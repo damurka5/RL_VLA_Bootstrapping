@@ -18,8 +18,7 @@ The framework does not vendor the VLA model itself. Instead, it expects an exter
 - `rl_vla_bootstrapping/policy`: action codec and policy connectors.
 - `rl_vla_bootstrapping/pipeline`: stage planning and execution.
 - `rl_vla_bootstrapping/cli`: entrypoints for training and preview.
-- `cdpr_mujoco`: vendored CDPR embodiment example for remote use.
-- `cdpr_dataset`: vendored CDPR task/simulation layer for remote use.
+- `robots`: embodiment bundles; the CDPR example now lives under `robots/cdpr/`.
 - `assets`: staged YCB/LIBERO asset bundles.
 - `benchmarks`: staged RoboTwin 2.0 / ManiTask repos and adapters.
 - `environments`: remote conda environment definitions.
@@ -74,7 +73,7 @@ python3 -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla
 
 ## Runtime Notes
 
-Preview and training stages use the dependencies required by the vendored CDPR example plus the external OpenVLA/OFT repo. For the current stack that means MuJoCo, EGL-capable rendering on Linux, `opencv-python`, and the OpenVLA/OFT training dependencies from the included environment file.
+Preview and training stages use the dependencies required by the vendored CDPR example bundle under `robots/cdpr/` plus the external OpenVLA/OFT repo. For the current stack that means MuJoCo, EGL-capable rendering on Linux, `opencv-python`, and the OpenVLA/OFT training dependencies from the included environment file.
 
 ## Assets And Benchmarks
 
@@ -82,6 +81,7 @@ The repo intentionally does not commit large YCB/LIBERO assets or full RoboTwin 
 
 - YCB and LIBERO are staged under `assets/externals/`.
 - RoboTwin 2.0 and ManiTask are staged under `benchmarks/externals/`.
+- GitHub stores only the framework, configs, and asset bundle definitions; large asset directories are linked or copied into the local checkout with `rl_vla_bootstrapping.cli.assets`.
 - The CDPR example config already includes bundle definitions and disabled benchmark stages.
 - Benchmark stages use local wrappers in `rl_vla_bootstrapping/evaluation/` so the evaluation layer is visible in this repo even though the benchmark repos stay external.
 

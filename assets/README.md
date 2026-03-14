@@ -1,6 +1,7 @@
 # External Assets
 
 Large assets are intentionally not committed into this repo.
+GitHub will contain this README, the bundle configuration, and placeholder directories such as `assets/externals/.gitkeep`, not the actual YCB/LIBERO/RoboTwin files.
 
 Use the configured asset bundles to stage them into stable repo-local paths:
 
@@ -14,6 +15,7 @@ Default target layout:
 
 - `assets/externals/ycb`
 - `assets/externals/libero`
+- `assets/externals/robotwin2_assets`
 - `benchmarks/externals/robotwin2`
 - `benchmarks/externals/manitask`
 

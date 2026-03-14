@@ -5,8 +5,8 @@ project:
 
 repos:
   openvla_oft: ../../../../openvla-oft
-  dataset_repo: ../..
-  embodiment_repo: ../..
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
 
 remote:
   conda_env_file: ../../environments/openvla-oft-remote.yaml
@@ -17,6 +17,7 @@ remote:
   notes:
     - Create the conda env from the included YAML on the remote server.
     - Stage YCB and LIBERO assets into repo-local paths before preview or training.
+    - If you want RoboTwin objects available in scene generation, stage `robotwin2_assets` too.
     - Clone or mount RoboTwin 2.0 and ManiTask only if you want the evaluation stage.
 
 assets:
@@ -39,6 +40,12 @@ assets:
       target_path: ../../benchmarks/externals/robotwin2
       required: false
       description: Optional benchmark workspace for RoboTwin 2.0 evaluation.
+    - name: robotwin2_assets
+      kind: asset
+      source_path: ../../../../RoboTwin2.0/assets
+      target_path: ../../assets/externals/robotwin2_assets
+      required: false
+      description: Optional RoboTwin 2.0 scene/object assets for additional object pools.
     - name: manitask
       kind: benchmark_repo
       source_path: ../../../../ManiTask
@@ -49,17 +56,17 @@ assets:
 embodiment:
   name: cdpr_5dof
   kind: mujoco
-  robot_root: ../../cdpr_mujoco
-  xml_path: ../../cdpr_mujoco/cdpr.xml
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr.xml
   dof: 5
   extra_python_paths:
-    - ../..
+    - ../../robots/cdpr
     - ../../../../openvla-oft
   cameras:
     overview: overview
     wrist: ee_camera
   controller:
-    file: ../../cdpr_mujoco/headless_cdpr_egl.py
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
     class_name: HeadlessCDPRSimulation
     init_kwargs:
       output_dir: "{run_dir}"
@@ -96,7 +103,7 @@ task:
   instruction_types: [pick_up, move_left, move_right, move_top, move_bottom]
   target_objects: [bowl, plate, ycb_bowl, ycb_apple, ycb_peach, ycb_pear]
   reward:
-    file: ../../cdpr_dataset/rl_instruction_tasks.py
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
     function: compute_instruction_reward
   metadata:
     goal_relation: object_to_region_or_direction
@@ -104,15 +111,16 @@ task:
 
 simulation:
   entrypoint:
-    file: ../../cdpr_dataset/generate_cdpr_dataset.py
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
     function: build_wrapper_if_needed
   preview_scene: desk
   preview_objects: [ycb_apple]
-  catalog_path: ../../cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
   object_roots:
     - ../../assets/externals/ycb
     - ../../assets/externals/libero/stable_hope_objects
     - ../../assets/externals/libero/stable_scanned_objects
+    - ../../assets/externals/robotwin2_assets
   desk_textures_dir: ../../assets/externals/libero/textures
   build_kwargs:
     scene_z: -0.85
@@ -177,7 +185,7 @@ training:
     args:
       resume_from_rl: true
       dataset_name: cdpr_synth
-      data_root_dir: ../../cdpr_dataset/datasets
+      data_root_dir: ../../robots/cdpr/cdpr_dataset/datasets
       use_lora: true
       use_l1_regression: true
       use_diffusion: false

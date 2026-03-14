@@ -2,4 +2,6 @@ runs/
 __pycache__/
 *.pyc
 assets/externals/*
+!assets/externals/.gitkeep
 benchmarks/externals/*
+!benchmarks/externals/.gitkeep

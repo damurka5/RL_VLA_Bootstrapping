@@ -1,6 +1,7 @@
 # Benchmarks
 
 This repo includes evaluation adapters for RoboTwin 2.0 and ManiTask, but not the benchmark repos themselves.
+GitHub keeps the adapters plus placeholder external directories; the actual benchmark repos are staged locally.
 
 Stage benchmark workspaces into:
 

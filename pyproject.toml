@@ -20,4 +20,4 @@ yaml = ["PyYAML>=6.0"]
 include-package-data = true
 
 [tool.setuptools.packages.find]
-include = ["rl_vla_bootstrapping*", "cdpr_mujoco*", "cdpr_dataset*"]
+include = ["rl_vla_bootstrapping*", "robots*"]

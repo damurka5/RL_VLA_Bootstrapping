@@ -28,7 +28,8 @@ from typing import Optional
 sys.path.append(str(Path(__file__).parent))
 
 HERE = Path(__file__).resolve().parent
-REPO = HERE.parent
+ROBOT_ROOT = HERE.parent
+REPO = HERE.parents[2]
 
 
 def _resolve_libero_assets() -> Path:
@@ -83,6 +84,7 @@ def _resolve_ycb_root() -> Path:
     candidates = [
         REPO / "assets" / "externals" / "ycb",
         REPO / "assets" / "externals" / "ycb_dataset" / "ycb",
+        REPO / "robots" / "cdpr" / "assets" / "externals" / "ycb",
         REPO / "CDPR-Dataset" / "cdpr_dataset" / "external_assets" / "ycb_dataset" / "ycb",
         REPO / "CDPR-Dataset" / "external_assets" / "ycb_dataset" / "ycb",
         REPO / "external_assets" / "ycb_dataset" / "ycb",
@@ -94,6 +96,39 @@ def _resolve_ycb_root() -> Path:
     return candidates[0].resolve()
 
 YCB_ROOT = _resolve_ycb_root()
+
+
+def _resolve_robotwin_roots() -> list[Path]:
+    env_candidates = [
+        os.environ.get("ROBOTWIN_ASSETS"),
+        os.environ.get("ROBOTWIN_ASSETS_ROOT"),
+    ]
+    roots: list[Path] = []
+    for env_value in env_candidates:
+        if env_value:
+            roots.append(Path(env_value).expanduser().resolve())
+
+    roots.extend(
+        [
+            REPO / "assets" / "externals" / "robotwin2_assets",
+            REPO / "benchmarks" / "externals" / "robotwin2" / "assets",
+            REPO / "RoboTwin2.0" / "assets",
+        ]
+    )
+
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for root in roots:
+        resolved = root.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        if resolved.exists():
+            out.append(resolved)
+    return out
+
+
+ROBOTWIN_ROOTS = _resolve_robotwin_roots()
 
 CDPR_XML = HERE / "cdpr.xml"
 
@@ -217,10 +252,25 @@ def find_object_xml(object_name: str) -> Path:
     if xmls:
         return xmls[0]
 
+    # 3) RoboTwin-style staged assets: search recursively to tolerate unknown layout.
+    for root in ROBOTWIN_ROOTS:
+        direct = root / f"{name}.xml"
+        if direct.exists():
+            return direct
+        nested_dir = root / name
+        if nested_dir.is_dir():
+            nested_xml = nested_dir / f"{name}.xml"
+            if nested_xml.exists():
+                return nested_xml
+        matches = list(root.rglob(f"{name}.xml"))
+        if matches:
+            return matches[0]
+
     raise FileNotFoundError(
         f"Object '{object_name}' not found.\n"
         f"Checked LIBERO roots: {', '.join(str(r) for r in OBJECTS_DIRS)}\n"
-        f"Checked YCB root: {YCB_ROOT}"
+        f"Checked YCB root: {YCB_ROOT}\n"
+        f"Checked RoboTwin roots: {', '.join(str(r) for r in ROBOTWIN_ROOTS) if ROBOTWIN_ROOTS else '(none)'}"
     )
 
 
