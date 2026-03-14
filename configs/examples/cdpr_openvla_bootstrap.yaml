@@ -17,6 +17,7 @@ remote:
   notes:
     - Create the conda env from the included YAML on the remote server.
     - Stage YCB and LIBERO assets into repo-local paths before preview or training.
+    - Stage `desk_textures_cache` too if you want PPO desk textures to match the original CDPR remote launcher.
     - If you want RoboTwin objects available in scene generation, stage `robotwin2_assets` too.
     - Clone or mount RoboTwin 2.0 and ManiTask only if you want the evaluation stage.
 
@@ -46,6 +47,12 @@ assets:
       target_path: ../../assets/externals/robotwin2_assets
       required: false
       description: Optional RoboTwin 2.0 scene/object assets for additional object pools.
+    - name: desk_textures_cache
+      kind: asset
+      source_path: ../../../../CDPR-Dataset/cdpr_dataset/wrappers/_desk_textures
+      target_path: ../../assets/externals/desk_textures_cache
+      required: false
+      description: Optional CDPR desk texture cache matching the original PPO remote launcher.
     - name: manitask
       kind: benchmark_repo
       source_path: ../../../../ManiTask
@@ -121,7 +128,8 @@ simulation:
     - ../../assets/externals/libero/stable_hope_objects
     - ../../assets/externals/libero/stable_scanned_objects
     - ../../assets/externals/robotwin2_assets
-  desk_textures_dir: ../../assets/externals/libero/textures
+  desk_textures_dir: ../../assets/externals/desk_textures_cache
+  desk_textures_fallback_dir: ../../assets/externals/libero/textures
   build_kwargs:
     scene_z: -0.85
     table_z: 0.15
@@ -154,29 +162,46 @@ training:
   rl:
     enabled: true
     algorithm: ppo
+    launcher: torchrun
+    launcher_args:
+      nproc_per_node: 2
     args:
+      num_parallel_envs: 8
       total_updates: 100
       rollout_steps: 256
       ppo_epochs: 4
-      minibatch_size: 4
-      microbatch_size: 4
+      minibatch_size: 16
+      microbatch_size: 16
       max_env_steps: 150
       gamma: 0.99
       gae_lambda: 0.95
       learning_rate: 1.0e-5
       value_lr: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      normalize_advantage: true
       init_log_std: -1.2
-      hold_steps: 6
+      action_step_xyz: 0.006
+      action_step_yaw: 0.08
+      hold_steps: 4
+      delta_closer_reward_coef: 0.0
+      delta_farther_penalty_coef: 0.0
       save_every: 20
-      validate_every_updates: 30
+      validate_every_updates: 10
       validation_episodes: 1
       validation_max_steps: 40
       prebuild_scene_cache: true
-      scene_pool_size: 5
+      scene_pool_size: 16
       texture_pool_size: 10
-      wrapper_cleanup: true
-      use_wrapper_cache: false
+      scene_sampling: round_robin
+      scene_refresh_every_steps: -1
+      wrapper_cleanup: false
+      use_wrapper_cache: true
       capture_frames: true
+      save_validation_frames: true
+      rollout_tap_every_updates: 10
+      tensorboard_every_updates: 1
+      env_trace_path: runs_ppo/env_trace.jsonl
       device: cuda
       quiet_env_logs: true
       status_bar: true

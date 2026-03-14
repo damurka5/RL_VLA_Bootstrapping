@@ -248,6 +248,7 @@ class SceneBuilderSpec:
     catalog_path: str | None = None
     object_roots: list[str] = field(default_factory=list)
     desk_textures_dir: str | None = None
+    desk_textures_fallback_dir: str | None = None
     build_kwargs: dict[str, Any] = field(default_factory=dict)
     randomization: dict[str, Any] = field(default_factory=dict)
 
@@ -261,6 +262,9 @@ class SceneBuilderSpec:
             catalog_path=str(data["catalog_path"]) if data.get("catalog_path") else None,
             object_roots=_as_str_list(data.get("object_roots")),
             desk_textures_dir=str(data["desk_textures_dir"]) if data.get("desk_textures_dir") else None,
+            desk_textures_fallback_dir=(
+                str(data["desk_textures_fallback_dir"]) if data.get("desk_textures_fallback_dir") else None
+            ),
             build_kwargs=dict(data.get("build_kwargs") or {}),
             randomization=dict(data.get("randomization") or {}),
         )
@@ -335,6 +339,8 @@ class RLStageSpec:
     enabled: bool = True
     algorithm: str = "ppo"
     script_path: str | None = None
+    launcher: str | None = None
+    launcher_args: dict[str, Any] = field(default_factory=dict)
     args: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -344,6 +350,8 @@ class RLStageSpec:
             enabled=bool(data.get("enabled", True)),
             algorithm=str(data.get("algorithm") or "ppo"),
             script_path=str(data["script_path"]) if data.get("script_path") else None,
+            launcher=str(data["launcher"]) if data.get("launcher") else None,
+            launcher_args=dict(data.get("launcher_args") or {}),
             args=dict(data.get("args") or {}),
         )
 
@@ -352,6 +360,8 @@ class RLStageSpec:
 class SFTStageSpec:
     enabled: bool = False
     script_path: str | None = None
+    launcher: str | None = None
+    launcher_args: dict[str, Any] = field(default_factory=dict)
     args: dict[str, Any] = field(default_factory=dict)
 
     @classmethod
@@ -360,6 +370,8 @@ class SFTStageSpec:
         return cls(
             enabled=bool(data.get("enabled", False)),
             script_path=str(data["script_path"]) if data.get("script_path") else None,
+            launcher=str(data["launcher"]) if data.get("launcher") else None,
+            launcher_args=dict(data.get("launcher_args") or {}),
             args=dict(data.get("args") or {}),
         )
 
@@ -444,18 +456,28 @@ class ProjectConfig:
 
     def all_python_paths(self) -> list[Path]:
         out: list[Path] = []
+        seen: set[Path] = set()
+
+        def _append(raw_path: str | None) -> None:
+            path = self.resolve_path(raw_path)
+            if path is None or path in seen:
+                return
+            seen.add(path)
+            out.append(path)
+
         for raw in self.embodiment.extra_python_paths:
-            path = self.resolve_path(raw)
-            if path is not None:
-                out.append(path)
+            _append(raw)
         for raw in self.embodiment.controller.entrypoint.python_paths:
-            path = self.resolve_path(raw)
-            if path is not None:
-                out.append(path)
+            _append(raw)
+        if self.simulation.entrypoint is not None:
+            for raw in self.simulation.entrypoint.python_paths:
+                _append(raw)
+        for entrypoint in (self.task.reward, self.task.success_predicate):
+            if entrypoint is not None:
+                for raw in entrypoint.python_paths:
+                    _append(raw)
         for raw in self.policy.extra_python_paths:
-            path = self.resolve_path(raw)
-            if path is not None:
-                out.append(path)
+            _append(raw)
         return out
 
     def asset_bundle(self, name: str) -> AssetBundleSpec | None:

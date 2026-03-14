@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 from typing import Any
 
 from rl_vla_bootstrapping.core.commands import StagePlan, append_cli_arg
-from rl_vla_bootstrapping.core.specs import ProjectConfig
+from rl_vla_bootstrapping.core.specs import EntrypointRef, ProjectConfig
 
 
 def _join_pythonpath(paths: list[Path]) -> str:
@@ -44,13 +45,101 @@ def _maybe_infer_xyz_step(config: ProjectConfig) -> float | None:
     return base
 
 
+def _resolved_python_paths(config: ProjectConfig, raw_paths: list[str]) -> list[Path]:
+    out: list[Path] = []
+    seen: set[Path] = set()
+    for raw in raw_paths:
+        path = config.resolve_path(raw)
+        if path is None or path in seen:
+            continue
+        seen.add(path)
+        out.append(path)
+    return out
+
+
+def _encode_entrypoint_env(
+    env: dict[str, str],
+    *,
+    prefix: str,
+    entrypoint: EntrypointRef | None,
+    config: ProjectConfig,
+) -> None:
+    if entrypoint is None:
+        return
+    env[f"{prefix}_ATTRIBUTE"] = entrypoint.attribute
+    if entrypoint.file:
+        resolved_file = config.resolve_path(entrypoint.file)
+        if resolved_file is not None:
+            env[f"{prefix}_FILE"] = resolved_file.as_posix()
+    if entrypoint.module:
+        env[f"{prefix}_MODULE"] = entrypoint.module
+    python_paths = _resolved_python_paths(config, entrypoint.python_paths)
+    if python_paths:
+        env[f"{prefix}_PYTHONPATHS"] = os.pathsep.join(path.as_posix() for path in python_paths)
+
+
+def _task_hook_env(config: ProjectConfig) -> dict[str, str]:
+    env: dict[str, str] = {}
+    _encode_entrypoint_env(env, prefix="RLVLA_TASK_REWARD", entrypoint=config.task.reward, config=config)
+    _encode_entrypoint_env(
+        env,
+        prefix="RLVLA_TASK_SUCCESS",
+        entrypoint=config.task.success_predicate,
+        config=config,
+    )
+    if config.task.goal_region:
+        env["RLVLA_TASK_GOAL_REGION_JSON"] = json.dumps(config.task.goal_region, sort_keys=True)
+    if config.task.goal_relation:
+        env["RLVLA_TASK_GOAL_RELATION"] = config.task.goal_relation
+    if config.task.dense_reward_terms:
+        env["RLVLA_TASK_DENSE_REWARD_TERMS_JSON"] = json.dumps(
+            config.task.dense_reward_terms,
+            sort_keys=True,
+        )
+    if config.task.metadata:
+        env["RLVLA_TASK_METADATA_JSON"] = json.dumps(config.task.metadata, sort_keys=True)
+    return env
+
+
+def _resolve_desk_textures_dir(config: ProjectConfig) -> tuple[Path | None, str | None]:
+    primary = config.resolve_path(config.simulation.desk_textures_dir)
+    fallback = config.resolve_path(config.simulation.desk_textures_fallback_dir)
+    if primary is not None and primary.exists():
+        return primary, None
+    if fallback is not None and fallback.exists():
+        note = f"Desk textures fallback selected: {fallback}"
+        return fallback, note
+    return primary or fallback, None
+
+
+def _build_stage_prefix(
+    *,
+    python_executable: str,
+    script_path: Path,
+    launcher: str | None,
+    launcher_args: dict[str, Any],
+) -> list[str]:
+    if launcher:
+        argv = [launcher]
+        for key, value in launcher_args.items():
+            append_cli_arg(argv, key, value)
+        argv.append(str(script_path))
+        return argv
+    return [python_executable, str(script_path)]
+
+
 def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     script_path = config.resolve_path(config.training.rl.script_path or config.policy.rl_script)
     if script_path is None:
         raise ValueError("RL stage needs `training.rl.script_path` or `policy.rl_script`.")
 
     stage_dir = run_dir / "rl"
-    argv = [config.project.python_executable, str(script_path)]
+    argv = _build_stage_prefix(
+        python_executable=config.project.python_executable,
+        script_path=script_path,
+        launcher=config.training.rl.launcher,
+        launcher_args=config.training.rl.launcher_args,
+    )
 
     injected: dict[str, Any] = dict(config.training.rl.args)
     if config.policy.base_checkpoint and "vla_path" not in injected:
@@ -70,8 +159,9 @@ def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
 
     if config.simulation.catalog_path and "catalog_path" not in injected:
         injected["catalog_path"] = config.resolve_path(config.simulation.catalog_path).as_posix()
-    if config.simulation.desk_textures_dir and "desk_textures_dir" not in injected:
-        injected["desk_textures_dir"] = config.resolve_path(config.simulation.desk_textures_dir).as_posix()
+    desk_textures_dir, desk_texture_note = _resolve_desk_textures_dir(config)
+    if desk_textures_dir is not None and "desk_textures_dir" not in injected:
+        injected["desk_textures_dir"] = desk_textures_dir.as_posix()
     if config.task.target_objects and "allowed_objects" not in injected:
         injected["allowed_objects"] = list(config.task.target_objects)
     if config.task.instruction_types and "instruction_types" not in injected:
@@ -92,15 +182,24 @@ def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     for key, value in injected.items():
         append_cli_arg(argv, key, value)
 
+    stage_env = _shared_env(config)
+    stage_env.update(_task_hook_env(config))
+
     notes = [
         "Zero-demo RL stage using an external OpenVLA-OFT-compatible trainer.",
     ]
+    if desk_texture_note:
+        notes.append(desk_texture_note)
+    if config.task.reward is not None:
+        notes.append("Task reward hook exported through RLVLA_TASK_REWARD_* env vars.")
+    if config.task.success_predicate is not None:
+        notes.append("Task success hook exported through RLVLA_TASK_SUCCESS_* env vars.")
     return StagePlan(
         name="rl",
         kind="external_python",
         command=argv,
         cwd=str(config.resolve_path(config.policy.repo_path) or run_dir),
-        env=_shared_env(config),
+        env=stage_env,
         notes=notes,
         artifact_paths=[stage_dir.as_posix()],
     )
@@ -121,7 +220,12 @@ def build_openvla_sft_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     if script_path is None:
         raise ValueError("SFT stage needs `training.sft.script_path` or `policy.sft_script`.")
 
-    argv = [config.project.python_executable, str(script_path)]
+    argv = _build_stage_prefix(
+        python_executable=config.project.python_executable,
+        script_path=script_path,
+        launcher=config.training.sft.launcher,
+        launcher_args=config.training.sft.launcher_args,
+    )
     injected: dict[str, Any] = dict(config.training.sft.args)
 
     resume_from_rl = bool(injected.pop("resume_from_rl", True))

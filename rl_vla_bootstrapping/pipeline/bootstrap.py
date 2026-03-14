@@ -50,6 +50,9 @@ class BootstrapPipeline:
             self.config.policy.rl_script,
             self.config.policy.sft_script,
             self.config.simulation.catalog_path,
+            self.config.simulation.entrypoint.file if self.config.simulation.entrypoint else None,
+            self.config.task.reward.file if self.config.task.reward else None,
+            self.config.task.success_predicate.file if self.config.task.success_predicate else None,
         ):
             path = self.config.resolve_path(raw)
             if raw and path is not None and not path.exists():

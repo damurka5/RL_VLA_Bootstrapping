@@ -4,8 +4,14 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
 import hashlib
+import importlib
+import importlib.util
+import inspect
+import json
+import os
 import re
 import shutil
+import sys
 import time
 import xml.etree.ElementTree as ET
 
@@ -47,6 +53,8 @@ DEFAULT_ALLOWED_OBJECTS: tuple[str, ...] = ("ycb_apple", "ycb_pear", "ycb_peach"
 DEFAULT_DESK_GEOM_REGEX = r"(table|desk|workbench|counter|surface)"
 WRAP_DIR = HERE / "wrappers"
 MIN_EE_START_Z = 0.35
+TASK_REWARD_PREFIX = "RLVLA_TASK_REWARD"
+TASK_SUCCESS_PREFIX = "RLVLA_TASK_SUCCESS"
 
 ROBOT_BODY_PREFIXES = (
     "world",
@@ -293,6 +301,113 @@ def _import_wrapper_builder():
     return build_wrapper_if_needed
 
 
+def _load_json_env(name: str) -> dict[str, Any]:
+    raw = os.environ.get(name)
+    if not raw:
+        return {}
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"Environment variable {name} is not valid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise ValueError(f"Environment variable {name} must contain a JSON object.")
+    return dict(payload)
+
+
+def _prepend_python_paths(paths_raw: str | None) -> None:
+    if not paths_raw:
+        return
+    for part in reversed([chunk for chunk in paths_raw.split(os.pathsep) if chunk]):
+        if part not in sys.path:
+            sys.path.insert(0, part)
+
+
+def _load_callable_from_env(prefix: str):
+    attribute = os.environ.get(f"{prefix}_ATTRIBUTE")
+    if not attribute:
+        return None
+
+    _prepend_python_paths(os.environ.get(f"{prefix}_PYTHONPATHS"))
+
+    module_name = os.environ.get(f"{prefix}_MODULE")
+    file_path = os.environ.get(f"{prefix}_FILE")
+    if module_name:
+        module = importlib.import_module(module_name)
+    elif file_path:
+        path = Path(file_path).expanduser().resolve()
+        if not path.exists():
+            raise FileNotFoundError(f"{prefix}_FILE does not exist: {path}")
+        unique_name = f"_rlvla_hook_{path.stem}_{hashlib.sha1(path.as_posix().encode('utf-8')).hexdigest()[:12]}"
+        spec = importlib.util.spec_from_file_location(unique_name, path)
+        if spec is None or spec.loader is None:
+            raise ImportError(f"Could not load module spec for task hook: {path}")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[unique_name] = module
+        spec.loader.exec_module(module)
+    else:
+        raise ValueError(f"{prefix}_ATTRIBUTE requires either {prefix}_MODULE or {prefix}_FILE.")
+
+    try:
+        return getattr(module, attribute)
+    except AttributeError as exc:
+        raise AttributeError(f"Task hook `{attribute}` not found for prefix {prefix}.") from exc
+
+
+def _call_with_supported_kwargs(func, **kwargs):
+    try:
+        signature = inspect.signature(func)
+    except (TypeError, ValueError):
+        return func(**kwargs)
+
+    params = signature.parameters
+    if any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values()):
+        return func(**kwargs)
+
+    filtered = {key: value for key, value in kwargs.items() if key in params}
+    return func(**filtered)
+
+
+def _normalize_reward_result(result: Any) -> tuple[float, bool, dict[str, Any]]:
+    if isinstance(result, dict):
+        reward = float(result.get("reward", 0.0))
+        success = bool(result.get("success", False))
+        info = dict(result.get("info") or {})
+        for key, value in result.items():
+            if key not in {"reward", "success", "info"}:
+                info[key] = value
+        return reward, success, info
+
+    if isinstance(result, (tuple, list)):
+        if len(result) == 3:
+            reward, success, info = result
+            return float(reward), bool(success), dict(info or {})
+        if len(result) == 2:
+            reward, success = result
+            return float(reward), bool(success), {}
+        if len(result) == 1:
+            return float(result[0]), False, {}
+        raise ValueError("Reward hook must return reward, (reward, success), or (reward, success, info).")
+
+    return float(result), False, {}
+
+
+def _normalize_success_result(result: Any, current_success: bool) -> tuple[bool, dict[str, Any]]:
+    if result is None:
+        return bool(current_success), {}
+    if isinstance(result, dict):
+        success = bool(result.get("success", current_success))
+        info = {key: value for key, value in result.items() if key != "success"}
+        return success, info
+    if isinstance(result, (tuple, list)):
+        if len(result) == 2:
+            success, info = result
+            return bool(success), dict(info or {})
+        if len(result) == 1:
+            return bool(result[0]), {}
+        raise ValueError("Success hook must return success or (success, info).")
+    return bool(result), {}
+
+
 class _EnvBase:
     pass
 
@@ -396,6 +511,13 @@ class CDPRLanguageRLEnv(_EnvBase):
             )
             if not self.desk_texture_files:
                 raise ValueError(f"No texture files found in: {tex_dir}")
+
+        self._goal_region = _load_json_env("RLVLA_TASK_GOAL_REGION_JSON")
+        self._dense_reward_terms = _load_json_env("RLVLA_TASK_DENSE_REWARD_TERMS_JSON")
+        self._task_metadata = _load_json_env("RLVLA_TASK_METADATA_JSON")
+        self._goal_relation = os.environ.get("RLVLA_TASK_GOAL_RELATION")
+        self._reward_fn = _load_callable_from_env(TASK_REWARD_PREFIX) or compute_instruction_reward
+        self._success_fn = _load_callable_from_env(TASK_SUCCESS_PREFIX)
 
         self.action_space = spaces.Box(
             low=-1.0,
@@ -540,6 +662,7 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         ee = self._get_ee_position()
         obj = self._get_body_position(self._target_body_name)
+        caught_body, caught_catalog, caught_score, caught_is_target = self._detect_caught_object(ee_pos=ee)
         gripper_surface_alignment = self._get_gripper_surface_alignment(obj_pos=obj)
         camera_alignment = self._get_ee_camera_alignment(obj_pos=obj)
         ee_height_above_surface: Optional[float]
@@ -550,19 +673,46 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_yaw_for_reward: Optional[float] = None
         if hasattr(self.sim, "set_yaw") or hasattr(self.sim, "get_yaw"):
             ee_yaw_for_reward = float(self._yaw)
-        reward, success, reward_info = compute_instruction_reward(
-            spec=self._instruction_spec,
-            ee_pos=ee,
-            obj_pos=obj,
-            reward_state=self._reward_state,
-            action=action,
-            ee_yaw=ee_yaw_for_reward,
-            gripper_surface_alignment=gripper_surface_alignment,
-            camera_alignment=camera_alignment,
-            ee_height_above_surface=ee_height_above_surface,
-            gripper_command=float(self._last_gripper_cmd),
+        reward_kwargs = {
+            "spec": self._instruction_spec,
+            "ee_pos": ee,
+            "obj_pos": obj,
+            "reward_state": self._reward_state,
+            "action": action,
+            "ee_yaw": ee_yaw_for_reward,
+            "gripper_surface_alignment": gripper_surface_alignment,
+            "camera_alignment": camera_alignment,
+            "ee_height_above_surface": ee_height_above_surface,
+            "gripper_command": float(self._last_gripper_cmd),
+            "goal_region": self._goal_region,
+            "goal_relation": self._goal_relation,
+            "dense_reward_terms": self._dense_reward_terms,
+            "task_metadata": self._task_metadata,
+            "env": self,
+            "sim": self.sim,
+            "scene_name": self._scene_name,
+            "target_catalog_name": self._target_catalog_name,
+            "target_body_name": self._target_body_name,
+            "caught_object_body": caught_body,
+            "caught_object_catalog": caught_catalog,
+            "caught_object_score": float(caught_score),
+            "caught_object_is_target": bool(caught_is_target),
+        }
+        reward, success, reward_info = _normalize_reward_result(
+            _call_with_supported_kwargs(self._reward_fn, **reward_kwargs)
         )
-        caught_body, caught_catalog, caught_score, caught_is_target = self._detect_caught_object(ee_pos=ee)
+        success_kwargs = {
+            **reward_kwargs,
+            "reward": float(reward),
+            "reward_info": reward_info,
+            "current_success": bool(success),
+        }
+        if self._success_fn is not None:
+            success, success_info = _normalize_success_result(
+                _call_with_supported_kwargs(self._success_fn, **success_kwargs),
+                bool(success),
+            )
+            reward_info.update(success_info)
         if caught_body:
             self._last_caught_body = caught_body
             self._last_caught_catalog = caught_catalog
@@ -953,6 +1103,9 @@ class CDPRLanguageRLEnv(_EnvBase):
             "target_object_body": self._target_body_name,
             "language_instruction": self._instruction_spec.text,
             "instruction_type": self._instruction_spec.instruction_type,
+            "goal_region": dict(self._goal_region),
+            "goal_relation": self._goal_relation or "",
+            "dense_reward_terms": dict(self._dense_reward_terms),
             "gripper_command": float(self._last_gripper_cmd),
             "desk_texture": self._desk_texture_name,
             "wrapper_xml": str(self._current_wrapper_xml) if self._current_wrapper_xml else "",

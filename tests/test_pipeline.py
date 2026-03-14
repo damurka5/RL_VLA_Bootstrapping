@@ -45,6 +45,8 @@ class PipelineTests(unittest.TestCase):
             _write(repo_root / "finetune.py", "print('sft')\n")
             (dataset_root / "textures").mkdir(parents=True, exist_ok=True)
             _write(dataset_root / "catalog.yaml", "defaults: {}\nscenes: []\n")
+            _write(dataset_root / "reward_hook.py", "def reward_fn(spec=None, **kwargs):\n    return 1.0, False, {'custom_reward': 1.0}\n")
+            _write(dataset_root / "success_hook.py", "def success_fn(current_success=False, **kwargs):\n    return current_success, {'checked_success': 1.0}\n")
 
             config = {
                 "project": {"name": "test_project", "output_root": "runs"},
@@ -85,9 +87,21 @@ class PipelineTests(unittest.TestCase):
                         },
                     },
                 },
+                "task": {
+                    "reward": {"file": "dataset/reward_hook.py", "function": "reward_fn"},
+                    "success_predicate": {
+                        "file": "dataset/success_hook.py",
+                        "function": "success_fn",
+                    },
+                    "goal_region": {"center": [0.0, 0.0, 0.2]},
+                    "goal_relation": "inside_region",
+                    "dense_reward_terms": {"reach": 1.0},
+                    "metadata": {"mode": "zero_demo"},
+                },
                 "simulation": {
                     "catalog_path": "dataset/catalog.yaml",
-                    "desk_textures_dir": "dataset/textures",
+                    "desk_textures_dir": "dataset/missing_cache",
+                    "desk_textures_fallback_dir": "dataset/textures",
                 },
                 "policy": {
                     "type": "openvla_oft",
@@ -121,6 +135,13 @@ class PipelineTests(unittest.TestCase):
             plans = pipeline.build_stage_plans(run_dir, ["all"])
             self.assertEqual([plan.name for plan in plans], ["preview", "rl", "sft"])
             self.assertIn("--total-updates", plans[1].command)
+            desk_textures_idx = plans[1].command.index("--desk-textures-dir") + 1
+            self.assertTrue(Path(plans[1].command[desk_textures_idx]).samefile(dataset_root / "textures"))
+            self.assertTrue(Path(plans[1].env["RLVLA_TASK_REWARD_FILE"]).samefile(dataset_root / "reward_hook.py"))
+            self.assertEqual(plans[1].env["RLVLA_TASK_REWARD_ATTRIBUTE"], "reward_fn")
+            self.assertTrue(Path(plans[1].env["RLVLA_TASK_SUCCESS_FILE"]).samefile(dataset_root / "success_hook.py"))
+            self.assertEqual(plans[1].env["RLVLA_TASK_SUCCESS_ATTRIBUTE"], "success_fn")
+            self.assertEqual(plans[1].env["RLVLA_TASK_GOAL_RELATION"], "inside_region")
 
             preview_only = pipeline.build_stage_plans(run_dir, ["preview"])
             self.assertEqual([plan.name for plan in preview_only], ["preview"])
