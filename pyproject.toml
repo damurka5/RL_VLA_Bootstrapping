@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "rl-vla-bootstrapping"
+version = "0.1.0"
+description = "Embodiment-first framework for zero-demo RL bootstrapping and optional SFT refinement of VLA policies."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Codex" }
+]
+dependencies = []
+
+[project.optional-dependencies]
+yaml = ["PyYAML>=6.0"]
+
+[tool.setuptools]
+include-package-data = true
+
+[tool.setuptools.packages.find]
+include = ["rl_vla_bootstrapping*", "cdpr_mujoco*", "cdpr_dataset*"]

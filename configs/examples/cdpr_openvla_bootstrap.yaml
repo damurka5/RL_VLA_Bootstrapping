@@ -1,0 +1,211 @@
+project:
+  name: cdpr_openvla_bootstrap
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  openvla_oft: ../../../../openvla-oft
+  dataset_repo: ../..
+  embodiment_repo: ../..
+
+remote:
+  conda_env_file: ../../environments/openvla-oft-remote.yaml
+  env_vars:
+    MUJOCO_GL: egl
+    PYOPENGL_PLATFORM: egl
+    TOKENIZERS_PARALLELISM: "false"
+  notes:
+    - Create the conda env from the included YAML on the remote server.
+    - Stage YCB and LIBERO assets into repo-local paths before preview or training.
+    - Clone or mount RoboTwin 2.0 and ManiTask only if you want the evaluation stage.
+
+assets:
+  bundles:
+    - name: ycb
+      kind: asset
+      source_path: ../../../../CDPR-Dataset/external_assets/ycb_dataset/ycb
+      target_path: ../../assets/externals/ycb
+      required: true
+      description: YCB object meshes and MJCFs used by CDPR randomized scenes.
+    - name: libero
+      kind: asset
+      source_path: ../../../../LIBERO/libero/libero/assets
+      target_path: ../../assets/externals/libero
+      required: true
+      description: LIBERO scene XMLs, textures, and scanned/stable object assets.
+    - name: robotwin2
+      kind: benchmark_repo
+      source_path: ../../../../RoboTwin2.0
+      target_path: ../../benchmarks/externals/robotwin2
+      required: false
+      description: Optional benchmark workspace for RoboTwin 2.0 evaluation.
+    - name: manitask
+      kind: benchmark_repo
+      source_path: ../../../../ManiTask
+      target_path: ../../benchmarks/externals/manitask
+      required: false
+      description: Optional benchmark workspace for ManiTask evaluation.
+
+embodiment:
+  name: cdpr_5dof
+  kind: mujoco
+  robot_root: ../../cdpr_mujoco
+  xml_path: ../../cdpr_mujoco/cdpr.xml
+  dof: 5
+  extra_python_paths:
+    - ../..
+    - ../../../../openvla-oft
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs:
+      output_dir: "{run_dir}"
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.005
+      y: 0.005
+      z: 0.005
+      yaw: 0.25
+      gripper: 1.0
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 0.03]
+    open_gripper_threshold: -0.2
+    close_gripper_threshold: 0.2
+
+task:
+  instruction_types: [pick_up, move_left, move_right, move_top, move_bottom]
+  target_objects: [bowl, plate, ycb_bowl, ycb_apple, ycb_peach, ycb_pear]
+  reward:
+    file: ../../cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  metadata:
+    goal_relation: object_to_region_or_direction
+    zero_demo_first: true
+
+simulation:
+  entrypoint:
+    file: ../../cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [ycb_apple]
+  catalog_path: ../../cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  object_roots:
+    - ../../assets/externals/ycb
+    - ../../assets/externals/libero/stable_hope_objects
+    - ../../assets/externals/libero/stable_scanned_objects
+  desk_textures_dir: ../../assets/externals/libero/textures
+  build_kwargs:
+    scene_z: -0.85
+    table_z: 0.15
+    settle_time: 0.0
+    ee_start: [0.0, 0.0, 0.35]
+  randomization:
+    random_scene_count: 100
+    max_objects: 8
+    use_domain_randomization: true
+
+policy:
+  type: openvla_oft
+  repo_path: ../../../../openvla-oft
+  base_checkpoint: openvla/openvla-7b
+  rl_script: ../../../../openvla-oft/vla-scripts/ppo_finetune_cdpr.py
+  sft_script: ../../../../openvla-oft/vla-scripts/finetune.py
+  action_head: L1RegressionActionHead
+  num_images_in_input: 2
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: true
+      bins: 256
+    export_filename: openvla_action_codec.json
+
+training:
+  preview_before_rl: true
+  rl:
+    enabled: true
+    algorithm: ppo
+    args:
+      total_updates: 100
+      rollout_steps: 256
+      ppo_epochs: 4
+      minibatch_size: 4
+      microbatch_size: 4
+      max_env_steps: 150
+      gamma: 0.99
+      gae_lambda: 0.95
+      learning_rate: 1.0e-5
+      value_lr: 1.0e-4
+      init_log_std: -1.2
+      hold_steps: 6
+      save_every: 20
+      validate_every_updates: 30
+      validation_episodes: 1
+      validation_max_steps: 40
+      prebuild_scene_cache: true
+      scene_pool_size: 5
+      texture_pool_size: 10
+      wrapper_cleanup: true
+      use_wrapper_cache: false
+      capture_frames: true
+      device: cuda
+      quiet_env_logs: true
+      status_bar: true
+  sft:
+    enabled: false
+    args:
+      resume_from_rl: true
+      dataset_name: cdpr_synth
+      data_root_dir: ../../cdpr_dataset/datasets
+      use_lora: true
+      use_l1_regression: true
+      use_diffusion: false
+      use_proprio: false
+      batch_size: 8
+      learning_rate: 5.0e-4
+      max_steps: 200000
+      save_freq: 10000
+      wandb_project: cdpr_bootstrap
+      wandb_entity: your-wandb-entity
+
+evaluation:
+  benchmarks:
+    - name: robotwin2
+      enabled: false
+      script_path: ../../rl_vla_bootstrapping/evaluation/run_robotwin2.py
+      args:
+        benchmark_repo: ../../benchmarks/externals/robotwin2
+        entry_script: run_benchmark.py
+        task_suite: all
+        episodes: 25
+        dry_run: true
+    - name: manitask
+      enabled: false
+      script_path: ../../rl_vla_bootstrapping/evaluation/run_manitask.py
+      args:
+        benchmark_repo: ../../benchmarks/externals/manitask
+        entry_script: run_benchmark.py
+        task_suite: all
+        episodes: 25
+        dry_run: true

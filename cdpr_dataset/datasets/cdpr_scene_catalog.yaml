@@ -1,0 +1,40 @@
+defaults:
+  scene_z: -0.85
+  ee_start: [0.0, 0.0, 0.35]
+  table_z: 0.15
+  object_dynamic: true
+  settle_time: 0.0
+
+scenes:
+  - name: desk
+    objects: [ycb_apple]
+  - name: desk
+    objects: [ycb_apple, ycb_peach]
+  - name: desk
+    objects: [ycb_apple, ycb_pear]
+  - name: desk
+    objects: [ycb_apple, ycb_banana]
+  - name: desk
+    objects: [ycb_apple, ycb_peach, ycb_pear]
+  - name: desk
+    objects: [ycb_apple, ycb_peach, ycb_banana]
+  - name: desk
+    objects: [ycb_apple, ycb_pear, ycb_banana]
+  - name: desk
+    objects: [ycb_apple, ycb_pear, ycb_banana, ycb_peach]
+  - name: desk
+    objects: [ycb_apple]
+  - name: desk
+    objects: [ycb_apple, ycb_peach]
+  - name: desk
+    objects: [ycb_apple, ycb_pear]
+  - name: desk
+    objects: [ycb_apple, ycb_banana]
+  - name: desk
+    objects: [ycb_apple, ycb_peach, ycb_pear]
+  - name: desk
+    objects: [ycb_apple, ycb_peach, ycb_banana]
+  - name: desk
+    objects: [ycb_apple, ycb_pear, ycb_banana]
+  - name: desk
+    objects: [ycb_apple, ycb_pear, ycb_banana, ycb_peach]
