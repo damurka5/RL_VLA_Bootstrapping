@@ -240,6 +240,46 @@ def _set_num_images_in_input(vla: Any, num_images: int) -> int:
     return 1
 
 
+def _motion_diagnostics_for_log(
+    action: np.ndarray,
+    control_spec: CDPRPolicyControlSpec,
+    ee_before: np.ndarray,
+    result: dict[str, Any],
+) -> dict[str, np.ndarray | float]:
+    action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+    ee_before_arr = np.asarray(ee_before, dtype=np.float32).reshape(-1)[:3]
+    clipped = np.clip(action_arr, -1.0, 1.0)
+    commanded_raw = np.asarray(clipped[:3] * float(control_spec.action_step_xyz), dtype=np.float32)
+
+    target_xyz = np.asarray(
+        result.get("target_xyz", ee_before_arr + commanded_raw),
+        dtype=np.float32,
+    ).reshape(-1)[:3]
+    commanded_effective = (target_xyz - ee_before_arr).astype(np.float32)
+
+    ee_after = np.asarray(
+        result.get("ee_position", ee_before_arr),
+        dtype=np.float32,
+    ).reshape(-1)[:3]
+    realized = (ee_after - ee_before_arr).astype(np.float32)
+
+    cmd_norm = float(np.linalg.norm(commanded_effective))
+    real_norm = float(np.linalg.norm(realized))
+    gain = float(real_norm / max(cmd_norm, 1e-8)) if cmd_norm > 1e-8 else float("nan")
+    cosine = float("nan")
+    if cmd_norm > 1e-8 and real_norm > 1e-8:
+        cosine = float(np.dot(commanded_effective, realized) / (cmd_norm * real_norm))
+
+    return {
+        "commanded_xyz_delta_raw": commanded_raw,
+        "commanded_xyz_delta_effective": commanded_effective,
+        "realized_xyz_delta": realized,
+        "target_xyz": target_xyz,
+        "realized_vs_command_gain": gain,
+        "realized_vs_command_cosine": cosine,
+    }
+
+
 def _resolve_llm_dim(vla: Any) -> int | None:
     for obj in _iter_model_candidates(vla):
         llm_dim = getattr(obj, "llm_dim", None)
@@ -650,6 +690,7 @@ def main() -> int:
         raise RuntimeError(f"Expected at least 5 action dimensions, got chunk shape {current_chunk.shape}")
     current_chunk = current_chunk[:, :5]
     chunk_idx = 0
+    log_every = max(1, int(args.log_every))
 
     for step in range(int(args.steps)):
         if chunk_idx >= len(current_chunk):
@@ -679,6 +720,7 @@ def main() -> int:
         if max_abs > float(args.action_guard):
             print(f"[warn] Step {step}: policy action max abs {max_abs:.4f} > {args.action_guard}; clipping to [-1, 1].")
 
+        ee_before = np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
         result = apply_normalized_cdpr_action(
             sim,
             action,
@@ -686,13 +728,33 @@ def main() -> int:
             capture_last_frame=True,
         )
 
-        if step < 5 or step % max(1, int(args.log_every)) == 0:
+        if step % log_every == 0:
+            motion_diag = _motion_diagnostics_for_log(
+                action=action,
+                control_spec=control_spec,
+                ee_before=ee_before,
+                result=result,
+            )
             ee = np.asarray(result.get("ee_position", sim.get_end_effector_position()), dtype=np.float32).reshape(-1)[:3]
             yaw = float(result.get("ee_yaw", sim.get_yaw() if hasattr(sim, "get_yaw") else 0.0))
             grip = float(result.get("gripper_opening", sim.get_gripper_opening() if hasattr(sim, "get_gripper_opening") else 0.0))
             print(
                 f"step={step:03d} action={np.clip(action, -1.0, 1.0).round(4).tolist()} "
                 f"ee=({ee[0]:.4f}, {ee[1]:.4f}, {ee[2]:.4f}) yaw={yaw:.4f} grip={grip:.4f}"
+            )
+            cmd_raw = np.asarray(motion_diag["commanded_xyz_delta_raw"], dtype=np.float32)
+            cmd_eff = np.asarray(motion_diag["commanded_xyz_delta_effective"], dtype=np.float32)
+            realized = np.asarray(motion_diag["realized_xyz_delta"], dtype=np.float32)
+            target_xyz = np.asarray(motion_diag["target_xyz"], dtype=np.float32)
+            gain = float(motion_diag["realized_vs_command_gain"])
+            cosine = float(motion_diag["realized_vs_command_cosine"])
+            print(
+                "  motion "
+                f"cmd_raw=({cmd_raw[0]:+.4f}, {cmd_raw[1]:+.4f}, {cmd_raw[2]:+.4f}) "
+                f"cmd_eff=({cmd_eff[0]:+.4f}, {cmd_eff[1]:+.4f}, {cmd_eff[2]:+.4f}) "
+                f"real=({realized[0]:+.4f}, {realized[1]:+.4f}, {realized[2]:+.4f}) "
+                f"target=({target_xyz[0]:+.4f}, {target_xyz[1]:+.4f}, {target_xyz[2]:+.4f}) "
+                f"gain={gain:.4f} cosine={cosine:.4f}"
             )
 
     if not args.no_save and hasattr(sim, "save_trajectory_results"):

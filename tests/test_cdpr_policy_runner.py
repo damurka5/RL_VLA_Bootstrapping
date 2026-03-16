@@ -9,6 +9,7 @@ import numpy as np
 from rl_vla_bootstrapping.cli.run_cdpr_policy import (
     _FallbackGenerateConfig,
     _load_generate_config,
+    _motion_diagnostics_for_log,
     _predict_normalized_action_chunk,
     _resolve_llm_dim,
     _set_num_images_in_input,
@@ -123,6 +124,49 @@ class PolicyRunnerConfigTests(unittest.TestCase):
         self.assertEqual(action_head.last_shape, (1, 10, 3))
         self.assertEqual(chunk.shape, (2, 5))
         self.assertTrue(np.allclose(chunk, np.tanh(0.5)))
+
+    def test_motion_diagnostics_reports_commanded_and_realized_xyz(self):
+        from robots.cdpr.cdpr_mujoco.policy_control import CDPRPolicyControlSpec
+
+        spec = CDPRPolicyControlSpec(
+            xyz_limits=((-0.8, 0.8), (-0.8, 0.8), (0.08, 1.2)),
+            action_step_xyz=0.006,
+            action_step_yaw=0.08,
+            hold_steps=4,
+        )
+
+        diag = _motion_diagnostics_for_log(
+            action=np.array([1.0, -1.0, 0.5, 0.0, 0.0], dtype=np.float32),
+            control_spec=spec,
+            ee_before=np.array([0.0, 0.0, 0.30], dtype=np.float32),
+            result={
+                "target_xyz": np.array([0.006, -0.006, 0.303], dtype=np.float32),
+                "ee_position": np.array([0.003, -0.003, 0.3015], dtype=np.float32),
+            },
+        )
+
+        np.testing.assert_allclose(
+            diag["commanded_xyz_delta_raw"],
+            np.array([0.006, -0.006, 0.003], dtype=np.float32),
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(
+            diag["commanded_xyz_delta_effective"],
+            np.array([0.006, -0.006, 0.003], dtype=np.float32),
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(
+            diag["realized_xyz_delta"],
+            np.array([0.003, -0.003, 0.0015], dtype=np.float32),
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(
+            diag["target_xyz"],
+            np.array([0.006, -0.006, 0.303], dtype=np.float32),
+            atol=1e-7,
+        )
+        self.assertAlmostEqual(float(diag["realized_vs_command_gain"]), 0.5, delta=1e-6)
+        self.assertAlmostEqual(float(diag["realized_vs_command_cosine"]), 1.0, delta=1e-6)
 
 
 if __name__ == "__main__":
