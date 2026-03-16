@@ -128,6 +128,12 @@ def _build_stage_prefix(
     return [python_executable, str(script_path)]
 
 
+def _append_openvla_script_arg(argv: list[str], key: str, value: Any) -> None:
+    # OpenVLA/OFT training scripts expose literal underscore option names,
+    # e.g. `--desk_textures_dir` and `--no-wrapper_cleanup`.
+    append_cli_arg(argv, key, value, preserve_underscores=True)
+
+
 def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     script_path = config.resolve_path(config.training.rl.script_path or config.policy.rl_script)
     if script_path is None:
@@ -180,7 +186,7 @@ def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     injected.setdefault("run_id", "rl")
 
     for key, value in injected.items():
-        append_cli_arg(argv, key, value)
+        _append_openvla_script_arg(argv, key, value)
 
     stage_env = _shared_env(config)
     stage_env.update(_task_hook_env(config))
@@ -239,7 +245,7 @@ def build_openvla_sft_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     injected.setdefault("run_root_dir", str(run_dir / "sft"))
 
     for key, value in injected.items():
-        append_cli_arg(argv, key, value)
+        _append_openvla_script_arg(argv, key, value)
 
     notes = [
         "Optional SFT refinement stage. Uses RL artifacts if they are available in the current run.",

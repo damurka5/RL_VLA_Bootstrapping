@@ -112,7 +112,7 @@ class PipelineTests(unittest.TestCase):
                 },
                 "training": {
                     "preview_before_rl": True,
-                    "rl": {"enabled": True, "args": {"total_updates": 1}},
+                    "rl": {"enabled": True, "args": {"total_updates": 1, "wrapper_cleanup": False}},
                     "sft": {"enabled": True, "args": {"resume_from_rl": False}},
                 },
             }
@@ -134,14 +134,17 @@ class PipelineTests(unittest.TestCase):
 
             plans = pipeline.build_stage_plans(run_dir, ["all"])
             self.assertEqual([plan.name for plan in plans], ["preview", "rl", "sft"])
-            self.assertIn("--total-updates", plans[1].command)
-            desk_textures_idx = plans[1].command.index("--desk-textures-dir") + 1
+            self.assertIn("--total_updates", plans[1].command)
+            self.assertIn("--no-wrapper_cleanup", plans[1].command)
+            desk_textures_idx = plans[1].command.index("--desk_textures_dir") + 1
             self.assertTrue(Path(plans[1].command[desk_textures_idx]).samefile(dataset_root / "textures"))
+            self.assertIn("--run_root_dir", plans[1].command)
             self.assertTrue(Path(plans[1].env["RLVLA_TASK_REWARD_FILE"]).samefile(dataset_root / "reward_hook.py"))
             self.assertEqual(plans[1].env["RLVLA_TASK_REWARD_ATTRIBUTE"], "reward_fn")
             self.assertTrue(Path(plans[1].env["RLVLA_TASK_SUCCESS_FILE"]).samefile(dataset_root / "success_hook.py"))
             self.assertEqual(plans[1].env["RLVLA_TASK_SUCCESS_ATTRIBUTE"], "success_fn")
             self.assertEqual(plans[1].env["RLVLA_TASK_GOAL_RELATION"], "inside_region")
+            self.assertIn("--run_root_dir", plans[2].command)
 
             preview_only = pipeline.build_stage_plans(run_dir, ["preview"])
             self.assertEqual([plan.name for plan in preview_only], ["preview"])

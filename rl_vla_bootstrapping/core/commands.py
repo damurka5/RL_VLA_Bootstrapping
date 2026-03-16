@@ -8,17 +8,26 @@ from pathlib import Path
 from typing import Any
 
 
-def option_name(key: str) -> str:
+def option_name(key: str, *, preserve_underscores: bool = False) -> str:
+    if preserve_underscores:
+        return "--" + key
     return "--" + key.replace("_", "-")
 
 
-def append_cli_arg(argv: list[str], key: str, value: Any) -> None:
+def append_cli_arg(
+    argv: list[str],
+    key: str,
+    value: Any,
+    *,
+    preserve_underscores: bool = False,
+) -> None:
     if value is None:
         return
 
-    flag = option_name(key)
+    flag = option_name(key, preserve_underscores=preserve_underscores)
     if isinstance(value, bool):
-        argv.append(flag if value else f"--no-{key.replace('_', '-')}")
+        negative_suffix = key if preserve_underscores else key.replace("_", "-")
+        argv.append(flag if value else f"--no-{negative_suffix}")
         return
 
     if isinstance(value, (list, tuple)):
