@@ -25,13 +25,13 @@ assets:
   bundles:
     - name: ycb
       kind: asset
-      source_path: ../../../../CDPR-Dataset/external_assets/ycb_dataset/ycb
+      source_path: ../../../../repo/CDPR-Dataset/cdpr_dataset/external_assets/ycb_dataset/ycb
       target_path: ../../assets/externals/ycb
       required: true
       description: YCB object meshes and MJCFs used by CDPR randomized scenes.
     - name: libero
       kind: asset
-      source_path: ../../../../LIBERO/libero/libero/assets
+      source_path: ../../../../repo/LIBERO/libero/libero/assets
       target_path: ../../assets/externals/libero
       required: true
       description: LIBERO scene XMLs, textures, and scanned/stable object assets.
@@ -49,7 +49,7 @@ assets:
       description: Optional RoboTwin 2.0 scene/object assets for additional object pools.
     - name: desk_textures_cache
       kind: asset
-      source_path: ../../../../CDPR-Dataset/cdpr_dataset/wrappers/_desk_textures
+      source_path: ../../../../repo/CDPR-Dataset/cdpr_dataset/wrappers/_desk_textures
       target_path: ../../assets/externals/desk_textures_cache
       required: false
       description: Optional CDPR desk texture cache matching the original PPO remote launcher.
