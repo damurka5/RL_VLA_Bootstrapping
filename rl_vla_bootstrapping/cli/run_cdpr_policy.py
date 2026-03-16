@@ -274,6 +274,94 @@ def _core_model(vla: Any) -> Any:
     return vla
 
 
+def _prepare_input_for_action_prediction_compat(
+    model: Any,
+    input_ids: Any,
+    attention_mask: Any,
+    *,
+    action_dim: int,
+    chunk_length: int,
+) -> tuple[Any, Any]:
+    if hasattr(model, "_prepare_input_for_action_prediction"):
+        return model._prepare_input_for_action_prediction(input_ids, attention_mask)
+
+    import torch
+    from prismatic.vla.constants import ACTION_TOKEN_BEGIN_IDX, STOP_INDEX
+
+    placeholder_count = int(action_dim) * int(chunk_length)
+    arbitrary_action_token_idx = int(ACTION_TOKEN_BEGIN_IDX) + 1
+    placeholder_action_token_ids = torch.full(
+        (input_ids.shape[0], placeholder_count),
+        fill_value=arbitrary_action_token_idx,
+        device=input_ids.device,
+        dtype=input_ids.dtype,
+    )
+    input_ids = torch.cat([input_ids, placeholder_action_token_ids], dim=-1)
+
+    stop_token_id = torch.full(
+        (input_ids.shape[0], 1),
+        fill_value=int(STOP_INDEX),
+        device=input_ids.device,
+        dtype=input_ids.dtype,
+    )
+    input_ids = torch.cat([input_ids, stop_token_id], dim=-1)
+
+    mask_extension = torch.ones(
+        (attention_mask.shape[0], input_ids.shape[-1] - attention_mask.shape[-1]),
+        device=attention_mask.device,
+        dtype=attention_mask.dtype,
+    )
+    attention_mask = torch.cat([attention_mask, mask_extension], dim=-1)
+    return input_ids, attention_mask
+
+
+def _prepare_labels_for_action_prediction_compat(
+    model: Any,
+    labels: Any,
+    input_ids: Any,
+    *,
+    action_dim: int,
+    chunk_length: int,
+) -> Any:
+    if hasattr(model, "_prepare_labels_for_action_prediction"):
+        return model._prepare_labels_for_action_prediction(labels, input_ids)
+
+    import torch
+    from prismatic.vla.constants import ACTION_TOKEN_BEGIN_IDX, STOP_INDEX
+
+    arbitrary_action_token_idx = int(ACTION_TOKEN_BEGIN_IDX) + 1
+    labels_extension = torch.full(
+        (labels.shape[0], input_ids.shape[-1] - labels.shape[-1]),
+        fill_value=arbitrary_action_token_idx,
+        device=labels.device,
+        dtype=labels.dtype,
+    )
+    labels = torch.cat([labels, labels_extension], dim=-1)
+    labels[:, -1] = int(STOP_INDEX)
+    return labels
+
+
+def _process_action_masks_compat(model: Any, labels: Any, *, action_dim: int, chunk_length: int) -> Any:
+    if hasattr(model, "_process_action_masks"):
+        return model._process_action_masks(labels)
+
+    import torch
+    from prismatic.vla.constants import IGNORE_INDEX
+
+    batch_size, seq_len = labels.shape
+    mask = torch.zeros((batch_size, seq_len), dtype=torch.bool, device=labels.device)
+    expected_total = int(action_dim) * int(chunk_length)
+
+    for batch_idx in range(batch_size):
+        positions = torch.nonzero(labels[batch_idx] != int(IGNORE_INDEX), as_tuple=False).squeeze(1)
+        if positions.numel() > expected_total:
+            positions = positions[:expected_total]
+        if positions.numel() > 0:
+            mask[batch_idx, positions] = True
+
+    return mask
+
+
 def _predict_normalized_action_chunk(
     *,
     vla: Any,
@@ -281,6 +369,7 @@ def _predict_normalized_action_chunk(
     action_head: Any,
     obs: dict[str, np.ndarray],
     instruction: str,
+    chunk_length: int,
     num_images_in_input: int,
     device: Any,
     pixel_dtype: Any,
@@ -306,12 +395,30 @@ def _predict_normalized_action_chunk(
     model = _core_model(vla)
     labels = torch.full_like(input_ids, fill_value=-100)
     prompt_len = input_ids.shape[1]
+    action_dim = int(getattr(action_head, "action_dim", 5))
 
-    input_ids_prep, attn_prep = model._prepare_input_for_action_prediction(input_ids, attention_mask)
-    labels = model._prepare_labels_for_action_prediction(labels, input_ids_prep)
+    input_ids_prep, attn_prep = _prepare_input_for_action_prediction_compat(
+        model,
+        input_ids,
+        attention_mask,
+        action_dim=action_dim,
+        chunk_length=chunk_length,
+    )
+    labels = _prepare_labels_for_action_prediction_compat(
+        model,
+        labels,
+        input_ids_prep,
+        action_dim=action_dim,
+        chunk_length=chunk_length,
+    )
 
     input_embeddings = model.get_input_embeddings()(input_ids_prep)
-    all_actions_mask = model._process_action_masks(labels)
+    all_actions_mask = _process_action_masks_compat(
+        model,
+        labels,
+        action_dim=action_dim,
+        chunk_length=chunk_length,
+    )
 
     language_embeddings = input_embeddings[~all_actions_mask].reshape(
         input_embeddings.shape[0], -1, input_embeddings.shape[2]
@@ -344,7 +451,8 @@ def _predict_normalized_action_chunk(
         [last_hidden_states[:, :1, :], last_hidden_states[:, 1 + patch_token_count :, :]],
         dim=1,
     )
-    action_hidden_states = text_hidden_states[:, prompt_len:, :]
+    total_action_tokens = int(action_dim) * int(chunk_length)
+    action_hidden_states = text_hidden_states[:, prompt_len : prompt_len + total_action_tokens, :]
 
     pred_pre = action_head.predict_action(action_hidden_states)
     predicted_actions = torch.tanh(pred_pre)
@@ -468,6 +576,7 @@ def main() -> int:
             action_head=action_head,
             obs=initial_obs,
             instruction=instruction,
+            chunk_length=int(cfg.num_open_loop_steps),
             num_images_in_input=int(cfg.num_images_in_input),
             device=param.device,
             pixel_dtype=param.dtype,
@@ -491,6 +600,7 @@ def main() -> int:
                     action_head=action_head,
                     obs=obs,
                     instruction=instruction,
+                    chunk_length=int(cfg.num_open_loop_steps),
                     num_images_in_input=int(cfg.num_images_in_input),
                     device=param.device,
                     pixel_dtype=param.dtype,

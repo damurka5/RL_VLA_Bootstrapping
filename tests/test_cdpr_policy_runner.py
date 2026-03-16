@@ -78,24 +78,15 @@ class PolicyRunnerConfigTests(unittest.TestCase):
 
         class _FakeLanguageModel:
             def __call__(self, **kwargs):
-                del kwargs
-                hidden = torch.arange(30, dtype=torch.float32).reshape(1, 10, 3)
+                inputs_embeds = kwargs["inputs_embeds"]
+                hidden = torch.arange(
+                    inputs_embeds.numel(), dtype=torch.float32
+                ).reshape(inputs_embeds.shape)
                 return types.SimpleNamespace(hidden_states=[hidden])
 
         class _FakeCoreModel:
             def __init__(self):
                 self.language_model = _FakeLanguageModel()
-
-            def _prepare_input_for_action_prediction(self, input_ids, attention_mask):
-                extra = torch.tensor([[20, 21, 22, 23, 2]], dtype=input_ids.dtype)
-                extra_attn = torch.ones_like(extra)
-                return torch.cat([input_ids, extra], dim=1), torch.cat([attention_mask, extra_attn], dim=1)
-
-            def _prepare_labels_for_action_prediction(self, labels, input_ids_prep):
-                del labels
-                out = torch.full_like(input_ids_prep, fill_value=-100)
-                out[:, 3:7] = 0
-                return out
 
             def get_input_embeddings(self):
                 def _embed(input_ids):
@@ -104,16 +95,21 @@ class PolicyRunnerConfigTests(unittest.TestCase):
 
                 return _embed
 
-            def _process_action_masks(self, labels):
-                return labels != -100
-
             def _process_vision_features(self, pixel_values, language_embeddings, use_film=False):
                 del pixel_values, language_embeddings, use_film
                 return torch.zeros((1, 2, 3), dtype=torch.float32)
 
             def _build_multimodal_attention(self, input_embeddings, projected_patch_embeddings, attn_prep):
-                del input_embeddings, attn_prep
-                return torch.zeros((1, 10, 3), dtype=torch.float32), torch.ones((1, 10), dtype=torch.long)
+                del attn_prep
+                multimodal_embeddings = torch.cat(
+                    [input_embeddings[:, :1, :], projected_patch_embeddings, input_embeddings[:, 1:, :]],
+                    dim=1,
+                )
+                multimodal_attention = torch.ones(
+                    (multimodal_embeddings.shape[0], multimodal_embeddings.shape[1]),
+                    dtype=torch.long,
+                )
+                return multimodal_embeddings, multimodal_attention
 
         class _FakeActionHead:
             def predict_action(self, action_hidden_states):
@@ -132,12 +128,13 @@ class PolicyRunnerConfigTests(unittest.TestCase):
             action_head=action_head,
             obs=obs,
             instruction="pick up apple",
+            chunk_length=2,
             num_images_in_input=1,
             device=torch.device("cpu"),
             pixel_dtype=torch.float32,
         )
 
-        self.assertEqual(action_head.last_shape, (1, 4, 3))
+        self.assertEqual(action_head.last_shape, (1, 10, 3))
         self.assertEqual(chunk.shape, (2, 5))
         self.assertTrue(np.allclose(chunk, np.tanh(0.5)))
 
