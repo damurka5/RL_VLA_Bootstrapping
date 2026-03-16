@@ -181,6 +181,91 @@ def _make_observation(sim, instruction: str, gripper_range: tuple[float, float])
     return obs, state.size
 
 
+def _iter_model_candidates(model: Any) -> list[Any]:
+    out: list[Any] = []
+    queue: list[Any] = [model]
+    seen: set[int] = set()
+
+    while queue:
+        cur = queue.pop(0)
+        if cur is None:
+            continue
+        oid = id(cur)
+        if oid in seen:
+            continue
+        seen.add(oid)
+        out.append(cur)
+
+        for attr in ("module", "model", "base_model"):
+            child = getattr(cur, attr, None)
+            if child is not None and id(child) not in seen:
+                queue.append(child)
+
+    return out
+
+
+def _resolve_vision_backbone(vla: Any) -> Any:
+    for obj in _iter_model_candidates(vla):
+        backbone = getattr(obj, "vision_backbone", None)
+        if backbone is not None:
+            return backbone
+    return None
+
+
+def _set_num_images_in_input(vla: Any, num_images: int) -> int:
+    requested = int(num_images)
+
+    for obj in _iter_model_candidates(vla):
+        if hasattr(obj, "set_num_images_in_input"):
+            obj.set_num_images_in_input(requested)
+            return requested
+        if hasattr(obj, "num_images_in_input"):
+            setattr(obj, "num_images_in_input", requested)
+            return requested
+
+    backbone = _resolve_vision_backbone(vla)
+    if backbone is not None:
+        if hasattr(backbone, "set_num_images_in_input"):
+            backbone.set_num_images_in_input(requested)
+            return requested
+        if hasattr(backbone, "num_images_in_input"):
+            setattr(backbone, "num_images_in_input", requested)
+            return requested
+        backbone_cfg = getattr(backbone, "config", None)
+        if backbone_cfg is not None and hasattr(backbone_cfg, "num_images_in_input"):
+            setattr(backbone_cfg, "num_images_in_input", requested)
+            return requested
+
+    if requested != 1:
+        print("[warn] OpenVLA image-count control API not found; falling back to single-image mode.")
+    return 1
+
+
+def _resolve_llm_dim(vla: Any) -> int | None:
+    for obj in _iter_model_candidates(vla):
+        llm_dim = getattr(obj, "llm_dim", None)
+        if llm_dim is not None:
+            return int(llm_dim)
+
+        cfg = getattr(obj, "config", None)
+        if cfg is not None:
+            text_cfg = getattr(cfg, "text_config", None)
+            hidden = getattr(text_cfg, "hidden_size", None) if text_cfg is not None else None
+            if hidden is not None:
+                return int(hidden)
+            hidden = getattr(cfg, "hidden_size", None)
+            if hidden is not None:
+                return int(hidden)
+
+        language_model = getattr(obj, "language_model", None)
+        language_cfg = getattr(language_model, "config", None) if language_model is not None else None
+        hidden = getattr(language_cfg, "hidden_size", None) if language_cfg is not None else None
+        if hidden is not None:
+            return int(hidden)
+
+    return None
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
@@ -275,15 +360,22 @@ def main() -> int:
     else:
         raise RuntimeError(f"Adapter path is not a directory: {args.adapter_path}")
 
+    cfg.num_images_in_input = _set_num_images_in_input(vla, int(cfg.num_images_in_input))
+    llm_dim = _resolve_llm_dim(vla)
+    if llm_dim is None:
+        raise RuntimeError("Could not resolve llm_dim from the wrapped OpenVLA model.")
+
     processor = get_processor(cfg)
     param = next(vla.parameters())
-    action_head = get_action_head(cfg, llm_dim=vla.llm_dim).to(device=param.device, dtype=param.dtype)
+    action_head = get_action_head(cfg, llm_dim=llm_dim).to(device=param.device, dtype=param.dtype)
     action_head.eval()
 
     initial_obs, proprio_dim = _make_observation(sim, instruction, gripper_range)
-    proprio_projector = get_proprio_projector(cfg, llm_dim=vla.llm_dim, proprio_dim=proprio_dim)
-    proprio_projector = proprio_projector.to(device=param.device, dtype=param.dtype)
-    proprio_projector.eval()
+    proprio_projector = None
+    if bool(getattr(cfg, "use_proprio", False)):
+        proprio_projector = get_proprio_projector(cfg, llm_dim=llm_dim, proprio_dim=proprio_dim)
+        proprio_projector = proprio_projector.to(device=param.device, dtype=param.dtype)
+        proprio_projector.eval()
 
     current_chunk = np.asarray(
         get_vla_action(cfg, vla, processor, initial_obs, instruction, action_head, proprio_projector),
