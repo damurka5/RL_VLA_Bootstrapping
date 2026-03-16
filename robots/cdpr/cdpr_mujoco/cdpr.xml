@@ -1,6 +1,5 @@
 <mujoco>
   <compiler autolimits="true"/>
-  <option impratio="20" noslip_iterations="8"/>
   <default>
     <site type="sphere" rgba="1 0 0 1" size="0.005"/>
     <tendon rgba="0.4 0.4 0.4 0.35" width="0.001"/>
@@ -136,24 +135,20 @@
 
           <body name="finger_left_car" pos="0.025 0 0">
             <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.00015"/>
-            <joint name="finger_l" type="slide" axis="1 0 0" limited="true" range="0 0.06" damping="6.0"/>
+            <joint name="finger_l" type="slide" axis="1 0 0" limited="true" range="0 0.05" damping="3.0"/>
             <geom name="finger_l_link" type="box" size="0.012 0.01 0.055" pos="0 0 -0.055"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" condim="6"
-                  friction="2.8 0.08 0.02" solref="0.003 1" solimp="0.95 0.995 0.001"/>
+                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
             <geom name="finger_l_tip" type="capsule" fromto="0 0 -0.11  0 0 -0.135" size="0.008"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" condim="6"
-                  friction="2.8 0.08 0.02" solref="0.003 1" solimp="0.95 0.995 0.001"/>
+                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
           </body>
 
           <body name="finger_right_car" pos="-0.025 0 0">
             <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.00015"/>
-            <joint name="finger_r" type="slide" axis="-1 0 0" limited="true" range="0 0.06" damping="6.0"/>
+            <joint name="finger_r" type="slide" axis="-1 0 0" limited="true" range="0 0.05" damping="3.0"/>
             <geom name="finger_r_link" type="box" size="0.012 0.01 0.055" pos="0 0 -0.055"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" condim="6"
-                  friction="2.8 0.08 0.02" solref="0.003 1" solimp="0.95 0.995 0.001"/>
+                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
             <geom name="finger_r_tip" type="capsule" fromto="0 0 -0.11  0 0 -0.135" size="0.008"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" condim="6"
-                  friction="2.8 0.08 0.02" solref="0.003 1" solimp="0.95 0.995 0.001"/>
+                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
           </body>
       </body>
         </body>
@@ -213,7 +208,7 @@
     <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="200" kv="80"/>
     <!-- Tool yaw and gripper -->
     <position name="act_ee_yaw" joint="ee_yaw" kp="30" ctrlrange="-180 180"/>
-    <position name="act_gripper" joint="finger_l" kp="550" kv="35" ctrlrange="0 0.06"/>
+    <position name="act_gripper" joint="finger_l" kp="300" ctrlrange="0 0.06"/>
   </actuator>
 
 

@@ -42,7 +42,7 @@ Or do the full remote bootstrap in one step:
 2. Stage assets into repo-local paths:
 
 ```bash
-python3 -m rl_vla_bootstrapping.cli.assets \
+python -m rl_vla_bootstrapping.cli.assets \
   --config configs/examples/cdpr_openvla_bootstrap.yaml \
   --stage
 ```
@@ -62,7 +62,7 @@ python3 -m rl_vla_bootstrapping.cli.assets \
 5. Plan the full pipeline:
 
 ```bash
-python3 -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla_bootstrap.yaml
+python -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla_bootstrap.yaml
 ```
 
 6. Execute the selected stages:

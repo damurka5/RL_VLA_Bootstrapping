@@ -296,9 +296,9 @@ def _build_textured_wrapper_variant(
 
 def _import_wrapper_builder():
     # Lazy import to avoid importing cdpr_mujoco at module import time.
-    from .generate_cdpr_dataset import build_wrapper_if_needed
+    from .generate_cdpr_dataset import build_wrapper_if_needed, list_wrapper_bundle_paths
 
-    return build_wrapper_if_needed
+    return build_wrapper_if_needed, list_wrapper_bundle_paths
 
 
 def _load_json_env(name: str) -> dict[str, Any]:
@@ -760,7 +760,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         return self.scenes[idx]
 
     def _build_wrapper(self, scene: SceneSpec) -> Path:
-        build_wrapper_if_needed = _import_wrapper_builder()
+        build_wrapper_if_needed, list_wrapper_bundle_paths = _import_wrapper_builder()
         wrapper_out = None
         use_cache = bool(self.use_wrapper_cache)
         if (not use_cache) or self.wrapper_cleanup:
@@ -780,7 +780,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             use_cache=use_cache,
         )
         if self.wrapper_cleanup:
-            self._register_cleanup_path(wrapper_xml)
+            for path in list_wrapper_bundle_paths(wrapper_xml):
+                self._register_cleanup_path(path)
 
         self._desk_texture_name = ""
         if self.desk_texture_files:

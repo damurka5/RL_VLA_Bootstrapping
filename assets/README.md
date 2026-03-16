@@ -6,7 +6,7 @@ GitHub will contain this README, the bundle configuration, and placeholder direc
 Use the configured asset bundles to stage them into stable repo-local paths:
 
 ```bash
-python3 -m rl_vla_bootstrapping.cli.assets \
+python -m rl_vla_bootstrapping.cli.assets \
   --config configs/examples/cdpr_openvla_bootstrap.yaml \
   --stage
 ```
