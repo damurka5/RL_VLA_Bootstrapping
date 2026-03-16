@@ -4,7 +4,7 @@ project:
   python_executable: python3
 
 repos:
-  openvla_oft: ../../../../openvla-oft
+  openvla_oft: ../../../../repo/openvla-oft
   dataset_repo: ../../robots/cdpr
   embodiment_repo: ../../robots/cdpr
 
@@ -68,7 +68,7 @@ embodiment:
   dof: 5
   extra_python_paths:
     - ../../robots/cdpr
-    - ../../../../openvla-oft
+    - ../../../../repo/openvla-oft
   cameras:
     overview: overview
     wrist: ee_camera
@@ -142,10 +142,10 @@ simulation:
 
 policy:
   type: openvla_oft
-  repo_path: ../../../../openvla-oft
+  repo_path: ../../../../repo/openvla-oft
   base_checkpoint: openvla/openvla-7b
-  rl_script: ../../../../openvla-oft/vla-scripts/ppo_finetune_cdpr.py
-  sft_script: ../../../../openvla-oft/vla-scripts/finetune.py
+  rl_script: ../../../../repo/openvla-oft/vla-scripts/ppo_finetune_cdpr.py
+  sft_script: ../../../../repo/openvla-oft/vla-scripts/finetune.py
   action_head: L1RegressionActionHead
   num_images_in_input: 2
   action_codec:
