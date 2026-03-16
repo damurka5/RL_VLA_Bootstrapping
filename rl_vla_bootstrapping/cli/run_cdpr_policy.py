@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 from rl_vla_bootstrapping.core.commands import ensure_directory
@@ -17,6 +20,26 @@ from robots.cdpr.cdpr_mujoco.policy_control import (
     policy_action_frequency_hz,
     policy_action_period_s,
 )
+
+
+@dataclass
+class _FallbackGenerateConfig:
+    # Minimal OpenVLA config surface needed by `experiments.robot.openvla_utils`.
+    model_family: str = "openvla"
+    pretrained_checkpoint: str | Path = ""
+    use_l1_regression: bool = True
+    use_diffusion: bool = False
+    num_diffusion_steps_train: int = 50
+    num_diffusion_steps_inference: int = 50
+    use_film: bool = False
+    num_images_in_input: int = 2
+    use_proprio: bool = False
+    center_crop: bool = True
+    num_open_loop_steps: int = 8
+    lora_rank: int = 32
+    unnorm_key: str | Path | None = ""
+    load_in_8bit: bool = False
+    load_in_4bit: bool = False
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -61,11 +84,26 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _load_generate_config() -> tuple[type[Any], str | None]:
+    try:
+        module = importlib.import_module("experiments.robot.libero.run_libero_eval")
+        GenerateConfig = module.GenerateConfig
+    except ModuleNotFoundError as exc:
+        missing = getattr(exc, "name", None)
+        if not missing:
+            missing = str(exc).replace("No module named", "").strip().strip("'\"") or "unknown"
+        note = (
+            "LIBERO eval dependencies were not importable "
+            f"(`{missing}`); using the runner-local GenerateConfig fallback."
+        )
+        return _FallbackGenerateConfig, note
+    return GenerateConfig, None
+
+
 def _load_openvla_modules(policy_repo: Path):
     if str(policy_repo) not in sys.path:
         sys.path.insert(0, str(policy_repo))
     try:
-        from experiments.robot.libero.run_libero_eval import GenerateConfig
         from experiments.robot.openvla_utils import (
             get_action_head,
             get_processor,
@@ -79,7 +117,8 @@ def _load_openvla_modules(policy_repo: Path):
             "Could not import OpenVLA/OFT runtime dependencies. "
             f"Ensure the policy repo exists and the active environment has its requirements installed: {exc}"
         ) from exc
-    return GenerateConfig, get_action_head, get_processor, get_proprio_projector, get_vla, get_vla_action, PeftModel
+    generate_config, note = _load_generate_config()
+    return generate_config, get_action_head, get_processor, get_proprio_projector, get_vla, get_vla_action, PeftModel, note
 
 
 def _default_objects(config, target_object: str | None, distractors: list[str]) -> list[str]:
@@ -208,7 +247,10 @@ def main() -> int:
         get_vla,
         get_vla_action,
         PeftModel,
+        generate_config_note,
     ) = _load_openvla_modules(policy_repo)
+    if generate_config_note:
+        print(f"[info] {generate_config_note}")
 
     cfg = GenerateConfig(
         pretrained_checkpoint=args.base_ckpt or config.policy.base_checkpoint,
