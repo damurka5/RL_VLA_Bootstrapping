@@ -4,9 +4,12 @@ import types
 import unittest
 from unittest import mock
 
+import numpy as np
+
 from rl_vla_bootstrapping.cli.run_cdpr_policy import (
     _FallbackGenerateConfig,
     _load_generate_config,
+    _predict_normalized_action_chunk,
     _resolve_llm_dim,
     _set_num_images_in_input,
 )
@@ -57,6 +60,86 @@ class PolicyRunnerConfigTests(unittest.TestCase):
     def test_set_num_images_in_input_falls_back_to_one_without_api(self):
         updated = _set_num_images_in_input(types.SimpleNamespace(), 2)
         self.assertEqual(updated, 1)
+
+    def test_predict_normalized_action_chunk_uses_action_head_path(self):
+        try:
+            import torch
+        except ImportError:
+            self.skipTest("torch is not installed in this environment")
+
+        class _FakeProcessor:
+            def __call__(self, prompt, image, return_tensors="pt"):
+                del prompt, image, return_tensors
+                return {
+                    "input_ids": torch.tensor([[11, 12, 13]], dtype=torch.long),
+                    "attention_mask": torch.tensor([[1, 1, 1]], dtype=torch.long),
+                    "pixel_values": torch.zeros((1, 1, 2, 2), dtype=torch.float32),
+                }
+
+        class _FakeLanguageModel:
+            def __call__(self, **kwargs):
+                del kwargs
+                hidden = torch.arange(30, dtype=torch.float32).reshape(1, 10, 3)
+                return types.SimpleNamespace(hidden_states=[hidden])
+
+        class _FakeCoreModel:
+            def __init__(self):
+                self.language_model = _FakeLanguageModel()
+
+            def _prepare_input_for_action_prediction(self, input_ids, attention_mask):
+                extra = torch.tensor([[20, 21, 22, 23, 2]], dtype=input_ids.dtype)
+                extra_attn = torch.ones_like(extra)
+                return torch.cat([input_ids, extra], dim=1), torch.cat([attention_mask, extra_attn], dim=1)
+
+            def _prepare_labels_for_action_prediction(self, labels, input_ids_prep):
+                del labels
+                out = torch.full_like(input_ids_prep, fill_value=-100)
+                out[:, 3:7] = 0
+                return out
+
+            def get_input_embeddings(self):
+                def _embed(input_ids):
+                    bsz, seq_len = input_ids.shape
+                    return torch.zeros((bsz, seq_len, 3), dtype=torch.float32)
+
+                return _embed
+
+            def _process_action_masks(self, labels):
+                return labels != -100
+
+            def _process_vision_features(self, pixel_values, language_embeddings, use_film=False):
+                del pixel_values, language_embeddings, use_film
+                return torch.zeros((1, 2, 3), dtype=torch.float32)
+
+            def _build_multimodal_attention(self, input_embeddings, projected_patch_embeddings, attn_prep):
+                del input_embeddings, attn_prep
+                return torch.zeros((1, 10, 3), dtype=torch.float32), torch.ones((1, 10), dtype=torch.long)
+
+        class _FakeActionHead:
+            def predict_action(self, action_hidden_states):
+                self.last_shape = tuple(action_hidden_states.shape)
+                return torch.full((1, 2, 5), 0.5, dtype=torch.float32)
+
+        action_head = _FakeActionHead()
+        obs = {
+            "full_image": np.zeros((4, 4, 3), dtype=np.uint8),
+            "wrist_image": np.zeros((4, 4, 3), dtype=np.uint8),
+        }
+
+        chunk = _predict_normalized_action_chunk(
+            vla=_FakeCoreModel(),
+            processor=_FakeProcessor(),
+            action_head=action_head,
+            obs=obs,
+            instruction="pick up apple",
+            num_images_in_input=1,
+            device=torch.device("cpu"),
+            pixel_dtype=torch.float32,
+        )
+
+        self.assertEqual(action_head.last_shape, (1, 4, 3))
+        self.assertEqual(chunk.shape, (2, 5))
+        self.assertTrue(np.allclose(chunk, np.tanh(0.5)))
 
 
 if __name__ == "__main__":

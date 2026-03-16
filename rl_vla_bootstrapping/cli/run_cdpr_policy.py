@@ -109,7 +109,6 @@ def _load_openvla_modules(policy_repo: Path):
             get_processor,
             get_proprio_projector,
             get_vla,
-            get_vla_action,
         )
         from peft import PeftModel
     except ImportError as exc:
@@ -118,7 +117,7 @@ def _load_openvla_modules(policy_repo: Path):
             f"Ensure the policy repo exists and the active environment has its requirements installed: {exc}"
         ) from exc
     generate_config, note = _load_generate_config()
-    return generate_config, get_action_head, get_processor, get_proprio_projector, get_vla, get_vla_action, PeftModel, note
+    return generate_config, get_action_head, get_processor, get_proprio_projector, get_vla, PeftModel, note
 
 
 def _default_objects(config, target_object: str | None, distractors: list[str]) -> list[str]:
@@ -266,6 +265,92 @@ def _resolve_llm_dim(vla: Any) -> int | None:
     return None
 
 
+def _core_model(vla: Any) -> Any:
+    if hasattr(vla, "_prepare_input_for_action_prediction"):
+        return vla
+    base = getattr(vla, "base_model", None)
+    if base is not None and hasattr(base, "model"):
+        return base.model
+    return vla
+
+
+def _predict_normalized_action_chunk(
+    *,
+    vla: Any,
+    processor: Any,
+    action_head: Any,
+    obs: dict[str, np.ndarray],
+    instruction: str,
+    num_images_in_input: int,
+    device: Any,
+    pixel_dtype: Any,
+) -> np.ndarray:
+    import torch
+    from PIL import Image
+
+    prompt = f"In: What action should the robot take to {instruction.lower()}?\nOut:"
+
+    primary_image = Image.fromarray(obs["full_image"].astype(np.uint8)).convert("RGB")
+    inputs = processor(prompt, primary_image, return_tensors="pt")
+    pixel_values = inputs["pixel_values"]
+
+    if int(num_images_in_input) > 1 and "wrist_image" in obs:
+        wrist_image = Image.fromarray(obs["wrist_image"].astype(np.uint8)).convert("RGB")
+        wrist_inputs = processor(prompt, wrist_image, return_tensors="pt")
+        pixel_values = torch.cat([pixel_values, wrist_inputs["pixel_values"]], dim=1)
+
+    input_ids = inputs["input_ids"].to(device)
+    attention_mask = inputs["attention_mask"].to(device)
+    pixel_values = pixel_values.to(device=device, dtype=pixel_dtype)
+
+    model = _core_model(vla)
+    labels = torch.full_like(input_ids, fill_value=-100)
+    prompt_len = input_ids.shape[1]
+
+    input_ids_prep, attn_prep = model._prepare_input_for_action_prediction(input_ids, attention_mask)
+    labels = model._prepare_labels_for_action_prediction(labels, input_ids_prep)
+
+    input_embeddings = model.get_input_embeddings()(input_ids_prep)
+    all_actions_mask = model._process_action_masks(labels)
+
+    language_embeddings = input_embeddings[~all_actions_mask].reshape(
+        input_embeddings.shape[0], -1, input_embeddings.shape[2]
+    )
+    projected_patch_embeddings = model._process_vision_features(pixel_values, language_embeddings, use_film=False)
+
+    all_actions_mask_expanded = all_actions_mask.unsqueeze(-1)
+    input_embeddings = input_embeddings * ~all_actions_mask_expanded
+
+    multimodal_embeddings, multimodal_attention_mask = model._build_multimodal_attention(
+        input_embeddings, projected_patch_embeddings, attn_prep
+    )
+
+    language_model_output = model.language_model(
+        input_ids=None,
+        attention_mask=multimodal_attention_mask,
+        position_ids=None,
+        past_key_values=None,
+        inputs_embeds=multimodal_embeddings,
+        labels=None,
+        use_cache=False,
+        output_attentions=False,
+        output_hidden_states=True,
+        return_dict=True,
+    )
+
+    last_hidden_states = language_model_output.hidden_states[-1]
+    patch_token_count = projected_patch_embeddings.shape[1]
+    text_hidden_states = torch.cat(
+        [last_hidden_states[:, :1, :], last_hidden_states[:, 1 + patch_token_count :, :]],
+        dim=1,
+    )
+    action_hidden_states = text_hidden_states[:, prompt_len:, :]
+
+    pred_pre = action_head.predict_action(action_hidden_states)
+    predicted_actions = torch.tanh(pred_pre)
+    return predicted_actions[0].to(dtype=torch.float32).cpu().numpy()
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
@@ -330,7 +415,6 @@ def main() -> int:
         get_processor,
         get_proprio_projector,
         get_vla,
-        get_vla_action,
         PeftModel,
         generate_config_note,
     ) = _load_openvla_modules(policy_repo)
@@ -378,7 +462,16 @@ def main() -> int:
         proprio_projector.eval()
 
     current_chunk = np.asarray(
-        get_vla_action(cfg, vla, processor, initial_obs, instruction, action_head, proprio_projector),
+        _predict_normalized_action_chunk(
+            vla=vla,
+            processor=processor,
+            action_head=action_head,
+            obs=initial_obs,
+            instruction=instruction,
+            num_images_in_input=int(cfg.num_images_in_input),
+            device=param.device,
+            pixel_dtype=param.dtype,
+        ),
         dtype=np.float32,
     )
     if current_chunk.ndim == 1:
@@ -392,7 +485,16 @@ def main() -> int:
         if chunk_idx >= len(current_chunk):
             obs, _ = _make_observation(sim, instruction, gripper_range)
             current_chunk = np.asarray(
-                get_vla_action(cfg, vla, processor, obs, instruction, action_head, proprio_projector),
+                _predict_normalized_action_chunk(
+                    vla=vla,
+                    processor=processor,
+                    action_head=action_head,
+                    obs=obs,
+                    instruction=instruction,
+                    num_images_in_input=int(cfg.num_images_in_input),
+                    device=param.device,
+                    pixel_dtype=param.dtype,
+                ),
                 dtype=np.float32,
             )
             if current_chunk.ndim == 1:
