@@ -614,6 +614,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         max_objects: int = 8,
         action_step_xyz: float = 0.02,
         action_step_yaw: float = 0.25,
+        hold_steps: int = 0,
         move_distance: float = 0.20,
         lift_distance: float = 0.10,
         capture_frames: bool = False,
@@ -655,6 +656,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.max_objects = int(max_objects)
         self.action_step_xyz = float(action_step_xyz)
         self.action_step_yaw = float(action_step_yaw)
+        self.hold_steps = max(0, int(hold_steps))
         self.move_distance = float(move_distance)
         self.lift_distance = float(lift_distance)
         self.capture_frames = bool(capture_frames)
@@ -1250,7 +1252,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         elif self._last_gripper_cmd <= -0.2 and hasattr(self.sim, "open_gripper"):
             self.sim.open_gripper()
 
-        self.sim.run_simulation_step(capture_frame=self.capture_frames)
+        total_sim_steps = 1 + int(self.hold_steps)
+        for sub_idx in range(total_sim_steps):
+            capture = bool(self.capture_frames and sub_idx == (total_sim_steps - 1))
+            self.sim.run_simulation_step(capture_frame=capture)
 
     def _get_obs(self) -> dict[str, np.ndarray]:
         ee_pos = self._get_ee_position()
