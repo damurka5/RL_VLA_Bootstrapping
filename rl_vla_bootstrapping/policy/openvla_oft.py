@@ -57,6 +57,39 @@ def _resolved_python_paths(config: ProjectConfig, raw_paths: list[str]) -> list[
     return out
 
 
+def _metadata_name_list(metadata: dict[str, Any], key: str) -> list[str]:
+    raw = metadata.get(key)
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        raw = [raw]
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = str(item).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _allowed_objects_from_config(config: ProjectConfig) -> list[str]:
+    metadata = config.task.metadata if isinstance(config.task.metadata, dict) else {}
+    target_pool = _metadata_name_list(metadata, "target_object_pool")
+    distractor_pool = _metadata_name_list(metadata, "distractor_object_pool")
+    if target_pool or distractor_pool:
+        merged: list[str] = []
+        seen: set[str] = set()
+        for name in [*target_pool, *distractor_pool]:
+            if name in seen:
+                continue
+            seen.add(name)
+            merged.append(name)
+        return merged
+    return list(config.task.target_objects)
+
+
 def _encode_entrypoint_env(
     env: dict[str, str],
     *,
@@ -168,8 +201,9 @@ def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     desk_textures_dir, desk_texture_note = _resolve_desk_textures_dir(config)
     if desk_textures_dir is not None and "desk_textures_dir" not in injected:
         injected["desk_textures_dir"] = desk_textures_dir.as_posix()
-    if config.task.target_objects and "allowed_objects" not in injected:
-        injected["allowed_objects"] = list(config.task.target_objects)
+    allowed_objects = _allowed_objects_from_config(config)
+    if allowed_objects and "allowed_objects" not in injected:
+        injected["allowed_objects"] = allowed_objects
     if config.task.instruction_types and "instruction_types" not in injected:
         injected["instruction_types"] = list(config.task.instruction_types)
 

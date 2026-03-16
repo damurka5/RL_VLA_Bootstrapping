@@ -71,9 +71,23 @@ python -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla_
 ./scripts/train_bootstrap.sh configs/examples/cdpr_openvla_bootstrap.yaml
 ```
 
+7. Run a trained OpenVLA/OFT CDPR policy with the same control scales used in RL:
+
+```bash
+python -m rl_vla_bootstrapping.cli.run_cdpr_policy \
+  --config configs/examples/cdpr_openvla_bootstrap.yaml \
+  --adapter-path /path/to/vla_cdpr_adapter \
+  --action-head-path /path/to/action_head_cdpr.pt \
+  --target-object ycb_apple \
+  --distractor ycb_banana \
+  --distractor ycb_orange
+```
+
 ## Runtime Notes
 
 Preview and training stages use the dependencies required by the vendored CDPR example bundle under `robots/cdpr/` plus the external OpenVLA/OFT repo. For the current stack that means MuJoCo, EGL-capable rendering on Linux, `opencv-python`, and the OpenVLA/OFT training dependencies from the included environment file.
+
+The CDPR example config now separates the instruction target pool from distractors via `task.metadata`. `task.target_objects` should contain only valid instruction targets, while `task.metadata.target_object_pool` / `task.metadata.distractor_object_pool` define the full scene object sampling pool. The repo-local runner and the RL env both use the same normalized action interpretation: XYZ deltas scaled by `action_step_xyz`, yaw scaled by `action_step_yaw`, gripper thresholded at the configured open/close cutoffs, and one policy action expanded into `1 + hold_steps` MuJoCo steps.
 
 ## Assets And Benchmarks
 

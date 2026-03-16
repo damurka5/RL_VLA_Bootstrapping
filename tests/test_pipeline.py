@@ -88,6 +88,7 @@ class PipelineTests(unittest.TestCase):
                     },
                 },
                 "task": {
+                    "target_objects": ["ycb_apple"],
                     "reward": {"file": "dataset/reward_hook.py", "function": "reward_fn"},
                     "success_predicate": {
                         "file": "dataset/success_hook.py",
@@ -96,7 +97,11 @@ class PipelineTests(unittest.TestCase):
                     "goal_region": {"center": [0.0, 0.0, 0.2]},
                     "goal_relation": "inside_region",
                     "dense_reward_terms": {"reach": 1.0},
-                    "metadata": {"mode": "zero_demo"},
+                    "metadata": {
+                        "mode": "zero_demo",
+                        "target_object_pool": ["ycb_apple", "ycb_pear"],
+                        "distractor_object_pool": ["milk", "ketchup"],
+                    },
                 },
                 "simulation": {
                     "catalog_path": "dataset/catalog.yaml",
@@ -139,6 +144,11 @@ class PipelineTests(unittest.TestCase):
             desk_textures_idx = plans[1].command.index("--desk_textures_dir") + 1
             self.assertTrue(Path(plans[1].command[desk_textures_idx]).samefile(dataset_root / "textures"))
             self.assertIn("--run_root_dir", plans[1].command)
+            allowed_objects_idx = plans[1].command.index("--allowed_objects") + 1
+            self.assertEqual(
+                plans[1].command[allowed_objects_idx : allowed_objects_idx + 4],
+                ["ycb_apple", "ycb_pear", "milk", "ketchup"],
+            )
             self.assertTrue(Path(plans[1].env["RLVLA_TASK_REWARD_FILE"]).samefile(dataset_root / "reward_hook.py"))
             self.assertEqual(plans[1].env["RLVLA_TASK_REWARD_ATTRIBUTE"], "reward_fn")
             self.assertTrue(Path(plans[1].env["RLVLA_TASK_SUCCESS_FILE"]).samefile(dataset_root / "success_hook.py"))

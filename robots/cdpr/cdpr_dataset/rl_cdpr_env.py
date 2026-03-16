@@ -72,6 +72,7 @@ ROBOT_BODY_PREFIXES = (
 class SceneSpec:
     name: str
     objects: tuple[str, ...]
+    target_object: str | None = None
 
 @dataclass
 class DeskTexturePatchResult:
@@ -136,6 +137,159 @@ def _filter_scenes_to_allowed_objects(
             f"Allowed objects: {sorted(allowed_set)}"
         )
     return filtered
+
+
+def _dedupe_names(values: Sequence[str]) -> tuple[str, ...]:
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        name = str(raw).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return tuple(out)
+
+
+def _metadata_name_list(task_metadata: dict[str, Any], key: str) -> tuple[str, ...]:
+    raw = task_metadata.get(key)
+    if raw is None:
+        return ()
+    if isinstance(raw, str):
+        raw = [raw]
+    if not isinstance(raw, Sequence):
+        raise ValueError(f"Task metadata `{key}` must be a list of object names.")
+    return _dedupe_names([str(item) for item in raw])
+
+
+def _unique_scene_names(scenes: Sequence[SceneSpec]) -> tuple[str, ...]:
+    names = _dedupe_names([scene.name for scene in scenes if getattr(scene, "name", "")])
+    if names:
+        return names
+    return ("desk",)
+
+
+def _sample_scene_object_count(
+    *,
+    rng: np.random.Generator,
+    min_objects: int,
+    max_objects: int,
+    total_available: int,
+) -> int:
+    upper = max(1, min(int(max_objects), int(total_available)))
+    lower = max(1, min(int(min_objects), upper))
+    return int(rng.integers(lower, upper + 1))
+
+
+def _build_scene_variants(
+    *,
+    scene_names: Sequence[str],
+    target_object_pool: Sequence[str],
+    distractor_object_pool: Sequence[str],
+    min_scene_objects: int,
+    max_scene_objects: int,
+    scene_variant_count: int,
+    seed: int | None,
+) -> list[SceneSpec]:
+    if not target_object_pool:
+        raise ValueError("Target object pool cannot be empty when building scene variants.")
+
+    scene_names = _unique_scene_names([SceneSpec(name=name, objects=()) for name in scene_names])
+    targets = _dedupe_names(target_object_pool)
+    distractors = _dedupe_names([name for name in distractor_object_pool if name not in targets])
+    total_pool = _dedupe_names([*targets, *distractors])
+    rng = np.random.default_rng(0 if seed is None else int(seed))
+
+    requested = max(int(scene_variant_count), len(scene_names) * len(targets))
+    variants: list[SceneSpec] = []
+    seen: set[tuple[str, str, tuple[str, ...]]] = set()
+
+    def _make_variant(scene_name: str, target_name: str) -> SceneSpec:
+        desired_count = _sample_scene_object_count(
+            rng=rng,
+            min_objects=min_scene_objects,
+            max_objects=max_scene_objects,
+            total_available=len(total_pool),
+        )
+        max_distractors = max(0, desired_count - 1)
+        distractor_candidates = [name for name in distractors if name != target_name]
+        chosen: list[str] = []
+        if distractor_candidates and max_distractors > 0:
+            sample_size = min(max_distractors, len(distractor_candidates))
+            chosen = list(rng.choice(distractor_candidates, size=sample_size, replace=False))
+            chosen.sort()
+        return SceneSpec(
+            name=scene_name,
+            objects=tuple([target_name, *chosen]),
+            target_object=target_name,
+        )
+
+    for scene_name in scene_names:
+        for target_name in targets:
+            variant = _make_variant(scene_name, target_name)
+            key = (variant.name, variant.target_object or "", tuple(sorted(variant.objects)))
+            if key in seen:
+                continue
+            seen.add(key)
+            variants.append(variant)
+
+    max_attempts = max(requested * 8, 32)
+    attempts = 0
+    while len(variants) < requested and attempts < max_attempts:
+        attempts += 1
+        scene_name = str(scene_names[int(rng.integers(0, len(scene_names)))])
+        target_name = str(targets[int(rng.integers(0, len(targets)))])
+        variant = _make_variant(scene_name, target_name)
+        key = (variant.name, variant.target_object or "", tuple(sorted(variant.objects)))
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append(variant)
+
+    return variants
+
+
+def _configure_scene_sampling(
+    *,
+    base_scenes: Sequence[SceneSpec],
+    allowed_objects: Sequence[str],
+    task_metadata: dict[str, Any],
+    seed: int | None,
+) -> tuple[list[SceneSpec], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    target_pool = _metadata_name_list(task_metadata, "target_object_pool")
+    distractor_pool = _metadata_name_list(task_metadata, "distractor_object_pool")
+
+    if not target_pool and not distractor_pool:
+        allowed = _dedupe_names(allowed_objects)
+        return list(base_scenes), allowed, allowed, ()
+
+    if not target_pool:
+        target_pool = _dedupe_names(allowed_objects)
+    if not target_pool:
+        raise ValueError("Task metadata target_object_pool is empty and no allowed_objects were provided.")
+
+    distractor_pool = _dedupe_names([name for name in distractor_pool if name not in target_pool])
+    allowed = _dedupe_names([*target_pool, *distractor_pool])
+
+    min_scene_objects = int(task_metadata.get("min_scene_objects", 1))
+    max_scene_objects = int(task_metadata.get("max_scene_objects", max(min_scene_objects, len(allowed))))
+    scene_variant_count = int(
+        task_metadata.get(
+            "scene_variant_count",
+            max(len(base_scenes), len(_unique_scene_names(base_scenes)) * max(1, len(target_pool))),
+        )
+    )
+
+    scenes = _build_scene_variants(
+        scene_names=_unique_scene_names(base_scenes),
+        target_object_pool=target_pool,
+        distractor_object_pool=distractor_pool,
+        min_scene_objects=min_scene_objects,
+        max_scene_objects=max_scene_objects,
+        scene_variant_count=scene_variant_count,
+        seed=seed,
+    )
+    return scenes, allowed, target_pool, distractor_pool
 
 
 def _iter_includes(tree_root: ET.Element):
@@ -534,6 +688,17 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._goal_relation = os.environ.get("RLVLA_TASK_GOAL_RELATION")
         self._reward_fn = _load_callable_from_env(TASK_REWARD_PREFIX) or compute_instruction_reward
         self._success_fn = _load_callable_from_env(TASK_SUCCESS_PREFIX)
+        (
+            self.scenes,
+            self.allowed_objects,
+            self.target_object_pool,
+            self.distractor_object_pool,
+        ) = _configure_scene_sampling(
+            base_scenes=self.scenes,
+            allowed_objects=self.allowed_objects,
+            task_metadata=self._task_metadata,
+            seed=seed,
+        )
 
         self.action_space = spaces.Box(
             low=-1.0,
@@ -619,6 +784,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         requested_target = (options or {}).get("target_object")
         if requested_target and requested_target in scene.objects:
             self._target_catalog_name = str(requested_target)
+        elif scene.target_object and scene.target_object in scene.objects:
+            self._target_catalog_name = str(scene.target_object)
         else:
             idx = int(self.np_random.integers(0, len(scene.objects)))
             self._target_catalog_name = scene.objects[idx]
@@ -1116,6 +1283,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             "scene": self._scene_name,
             "scene_objects": list(self._scene_catalog_objects),
             "allowed_objects": list(self.allowed_objects),
+            "target_object_pool": list(self.target_object_pool),
+            "distractor_object_pool": list(self.distractor_object_pool),
             "target_object_catalog": self._target_catalog_name,
             "target_object_body": self._target_body_name,
             "language_instruction": self._instruction_spec.text,

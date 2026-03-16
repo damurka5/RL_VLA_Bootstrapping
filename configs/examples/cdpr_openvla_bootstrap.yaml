@@ -108,13 +108,18 @@ embodiment:
 
 task:
   instruction_types: [pick_up, move_left, move_right, move_top, move_bottom]
-  target_objects: [bowl, plate, ycb_bowl, ycb_apple, ycb_peach, ycb_pear]
+  target_objects: [ycb_apple, ycb_peach, ycb_pear, porcelain_mug, red_coffee_mug, white_yellow_mug]
   reward:
     file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
     function: compute_instruction_reward
   metadata:
     goal_relation: object_to_region_or_direction
     zero_demo_first: true
+    target_object_pool: [ycb_apple, ycb_peach, ycb_pear, porcelain_mug, red_coffee_mug, white_yellow_mug]
+    distractor_object_pool: [ycb_banana, ycb_strawberry, ycb_lemon, ycb_orange, ycb_plum]
+    min_scene_objects: 2
+    max_scene_objects: 5
+    scene_variant_count: 64
 
 simulation:
   entrypoint:
