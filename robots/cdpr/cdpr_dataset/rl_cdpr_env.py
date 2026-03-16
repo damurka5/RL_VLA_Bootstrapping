@@ -1027,7 +1027,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         if self.sim is None:
             return
         # Reset any simulator-side logs so reset-time warmup motion never appears in saved episodes.
-        for attr in ("trajectory_data", "overview_frames", "ee_camera_frames"):
+        for attr in ("trajectory_data", "overview_frames", "ee_camera_frames", "frame_capture_timestamps"):
             if hasattr(self.sim, attr):
                 try:
                     setattr(self.sim, attr, [])

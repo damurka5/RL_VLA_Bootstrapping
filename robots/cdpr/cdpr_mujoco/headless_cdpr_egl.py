@@ -97,6 +97,7 @@ class HeadlessCDPRSimulation:
         # Recording
         self.overview_frames = []
         self.ee_camera_frames = []
+        self.frame_capture_timestamps = []
         self.trajectory_data = []
 
         os.makedirs(output_dir, exist_ok=True)
@@ -541,6 +542,7 @@ class HeadlessCDPRSimulation:
         if capture_frame:
             self.overview_frames.append(self.capture_frame(self.overview_cam, "overview"))
             self.ee_camera_frames.append(self.capture_frame(self.ee_cam, "ee_camera"))
+            self.frame_capture_timestamps.append(float(self.data.time))
 
         self.record_trajectory_step()
 
@@ -551,7 +553,7 @@ class HeadlessCDPRSimulation:
         os.makedirs(trajectory_dir, exist_ok=True)
         print(f"Starting trajectory: {trajectory_name}")
 
-        self.overview_frames, self.ee_camera_frames, self.trajectory_data = [], [], []
+        self.overview_frames, self.ee_camera_frames, self.frame_capture_timestamps, self.trajectory_data = [], [], [], []
         total_steps = 0
         trajectory_success = True
 
@@ -595,7 +597,7 @@ class HeadlessCDPRSimulation:
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         trajectory_dir = os.path.join(self.output_dir, f"{name}_{timestamp}")
         os.makedirs(trajectory_dir, exist_ok=True)
-        self.overview_frames, self.ee_camera_frames, self.trajectory_data = [], [], []
+        self.overview_frames, self.ee_camera_frames, self.frame_capture_timestamps, self.trajectory_data = [], [], [], []
 
         ox, oy = object_xy
         hold_hover = np.array([ox, oy, hover_z], dtype=float)
@@ -656,21 +658,22 @@ class HeadlessCDPRSimulation:
         """Save all trajectory data and videos"""
         os.makedirs(trajectory_dir, exist_ok=True)
         print("Saving trajectory results...")
+        video_fps = self._estimate_video_fps()
         
         # Save videos if we have frames
         if self.overview_frames:
             try:
                 overview_video_path = os.path.join(trajectory_dir, "overview_video.mp4")
-                self.save_video(self.overview_frames, overview_video_path, fps=20)
-                print(f"Overview video saved: {overview_video_path}")
+                self.save_video(self.overview_frames, overview_video_path, fps=video_fps)
+                print(f"Overview video saved: {overview_video_path} (fps={video_fps:.3f})")
             except Exception as e:
                 print(f"Error saving overview video: {e}")
         
         if self.ee_camera_frames:
             try:
                 ee_video_path = os.path.join(trajectory_dir, "ee_camera_video.mp4")
-                self.save_video(self.ee_camera_frames, ee_video_path, fps=20)
-                print(f"End-effector video saved: {ee_video_path}")
+                self.save_video(self.ee_camera_frames, ee_video_path, fps=video_fps)
+                print(f"End-effector video saved: {ee_video_path} (fps={video_fps:.3f})")
             except Exception as e:
                 print(f"Error saving EE camera video: {e}")
         
@@ -724,6 +727,24 @@ class HeadlessCDPRSimulation:
         with imageio.get_writer(filepath, fps=fps) as writer:
             for frame in frames:
                 writer.append_data(frame)
+
+    def _estimate_video_fps(self, default_fps=20.0):
+        times = np.asarray(getattr(self, "frame_capture_timestamps", []), dtype=np.float64)
+        if times.size >= 2:
+            diffs = np.diff(times)
+            diffs = diffs[np.isfinite(diffs) & (diffs > 1e-9)]
+            if diffs.size > 0:
+                return float(1.0 / np.mean(diffs))
+
+        frame_count = max(len(getattr(self, "overview_frames", [])), len(getattr(self, "ee_camera_frames", [])))
+        total_time = float(getattr(getattr(self, "data", None), "time", 0.0) or 0.0)
+        if frame_count > 1 and total_time > 1e-9:
+            return float(frame_count / total_time)
+
+        dt = float(getattr(getattr(self, "controller", None), "dt", 0.0) or 0.0)
+        if dt > 1e-9:
+            return float(1.0 / dt)
+        return float(default_fps)
     
     def save_trajectory_data(self, filepath):
         """Save trajectory data (.npz) including:
@@ -843,6 +864,7 @@ class HeadlessCDPRSimulation:
             f.write(f"Total frames captured: {len(self.overview_frames)}\n")
             f.write(f"Total simulation steps: {len(self.trajectory_data)}\n")
             f.write(f"Simulation time: {self.data.time:.2f} seconds\n")
+            f.write(f"Video fps: {self._estimate_video_fps():.3f}\n")
             if hasattr(self, "language_instruction"):
                 f.write(f"language_instruction: {self.language_instruction}\n")
             if self.trajectory_data:

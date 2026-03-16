@@ -188,7 +188,7 @@ training:
       init_log_std: -1.2
       action_step_xyz: 0.006
       action_step_yaw: 0.08
-      hold_steps: 4
+      hold_steps: 10
       delta_closer_reward_coef: 0.0
       delta_farther_penalty_coef: 0.0
       save_every: 20
