@@ -92,9 +92,9 @@ embodiment:
   action_adapter:
     common_action_keys: [x, y, z, yaw, gripper]
     controller_scales:
-      x: 0.006
-      y: 0.006
-      z: 0.006
+      x: 0.02
+      y: 0.02
+      z: 0.02
       yaw: 0.08
       gripper: 1.0
     controller_limits:
@@ -186,7 +186,7 @@ training:
       weight_decay: 0.0
       normalize_advantage: true
       init_log_std: -1.2
-      action_step_xyz: 0.006
+      action_step_xyz: 0.02
       action_step_yaw: 0.08
       hold_steps: 10
       delta_closer_reward_coef: 0.0
