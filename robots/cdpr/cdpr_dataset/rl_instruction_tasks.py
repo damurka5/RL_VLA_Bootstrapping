@@ -156,6 +156,20 @@ def _heading_toward_target(
     return float(max(alignment, 0.0))
 
 
+def _reward_distance_to_target(
+    ee_pos: np.ndarray,
+    obj_pos: np.ndarray,
+    *,
+    xy_only_distance_threshold: float,
+) -> tuple[float, float, float, bool]:
+    delta = np.asarray(ee_pos - obj_pos, dtype=np.float32)
+    dist_xy = float(np.linalg.norm(delta[:2]))
+    dist_xyz = float(np.linalg.norm(delta))
+    use_xy_only = bool(dist_xy >= float(xy_only_distance_threshold))
+    reward_dist = dist_xy if use_xy_only else dist_xyz
+    return reward_dist, dist_xyz, dist_xy, use_xy_only
+
+
 def compute_instruction_reward(
     spec: InstructionSpec,
     ee_pos: np.ndarray,
@@ -177,6 +191,7 @@ def compute_instruction_reward(
     near_zero_action_threshold: float = 0.08,
     idle_penalty_gain: float = 0.30,
     near_phase_distance: Optional[float] = None,
+    xy_only_distance_threshold: float = 0.03,
     orient_gate_distance: float = 0.10,
     min_ee_height_before_reach: float = 0.10,
     z_height_reach_distance: Optional[float] = None,
@@ -226,8 +241,16 @@ def compute_instruction_reward(
         elif gripper_command <= open_command_threshold:
             reward_state.gripper_closed = False
 
-    prev_ee_obj_dist = float(np.linalg.norm(reward_state.prev_ee_pos - reward_state.prev_obj_pos))
-    ee_obj_dist = float(np.linalg.norm(ee_pos - obj_pos))
+    prev_ee_obj_dist, prev_ee_obj_dist_xyz, prev_ee_obj_dist_xy, prev_use_xy_only = _reward_distance_to_target(
+        reward_state.prev_ee_pos,
+        reward_state.prev_obj_pos,
+        xy_only_distance_threshold=float(xy_only_distance_threshold),
+    )
+    ee_obj_dist, ee_obj_dist_xyz, ee_obj_dist_xy, use_xy_only_distance = _reward_distance_to_target(
+        ee_pos,
+        obj_pos,
+        xy_only_distance_threshold=float(xy_only_distance_threshold),
+    )
     approach = float(np.exp(-approach_gain * ee_obj_dist))  # debug-only signal
     distance_delta = float(prev_ee_obj_dist - ee_obj_dist)
 
@@ -266,7 +289,7 @@ def compute_instruction_reward(
     follow_error = float(np.linalg.norm(obj_step - ee_step))
 
     follows_ee = 0.0
-    if reward_state.gripper_closed and ee_obj_dist <= (grasp_dist_threshold * 1.6):
+    if reward_state.gripper_closed and ee_obj_dist_xyz <= (grasp_dist_threshold * 1.6):
         follows_ee = float(np.exp(-follow_gain * follow_error))
 
     heading_toward = _heading_toward_target(ee_pos=ee_pos, obj_pos=obj_pos, ee_yaw=ee_yaw)
@@ -381,7 +404,7 @@ def compute_instruction_reward(
             )
             idle_action_penalty = float(idle_penalty_gain * far_scale * idle_scale)
 
-    contact = ee_obj_dist <= grasp_dist_threshold
+    contact = ee_obj_dist_xyz <= grasp_dist_threshold
     was_grasped = bool(reward_state.grasped)
     grasp_confidence = (
         (1.0 if reward_state.gripper_closed and contact else 0.0) * (0.5 + 0.5 * follows_ee)
@@ -471,6 +494,13 @@ def compute_instruction_reward(
 
     info = {
         "distance_ee_to_object": ee_obj_dist,
+        "distance_ee_to_object_xyz": ee_obj_dist_xyz,
+        "distance_ee_to_object_xy": ee_obj_dist_xy,
+        "distance_ee_to_object_prev": prev_ee_obj_dist,
+        "distance_ee_to_object_prev_xyz": prev_ee_obj_dist_xyz,
+        "distance_ee_to_object_prev_xy": prev_ee_obj_dist_xy,
+        "distance_use_xy_only": float(use_xy_only_distance),
+        "distance_prev_use_xy_only": float(prev_use_xy_only),
         "distance_delta": distance_delta,
         "phase_is_far": float(is_far_phase),
         "approach_reward": approach,

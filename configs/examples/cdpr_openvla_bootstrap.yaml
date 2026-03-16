@@ -4,7 +4,7 @@ project:
   python_executable: python3
 
 repos:
-  openvla_oft: ../../../../repo/openvla-oft
+  openvla_oft: ../../../../openvla-oft
   dataset_repo: ../../robots/cdpr
   embodiment_repo: ../../robots/cdpr
 
@@ -68,7 +68,7 @@ embodiment:
   dof: 5
   extra_python_paths:
     - ../../robots/cdpr
-    - ../../../../repo/openvla-oft
+    - ../../../../openvla-oft
   cameras:
     overview: overview
     wrist: ee_camera
@@ -92,10 +92,10 @@ embodiment:
   action_adapter:
     common_action_keys: [x, y, z, yaw, gripper]
     controller_scales:
-      x: 0.005
-      y: 0.005
-      z: 0.005
-      yaw: 0.25
+      x: 0.006
+      y: 0.006
+      z: 0.006
+      yaw: 0.08
       gripper: 1.0
     controller_limits:
       x: [-0.8, 0.8]
@@ -108,14 +108,14 @@ embodiment:
 
 task:
   instruction_types: [pick_up, move_left, move_right, move_top, move_bottom]
-  target_objects: [ycb_apple, ycb_peach, ycb_pear, porcelain_mug, red_coffee_mug, white_yellow_mug]
+  target_objects: [ycb_apple, ycb_peach, ycb_pear, porcelain_mug, red_coffee_mug, white_yellow_mug, ycb_a_cups, ycb_baseball, ycb_f_cups]
   reward:
     file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
     function: compute_instruction_reward
   metadata:
     goal_relation: object_to_region_or_direction
     zero_demo_first: true
-    target_object_pool: [ycb_apple, ycb_peach, ycb_pear, porcelain_mug, red_coffee_mug, white_yellow_mug]
+    target_object_pool: [ycb_apple, ycb_peach, ycb_pear, porcelain_mug, red_coffee_mug, white_yellow_mug, ycb_a_cups, ycb_baseball, ycb_f_cups]
     distractor_object_pool: [ycb_banana, ycb_strawberry, ycb_lemon, ycb_orange, ycb_plum]
     min_scene_objects: 2
     max_scene_objects: 5
@@ -147,10 +147,10 @@ simulation:
 
 policy:
   type: openvla_oft
-  repo_path: ../../../../repo/openvla-oft
+  repo_path: ../../../../openvla-oft
   base_checkpoint: openvla/openvla-7b
-  rl_script: ../../../../repo/openvla-oft/vla-scripts/ppo_finetune_cdpr.py
-  sft_script: ../../../../repo/openvla-oft/vla-scripts/finetune.py
+  rl_script: ../../../../openvla-oft/vla-scripts/ppo_finetune_cdpr.py
+  sft_script: ../../../../openvla-oft/vla-scripts/finetune.py
   action_head: L1RegressionActionHead
   num_images_in_input: 2
   action_codec:
