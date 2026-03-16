@@ -87,6 +87,8 @@ class PolicyRunnerConfigTests(unittest.TestCase):
         class _FakeCoreModel:
             def __init__(self):
                 self.language_model = _FakeLanguageModel()
+                self.vision_backbone = lambda pixel_values: torch.zeros((pixel_values.shape[0], 2, 3), dtype=torch.float32)
+                self.projector = lambda patch_features: patch_features
 
             def get_input_embeddings(self):
                 def _embed(input_ids):
@@ -94,22 +96,6 @@ class PolicyRunnerConfigTests(unittest.TestCase):
                     return torch.zeros((bsz, seq_len, 3), dtype=torch.float32)
 
                 return _embed
-
-            def _process_vision_features(self, pixel_values, language_embeddings, use_film=False):
-                del pixel_values, language_embeddings, use_film
-                return torch.zeros((1, 2, 3), dtype=torch.float32)
-
-            def _build_multimodal_attention(self, input_embeddings, projected_patch_embeddings, attn_prep):
-                del attn_prep
-                multimodal_embeddings = torch.cat(
-                    [input_embeddings[:, :1, :], projected_patch_embeddings, input_embeddings[:, 1:, :]],
-                    dim=1,
-                )
-                multimodal_attention = torch.ones(
-                    (multimodal_embeddings.shape[0], multimodal_embeddings.shape[1]),
-                    dtype=torch.long,
-                )
-                return multimodal_embeddings, multimodal_attention
 
         class _FakeActionHead:
             def predict_action(self, action_hidden_states):

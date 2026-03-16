@@ -362,6 +362,58 @@ def _process_action_masks_compat(model: Any, labels: Any, *, action_dim: int, ch
     return mask
 
 
+def _process_vision_features_compat(
+    model: Any,
+    pixel_values: Any,
+    language_embeddings: Any,
+    *,
+    use_film: bool,
+) -> Any:
+    if hasattr(model, "_process_vision_features"):
+        return model._process_vision_features(pixel_values, language_embeddings, use_film=use_film)
+
+    if use_film:
+        patch_features = model.vision_backbone(pixel_values, language_embeddings)
+    else:
+        patch_features = model.vision_backbone(pixel_values)
+    return model.projector(patch_features)
+
+
+def _build_multimodal_attention_compat(
+    model: Any,
+    input_embeddings: Any,
+    projected_patch_embeddings: Any,
+    attention_mask: Any,
+) -> tuple[Any, Any]:
+    if hasattr(model, "_build_multimodal_attention"):
+        return model._build_multimodal_attention(input_embeddings, projected_patch_embeddings, attention_mask)
+
+    import torch
+
+    projected_patch_attention_mask = None
+    if attention_mask is not None:
+        projected_patch_attention_mask = torch.full(
+            (projected_patch_embeddings.shape[0], projected_patch_embeddings.shape[1]),
+            fill_value=True,
+            dtype=attention_mask.dtype,
+            device=attention_mask.device,
+        )
+
+    multimodal_embeddings = torch.cat(
+        [input_embeddings[:, :1, :], projected_patch_embeddings, input_embeddings[:, 1:, :]],
+        dim=1,
+    )
+
+    multimodal_attention_mask = None
+    if attention_mask is not None:
+        multimodal_attention_mask = torch.cat(
+            [attention_mask[:, :1], projected_patch_attention_mask, attention_mask[:, 1:]],
+            dim=1,
+        )
+
+    return multimodal_embeddings, multimodal_attention_mask
+
+
 def _predict_normalized_action_chunk(
     *,
     vla: Any,
@@ -423,13 +475,21 @@ def _predict_normalized_action_chunk(
     language_embeddings = input_embeddings[~all_actions_mask].reshape(
         input_embeddings.shape[0], -1, input_embeddings.shape[2]
     )
-    projected_patch_embeddings = model._process_vision_features(pixel_values, language_embeddings, use_film=False)
+    projected_patch_embeddings = _process_vision_features_compat(
+        model,
+        pixel_values,
+        language_embeddings,
+        use_film=False,
+    )
 
     all_actions_mask_expanded = all_actions_mask.unsqueeze(-1)
     input_embeddings = input_embeddings * ~all_actions_mask_expanded
 
-    multimodal_embeddings, multimodal_attention_mask = model._build_multimodal_attention(
-        input_embeddings, projected_patch_embeddings, attn_prep
+    multimodal_embeddings, multimodal_attention_mask = _build_multimodal_attention_compat(
+        model,
+        input_embeddings,
+        projected_patch_embeddings,
+        attn_prep,
     )
 
     language_model_output = model.language_model(
