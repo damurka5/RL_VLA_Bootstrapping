@@ -429,94 +429,95 @@ def _predict_normalized_action_chunk(
     import torch
     from PIL import Image
 
-    prompt = f"In: What action should the robot take to {instruction.lower()}?\nOut:"
+    with torch.inference_mode():
+        prompt = f"In: What action should the robot take to {instruction.lower()}?\nOut:"
 
-    primary_image = Image.fromarray(obs["full_image"].astype(np.uint8)).convert("RGB")
-    inputs = processor(prompt, primary_image, return_tensors="pt")
-    pixel_values = inputs["pixel_values"]
+        primary_image = Image.fromarray(obs["full_image"].astype(np.uint8)).convert("RGB")
+        inputs = processor(prompt, primary_image, return_tensors="pt")
+        pixel_values = inputs["pixel_values"]
 
-    if int(num_images_in_input) > 1 and "wrist_image" in obs:
-        wrist_image = Image.fromarray(obs["wrist_image"].astype(np.uint8)).convert("RGB")
-        wrist_inputs = processor(prompt, wrist_image, return_tensors="pt")
-        pixel_values = torch.cat([pixel_values, wrist_inputs["pixel_values"]], dim=1)
+        if int(num_images_in_input) > 1 and "wrist_image" in obs:
+            wrist_image = Image.fromarray(obs["wrist_image"].astype(np.uint8)).convert("RGB")
+            wrist_inputs = processor(prompt, wrist_image, return_tensors="pt")
+            pixel_values = torch.cat([pixel_values, wrist_inputs["pixel_values"]], dim=1)
 
-    input_ids = inputs["input_ids"].to(device)
-    attention_mask = inputs["attention_mask"].to(device)
-    pixel_values = pixel_values.to(device=device, dtype=pixel_dtype)
+        input_ids = inputs["input_ids"].to(device)
+        attention_mask = inputs["attention_mask"].to(device)
+        pixel_values = pixel_values.to(device=device, dtype=pixel_dtype)
 
-    model = _core_model(vla)
-    labels = torch.full_like(input_ids, fill_value=-100)
-    prompt_len = input_ids.shape[1]
-    action_dim = int(getattr(action_head, "action_dim", 5))
+        model = _core_model(vla)
+        labels = torch.full_like(input_ids, fill_value=-100)
+        prompt_len = input_ids.shape[1]
+        action_dim = int(getattr(action_head, "action_dim", 5))
 
-    input_ids_prep, attn_prep = _prepare_input_for_action_prediction_compat(
-        model,
-        input_ids,
-        attention_mask,
-        action_dim=action_dim,
-        chunk_length=chunk_length,
-    )
-    labels = _prepare_labels_for_action_prediction_compat(
-        model,
-        labels,
-        input_ids_prep,
-        action_dim=action_dim,
-        chunk_length=chunk_length,
-    )
+        input_ids_prep, attn_prep = _prepare_input_for_action_prediction_compat(
+            model,
+            input_ids,
+            attention_mask,
+            action_dim=action_dim,
+            chunk_length=chunk_length,
+        )
+        labels = _prepare_labels_for_action_prediction_compat(
+            model,
+            labels,
+            input_ids_prep,
+            action_dim=action_dim,
+            chunk_length=chunk_length,
+        )
 
-    input_embeddings = model.get_input_embeddings()(input_ids_prep)
-    all_actions_mask = _process_action_masks_compat(
-        model,
-        labels,
-        action_dim=action_dim,
-        chunk_length=chunk_length,
-    )
+        input_embeddings = model.get_input_embeddings()(input_ids_prep)
+        all_actions_mask = _process_action_masks_compat(
+            model,
+            labels,
+            action_dim=action_dim,
+            chunk_length=chunk_length,
+        )
 
-    language_embeddings = input_embeddings[~all_actions_mask].reshape(
-        input_embeddings.shape[0], -1, input_embeddings.shape[2]
-    )
-    projected_patch_embeddings = _process_vision_features_compat(
-        model,
-        pixel_values,
-        language_embeddings,
-        use_film=False,
-    )
+        language_embeddings = input_embeddings[~all_actions_mask].reshape(
+            input_embeddings.shape[0], -1, input_embeddings.shape[2]
+        )
+        projected_patch_embeddings = _process_vision_features_compat(
+            model,
+            pixel_values,
+            language_embeddings,
+            use_film=False,
+        )
 
-    all_actions_mask_expanded = all_actions_mask.unsqueeze(-1)
-    input_embeddings = input_embeddings * ~all_actions_mask_expanded
+        all_actions_mask_expanded = all_actions_mask.unsqueeze(-1)
+        input_embeddings = input_embeddings * ~all_actions_mask_expanded
 
-    multimodal_embeddings, multimodal_attention_mask = _build_multimodal_attention_compat(
-        model,
-        input_embeddings,
-        projected_patch_embeddings,
-        attn_prep,
-    )
+        multimodal_embeddings, multimodal_attention_mask = _build_multimodal_attention_compat(
+            model,
+            input_embeddings,
+            projected_patch_embeddings,
+            attn_prep,
+        )
 
-    language_model_output = model.language_model(
-        input_ids=None,
-        attention_mask=multimodal_attention_mask,
-        position_ids=None,
-        past_key_values=None,
-        inputs_embeds=multimodal_embeddings,
-        labels=None,
-        use_cache=False,
-        output_attentions=False,
-        output_hidden_states=True,
-        return_dict=True,
-    )
+        language_model_output = model.language_model(
+            input_ids=None,
+            attention_mask=multimodal_attention_mask,
+            position_ids=None,
+            past_key_values=None,
+            inputs_embeds=multimodal_embeddings,
+            labels=None,
+            use_cache=False,
+            output_attentions=False,
+            output_hidden_states=True,
+            return_dict=True,
+        )
 
-    last_hidden_states = language_model_output.hidden_states[-1]
-    patch_token_count = projected_patch_embeddings.shape[1]
-    text_hidden_states = torch.cat(
-        [last_hidden_states[:, :1, :], last_hidden_states[:, 1 + patch_token_count :, :]],
-        dim=1,
-    )
-    total_action_tokens = int(action_dim) * int(chunk_length)
-    action_hidden_states = text_hidden_states[:, prompt_len : prompt_len + total_action_tokens, :]
+        last_hidden_states = language_model_output.hidden_states[-1]
+        patch_token_count = projected_patch_embeddings.shape[1]
+        text_hidden_states = torch.cat(
+            [last_hidden_states[:, :1, :], last_hidden_states[:, 1 + patch_token_count :, :]],
+            dim=1,
+        )
+        total_action_tokens = int(action_dim) * int(chunk_length)
+        action_hidden_states = text_hidden_states[:, prompt_len : prompt_len + total_action_tokens, :]
 
-    pred_pre = action_head.predict_action(action_hidden_states)
-    predicted_actions = torch.tanh(pred_pre)
-    return predicted_actions[0].to(dtype=torch.float32).cpu().numpy()
+        pred_pre = action_head.predict_action(action_hidden_states)
+        predicted_actions = torch.tanh(pred_pre)
+        return predicted_actions[0].detach().to(dtype=torch.float32).cpu().numpy()
 
 
 def main() -> int:

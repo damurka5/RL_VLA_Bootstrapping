@@ -100,7 +100,7 @@ class PolicyRunnerConfigTests(unittest.TestCase):
         class _FakeActionHead:
             def predict_action(self, action_hidden_states):
                 self.last_shape = tuple(action_hidden_states.shape)
-                return torch.full((1, 2, 5), 0.5, dtype=torch.float32)
+                return torch.full((1, 2, 5), 0.5, dtype=torch.float32, requires_grad=True)
 
         action_head = _FakeActionHead()
         obs = {
