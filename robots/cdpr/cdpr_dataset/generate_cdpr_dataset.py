@@ -28,6 +28,8 @@ from .synthetic_tasks import (
 
 # ----- I/O roots (never write into VLA_CDPR) -----
 HERE = Path(__file__).resolve().parent
+CDPR_ROOT = HERE.parent
+SCENE_SWITCHER = CDPR_ROOT / "cdpr_mujoco" / "cdpr_scene_switcher.py"
 DATASET_ROOT = HERE / "datasets" / "cdpr_synth"
 NPZ_DIR   = DATASET_ROOT / "npz"
 VIDEO_DIR = DATASET_ROOT / "videos"
@@ -63,6 +65,24 @@ def load_catalog(catalog_path: str):
 def _wrapper_name(scene: str, object_names: list[str]) -> str:
     objs = "-".join(sorted(object_names))
     return f"{scene}__{objs}_wrapper.xml"
+
+
+def _scene_switcher_command(*, scene_name: str, scene_z: float, ee_start: np.ndarray, table_z: float, settle_time: float, wrapper_path: Path) -> list[str]:
+    if not SCENE_SWITCHER.exists():
+        raise FileNotFoundError(f"Scene switcher script not found: {SCENE_SWITCHER}")
+
+    return [
+        sys.executable,
+        str(SCENE_SWITCHER),
+        "--scene", scene_name,
+        "--scene_z", str(scene_z),
+        "--ee_start", ",".join(map(str, ee_start)),
+        "--table_z", str(table_z),
+        "--settle_time", str(settle_time),
+        "--wrapper_out", str(wrapper_path),
+        "--object_on_table",
+        "--object_dynamic",
+    ]
 
 
 def _resolve_include_path(current_xml: Path, file_attr: str) -> Path:
@@ -265,17 +285,14 @@ def build_wrapper_if_needed(scene_name: str,
     ee_start = np.asarray(ee_start, dtype=float).reshape(3)
     ee_start[2] = max(float(ee_start[2]), MIN_EE_START_Z)
 
-    cmd = [
-        sys.executable, "-m", "cdpr_mujoco.cdpr_scene_switcher",
-        "--scene", scene_name,
-        "--scene_z", str(scene_z),
-        "--ee_start", ",".join(map(str, ee_start)),
-        "--table_z", str(table_z),
-        "--settle_time", str(settle_time),
-        "--wrapper_out", str(wrapper_path),
-        "--object_on_table",
-        "--object_dynamic",
-    ]
+    cmd = _scene_switcher_command(
+        scene_name=scene_name,
+        scene_z=scene_z,
+        ee_start=ee_start,
+        table_z=table_z,
+        settle_time=settle_time,
+        wrapper_path=wrapper_path,
+    )
     ROT_X_BY_OBJECT = {
         "ketchup":      math.radians(90),
         "milk":         math.radians(90),
