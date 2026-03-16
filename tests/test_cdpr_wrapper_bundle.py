@@ -24,10 +24,16 @@ def _load_generate_module():
     return importlib.import_module("robots.cdpr.cdpr_dataset.generate_cdpr_dataset")
 
 
+def _load_rl_env_module():
+    _load_generate_module()
+    return importlib.import_module("robots.cdpr.cdpr_dataset.rl_cdpr_env")
+
+
 class WrapperBundleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.mod = _load_generate_module()
+        cls.rl_env_mod = _load_rl_env_module()
 
     def test_list_wrapper_bundle_paths_tracks_local_helper_xmls(self):
         with TemporaryDirectory() as tmp:
@@ -126,6 +132,15 @@ class WrapperBundleTests(unittest.TestCase):
             self.assertEqual(Path(issued_cmd[1]).resolve(), self.mod.SCENE_SWITCHER.resolve())
             self.assertNotIn("-m", issued_cmd)
             self.assertTrue(wrapper.exists())
+
+    def test_import_wrapper_builder_supports_call_and_unpack(self):
+        handle = self.rl_env_mod._import_wrapper_builder()
+
+        self.assertTrue(callable(handle))
+
+        build_wrapper_if_needed, list_wrapper_bundle_paths = handle
+        self.assertIs(build_wrapper_if_needed, self.mod.build_wrapper_if_needed)
+        self.assertIs(list_wrapper_bundle_paths, self.mod.list_wrapper_bundle_paths)
 
 
 if __name__ == "__main__":

@@ -82,6 +82,19 @@ class DeskTexturePatchResult:
     matched_geoms: int
 
 
+@dataclass(frozen=True)
+class WrapperBuilderHandle:
+    build_wrapper_if_needed: Any
+    list_wrapper_bundle_paths: Any
+
+    def __call__(self, *args, **kwargs):
+        return self.build_wrapper_if_needed(*args, **kwargs)
+
+    def __iter__(self):
+        yield self.build_wrapper_if_needed
+        yield self.list_wrapper_bundle_paths
+
+
 def _load_catalog(catalog_path: Path) -> tuple[dict[str, Any], list[SceneSpec]]:
     with catalog_path.open("r", encoding="utf-8") as f:
         cfg = yaml.safe_load(f) or {}
@@ -298,7 +311,10 @@ def _import_wrapper_builder():
     # Lazy import to avoid importing cdpr_mujoco at module import time.
     from .generate_cdpr_dataset import build_wrapper_if_needed, list_wrapper_bundle_paths
 
-    return build_wrapper_if_needed, list_wrapper_bundle_paths
+    return WrapperBuilderHandle(
+        build_wrapper_if_needed=build_wrapper_if_needed,
+        list_wrapper_bundle_paths=list_wrapper_bundle_paths,
+    )
 
 
 def _load_json_env(name: str) -> dict[str, Any]:
