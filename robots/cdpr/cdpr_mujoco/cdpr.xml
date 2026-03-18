@@ -103,7 +103,7 @@
 
     <!-- End-effector -->
     <!-- ===== Cable-suspended base (translation+rotation from cables) ===== -->
-    <body name="ee_base" pos="0 0 1.309">
+    <body name="ee_base" pos="0 0 0.40">
       <joint name="ee_free" type="free" damping="3" armature="0.002"/>
       <inertial pos="0 0 0" mass="1.2" diaginertia="0.02 0.02 0.02"/>
 
@@ -202,10 +202,10 @@
   </tendon>
 
   <actuator>
-    <position name="slider_1_pos" joint="slider_1" ctrlrange="-4.5 4.5" kp="200" kv="80"/>
-    <position name="slider_2_pos" joint="slider_2" ctrlrange="-4.5 4.5" kp="200" kv="80"/>
-    <position name="slider_3_pos" joint="slider_3" ctrlrange="-4.5 4.5" kp="200" kv="80"/>
-    <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="200" kv="80"/>
+    <position name="slider_1_pos" joint="slider_1" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
+    <position name="slider_2_pos" joint="slider_2" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
+    <position name="slider_3_pos" joint="slider_3" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
+    <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
     <!-- Tool yaw and gripper -->
     <position name="act_ee_yaw" joint="ee_yaw" kp="30" ctrlrange="-180 180"/>
     <position name="act_gripper" joint="finger_l" kp="300" ctrlrange="0 0.03"/>
