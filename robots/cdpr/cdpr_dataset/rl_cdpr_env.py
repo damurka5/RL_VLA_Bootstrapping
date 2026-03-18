@@ -60,7 +60,7 @@ DEFAULT_ALLOWED_OBJECTS: tuple[str, ...] = (
     "ycb_baseball",
     "ycb_lemon",
     "ycb_fork",
-    "ycb_hummer",
+    "ycb_hammer",
     "ycb_spoon",
 )
 DEFAULT_DESK_GEOM_REGEX = r"(table|desk|workbench|counter|surface)"
@@ -960,14 +960,14 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         episode_ee_start = self._sample_episode_ee_start(options=options)
         self._episode_ee_start = episode_ee_start.astype(np.float32)
-        wrapper_xml = self._build_wrapper(scene=scene, ee_start=episode_ee_start)
+        wrapper_xml = self._build_episode_wrapper(scene=scene, ee_start=episode_ee_start)
         self._current_wrapper_xml = wrapper_xml
         self.sim = self._sim_cls(xml_path=str(wrapper_xml), output_dir=str(DEFAULT_VIDEO_DIR))
         self.sim.initialize()
         if hasattr(self.sim, "hold_current_pose"):
             self.sim.hold_current_pose(warm_steps=10)
         self._refresh_workspace_safety()
-        self._move_ee_to_spawn_height()
+        self._move_ee_to_episode_start()
         self._clear_sim_recording_buffers()
 
         self._catalog_to_body, self._object_body_names = self._resolve_objects(scene.objects)
@@ -1246,6 +1246,34 @@ class CDPRLanguageRLEnv(_EnvBase):
             return (fallback / fallback_norm).astype(np.float32)
         return np.zeros((3,), dtype=np.float32)
 
+    def _build_episode_wrapper(
+        self,
+        *,
+        scene: SceneSpec,
+        ee_start: Sequence[float] | np.ndarray,
+    ) -> Path:
+        build_wrapper = self._build_wrapper
+        supports_ee_start = True
+        try:
+            signature = inspect.signature(build_wrapper)
+        except (TypeError, ValueError):
+            signature = None
+        if signature is not None:
+            params = signature.parameters
+            supports_ee_start = (
+                "ee_start" in params
+                or any(param.kind == inspect.Parameter.VAR_KEYWORD for param in params.values())
+            )
+
+        if supports_ee_start:
+            try:
+                return Path(build_wrapper(scene=scene, ee_start=ee_start)).resolve()
+            except TypeError as exc:
+                if "ee_start" not in str(exc):
+                    raise
+
+        return Path(build_wrapper(scene=scene)).resolve()
+
     def _build_wrapper(self, scene: SceneSpec, *, ee_start: Sequence[float] | np.ndarray | None = None) -> Path:
         build_wrapper_if_needed, list_wrapper_bundle_paths = _import_wrapper_builder()
         default_ee_start = self._default_ee_start()
@@ -1312,6 +1340,37 @@ class CDPRLanguageRLEnv(_EnvBase):
             tol=0.01,
             warm_steps=6,
         )
+
+    def _move_ee_to_episode_start(self):
+        if self.sim is None:
+            return
+
+        target = np.asarray(self._episode_ee_start, dtype=np.float32).reshape(3).copy()
+        if np.isfinite(self._ee_spawn_z):
+            target[2] = max(float(target[2]), float(self._ee_spawn_z))
+        if np.isfinite(self._ee_min_z):
+            target[2] = max(float(target[2]), float(self._ee_min_z))
+        target = np.asarray(clamp_xyz(target), dtype=np.float32)
+        self._set_ee_target(target)
+
+        moved_with_goto = False
+        if hasattr(self.sim, "goto"):
+            try:
+                self.sim.goto(target, max_steps=120, tol=0.01)
+                moved_with_goto = True
+            except Exception:
+                moved_with_goto = False
+
+        if not moved_with_goto and hasattr(self.sim, "run_simulation_step"):
+            for _ in range(8):
+                self.sim.run_simulation_step(capture_frame=False)
+
+        if hasattr(self.sim, "hold_current_pose"):
+            try:
+                self.sim.hold_current_pose(warm_steps=6)
+            except Exception:
+                pass
+        self._locked_target_xyz = target.astype(np.float32)
 
     def _temporary_wrapper_path(self, scene: SceneSpec) -> Path:
         obj_part = "-".join(sorted(scene.objects))

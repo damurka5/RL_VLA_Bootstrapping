@@ -239,6 +239,50 @@ class WrapperBundleTests(unittest.TestCase):
 
         self.assertNotEqual(first, second)
 
+    def test_rl_env_build_episode_wrapper_falls_back_when_cached_wrapper_lacks_ee_start_kwarg(self):
+        env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
+        scene = self.rl_env_mod.SceneSpec(name="desk", objects=("ycb_apple",))
+
+        def cached_wrapper(this, scene):
+            return Path("/tmp/cached_scene.xml")
+
+        env._build_wrapper = types.MethodType(cached_wrapper, env)
+
+        out = env._build_episode_wrapper(scene=scene, ee_start=np.array([0.1, -0.1, 0.4], dtype=np.float32))
+
+        self.assertEqual(out, Path("/tmp/cached_scene.xml").resolve())
+
+    def test_rl_env_move_episode_start_applies_sampled_xy_even_without_wrapper_override(self):
+        env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
+
+        class FakeSim:
+            def __init__(self):
+                self.target = None
+                self.goto_calls = []
+                self.hold_calls = []
+
+            def set_target_position(self, xyz):
+                self.target = np.asarray(xyz, dtype=np.float32).copy()
+
+            def goto(self, target, max_steps=120, tol=0.01):
+                self.goto_calls.append((np.asarray(target, dtype=np.float32).copy(), int(max_steps), float(tol)))
+
+            def hold_current_pose(self, warm_steps=0):
+                self.hold_calls.append(int(warm_steps))
+
+        env.sim = FakeSim()
+        env._episode_ee_start = np.array([0.17, -0.11, 0.40], dtype=np.float32)
+        env._ee_spawn_z = 0.236
+        env._ee_min_z = 0.12
+        env._locked_target_xyz = np.zeros((3,), dtype=np.float32)
+
+        env._move_ee_to_episode_start()
+
+        np.testing.assert_allclose(env.sim.target, np.array([0.17, -0.11, 0.40], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(env.sim.goto_calls[0][0], np.array([0.17, -0.11, 0.40], dtype=np.float32), atol=1e-7)
+        self.assertEqual(env.sim.hold_calls, [6])
+        np.testing.assert_allclose(env._locked_target_xyz, np.array([0.17, -0.11, 0.40], dtype=np.float32), atol=1e-7)
+
 
 if __name__ == "__main__":
     unittest.main()

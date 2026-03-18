@@ -108,13 +108,13 @@ embodiment:
 
 task:
   instruction_types: [move_up, move_down, move_left, move_right, move_top, move_bottom, move_center]
-  target_objects: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hummer, ycb_spoon]
+  target_objects: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hammer, ycb_spoon]
   reward:
     file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
     function: compute_instruction_reward
   metadata:
     zero_demo_first: true
-    scene_object_pool: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hummer, ycb_spoon]
+    scene_object_pool: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hammer, ycb_spoon]
     min_scene_objects: 1
     max_scene_objects: 3
     scene_variant_count: 64
