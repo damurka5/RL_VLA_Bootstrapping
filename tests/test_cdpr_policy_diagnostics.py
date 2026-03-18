@@ -29,6 +29,7 @@ class PolicyDiagnosticsTests(unittest.TestCase):
         self.assertIsNone(args.ee_start_x_bounds)
         self.assertIsNone(args.ee_start_y_bounds)
         self.assertIsNone(args.ee_start_z)
+        self.assertIsNone(args.seed)
 
     def test_build_axis_demos_matches_chunk_size_and_signs(self):
         demos = _build_axis_demos(8, 0.25, include_negative=True)

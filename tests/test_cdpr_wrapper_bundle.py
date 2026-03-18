@@ -211,6 +211,22 @@ class WrapperBundleTests(unittest.TestCase):
 
         np.testing.assert_allclose(ee_start, np.array([0.07, -0.03, 0.40], dtype=np.float64), atol=1e-9)
 
+    def test_rl_env_same_reset_seed_advances_episode_rng(self):
+        env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
+        env.np_random = np.random.default_rng(0)
+        env._reset_counter = 0
+        env._episode_index = -1
+
+        env._prepare_episode_rng(123)
+        first = float(env.np_random.uniform())
+        self.assertEqual(env._episode_index, 0)
+
+        env._prepare_episode_rng(123)
+        second = float(env.np_random.uniform())
+        self.assertEqual(env._episode_index, 1)
+
+        self.assertNotEqual(first, second)
+
 
 if __name__ == "__main__":
     unittest.main()

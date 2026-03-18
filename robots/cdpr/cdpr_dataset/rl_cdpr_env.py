@@ -854,10 +854,11 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._ee_spawn_z = float("-inf")
         self._locked_target_xyz = np.zeros((3,), dtype=np.float32)
         self._episode_ee_start = self._default_ee_start().astype(np.float32)
+        self._episode_index = -1
+        self._reset_counter = 0
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
-        if seed is not None:
-            self.np_random = np.random.default_rng(seed)
+        self._prepare_episode_rng(seed)
 
         self.close()
         scene = self._sample_scene(options=options)
@@ -1052,6 +1053,15 @@ class CDPRLanguageRLEnv(_EnvBase):
                     return scene
         idx = int(self.np_random.integers(0, len(self.scenes)))
         return self.scenes[idx]
+
+    def _prepare_episode_rng(self, seed: Optional[int]) -> None:
+        episode_index = int(self._reset_counter)
+        self._reset_counter += 1
+        self._episode_index = episode_index
+        if seed is None:
+            return
+        seed_sequence = np.random.SeedSequence([int(seed), episode_index])
+        self.np_random = np.random.default_rng(seed_sequence)
 
     def _default_ee_start(self) -> np.ndarray:
         ee_start = _coerce_ee_start(self.defaults.get("ee_start", (0.0, 0.0, MIN_EE_START_Z)))
@@ -1416,6 +1426,7 @@ class CDPRLanguageRLEnv(_EnvBase):
     def _base_info(self) -> dict[str, Any]:
         return {
             "scene": self._scene_name,
+            "episode_index": int(self._episode_index),
             "scene_objects": list(self._scene_catalog_objects),
             "allowed_objects": list(self.allowed_objects),
             "target_object_pool": list(self.target_object_pool),

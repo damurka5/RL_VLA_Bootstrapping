@@ -131,7 +131,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=False,
         help="Include random gripper commands in the random demos.",
     )
-    parser.add_argument("--seed", type=int, default=0, help="Seed for random diagnostic chunks.")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="Optional seed for reproducible random diagnostic chunks and EE spawn sampling.",
+    )
     parser.add_argument(
         "--capture-all-substeps",
         action=argparse.BooleanOptionalAction,
@@ -201,11 +206,11 @@ def _build_random_demos(
     *,
     demo_count: int,
     magnitude: float,
-    seed: int,
+    seed: int | None,
     randomize_yaw: bool,
     randomize_gripper: bool,
 ) -> list[DiagnosticDemo]:
-    rng = np.random.default_rng(int(seed))
+    rng = np.random.default_rng(None if seed is None else int(seed))
     clipped = float(abs(np.clip(magnitude, -1.0, 1.0)))
     demos: list[DiagnosticDemo] = []
 
@@ -279,7 +284,7 @@ def _scene_build_kwargs_from_args(config: Any, args: argparse.Namespace) -> tupl
             args.ee_start_y_bounds or DEFAULT_RANDOM_EE_START_Y_BOUNDS,
             name="ee_start_y_bounds",
         )
-        rng = np.random.default_rng(int(args.seed))
+        rng = np.random.default_rng(None if args.seed is None else int(args.seed))
         ee_start[0] = float(rng.uniform(*x_bounds))
         ee_start[1] = float(rng.uniform(*y_bounds))
         spawn_info["ee_start_x_bounds"] = [float(x_bounds[0]), float(x_bounds[1])]
@@ -828,7 +833,7 @@ def main() -> int:
             chunk_length,
             demo_count=int(args.random_demos),
             magnitude=float(args.random_magnitude),
-            seed=int(args.seed),
+            seed=None if args.seed is None else int(args.seed),
             randomize_yaw=bool(args.randomize_yaw),
             randomize_gripper=bool(args.randomize_gripper),
         )
@@ -860,16 +865,19 @@ def main() -> int:
     print(f"Reset each repeat: {bool(args.reset_to_visible_start_each_repeat)}")
     print(f"Capture mode: {'all_substeps' if args.capture_all_substeps else 'last_frame_only'}")
     if ee_spawn_config["randomized"]:
+        seed_label = "entropy" if args.seed is None else str(int(args.seed))
         print(
             "Randomized EE start: "
             f"{ee_spawn_config['ee_start']} "
             f"(x_bounds={ee_spawn_config['ee_start_x_bounds']}, "
-            f"y_bounds={ee_spawn_config['ee_start_y_bounds']}, seed={int(args.seed)})"
+            f"y_bounds={ee_spawn_config['ee_start_y_bounds']}, seed={seed_label})"
         )
     elif ee_spawn_config["enabled"]:
         print(f"EE start override: {ee_spawn_config['ee_start']}")
     else:
         print(f"EE start: {ee_spawn_config['ee_start']}")
+    if ee_spawn_config["randomized"]:
+        print("Randomized EE start is sampled once for the built scene and reused across demos in the same invocation.")
 
     demo_root = ensure_directory(run_dir / "demos")
     manifest_demos: list[dict[str, Any]] = []
@@ -931,7 +939,7 @@ def main() -> int:
         "reset_to_visible_start_each_repeat": bool(args.reset_to_visible_start_each_repeat),
         "lock_non_commanded_axes": bool(args.lock_non_commanded_axes),
         "capture_mode": "all_substeps" if args.capture_all_substeps else "last_frame_only",
-        "seed": int(args.seed),
+        "seed": None if args.seed is None else int(args.seed),
         "scene_build_kwargs_overrides": scene_build_kwargs,
         "ee_spawn": ee_spawn_config,
         "control_spec": asdict(control_spec),
