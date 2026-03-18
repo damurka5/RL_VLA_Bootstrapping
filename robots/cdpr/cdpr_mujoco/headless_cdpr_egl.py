@@ -22,6 +22,23 @@ def _id(model, objtype, name):
     return mj.mj_name2id(model, objtype, name)
 
 
+def _solve_slider_preload_targets(
+    current_slider_qpos,
+    current_tendon_lengths,
+    tendon_upper_limits,
+    dlength_dq,
+):
+    current_slider_qpos = np.asarray(current_slider_qpos, dtype=float).reshape(4)
+    current_tendon_lengths = np.asarray(current_tendon_lengths, dtype=float).reshape(4)
+    tendon_upper_limits = np.asarray(tendon_upper_limits, dtype=float).reshape(4)
+    dlength_dq = np.asarray(dlength_dq, dtype=float).reshape(4)
+
+    if np.any(np.abs(dlength_dq) < 1e-8):
+        raise ValueError("Cannot solve slider preload with singular tendon Jacobian.")
+
+    return current_slider_qpos + (tendon_upper_limits - current_tendon_lengths) / dlength_dq
+
+
 class HeadlessCDPRController:
     def __init__(
         self,
@@ -252,12 +269,11 @@ class HeadlessCDPRSimulation:
         self._setup_offscreen_rendering()
         mj.mj_forward(self.model, self.data)
         self._sync_controller_geometry_from_state()
-        # Seed target to current EE pose (so your higher-level controller doesn’t pull elsewhere)
+        # Seed target to current EE pose (so your higher-level controller doesn’t pull elsewhere).
         self.target_pos = self.get_end_effector_position().copy()
-        self.controller.prev_lengths = self.controller.inverse_kinematics(self.target_pos)
-
-        self._configure_controller_tendon_model()
         self._match_sliders_to_ee_lengths(max_iter=12, tol=1e-6)
+        self.target_pos = self.get_end_effector_position().copy()
+        self.controller.prev_lengths = self.get_cable_lengths().copy()
         print("Headless CDPR Simulation initialized successfully!")
         print(f"Using {'EGL' if EGL_AVAILABLE else 'software'} rendering")
 
@@ -349,29 +365,73 @@ class HeadlessCDPRSimulation:
             dlength_dq = self._estimate_slider_length_jacobian()
         self.controller.configure_tendon_model(dlength_dq=dlength_dq)
 
+    def _slider_ctrl_limits(self):
+        limits = np.full((4, 2), np.array([-np.inf, np.inf], dtype=float), dtype=float)
+        for idx, act_id in enumerate(self.act_sliders):
+            if act_id < 0:
+                continue
+            if bool(self.model.actuator_ctrllimited[act_id]):
+                limits[idx] = self.model.actuator_ctrlrange[act_id]
+        return limits
+
+    def _set_slider_targets(self, slider_targets, *, update_qpos=False, zero_velocity=False):
+        targets = np.asarray(slider_targets, dtype=float).reshape(4).copy()
+        ctrl_limits = self._slider_ctrl_limits()
+        targets = np.clip(targets, ctrl_limits[:, 0], ctrl_limits[:, 1])
+
+        for idx, (target, qadr, act_id, joint_id) in enumerate(
+            zip(targets, self.slider_qadr, self.act_sliders, self.slider_joint_ids)
+        ):
+            if update_qpos:
+                self.data.qpos[qadr] = float(target)
+                if zero_velocity:
+                    dofadr = int(self.model.jnt_dofadr[joint_id])
+                    if 0 <= dofadr < self.model.nv:
+                        self.data.qvel[dofadr] = 0.0
+            if act_id >= 0:
+                self.data.ctrl[act_id] = float(target)
+
+        return targets
+
+    def _tendon_upper_limits(self):
+        return np.array([self.model.tendon_range[idx, 1] for idx in self.tendon_idx], dtype=float)
+
+    def _calibrate_slider_preload(self, *, max_iter=8, tol=1e-6):
+        last_targets = np.array([self.data.qpos[idx] for idx in self.slider_qadr], dtype=float)
+        for _ in range(max(1, int(max_iter))):
+            mj.mj_forward(self.model, self.data)
+            current_slider_qpos = np.array([self.data.qpos[idx] for idx in self.slider_qadr], dtype=float)
+            current_tendon_lengths = self.get_cable_lengths()
+            dlength_dq = self._estimate_slider_length_jacobian()
+            targets = _solve_slider_preload_targets(
+                current_slider_qpos=current_slider_qpos,
+                current_tendon_lengths=current_tendon_lengths,
+                tendon_upper_limits=self._tendon_upper_limits(),
+                dlength_dq=dlength_dq,
+            )
+            last_targets = self._set_slider_targets(targets, update_qpos=True, zero_velocity=True)
+            if float(np.max(np.abs(last_targets - current_slider_qpos))) <= float(tol):
+                break
+
+        mj.mj_forward(self.model, self.data)
+        return last_targets
+
     def hold_current_pose(self, warm_steps=0):
         """
-        Seed the controller target to the CURRENT EE pose and set slider ctrl
-        so there is no immediate jump on the first step.
+        Re-solve slider preload for the CURRENT EE pose so the system starts from
+        a static cable-supported state instead of preserving a transient.
         """
-        # current pose
         ee_now = self.get_end_effector_position()
-        # make it the target
         self.target_pos = ee_now.copy()
         self._sync_controller_geometry_from_state()
-        slider_qpos = np.array([self.data.qpos[idx] for idx in self.slider_qadr], dtype=float)
-        cur_lengths = self.get_cable_lengths()
-        self.controller.prev_lengths = cur_lengths.copy()
-        for act_id, qpos in zip(self.act_sliders, slider_qpos):
-            self.data.ctrl[act_id] = float(qpos)
+        self._calibrate_slider_preload(max_iter=8, tol=1e-6)
+        self.controller.prev_lengths = self.get_cable_lengths().copy()
         for _ in range(int(warm_steps)):
             mj.mj_step(self.model, self.data)
         settled_ee = self.get_end_effector_position()
         self.target_pos = settled_ee.copy()
         self._sync_controller_geometry_from_state()
-        settled_slider_qpos = np.array([self.data.qpos[idx] for idx in self.slider_qadr], dtype=float)
-        for act_id, qpos in zip(self.act_sliders, settled_slider_qpos):
-            self.data.ctrl[act_id] = float(qpos)
+        self._calibrate_slider_preload(max_iter=8, tol=1e-6)
         self.controller.prev_lengths = self.get_cable_lengths().copy()
         self._configure_controller_tendon_model()
             
@@ -393,15 +453,14 @@ class HeadlessCDPRSimulation:
             # only safe if the actuator is mjtGain::position (yours are <position .../>)
             self.data.ctrl[i] = float(self.data.qpos[qadr])
 
-    def _match_sliders_to_ee_lengths(self, max_iter=12, tol=6):
+    def _match_sliders_to_ee_lengths(self, max_iter=12, tol=1e-6):
         """
-        Preserve the XML-defined slider/cable preload at startup and only
-        calibrate the tendon Jacobian used for incremental control.
+        Solve the slider preload so the current EE pose sits at the tendon upper
+        limits, then refresh the Jacobian used for incremental control.
         """
-        mj.mj_forward(self.model, self.data)
-        dlength_dq = self._estimate_slider_length_jacobian()
+        self._calibrate_slider_preload(max_iter=max_iter, tol=tol)
         self._neutralize_position_actuators()
-        self._configure_controller_tendon_model(dlength_dq=dlength_dq)
+        self._configure_controller_tendon_model()
 
 
     def get_end_effector_position(self):

@@ -202,10 +202,10 @@
   </tendon>
 
   <actuator>
-    <position name="slider_1_pos" joint="slider_1" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
-    <position name="slider_2_pos" joint="slider_2" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
-    <position name="slider_3_pos" joint="slider_3" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
-    <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="20000" kv="1500"/>
+    <position name="slider_1_pos" joint="slider_1" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
+    <position name="slider_2_pos" joint="slider_2" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
+    <position name="slider_3_pos" joint="slider_3" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
+    <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
     <!-- Tool yaw and gripper -->
     <position name="act_ee_yaw" joint="ee_yaw" kp="30" ctrlrange="-180 180"/>
     <position name="act_gripper" joint="finger_l" kp="300" ctrlrange="0 0.03"/>

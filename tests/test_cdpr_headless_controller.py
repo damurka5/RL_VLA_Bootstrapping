@@ -4,10 +4,27 @@ import unittest
 
 import numpy as np
 
-from robots.cdpr.cdpr_mujoco.headless_cdpr_egl import HeadlessCDPRController
+from robots.cdpr.cdpr_mujoco.headless_cdpr_egl import (
+    HeadlessCDPRController,
+    _solve_slider_preload_targets,
+)
 
 
 class HeadlessCDPRControllerTests(unittest.TestCase):
+    def test_solve_slider_preload_targets_uses_tendon_upper_limit_residual(self):
+        targets = _solve_slider_preload_targets(
+            current_slider_qpos=np.array([0.0, -0.1, 0.2, -0.3], dtype=float),
+            current_tendon_lengths=np.array([4.6, 4.2, 3.9, 4.1], dtype=float),
+            tendon_upper_limits=np.array([4.235, 4.235, 4.235, 4.235], dtype=float),
+            dlength_dq=np.array([1.0, 1.0, 2.0, -0.5], dtype=float),
+        )
+
+        np.testing.assert_allclose(
+            targets,
+            np.array([-0.365, -0.065, 0.3675, -0.57], dtype=float),
+            atol=1e-9,
+        )
+
     def test_inverse_kinematics_uses_attach_point_offset(self):
         frame_points = np.tile(np.array([[0.0, 0.0, 1.0]], dtype=float), (4, 1))
         controller = HeadlessCDPRController(
