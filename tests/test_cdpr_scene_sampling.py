@@ -6,6 +6,35 @@ from robots.cdpr.cdpr_dataset.rl_cdpr_env import SceneSpec, _configure_scene_sam
 
 
 class SceneSamplingTests(unittest.TestCase):
+    def test_configure_scene_sampling_builds_scene_variants_from_single_pool(self):
+        base_scenes = [SceneSpec(name="desk", objects=("ycb_apple",))]
+        metadata = {
+            "scene_object_pool": ["ycb_apple", "plate", "ycb_spoon", "ycb_lemon"],
+            "min_scene_objects": 1,
+            "max_scene_objects": 3,
+            "scene_variant_count": 12,
+        }
+
+        scenes, allowed, targets, distractors = _configure_scene_sampling(
+            base_scenes=base_scenes,
+            allowed_objects=("ycb_apple",),
+            task_metadata=metadata,
+            seed=5,
+        )
+
+        self.assertEqual(allowed, ("ycb_apple", "plate", "ycb_spoon", "ycb_lemon"))
+        self.assertEqual(targets, ())
+        self.assertEqual(distractors, ())
+        self.assertGreaterEqual(len(scenes), 1)
+        for scene in scenes:
+            self.assertEqual(scene.name, "desk")
+            self.assertIsNone(scene.target_object)
+            self.assertGreaterEqual(len(scene.objects), 1)
+            self.assertLessEqual(len(scene.objects), 3)
+            self.assertEqual(len(scene.objects), len(set(scene.objects)))
+            for name in scene.objects:
+                self.assertIn(name, allowed)
+
     def test_configure_scene_sampling_builds_target_plus_distractors(self):
         base_scenes = [
             SceneSpec(name="desk", objects=("ycb_apple",)),

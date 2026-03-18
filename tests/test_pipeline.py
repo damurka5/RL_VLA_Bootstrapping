@@ -99,8 +99,7 @@ class PipelineTests(unittest.TestCase):
                     "dense_reward_terms": {"reach": 1.0},
                     "metadata": {
                         "mode": "zero_demo",
-                        "target_object_pool": ["ycb_apple", "ycb_pear"],
-                        "distractor_object_pool": ["milk", "ketchup"],
+                        "scene_object_pool": ["ycb_apple", "ycb_pear", "plate", "ycb_spoon"],
                     },
                 },
                 "simulation": {
@@ -163,7 +162,7 @@ class PipelineTests(unittest.TestCase):
             allowed_objects_idx = plans[1].command.index("--allowed_objects") + 1
             self.assertEqual(
                 plans[1].command[allowed_objects_idx : allowed_objects_idx + 4],
-                ["ycb_apple", "ycb_pear", "milk", "ketchup"],
+                ["ycb_apple", "ycb_pear", "plate", "ycb_spoon"],
             )
             self.assertTrue(Path(plans[1].env["RLVLA_TASK_REWARD_FILE"]).samefile(dataset_root / "reward_hook.py"))
             self.assertEqual(plans[1].env["RLVLA_TASK_REWARD_ATTRIBUTE"], "reward_fn")

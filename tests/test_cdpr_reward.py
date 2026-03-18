@@ -12,57 +12,79 @@ from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
 
 
 class RewardDistanceTests(unittest.TestCase):
-    def _pick_spec(self) -> InstructionSpec:
+    def _spec(self, instruction_type: str = "move_left") -> InstructionSpec:
+        direction = {
+            "move_left": np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+            "move_up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        }[instruction_type]
+        text = instruction_type.replace("_", " ")
         return InstructionSpec(
-            instruction_type="pick_up",
-            text="pick up apple",
-            target_object="ycb_apple",
-            direction=np.zeros((2,), dtype=np.float32),
-            target_displacement=0.20,
+            instruction_type=instruction_type,
+            text=text,
+            target_object="",
+            direction=direction,
+            target_displacement=0.40,
             lift_target=0.10,
         )
 
-    def test_far_reach_uses_xy_distance_only(self):
-        spec = self._pick_spec()
-        reward_state = init_reward_state(
-            initial_ee_pos=np.array([0.12, 0.0, 0.30], dtype=np.float32),
-            initial_obj_pos=np.array([0.0, 0.0, 0.0], dtype=np.float32),
-        )
+    def test_closer_goal_has_higher_reward(self):
+        spec = self._spec("move_left")
+        goal = np.array([0.0, 0.0, 0.20], dtype=np.float32)
 
-        reward, success, info = compute_instruction_reward(
+        reward_far, success_far, info_far = compute_instruction_reward(
             spec=spec,
-            ee_pos=np.array([0.10, 0.0, 0.30], dtype=np.float32),
-            obj_pos=np.array([0.0, 0.0, 0.0], dtype=np.float32),
-            reward_state=reward_state,
+            ee_pos=np.array([0.20, 0.0, 0.20], dtype=np.float32),
+            obj_pos=goal,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.20, 0.0, 0.20], dtype=np.float32),
+                initial_obj_pos=goal,
+            ),
+            camera_alignment=1.0,
+            goal_direction=np.array([-1.0, 0.0, 0.0], dtype=np.float32),
         )
-
-        self.assertFalse(success)
-        self.assertGreater(reward, 0.0)
-        self.assertAlmostEqual(info["distance_ee_to_object"], 0.10, places=6)
-        self.assertAlmostEqual(info["distance_ee_to_object_xy"], 0.10, places=6)
-        self.assertGreater(info["distance_ee_to_object_xyz"], info["distance_ee_to_object"])
-        self.assertEqual(info["distance_use_xy_only"], 1.0)
-
-    def test_near_reach_switches_back_to_full_xyz_distance(self):
-        spec = self._pick_spec()
-        reward_state = init_reward_state(
-            initial_ee_pos=np.array([0.025, 0.0, 0.05], dtype=np.float32),
-            initial_obj_pos=np.array([0.0, 0.0, 0.0], dtype=np.float32),
-        )
-
-        _, success, info = compute_instruction_reward(
+        reward_near, success_near, info_near = compute_instruction_reward(
             spec=spec,
-            ee_pos=np.array([0.020, 0.0, 0.03], dtype=np.float32),
-            obj_pos=np.array([0.0, 0.0, 0.0], dtype=np.float32),
-            reward_state=reward_state,
+            ee_pos=np.array([0.05, 0.0, 0.20], dtype=np.float32),
+            obj_pos=goal,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.05, 0.0, 0.20], dtype=np.float32),
+                initial_obj_pos=goal,
+            ),
+            camera_alignment=1.0,
+            goal_direction=np.array([-1.0, 0.0, 0.0], dtype=np.float32),
         )
 
-        expected_xyz = float(np.linalg.norm(np.array([0.020, 0.0, 0.03], dtype=np.float32)))
-        self.assertFalse(success)
-        self.assertAlmostEqual(info["distance_ee_to_object"], expected_xyz, places=6)
-        self.assertAlmostEqual(info["distance_ee_to_object_xyz"], expected_xyz, places=6)
-        self.assertAlmostEqual(info["distance_ee_to_object_xy"], 0.02, places=6)
-        self.assertEqual(info["distance_use_xy_only"], 0.0)
+        self.assertFalse(success_far)
+        self.assertFalse(success_near)
+        self.assertGreater(reward_near, reward_far)
+        self.assertGreater(info_far["distance_to_goal"], info_near["distance_to_goal"])
+
+    def test_camera_alignment_changes_reward_and_success(self):
+        spec = self._spec("move_up")
+        goal = np.array([0.0, 0.0, 0.23], dtype=np.float32)
+        ee = np.array([0.0, 0.0, 0.205], dtype=np.float32)
+
+        reward_bad, success_bad, info_bad = compute_instruction_reward(
+            spec=spec,
+            ee_pos=ee,
+            obj_pos=goal,
+            reward_state=init_reward_state(initial_ee_pos=ee, initial_obj_pos=goal),
+            camera_alignment=0.15,
+            goal_direction=np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        )
+        reward_good, success_good, info_good = compute_instruction_reward(
+            spec=spec,
+            ee_pos=ee,
+            obj_pos=goal,
+            reward_state=init_reward_state(initial_ee_pos=ee, initial_obj_pos=goal),
+            camera_alignment=0.95,
+            goal_direction=np.array([0.0, 0.0, 1.0], dtype=np.float32),
+        )
+
+        self.assertFalse(success_bad)
+        self.assertTrue(success_good)
+        self.assertGreater(reward_good, reward_bad)
+        self.assertGreater(info_good["camera_reward"], info_bad["camera_reward"])
 
 
 if __name__ == "__main__":

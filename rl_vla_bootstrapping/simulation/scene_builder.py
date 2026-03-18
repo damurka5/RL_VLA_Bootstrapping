@@ -13,6 +13,10 @@ def preview_selection(config: ProjectConfig) -> tuple[str | None, list[str]]:
     objects = list(config.simulation.preview_objects)
     if not objects and config.task.target_objects:
         objects = [config.task.target_objects[0]]
+    if not objects and isinstance(config.task.metadata, dict):
+        scene_object_pool = list(config.task.metadata.get("scene_object_pool") or [])
+        if scene_object_pool:
+            objects = [str(scene_object_pool[0])]
     return scene, objects
 
 

@@ -76,6 +76,9 @@ def _metadata_name_list(metadata: dict[str, Any], key: str) -> list[str]:
 
 def _allowed_objects_from_config(config: ProjectConfig) -> list[str]:
     metadata = config.task.metadata if isinstance(config.task.metadata, dict) else {}
+    scene_object_pool = _metadata_name_list(metadata, "scene_object_pool")
+    if scene_object_pool:
+        return scene_object_pool
     target_pool = _metadata_name_list(metadata, "target_object_pool")
     distractor_pool = _metadata_name_list(metadata, "distractor_object_pool")
     if target_pool or distractor_pool:

@@ -50,7 +50,19 @@ from .synthetic_tasks import (
 HERE = Path(__file__).resolve().parent
 DEFAULT_CATALOG_PATH = HERE / "datasets" / "cdpr_scene_catalog.yaml"
 DEFAULT_VIDEO_DIR = HERE / "datasets" / "cdpr_synth" / "videos"
-DEFAULT_ALLOWED_OBJECTS: tuple[str, ...] = ("ycb_apple", "ycb_pear", "ycb_peach")
+DEFAULT_ALLOWED_OBJECTS: tuple[str, ...] = (
+    "ycb_apple",
+    "ycb_banana",
+    "ycb_pear",
+    "ycb_peach",
+    "bowl",
+    "plate",
+    "ycb_baseball",
+    "ycb_lemon",
+    "ycb_fork",
+    "ycb_hummer",
+    "ycb_spoon",
+)
 DEFAULT_DESK_GEOM_REGEX = r"(table|desk|workbench|counter|surface)"
 WRAP_DIR = HERE / "wrappers"
 MIN_EE_START_Z = 0.40
@@ -62,8 +74,10 @@ CDPR_RANDOMIZE_EE_START_ENV = "RLVLA_CDPR_RANDOMIZE_EE_START"
 CDPR_EE_START_X_BOUNDS_ENV = "RLVLA_CDPR_EE_START_X_BOUNDS"
 CDPR_EE_START_Y_BOUNDS_ENV = "RLVLA_CDPR_EE_START_Y_BOUNDS"
 CDPR_EE_START_Z_ENV = "RLVLA_CDPR_EE_START_Z"
-DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.12, 0.12)
-DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.12, 0.12)
+DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
+DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
+DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
+DEFAULT_GOAL_HEIGHT_ABOVE_TABLE = 0.10
 
 ROBOT_BODY_PREFIXES = (
     "world",
@@ -190,6 +204,59 @@ def _sample_scene_object_count(
     return int(rng.integers(lower, upper + 1))
 
 
+def _build_scene_object_variants(
+    *,
+    scene_names: Sequence[str],
+    object_pool: Sequence[str],
+    min_scene_objects: int,
+    max_scene_objects: int,
+    scene_variant_count: int,
+    seed: int | None,
+) -> list[SceneSpec]:
+    object_pool = _dedupe_names(object_pool)
+    if not object_pool:
+        raise ValueError("Scene object pool cannot be empty when building scene variants.")
+
+    scene_names = _unique_scene_names([SceneSpec(name=name, objects=()) for name in scene_names])
+    rng = np.random.default_rng(0 if seed is None else int(seed))
+    requested = max(int(scene_variant_count), len(scene_names))
+    variants: list[SceneSpec] = []
+    seen: set[tuple[str, tuple[str, ...]]] = set()
+
+    def _make_variant(scene_name: str) -> SceneSpec:
+        desired_count = _sample_scene_object_count(
+            rng=rng,
+            min_objects=min_scene_objects,
+            max_objects=max_scene_objects,
+            total_available=len(object_pool),
+        )
+        chosen = list(rng.choice(object_pool, size=desired_count, replace=False))
+        chosen.sort()
+        return SceneSpec(name=scene_name, objects=tuple(chosen))
+
+    for scene_name in scene_names:
+        variant = _make_variant(scene_name)
+        key = (variant.name, tuple(sorted(variant.objects)))
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append(variant)
+
+    max_attempts = max(requested * 8, 32)
+    attempts = 0
+    while len(variants) < requested and attempts < max_attempts:
+        attempts += 1
+        scene_name = str(scene_names[int(rng.integers(0, len(scene_names)))])
+        variant = _make_variant(scene_name)
+        key = (variant.name, tuple(sorted(variant.objects)))
+        if key in seen:
+            continue
+        seen.add(key)
+        variants.append(variant)
+
+    return variants
+
+
 def _build_scene_variants(
     *,
     scene_names: Sequence[str],
@@ -265,6 +332,27 @@ def _configure_scene_sampling(
     task_metadata: dict[str, Any],
     seed: int | None,
 ) -> tuple[list[SceneSpec], tuple[str, ...], tuple[str, ...], tuple[str, ...]]:
+    scene_object_pool = _metadata_name_list(task_metadata, "scene_object_pool")
+    if scene_object_pool:
+        allowed = _dedupe_names(scene_object_pool)
+        min_scene_objects = int(task_metadata.get("min_scene_objects", 1))
+        max_scene_objects = int(task_metadata.get("max_scene_objects", min(3, max(1, len(allowed)))))
+        scene_variant_count = int(
+            task_metadata.get(
+                "scene_variant_count",
+                max(len(base_scenes), len(_unique_scene_names(base_scenes)) * max(1, len(allowed))),
+            )
+        )
+        scenes = _build_scene_object_variants(
+            scene_names=_unique_scene_names(base_scenes),
+            object_pool=allowed,
+            min_scene_objects=min_scene_objects,
+            max_scene_objects=max_scene_objects,
+            scene_variant_count=scene_variant_count,
+            seed=seed,
+        )
+        return scenes, allowed, (), ()
+
     target_pool = _metadata_name_list(task_metadata, "target_object_pool")
     distractor_pool = _metadata_name_list(task_metadata, "distractor_object_pool")
 
@@ -668,11 +756,11 @@ class CDPRLanguageRLEnv(_EnvBase):
 
     Observation space:
       - ee_position: (3,)
-      - target_object_position: (3,)
+      - target_object_position: (3,) waypoint goal position
       - all_object_positions: (max_objects, 3)
       - object_position_mask: (max_objects,)
-      - instruction_onehot: (5,)
-      - goal_direction: (2,) for move instructions, zeros for pick.
+      - instruction_onehot: (7,)
+      - goal_direction: (3,) motion direction for the current waypoint goal.
     """
 
     metadata = {"render.modes": []}
@@ -691,7 +779,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_start_x_bounds: Sequence[float] | None = None,
         ee_start_y_bounds: Sequence[float] | None = None,
         ee_start_z: float | None = None,
-        move_distance: float = 0.20,
+        move_distance: float = 0.40,
         lift_distance: float = 0.10,
         capture_frames: bool = False,
         instruction_types: Optional[Sequence[str]] = None,
@@ -805,6 +893,9 @@ class CDPRLanguageRLEnv(_EnvBase):
             task_metadata=self._task_metadata,
             seed=seed,
         )
+        self.scene_object_pool = _metadata_name_list(self._task_metadata, "scene_object_pool")
+        if not self.scene_object_pool:
+            self.scene_object_pool = tuple(self.allowed_objects)
 
         self.action_space = spaces.Box(
             low=-1.0,
@@ -825,7 +916,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                 "instruction_onehot": spaces.Box(
                     0.0, 1.0, shape=(len(INSTRUCTION_TYPES),), dtype=np.float32
                 ),
-                "goal_direction": spaces.Box(-1.0, 1.0, shape=(2,), dtype=np.float32),
+                "goal_direction": spaces.Box(-1.0, 1.0, shape=(3,), dtype=np.float32),
             }
         )
 
@@ -854,6 +945,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._ee_spawn_z = float("-inf")
         self._locked_target_xyz = np.zeros((3,), dtype=np.float32)
         self._episode_ee_start = self._default_ee_start().astype(np.float32)
+        self._goal_position = np.zeros((3,), dtype=np.float32)
+        self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
         self._episode_index = -1
         self._reset_counter = 0
 
@@ -892,27 +985,11 @@ class CDPRLanguageRLEnv(_EnvBase):
                 # Continue if placement fails; wrapper-provided placement is still valid.
                 pass
 
-        requested_target = (options or {}).get("target_object")
-        if requested_target and requested_target in scene.objects:
-            self._target_catalog_name = str(requested_target)
-        elif scene.target_object and scene.target_object in scene.objects:
-            self._target_catalog_name = str(scene.target_object)
-        else:
-            idx = int(self.np_random.integers(0, len(scene.objects)))
-            self._target_catalog_name = scene.objects[idx]
-
-        target_body = self._catalog_to_body.get(self._target_catalog_name)
-        if target_body is None:
-            try:
-                target_body = resolve_body_name(self.sim, self._target_catalog_name)
-            except Exception:
-                target_body = self._object_body_names[0] if self._object_body_names else ""
-        self._target_body_name = target_body
-        if not self._target_body_name:
-            raise RuntimeError("Could not resolve target object body for RL episode reset.")
+        self._target_catalog_name = ""
+        self._target_body_name = ""
 
         self._instruction_spec = sample_instruction(
-            target_object=self._target_catalog_name,
+            target_object=None,
             rng=self.np_random,
             allowed_instruction_types=self.instruction_types,
             move_distance=self.move_distance,
@@ -921,8 +998,17 @@ class CDPRLanguageRLEnv(_EnvBase):
         setattr(self.sim, "language_instruction", self._instruction_spec.text)
 
         ee0 = self._get_ee_position()
-        obj0 = self._get_body_position(self._target_body_name)
-        self._reward_state = init_reward_state(ee0, obj0)
+        self._goal_position = self._compute_instruction_goal(
+            spec=self._instruction_spec,
+            initial_ee_pos=ee0,
+            options=options,
+        )
+        self._goal_motion_direction = self._compute_goal_motion_direction(
+            initial_ee_pos=ee0,
+            goal_pos=self._goal_position,
+            instruction_direction=self._instruction_spec.direction,
+        )
+        self._reward_state = init_reward_state(ee0, self._goal_position)
         self._step_count = 0
         self._yaw = self._read_current_yaw()
         self._last_gripper_cmd = 0.0
@@ -956,29 +1042,21 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._apply_action(action)
 
         ee = self._get_ee_position()
-        obj = self._get_body_position(self._target_body_name)
-        caught_body, caught_catalog, caught_score, caught_is_target = self._detect_caught_object(ee_pos=ee)
-        gripper_surface_alignment = self._get_gripper_surface_alignment(obj_pos=obj)
-        camera_alignment = self._get_ee_camera_alignment(obj_pos=obj)
-        ee_height_above_surface: Optional[float]
-        if np.isfinite(self._support_surface_z):
-            ee_height_above_surface = float(ee[2] - self._support_surface_z)
-        else:
-            ee_height_above_surface = None
-        ee_yaw_for_reward: Optional[float] = None
-        if hasattr(self.sim, "set_yaw") or hasattr(self.sim, "get_yaw"):
-            ee_yaw_for_reward = float(self._yaw)
+        goal_pos = self._goal_position.astype(np.float32)
+        camera_alignment = self._get_ee_camera_alignment(direction=self._goal_motion_direction)
+        caught_body = ""
+        caught_catalog = ""
+        caught_score = 0.0
+        caught_is_target = False
         reward_kwargs = {
             "spec": self._instruction_spec,
             "ee_pos": ee,
-            "obj_pos": obj,
+            "obj_pos": goal_pos,
+            "goal_pos": goal_pos,
             "reward_state": self._reward_state,
             "action": action,
-            "ee_yaw": ee_yaw_for_reward,
-            "gripper_surface_alignment": gripper_surface_alignment,
             "camera_alignment": camera_alignment,
-            "ee_height_above_surface": ee_height_above_surface,
-            "gripper_command": float(self._last_gripper_cmd),
+            "goal_direction": self._goal_motion_direction,
             "goal_region": self._goal_region,
             "goal_relation": self._goal_relation,
             "dense_reward_terms": self._dense_reward_terms,
@@ -1043,6 +1121,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._desk_texture_name = ""
         self._prev_object_positions = {}
         self._inverse_catalog_to_body = {}
+        self._goal_position = np.zeros((3,), dtype=np.float32)
+        self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
 
     def _sample_scene(self, options: Optional[dict[str, Any]]) -> SceneSpec:
         requested_scene = (options or {}).get("scene")
@@ -1081,6 +1161,90 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_start[0] = float(self.np_random.uniform(*self.ee_start_x_bounds))
         ee_start[1] = float(self.np_random.uniform(*self.ee_start_y_bounds))
         return ee_start
+
+    def _goal_center(self) -> np.ndarray:
+        raw_xy = self._task_metadata.get("goal_center_xy", self.defaults.get("goal_center_xy", DEFAULT_GOAL_CENTER_XY))
+        xy = np.asarray(raw_xy, dtype=np.float32).reshape(-1)
+        if xy.size < 2:
+            raise ValueError(f"goal_center_xy must contain at least two values, got {raw_xy!r}")
+        height_above_table = float(
+            self._task_metadata.get(
+                "goal_height_above_table",
+                self.defaults.get("goal_height_above_table", DEFAULT_GOAL_HEIGHT_ABOVE_TABLE),
+            )
+        )
+        center = np.array([xy[0], xy[1], self._support_surface_z + height_above_table], dtype=np.float32)
+        center = np.asarray(clamp_xyz(center), dtype=np.float32)
+        if np.isfinite(self._ee_min_z):
+            center[2] = max(float(center[2]), float(self._ee_min_z))
+        return center
+
+    def _compute_instruction_goal(
+        self,
+        *,
+        spec,
+        initial_ee_pos: np.ndarray,
+        options: Optional[dict[str, Any]] = None,
+    ) -> np.ndarray:
+        requested_goal = (options or {}).get("goal_position")
+        if requested_goal is None:
+            requested_goal = (options or {}).get("target_position")
+        if requested_goal is not None:
+            goal = np.asarray(clamp_xyz(requested_goal), dtype=np.float32)
+        else:
+            center = self._goal_center()
+            lateral_offset = float(self._task_metadata.get("lateral_goal_offset", spec.target_displacement))
+            vertical_offset = float(self._task_metadata.get("vertical_goal_offset", spec.lift_target))
+            goal = center.copy()
+            if spec.instruction_type == "move_left":
+                goal[0] -= lateral_offset
+            elif spec.instruction_type == "move_right":
+                goal[0] += lateral_offset
+            elif spec.instruction_type == "move_top":
+                goal[1] += lateral_offset
+            elif spec.instruction_type == "move_bottom":
+                goal[1] -= lateral_offset
+            elif spec.instruction_type == "move_up":
+                goal[0] = float(initial_ee_pos[0])
+                goal[1] = float(initial_ee_pos[1])
+                goal[2] = float(initial_ee_pos[2] + vertical_offset)
+            elif spec.instruction_type == "move_down":
+                goal[0] = float(initial_ee_pos[0])
+                goal[1] = float(initial_ee_pos[1])
+                goal[2] = float(initial_ee_pos[2] - vertical_offset)
+            elif spec.instruction_type != "move_center":
+                raise RuntimeError(f"Unsupported instruction type for goal generation: {spec.instruction_type}")
+            goal = np.asarray(clamp_xyz(goal), dtype=np.float32)
+
+        min_goal_height = float(self._task_metadata.get("min_goal_height_above_table", 0.02))
+        goal[2] = max(float(goal[2]), float(self._support_surface_z + min_goal_height))
+        if np.isfinite(self._ee_min_z):
+            goal[2] = max(float(goal[2]), float(self._ee_min_z))
+        return goal.astype(np.float32)
+
+    def _compute_goal_motion_direction(
+        self,
+        *,
+        initial_ee_pos: np.ndarray,
+        goal_pos: np.ndarray,
+        instruction_direction: np.ndarray,
+    ) -> np.ndarray:
+        goal_delta = np.asarray(goal_pos - initial_ee_pos, dtype=np.float32)
+        goal_norm = float(np.linalg.norm(goal_delta))
+        if goal_norm > 1e-8:
+            return (goal_delta / goal_norm).astype(np.float32)
+
+        fallback = np.asarray(instruction_direction, dtype=np.float32).reshape(-1)
+        if fallback.size < 3:
+            padded = np.zeros((3,), dtype=np.float32)
+            padded[: fallback.size] = fallback
+            fallback = padded
+        else:
+            fallback = fallback[:3]
+        fallback_norm = float(np.linalg.norm(fallback))
+        if fallback_norm > 1e-8:
+            return (fallback / fallback_norm).astype(np.float32)
+        return np.zeros((3,), dtype=np.float32)
 
     def _build_wrapper(self, scene: SceneSpec, *, ee_start: Sequence[float] | np.ndarray | None = None) -> Path:
         build_wrapper_if_needed, list_wrapper_bundle_paths = _import_wrapper_builder()
@@ -1335,7 +1499,12 @@ class CDPRLanguageRLEnv(_EnvBase):
         # Absolute because either finger can face the target.
         return float(np.clip(abs(np.dot(surface_normal_xy, to_obj_xy)), 0.0, 1.0))
 
-    def _get_ee_camera_alignment(self, obj_pos: np.ndarray) -> Optional[float]:
+    def _get_ee_camera_alignment(
+        self,
+        target_pos: Optional[np.ndarray] = None,
+        *,
+        direction: Optional[np.ndarray] = None,
+    ) -> Optional[float]:
         cam_id = mj.mj_name2id(self.sim.model, mj.mjtObj.mjOBJ_CAMERA, "ee_camera")
         if cam_id == -1:
             return None
@@ -1349,13 +1518,25 @@ class CDPRLanguageRLEnv(_EnvBase):
             return None
         cam_forward /= norm_forward
 
-        to_obj = np.asarray(obj_pos - cam_pos, dtype=np.float32)
-        norm_to_obj = float(np.linalg.norm(to_obj))
-        if norm_to_obj < 1e-8:
-            return 1.0
-        to_obj /= norm_to_obj
+        if direction is not None:
+            desired = np.asarray(direction, dtype=np.float32).reshape(-1)
+            if desired.size < 3:
+                padded = np.zeros((3,), dtype=np.float32)
+                padded[: desired.size] = desired
+                desired = padded
+            else:
+                desired = desired[:3]
+        elif target_pos is not None:
+            desired = np.asarray(target_pos - cam_pos, dtype=np.float32)
+        else:
+            return None
 
-        return float(np.clip(np.dot(cam_forward, to_obj), 0.0, 1.0))
+        norm_desired = float(np.linalg.norm(desired))
+        if norm_desired < 1e-8:
+            return 1.0
+        desired /= norm_desired
+
+        return float(np.clip(np.dot(cam_forward, desired), 0.0, 1.0))
 
     def _apply_action(self, action: np.ndarray):
         ee = self._get_ee_position()
@@ -1399,7 +1580,7 @@ class CDPRLanguageRLEnv(_EnvBase):
 
     def _get_obs(self) -> dict[str, np.ndarray]:
         ee_pos = self._get_ee_position()
-        target_pos = self._get_body_position(self._target_body_name)
+        target_pos = self._goal_position.astype(np.float32)
 
         obj_pos = np.zeros((self.max_objects, 3), dtype=np.float32)
         obj_mask = np.zeros((self.max_objects,), dtype=np.float32)
@@ -1411,7 +1592,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                 continue
 
         onehot = instruction_to_onehot(self._instruction_spec)
-        goal_direction = self._instruction_spec.direction.astype(np.float32)
+        goal_direction = self._goal_motion_direction.astype(np.float32)
 
         obs = {
             "ee_position": ee_pos.astype(np.float32),
@@ -1429,12 +1610,15 @@ class CDPRLanguageRLEnv(_EnvBase):
             "episode_index": int(self._episode_index),
             "scene_objects": list(self._scene_catalog_objects),
             "allowed_objects": list(self.allowed_objects),
+            "scene_object_pool": list(self.scene_object_pool),
             "target_object_pool": list(self.target_object_pool),
             "distractor_object_pool": list(self.distractor_object_pool),
             "target_object_catalog": self._target_catalog_name,
             "target_object_body": self._target_body_name,
             "language_instruction": self._instruction_spec.text,
             "instruction_type": self._instruction_spec.instruction_type,
+            "goal_position": [float(x) for x in self._goal_position.tolist()],
+            "goal_motion_direction": [float(x) for x in self._goal_motion_direction.tolist()],
             "goal_region": dict(self._goal_region),
             "goal_relation": self._goal_relation or "",
             "dense_reward_terms": dict(self._dense_reward_terms),

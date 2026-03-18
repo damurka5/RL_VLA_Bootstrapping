@@ -107,19 +107,21 @@ embodiment:
     close_gripper_threshold: 0.2
 
 task:
-  instruction_types: [pick_up, move_left, move_right, move_top, move_bottom]
-  target_objects: [ycb_apple, ycb_peach, ycb_pear, ycb_a_cups, ycb_baseball, ycb_f_cups]
+  instruction_types: [move_up, move_down, move_left, move_right, move_top, move_bottom, move_center]
+  target_objects: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hummer, ycb_spoon]
   reward:
     file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
     function: compute_instruction_reward
   metadata:
-    goal_relation: object_to_region_or_direction
     zero_demo_first: true
-    target_object_pool: [ycb_apple, ycb_peach, ycb_pear, ycb_a_cups, ycb_baseball, ycb_f_cups]
-    distractor_object_pool: [ycb_banana, ycb_bowl, ycb_fork, ycb_lemon, ycb_plum]
-    min_scene_objects: 2
+    scene_object_pool: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hummer, ycb_spoon]
+    min_scene_objects: 1
     max_scene_objects: 3
     scene_variant_count: 64
+    goal_center_xy: [0.0, 0.0]
+    goal_height_above_table: 0.10
+    lateral_goal_offset: 0.40
+    vertical_goal_offset: 0.10
 
 simulation:
   entrypoint:
@@ -142,7 +144,7 @@ simulation:
     ee_start: [0.0, 0.0, 0.40]
   randomization:
     random_scene_count: 100
-    max_objects: 8
+    max_objects: 3
     use_domain_randomization: true
 
 policy:
@@ -172,12 +174,12 @@ training:
       nproc_per_node: 2
     args:
       num_parallel_envs: 8
-      total_updates: 100
+      total_updates: 30
       rollout_steps: 256
       ppo_epochs: 4
       minibatch_size: 16
       microbatch_size: 16
-      max_env_steps: 150
+      max_env_steps: 100
       gamma: 0.99
       gae_lambda: 0.95
       learning_rate: 1.0e-5
@@ -192,8 +194,8 @@ training:
       lock_non_commanded_axes: true
       lock_non_commanded_axes_threshold: 0.05
       randomize_ee_start: true
-      ee_start_x_bounds: [-0.12, 0.12]
-      ee_start_y_bounds: [-0.12, 0.12]
+      ee_start_x_bounds: [-0.25, 0.25]
+      ee_start_y_bounds: [-0.25, 0.25]
       delta_closer_reward_coef: 0.0
       delta_farther_penalty_coef: 0.0
       save_every: 20
