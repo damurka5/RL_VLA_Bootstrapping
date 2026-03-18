@@ -13,6 +13,7 @@ remote:
   env_vars:
     MUJOCO_GL: egl
     PYOPENGL_PLATFORM: egl
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     TOKENIZERS_PARALLELISM: "false"
   notes:
     - Throughput-oriented PPO profile using a local shim around the external trainer.
@@ -166,9 +167,9 @@ training:
       nproc_per_node: 2
     args:
       external_ppo_script: vla-scripts/ppo_finetune_cdpr.py
-      num_parallel_envs: 16
+      num_parallel_envs: 12
       total_updates: 30
-      rollout_steps: 128
+      rollout_steps: 170
       ppo_epochs: 4
       minibatch_size: 16
       microbatch_size: 16
@@ -181,7 +182,7 @@ training:
       weight_decay: 0.0
       normalize_advantage: true
       init_log_std: -1.2
-      gradient_checkpointing: false
+      gradient_checkpointing: true
       action_step_xyz: 0.02
       action_step_yaw: 0.08
       hold_steps: 10
@@ -209,7 +210,7 @@ training:
       tensorboard_every_updates: 5
       device: cuda
       quiet_env_logs: true
-      status_bar: false
+      status_bar: true
   sft:
     enabled: false
 
