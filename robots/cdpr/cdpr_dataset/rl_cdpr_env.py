@@ -56,6 +56,8 @@ WRAP_DIR = HERE / "wrappers"
 MIN_EE_START_Z = 0.40
 TASK_REWARD_PREFIX = "RLVLA_TASK_REWARD"
 TASK_SUCCESS_PREFIX = "RLVLA_TASK_SUCCESS"
+CDPR_LOCK_NON_COMMANDED_AXES_ENV = "RLVLA_CDPR_LOCK_NON_COMMANDED_AXES"
+CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD_ENV = "RLVLA_CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD"
 
 ROBOT_BODY_PREFIXES = (
     "world",
@@ -485,6 +487,28 @@ def _load_json_env(name: str) -> dict[str, Any]:
     return dict(payload)
 
 
+def _load_bool_env(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Environment variable {name} is not a valid boolean: {raw!r}")
+
+
+def _load_float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {name} is not a valid float: {raw!r}") from exc
+
+
 def _prepend_python_paths(paths_raw: str | None) -> None:
     if not paths_raw:
         return
@@ -616,6 +640,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         action_step_xyz: float = 0.02,
         action_step_yaw: float = 0.25,
         hold_steps: int = 0,
+        lock_non_commanded_axes: bool | None = None,
+        lock_non_commanded_axes_threshold: float | None = None,
         move_distance: float = 0.20,
         lift_distance: float = 0.10,
         capture_frames: bool = False,
@@ -658,6 +684,15 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.action_step_xyz = float(action_step_xyz)
         self.action_step_yaw = float(action_step_yaw)
         self.hold_steps = max(0, int(hold_steps))
+        if lock_non_commanded_axes is None:
+            lock_non_commanded_axes = _load_bool_env(CDPR_LOCK_NON_COMMANDED_AXES_ENV, default=False)
+        if lock_non_commanded_axes_threshold is None:
+            lock_non_commanded_axes_threshold = _load_float_env(
+                CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD_ENV,
+                default=0.05,
+            )
+        self.lock_non_commanded_axes = bool(lock_non_commanded_axes)
+        self.lock_non_commanded_axes_threshold = max(0.0, float(lock_non_commanded_axes_threshold))
         self.move_distance = float(move_distance)
         self.lift_distance = float(lift_distance)
         self.capture_frames = bool(capture_frames)
@@ -749,6 +784,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._support_surface_z = 0.0
         self._ee_min_z = float("-inf")
         self._ee_spawn_z = float("-inf")
+        self._locked_target_xyz = np.zeros((3,), dtype=np.float32)
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
         if seed is not None:
@@ -827,6 +863,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                 continue
         self._last_caught_body = ""
         self._last_caught_catalog = ""
+        self._locked_target_xyz = self._get_ee_position().astype(np.float32)
 
         obs = self._get_obs()
         info = self._base_info()
@@ -1219,20 +1256,34 @@ class CDPRLanguageRLEnv(_EnvBase):
 
     def _apply_action(self, action: np.ndarray):
         ee = self._get_ee_position()
-        dxyz = action[:3] * self.action_step_xyz
-        target = clamp_xyz(ee + dxyz)
+        action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+        dxyz = action_arr[:3] * self.action_step_xyz
+
+        if self.lock_non_commanded_axes:
+            reference = np.asarray(self._locked_target_xyz, dtype=np.float32).reshape(3).copy()
+            if not np.all(np.isfinite(reference)):
+                reference = ee.astype(np.float32)
+            active_axes = np.abs(action_arr[:3]) > float(self.lock_non_commanded_axes_threshold)
+            target = reference.copy()
+            target[active_axes] = target[active_axes] + dxyz[active_axes]
+        else:
+            target = ee + dxyz
+
+        target = clamp_xyz(target)
         if np.isfinite(self._ee_min_z):
             target[2] = max(float(target[2]), float(self._ee_min_z))
-        self._set_ee_target(target.astype(np.float32))
+        target = target.astype(np.float32)
+        self._set_ee_target(target)
+        self._locked_target_xyz = target.copy()
 
         if hasattr(self.sim, "set_yaw"):
-            self._yaw = self._yaw + float(action[3]) * self.action_step_yaw
+            self._yaw = self._yaw + float(action_arr[3]) * self.action_step_yaw
             try:
                 self.sim.set_yaw(self._yaw)
             except Exception:
                 pass
 
-        self._last_gripper_cmd = float(action[4])
+        self._last_gripper_cmd = float(action_arr[4])
         if self._last_gripper_cmd >= 0.2 and hasattr(self.sim, "close_gripper"):
             self.sim.close_gripper()
         elif self._last_gripper_cmd <= -0.2 and hasattr(self.sim, "open_gripper"):
@@ -1289,4 +1340,6 @@ class CDPRLanguageRLEnv(_EnvBase):
             "support_surface_z": float(self._support_surface_z),
             "ee_min_z": float(self._ee_min_z) if np.isfinite(self._ee_min_z) else float("nan"),
             "ee_spawn_z": float(self._ee_spawn_z) if np.isfinite(self._ee_spawn_z) else float("nan"),
+            "lock_non_commanded_axes": bool(self.lock_non_commanded_axes),
+            "lock_non_commanded_axes_threshold": float(self.lock_non_commanded_axes_threshold),
         }

@@ -167,6 +167,17 @@ def _append_openvla_script_arg(argv: list[str], key: str, value: Any) -> None:
     append_cli_arg(argv, key, value, preserve_underscores=True)
 
 
+def _extract_cdpr_env_overrides(injected: dict[str, Any]) -> dict[str, str]:
+    env: dict[str, str] = {}
+    if "lock_non_commanded_axes" in injected:
+        env["RLVLA_CDPR_LOCK_NON_COMMANDED_AXES"] = "1" if bool(injected.pop("lock_non_commanded_axes")) else "0"
+    if "lock_non_commanded_axes_threshold" in injected:
+        env["RLVLA_CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD"] = str(
+            float(injected.pop("lock_non_commanded_axes_threshold"))
+        )
+    return env
+
+
 def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     script_path = config.resolve_path(config.training.rl.script_path or config.policy.rl_script)
     if script_path is None:
@@ -219,11 +230,12 @@ def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     injected.setdefault("run_root_dir", run_dir.as_posix())
     injected.setdefault("run_id", "rl")
 
-    for key, value in injected.items():
-        _append_openvla_script_arg(argv, key, value)
-
     stage_env = _shared_env(config)
     stage_env.update(_task_hook_env(config))
+    stage_env.update(_extract_cdpr_env_overrides(injected))
+
+    for key, value in injected.items():
+        _append_openvla_script_arg(argv, key, value)
 
     notes = [
         "Zero-demo RL stage using an external OpenVLA-OFT-compatible trainer.",
