@@ -175,6 +175,18 @@ def _extract_cdpr_env_overrides(injected: dict[str, Any]) -> dict[str, str]:
         env["RLVLA_CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD"] = str(
             float(injected.pop("lock_non_commanded_axes_threshold"))
         )
+    if "randomize_ee_start" in injected:
+        env["RLVLA_CDPR_RANDOMIZE_EE_START"] = "1" if bool(injected.pop("randomize_ee_start")) else "0"
+    if "ee_start_x_bounds" in injected:
+        env["RLVLA_CDPR_EE_START_X_BOUNDS"] = json.dumps(
+            [float(value) for value in injected.pop("ee_start_x_bounds")]
+        )
+    if "ee_start_y_bounds" in injected:
+        env["RLVLA_CDPR_EE_START_Y_BOUNDS"] = json.dumps(
+            [float(value) for value in injected.pop("ee_start_y_bounds")]
+        )
+    if "ee_start_z" in injected:
+        env["RLVLA_CDPR_EE_START_Z"] = str(float(injected.pop("ee_start_z")))
     return env
 
 

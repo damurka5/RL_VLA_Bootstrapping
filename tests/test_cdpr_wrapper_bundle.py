@@ -10,6 +10,8 @@ from tempfile import TemporaryDirectory
 from types import SimpleNamespace
 from unittest import mock
 
+import numpy as np
+
 
 def _load_generate_module():
     dummy_pkg = sys.modules.setdefault("cdpr_mujoco", types.ModuleType("cdpr_mujoco"))
@@ -141,6 +143,73 @@ class WrapperBundleTests(unittest.TestCase):
         build_wrapper_if_needed, list_wrapper_bundle_paths = handle
         self.assertIs(build_wrapper_if_needed, self.mod.build_wrapper_if_needed)
         self.assertIs(list_wrapper_bundle_paths, self.mod.list_wrapper_bundle_paths)
+
+    def test_rl_env_build_wrapper_uses_unique_temp_bundle_for_randomized_ee_start(self):
+        scene = self.rl_env_mod.SceneSpec(name="desk", objects=("ycb_apple",))
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            issued: dict[str, object] = {}
+
+            def fake_builder(**kwargs):
+                issued.update(kwargs)
+                wrapper_path = Path(kwargs["wrapper_out"]).resolve()
+                wrapper_path.write_text("<mujoco/>", encoding="utf-8")
+                return wrapper_path
+
+            env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
+            env.defaults = {
+                "scene_z": -0.85,
+                "table_z": 0.15,
+                "settle_time": 0.0,
+                "ee_start": [0.0, 0.0, 0.40],
+            }
+            env.randomize_ee_start = True
+            env.ee_start_x_bounds = (-0.10, 0.10)
+            env.ee_start_y_bounds = (-0.08, 0.05)
+            env.ee_start_z = None
+            env.use_wrapper_cache = True
+            env.wrapper_cleanup = False
+            env.wrapper_dir = root
+            env.desk_texture_files = []
+            env._cleanup_paths = []
+            env._cleanup_path_set = set()
+            env.np_random = np.random.default_rng(11)
+
+            with mock.patch.object(
+                self.rl_env_mod,
+                "_import_wrapper_builder",
+                return_value=self.rl_env_mod.WrapperBuilderHandle(
+                    build_wrapper_if_needed=fake_builder,
+                    list_wrapper_bundle_paths=lambda path: [Path(path).resolve()],
+                ),
+            ):
+                ee_start = env._sample_episode_ee_start()
+                wrapper_xml = env._build_wrapper(scene=scene, ee_start=ee_start)
+
+            self.assertTrue(wrapper_xml.exists())
+            self.assertFalse(bool(issued["use_cache"]))
+            self.assertEqual(Path(issued["wrapper_out"]).parent, root)
+            self.assertIn(wrapper_xml.resolve(), env._cleanup_paths)
+            sampled = np.asarray(issued["ee_start"], dtype=np.float32)
+            self.assertGreaterEqual(float(sampled[0]), -0.10)
+            self.assertLessEqual(float(sampled[0]), 0.10)
+            self.assertGreaterEqual(float(sampled[1]), -0.08)
+            self.assertLessEqual(float(sampled[1]), 0.05)
+            self.assertAlmostEqual(float(sampled[2]), 0.40, places=6)
+
+    def test_rl_env_can_override_episode_ee_start_via_reset_options(self):
+        env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
+        env.defaults = {"ee_start": [0.0, 0.0, 0.40]}
+        env.randomize_ee_start = False
+        env.ee_start_x_bounds = (-0.12, 0.12)
+        env.ee_start_y_bounds = (-0.12, 0.12)
+        env.ee_start_z = None
+        env.np_random = np.random.default_rng(0)
+
+        ee_start = env._sample_episode_ee_start(options={"ee_start": [0.07, -0.03, 0.18]})
+
+        np.testing.assert_allclose(ee_start, np.array([0.07, -0.03, 0.40], dtype=np.float64), atol=1e-9)
 
 
 if __name__ == "__main__":

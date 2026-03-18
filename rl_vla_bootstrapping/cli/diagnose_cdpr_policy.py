@@ -5,6 +5,7 @@ import json
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import numpy as np
@@ -26,6 +27,11 @@ from robots.cdpr.cdpr_mujoco.policy_control import (
     policy_action_frequency_hz,
     policy_action_period_s,
 )
+
+
+MIN_EE_START_Z = 0.40
+DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.12, 0.12)
+DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.12, 0.12)
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,34 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hold-steps", type=int, default=None, help="Override extra simulator substeps per policy action.")
     parser.add_argument("--action-step-xyz", type=float, default=None, help="Optional override for XYZ step size in meters.")
     parser.add_argument("--action-step-yaw", type=float, default=None, help="Optional override for yaw step size in radians.")
+    parser.add_argument(
+        "--randomize-ee-start",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Sample an off-center EE spawn in XY before scene build.",
+    )
+    parser.add_argument(
+        "--ee-start-x-bounds",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("LOW", "HIGH"),
+        help="Optional X bounds in meters for random EE spawn sampling.",
+    )
+    parser.add_argument(
+        "--ee-start-y-bounds",
+        type=float,
+        nargs=2,
+        default=None,
+        metavar=("LOW", "HIGH"),
+        help="Optional Y bounds in meters for random EE spawn sampling.",
+    )
+    parser.add_argument(
+        "--ee-start-z",
+        type=float,
+        default=None,
+        help="Optional scene-build EE spawn Z override in meters.",
+    )
     parser.add_argument(
         "--axis-magnitude",
         type=float,
@@ -194,6 +228,65 @@ def _build_random_demos(
             )
         )
     return demos
+
+
+def _normalize_bounds_pair(values: Any, *, name: str) -> tuple[float, float]:
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    if arr.size != 2:
+        raise ValueError(f"{name} must contain exactly two floats, got {values!r}")
+    low = float(arr[0])
+    high = float(arr[1])
+    if not np.isfinite(low) or not np.isfinite(high):
+        raise ValueError(f"{name} must contain finite floats, got {values!r}")
+    if low <= high:
+        return low, high
+    return high, low
+
+
+def _coerce_ee_start(values: Any) -> np.ndarray:
+    ee_start = np.asarray(values, dtype=float).reshape(3)
+    if not np.all(np.isfinite(ee_start)):
+        raise ValueError(f"ee_start must contain finite floats, got {values!r}")
+    ee_start[2] = max(float(ee_start[2]), MIN_EE_START_Z)
+    return ee_start
+
+
+def _scene_build_kwargs_from_args(config: Any, args: argparse.Namespace) -> tuple[dict[str, Any], dict[str, Any]]:
+    base_kwargs = dict(getattr(getattr(config, "simulation", SimpleNamespace(build_kwargs={})), "build_kwargs", {}) or {})
+    ee_start = _coerce_ee_start(base_kwargs.get("ee_start", (0.0, 0.0, MIN_EE_START_Z)))
+    if args.ee_start_z is not None:
+        ee_start[2] = max(float(args.ee_start_z), MIN_EE_START_Z)
+
+    randomize = bool(
+        args.randomize_ee_start
+        or args.ee_start_x_bounds is not None
+        or args.ee_start_y_bounds is not None
+    )
+    spawn_info: dict[str, Any] = {
+        "enabled": bool(randomize or args.ee_start_z is not None),
+        "randomized": bool(randomize),
+        "ee_start": [float(x) for x in ee_start.tolist()],
+    }
+    if not randomize and args.ee_start_z is None:
+        return {}, spawn_info
+
+    if randomize:
+        x_bounds = _normalize_bounds_pair(
+            args.ee_start_x_bounds or DEFAULT_RANDOM_EE_START_X_BOUNDS,
+            name="ee_start_x_bounds",
+        )
+        y_bounds = _normalize_bounds_pair(
+            args.ee_start_y_bounds or DEFAULT_RANDOM_EE_START_Y_BOUNDS,
+            name="ee_start_y_bounds",
+        )
+        rng = np.random.default_rng(int(args.seed))
+        ee_start[0] = float(rng.uniform(*x_bounds))
+        ee_start[1] = float(rng.uniform(*y_bounds))
+        spawn_info["ee_start_x_bounds"] = [float(x_bounds[0]), float(x_bounds[1])]
+        spawn_info["ee_start_y_bounds"] = [float(y_bounds[0]), float(y_bounds[1])]
+
+    spawn_info["ee_start"] = [float(x) for x in ee_start.tolist()]
+    return {"ee_start": [float(x) for x in ee_start.tolist()]}, spawn_info
 
 
 def _mm(vec: np.ndarray) -> np.ndarray:
@@ -743,11 +836,13 @@ def main() -> int:
     if not demos:
         raise RuntimeError("No diagnostic demos were generated.")
 
+    scene_build_kwargs, ee_spawn_config = _scene_build_kwargs_from_args(config, args)
     xml_path = build_scene_xml(
         config,
         output_dir=run_dir / "scene",
         scene_name=scene_name,
         object_names=object_names,
+        build_kwargs_overrides=scene_build_kwargs,
     )
     embodiment = MujocoEmbodiment(config=config, spec=config.embodiment)
     control_spec = _control_spec_from_config(config, args.hold_steps)
@@ -764,6 +859,17 @@ def main() -> int:
     print(f"Chunk repeats: {max(1, int(args.chunk_repeats))}")
     print(f"Reset each repeat: {bool(args.reset_to_visible_start_each_repeat)}")
     print(f"Capture mode: {'all_substeps' if args.capture_all_substeps else 'last_frame_only'}")
+    if ee_spawn_config["randomized"]:
+        print(
+            "Randomized EE start: "
+            f"{ee_spawn_config['ee_start']} "
+            f"(x_bounds={ee_spawn_config['ee_start_x_bounds']}, "
+            f"y_bounds={ee_spawn_config['ee_start_y_bounds']}, seed={int(args.seed)})"
+        )
+    elif ee_spawn_config["enabled"]:
+        print(f"EE start override: {ee_spawn_config['ee_start']}")
+    else:
+        print(f"EE start: {ee_spawn_config['ee_start']}")
 
     demo_root = ensure_directory(run_dir / "demos")
     manifest_demos: list[dict[str, Any]] = []
@@ -826,6 +932,8 @@ def main() -> int:
         "lock_non_commanded_axes": bool(args.lock_non_commanded_axes),
         "capture_mode": "all_substeps" if args.capture_all_substeps else "last_frame_only",
         "seed": int(args.seed),
+        "scene_build_kwargs_overrides": scene_build_kwargs,
+        "ee_spawn": ee_spawn_config,
         "control_spec": asdict(control_spec),
         "sim_dt": sim_dt,
         "policy_period_s": action_period,

@@ -58,6 +58,12 @@ TASK_REWARD_PREFIX = "RLVLA_TASK_REWARD"
 TASK_SUCCESS_PREFIX = "RLVLA_TASK_SUCCESS"
 CDPR_LOCK_NON_COMMANDED_AXES_ENV = "RLVLA_CDPR_LOCK_NON_COMMANDED_AXES"
 CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD_ENV = "RLVLA_CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD"
+CDPR_RANDOMIZE_EE_START_ENV = "RLVLA_CDPR_RANDOMIZE_EE_START"
+CDPR_EE_START_X_BOUNDS_ENV = "RLVLA_CDPR_EE_START_X_BOUNDS"
+CDPR_EE_START_Y_BOUNDS_ENV = "RLVLA_CDPR_EE_START_Y_BOUNDS"
+CDPR_EE_START_Z_ENV = "RLVLA_CDPR_EE_START_Z"
+DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.12, 0.12)
+DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.12, 0.12)
 
 ROBOT_BODY_PREFIXES = (
     "world",
@@ -509,6 +515,45 @@ def _load_float_env(name: str, default: float) -> float:
         raise ValueError(f"Environment variable {name} is not a valid float: {raw!r}") from exc
 
 
+def _normalize_float_pair(values: Sequence[float], *, name: str) -> tuple[float, float]:
+    arr = np.asarray(values, dtype=float).reshape(-1)
+    if arr.size != 2:
+        raise ValueError(f"{name} must contain exactly two floats, got {values!r}")
+    low = float(arr[0])
+    high = float(arr[1])
+    if not np.isfinite(low) or not np.isfinite(high):
+        raise ValueError(f"{name} must contain finite floats, got {values!r}")
+    if low <= high:
+        return low, high
+    return high, low
+
+
+def _load_float_pair_env(name: str, default: Sequence[float]) -> tuple[float, float]:
+    raw = os.environ.get(name)
+    if raw is None:
+        return _normalize_float_pair(default, name=name)
+
+    payload: Sequence[Any]
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        parsed = [chunk for chunk in re.split(r"[\s,]+", str(raw).strip()) if chunk]
+    if not isinstance(parsed, (list, tuple)) or len(parsed) != 2:
+        raise ValueError(
+            f"Environment variable {name} must contain two floats as JSON or comma-separated text, got {raw!r}"
+        )
+    payload = parsed
+    return _normalize_float_pair((float(payload[0]), float(payload[1])), name=name)
+
+
+def _coerce_ee_start(values: Sequence[float]) -> np.ndarray:
+    ee_start = np.asarray(values, dtype=float).reshape(3)
+    if not np.all(np.isfinite(ee_start)):
+        raise ValueError(f"ee_start must contain finite floats, got {values!r}")
+    ee_start[2] = max(float(ee_start[2]), MIN_EE_START_Z)
+    return ee_start
+
+
 def _prepend_python_paths(paths_raw: str | None) -> None:
     if not paths_raw:
         return
@@ -642,6 +687,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         hold_steps: int = 0,
         lock_non_commanded_axes: bool | None = None,
         lock_non_commanded_axes_threshold: float | None = None,
+        randomize_ee_start: bool | None = None,
+        ee_start_x_bounds: Sequence[float] | None = None,
+        ee_start_y_bounds: Sequence[float] | None = None,
+        ee_start_z: float | None = None,
         move_distance: float = 0.20,
         lift_distance: float = 0.10,
         capture_frames: bool = False,
@@ -691,8 +740,27 @@ class CDPRLanguageRLEnv(_EnvBase):
                 CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD_ENV,
                 default=0.05,
             )
+        if randomize_ee_start is None:
+            randomize_ee_start = _load_bool_env(CDPR_RANDOMIZE_EE_START_ENV, default=False)
+        if ee_start_x_bounds is None:
+            ee_start_x_bounds = _load_float_pair_env(
+                CDPR_EE_START_X_BOUNDS_ENV,
+                default=DEFAULT_RANDOM_EE_START_X_BOUNDS,
+            )
+        if ee_start_y_bounds is None:
+            ee_start_y_bounds = _load_float_pair_env(
+                CDPR_EE_START_Y_BOUNDS_ENV,
+                default=DEFAULT_RANDOM_EE_START_Y_BOUNDS,
+            )
+        if ee_start_z is None:
+            loaded_ee_start_z = _load_float_env(CDPR_EE_START_Z_ENV, default=float("nan"))
+            ee_start_z = None if not np.isfinite(loaded_ee_start_z) else float(loaded_ee_start_z)
         self.lock_non_commanded_axes = bool(lock_non_commanded_axes)
         self.lock_non_commanded_axes_threshold = max(0.0, float(lock_non_commanded_axes_threshold))
+        self.randomize_ee_start = bool(randomize_ee_start)
+        self.ee_start_x_bounds = _normalize_float_pair(ee_start_x_bounds, name="ee_start_x_bounds")
+        self.ee_start_y_bounds = _normalize_float_pair(ee_start_y_bounds, name="ee_start_y_bounds")
+        self.ee_start_z = None if ee_start_z is None else max(float(ee_start_z), MIN_EE_START_Z)
         self.move_distance = float(move_distance)
         self.lift_distance = float(lift_distance)
         self.capture_frames = bool(capture_frames)
@@ -785,6 +853,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._ee_min_z = float("-inf")
         self._ee_spawn_z = float("-inf")
         self._locked_target_xyz = np.zeros((3,), dtype=np.float32)
+        self._episode_ee_start = self._default_ee_start().astype(np.float32)
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
         if seed is not None:
@@ -795,7 +864,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._scene_name = scene.name
         self._scene_catalog_objects = list(scene.objects)
 
-        wrapper_xml = self._build_wrapper(scene=scene)
+        episode_ee_start = self._sample_episode_ee_start(options=options)
+        self._episode_ee_start = episode_ee_start.astype(np.float32)
+        wrapper_xml = self._build_wrapper(scene=scene, ee_start=episode_ee_start)
         self._current_wrapper_xml = wrapper_xml
         self.sim = self._sim_cls(xml_path=str(wrapper_xml), output_dir=str(DEFAULT_VIDEO_DIR))
         self.sim.initialize()
@@ -982,27 +1053,49 @@ class CDPRLanguageRLEnv(_EnvBase):
         idx = int(self.np_random.integers(0, len(self.scenes)))
         return self.scenes[idx]
 
-    def _build_wrapper(self, scene: SceneSpec) -> Path:
+    def _default_ee_start(self) -> np.ndarray:
+        ee_start = _coerce_ee_start(self.defaults.get("ee_start", (0.0, 0.0, MIN_EE_START_Z)))
+        if self.ee_start_z is not None:
+            ee_start[2] = max(float(self.ee_start_z), MIN_EE_START_Z)
+        return ee_start
+
+    def _sample_episode_ee_start(self, options: Optional[dict[str, Any]] = None) -> np.ndarray:
+        requested = (options or {}).get("ee_start")
+        if requested is not None:
+            return _coerce_ee_start(requested)
+
+        ee_start = self._default_ee_start()
+        if not self.randomize_ee_start:
+            return ee_start
+
+        ee_start[0] = float(self.np_random.uniform(*self.ee_start_x_bounds))
+        ee_start[1] = float(self.np_random.uniform(*self.ee_start_y_bounds))
+        return ee_start
+
+    def _build_wrapper(self, scene: SceneSpec, *, ee_start: Sequence[float] | np.ndarray | None = None) -> Path:
         build_wrapper_if_needed, list_wrapper_bundle_paths = _import_wrapper_builder()
+        default_ee_start = self._default_ee_start()
+        episode_ee_start = default_ee_start if ee_start is None else _coerce_ee_start(ee_start)
+        unique_wrapper_bundle = bool(
+            self.randomize_ee_start or not np.allclose(episode_ee_start, default_ee_start, atol=1e-9)
+        )
         wrapper_out = None
-        use_cache = bool(self.use_wrapper_cache)
+        use_cache = bool(self.use_wrapper_cache and not unique_wrapper_bundle)
         if (not use_cache) or self.wrapper_cleanup:
             wrapper_out = self._temporary_wrapper_path(scene=scene)
             use_cache = False
-        ee_start = np.asarray(self.defaults.get("ee_start", (0.0, 0.0, MIN_EE_START_Z)), dtype=float).reshape(3)
-        ee_start[2] = max(float(ee_start[2]), MIN_EE_START_Z)
 
         wrapper_xml = build_wrapper_if_needed(
             scene_name=scene.name,
             object_names=list(scene.objects),
             scene_z=self.defaults.get("scene_z", -0.85),
-            ee_start=tuple(float(x) for x in ee_start),
+            ee_start=tuple(float(x) for x in episode_ee_start),
             table_z=self.defaults.get("table_z", 0.15),
             settle_time=self.defaults.get("settle_time", 0.0),
             wrapper_out=wrapper_out,
             use_cache=use_cache,
         )
-        if self.wrapper_cleanup:
+        if self.wrapper_cleanup or unique_wrapper_bundle:
             for path in list_wrapper_bundle_paths(wrapper_xml):
                 self._register_cleanup_path(path)
 
@@ -1021,7 +1114,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             wrapper_xml = patched.wrapper_xml
             self._desk_texture_name = chosen_texture.name
 
-            if self.wrapper_cleanup:
+            if self.wrapper_cleanup or unique_wrapper_bundle:
                 for path in patched.generated_xmls:
                     self._register_cleanup_path(path)
                 for path in patched.generated_files:
@@ -1337,9 +1430,16 @@ class CDPRLanguageRLEnv(_EnvBase):
             "gripper_command": float(self._last_gripper_cmd),
             "desk_texture": self._desk_texture_name,
             "wrapper_xml": str(self._current_wrapper_xml) if self._current_wrapper_xml else "",
+            "ee_start": [float(x) for x in self._episode_ee_start.tolist()],
             "support_surface_z": float(self._support_surface_z),
             "ee_min_z": float(self._ee_min_z) if np.isfinite(self._ee_min_z) else float("nan"),
             "ee_spawn_z": float(self._ee_spawn_z) if np.isfinite(self._ee_spawn_z) else float("nan"),
             "lock_non_commanded_axes": bool(self.lock_non_commanded_axes),
             "lock_non_commanded_axes_threshold": float(self.lock_non_commanded_axes_threshold),
+            "randomize_ee_start": bool(self.randomize_ee_start),
+            "ee_start_x_bounds": [float(self.ee_start_x_bounds[0]), float(self.ee_start_x_bounds[1])],
+            "ee_start_y_bounds": [float(self.ee_start_y_bounds[0]), float(self.ee_start_y_bounds[1])],
+            "ee_start_z_override": (
+                float(self.ee_start_z) if self.ee_start_z is not None else float("nan")
+            ),
         }

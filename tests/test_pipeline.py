@@ -124,6 +124,9 @@ class PipelineTests(unittest.TestCase):
                             "wrapper_cleanup": False,
                             "lock_non_commanded_axes": True,
                             "lock_non_commanded_axes_threshold": 0.05,
+                            "randomize_ee_start": True,
+                            "ee_start_x_bounds": [-0.12, 0.12],
+                            "ee_start_y_bounds": [-0.08, 0.10],
                         },
                     },
                     "sft": {"enabled": True, "args": {"resume_from_rl": False}},
@@ -151,6 +154,9 @@ class PipelineTests(unittest.TestCase):
             self.assertIn("--no-wrapper_cleanup", plans[1].command)
             self.assertNotIn("--lock_non_commanded_axes", plans[1].command)
             self.assertNotIn("--lock_non_commanded_axes_threshold", plans[1].command)
+            self.assertNotIn("--randomize_ee_start", plans[1].command)
+            self.assertNotIn("--ee_start_x_bounds", plans[1].command)
+            self.assertNotIn("--ee_start_y_bounds", plans[1].command)
             desk_textures_idx = plans[1].command.index("--desk_textures_dir") + 1
             self.assertTrue(Path(plans[1].command[desk_textures_idx]).samefile(dataset_root / "textures"))
             self.assertIn("--run_root_dir", plans[1].command)
@@ -166,6 +172,9 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(plans[1].env["RLVLA_TASK_GOAL_RELATION"], "inside_region")
             self.assertEqual(plans[1].env["RLVLA_CDPR_LOCK_NON_COMMANDED_AXES"], "1")
             self.assertEqual(plans[1].env["RLVLA_CDPR_LOCK_NON_COMMANDED_AXES_THRESHOLD"], "0.05")
+            self.assertEqual(plans[1].env["RLVLA_CDPR_RANDOMIZE_EE_START"], "1")
+            self.assertEqual(plans[1].env["RLVLA_CDPR_EE_START_X_BOUNDS"], "[-0.12, 0.12]")
+            self.assertEqual(plans[1].env["RLVLA_CDPR_EE_START_Y_BOUNDS"], "[-0.08, 0.1]")
             self.assertIn("--run_root_dir", plans[2].command)
 
             preview_only = pipeline.build_stage_plans(run_dir, ["preview"])

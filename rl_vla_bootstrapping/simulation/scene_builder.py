@@ -22,6 +22,7 @@ def build_scene_xml(
     *,
     scene_name: str | None = None,
     object_names: list[str] | None = None,
+    build_kwargs_overrides: dict[str, Any] | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     if config.simulation.entrypoint is None:
@@ -40,6 +41,8 @@ def build_scene_xml(
 
     wrapper_out = output_dir / "preview_scene.xml"
     kwargs: dict[str, Any] = dict(config.simulation.build_kwargs)
+    if build_kwargs_overrides:
+        kwargs.update(dict(build_kwargs_overrides))
     kwargs.update(
         {
             "scene_name": scene_name or config.simulation.preview_scene,

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
 import unittest
 
 import numpy as np
@@ -10,6 +11,7 @@ from rl_vla_bootstrapping.cli.diagnose_cdpr_policy import (
     _build_axis_demos,
     _build_executed_action_sequence,
     _build_random_demos,
+    _scene_build_kwargs_from_args,
     _compute_visible_start_xyz,
     _locked_axes_for_demo,
     _summarize_demo,
@@ -23,6 +25,10 @@ class PolicyDiagnosticsTests(unittest.TestCase):
         self.assertEqual(args.chunk_repeats, 3)
         self.assertFalse(args.reset_to_visible_start_each_repeat)
         self.assertFalse(args.lock_non_commanded_axes)
+        self.assertFalse(args.randomize_ee_start)
+        self.assertIsNone(args.ee_start_x_bounds)
+        self.assertIsNone(args.ee_start_y_bounds)
+        self.assertIsNone(args.ee_start_z)
 
     def test_build_axis_demos_matches_chunk_size_and_signs(self):
         demos = _build_axis_demos(8, 0.25, include_negative=True)
@@ -102,6 +108,48 @@ class PolicyDiagnosticsTests(unittest.TestCase):
 
         self.assertEqual(_locked_axes_for_demo(demo, lock_non_commanded_axes=True), (1, 2))
         self.assertEqual(_locked_axes_for_demo(demo, lock_non_commanded_axes=False), ())
+
+    def test_scene_build_kwargs_can_randomize_ee_start_in_xy(self):
+        args = _build_parser().parse_args(
+            [
+                "--config",
+                "dummy.yaml",
+                "--randomize-ee-start",
+                "--ee-start-x-bounds",
+                "-0.10",
+                "0.10",
+                "--ee-start-y-bounds",
+                "-0.08",
+                "0.05",
+                "--ee-start-z",
+                "0.37",
+                "--seed",
+                "11",
+            ]
+        )
+        config = SimpleNamespace(
+            simulation=SimpleNamespace(
+                build_kwargs={
+                    "ee_start": [0.0, 0.0, 0.33],
+                }
+            )
+        )
+
+        overrides_a, info_a = _scene_build_kwargs_from_args(config, args)
+        overrides_b, info_b = _scene_build_kwargs_from_args(config, args)
+
+        self.assertEqual(overrides_a, overrides_b)
+        self.assertTrue(info_a["randomized"])
+        self.assertEqual(info_a["ee_start_x_bounds"], [-0.1, 0.1])
+        self.assertEqual(info_a["ee_start_y_bounds"], [-0.08, 0.05])
+        self.assertEqual(info_a, info_b)
+
+        ee_start = np.asarray(overrides_a["ee_start"], dtype=np.float32)
+        self.assertGreaterEqual(float(ee_start[0]), -0.10)
+        self.assertLessEqual(float(ee_start[0]), 0.10)
+        self.assertGreaterEqual(float(ee_start[1]), -0.08)
+        self.assertLessEqual(float(ee_start[1]), 0.05)
+        self.assertAlmostEqual(float(ee_start[2]), 0.40, places=6)
 
     def test_summarize_demo_aggregates_realized_and_commanded_motion(self):
         demo = DiagnosticDemo(

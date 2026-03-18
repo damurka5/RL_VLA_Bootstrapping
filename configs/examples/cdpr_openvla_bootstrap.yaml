@@ -191,6 +191,9 @@ training:
       hold_steps: 10
       lock_non_commanded_axes: true
       lock_non_commanded_axes_threshold: 0.05
+      randomize_ee_start: true
+      ee_start_x_bounds: [-0.12, 0.12]
+      ee_start_y_bounds: [-0.12, 0.12]
       delta_closer_reward_coef: 0.0
       delta_farther_penalty_coef: 0.0
       save_every: 20
