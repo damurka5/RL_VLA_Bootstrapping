@@ -14,6 +14,7 @@ from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.embodiments.mujoco import MujocoEmbodiment
 from rl_vla_bootstrapping.simulation.scene_builder import build_scene_xml, preview_selection
 from robots.cdpr.cdpr_dataset.rl_instruction_tasks import canonical_object_name
+from robots.cdpr.cdpr_dataset.synthetic_tasks import prepare_cdpr_workspace
 from robots.cdpr.cdpr_mujoco.policy_control import (
     CDPRPolicyControlSpec,
     apply_normalized_cdpr_action,
@@ -593,8 +594,11 @@ def main() -> int:
     embodiment = MujocoEmbodiment(config=config, spec=config.embodiment)
     sim = embodiment.instantiate_controller(xml_path=xml_path, run_dir=run_dir)
     sim.initialize()
-    if hasattr(sim, "hold_current_pose"):
-        sim.hold_current_pose(warm_steps=10)
+    workspace_safety = prepare_cdpr_workspace(
+        sim,
+        initial_hold_warm_steps=10,
+        clear_recordings=True,
+    )
     setattr(sim, "language_instruction", instruction)
 
     control_spec = _control_spec_from_config(config, args.hold_steps)
@@ -610,6 +614,13 @@ def main() -> int:
     print(f"Scene: {scene_name}")
     print(f"Objects: {object_names}")
     print(f"Instruction: {instruction}")
+    print(
+        "Workspace safety: "
+        f"surface_z={workspace_safety['support_surface_z']:.4f}, "
+        f"ee_min_z={workspace_safety['ee_min_z']:.4f}, "
+        f"ee_spawn_z={workspace_safety['ee_spawn_z']:.4f}, "
+        f"lifted={workspace_safety['lifted_to_spawn_height']}"
+    )
     print(
         "Control contract: "
         f"dt={sim_dt:.6f}s, hold_steps={control_spec.hold_steps}, "
@@ -725,6 +736,7 @@ def main() -> int:
             sim,
             action,
             control_spec,
+            ee_min_z=float(workspace_safety["ee_min_z"]),
             capture_last_frame=True,
         )
 

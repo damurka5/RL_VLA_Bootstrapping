@@ -38,9 +38,10 @@ from .rl_instruction_tasks import (
     sample_instruction,
 )
 from .synthetic_tasks import (
-    body_bottom_offset,
     clamp_xyz,
-    infer_workspace_surface_z,
+    compute_cdpr_workspace_safety,
+    clear_sim_recording_buffers,
+    lift_cdpr_ee_to_spawn_height,
     place_objects_non_overlapping,
     resolve_body_name,
 )
@@ -52,7 +53,7 @@ DEFAULT_VIDEO_DIR = HERE / "datasets" / "cdpr_synth" / "videos"
 DEFAULT_ALLOWED_OBJECTS: tuple[str, ...] = ("ycb_apple", "ycb_pear", "ycb_peach")
 DEFAULT_DESK_GEOM_REGEX = r"(table|desk|workbench|counter|surface)"
 WRAP_DIR = HERE / "wrappers"
-MIN_EE_START_Z = 0.35
+MIN_EE_START_Z = 0.40
 TASK_REWARD_PREFIX = "RLVLA_TASK_REWARD"
 TASK_SUCCESS_PREFIX = "RLVLA_TASK_SUCCESS"
 
@@ -992,31 +993,21 @@ class CDPRLanguageRLEnv(_EnvBase):
         return wrapper_xml
 
     def _refresh_workspace_safety(self):
-        self._support_surface_z = float(infer_workspace_surface_z(self.sim, fallback_z=0.0))
-        ee_bottom = float(body_bottom_offset(self.sim, "ee_base"))
-        # Keep tool lowest point >= 5 cm above support; spawn at >= 8 cm.
-        self._ee_min_z = self._support_surface_z + ee_bottom + 0.05
-        self._ee_spawn_z = self._support_surface_z + ee_bottom + 0.08
+        safety = compute_cdpr_workspace_safety(self.sim, fallback_z=0.0)
+        self._support_surface_z = float(safety["support_surface_z"])
+        self._ee_min_z = float(safety["ee_min_z"])
+        self._ee_spawn_z = float(safety["ee_spawn_z"])
 
     def _move_ee_to_spawn_height(self):
         if self.sim is None:
             return
-        ee = self._get_ee_position().astype(np.float64)
-        if ee[2] >= self._ee_spawn_z - 1e-4:
-            return
-        target = ee.copy()
-        target[2] = self._ee_spawn_z
-        self._set_ee_target(target)
-        if hasattr(self.sim, "goto"):
-            try:
-                self.sim.goto(target, max_steps=120, tol=0.01)
-            except Exception:
-                pass
-        if hasattr(self.sim, "hold_current_pose"):
-            try:
-                self.sim.hold_current_pose(warm_steps=6)
-            except Exception:
-                pass
+        lift_cdpr_ee_to_spawn_height(
+            self.sim,
+            ee_spawn_z=float(self._ee_spawn_z),
+            max_steps=120,
+            tol=0.01,
+            warm_steps=6,
+        )
 
     def _temporary_wrapper_path(self, scene: SceneSpec) -> Path:
         obj_part = "-".join(sorted(scene.objects))
@@ -1027,12 +1018,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         if self.sim is None:
             return
         # Reset any simulator-side logs so reset-time warmup motion never appears in saved episodes.
-        for attr in ("trajectory_data", "overview_frames", "ee_camera_frames", "frame_capture_timestamps"):
-            if hasattr(self.sim, attr):
-                try:
-                    setattr(self.sim, attr, [])
-                except Exception:
-                    pass
+        clear_sim_recording_buffers(self.sim)
 
     def _register_cleanup_path(self, path: Path):
         p = Path(path).resolve()

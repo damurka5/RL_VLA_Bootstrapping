@@ -1,6 +1,6 @@
 defaults:
   scene_z: -0.85
-  ee_start: [0.0, 0.0, 0.35]
+  ee_start: [0.0, 0.0, 0.40]
   table_z: 0.15
   object_dynamic: true
   settle_time: 0.0

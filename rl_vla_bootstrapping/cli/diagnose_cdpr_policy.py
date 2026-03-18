@@ -19,6 +19,7 @@ from rl_vla_bootstrapping.core.commands import ensure_directory
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.embodiments.mujoco import MujocoEmbodiment
 from rl_vla_bootstrapping.simulation.scene_builder import build_scene_xml
+from robots.cdpr.cdpr_dataset.synthetic_tasks import prepare_cdpr_workspace
 from robots.cdpr.cdpr_mujoco.policy_control import (
     apply_normalized_cdpr_action,
     policy_action_frequency_hz,
@@ -359,12 +360,19 @@ def _run_demo(
 
     try:
         sim.initialize()
+        workspace_safety = prepare_cdpr_workspace(
+            sim,
+            initial_hold_warm_steps=int(warm_steps),
+            clear_recordings=True,
+        )
         sim_dt = float(getattr(getattr(sim, "controller", None), "dt", 1.0 / 60.0))
-        if hasattr(sim, "hold_current_pose"):
-            sim.hold_current_pose(warm_steps=int(warm_steps))
         setattr(sim, "language_instruction", instruction)
 
-        print(f"[demo:{demo.name}] {demo.description}")
+        print(
+            f"[demo:{demo.name}] {demo.description} "
+            f"(ee_min_z={workspace_safety['ee_min_z']:.4f}, ee_spawn_z={workspace_safety['ee_spawn_z']:.4f}, "
+            f"lifted={workspace_safety['lifted_to_spawn_height']})"
+        )
         for step_idx, action in enumerate(demo.chunk):
             ee_before = np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
             yaw_before = float(sim.get_yaw()) if hasattr(sim, "get_yaw") else None
@@ -374,6 +382,7 @@ def _run_demo(
                 sim,
                 action,
                 control_spec,
+                ee_min_z=float(workspace_safety["ee_min_z"]),
                 capture_last_frame=not capture_all_substeps,
                 capture_all_steps=capture_all_substeps,
             )

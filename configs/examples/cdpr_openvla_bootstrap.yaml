@@ -139,7 +139,7 @@ simulation:
     scene_z: -0.85
     table_z: 0.15
     settle_time: 0.0
-    ee_start: [0.0, 0.0, 0.35]
+    ee_start: [0.0, 0.0, 0.40]
   randomization:
     random_scene_count: 100
     max_objects: 8

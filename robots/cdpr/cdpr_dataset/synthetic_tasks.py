@@ -24,6 +24,125 @@ SEG_T_PUSH_S    = 2.0
 SETTLE_STEPS = 20
 FALLBACK_MAX_STEPS = 120
 
+
+def _set_ee_target_if_available(sim, target_xyz):
+    target = np.asarray(target_xyz, dtype=float).reshape(3)
+    if hasattr(sim, "set_end_effector_target"):
+        sim.set_end_effector_target(target)
+        return True
+    if hasattr(sim, "set_ee_target"):
+        sim.set_ee_target(target)
+        return True
+    if hasattr(sim, "set_target_position"):
+        sim.set_target_position(target)
+        return True
+    return False
+
+
+def clear_sim_recording_buffers(sim):
+    for attr in ("trajectory_data", "overview_frames", "ee_camera_frames", "frame_capture_timestamps"):
+        if hasattr(sim, attr):
+            try:
+                setattr(sim, attr, [])
+            except Exception:
+                pass
+
+
+def compute_cdpr_workspace_safety(
+    sim,
+    *,
+    fallback_z=0.0,
+    min_clearance=0.05,
+    spawn_clearance=0.08,
+):
+    support_surface_z = float(infer_workspace_surface_z(sim, fallback_z=fallback_z))
+    ee_bottom = float(body_bottom_offset(sim, "ee_base"))
+    ee_min_z = support_surface_z + float(min_clearance) + ee_bottom
+    ee_spawn_z = support_surface_z + float(spawn_clearance) + ee_bottom
+    return {
+        "support_surface_z": support_surface_z,
+        "ee_bottom_offset": ee_bottom,
+        "ee_min_z": ee_min_z,
+        "ee_spawn_z": ee_spawn_z,
+    }
+
+
+def lift_cdpr_ee_to_spawn_height(
+    sim,
+    *,
+    ee_spawn_z,
+    max_steps=120,
+    tol=0.01,
+    warm_steps=6,
+):
+    ee = np.asarray(sim.get_end_effector_position(), dtype=np.float64).reshape(-1)[:3]
+    target = ee.copy()
+    target[2] = float(ee_spawn_z)
+    if ee[2] >= float(ee_spawn_z) - 1e-4:
+        return False
+
+    _set_ee_target_if_available(sim, target)
+
+    if hasattr(sim, "goto"):
+        try:
+            sim.goto(target, max_steps=int(max_steps), tol=float(tol))
+        except Exception:
+            pass
+    elif hasattr(sim, "run_simulation_step"):
+        for _ in range(max(1, int(max_steps))):
+            sim.run_simulation_step(capture_frame=False)
+            ee = np.asarray(sim.get_end_effector_position(), dtype=np.float64).reshape(-1)[:3]
+            if np.linalg.norm(ee - target) < float(tol):
+                break
+
+    if hasattr(sim, "hold_current_pose"):
+        try:
+            sim.hold_current_pose(warm_steps=int(warm_steps))
+        except Exception:
+            pass
+    return True
+
+
+def prepare_cdpr_workspace(
+    sim,
+    *,
+    initial_hold_warm_steps=10,
+    fallback_z=0.0,
+    min_clearance=0.05,
+    spawn_clearance=0.08,
+    lift_max_steps=120,
+    lift_tol=0.01,
+    post_lift_warm_steps=6,
+    clear_recordings=False,
+):
+    if hasattr(sim, "hold_current_pose") and int(initial_hold_warm_steps) > 0:
+        try:
+            sim.hold_current_pose(warm_steps=int(initial_hold_warm_steps))
+        except Exception:
+            pass
+
+    safety = compute_cdpr_workspace_safety(
+        sim,
+        fallback_z=fallback_z,
+        min_clearance=min_clearance,
+        spawn_clearance=spawn_clearance,
+    )
+    lifted = lift_cdpr_ee_to_spawn_height(
+        sim,
+        ee_spawn_z=float(safety["ee_spawn_z"]),
+        max_steps=int(lift_max_steps),
+        tol=float(lift_tol),
+        warm_steps=int(post_lift_warm_steps),
+    )
+    if clear_recordings:
+        clear_sim_recording_buffers(sim)
+
+    safety["lifted_to_spawn_height"] = bool(lifted)
+    safety["ee_position_after_prepare"] = (
+        np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3].tolist()
+    )
+    return safety
+
 def clamp(v, lo, hi):
     return float(max(lo, min(hi, v)))
 

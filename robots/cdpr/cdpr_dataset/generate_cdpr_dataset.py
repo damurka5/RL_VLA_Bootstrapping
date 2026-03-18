@@ -17,6 +17,8 @@ import numpy as np
 from cdpr_mujoco.headless_cdpr_egl import HeadlessCDPRSimulation
 
 from .synthetic_tasks import (
+    clear_sim_recording_buffers,
+    prepare_cdpr_workspace,
     script_pick_and_hover,
     script_push,
     script_move_to_xy,
@@ -35,7 +37,7 @@ NPZ_DIR   = DATASET_ROOT / "npz"
 VIDEO_DIR = DATASET_ROOT / "videos"
 TFREC_DIR = DATASET_ROOT / "tfrecords"
 WRAP_DIR  = HERE / "wrappers"
-MIN_EE_START_Z = 0.35
+MIN_EE_START_Z = 0.40
 
 def ensure_dirs():
     for d in [NPZ_DIR, VIDEO_DIR, TFREC_DIR, WRAP_DIR]:
@@ -446,6 +448,18 @@ def _episode_out_dir(wrapper_xml: Path, task_name: str) -> Path:
 def run_episode(task_name: str, wrapper_xml: Path, catalog_object_name: str):
     sim = HeadlessCDPRSimulation(xml_path=str(wrapper_xml), output_dir=str(VIDEO_DIR))
     sim.initialize()
+    workspace_safety = prepare_cdpr_workspace(
+        sim,
+        initial_hold_warm_steps=10,
+        clear_recordings=True,
+    )
+    print(
+        "[run_episode] workspace safety "
+        f"surface_z={workspace_safety['support_surface_z']:.4f} "
+        f"ee_min_z={workspace_safety['ee_min_z']:.4f} "
+        f"ee_spawn_z={workspace_safety['ee_spawn_z']:.4f} "
+        f"lifted={workspace_safety['lifted_to_spawn_height']}"
+    )
 
     real_obj = sim.get_object_body_name() or catalog_object_name
     movable_objects = _discover_movable_object_bodies(sim)
@@ -486,6 +500,7 @@ def run_episode(task_name: str, wrapper_xml: Path, catalog_object_name: str):
     bid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_BODY, real_obj)
     if bid != -1:
         print(f"[debug] world xquat for {real_obj} after sync = {d.xquat[bid]}")
+    clear_sim_recording_buffers(sim)
 
     # Now recompute centers after orientation is applied
     cx, tz, _ = object_centers(sim, real_obj)
