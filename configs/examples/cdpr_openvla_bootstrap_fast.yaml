@@ -207,7 +207,7 @@ training:
       capture_frames: true
       save_validation_frames: false
       rollout_tap_every_updates: -1
-      tensorboard_every_updates: 5
+      tensorboard_every_updates: 1
       device: cuda
       quiet_env_logs: true
       status_bar: true
