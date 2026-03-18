@@ -6,6 +6,7 @@ import numpy as np
 
 from rl_vla_bootstrapping.cli.diagnose_cdpr_policy import (
     DiagnosticDemo,
+    _build_parser,
     _build_axis_demos,
     _build_executed_action_sequence,
     _build_random_demos,
@@ -16,6 +17,13 @@ from rl_vla_bootstrapping.cli.diagnose_cdpr_policy import (
 
 
 class PolicyDiagnosticsTests(unittest.TestCase):
+    def test_parser_defaults_to_continuous_repeats_without_axis_lock(self):
+        args = _build_parser().parse_args(["--config", "dummy.yaml"])
+
+        self.assertEqual(args.chunk_repeats, 3)
+        self.assertFalse(args.reset_to_visible_start_each_repeat)
+        self.assertFalse(args.lock_non_commanded_axes)
+
     def test_build_axis_demos_matches_chunk_size_and_signs(self):
         demos = _build_axis_demos(8, 0.25, include_negative=True)
 

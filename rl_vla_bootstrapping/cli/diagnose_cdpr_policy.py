@@ -125,13 +125,13 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--reset-to-visible-start-each-repeat",
         action=argparse.BooleanOptionalAction,
-        default=True,
-        help="Move back to the same lifted start pose before each chunk repeat.",
+        default=False,
+        help="Move back to the same lifted start pose before each chunk repeat instead of continuing continuously.",
     )
     parser.add_argument(
         "--lock-non-commanded-axes",
         action=argparse.BooleanOptionalAction,
-        default=True,
+        default=False,
         help="For axis demos, keep the other Cartesian axes pinned to the lifted reference pose.",
     )
     parser.add_argument("--warm-steps", type=int, default=10, help="Warmup steps for hold_current_pose before each demo.")
