@@ -19,7 +19,7 @@ from rl_vla_bootstrapping.core.commands import ensure_directory
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.embodiments.mujoco import MujocoEmbodiment
 from rl_vla_bootstrapping.simulation.scene_builder import build_scene_xml
-from robots.cdpr.cdpr_dataset.synthetic_tasks import prepare_cdpr_workspace
+from robots.cdpr.cdpr_dataset.synthetic_tasks import clear_sim_recording_buffers, prepare_cdpr_workspace
 from robots.cdpr.cdpr_mujoco.policy_control import (
     apply_normalized_cdpr_action,
     policy_action_frequency_hz,
@@ -103,6 +103,24 @@ def _build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Record every MuJoCo substep instead of only the last frame of each policy action.",
     )
+    parser.add_argument(
+        "--chunk-repeats",
+        type=int,
+        default=3,
+        help="How many times to execute each diagnostic chunk back-to-back.",
+    )
+    parser.add_argument(
+        "--visible-start-z-offset",
+        type=float,
+        default=0.05,
+        help="Additional Z lift above the validation-style spawn height before recording the demo.",
+    )
+    parser.add_argument(
+        "--pre-roll-steps",
+        type=int,
+        default=30,
+        help="Captured simulator steps to hold the lifted start pose before the first action.",
+    )
     parser.add_argument("--warm-steps", type=int, default=10, help="Warmup steps for hold_current_pose before each demo.")
     parser.add_argument("--log-every", type=int, default=1, help="Logging cadence in policy-action steps.")
     return parser
@@ -169,6 +187,72 @@ def _mm(vec: np.ndarray) -> np.ndarray:
     return np.asarray(vec, dtype=np.float32) * np.float32(1000.0)
 
 
+def _build_executed_action_sequence(chunk: np.ndarray, chunk_repeats: int) -> np.ndarray:
+    chunk_arr = np.asarray(chunk, dtype=np.float32)
+    if chunk_arr.ndim != 2 or chunk_arr.shape[1] != 5:
+        raise ValueError(f"Expected chunk shape (T, 5), got {chunk_arr.shape}")
+    repeats = max(1, int(chunk_repeats))
+    return np.tile(chunk_arr, (repeats, 1))
+
+
+def _set_ee_target(sim: Any, xyz: np.ndarray) -> bool:
+    target = np.asarray(xyz, dtype=np.float32).reshape(3)
+    for attr in ("set_end_effector_target", "set_ee_target", "set_target_position"):
+        if hasattr(sim, attr):
+            getattr(sim, attr)(target)
+            return True
+    return False
+
+
+def _move_to_xyz(
+    sim: Any,
+    target_xyz: np.ndarray,
+    *,
+    max_steps: int = 120,
+    tol: float = 0.01,
+    settle_steps: int = 12,
+) -> np.ndarray:
+    target = np.asarray(target_xyz, dtype=np.float32).reshape(3)
+    _set_ee_target(sim, target)
+    if hasattr(sim, "goto"):
+        try:
+            sim.goto(target, max_steps=int(max_steps), tol=float(tol))
+        except Exception:
+            pass
+    elif hasattr(sim, "run_simulation_step"):
+        for _ in range(max(1, int(max_steps))):
+            sim.run_simulation_step(capture_frame=False)
+            ee = np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
+            if float(np.linalg.norm(ee - target)) <= float(tol):
+                break
+
+    if hasattr(sim, "run_simulation_step"):
+        for _ in range(max(0, int(settle_steps))):
+            sim.run_simulation_step(capture_frame=False)
+    return np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
+
+
+def _capture_idle_steps(sim: Any, steps: int) -> None:
+    if not hasattr(sim, "run_simulation_step"):
+        return
+    for _ in range(max(0, int(steps))):
+        sim.run_simulation_step(capture_frame=True)
+
+
+def _compute_visible_start_xyz(
+    current_xyz: np.ndarray,
+    *,
+    workspace_safety: dict[str, Any],
+    z_offset: float,
+    z_limits: tuple[float, float],
+) -> np.ndarray:
+    current = np.asarray(current_xyz, dtype=np.float32).reshape(-1)[:3].copy()
+    z_lo, z_hi = float(z_limits[0]), float(z_limits[1])
+    desired_z = max(float(current[2]), float(workspace_safety["ee_spawn_z"]) + float(z_offset))
+    current[2] = np.float32(np.clip(desired_z, z_lo, z_hi))
+    return current
+
+
 def _format_triplet(vec: np.ndarray) -> str:
     arr = np.asarray(vec, dtype=np.float32).reshape(-1)[:3]
     return f"({arr[0]:+.4f}, {arr[1]:+.4f}, {arr[2]:+.4f})"
@@ -182,6 +266,8 @@ def _format_triplet_mm(vec: np.ndarray) -> str:
 def _collect_demo_record(
     *,
     step: int,
+    repeat_index: int,
+    chunk_step_index: int,
     action: np.ndarray,
     ee_before: np.ndarray,
     yaw_before: float | None,
@@ -195,6 +281,8 @@ def _collect_demo_record(
     cosine = float(motion_diag["realized_vs_command_cosine"])
     record = {
         "step": int(step),
+        "repeat_index": int(repeat_index),
+        "chunk_step_index": int(chunk_step_index),
         "normalized_action": np.asarray(np.clip(action, -1.0, 1.0), dtype=np.float32).reshape(5).tolist(),
         "ee_before": np.asarray(ee_before, dtype=np.float32).reshape(-1)[:3].tolist(),
         "ee_after": ee_after.tolist(),
@@ -290,6 +378,7 @@ def _save_demo_artifacts(
     demo: DiagnosticDemo,
     demo_summary: dict[str, Any],
     step_records: list[dict[str, Any]],
+    executed_sequence: np.ndarray,
 ) -> dict[str, str]:
     outputs: dict[str, str] = {}
     video_fps = float(sim._estimate_video_fps()) if hasattr(sim, "_estimate_video_fps") else 20.0
@@ -311,6 +400,14 @@ def _save_demo_artifacts(
     chunk_json = demo_dir / "normalized_action_chunk.json"
     chunk_json.write_text(json.dumps(demo.chunk.tolist(), indent=2), encoding="utf-8")
     outputs["normalized_action_chunk_json"] = chunk_json.as_posix()
+
+    executed_npy = demo_dir / "executed_action_sequence.npy"
+    np.save(executed_npy, executed_sequence)
+    outputs["executed_action_sequence_npy"] = executed_npy.as_posix()
+
+    executed_json = demo_dir / "executed_action_sequence.json"
+    executed_json.write_text(json.dumps(executed_sequence.tolist(), indent=2), encoding="utf-8")
+    outputs["executed_action_sequence_json"] = executed_json.as_posix()
 
     records_path = demo_dir / "motion_diagnostics.json"
     records_path.write_text(
@@ -351,6 +448,9 @@ def _run_demo(
     instruction: str,
     control_spec: Any,
     capture_all_substeps: bool,
+    chunk_repeats: int,
+    visible_start_z_offset: float,
+    pre_roll_steps: int,
     warm_steps: int,
     log_every: int,
 ) -> tuple[dict[str, Any], dict[str, Any], float]:
@@ -367,13 +467,25 @@ def _run_demo(
         )
         sim_dt = float(getattr(getattr(sim, "controller", None), "dt", 1.0 / 60.0))
         setattr(sim, "language_instruction", instruction)
+        executed_sequence = _build_executed_action_sequence(demo.chunk, int(chunk_repeats))
+        visible_start_xyz = _compute_visible_start_xyz(
+            sim.get_end_effector_position(),
+            workspace_safety=workspace_safety,
+            z_offset=float(visible_start_z_offset),
+            z_limits=control_spec.xyz_limits[2],
+        )
+        actual_start_xyz = _move_to_xyz(sim, visible_start_xyz)
+        clear_sim_recording_buffers(sim)
+        _capture_idle_steps(sim, int(pre_roll_steps))
 
         print(
             f"[demo:{demo.name}] {demo.description} "
             f"(ee_min_z={workspace_safety['ee_min_z']:.4f}, ee_spawn_z={workspace_safety['ee_spawn_z']:.4f}, "
-            f"lifted={workspace_safety['lifted_to_spawn_height']})"
+            f"lifted={workspace_safety['lifted_to_spawn_height']}, "
+            f"visible_start={_format_triplet(actual_start_xyz)}, repeats={max(1, int(chunk_repeats))})"
         )
-        for step_idx, action in enumerate(demo.chunk):
+        chunk_len = max(1, int(len(demo.chunk)))
+        for step_idx, action in enumerate(executed_sequence):
             ee_before = np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
             yaw_before = float(sim.get_yaw()) if hasattr(sim, "get_yaw") else None
             grip_before = float(sim.get_gripper_opening()) if hasattr(sim, "get_gripper_opening") else None
@@ -394,6 +506,8 @@ def _run_demo(
             )
             record = _collect_demo_record(
                 step=step_idx,
+                repeat_index=(step_idx // chunk_len),
+                chunk_step_index=(step_idx % chunk_len),
                 action=action,
                 ee_before=ee_before,
                 yaw_before=yaw_before,
@@ -413,7 +527,8 @@ def _run_demo(
                 yaw_after = record["yaw_after"]
                 grip_after = record["gripper_after"]
                 print(
-                    f"  step={step_idx:02d} action={record['normalized_action']} "
+                    f"  step={step_idx:02d} repeat={record['repeat_index']} chunk_step={record['chunk_step_index']} "
+                    f"action={record['normalized_action']} "
                     f"ee={_format_triplet(ee_after)} "
                     f"yaw={0.0 if yaw_after is None else float(yaw_after):.4f} "
                     f"grip={0.0 if grip_after is None else float(grip_after):.4f}"
@@ -433,6 +548,7 @@ def _run_demo(
             demo=demo,
             demo_summary=summary,
             step_records=records,
+            executed_sequence=executed_sequence,
         )
 
         cmd_total = np.asarray(summary["commanded_total_xyz_effective"], dtype=np.float32)
@@ -506,6 +622,7 @@ def main() -> int:
     print(f"Objects: {object_names}")
     print(f"Instruction label: {instruction}")
     print(f"Chunk length: {chunk_length}")
+    print(f"Chunk repeats: {max(1, int(args.chunk_repeats))}")
     print(f"Capture mode: {'all_substeps' if args.capture_all_substeps else 'last_frame_only'}")
 
     demo_root = ensure_directory(run_dir / "demos")
@@ -522,6 +639,9 @@ def main() -> int:
             instruction=instruction,
             control_spec=control_spec,
             capture_all_substeps=bool(args.capture_all_substeps),
+            chunk_repeats=int(args.chunk_repeats),
+            visible_start_z_offset=float(args.visible_start_z_offset),
+            pre_roll_steps=int(args.pre_roll_steps),
             warm_steps=int(args.warm_steps),
             log_every=int(args.log_every),
         )
@@ -557,6 +677,9 @@ def main() -> int:
         "instruction": instruction,
         "run_name": args.run_name,
         "chunk_length": chunk_length,
+        "chunk_repeats": max(1, int(args.chunk_repeats)),
+        "visible_start_z_offset": float(args.visible_start_z_offset),
+        "pre_roll_steps": int(args.pre_roll_steps),
         "capture_mode": "all_substeps" if args.capture_all_substeps else "last_frame_only",
         "seed": int(args.seed),
         "control_spec": asdict(control_spec),

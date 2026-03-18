@@ -7,7 +7,9 @@ import numpy as np
 from rl_vla_bootstrapping.cli.diagnose_cdpr_policy import (
     DiagnosticDemo,
     _build_axis_demos,
+    _build_executed_action_sequence,
     _build_random_demos,
+    _compute_visible_start_xyz,
     _summarize_demo,
 )
 
@@ -54,6 +56,32 @@ class PolicyDiagnosticsTests(unittest.TestCase):
         np.testing.assert_allclose(demos_a[0].chunk, demos_b[0].chunk)
         self.assertTrue(np.all(np.abs(demos_a[0].chunk[:, :3]) <= 0.5))
         self.assertTrue(np.allclose(demos_a[0].chunk[:, 3:], 0.0))
+
+    def test_build_executed_action_sequence_tiles_chunk(self):
+        chunk = np.array(
+            [
+                [0.1, 0.0, 0.0, 0.0, 0.0],
+                [0.0, 0.2, 0.0, 0.0, 0.0],
+            ],
+            dtype=np.float32,
+        )
+
+        executed = _build_executed_action_sequence(chunk, 3)
+
+        self.assertEqual(executed.shape, (6, 5))
+        np.testing.assert_allclose(executed[:2], chunk)
+        np.testing.assert_allclose(executed[2:4], chunk)
+        np.testing.assert_allclose(executed[4:6], chunk)
+
+    def test_compute_visible_start_xyz_lifts_above_spawn_and_respects_limits(self):
+        target = _compute_visible_start_xyz(
+            np.array([0.01, -0.02, 0.21], dtype=np.float32),
+            workspace_safety={"ee_spawn_z": 0.236},
+            z_offset=0.05,
+            z_limits=(0.08, 0.26),
+        )
+
+        np.testing.assert_allclose(target, np.array([0.01, -0.02, 0.26], dtype=np.float32), atol=1e-7)
 
     def test_summarize_demo_aggregates_realized_and_commanded_motion(self):
         demo = DiagnosticDemo(
