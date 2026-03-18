@@ -51,17 +51,17 @@ Optional pieces:
 
 ## Recommended Directory Layout
 
-The example config in this repo currently expects a sibling layout like this:
+The recommended remote-server config in this repo expects this layout:
 
 ```text
-<workspace>/
+/root/repo/
 ├── RL_VLA_Bootstrapping/
 └── openvla-oft/
 ```
 
-From inside `RL_VLA_Bootstrapping/configs/examples/cdpr_openvla_bootstrap.yaml`, that is referenced as:
+In `configs/examples/cdpr_openvla_bootstrap_fast.yaml`, that is referenced as:
 
-- `../../../../openvla-oft`
+- `/root/repo/openvla-oft`
 
 If someone keeps `openvla-oft` somewhere else, they must update:
 
@@ -85,7 +85,7 @@ The scene builder and CDPR wrappers read from those local staged paths during pr
 ## Minimal Setup Flow
 
 1. Clone this repo.
-2. Clone `openvla-oft` next to it, or edit the config paths.
+2. Clone `openvla-oft` to `/root/repo/openvla-oft`, or edit the config paths.
 3. Create the runtime environment from [openvla-oft-remote.yaml](/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/environments/openvla-oft-remote.yaml).
 4. Stage YCB and LIBERO assets into this repo’s `assets/externals/` paths.
 5. Run validation for paths and environment:

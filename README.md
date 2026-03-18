@@ -2,10 +2,10 @@
 
 `rl_vla_bootstrapping` is an embodiment-first orchestration framework for building language-conditioned visuomotor training stacks around a new robot without starting from demonstrations.
 
-For remote CDPR PPO runs on OpenVLA-OFT, the recommended config in this repo is `configs/examples/cdpr_openvla_bootstrap_fast.yaml`. It assumes a sibling layout:
+For remote CDPR PPO runs on OpenVLA-OFT, the recommended config in this repo is `configs/examples/cdpr_openvla_bootstrap_fast.yaml`. It assumes the remote server keeps OpenVLA-OFT at `/root/repo/openvla-oft`:
 
 ```text
-<workspace>/
+/root/repo/
 ├── RL_VLA_Bootstrapping/
 └── openvla-oft/
 ```

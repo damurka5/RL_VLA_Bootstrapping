@@ -4,7 +4,7 @@ project:
   python_executable: python3
 
 repos:
-  openvla_oft: ../../../../openvla-oft
+  openvla_oft: /root/repo/openvla-oft
   dataset_repo: ../../robots/cdpr
   embodiment_repo: ../../robots/cdpr
 
@@ -16,7 +16,7 @@ remote:
     TOKENIZERS_PARALLELISM: "false"
   notes:
     - Throughput-oriented PPO profile using a local shim around the external trainer.
-    - Clone or mount `openvla-oft` next to this repo, or update the repo/script paths below.
+    - Remote server path expects `openvla-oft` at `/root/repo/openvla-oft`.
 
 assets:
   bundles:
@@ -59,7 +59,7 @@ embodiment:
   dof: 5
   extra_python_paths:
     - ../../robots/cdpr
-    - ../../../../openvla-oft
+    - /root/repo/openvla-oft
   cameras:
     overview: overview
     wrist: ee_camera
@@ -140,10 +140,10 @@ simulation:
 
 policy:
   type: openvla_oft
-  repo_path: ../../../../openvla-oft
+  repo_path: /root/repo/openvla-oft
   base_checkpoint: openvla/openvla-7b
-  rl_script: ../../../../openvla-oft/vla-scripts/ppo_finetune_cdpr.py
-  sft_script: ../../../../openvla-oft/vla-scripts/finetune.py
+  rl_script: /root/repo/openvla-oft/vla-scripts/ppo_finetune_cdpr.py
+  sft_script: /root/repo/openvla-oft/vla-scripts/finetune.py
   action_head: L1RegressionActionHead
   num_images_in_input: 2
   action_codec:
