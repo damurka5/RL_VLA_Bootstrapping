@@ -83,6 +83,17 @@ python -m rl_vla_bootstrapping.cli.run_cdpr_policy \
   --distractor ycb_orange
 ```
 
+8. Diagnose whether scripted OpenVLA-style 8-action chunks actually move the CDPR controller:
+
+```bash
+python -m rl_vla_bootstrapping.cli.diagnose_cdpr_policy \
+  --config configs/examples/cdpr_openvla_bootstrap.yaml \
+  --target-object ycb_apple \
+  --hold-steps 10 \
+  --axis-magnitude 0.25 \
+  --random-demos 1
+```
+
 ## Runtime Notes
 
 Preview and training stages use the dependencies required by the vendored CDPR example bundle under `robots/cdpr/` plus the external OpenVLA/OFT repo. For the current stack that means MuJoCo, EGL-capable rendering on Linux, `opencv-python`, and the OpenVLA/OFT training dependencies from the included environment file.

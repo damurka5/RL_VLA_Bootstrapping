@@ -65,6 +65,7 @@ def apply_normalized_cdpr_action(
     *,
     ee_min_z: float | None = None,
     capture_last_frame: bool = True,
+    capture_all_steps: bool = False,
 ) -> dict[str, Any]:
     action = np.asarray(normalized_action, dtype=np.float32).reshape(-1)
     if action.size != 5:
@@ -95,7 +96,7 @@ def apply_normalized_cdpr_action(
 
     steps = spec.sim_steps_per_policy_action
     for step_idx in range(steps):
-        capture = bool(capture_last_frame and step_idx == (steps - 1))
+        capture = bool(capture_all_steps or (capture_last_frame and step_idx == (steps - 1)))
         sim.run_simulation_step(capture_frame=capture)
 
     result: dict[str, Any] = {

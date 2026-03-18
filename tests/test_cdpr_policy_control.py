@@ -96,6 +96,26 @@ class PolicyControlTests(unittest.TestCase):
         self.assertEqual(sim.opened, 1)
         self.assertEqual(sim.capture_history, [False])
 
+    def test_apply_normalized_action_can_capture_all_substeps(self):
+        sim = _FakeSim()
+        spec = CDPRPolicyControlSpec(
+            xyz_limits=((-0.8, 0.8), (-0.8, 0.8), (0.08, 1.2)),
+            action_step_xyz=0.006,
+            action_step_yaw=0.08,
+            hold_steps=2,
+        )
+
+        result = apply_normalized_cdpr_action(
+            sim,
+            np.array([0.5, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            spec,
+            capture_last_frame=False,
+            capture_all_steps=True,
+        )
+
+        self.assertEqual(result["sim_steps"], 3)
+        self.assertEqual(sim.capture_history, [True, True, True])
+
     def test_policy_frequency_matches_one_plus_hold_steps(self):
         self.assertAlmostEqual(policy_action_frequency_hz(1.0 / 60.0, hold_steps=4), 12.0, places=6)
 
