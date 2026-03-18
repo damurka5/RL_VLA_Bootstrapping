@@ -78,7 +78,7 @@ def _scene_switcher_command(*, scene_name: str, scene_z: float, ee_start: np.nda
         str(SCENE_SWITCHER),
         "--scene", scene_name,
         "--scene_z", str(scene_z),
-        "--ee_start", ",".join(map(str, ee_start)),
+        f"--ee_start={','.join(map(str, ee_start))}",
         "--table_z", str(table_z),
         "--settle_time", str(settle_time),
         "--wrapper_out", str(wrapper_path),

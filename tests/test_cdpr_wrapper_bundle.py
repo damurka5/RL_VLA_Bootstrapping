@@ -135,6 +135,18 @@ class WrapperBundleTests(unittest.TestCase):
             self.assertNotIn("-m", issued_cmd)
             self.assertTrue(wrapper.exists())
 
+    def test_scene_switcher_command_embeds_negative_ee_start_in_same_arg(self):
+        cmd = self.mod._scene_switcher_command(
+            scene_name="desk",
+            scene_z=-0.85,
+            ee_start=np.array([-0.12, 0.04, 0.40], dtype=float),
+            table_z=0.15,
+            settle_time=0.0,
+            wrapper_path=Path("/tmp/preview_scene.xml"),
+        )
+
+        self.assertIn("--ee_start=-0.12,0.04,0.4", cmd)
+
     def test_import_wrapper_builder_supports_call_and_unpack(self):
         handle = self.rl_env_mod._import_wrapper_builder()
 
