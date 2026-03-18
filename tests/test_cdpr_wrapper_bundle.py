@@ -110,6 +110,51 @@ class WrapperBundleTests(unittest.TestCase):
             )
             self.assertTrue(self.mod._wrapper_bundle_isolated(wrapper))
 
+    def test_wrapper_bundle_exists_checks_local_texture_assets(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            texture_dir = root / "_desk_textures"
+            texture_dir.mkdir(parents=True, exist_ok=True)
+            texture_path = texture_dir / "desk.png"
+            texture_path.write_bytes(b"png-bytes")
+
+            wrapper = root / "desk_wrapper.xml"
+            wrapper.write_text(
+                (
+                    "<mujoco>"
+                    "<asset>"
+                    '<texture name="desktex" type="2d" file="_desk_textures/desk.png"/>'
+                    "</asset>"
+                    "</mujoco>"
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertTrue(self.rl_env_mod._wrapper_bundle_exists(wrapper))
+
+            texture_path.unlink()
+            self.assertFalse(self.rl_env_mod._wrapper_bundle_exists(wrapper))
+
+    def test_validated_texture_files_skips_corrupt_pngs(self):
+        try:
+            from PIL import Image
+        except Exception:
+            self.skipTest("Pillow is unavailable")
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            valid = root / "valid.png"
+            corrupt = root / "corrupt.png"
+
+            Image.new("RGB", (4, 4), color=(12, 34, 56)).save(valid)
+            corrupt.write_bytes(b"not-a-real-png")
+
+            self.rl_env_mod._TEXTURE_VALIDATION_CACHE.clear()
+            self.rl_env_mod._TEXTURE_VALIDATION_WARNED.clear()
+            filtered = self.rl_env_mod._validated_texture_files(root)
+
+            self.assertEqual(filtered, [valid.resolve()])
+
     def test_build_wrapper_uses_scene_switcher_script_path(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)

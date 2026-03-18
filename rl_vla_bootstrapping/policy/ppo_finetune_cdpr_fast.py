@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import importlib
 import importlib.util
 import os
 import sys
@@ -116,6 +117,60 @@ def _patch_prepare_inputs(module) -> None:
     policy_cls._prepare_inputs = _prepare_inputs_batched
 
 
+def _load_wrapper_bundle_checker():
+    for module_name in ("cdpr_dataset.rl_cdpr_env", "robots.cdpr.cdpr_dataset.rl_cdpr_env"):
+        try:
+            helper_module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        helper = getattr(helper_module, "_wrapper_bundle_exists", None)
+        if callable(helper):
+            return helper
+    return None
+
+
+def _patch_scene_wrapper_cache(module) -> None:
+    wrapper_bundle_exists = _load_wrapper_bundle_checker()
+    if wrapper_bundle_exists is None:
+        return
+
+    env_cls = module.CDPRVisionLanguageEnv
+    original_activate = env_cls._activate_scene_wrapper_cache
+
+    def _activate_scene_wrapper_cache_checked(self, scene_wrapper_cache, texture_name_by_wrapper):
+        out = original_activate(self, scene_wrapper_cache, texture_name_by_wrapper)
+        rl = self.env
+        cached_builder = getattr(rl, "_build_wrapper", None)
+        if cached_builder is None or not hasattr(rl, "_build_wrapper_original"):
+            return out
+
+        def _build_wrapper_checked(this, scene):
+            scene_name = str(getattr(scene, "name", ""))
+            variants_local = list(self._scene_wrapper_cache.get(scene_name) or [])
+            if variants_local:
+                available_variants = [Path(path).resolve() for path in variants_local if wrapper_bundle_exists(Path(path))]
+                if len(available_variants) != len(variants_local):
+                    self._scene_wrapper_cache[scene_name] = available_variants
+                    warned = getattr(self, "_rlvla_scene_cache_repair_warned", set())
+                    if scene_name not in warned:
+                        print(
+                            f"[env_cache] Repaired unavailable cached wrappers for scene '{scene_name}' "
+                            f"({len(variants_local)} -> {len(available_variants)} variants).",
+                            flush=True,
+                        )
+                        warned.add(scene_name)
+                        self._rlvla_scene_cache_repair_warned = warned
+                if not available_variants:
+                    this._desk_texture_name = ""
+                    return this._build_wrapper_original(scene)
+            return cached_builder(scene)
+
+        rl._build_wrapper = module.types.MethodType(_build_wrapper_checked, rl)
+        return out
+
+    env_cls._activate_scene_wrapper_cache = _activate_scene_wrapper_cache_checked
+
+
 def _enable_fast_runtime_flags() -> None:
     if not torch.cuda.is_available():
         return
@@ -134,6 +189,7 @@ def main() -> None:
 
     _enable_fast_runtime_flags()
     _patch_prepare_inputs(module)
+    _patch_scene_wrapper_cache(module)
 
     sys.argv = [str(external_script)] + forwarded_argv
     module.main()

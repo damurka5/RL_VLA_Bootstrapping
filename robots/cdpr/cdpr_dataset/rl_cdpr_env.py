@@ -30,6 +30,11 @@ except Exception:  # pragma: no cover - optional runtime dependency
     gym = None
     spaces = None
 
+try:
+    from PIL import Image
+except Exception:  # pragma: no cover - optional runtime dependency
+    Image = None
+
 from .rl_instruction_tasks import (
     INSTRUCTION_TYPES,
     compute_instruction_reward,
@@ -78,6 +83,8 @@ DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
 DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
 DEFAULT_GOAL_HEIGHT_ABOVE_TABLE = 0.10
+_TEXTURE_VALIDATION_CACHE: dict[Path, tuple[tuple[tuple[str, int, int], ...], list[Path], list[Path]]] = {}
+_TEXTURE_VALIDATION_WARNED: set[Path] = set()
 
 ROBOT_BODY_PREFIXES = (
     "world",
@@ -408,6 +415,107 @@ def _relpath_or_abs(target: Path, base_dir: Path) -> str:
         return target.relative_to(base_dir).as_posix()
     except Exception:
         return target.as_posix()
+
+
+def _candidate_texture_files(tex_dir: Path) -> list[Path]:
+    return sorted(p for p in tex_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
+
+
+def _texture_dir_signature(paths: Sequence[Path]) -> tuple[tuple[str, int, int], ...]:
+    out: list[tuple[str, int, int]] = []
+    for path in paths:
+        try:
+            stat = path.stat()
+        except OSError:
+            continue
+        mtime_ns = int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+        out.append((path.name, int(stat.st_size), mtime_ns))
+    return tuple(out)
+
+
+def _is_texture_file_valid(path: Path) -> bool:
+    if Image is None:
+        return path.is_file()
+    try:
+        with Image.open(path) as img:
+            img.load()
+        return True
+    except Exception:
+        return False
+
+
+def _validated_texture_files(tex_dir: Path) -> list[Path]:
+    tex_dir = tex_dir.expanduser().resolve()
+    candidates = _candidate_texture_files(tex_dir)
+    signature = _texture_dir_signature(candidates)
+
+    cached = _TEXTURE_VALIDATION_CACHE.get(tex_dir)
+    if cached is not None and cached[0] == signature:
+        valid_paths, invalid_paths = cached[1], cached[2]
+    else:
+        valid_paths = []
+        invalid_paths = []
+        for path in candidates:
+            if _is_texture_file_valid(path):
+                valid_paths.append(path)
+            else:
+                invalid_paths.append(path)
+        _TEXTURE_VALIDATION_CACHE[tex_dir] = (signature, valid_paths, invalid_paths)
+
+    if invalid_paths and tex_dir not in _TEXTURE_VALIDATION_WARNED:
+        sample = ", ".join(path.name for path in invalid_paths[:3])
+        suffix = "" if len(invalid_paths) <= 3 else ", ..."
+        print(
+            f"[env] Skipping {len(invalid_paths)} invalid desk texture file(s) from {tex_dir}: {sample}{suffix}",
+            flush=True,
+        )
+        _TEXTURE_VALIDATION_WARNED.add(tex_dir)
+
+    return list(valid_paths)
+
+
+def _wrapper_bundle_exists(wrapper_xml: Path) -> bool:
+    wrapper_xml = Path(wrapper_xml).expanduser().resolve()
+    if not wrapper_xml.exists():
+        return False
+
+    wrap_root = WRAP_DIR.resolve()
+    queue = [wrapper_xml]
+    seen: set[Path] = set()
+
+    while queue:
+        current = queue.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        if not current.exists():
+            return False
+
+        try:
+            tree = ET.parse(current)
+        except Exception:
+            return False
+        root = tree.getroot()
+
+        for _, file_attr in _iter_includes(root):
+            include_path = _resolve_include_path(current, file_attr)
+            include_is_local = current.parent in include_path.parents or wrap_root in include_path.parents
+            if include_is_local:
+                if not include_path.exists():
+                    return False
+                queue.append(include_path)
+
+        for tag_name in ("texture", "mesh", "hfield"):
+            for elem in root.iter(tag_name):
+                file_attr = elem.get("file")
+                if not file_attr:
+                    continue
+                asset_path = _resolve_include_path(current, file_attr)
+                asset_is_local = current.parent in asset_path.parents or wrap_root in asset_path.parents
+                if asset_is_local and not asset_path.exists():
+                    return False
+
+    return True
 
 
 def _ensure_asset_first(root: ET.Element) -> ET.Element:
@@ -870,9 +978,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             tex_dir = Path(desk_textures_dir).expanduser().resolve()
             if not tex_dir.exists():
                 raise ValueError(f"desk_textures_dir not found: {tex_dir}")
-            self.desk_texture_files = sorted(
-                p for p in tex_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg")
-            )
+            self.desk_texture_files = _validated_texture_files(tex_dir)
             if not self.desk_texture_files:
                 raise ValueError(f"No texture files found in: {tex_dir}")
 
