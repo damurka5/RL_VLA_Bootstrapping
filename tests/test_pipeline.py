@@ -179,6 +179,102 @@ class PipelineTests(unittest.TestCase):
             preview_only = pipeline.build_stage_plans(run_dir, ["preview"])
             self.assertEqual([plan.name for plan in preview_only], ["preview"])
 
+    def test_rl_stage_supports_local_wrapper_script(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            robot_root = root / "robot"
+            repo_root = root / "openvla-oft"
+            dataset_root = root / "dataset"
+            wrapper_script = root / "local_wrapper.py"
+
+            _write(robot_root / "robot.xml", "<mujoco/>")
+            _write(
+                robot_root / "controller.py",
+                "class DummyController:\n"
+                "    def __init__(self, xml_path=None, output_dir=None):\n"
+                "        self.xml_path = xml_path\n"
+                "        self.output_dir = output_dir\n"
+                "        self.overview_frames = []\n"
+                "        self.ee_camera_frames = []\n"
+                "    def initialize(self):\n"
+                "        pass\n"
+                "    def run_simulation_step(self, capture_frame=True):\n"
+                "        pass\n"
+                "    def cleanup(self):\n"
+                "        pass\n",
+            )
+            _write(repo_root / "vla-scripts" / "ppo.py", "print('ppo')\n")
+            _write(wrapper_script, "print('wrapper')\n")
+            (dataset_root / "textures").mkdir(parents=True, exist_ok=True)
+            _write(dataset_root / "catalog.yaml", "defaults: {}\nscenes: []\n")
+
+            config = {
+                "project": {"name": "wrapper_test", "output_root": "runs"},
+                "repos": {
+                    "openvla_oft": "openvla-oft",
+                    "dataset_repo": "dataset",
+                    "embodiment_repo": "robot",
+                },
+                "embodiment": {
+                    "name": "dummy_bot",
+                    "kind": "mujoco",
+                    "robot_root": "robot",
+                    "xml_path": "robot/robot.xml",
+                    "dof": 5,
+                    "controller": {
+                        "file": "robot/controller.py",
+                        "class_name": "DummyController",
+                        "frame_buffers": {"overview": "overview_frames", "wrist": "ee_camera_frames"},
+                    },
+                    "action_adapter": {
+                        "common_action_keys": ["x", "y", "z", "yaw", "gripper"],
+                        "controller_limits": {
+                            "x": [-1, 1],
+                            "y": [-1, 1],
+                            "z": [-1, 1],
+                            "yaw": [-1, 1],
+                            "gripper": [0, 1],
+                        },
+                    },
+                },
+                "task": {"target_objects": ["ycb_apple"]},
+                "simulation": {
+                    "catalog_path": "dataset/catalog.yaml",
+                    "desk_textures_fallback_dir": "dataset/textures",
+                },
+                "policy": {
+                    "type": "openvla_oft",
+                    "repo_path": "openvla-oft",
+                    "base_checkpoint": "openvla/openvla-7b",
+                    "rl_script": "openvla-oft/vla-scripts/ppo.py",
+                },
+                "training": {
+                    "rl": {
+                        "enabled": True,
+                        "script_path": "local_wrapper.py",
+                        "launcher": "torchrun",
+                        "launcher_args": {"nproc_per_node": 2},
+                        "args": {
+                            "external_ppo_script": "vla-scripts/ppo.py",
+                            "capture_frames": True,
+                        },
+                    }
+                },
+            }
+            config_path = root / "config.json"
+            config_path.write_text(json.dumps(config), encoding="utf-8")
+
+            project_config = load_project_config(config_path)
+            pipeline = BootstrapPipeline(project_config)
+            run_dir = pipeline.make_run_dir("wrapper")
+            plans = pipeline.build_stage_plans(run_dir, ["rl"])
+            rl_plan = plans[1]
+
+            self.assertEqual(rl_plan.cwd, str(repo_root.resolve()))
+            self.assertEqual(rl_plan.command[:4], ["torchrun", "--nproc-per-node", "2", str(wrapper_script.resolve())])
+            ext_idx = rl_plan.command.index("--external_ppo_script") + 1
+            self.assertEqual(rl_plan.command[ext_idx], "vla-scripts/ppo.py")
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -2,6 +2,14 @@
 
 `rl_vla_bootstrapping` is an embodiment-first orchestration framework for building language-conditioned visuomotor training stacks around a new robot without starting from demonstrations.
 
+For remote CDPR PPO runs on OpenVLA-OFT, the recommended config in this repo is `configs/examples/cdpr_openvla_bootstrap_fast.yaml`. It assumes a sibling layout:
+
+```text
+<workspace>/
+├── RL_VLA_Bootstrapping/
+└── openvla-oft/
+```
+
 The repo is intentionally centered on separable layers instead of a single PPO or OpenVLA implementation:
 
 - Embodiment specification: MuJoCo XML, controller entrypoint, joint/action metadata, limits, gripper semantics, and a shared action codec.
@@ -36,46 +44,46 @@ conda env update -n openvla-oft -f environments/openvla-oft-remote.yaml --prune
 Or do the full remote bootstrap in one step:
 
 ```bash
-./scripts/setup_remote.sh configs/examples/cdpr_openvla_bootstrap.yaml
+./scripts/setup_remote.sh configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
 
 2. Stage assets into repo-local paths:
 
 ```bash
 python -m rl_vla_bootstrapping.cli.assets \
-  --config configs/examples/cdpr_openvla_bootstrap.yaml \
+  --config configs/examples/cdpr_openvla_bootstrap_fast.yaml \
   --stage
 ```
 
 3. Validate the runtime and robot setup:
 
 ```bash
-./scripts/doctor_bootstrap.sh configs/examples/cdpr_openvla_bootstrap.yaml
+./scripts/doctor_bootstrap.sh configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
 
 4. Run a preview:
 
 ```bash
-./scripts/preview_bootstrap.sh configs/examples/cdpr_openvla_bootstrap.yaml
+./scripts/preview_bootstrap.sh configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
 
 5. Plan the full pipeline:
 
 ```bash
-python -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla_bootstrap.yaml
+python -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
 
 6. Execute the selected stages:
 
 ```bash
-./scripts/train_bootstrap.sh configs/examples/cdpr_openvla_bootstrap.yaml
+./scripts/train_bootstrap.sh configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
 
 7. Run a trained OpenVLA/OFT CDPR policy with the same control scales used in RL:
 
 ```bash
 python -m rl_vla_bootstrapping.cli.run_cdpr_policy \
-  --config configs/examples/cdpr_openvla_bootstrap.yaml \
+  --config configs/examples/cdpr_openvla_bootstrap_fast.yaml \
   --adapter-path /path/to/vla_cdpr_adapter \
   --action-head-path /path/to/action_head_cdpr.pt \
   --target-object ycb_apple \
@@ -87,7 +95,7 @@ python -m rl_vla_bootstrapping.cli.run_cdpr_policy \
 
 ```bash
 python -m rl_vla_bootstrapping.cli.diagnose_cdpr_policy \
-  --config configs/examples/cdpr_openvla_bootstrap.yaml \
+  --config configs/examples/cdpr_openvla_bootstrap_fast.yaml \
   --target-object ycb_apple \
   --hold-steps 10 \
   --axis-magnitude 0.25 \

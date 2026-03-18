@@ -91,14 +91,16 @@ The scene builder and CDPR wrappers read from those local staged paths during pr
 5. Run validation for paths and environment:
 
 ```bash
-./scripts/doctor_bootstrap.sh configs/examples/cdpr_openvla_bootstrap.yaml
+./scripts/doctor_bootstrap.sh configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
 
 6. Start training:
 
 ```bash
-./scripts/train_bootstrap.sh configs/examples/cdpr_openvla_bootstrap.yaml
+./scripts/train_bootstrap.sh configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
+
+The `cdpr_openvla_bootstrap_fast.yaml` config is the recommended remote-server profile. It keeps the PPO logic the same, but uses a local wrapper launcher plus a more throughput-oriented runtime profile for multi-GPU CDPR training.
 
 ## What Can Be Run Without `openvla-oft`
 
