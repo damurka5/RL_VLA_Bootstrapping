@@ -8,6 +8,7 @@ import numpy as np
 
 from rl_vla_bootstrapping.cli.run_cdpr_policy import (
     _FallbackGenerateConfig,
+    _control_spec_from_config,
     _load_generate_config,
     _motion_diagnostics_for_log,
     _predict_normalized_action_chunk,
@@ -61,6 +62,27 @@ class PolicyRunnerConfigTests(unittest.TestCase):
     def test_set_num_images_in_input_falls_back_to_one_without_api(self):
         updated = _set_num_images_in_input(types.SimpleNamespace(), 2)
         self.assertEqual(updated, 1)
+
+    def test_control_spec_falls_back_to_two_centimeter_xyz_step(self):
+        config = types.SimpleNamespace(
+            embodiment=types.SimpleNamespace(
+                action_adapter=types.SimpleNamespace(
+                    controller_limits={"x": (-0.8, 0.8), "y": (-0.8, 0.8), "z": (0.08, 1.2)},
+                    controller_scales={},
+                    open_gripper_threshold=-0.2,
+                    close_gripper_threshold=0.2,
+                )
+            ),
+            training=types.SimpleNamespace(
+                rl=types.SimpleNamespace(
+                    args={},
+                )
+            ),
+        )
+
+        spec = _control_spec_from_config(config, hold_steps=None)
+
+        self.assertAlmostEqual(spec.action_step_xyz, 0.02, places=7)
 
     def test_predict_normalized_action_chunk_uses_action_head_path(self):
         try:

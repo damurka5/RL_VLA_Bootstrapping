@@ -153,7 +153,7 @@ def _control_spec_from_config(config, hold_steps: int | None) -> CDPRPolicyContr
             limits["y"],
             limits["z"],
         ),
-        action_step_xyz=float(config.training.rl.args.get("action_step_xyz", config.embodiment.action_adapter.controller_scales.get("x", 0.005))),
+        action_step_xyz=float(config.training.rl.args.get("action_step_xyz", config.embodiment.action_adapter.controller_scales.get("x", 0.02))),
         action_step_yaw=float(config.training.rl.args.get("action_step_yaw", config.embodiment.action_adapter.controller_scales.get("yaw", 0.25))),
         open_gripper_threshold=float(config.embodiment.action_adapter.open_gripper_threshold),
         close_gripper_threshold=float(config.embodiment.action_adapter.close_gripper_threshold),
