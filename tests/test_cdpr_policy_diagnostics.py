@@ -10,6 +10,7 @@ from rl_vla_bootstrapping.cli.diagnose_cdpr_policy import (
     _build_executed_action_sequence,
     _build_random_demos,
     _compute_visible_start_xyz,
+    _locked_axes_for_demo,
     _summarize_demo,
 )
 
@@ -82,6 +83,17 @@ class PolicyDiagnosticsTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(target, np.array([0.01, -0.02, 0.26], dtype=np.float32), atol=1e-7)
+
+    def test_locked_axes_for_axis_demo_pins_other_coordinates(self):
+        demo = DiagnosticDemo(
+            name="axis_x_pos",
+            kind="axis",
+            description="test",
+            chunk=np.tile(np.array([[0.25, 0.0, 0.0, 0.0, 0.0]], dtype=np.float32), (8, 1)),
+        )
+
+        self.assertEqual(_locked_axes_for_demo(demo, lock_non_commanded_axes=True), (1, 2))
+        self.assertEqual(_locked_axes_for_demo(demo, lock_non_commanded_axes=False), ())
 
     def test_summarize_demo_aggregates_realized_and_commanded_motion(self):
         demo = DiagnosticDemo(

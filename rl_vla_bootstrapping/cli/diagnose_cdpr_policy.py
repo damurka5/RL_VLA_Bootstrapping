@@ -22,6 +22,7 @@ from rl_vla_bootstrapping.simulation.scene_builder import build_scene_xml
 from robots.cdpr.cdpr_dataset.synthetic_tasks import clear_sim_recording_buffers, prepare_cdpr_workspace
 from robots.cdpr.cdpr_mujoco.policy_control import (
     apply_normalized_cdpr_action,
+    clamp_xyz_to_limits,
     policy_action_frequency_hz,
     policy_action_period_s,
 )
@@ -121,6 +122,18 @@ def _build_parser() -> argparse.ArgumentParser:
         default=30,
         help="Captured simulator steps to hold the lifted start pose before the first action.",
     )
+    parser.add_argument(
+        "--reset-to-visible-start-each-repeat",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Move back to the same lifted start pose before each chunk repeat.",
+    )
+    parser.add_argument(
+        "--lock-non-commanded-axes",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="For axis demos, keep the other Cartesian axes pinned to the lifted reference pose.",
+    )
     parser.add_argument("--warm-steps", type=int, default=10, help="Warmup steps for hold_current_pose before each demo.")
     parser.add_argument("--log-every", type=int, default=1, help="Logging cadence in policy-action steps.")
     return parser
@@ -204,6 +217,73 @@ def _set_ee_target(sim: Any, xyz: np.ndarray) -> bool:
     return False
 
 
+def _apply_diagnostic_action(
+    sim: Any,
+    normalized_action: np.ndarray,
+    control_spec: Any,
+    *,
+    ee_min_z: float | None,
+    capture_last_frame: bool,
+    capture_all_steps: bool,
+    reference_xyz: np.ndarray | None = None,
+    locked_axes: tuple[int, ...] = (),
+) -> dict[str, Any]:
+    action = np.asarray(normalized_action, dtype=np.float32).reshape(-1)
+    if action.size != 5:
+        raise ValueError(f"Expected normalized action shape (5,), got {action.shape}")
+    action = np.clip(action, -1.0, 1.0)
+
+    current_xyz = np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
+    target_xyz = current_xyz + np.asarray(action[:3] * float(control_spec.action_step_xyz), dtype=np.float32)
+
+    if reference_xyz is not None:
+        ref = np.asarray(reference_xyz, dtype=np.float32).reshape(-1)[:3]
+        for axis_idx in tuple(int(i) for i in locked_axes):
+            if 0 <= axis_idx < 3:
+                target_xyz[axis_idx] = ref[axis_idx]
+
+    target_xyz = clamp_xyz_to_limits(target_xyz, control_spec.xyz_limits)
+    if ee_min_z is not None:
+        target_xyz[2] = np.float32(max(float(target_xyz[2]), float(ee_min_z)))
+    _set_ee_target(sim, target_xyz)
+
+    current_yaw = None
+    target_yaw = None
+    if hasattr(sim, "get_yaw"):
+        current_yaw = float(sim.get_yaw())
+    if current_yaw is not None:
+        target_yaw = float(current_yaw + float(action[3]) * float(control_spec.action_step_yaw))
+        if hasattr(sim, "set_yaw"):
+            sim.set_yaw(target_yaw)
+
+    gripper_command = float(action[4])
+    if gripper_command >= float(control_spec.close_gripper_threshold) and hasattr(sim, "close_gripper"):
+        sim.close_gripper()
+    elif gripper_command <= float(control_spec.open_gripper_threshold) and hasattr(sim, "open_gripper"):
+        sim.open_gripper()
+
+    steps = control_spec.sim_steps_per_policy_action
+    for step_idx in range(steps):
+        capture = bool(capture_all_steps or (capture_last_frame and step_idx == (steps - 1)))
+        sim.run_simulation_step(capture_frame=capture)
+
+    result: dict[str, Any] = {
+        "commanded_action": action.copy(),
+        "target_xyz": target_xyz.copy(),
+        "gripper_command": gripper_command,
+        "sim_steps": steps,
+    }
+    if target_yaw is not None:
+        result["target_yaw"] = float(target_yaw)
+    if hasattr(sim, "get_end_effector_position"):
+        result["ee_position"] = np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3].copy()
+    if hasattr(sim, "get_yaw"):
+        result["ee_yaw"] = float(sim.get_yaw())
+    if hasattr(sim, "get_gripper_opening"):
+        result["gripper_opening"] = float(sim.get_gripper_opening())
+    return result
+
+
 def _move_to_xyz(
     sim: Any,
     target_xyz: np.ndarray,
@@ -251,6 +331,36 @@ def _compute_visible_start_xyz(
     desired_z = max(float(current[2]), float(workspace_safety["ee_spawn_z"]) + float(z_offset))
     current[2] = np.float32(np.clip(desired_z, z_lo, z_hi))
     return current
+
+
+def _locked_axes_for_demo(demo: DiagnosticDemo, *, lock_non_commanded_axes: bool) -> tuple[int, ...]:
+    if not lock_non_commanded_axes:
+        return ()
+    chunk = np.asarray(demo.chunk, dtype=np.float32)
+    active_axes = tuple(int(idx) for idx in np.where(np.any(np.abs(chunk[:, :3]) > 1e-6, axis=0))[0].tolist())
+    if len(active_axes) != 1:
+        return ()
+    return tuple(axis for axis in range(3) if axis not in active_axes)
+
+
+def _prepare_demo_start_pose(
+    sim: Any,
+    *,
+    target_xyz: np.ndarray,
+    hold_warm_steps: int,
+    clear_recordings: bool,
+    pre_roll_steps: int,
+) -> np.ndarray:
+    actual_xyz = _move_to_xyz(sim, target_xyz)
+    if hasattr(sim, "hold_current_pose"):
+        try:
+            sim.hold_current_pose(warm_steps=max(0, int(hold_warm_steps)))
+        except Exception:
+            pass
+    if clear_recordings:
+        clear_sim_recording_buffers(sim)
+    _capture_idle_steps(sim, int(pre_roll_steps))
+    return np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
 
 
 def _format_triplet(vec: np.ndarray) -> str:
@@ -451,6 +561,8 @@ def _run_demo(
     chunk_repeats: int,
     visible_start_z_offset: float,
     pre_roll_steps: int,
+    reset_to_visible_start_each_repeat: bool,
+    lock_non_commanded_axes: bool,
     warm_steps: int,
     log_every: int,
 ) -> tuple[dict[str, Any], dict[str, Any], float]:
@@ -474,30 +586,57 @@ def _run_demo(
             z_offset=float(visible_start_z_offset),
             z_limits=control_spec.xyz_limits[2],
         )
-        actual_start_xyz = _move_to_xyz(sim, visible_start_xyz)
-        clear_sim_recording_buffers(sim)
-        _capture_idle_steps(sim, int(pre_roll_steps))
+        actual_start_xyz = _prepare_demo_start_pose(
+            sim,
+            target_xyz=visible_start_xyz,
+            hold_warm_steps=max(6, int(warm_steps)),
+            clear_recordings=True,
+            pre_roll_steps=int(pre_roll_steps),
+        )
+        locked_axes = _locked_axes_for_demo(demo, lock_non_commanded_axes=bool(lock_non_commanded_axes))
 
         print(
             f"[demo:{demo.name}] {demo.description} "
             f"(ee_min_z={workspace_safety['ee_min_z']:.4f}, ee_spawn_z={workspace_safety['ee_spawn_z']:.4f}, "
             f"lifted={workspace_safety['lifted_to_spawn_height']}, "
+            f"locked_axes={list(locked_axes)}, "
             f"visible_start={_format_triplet(actual_start_xyz)}, repeats={max(1, int(chunk_repeats))})"
         )
         chunk_len = max(1, int(len(demo.chunk)))
         for step_idx, action in enumerate(executed_sequence):
+            if step_idx > 0 and (step_idx % chunk_len == 0) and bool(reset_to_visible_start_each_repeat):
+                actual_start_xyz = _prepare_demo_start_pose(
+                    sim,
+                    target_xyz=visible_start_xyz,
+                    hold_warm_steps=max(6, int(warm_steps)),
+                    clear_recordings=False,
+                    pre_roll_steps=0,
+                )
+
             ee_before = np.asarray(sim.get_end_effector_position(), dtype=np.float32).reshape(-1)[:3]
             yaw_before = float(sim.get_yaw()) if hasattr(sim, "get_yaw") else None
             grip_before = float(sim.get_gripper_opening()) if hasattr(sim, "get_gripper_opening") else None
 
-            result = apply_normalized_cdpr_action(
-                sim,
-                action,
-                control_spec,
-                ee_min_z=float(workspace_safety["ee_min_z"]),
-                capture_last_frame=not capture_all_substeps,
-                capture_all_steps=capture_all_substeps,
-            )
+            if locked_axes:
+                result = _apply_diagnostic_action(
+                    sim,
+                    action,
+                    control_spec,
+                    ee_min_z=float(workspace_safety["ee_min_z"]),
+                    capture_last_frame=not capture_all_substeps,
+                    capture_all_steps=capture_all_substeps,
+                    reference_xyz=visible_start_xyz,
+                    locked_axes=locked_axes,
+                )
+            else:
+                result = apply_normalized_cdpr_action(
+                    sim,
+                    action,
+                    control_spec,
+                    ee_min_z=float(workspace_safety["ee_min_z"]),
+                    capture_last_frame=not capture_all_substeps,
+                    capture_all_steps=capture_all_substeps,
+                )
             motion_diag = _motion_diagnostics_for_log(
                 action=action,
                 control_spec=control_spec,
@@ -623,6 +762,7 @@ def main() -> int:
     print(f"Instruction label: {instruction}")
     print(f"Chunk length: {chunk_length}")
     print(f"Chunk repeats: {max(1, int(args.chunk_repeats))}")
+    print(f"Reset each repeat: {bool(args.reset_to_visible_start_each_repeat)}")
     print(f"Capture mode: {'all_substeps' if args.capture_all_substeps else 'last_frame_only'}")
 
     demo_root = ensure_directory(run_dir / "demos")
@@ -642,6 +782,8 @@ def main() -> int:
             chunk_repeats=int(args.chunk_repeats),
             visible_start_z_offset=float(args.visible_start_z_offset),
             pre_roll_steps=int(args.pre_roll_steps),
+            reset_to_visible_start_each_repeat=bool(args.reset_to_visible_start_each_repeat),
+            lock_non_commanded_axes=bool(args.lock_non_commanded_axes),
             warm_steps=int(args.warm_steps),
             log_every=int(args.log_every),
         )
@@ -680,6 +822,8 @@ def main() -> int:
         "chunk_repeats": max(1, int(args.chunk_repeats)),
         "visible_start_z_offset": float(args.visible_start_z_offset),
         "pre_roll_steps": int(args.pre_roll_steps),
+        "reset_to_visible_start_each_repeat": bool(args.reset_to_visible_start_each_repeat),
+        "lock_non_commanded_axes": bool(args.lock_non_commanded_axes),
         "capture_mode": "all_substeps" if args.capture_all_substeps else "last_frame_only",
         "seed": int(args.seed),
         "control_spec": asdict(control_spec),
