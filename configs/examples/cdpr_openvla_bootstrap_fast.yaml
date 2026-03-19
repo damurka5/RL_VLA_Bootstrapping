@@ -197,6 +197,7 @@ training:
       validate_every_updates: 10
       validation_episodes: 1
       validation_max_steps: 40
+      tensorboard_rollout_every_global_steps: 100
       prebuild_scene_cache: true
       scene_pool_size: 16
       texture_pool_size: 10
