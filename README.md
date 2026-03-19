@@ -79,6 +79,8 @@ python -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla_
 ./scripts/train_bootstrap.sh configs/examples/cdpr_openvla_bootstrap_fast.yaml
 ```
 
+TensorBoard for the fast CDPR preset writes under `runs/<run_name>/rl/tensorboard`. The external OpenVLA/OFT PPO trainer creates the writer on rank 0, prints the resolved log directory at startup, logs training scalars every PPO update because `tensorboard_every_updates: 1`, and the fast preset now requests validation TensorBoard points every 10 updates.
+
 7. Run a trained OpenVLA/OFT CDPR policy with the same control scales used in RL:
 
 ```bash

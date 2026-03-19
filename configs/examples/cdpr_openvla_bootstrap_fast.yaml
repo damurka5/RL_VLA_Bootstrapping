@@ -84,9 +84,9 @@ embodiment:
   action_adapter:
     common_action_keys: [x, y, z, yaw, gripper]
     controller_scales:
-      x: 0.02
-      y: 0.02
-      z: 0.02
+      x: 0.015
+      y: 0.015
+      z: 0.015
       yaw: 0.08
       gripper: 1.0
     controller_limits:
@@ -168,7 +168,7 @@ training:
     args:
       external_ppo_script: vla-scripts/ppo_finetune_cdpr.py
       num_parallel_envs: 12
-      total_updates: 30
+      total_updates: 60
       rollout_steps: 170
       ppo_epochs: 4
       minibatch_size: 16
@@ -183,7 +183,7 @@ training:
       normalize_advantage: true
       init_log_std: -1.2
       gradient_checkpointing: true
-      action_step_xyz: 0.02
+      action_step_xyz: 0.015
       action_step_yaw: 0.08
       hold_steps: 10
       lock_non_commanded_axes: true
@@ -194,7 +194,7 @@ training:
       delta_closer_reward_coef: 0.0
       delta_farther_penalty_coef: 0.0
       save_every: 20
-      validate_every_updates: 20
+      validate_every_updates: 10
       validation_episodes: 1
       validation_max_steps: 40
       prebuild_scene_cache: true
