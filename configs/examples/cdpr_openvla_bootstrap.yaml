@@ -122,6 +122,15 @@ task:
     goal_height_above_table: 0.10
     lateral_goal_offset: 0.40
     vertical_goal_offset: 0.10
+    distance_reward_scale: 0.40
+    distance_reward_weight: 1.0
+    distance_reward_exponent: 2.0
+    camera_alignment_weight: 0.0
+    success_distance: 0.03
+    success_bonus: 1.0
+    action_saturation_threshold: 0.95
+    action_saturation_penalty_weight: 1.0
+    action_saturation_exponent: 2.0
 
 simulation:
   entrypoint:
@@ -179,7 +188,7 @@ training:
       ppo_epochs: 4
       minibatch_size: 16
       microbatch_size: 16
-      max_env_steps: 100
+      max_env_steps: 32
       gamma: 0.99
       gae_lambda: 0.95
       learning_rate: 1.0e-5
@@ -201,7 +210,7 @@ training:
       save_every: 20
       validate_every_updates: 10
       validation_episodes: 1
-      validation_max_steps: 40
+      validation_max_steps: 32
       prebuild_scene_cache: true
       scene_pool_size: 16
       texture_pool_size: 10

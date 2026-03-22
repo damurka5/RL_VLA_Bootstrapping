@@ -35,7 +35,7 @@ class InstructionGoalTests(unittest.TestCase):
 
         np.testing.assert_allclose(goal, np.array([-0.40, 0.0, 0.25], dtype=np.float32), atol=1e-7)
 
-    def test_vertical_instruction_keeps_initial_xy(self):
+    def test_vertical_instruction_uses_workspace_center_target(self):
         env = self._env()
         spec = InstructionSpec(
             instruction_type="move_up",
@@ -48,14 +48,7 @@ class InstructionGoalTests(unittest.TestCase):
         initial = np.array([0.18, -0.14, 0.40], dtype=np.float32)
 
         goal = env._compute_instruction_goal(spec=spec, initial_ee_pos=initial)
-        direction = env._compute_goal_motion_direction(
-            initial_ee_pos=initial,
-            goal_pos=goal,
-            instruction_direction=spec.direction,
-        )
-
-        np.testing.assert_allclose(goal, np.array([0.18, -0.14, 0.50], dtype=np.float32), atol=1e-7)
-        np.testing.assert_allclose(direction, np.array([0.0, 0.0, 1.0], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(goal, np.array([0.0, 0.0, 0.25], dtype=np.float32), atol=1e-7)
 
 
 if __name__ == "__main__":

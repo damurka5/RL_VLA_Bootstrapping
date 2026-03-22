@@ -1300,7 +1300,6 @@ class CDPRLanguageRLEnv(_EnvBase):
         else:
             center = self._goal_center()
             lateral_offset = float(self._task_metadata.get("lateral_goal_offset", spec.target_displacement))
-            vertical_offset = float(self._task_metadata.get("vertical_goal_offset", spec.lift_target))
             goal = center.copy()
             if spec.instruction_type == "move_left":
                 goal[0] -= lateral_offset
@@ -1310,14 +1309,9 @@ class CDPRLanguageRLEnv(_EnvBase):
                 goal[1] += lateral_offset
             elif spec.instruction_type == "move_bottom":
                 goal[1] -= lateral_offset
-            elif spec.instruction_type == "move_up":
-                goal[0] = float(initial_ee_pos[0])
-                goal[1] = float(initial_ee_pos[1])
-                goal[2] = float(initial_ee_pos[2] + vertical_offset)
-            elif spec.instruction_type == "move_down":
-                goal[0] = float(initial_ee_pos[0])
-                goal[1] = float(initial_ee_pos[1])
-                goal[2] = float(initial_ee_pos[2] - vertical_offset)
+            elif spec.instruction_type in {"move_up", "move_down", "move_center"}:
+                # Center-anchored instructions all share the workspace center target.
+                pass
             elif spec.instruction_type != "move_center":
                 raise RuntimeError(f"Unsupported instruction type for goal generation: {spec.instruction_type}")
             goal = np.asarray(clamp_xyz(goal), dtype=np.float32)

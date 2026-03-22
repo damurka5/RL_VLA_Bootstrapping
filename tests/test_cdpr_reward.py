@@ -59,7 +59,7 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertGreater(reward_near, reward_far)
         self.assertGreater(info_far["distance_to_goal"], info_near["distance_to_goal"])
 
-    def test_camera_alignment_changes_reward_and_success(self):
+    def test_camera_alignment_no_longer_drives_reward_or_success(self):
         spec = self._spec("move_up")
         goal = np.array([0.0, 0.0, 0.23], dtype=np.float32)
         ee = np.array([0.0, 0.0, 0.205], dtype=np.float32)
@@ -81,10 +81,43 @@ class RewardDistanceTests(unittest.TestCase):
             goal_direction=np.array([0.0, 0.0, 1.0], dtype=np.float32),
         )
 
-        self.assertFalse(success_bad)
+        self.assertTrue(success_bad)
         self.assertTrue(success_good)
-        self.assertGreater(reward_good, reward_bad)
-        self.assertGreater(info_good["camera_reward"], info_bad["camera_reward"])
+        self.assertAlmostEqual(reward_good, reward_bad, places=6)
+        self.assertEqual(info_bad["camera_reward"], 0.0)
+        self.assertEqual(info_good["camera_reward"], 0.0)
+
+    def test_near_saturated_actions_receive_penalty(self):
+        spec = self._spec("move_left")
+        goal = np.array([0.0, 0.0, 0.20], dtype=np.float32)
+        ee = np.array([0.05, 0.0, 0.20], dtype=np.float32)
+        state = init_reward_state(initial_ee_pos=ee, initial_obj_pos=goal)
+
+        reward_soft, success_soft, info_soft = compute_instruction_reward(
+            spec=spec,
+            ee_pos=ee,
+            obj_pos=goal,
+            reward_state=state,
+            action=np.array([0.25, -0.10, 0.15, 0.0, -1.0], dtype=np.float32),
+            camera_alignment=0.4,
+            goal_direction=np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+        )
+        reward_saturated, success_saturated, info_saturated = compute_instruction_reward(
+            spec=spec,
+            ee_pos=ee,
+            obj_pos=goal,
+            reward_state=init_reward_state(initial_ee_pos=ee, initial_obj_pos=goal),
+            action=np.array([0.99, -0.99, 0.98, 0.97, -1.0], dtype=np.float32),
+            camera_alignment=0.4,
+            goal_direction=np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+        )
+
+        self.assertFalse(success_soft)
+        self.assertFalse(success_saturated)
+        self.assertEqual(info_soft["action_saturation_penalty"], 0.0)
+        self.assertGreater(info_saturated["action_saturation_penalty"], 0.0)
+        self.assertGreater(info_saturated["action_saturation_rate"], 0.0)
+        self.assertLess(reward_saturated, reward_soft)
 
 
 if __name__ == "__main__":

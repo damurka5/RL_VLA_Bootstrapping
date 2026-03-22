@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 import importlib
 import importlib.util
+import math
 import os
 import sys
 from collections import deque
@@ -217,6 +218,9 @@ class _RolloutTensorboardLogger:
             "unstable_transition_rate": deque(maxlen=self.every_global_steps or 1),
             "reward_clip_rate": deque(maxlen=self.every_global_steps or 1),
             "reward_non_finite_rate": deque(maxlen=self.every_global_steps or 1),
+            "distance_to_goal": deque(maxlen=self.every_global_steps or 1),
+            "action_saturation_penalty": deque(maxlen=self.every_global_steps or 1),
+            "action_saturation_rate": deque(maxlen=self.every_global_steps or 1),
         }
 
     def set_run_dir(self, run_dir: Path | str | None) -> None:
@@ -276,6 +280,9 @@ class _RolloutTensorboardLogger:
         self._append("unstable_transition_rate", 1.0 if bool(info.get("unstable_transition", False)) else 0.0)
         self._append("reward_clip_rate", 1.0 if bool(info.get("reward_env_clipped", False)) else 0.0)
         self._append("reward_non_finite_rate", 1.0 if bool(info.get("reward_env_non_finite", False)) else 0.0)
+        self._append_optional("distance_to_goal", info.get("distance_to_goal"))
+        self._append_optional("action_saturation_penalty", info.get("action_saturation_penalty"))
+        self._append_optional("action_saturation_rate", info.get("action_saturation_rate"))
 
         if self.global_step % self.every_global_steps != 0:
             return
@@ -311,6 +318,15 @@ class _RolloutTensorboardLogger:
 
     def _append(self, key: str, value: float) -> None:
         self._windows[key].append(float(value))
+
+    def _append_optional(self, key: str, value: Any) -> None:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return
+        if not math.isfinite(numeric):
+            return
+        self._append(key, numeric)
 
     def _ensure_writer(self):
         if self.writer is not None:

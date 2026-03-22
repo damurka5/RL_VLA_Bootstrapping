@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Sequence
+from typing import Any, Optional, Sequence
 
 import numpy as np
 
@@ -129,20 +129,58 @@ def _safe_unit(vector: np.ndarray) -> tuple[np.ndarray, float]:
     return arr / norm, norm
 
 
+def _metadata_float(task_metadata: dict[str, Any] | None, key: str, default: float) -> float:
+    if not isinstance(task_metadata, dict) or key not in task_metadata:
+        return float(default)
+    raw = task_metadata.get(key)
+    if raw is None:
+        return float(default)
+    try:
+        return float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Task metadata `{key}` must be numeric, got {raw!r}") from exc
+
+
+def _action_saturation_stats(
+    action: np.ndarray | None,
+    *,
+    threshold: float,
+    exponent: float,
+) -> tuple[float, float, float]:
+    if action is None:
+        return 0.0, 0.0, 0.0
+
+    action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+    if action_arr.size > 1:
+        # Exclude the gripper dimension so deliberate open/close commands are not punished.
+        action_arr = action_arr[:-1]
+    if action_arr.size == 0:
+        return 0.0, 0.0, 0.0
+
+    abs_action = np.abs(action_arr)
+    normalized_threshold = float(np.clip(threshold, 0.0, 0.999999))
+    denom = max(1e-6, 1.0 - normalized_threshold)
+    excess = np.clip((abs_action - normalized_threshold) / denom, 0.0, 1.0)
+    penalty_raw = float(np.mean(np.power(excess, float(max(exponent, 1e-6)))))
+    saturation_rate = float(np.mean(abs_action >= normalized_threshold))
+    saturation_max_abs = float(np.max(abs_action))
+    return penalty_raw, saturation_rate, saturation_max_abs
+
+
 def compute_instruction_reward(
     spec: InstructionSpec,
     ee_pos: np.ndarray,
     obj_pos: np.ndarray,
     reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
     camera_alignment: Optional[float] = None,
     goal_direction: Optional[np.ndarray] = None,
     distance_reward_gain: float = 8.0,
-    camera_alignment_weight: float = 0.30,
+    camera_alignment_weight: float = 0.0,
     success_distance: float = 0.03,
     success_camera_alignment: float = 0.60,
+    task_metadata: Optional[dict[str, Any]] = None,
 ) -> tuple[float, bool, dict[str, float]]:
-    del spec
-
     ee_pos = np.asarray(ee_pos, dtype=np.float32)
     goal_pos = np.asarray(obj_pos, dtype=np.float32)
     prev_goal_pos = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
@@ -163,11 +201,45 @@ def compute_instruction_reward(
     prev_camera_align = 0.0 if reward_state.prev_camera_align is None else float(reward_state.prev_camera_align)
     camera_alignment_delta = float(camera_align - prev_camera_align)
 
-    distance_reward = float(np.exp(-float(distance_reward_gain) * distance))
-    camera_reward = float(camera_alignment_weight * camera_align)
-    reward = float(distance_reward + camera_reward)
+    reward_scale_default = max(float(spec.target_displacement), float(spec.lift_target), 1.0 / max(distance_reward_gain, 1e-6))
+    distance_reward_scale = max(
+        _metadata_float(task_metadata, "distance_reward_scale", reward_scale_default),
+        1e-6,
+    )
+    distance_reward_weight = _metadata_float(task_metadata, "distance_reward_weight", 1.0)
+    distance_reward_exponent = _metadata_float(task_metadata, "distance_reward_exponent", 2.0)
+    camera_alignment_weight = _metadata_float(task_metadata, "camera_alignment_weight", camera_alignment_weight)
+    success_distance = _metadata_float(task_metadata, "success_distance", success_distance)
+    success_camera_alignment = _metadata_float(
+        task_metadata,
+        "success_camera_alignment",
+        success_camera_alignment,
+    )
+    success_bonus = _metadata_float(task_metadata, "success_bonus", 1.0)
+    action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.95)
+    action_saturation_penalty_weight = _metadata_float(
+        task_metadata,
+        "action_saturation_penalty_weight",
+        1.0,
+    )
+    action_saturation_exponent = _metadata_float(task_metadata, "action_saturation_exponent", 2.0)
 
-    camera_required = bool(goal_dir_norm > 1e-8)
+    normalized_distance = float(distance / distance_reward_scale)
+    quadratic_term = float(np.power(normalized_distance, max(distance_reward_exponent, 1e-6)))
+    distance_reward = float(distance_reward_weight / (1.0 + quadratic_term))
+    camera_reward = float(camera_alignment_weight * camera_align)
+    action_saturation_penalty_raw, action_saturation_rate, action_saturation_max_abs = _action_saturation_stats(
+        action,
+        threshold=action_saturation_threshold,
+        exponent=action_saturation_exponent,
+    )
+    action_saturation_penalty = float(action_saturation_penalty_weight * action_saturation_penalty_raw)
+
+    camera_required = bool(
+        camera_alignment_weight > 0.0
+        and goal_dir_norm > 1e-8
+        and success_camera_alignment > 0.0
+    )
     success = bool(
         distance <= float(success_distance)
         and (
@@ -175,6 +247,8 @@ def compute_instruction_reward(
             or camera_align >= float(success_camera_alignment)
         )
     )
+    success_reward = float(success_bonus if success else 0.0)
+    reward = float(distance_reward + camera_reward + success_reward - action_saturation_penalty)
 
     reward_state.prev_ee_pos = ee_pos.copy()
     reward_state.prev_obj_pos = goal_pos.copy()
@@ -188,10 +262,20 @@ def compute_instruction_reward(
         "distance_to_goal_prev": prev_distance,
         "distance_to_goal_prev_xy": prev_xy_distance,
         "distance_delta": distance_delta,
+        "distance_to_goal_normalized": normalized_distance,
         "distance_reward": distance_reward,
+        "distance_reward_scale": float(distance_reward_scale),
+        "distance_reward_weight": float(distance_reward_weight),
+        "distance_reward_exponent": float(distance_reward_exponent),
         "camera_alignment": camera_align,
         "camera_alignment_delta": camera_alignment_delta,
         "camera_reward": camera_reward,
+        "action_saturation_penalty": action_saturation_penalty,
+        "action_saturation_penalty_raw": action_saturation_penalty_raw,
+        "action_saturation_rate": action_saturation_rate,
+        "action_saturation_max_abs": action_saturation_max_abs,
+        "action_saturation_threshold": float(action_saturation_threshold),
+        "action_saturation_exponent": float(action_saturation_exponent),
         "goal_direction_x": float(goal_dir_unit[0]),
         "goal_direction_y": float(goal_dir_unit[1]),
         "goal_direction_z": float(goal_dir_unit[2]),
@@ -207,6 +291,6 @@ def compute_instruction_reward(
         "distance_ee_to_object_prev_xyz": prev_distance,
         "distance_ee_to_object_prev_xy": prev_xy_distance,
         "orientation_reward": camera_reward,
-        "success_bonus": 0.0,
+        "success_bonus": success_reward,
     }
     return reward, success, info
