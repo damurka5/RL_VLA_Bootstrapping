@@ -5,6 +5,7 @@ import unittest
 import numpy as np
 
 from robots.cdpr.cdpr_mujoco.headless_cdpr_egl import (
+    HeadlessCDPRSimulation,
     HeadlessCDPRController,
     _solve_slider_preload_targets,
 )
@@ -72,6 +73,52 @@ class HeadlessCDPRControllerTests(unittest.TestCase):
 
         expected_delta = (1.0 - 0.8) / 2.0
         np.testing.assert_allclose(control, current_q + expected_delta)
+
+    def test_simulation_set_yaw_clips_to_joint_limits(self):
+        sim = HeadlessCDPRSimulation.__new__(HeadlessCDPRSimulation)
+        sim.act_yaw = 2
+        sim.yaw_min = -1.5
+        sim.yaw_max = 1.5
+        sim.data = type("Data", (), {"ctrl": np.zeros(3, dtype=float)})()
+
+        sim.set_yaw(3.0)
+        self.assertAlmostEqual(float(sim.data.ctrl[2]), 1.5, places=9)
+
+        sim.set_yaw(-4.0)
+        self.assertAlmostEqual(float(sim.data.ctrl[2]), -1.5, places=9)
+
+    def test_set_slider_targets_clips_each_slider_to_actuator_range(self):
+        sim = HeadlessCDPRSimulation.__new__(HeadlessCDPRSimulation)
+        sim.act_sliders = [0, 1, 2, 3]
+        sim.slider_qadr = [0, 1, 2, 3]
+        sim.slider_joint_ids = [0, 1, 2, 3]
+        sim.model = type(
+            "Model",
+            (),
+            {
+                "actuator_ctrllimited": np.array([1, 1, 1, 1], dtype=np.int32),
+                "actuator_ctrlrange": np.array(
+                    [[-1.0, 1.0], [-2.0, 2.0], [-3.0, 3.0], [-4.0, 4.0]],
+                    dtype=float,
+                ),
+                "jnt_dofadr": np.array([0, 1, 2, 3], dtype=np.int32),
+                "nv": 4,
+            },
+        )()
+        sim.data = type(
+            "Data",
+            (),
+            {
+                "ctrl": np.zeros(4, dtype=float),
+                "qpos": np.zeros(4, dtype=float),
+                "qvel": np.zeros(4, dtype=float),
+            },
+        )()
+
+        clipped = sim._set_slider_targets(np.array([5.0, -5.0, 0.5, -0.5], dtype=float))
+
+        np.testing.assert_allclose(clipped, np.array([1.0, -2.0, 0.5, -0.5], dtype=float), atol=1e-9)
+        np.testing.assert_allclose(sim.data.ctrl, clipped, atol=1e-9)
 
 
 if __name__ == "__main__":

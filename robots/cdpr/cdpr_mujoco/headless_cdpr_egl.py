@@ -137,6 +137,8 @@ class HeadlessCDPRSimulation:
         self.target_pos = np.array([0, 0, 0.40], dtype=float)
         self.gripper_min = 0.0
         self.gripper_max = 0.03
+        self.yaw_min = -np.pi
+        self.yaw_max = np.pi
         self.jnt_finger_l_qadr = None
 
         # Recording
@@ -181,6 +183,14 @@ class HeadlessCDPRSimulation:
         self.jnt_finger_l = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "finger_l")
         if self.jnt_finger_l != -1:
             self.jnt_finger_l_qadr = int(self.model.jnt_qposadr[self.jnt_finger_l])
+
+        if self.jnt_yaw != -1 and bool(self.model.jnt_limited[self.jnt_yaw]):
+            y_lo, y_hi = self.model.jnt_range[self.jnt_yaw]
+            self.yaw_min = float(min(y_lo, y_hi))
+            self.yaw_max = float(max(y_lo, y_hi))
+        else:
+            self.yaw_min = float(-np.pi)
+            self.yaw_max = float(np.pi)
 
         # Read gripper limits from the active model so wrappers and base XML stay consistent.
         if self.act_gripper != -1 and bool(self.model.actuator_ctrllimited[self.act_gripper]):
@@ -519,7 +529,10 @@ class HeadlessCDPRSimulation:
         return float(self.data.qpos[self.jnt_yaw_qadr])
 
     def set_yaw(self, yaw_rad):
-        self.data.ctrl[self.act_yaw] = float(np.clip(yaw_rad, -2*np.pi, 2*np.pi))
+        if self.act_yaw == -1:
+            return
+        yaw_cmd = float(np.clip(yaw_rad, self.yaw_min, self.yaw_max))
+        self.data.ctrl[self.act_yaw] = yaw_cmd
 
     def record_trajectory_step(self):
         ee_pos = self.get_end_effector_position()
@@ -617,9 +630,9 @@ class HeadlessCDPRSimulation:
             current_slider_qpos=slider_qpos,
             current_tendon_lengths=tendon_lengths,
         )
-
-        for j, act_id in enumerate(self.act_sliders):
-            self.data.ctrl[act_id] = control_signals[j]
+        if not np.all(np.isfinite(control_signals)):
+            control_signals = np.asarray(slider_qpos, dtype=float)
+        self._set_slider_targets(control_signals)
 
         mj.mj_step(self.model, self.data)
 
