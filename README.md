@@ -81,6 +81,12 @@ python -m rl_vla_bootstrapping.cli.train --config configs/examples/cdpr_openvla_
 
 TensorBoard for the fast CDPR preset writes under `runs/<run_name>/rl/tensorboard`. The external OpenVLA/OFT PPO trainer creates the main writer on rank 0, prints the resolved log directory at startup, logs update-level training scalars every PPO update because `tensorboard_every_updates: 1`, and the fast preset requests validation TensorBoard points every 10 updates. The fast wrapper also adds `rollout_step/*` summaries every 100 rank-0 `global_step`s via `tensorboard_rollout_every_global_steps`, which is useful when one PPO update spans thousands of rollout steps.
 
+For a self-contained CDPR safe-RL baseline inside this repo, use `rl_vla_bootstrapping/policy/blac_finetune_cdpr.py`. It implements a Barrier-Lyapunov Actor-Critic inspired by Zhao et al. ([paper](https://arxiv.org/pdf/2304.04066)) on top of the repo’s vector-state CDPR env and also exposes compatible off-policy baselines through `--algorithm blac|bac|sac|td3|redq`. The script accepts the same CDPR/env arguments that the pipeline already injects, so a config can swap from PPO by changing `training.rl.script_path` and `training.rl.algorithm`.
+
+If you want to extend the OpenVLA path directly in-tree, the reusable feature-extraction and actor/critic wrapper now lives in `rl_vla_bootstrapping/policy/openvla_actor_critic.py`. That module keeps the OpenVLA prompt formatting, multimodal token preparation, action-token extraction, and twin-critic scaffolding in this repo instead of only inside ad hoc scripts.
+
+The first trainer wired on top of that stack is `rl_vla_bootstrapping/policy/openvla_blac_finetune_cdpr.py`. It runs chunked OpenVLA action-head finetuning directly against `CDPRVisionLanguageEnv`, stores image-conditioned replay, and applies BLAC-style workspace barrier / Lyapunov penalties using the repo-local safety machinery.
+
 7. Run a trained OpenVLA/OFT CDPR policy with the same control scales used in RL:
 
 ```bash

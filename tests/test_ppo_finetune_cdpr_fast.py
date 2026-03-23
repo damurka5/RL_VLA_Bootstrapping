@@ -6,6 +6,8 @@ import types
 import unittest
 from pathlib import Path
 
+_INSERTED_TORCH_STUB = False
+
 if "torch" not in sys.modules:
     torch_stub = types.ModuleType("torch")
     torch_stub.cuda = types.SimpleNamespace(is_available=lambda: False)
@@ -15,6 +17,7 @@ if "torch" not in sys.modules:
     )
     torch_stub.set_float32_matmul_precision = lambda *args, **kwargs: None
     sys.modules["torch"] = torch_stub
+    _INSERTED_TORCH_STUB = True
 
 if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
     pil_stub = types.ModuleType("PIL")
@@ -33,6 +36,9 @@ from rl_vla_bootstrapping.policy.ppo_finetune_cdpr_fast import (
     _RolloutTensorboardLogger,
     _split_wrapper_argv,
 )
+
+if _INSERTED_TORCH_STUB:
+    sys.modules.pop("torch", None)
 
 
 class _FakeSummaryWriter:
