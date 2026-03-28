@@ -10,6 +10,7 @@ _INSERTED_TORCH_STUB = False
 
 if "torch" not in sys.modules:
     torch_stub = types.ModuleType("torch")
+    torch_stub.Tensor = object
     torch_stub.cuda = types.SimpleNamespace(is_available=lambda: False)
     torch_stub.backends = types.SimpleNamespace(
         cuda=types.SimpleNamespace(matmul=types.SimpleNamespace(allow_tf32=False)),
@@ -34,6 +35,7 @@ if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
 
 from rl_vla_bootstrapping.policy.ppo_finetune_cdpr_fast import (
     _RolloutTensorboardLogger,
+    _infer_resume_artifacts,
     _split_wrapper_argv,
 )
 
@@ -81,6 +83,36 @@ class FastPPOWrapperTests(unittest.TestCase):
         self.assertEqual(external_script, Path("/tmp/external_ppo.py").resolve())
         self.assertEqual(forwarded, ["--rollout_steps", "170"])
         self.assertEqual(fast_args.tensorboard_rollout_every_global_steps, 100)
+
+    def test_infer_resume_artifacts_from_checkpoint_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp) / "step_0122400"
+            adapter_dir = checkpoint_dir / "vla_cdpr_adapter"
+            adapter_dir.mkdir(parents=True)
+            (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+            (checkpoint_dir / "value_head.pt").write_text("value", encoding="utf-8")
+            (checkpoint_dir / "ppo_actor_stats.pt").write_text("actor", encoding="utf-8")
+
+            artifacts = _infer_resume_artifacts(["--adapter_path", str(checkpoint_dir)])
+
+            self.assertEqual(artifacts.checkpoint_dir, checkpoint_dir.resolve())
+            self.assertEqual(artifacts.value_head_path, (checkpoint_dir / "value_head.pt").resolve())
+            self.assertEqual(artifacts.actor_stats_path, (checkpoint_dir / "ppo_actor_stats.pt").resolve())
+
+    def test_infer_resume_artifacts_from_adapter_dir(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp) / "step_0122400"
+            adapter_dir = checkpoint_dir / "vla_cdpr_adapter"
+            adapter_dir.mkdir(parents=True)
+            (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+            (checkpoint_dir / "value_head.pt").write_text("value", encoding="utf-8")
+            (checkpoint_dir / "ppo_actor_stats.pt").write_text("actor", encoding="utf-8")
+
+            artifacts = _infer_resume_artifacts(["--adapter_path", str(adapter_dir)])
+
+            self.assertEqual(artifacts.checkpoint_dir, checkpoint_dir.resolve())
+            self.assertEqual(artifacts.value_head_path, (checkpoint_dir / "value_head.pt").resolve())
+            self.assertEqual(artifacts.actor_stats_path, (checkpoint_dir / "ppo_actor_stats.pt").resolve())
 
     def test_rollout_tensorboard_logger_emits_window_means_on_cadence(self):
         with tempfile.TemporaryDirectory() as tmp:

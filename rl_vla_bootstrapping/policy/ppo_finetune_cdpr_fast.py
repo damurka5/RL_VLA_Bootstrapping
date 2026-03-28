@@ -21,6 +21,13 @@ class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
 
 
+@dataclass(frozen=True)
+class _ResumeArtifacts:
+    checkpoint_dir: Path | None = None
+    value_head_path: Path | None = None
+    actor_stats_path: Path | None = None
+
+
 def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _FastWrapperArgs]:
     forwarded: list[str] = []
     external_script: Path | None = None
@@ -50,6 +57,59 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     return external_script, forwarded, _FastWrapperArgs(
         tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps
     )
+
+
+def _extract_cli_arg_value(argv: Sequence[str], flag: str) -> str | None:
+    inline_prefix = flag + "="
+    for idx in range(len(argv) - 1, -1, -1):
+        arg = str(argv[idx])
+        if arg == flag:
+            if idx + 1 < len(argv):
+                return str(argv[idx + 1])
+            return None
+        if arg.startswith(inline_prefix):
+            return arg[len(inline_prefix) :]
+    return None
+
+
+def _candidate_checkpoint_dirs(raw_path: str | Path) -> list[Path]:
+    base = Path(raw_path).expanduser().resolve()
+    if base.is_file():
+        return [base.parent]
+
+    candidates: list[Path] = []
+    if base.name == "vla_cdpr_adapter":
+        candidates.append(base.parent)
+    candidates.append(base)
+
+    deduped: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        deduped.append(candidate)
+    return deduped
+
+
+def _infer_resume_artifacts(argv: Sequence[str]) -> _ResumeArtifacts:
+    raw_values = [
+        _extract_cli_arg_value(argv, "--action_head_path"),
+        _extract_cli_arg_value(argv, "--adapter_path"),
+    ]
+    for raw_value in raw_values:
+        if not raw_value:
+            continue
+        for checkpoint_dir in _candidate_checkpoint_dirs(raw_value):
+            value_head_path = checkpoint_dir / "value_head.pt"
+            actor_stats_path = checkpoint_dir / "ppo_actor_stats.pt"
+            if value_head_path.is_file() or actor_stats_path.is_file():
+                return _ResumeArtifacts(
+                    checkpoint_dir=checkpoint_dir,
+                    value_head_path=value_head_path if value_head_path.is_file() else None,
+                    actor_stats_path=actor_stats_path if actor_stats_path.is_file() else None,
+                )
+    return _ResumeArtifacts()
 
 
 def _candidate_external_scripts() -> list[Path]:
@@ -190,6 +250,80 @@ def _patch_scene_wrapper_cache(module) -> None:
         return out
 
     env_cls._activate_scene_wrapper_cache = _activate_scene_wrapper_cache_checked
+
+
+def _load_state_dict(module, checkpoint_path: Path) -> dict[str, torch.Tensor]:
+    state_raw = torch.load(checkpoint_path, map_location="cpu")
+    if hasattr(module, "_extract_state_dict"):
+        return module._extract_state_dict(state_raw)
+    if isinstance(state_raw, dict):
+        return {str(key): value for key, value in state_raw.items() if isinstance(value, torch.Tensor)}
+    raise TypeError(f"Unsupported checkpoint payload type: {type(state_raw)}")
+
+
+def _find_log_std_tensor(payload: Any) -> torch.Tensor | None:
+    if isinstance(payload, torch.Tensor):
+        return payload
+    if isinstance(payload, dict):
+        direct = payload.get("log_std")
+        if isinstance(direct, torch.Tensor):
+            return direct
+        for value in payload.values():
+            tensor = _find_log_std_tensor(value)
+            if tensor is not None:
+                return tensor
+    return None
+
+
+def _patch_resume_artifacts(module, forwarded_argv: Sequence[str]) -> None:
+    artifacts = _infer_resume_artifacts(forwarded_argv)
+    if artifacts.checkpoint_dir is None:
+        return
+
+    if artifacts.value_head_path is not None:
+        original_value_head_cls = module.PPOValueHead
+
+        class _ResumePPOValueHead(original_value_head_cls):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                state = _load_state_dict(module, artifacts.value_head_path)
+                missing, unexpected = self.load_state_dict(state, strict=True)
+                if missing or unexpected:
+                    raise RuntimeError(
+                        "Strict value-head load failed during resume. "
+                        f"missing={missing}, unexpected={unexpected}"
+                    )
+                print(f"[value_head] Loaded from {artifacts.value_head_path}", flush=True)
+
+        module.PPOValueHead = _ResumePPOValueHead
+
+    if artifacts.actor_stats_path is not None:
+        original_policy_init = module.OpenVLAPPOPolicy.__init__
+
+        def _policy_init_with_actor_resume(self, *args, **kwargs):
+            original_policy_init(self, *args, **kwargs)
+            state_raw = torch.load(artifacts.actor_stats_path, map_location="cpu")
+            log_std = _find_log_std_tensor(state_raw)
+            if log_std is None:
+                raise RuntimeError(f"Could not locate `log_std` tensor in {artifacts.actor_stats_path}")
+            flat_log_std = log_std.detach().reshape(-1)
+            if flat_log_std.numel() != self.log_std.numel():
+                raise RuntimeError(
+                    "Resumed PPO actor stats shape mismatch. "
+                    f"checkpoint={tuple(flat_log_std.shape)}, target={tuple(self.log_std.shape)}"
+                )
+            target = flat_log_std.to(device=self.device, dtype=self.log_std.dtype).reshape(self.log_std.shape)
+            with torch.no_grad():
+                self.log_std.copy_(target)
+            print(f"[ppo_actor_stats] Loaded from {artifacts.actor_stats_path}", flush=True)
+
+        module.OpenVLAPPOPolicy.__init__ = _policy_init_with_actor_resume
+
+    print(
+        "[rlvla-fast] Resume artifacts inferred from checkpoint dir: "
+        f"{artifacts.checkpoint_dir}",
+        flush=True,
+    )
 
 
 class _RolloutTensorboardLogger:
@@ -443,6 +577,7 @@ def main() -> None:
     _enable_fast_runtime_flags()
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
+    _patch_resume_artifacts(module, forwarded_argv)
     _patch_rollout_tensorboard(
         module,
         every_global_steps=fast_args.tensorboard_rollout_every_global_steps,
