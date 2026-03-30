@@ -4,6 +4,7 @@ import argparse
 import csv
 import json
 import os
+import sys
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -79,6 +80,41 @@ def _rl_args(config: Any) -> dict[str, Any]:
     training = getattr(config, "training", None)
     rl = getattr(training, "rl", None)
     return dict(getattr(rl, "args", {}) or {})
+
+
+def _runtime_python_paths(config: Any) -> list[Path]:
+    paths: list[Path] = []
+    seen: set[Path] = set()
+
+    def _append(raw_path: str | None) -> None:
+        path = config.resolve_path(raw_path)
+        if path is None:
+            return
+        resolved = path.resolve()
+        if resolved in seen:
+            return
+        seen.add(resolved)
+        paths.append(resolved)
+
+    for path in config.all_python_paths():
+        resolved = Path(path).resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        paths.append(resolved)
+
+    _append(config.repos.dataset_repo)
+    _append(config.repos.embodiment_repo)
+    _append(config.repos.openvla_oft)
+    _append(config.policy.repo_path)
+    return paths
+
+
+def _prepend_runtime_python_paths(config: Any) -> None:
+    for path in reversed(_runtime_python_paths(config)):
+        path_str = path.as_posix()
+        if path_str not in sys.path:
+            sys.path.insert(0, path_str)
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -641,6 +677,7 @@ def main() -> int:
         raise ValueError("--episodes-per-instruction must be positive.")
 
     config = load_project_config(args.config)
+    _prepend_runtime_python_paths(config)
     artifacts = _resolve_policy_artifacts(args, config)
 
     run_dir = (
