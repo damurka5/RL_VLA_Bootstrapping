@@ -518,6 +518,43 @@ def _wrapper_bundle_exists(wrapper_xml: Path) -> bool:
     return True
 
 
+def _wrapper_cache_prefix(scene_name: str, object_names: Sequence[str]) -> str:
+    obj_part = "-".join(sorted(str(name) for name in object_names))
+    return f"{scene_name}__{obj_part}"
+
+
+def _candidate_existing_wrapper_paths(
+    wrapper_dir: Path,
+    *,
+    scene_name: str,
+    object_names: Sequence[str],
+) -> list[Path]:
+    wrapper_root = Path(wrapper_dir).expanduser().resolve()
+    if not wrapper_root.exists():
+        return []
+
+    prefix = _wrapper_cache_prefix(scene_name, object_names)
+    patterns = (
+        f"{prefix}_wrapper.xml",
+        f"{prefix}_wrapper__*__desktex_*.xml",
+        f"{prefix}__rltmp_*.xml",
+        f"{prefix}__rltmp_*__*__desktex_*.xml",
+    )
+
+    candidates: list[Path] = []
+    seen: set[Path] = set()
+    for pattern in patterns:
+        for path in sorted(wrapper_root.glob(pattern)):
+            resolved = path.resolve()
+            if resolved in seen:
+                continue
+            if not _wrapper_bundle_exists(resolved):
+                continue
+            seen.add(resolved)
+            candidates.append(resolved)
+    return candidates
+
+
 def _ensure_asset_first(root: ET.Element) -> ET.Element:
     asset = root.find("asset")
     if asset is None:
@@ -897,6 +934,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         desk_texrepeat: Sequence[int] = (20, 20),
         wrapper_cleanup: bool = True,
         use_wrapper_cache: bool = False,
+        reuse_existing_wrapper_variants: bool = False,
         seed: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -963,6 +1001,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.instruction_types = tuple(instruction_types) if instruction_types else None
         self.wrapper_cleanup = bool(wrapper_cleanup)
         self.use_wrapper_cache = bool(use_wrapper_cache)
+        self.reuse_existing_wrapper_variants = bool(reuse_existing_wrapper_variants)
         self.desk_geom_regex = str(desk_geom_regex)
         texrepeat_vals = tuple(desk_texrepeat)
         if len(texrepeat_vals) != 2:
@@ -1375,6 +1414,19 @@ class CDPRLanguageRLEnv(_EnvBase):
         return Path(build_wrapper(scene=scene)).resolve()
 
     def _build_wrapper(self, scene: SceneSpec, *, ee_start: Sequence[float] | np.ndarray | None = None) -> Path:
+        if self.use_wrapper_cache and bool(getattr(self, "reuse_existing_wrapper_variants", False)):
+            existing_candidates = _candidate_existing_wrapper_paths(
+                self.wrapper_dir,
+                scene_name=scene.name,
+                object_names=scene.objects,
+            )
+            if existing_candidates:
+                chosen_idx = int(self.np_random.integers(0, len(existing_candidates)))
+                chosen_wrapper = existing_candidates[chosen_idx].resolve()
+                print(f"[env] Reusing cached wrapper variant: {chosen_wrapper}", flush=True)
+                self._desk_texture_name = ""
+                return chosen_wrapper
+
         build_wrapper_if_needed, list_wrapper_bundle_paths = _import_wrapper_builder()
         default_ee_start = self._default_ee_start()
         episode_ee_start = default_ee_start if ee_start is None else _coerce_ee_start(ee_start)

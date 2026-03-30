@@ -194,6 +194,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=0.05,
         help="Validation success tolerance in meters for reaching the target point.",
     )
+    parser.add_argument(
+        "--reuse-existing-wrapper-variants",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Prefer randomly sampling an already existing matching wrapper bundle before building a new one.",
+    )
     return parser
 
 
@@ -383,6 +389,7 @@ def _build_validation_env(
         desk_textures_dir=desk_textures_dir,
         wrapper_cleanup=bool(rl_args.get("wrapper_cleanup", True)),
         use_wrapper_cache=bool(rl_args.get("use_wrapper_cache", False)),
+        reuse_existing_wrapper_variants=bool(args.reuse_existing_wrapper_variants),
         seed=seed,
     )
 
@@ -718,6 +725,7 @@ def main() -> int:
     print(f"Episode max steps: {max_steps}")
     print(f"Record success videos: {bool(args.record_success_videos)}")
     print(f"Validation success distance: {float(args.success_distance):.3f} m")
+    print(f"Reuse existing wrapper variants: {bool(args.reuse_existing_wrapper_variants)}")
     print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
 
     with _temporary_env_vars(_validation_env_vars(config, args)):
@@ -764,6 +772,7 @@ def main() -> int:
         "seed": base_seed,
         "record_success_videos": bool(args.record_success_videos),
         "success_distance": float(args.success_distance),
+        "reuse_existing_wrapper_variants": bool(args.reuse_existing_wrapper_variants),
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
         "episodes": instruction_episodes,
     }

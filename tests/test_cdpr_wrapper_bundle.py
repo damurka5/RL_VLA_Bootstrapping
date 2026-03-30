@@ -226,6 +226,7 @@ class WrapperBundleTests(unittest.TestCase):
             env.ee_start_y_bounds = (-0.08, 0.05)
             env.ee_start_z = None
             env.use_wrapper_cache = True
+            env.reuse_existing_wrapper_variants = False
             env.wrapper_cleanup = False
             env.wrapper_dir = root
             env.desk_texture_files = []
@@ -254,6 +255,62 @@ class WrapperBundleTests(unittest.TestCase):
             self.assertGreaterEqual(float(sampled[1]), -0.08)
             self.assertLessEqual(float(sampled[1]), 0.05)
             self.assertAlmostEqual(float(sampled[2]), 0.40, places=6)
+
+    def test_candidate_existing_wrapper_paths_discovers_cached_variants(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            cached = root / "desk__plate-ycb_apple_wrapper.xml"
+            textured = root / "desk__plate-ycb_apple_wrapper__abc123__desktex_rl_1.xml"
+            temp_variant = root / "desk__plate-ycb_apple__rltmp_123.xml"
+
+            for path in (cached, textured, temp_variant):
+                path.write_text("<mujoco/>", encoding="utf-8")
+
+            candidates = self.rl_env_mod._candidate_existing_wrapper_paths(
+                root,
+                scene_name="desk",
+                object_names=("ycb_apple", "plate"),
+            )
+
+            self.assertEqual(
+                candidates,
+                [cached.resolve(), textured.resolve(), temp_variant.resolve()],
+            )
+
+    def test_rl_env_build_wrapper_reuses_existing_cached_variants(self):
+        scene = self.rl_env_mod.SceneSpec(name="desk", objects=("ycb_apple", "plate"))
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            existing_a = root / "desk__plate-ycb_apple_wrapper.xml"
+            existing_b = root / "desk__plate-ycb_apple__rltmp_123.xml"
+            existing_a.write_text("<mujoco/>", encoding="utf-8")
+            existing_b.write_text("<mujoco/>", encoding="utf-8")
+
+            env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
+            env.defaults = {
+                "scene_z": -0.85,
+                "table_z": 0.15,
+                "settle_time": 0.0,
+                "ee_start": [0.0, 0.0, 0.40],
+            }
+            env.randomize_ee_start = True
+            env.ee_start_z = None
+            env.use_wrapper_cache = True
+            env.reuse_existing_wrapper_variants = True
+            env.wrapper_cleanup = False
+            env.wrapper_dir = root
+            env.desk_texture_files = []
+            env._cleanup_paths = []
+            env._cleanup_path_set = set()
+            env._desk_texture_name = ""
+            env.np_random = np.random.default_rng(1)
+
+            with mock.patch.object(self.rl_env_mod, "_import_wrapper_builder") as builder_mock:
+                wrapper_xml = env._build_wrapper(scene=scene, ee_start=np.array([0.05, 0.02, 0.40], dtype=np.float32))
+
+            self.assertIn(wrapper_xml.resolve(), {existing_a.resolve(), existing_b.resolve()})
+            builder_mock.assert_not_called()
 
     def test_rl_env_can_override_episode_ee_start_via_reset_options(self):
         env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
