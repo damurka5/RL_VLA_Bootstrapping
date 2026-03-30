@@ -188,6 +188,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=10,
         help="Logging cadence within each instruction bucket.",
     )
+    parser.add_argument(
+        "--success-distance",
+        type=float,
+        default=0.05,
+        help="Validation success tolerance in meters for reaching the target point.",
+    )
     return parser
 
 
@@ -309,12 +315,22 @@ def _episode_seed(base_seed: int | None, instruction_index: int, episode_index: 
     return int(base_seed) + int(instruction_index) * 100_000 + int(episode_index)
 
 
-def _validation_env_vars(config: Any) -> dict[str, str]:
+def _validation_task_metadata(config: Any, args: argparse.Namespace) -> dict[str, Any]:
+    metadata = dict(getattr(config.task, "metadata", {}) or {})
+    metadata["success_distance"] = float(args.success_distance)
+    return metadata
+
+
+def _validation_env_vars(config: Any, args: argparse.Namespace) -> dict[str, str]:
     rl_args = _rl_args(config)
     env = {str(k): str(v) for k, v in getattr(config.project, "env", {}).items()}
     env.update({str(k): str(v) for k, v in getattr(config.remote, "env_vars", {}).items()})
     env.update(_task_hook_env(config))
     env.update(_extract_cdpr_env_overrides(dict(rl_args)))
+    env["RLVLA_TASK_METADATA_JSON"] = json.dumps(
+        _validation_task_metadata(config, args),
+        sort_keys=True,
+    )
     return env
 
 
@@ -701,9 +717,10 @@ def main() -> int:
     print(f"Episodes per instruction: {int(args.episodes_per_instruction)}")
     print(f"Episode max steps: {max_steps}")
     print(f"Record success videos: {bool(args.record_success_videos)}")
+    print(f"Validation success distance: {float(args.success_distance):.3f} m")
     print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
 
-    with _temporary_env_vars(_validation_env_vars(config)):
+    with _temporary_env_vars(_validation_env_vars(config, args)):
         runtime = _load_policy_runtime(config=config, artifacts=artifacts, args=args)
 
         instruction_summaries: list[InstructionSummary] = []
@@ -746,6 +763,7 @@ def main() -> int:
         "hold_steps": int(_control_spec_from_config(config, args.hold_steps).hold_steps),
         "seed": base_seed,
         "record_success_videos": bool(args.record_success_videos),
+        "success_distance": float(args.success_distance),
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
         "episodes": instruction_episodes,
     }

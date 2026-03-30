@@ -8,6 +8,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _default_max_steps,
     _resolve_policy_artifacts,
     _summarize_instruction_results,
+    _validation_env_vars,
     EpisodeResult,
 )
 
@@ -127,6 +128,35 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(summary.mean_reward, 1.0, places=7)
         self.assertAlmostEqual(summary.mean_steps, 22.0, places=7)
         self.assertEqual(summary.video_path, "/tmp/move_up.mp4")
+
+    def test_validation_env_vars_override_success_distance(self):
+        config = type(
+            "_Config",
+            (),
+            {
+                "project": type("_Project", (), {"env": {}})(),
+                "remote": type("_Remote", (), {"env_vars": {}})(),
+                "task": type(
+                    "_Task",
+                    (),
+                    {
+                        "metadata": {"success_distance": 0.03},
+                        "reward": None,
+                        "success_predicate": None,
+                        "goal_region": {},
+                        "goal_relation": None,
+                        "dense_reward_terms": {},
+                    },
+                )(),
+                "training": type("_Training", (), {"rl": type("_RL", (), {"args": {}})()})(),
+            },
+        )()
+        args = type("_Args", (), {"success_distance": 0.05})()
+
+        env = _validation_env_vars(config, args)
+
+        self.assertIn("RLVLA_TASK_METADATA_JSON", env)
+        self.assertIn('"success_distance": 0.05', env["RLVLA_TASK_METADATA_JSON"])
 
 
 if __name__ == "__main__":
