@@ -935,6 +935,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         wrapper_cleanup: bool = True,
         use_wrapper_cache: bool = False,
         reuse_existing_wrapper_variants: bool = False,
+        wrapper_dir: Path | str | None = None,
         seed: Optional[int] = None,
     ) -> None:
         super().__init__()
@@ -1009,8 +1010,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.desk_texrepeat = (int(texrepeat_vals[0]), int(texrepeat_vals[1]))
 
         self.np_random = np.random.default_rng(seed)
-        WRAP_DIR.mkdir(parents=True, exist_ok=True)
-        self.wrapper_dir = WRAP_DIR
+        wrapper_root = WRAP_DIR if wrapper_dir is None else Path(wrapper_dir).expanduser().resolve()
+        wrapper_root.mkdir(parents=True, exist_ok=True)
+        self.wrapper_dir = wrapper_root
 
         self.desk_texture_files: list[Path] = []
         if desk_textures_dir is not None:

@@ -5,13 +5,17 @@ import csv
 import json
 import os
 import sys
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
 import numpy as np
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - optional runtime dependency
+    tqdm = None
 
 from rl_vla_bootstrapping.cli.run_cdpr_policy import (
     _control_spec_from_config,
@@ -138,6 +142,11 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--base-ckpt", default=None, help="Optional override for the base VLA checkpoint.")
     parser.add_argument("--scene", default=None, help="Optional fixed scene override for every episode.")
     parser.add_argument(
+        "--wrapper-dir",
+        default=None,
+        help="Optional wrapper cache directory override. Defaults to an existing remote cache if found.",
+    )
+    parser.add_argument(
         "--episodes-per-instruction",
         type=int,
         default=100,
@@ -199,6 +208,12 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Prefer randomly sampling an already existing matching wrapper bundle before building a new one.",
+    )
+    parser.add_argument(
+        "--progress-only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Show only a tqdm progress bar and suppress the validator's other console output.",
     )
     return parser
 
@@ -340,6 +355,40 @@ def _validation_env_vars(config: Any, args: argparse.Namespace) -> dict[str, str
     return env
 
 
+def _resolve_wrapper_dir(config: Any, args: argparse.Namespace) -> Path | None:
+    if args.wrapper_dir:
+        return Path(args.wrapper_dir).expanduser().resolve()
+
+    remote_candidate = Path("/robot/cdpr/cdpr_dataset/wrappers")
+    if remote_candidate.exists():
+        return remote_candidate.resolve()
+
+    dataset_repo = config.resolve_path(config.repos.dataset_repo)
+    if dataset_repo is not None:
+        candidate = dataset_repo / "cdpr_dataset" / "wrappers"
+        if candidate.exists():
+            return candidate.resolve()
+
+    return None
+
+
+@contextmanager
+def _silence_output(enabled: bool) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
+
+    with open(os.devnull, "w", encoding="utf-8") as devnull:
+        with redirect_stdout(devnull), redirect_stderr(devnull):
+            yield
+
+
+def _progress_bar(total: int):
+    if tqdm is None:  # pragma: no cover - exercised only when tqdm is unavailable
+        raise RuntimeError("`tqdm` is required for progress display. Install it in the remote environment.")
+    return tqdm(total=total, dynamic_ncols=True, file=sys.__stderr__, leave=True)
+
+
 @contextmanager
 def _temporary_env_vars(overrides: dict[str, str]) -> Iterator[None]:
     previous = {key: os.environ.get(key) for key in overrides}
@@ -363,6 +412,8 @@ def _build_validation_env(
     max_steps: int,
     hold_steps: int | None,
     seed: int | None,
+    args: argparse.Namespace,
+    wrapper_dir: Path | None,
 ) -> CDPRLanguageRLEnv:
     rl_args = _rl_args(config)
     control_spec = _control_spec_from_config(config, hold_steps)
@@ -390,6 +441,7 @@ def _build_validation_env(
         wrapper_cleanup=bool(rl_args.get("wrapper_cleanup", True)),
         use_wrapper_cache=bool(rl_args.get("use_wrapper_cache", False)),
         reuse_existing_wrapper_variants=bool(args.reuse_existing_wrapper_variants),
+        wrapper_dir=wrapper_dir,
         seed=seed,
     )
 
@@ -435,6 +487,7 @@ def _load_policy_runtime(
     config: Any,
     artifacts: ResolvedPolicyArtifacts,
     args: argparse.Namespace,
+    quiet: bool,
 ) -> dict[str, Any]:
     policy_repo = config.resolve_path(config.policy.repo_path)
     if policy_repo is None:
@@ -449,7 +502,7 @@ def _load_policy_runtime(
         PeftModel,
         generate_config_note,
     ) = _load_openvla_modules(policy_repo)
-    if generate_config_note:
+    if generate_config_note and not quiet:
         print(f"[info] {generate_config_note}")
 
     chunk_length = int(args.chunk_length or config.policy.action_codec.chunk_size)
@@ -588,6 +641,8 @@ def _run_instruction_validation(
     videos_dir: Path,
     max_steps: int,
     base_seed: int | None,
+    progress,
+    wrapper_dir: Path | None,
 ) -> tuple[InstructionSummary, list[EpisodeResult]]:
     should_capture = bool(args.record_success_videos)
     env = _build_validation_env(
@@ -597,17 +652,21 @@ def _run_instruction_validation(
         max_steps=max_steps,
         hold_steps=args.hold_steps,
         seed=base_seed,
+        args=args,
+        wrapper_dir=wrapper_dir,
     )
 
     reset_options = {"scene": args.scene} if args.scene else None
     episode_results: list[EpisodeResult] = []
     video_path: str | None = None
+    successes = 0
 
     try:
         for episode_index in range(int(args.episodes_per_instruction)):
             env.capture_frames = bool(args.record_success_videos and video_path is None)
             seed = _episode_seed(base_seed, instruction_index, episode_index)
-            _obs, reset_info = env.reset(seed=seed, options=reset_options)
+            with _silence_output(bool(args.progress_only)):
+                _obs, reset_info = env.reset(seed=seed, options=reset_options)
             instruction = str(reset_info.get("language_instruction", INSTRUCTION_TEXT[instruction_type]))
 
             current_chunk = np.zeros((0, 5), dtype=np.float32)
@@ -619,24 +678,26 @@ def _run_instruction_validation(
 
             while not (terminated or truncated):
                 if chunk_index >= len(current_chunk):
-                    current_chunk = _predict_policy_chunk(
-                        runtime=runtime,
-                        sim=env.sim,
-                        instruction=instruction,
-                        config=config,
-                    )
+                    with _silence_output(bool(args.progress_only)):
+                        current_chunk = _predict_policy_chunk(
+                            runtime=runtime,
+                            sim=env.sim,
+                            instruction=instruction,
+                            config=config,
+                        )
                     chunk_index = 0
 
                 action = np.asarray(current_chunk[chunk_index], dtype=np.float32).reshape(5)
                 chunk_index += 1
                 max_abs = float(np.max(np.abs(action)))
-                if max_abs > float(args.action_guard):
+                if max_abs > float(args.action_guard) and not args.progress_only:
                     print(
                         f"[warn] [{instruction_type}] episode={episode_index:03d} "
                         f"action max abs {max_abs:.4f} > {args.action_guard}; clipping to [-1, 1]."
                     )
 
-                _obs, reward, terminated, truncated, final_info = env.step(action)
+                with _silence_output(bool(args.progress_only)):
+                    _obs, reward, terminated, truncated, final_info = env.step(action)
                 reward_total += float(reward)
 
             episode_result = EpisodeResult(
@@ -654,23 +715,30 @@ def _run_instruction_validation(
                 ee_start=[float(value) for value in final_info.get("ee_start", [])],
             )
             episode_results.append(episode_result)
+            successes += int(episode_result.success)
 
             if episode_result.success and video_path is None and bool(args.record_success_videos):
                 try:
-                    video_path = _save_success_video(
-                        sim=env.sim,
-                        output_dir=videos_dir,
-                        instruction_type=instruction_type,
-                        episode_result=episode_result,
-                    )
+                    with _silence_output(bool(args.progress_only)):
+                        video_path = _save_success_video(
+                            sim=env.sim,
+                            output_dir=videos_dir,
+                            instruction_type=instruction_type,
+                            episode_result=episode_result,
+                        )
                 except Exception as exc:
-                    print(f"[warn] Failed to save success video for {instruction_type}: {exc}")
+                    if not args.progress_only:
+                        print(f"[warn] Failed to save success video for {instruction_type}: {exc}")
                 finally:
                     clear_sim_recording_buffers(env.sim)
             elif getattr(env, "sim", None) is not None:
                 clear_sim_recording_buffers(env.sim)
 
-            if (
+            if progress is not None:
+                progress.set_description_str(instruction_type)
+                progress.set_postfix_str(f"success={successes}/{episode_index + 1}")
+                progress.update(1)
+            elif (
                 episode_result.success
                 or episode_index == 0
                 or (episode_index + 1) % max(1, int(args.log_every_episode)) == 0
@@ -715,44 +783,52 @@ def main() -> int:
     max_steps = _default_max_steps(config, args)
     base_seed = None if args.seed is None or int(args.seed) < 0 else int(args.seed)
     instruction_types = tuple(config.task.instruction_types) or INSTRUCTION_TYPES
+    wrapper_dir = _resolve_wrapper_dir(config, args)
 
-    print(f"Run directory: {run_dir}")
-    print(f"Checkpoint dir: {artifacts.checkpoint_dir}")
-    print(f"Adapter path: {artifacts.adapter_path}")
-    print(f"Action-head path: {artifacts.action_head_path}")
-    print(f"Instruction types: {list(instruction_types)}")
-    print(f"Episodes per instruction: {int(args.episodes_per_instruction)}")
-    print(f"Episode max steps: {max_steps}")
-    print(f"Record success videos: {bool(args.record_success_videos)}")
-    print(f"Validation success distance: {float(args.success_distance):.3f} m")
-    print(f"Reuse existing wrapper variants: {bool(args.reuse_existing_wrapper_variants)}")
-    print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
+    if not args.progress_only:
+        print(f"Run directory: {run_dir}")
+        print(f"Checkpoint dir: {artifacts.checkpoint_dir}")
+        print(f"Adapter path: {artifacts.adapter_path}")
+        print(f"Action-head path: {artifacts.action_head_path}")
+        print(f"Wrapper dir: {wrapper_dir}")
+        print(f"Instruction types: {list(instruction_types)}")
+        print(f"Episodes per instruction: {int(args.episodes_per_instruction)}")
+        print(f"Episode max steps: {max_steps}")
+        print(f"Record success videos: {bool(args.record_success_videos)}")
+        print(f"Validation success distance: {float(args.success_distance):.3f} m")
+        print(f"Reuse existing wrapper variants: {bool(args.reuse_existing_wrapper_variants)}")
+        print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
 
     with _temporary_env_vars(_validation_env_vars(config, args)):
-        runtime = _load_policy_runtime(config=config, artifacts=artifacts, args=args)
+        with _silence_output(bool(args.progress_only)):
+            runtime = _load_policy_runtime(
+                config=config,
+                artifacts=artifacts,
+                args=args,
+                quiet=bool(args.progress_only),
+            )
 
         instruction_summaries: list[InstructionSummary] = []
         instruction_episodes: dict[str, list[dict[str, Any]]] = {}
-
-        for instruction_index, instruction_type in enumerate(instruction_types):
-            summary, episode_results = _run_instruction_validation(
-                instruction_type=instruction_type,
-                instruction_index=instruction_index,
-                config=config,
-                runtime=runtime,
-                args=args,
-                videos_dir=videos_dir,
-                max_steps=max_steps,
-                base_seed=base_seed,
-            )
-            instruction_summaries.append(summary)
-            instruction_episodes[instruction_type] = [asdict(result) for result in episode_results]
-            print(
-                f"[summary:{instruction_type}] "
-                f"{summary.successes}/{summary.episodes} success "
-                f"({summary.success_rate:.2%})"
-                f"{'' if not summary.video_path else f' video={summary.video_path}'}"
-            )
+        progress = _progress_bar(total=len(instruction_types) * int(args.episodes_per_instruction))
+        try:
+            for instruction_index, instruction_type in enumerate(instruction_types):
+                summary, episode_results = _run_instruction_validation(
+                    instruction_type=instruction_type,
+                    instruction_index=instruction_index,
+                    config=config,
+                    runtime=runtime,
+                    args=args,
+                    videos_dir=videos_dir,
+                    max_steps=max_steps,
+                    base_seed=base_seed,
+                    progress=progress,
+                    wrapper_dir=wrapper_dir,
+                )
+                instruction_summaries.append(summary)
+                instruction_episodes[instruction_type] = [asdict(result) for result in episode_results]
+        finally:
+            progress.close()
 
     manifest = {
         "run_dir": run_dir.as_posix(),
@@ -763,6 +839,7 @@ def main() -> int:
         "action_head_path": artifacts.action_head_path.as_posix(),
         "base_checkpoint": args.base_ckpt or config.policy.base_checkpoint,
         "scene": args.scene,
+        "wrapper_dir": None if wrapper_dir is None else wrapper_dir.as_posix(),
         "episodes_per_instruction": int(args.episodes_per_instruction),
         "max_steps": int(max_steps),
         "chunk_length": int(runtime["chunk_length"]),
@@ -782,8 +859,9 @@ def main() -> int:
     csv_path = run_dir / "instruction_success_rates.csv"
     _write_success_rate_csv(csv_path, instruction_summaries)
 
-    print(f"Manifest saved: {manifest_path}")
-    print(f"CSV saved: {csv_path}")
+    if not args.progress_only:
+        print(f"Manifest saved: {manifest_path}")
+        print(f"CSV saved: {csv_path}")
     return 0
 
 
