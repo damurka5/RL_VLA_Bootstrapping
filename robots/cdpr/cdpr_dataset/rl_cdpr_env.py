@@ -1096,6 +1096,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
         self._episode_index = -1
         self._reset_counter = 0
+        self._invalid_wrapper_paths: set[Path] = set()
+        self._last_wrapper_reused_from_cache = False
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
         self._prepare_episode_rng(seed)
@@ -1107,10 +1109,33 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         episode_ee_start = self._sample_episode_ee_start(options=options)
         self._episode_ee_start = episode_ee_start.astype(np.float32)
-        wrapper_xml = self._build_episode_wrapper(scene=scene, ee_start=episode_ee_start)
-        self._current_wrapper_xml = wrapper_xml
-        self.sim = self._sim_cls(xml_path=str(wrapper_xml), output_dir=str(DEFAULT_VIDEO_DIR))
-        self.sim.initialize()
+        wrapper_xml: Path | None = None
+        original_reuse_existing = bool(getattr(self, "reuse_existing_wrapper_variants", False))
+        for attempt in range(2):
+            if attempt > 0:
+                self.reuse_existing_wrapper_variants = False
+
+            try:
+                wrapper_xml = self._build_episode_wrapper(scene=scene, ee_start=episode_ee_start)
+                self._current_wrapper_xml = wrapper_xml
+                self.sim = self._sim_cls(xml_path=str(wrapper_xml), output_dir=str(DEFAULT_VIDEO_DIR))
+                self.sim.initialize()
+                break
+            except Exception:
+                if bool(getattr(self, "_last_wrapper_reused_from_cache", False)) and wrapper_xml is not None:
+                    self._invalid_wrapper_paths.add(Path(wrapper_xml).resolve())
+                if self.sim is not None:
+                    try:
+                        self.sim.cleanup()
+                    except Exception:
+                        pass
+                self.sim = None
+                self._current_wrapper_xml = None
+                if attempt == 0 and bool(getattr(self, "_last_wrapper_reused_from_cache", False)):
+                    continue
+                raise
+            finally:
+                self.reuse_existing_wrapper_variants = original_reuse_existing
         if hasattr(self.sim, "hold_current_pose"):
             self.sim.hold_current_pose(warm_steps=10)
         self._refresh_workspace_safety()
@@ -1416,15 +1441,23 @@ class CDPRLanguageRLEnv(_EnvBase):
         return Path(build_wrapper(scene=scene)).resolve()
 
     def _build_wrapper(self, scene: SceneSpec, *, ee_start: Sequence[float] | np.ndarray | None = None) -> Path:
+        self._last_wrapper_reused_from_cache = False
         if self.use_wrapper_cache and bool(getattr(self, "reuse_existing_wrapper_variants", False)):
             existing_candidates = _candidate_existing_wrapper_paths(
                 self.wrapper_dir,
                 scene_name=scene.name,
                 object_names=scene.objects,
             )
+            invalid_paths = set(getattr(self, "_invalid_wrapper_paths", set()))
+            if invalid_paths:
+                existing_candidates = [
+                    path for path in existing_candidates
+                    if path.resolve() not in invalid_paths
+                ]
             if existing_candidates:
                 chosen_idx = int(self.np_random.integers(0, len(existing_candidates)))
                 chosen_wrapper = existing_candidates[chosen_idx].resolve()
+                self._last_wrapper_reused_from_cache = True
                 print(f"[env] Reusing cached wrapper variant: {chosen_wrapper}", flush=True)
                 self._desk_texture_name = ""
                 return chosen_wrapper

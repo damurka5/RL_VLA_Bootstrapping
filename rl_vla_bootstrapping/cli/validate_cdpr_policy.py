@@ -757,7 +757,8 @@ def _run_instruction_validation(
         )
         return summary, episode_results
     finally:
-        env.close()
+        with _silence_output(bool(args.progress_only)):
+            env.close()
 
 
 def main() -> int:
