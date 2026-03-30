@@ -6,6 +6,7 @@ import numpy as np
 
 from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
     InstructionSpec,
+    compute_instruction_validation_success,
     compute_instruction_reward,
     init_reward_state,
 )
@@ -15,7 +16,9 @@ class RewardDistanceTests(unittest.TestCase):
     def _spec(self, instruction_type: str = "move_left") -> InstructionSpec:
         direction = {
             "move_left": np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+            "move_right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
             "move_up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+            "move_center": np.array([0.0, 0.0, 0.0], dtype=np.float32),
         }[instruction_type]
         text = instruction_type.replace("_", " ")
         return InstructionSpec(
@@ -118,6 +121,71 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertGreater(info_saturated["action_saturation_penalty"], 0.0)
         self.assertGreater(info_saturated["action_saturation_rate"], 0.0)
         self.assertLess(reward_saturated, reward_soft)
+
+    def test_directional_validation_success_uses_signed_displacement(self):
+        spec = self._spec("move_right")
+        initial = np.array([0.10, 0.00, 0.20], dtype=np.float32)
+
+        success, info = compute_instruction_validation_success(
+            spec=spec,
+            ee_pos=np.array([0.31, 0.00, 0.20], dtype=np.float32),
+            reward_state=init_reward_state(initial_ee_pos=initial, initial_obj_pos=initial),
+            task_metadata={"directional_success_displacement_threshold": 0.20},
+            current_success=False,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(info["validation_success_mode"], 1.0)
+        self.assertAlmostEqual(info["directional_success_signed_displacement"], 0.21, places=6)
+        self.assertAlmostEqual(info["directional_success_threshold"], 0.20, places=6)
+
+    def test_directional_validation_success_requires_threshold(self):
+        spec = self._spec("move_right")
+        initial = np.array([0.10, 0.00, 0.20], dtype=np.float32)
+
+        success, info = compute_instruction_validation_success(
+            spec=spec,
+            ee_pos=np.array([0.29, 0.00, 0.20], dtype=np.float32),
+            reward_state=init_reward_state(initial_ee_pos=initial, initial_obj_pos=initial),
+            task_metadata={"directional_success_displacement_threshold": 0.20},
+            current_success=True,
+        )
+
+        self.assertFalse(success)
+        self.assertEqual(info["validation_success_mode"], 1.0)
+        self.assertAlmostEqual(info["directional_success_signed_displacement"], 0.19, places=6)
+
+    def test_directional_validation_success_handles_negative_axis_motion(self):
+        spec = self._spec("move_left")
+        initial = np.array([0.10, 0.00, 0.20], dtype=np.float32)
+
+        success, info = compute_instruction_validation_success(
+            spec=spec,
+            ee_pos=np.array([-0.11, 0.00, 0.20], dtype=np.float32),
+            reward_state=init_reward_state(initial_ee_pos=initial, initial_obj_pos=initial),
+            task_metadata={"directional_success_displacement_threshold": 0.20},
+            current_success=False,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(info["directional_success_sign"], -1.0)
+        self.assertAlmostEqual(info["directional_success_raw_displacement"], -0.21, places=6)
+        self.assertAlmostEqual(info["directional_success_signed_displacement"], 0.21, places=6)
+
+    def test_center_validation_success_falls_back_to_point_success(self):
+        spec = self._spec("move_center")
+        initial = np.array([0.10, 0.00, 0.20], dtype=np.float32)
+
+        success, info = compute_instruction_validation_success(
+            spec=spec,
+            ee_pos=np.array([0.50, 0.25, 0.55], dtype=np.float32),
+            reward_state=init_reward_state(initial_ee_pos=initial, initial_obj_pos=initial),
+            task_metadata={"directional_success_displacement_threshold": 0.20},
+            current_success=True,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(info["validation_success_mode"], 0.0)
 
 
 if __name__ == "__main__":

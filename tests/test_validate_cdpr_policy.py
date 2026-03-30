@@ -129,7 +129,7 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(summary.mean_steps, 22.0, places=7)
         self.assertEqual(summary.video_path, "/tmp/move_up.mp4")
 
-    def test_validation_env_vars_override_success_distance(self):
+    def test_validation_env_vars_override_success_behavior(self):
         config = type(
             "_Config",
             (),
@@ -151,12 +151,22 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
                 "training": type("_Training", (), {"rl": type("_RL", (), {"args": {}})()})(),
             },
         )()
-        args = type("_Args", (), {"success_distance": 0.05})()
+        args = type(
+            "_Args",
+            (),
+            {
+                "success_distance": 0.05,
+                "directional_displacement_threshold": 0.20,
+            },
+        )()
 
         env = _validation_env_vars(config, args)
 
         self.assertIn("RLVLA_TASK_METADATA_JSON", env)
         self.assertIn('"success_distance": 0.05', env["RLVLA_TASK_METADATA_JSON"])
+        self.assertIn('"directional_success_displacement_threshold": 0.2', env["RLVLA_TASK_METADATA_JSON"])
+        self.assertEqual(env["RLVLA_TASK_SUCCESS_ATTRIBUTE"], "compute_instruction_validation_success")
+        self.assertIn("rl_instruction_tasks.py", env["RLVLA_TASK_SUCCESS_FILE"])
 
 
 if __name__ == "__main__":

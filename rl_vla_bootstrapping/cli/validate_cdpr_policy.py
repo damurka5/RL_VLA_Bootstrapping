@@ -204,6 +204,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Validation success tolerance in meters for reaching the target point.",
     )
     parser.add_argument(
+        "--directional-displacement-threshold",
+        type=float,
+        default=0.20,
+        help="Validation displacement threshold in meters for move_left/right/top/bottom/up/down.",
+    )
+    parser.add_argument(
         "--reuse-existing-wrapper-variants",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -339,6 +345,7 @@ def _episode_seed(base_seed: int | None, instruction_index: int, episode_index: 
 def _validation_task_metadata(config: Any, args: argparse.Namespace) -> dict[str, Any]:
     metadata = dict(getattr(config.task, "metadata", {}) or {})
     metadata["success_distance"] = float(args.success_distance)
+    metadata["directional_success_displacement_threshold"] = float(args.directional_displacement_threshold)
     return metadata
 
 
@@ -352,6 +359,11 @@ def _validation_env_vars(config: Any, args: argparse.Namespace) -> dict[str, str
         _validation_task_metadata(config, args),
         sort_keys=True,
     )
+    env["RLVLA_TASK_SUCCESS_ATTRIBUTE"] = "compute_instruction_validation_success"
+    env["RLVLA_TASK_SUCCESS_FILE"] = (
+        Path(__file__).resolve().parents[2] / "robots" / "cdpr" / "cdpr_dataset" / "rl_instruction_tasks.py"
+    ).as_posix()
+    env.pop("RLVLA_TASK_SUCCESS_MODULE", None)
     return env
 
 
@@ -797,6 +809,10 @@ def main() -> int:
         print(f"Episode max steps: {max_steps}")
         print(f"Record success videos: {bool(args.record_success_videos)}")
         print(f"Validation success distance: {float(args.success_distance):.3f} m")
+        print(
+            "Directional displacement threshold: "
+            f"{float(args.directional_displacement_threshold):.3f} m"
+        )
         print(f"Reuse existing wrapper variants: {bool(args.reuse_existing_wrapper_variants)}")
         print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
 
@@ -850,6 +866,7 @@ def main() -> int:
         "seed": base_seed,
         "record_success_videos": bool(args.record_success_videos),
         "success_distance": float(args.success_distance),
+        "directional_displacement_threshold": float(args.directional_displacement_threshold),
         "reuse_existing_wrapper_variants": bool(args.reuse_existing_wrapper_variants),
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
         "episodes": instruction_episodes,

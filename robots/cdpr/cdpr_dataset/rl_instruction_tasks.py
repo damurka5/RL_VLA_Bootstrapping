@@ -26,6 +26,15 @@ MOVE_DIRECTIONS: dict[str, np.ndarray] = {
     "move_center": np.zeros((3,), dtype=np.float32),
 }
 
+_DIRECTIONAL_SUCCESS_AXES: dict[str, tuple[int, float]] = {
+    "move_right": (0, 1.0),
+    "move_left": (0, -1.0),
+    "move_top": (1, 1.0),
+    "move_bottom": (1, -1.0),
+    "move_up": (2, 1.0),
+    "move_down": (2, -1.0),
+}
+
 INSTRUCTION_TEXT: dict[str, str] = {
     "move_up": "move up",
     "move_down": "move down",
@@ -294,3 +303,41 @@ def compute_instruction_reward(
         "success_bonus": success_reward,
     }
     return reward, success, info
+
+
+def compute_instruction_validation_success(
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    reward_state: RewardState,
+    task_metadata: Optional[dict[str, Any]] = None,
+    current_success: bool = False,
+) -> tuple[bool, dict[str, float]]:
+    ee_arr = np.asarray(ee_pos, dtype=np.float32).reshape(-1)
+    start_arr = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
+    if ee_arr.size < 3 or start_arr.size < 3:
+        return bool(current_success), {}
+
+    axis_spec = _DIRECTIONAL_SUCCESS_AXES.get(spec.instruction_type)
+    if axis_spec is None:
+        return bool(current_success), {
+            "validation_success_mode": 0.0,
+        }
+
+    axis_idx, axis_sign = axis_spec
+    displacement_threshold = _metadata_float(
+        task_metadata,
+        "directional_success_displacement_threshold",
+        0.20,
+    )
+    raw_displacement = float(ee_arr[axis_idx] - start_arr[axis_idx])
+    signed_displacement = float(axis_sign * raw_displacement)
+    success = bool(signed_displacement >= float(displacement_threshold))
+
+    return success, {
+        "validation_success_mode": 1.0,
+        "directional_success_axis": float(axis_idx),
+        "directional_success_sign": float(axis_sign),
+        "directional_success_raw_displacement": raw_displacement,
+        "directional_success_signed_displacement": signed_displacement,
+        "directional_success_threshold": float(displacement_threshold),
+    }
