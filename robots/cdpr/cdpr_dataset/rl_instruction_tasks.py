@@ -40,8 +40,8 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "move_down": "move down",
     "move_left": "move left",
     "move_right": "move right",
-    "move_top": "move top",
-    "move_bottom": "move bottom",
+    "move_top": "move forward",
+    "move_bottom": "move backward",
     "move_center": "move center",
 }
 

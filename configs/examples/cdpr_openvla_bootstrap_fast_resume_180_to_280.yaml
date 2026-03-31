@@ -1,0 +1,234 @@
+project:
+  name: cdpr_openvla_bootstrap_fast
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  openvla_oft: /root/repo/openvla-oft
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  conda_env_file: ../../environments/openvla-oft-remote.yaml
+  env_vars:
+    MUJOCO_GL: egl
+    PYOPENGL_PLATFORM: egl
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    TOKENIZERS_PARALLELISM: "false"
+  notes:
+    - Throughput-oriented PPO profile using a local shim around the external trainer.
+    - Remote server path expects `openvla-oft` at `/root/repo/openvla-oft`.
+
+assets:
+  bundles:
+    - name: ycb
+      kind: asset
+      source_path: ../../../../repo/CDPR-Dataset/cdpr_dataset/external_assets/ycb_dataset/ycb
+      target_path: ../../assets/externals/ycb
+      required: true
+      description: YCB object meshes and MJCFs used by CDPR randomized scenes.
+    - name: libero
+      kind: asset
+      source_path: ../../../../repo/LIBERO/libero/libero/assets
+      target_path: ../../assets/externals/libero
+      required: true
+      description: LIBERO scene XMLs, textures, and scanned/stable object assets.
+    - name: robotwin2
+      kind: benchmark_repo
+      source_path: ../../../../RoboTwin2.0
+      target_path: ../../benchmarks/externals/robotwin2
+      required: false
+      description: Optional benchmark workspace for RoboTwin 2.0 evaluation.
+    - name: robotwin2_assets
+      kind: asset
+      source_path: ../../../../RoboTwin2.0/assets
+      target_path: ../../assets/externals/robotwin2_assets
+      required: false
+      description: Optional RoboTwin 2.0 scene/object assets for additional object pools.
+    - name: desk_textures_cache
+      kind: asset
+      source_path: ../../../../repo/CDPR-Dataset/cdpr_dataset/wrappers/_desk_textures
+      target_path: ../../assets/externals/desk_textures_cache
+      required: false
+      description: Optional CDPR desk texture cache matching the original PPO remote launcher.
+
+embodiment:
+  name: cdpr_5dof
+  kind: mujoco
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr.xml
+  dof: 5
+  extra_python_paths:
+    - ../../robots/cdpr
+    - /root/repo/openvla-oft
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs:
+      output_dir: "{run_dir}"
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 1.0
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 0.03]
+    open_gripper_threshold: -0.2
+    close_gripper_threshold: 0.2
+
+task:
+  instruction_types: [move_up, move_down, move_left, move_right, move_top, move_bottom, move_center]
+  target_objects: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hammer, ycb_spoon]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  metadata:
+    zero_demo_first: true
+    scene_object_pool: [ycb_apple, ycb_banana, ycb_pear, ycb_peach, bowl, plate, ycb_baseball, ycb_lemon, ycb_fork, ycb_hammer, ycb_spoon]
+    min_scene_objects: 1
+    max_scene_objects: 3
+    scene_variant_count: 64
+    goal_center_xy: [0.0, 0.0]
+    goal_height_above_table: 0.10
+    lateral_goal_offset: 0.40
+    vertical_goal_offset: 0.10
+    distance_reward_scale: 0.40
+    distance_reward_weight: 1.0
+    distance_reward_exponent: 2.0
+    camera_alignment_weight: 0.0
+    success_distance: 0.03
+    success_bonus: 1.0
+    action_saturation_threshold: 0.95
+    action_saturation_penalty_weight: 1.0
+    action_saturation_exponent: 2.0
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [ycb_apple]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  object_roots:
+    - ../../assets/externals/ycb
+    - ../../assets/externals/libero/stable_hope_objects
+    - ../../assets/externals/libero/stable_scanned_objects
+    - ../../assets/externals/robotwin2_assets
+  desk_textures_dir: ../../assets/externals/desk_textures_cache
+  desk_textures_fallback_dir: ../../assets/externals/libero/textures
+  build_kwargs:
+    scene_z: -0.85
+    table_z: 0.15
+    settle_time: 0.0
+    ee_start: [0.0, 0.0, 0.40]
+  randomization:
+    random_scene_count: 100
+    max_objects: 3
+    use_domain_randomization: true
+
+policy:
+  type: openvla_oft
+  repo_path: /root/repo/openvla-oft
+  base_checkpoint: openvla/openvla-7b
+  rl_script: /root/repo/openvla-oft/vla-scripts/ppo_finetune_cdpr.py
+  sft_script: /root/repo/openvla-oft/vla-scripts/finetune.py
+  action_head: L1RegressionActionHead
+  num_images_in_input: 2
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: true
+      bins: 256
+    export_filename: openvla_action_codec.json
+
+training:
+  preview_before_rl: true
+  rl:
+    enabled: true
+    algorithm: ppo
+    script_path: ../../rl_vla_bootstrapping/policy/ppo_finetune_cdpr_fast.py
+    launcher: torchrun
+    launcher_args:
+      nproc_per_node: 2
+    args:
+      external_ppo_script: vla-scripts/ppo_finetune_cdpr.py
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_bootstrap_fast_resume_120_to_180/rl/step_0081600
+      train_loaded_adapter: true
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_bootstrap_fast_resume_120_to_180/rl/step_0081600
+      num_parallel_envs: 12
+      total_updates: 100
+      rollout_steps: 170
+      ppo_epochs: 4
+      minibatch_size: 16
+      microbatch_size: 16
+      max_env_steps: 32
+      gamma: 0.99
+      gae_lambda: 0.95
+      learning_rate: 1.0e-5
+      value_lr: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      normalize_advantage: true
+      init_log_std: -1.2
+      gradient_checkpointing: true
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      hold_steps: 10
+      lock_non_commanded_axes: true
+      lock_non_commanded_axes_threshold: 0.05
+      randomize_ee_start: true
+      ee_start_x_bounds: [-0.1, 0.1]
+      ee_start_y_bounds: [-0.1, 0.1]
+      ee_start_z: 0.15
+      delta_closer_reward_coef: 0.0
+      delta_farther_penalty_coef: 0.0
+      save_every: 20
+      validate_every_updates: 30
+      validation_episodes: 1
+      validation_max_steps: 32
+      tensorboard_rollout_every_global_steps: 100
+      prebuild_scene_cache: true
+      scene_pool_size: 16
+      texture_pool_size: 10
+      scene_sampling: round_robin
+      scene_refresh_every_steps: -1
+      wrapper_cleanup: false
+      use_wrapper_cache: true
+      capture_frames: true
+      save_validation_frames: true
+      rollout_tap_every_updates: -1
+      tensorboard_every_updates: 1
+      device: cuda
+      quiet_env_logs: true
+      status_bar: true
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks:
+    - name: robotwin2
+      enabled: false
