@@ -180,6 +180,35 @@ class WrapperBundleTests(unittest.TestCase):
             self.assertNotIn("-m", issued_cmd)
             self.assertTrue(wrapper.exists())
 
+    def test_build_wrapper_rebuilds_corrupt_cached_bundle(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = root / "preview_scene.xml"
+            helper = root / "preview_helper.xml"
+            helper.write_text("", encoding="utf-8")
+            wrapper.write_text(
+                '<mujoco><include file="preview_helper.xml"/></mujoco>',
+                encoding="utf-8",
+            )
+            issued_cmd: list[str] = []
+
+            def fake_run(cmd, *args, **kwargs):
+                issued_cmd[:] = list(cmd)
+                wrapper.write_text("<mujoco/>", encoding="utf-8")
+                return SimpleNamespace(returncode=0)
+
+            with mock.patch.object(self.mod.subprocess, "run", side_effect=fake_run):
+                out = self.mod.build_wrapper_if_needed(
+                    scene_name="desk",
+                    object_names=["ycb_apple"],
+                    wrapper_out=wrapper,
+                    use_cache=True,
+                )
+
+            self.assertEqual(out, wrapper.resolve())
+            self.assertTrue(issued_cmd)
+            self.assertEqual(ET.parse(wrapper).getroot().tag, "mujoco")
+
     def test_scene_switcher_command_embeds_negative_ee_start_in_same_arg(self):
         cmd = self.mod._scene_switcher_command(
             scene_name="desk",

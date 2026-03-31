@@ -123,6 +123,39 @@ def _iter_local_wrapper_dependencies(wrapper_xml: Path) -> list[Path]:
     return deps
 
 
+def _validate_local_wrapper_bundle(wrapper_xml: Path) -> tuple[bool, str | None]:
+    wrapper_path = wrapper_xml.resolve()
+    seen: set[Path] = set()
+    queue = [wrapper_path]
+
+    while queue:
+        current_xml = queue.pop()
+        if current_xml in seen:
+            continue
+        seen.add(current_xml)
+
+        if not current_xml.exists():
+            return False, f"missing bundle file: {current_xml}"
+
+        try:
+            root = ET.parse(current_xml).getroot()
+        except ET.ParseError as exc:
+            return False, f"invalid XML in {current_xml}: {exc}"
+        except OSError as exc:
+            return False, f"failed reading {current_xml}: {exc}"
+
+        for include in root.iter("include"):
+            file_attr = include.get("file")
+            if not file_attr:
+                continue
+            include_path = _resolve_include_path(current_xml, file_attr)
+            if include_path.parent != wrapper_path.parent:
+                continue
+            queue.append(include_path)
+
+    return True, None
+
+
 def list_wrapper_bundle_paths(wrapper_xml: str | Path) -> list[Path]:
     wrapper_path = Path(wrapper_xml).expanduser().resolve()
     bundle_paths = [wrapper_path]
@@ -272,10 +305,14 @@ def build_wrapper_if_needed(scene_name: str,
         wrapper_path.parent.mkdir(parents=True, exist_ok=True)
 
     if use_cache and wrapper_path.exists():
-        if _wrapper_bundle_isolated(wrapper_path):
+        bundle_valid, bundle_reason = _validate_local_wrapper_bundle(wrapper_path)
+        if bundle_valid and _wrapper_bundle_isolated(wrapper_path):
             print(f"✅ Using cached wrapper: {wrapper_path}")
             return wrapper_path
-        print(f"♻️ Rebuilding cached wrapper with isolated includes: {wrapper_path}")
+        if not bundle_valid:
+            print(f"♻️ Rebuilding corrupt cached wrapper ({bundle_reason}): {wrapper_path}")
+        else:
+            print(f"♻️ Rebuilding cached wrapper with isolated includes: {wrapper_path}")
 
     if wrapper_path.exists():
         try:
