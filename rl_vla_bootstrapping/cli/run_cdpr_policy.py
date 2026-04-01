@@ -12,6 +12,7 @@ import numpy as np
 from rl_vla_bootstrapping.core.commands import ensure_directory
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.embodiments.mujoco import MujocoEmbodiment
+from rl_vla_bootstrapping.policy.openvla_actor_critic import configure_openvla_dimension_env_from_config
 from rl_vla_bootstrapping.simulation.scene_builder import build_scene_xml, preview_selection
 from robots.cdpr.cdpr_dataset.rl_instruction_tasks import canonical_object_name
 from robots.cdpr.cdpr_dataset.synthetic_tasks import prepare_cdpr_workspace
@@ -629,6 +630,10 @@ def main() -> int:
         f"action_step_xyz={control_spec.action_step_xyz}, action_step_yaw={control_spec.action_step_yaw}"
     )
 
+    configure_openvla_dimension_env_from_config(
+        config,
+        chunk_length=int(args.chunk_length or config.policy.action_codec.chunk_size),
+    )
     (
         GenerateConfig,
         get_action_head,

@@ -27,6 +27,7 @@ from rl_vla_bootstrapping.cli.run_cdpr_policy import (
 )
 from rl_vla_bootstrapping.core.commands import ensure_directory
 from rl_vla_bootstrapping.core.config import load_project_config
+from rl_vla_bootstrapping.policy.openvla_actor_critic import configure_openvla_dimension_env_from_config
 from rl_vla_bootstrapping.policy.openvla_oft import (
     _allowed_objects_from_config,
     _extract_cdpr_env_overrides,
@@ -505,6 +506,10 @@ def _load_policy_runtime(
     if policy_repo is None:
         raise RuntimeError("Config is missing `policy.repo_path`.")
 
+    configure_openvla_dimension_env_from_config(
+        config,
+        chunk_length=int(args.chunk_length or config.policy.action_codec.chunk_size),
+    )
     (
         GenerateConfig,
         get_action_head,

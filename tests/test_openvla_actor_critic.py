@@ -5,6 +5,7 @@ import unittest
 from unittest import mock
 
 from rl_vla_bootstrapping.policy.openvla_actor_critic import (
+    configure_openvla_dimension_env_from_config,
     iter_model_candidates,
     load_generate_config,
     prepare_prompt,
@@ -55,6 +56,25 @@ class OpenVLAActorCriticHelpersTests(unittest.TestCase):
         self.assertIsNotNone(config_cls)
         self.assertIsNotNone(note)
         self.assertIn("libero", note.lower())
+
+    def test_configure_openvla_dimension_env_from_config_exports_dimensions(self):
+        config = types.SimpleNamespace(
+            embodiment=types.SimpleNamespace(
+                dof=7,
+                action_adapter=types.SimpleNamespace(common_action_keys=("j1", "j2", "j3", "j4", "j5", "j6", "j7")),
+            ),
+            policy=types.SimpleNamespace(
+                action_codec=types.SimpleNamespace(chunk_size=8),
+            ),
+        )
+
+        with mock.patch.dict("os.environ", {}, clear=True):
+            updates = configure_openvla_dimension_env_from_config(config)
+
+            self.assertEqual(updates["VLA_ROBOT"], "cdpr")
+            self.assertEqual(updates["VLA_ACTION_DIM"], "7")
+            self.assertEqual(updates["VLA_NUM_ACTIONS_CHUNK"], "8")
+            self.assertEqual(updates["VLA_PROPRIO_DIM"], "7")
 
 
 if __name__ == "__main__":

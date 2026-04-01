@@ -75,6 +75,7 @@ class FastPPOWrapperTests(unittest.TestCase):
                 "/tmp/external_ppo.py",
                 "--tensorboard_rollout_every_global_steps",
                 "100",
+                "--no-resume_actor_stats",
                 "--rollout_steps",
                 "170",
             ]
@@ -83,6 +84,8 @@ class FastPPOWrapperTests(unittest.TestCase):
         self.assertEqual(external_script, Path("/tmp/external_ppo.py").resolve())
         self.assertEqual(forwarded, ["--rollout_steps", "170"])
         self.assertEqual(fast_args.tensorboard_rollout_every_global_steps, 100)
+        self.assertTrue(fast_args.resume_value_head)
+        self.assertFalse(fast_args.resume_actor_stats)
 
     def test_infer_resume_artifacts_from_checkpoint_dir(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -113,6 +116,24 @@ class FastPPOWrapperTests(unittest.TestCase):
             self.assertEqual(artifacts.checkpoint_dir, checkpoint_dir.resolve())
             self.assertEqual(artifacts.value_head_path, (checkpoint_dir / "value_head.pt").resolve())
             self.assertEqual(artifacts.actor_stats_path, (checkpoint_dir / "ppo_actor_stats.pt").resolve())
+
+    def test_infer_resume_artifacts_can_skip_actor_stats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp) / "step_0122400"
+            adapter_dir = checkpoint_dir / "vla_cdpr_adapter"
+            adapter_dir.mkdir(parents=True)
+            (adapter_dir / "adapter_config.json").write_text("{}", encoding="utf-8")
+            (checkpoint_dir / "value_head.pt").write_text("value", encoding="utf-8")
+            (checkpoint_dir / "ppo_actor_stats.pt").write_text("actor", encoding="utf-8")
+
+            artifacts = _infer_resume_artifacts(
+                ["--adapter_path", str(checkpoint_dir)],
+                resume_actor_stats=False,
+            )
+
+            self.assertEqual(artifacts.checkpoint_dir, checkpoint_dir.resolve())
+            self.assertEqual(artifacts.value_head_path, (checkpoint_dir / "value_head.pt").resolve())
+            self.assertIsNone(artifacts.actor_stats_path)
 
     def test_rollout_tensorboard_logger_emits_window_means_on_cadence(self):
         with tempfile.TemporaryDirectory() as tmp:

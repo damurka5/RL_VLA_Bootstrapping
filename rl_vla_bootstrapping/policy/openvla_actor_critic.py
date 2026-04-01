@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -74,6 +75,51 @@ def resolve_llm_dim(vla: Any) -> int | None:
             return int(hidden)
 
     return None
+
+
+def configure_openvla_dimension_env(
+    *,
+    action_dim: int,
+    chunk_length: int,
+    proprio_dim: int | None = None,
+    robot_platform: str = "cdpr",
+) -> dict[str, str]:
+    resolved_action_dim = max(1, int(action_dim))
+    resolved_chunk_length = max(1, int(chunk_length))
+    resolved_proprio_dim = max(1, int(proprio_dim if proprio_dim is not None else resolved_action_dim))
+    updates = {
+        "VLA_ROBOT": str(robot_platform).strip().lower() or "cdpr",
+        "VLA_ACTION_DIM": str(resolved_action_dim),
+        "VLA_NUM_ACTIONS_CHUNK": str(resolved_chunk_length),
+        "VLA_PROPRIO_DIM": str(resolved_proprio_dim),
+    }
+    for key, value in updates.items():
+        os.environ[key] = value
+    return updates
+
+
+def configure_openvla_dimension_env_from_config(
+    config: Any,
+    *,
+    chunk_length: int | None = None,
+    action_dim: int | None = None,
+    proprio_dim: int | None = None,
+    robot_platform: str = "cdpr",
+) -> dict[str, str]:
+    action_keys = tuple(getattr(getattr(config.embodiment, "action_adapter", None), "common_action_keys", ()) or ())
+    resolved_action_dim = int(action_dim if action_dim is not None else len(action_keys) or getattr(config.embodiment, "dof", 0) or 1)
+    resolved_chunk_length = int(
+        chunk_length
+        if chunk_length is not None
+        else getattr(getattr(config.policy, "action_codec", None), "chunk_size", 8)
+    )
+    resolved_proprio_dim = int(proprio_dim if proprio_dim is not None else resolved_action_dim)
+    return configure_openvla_dimension_env(
+        action_dim=resolved_action_dim,
+        chunk_length=resolved_chunk_length,
+        proprio_dim=resolved_proprio_dim,
+        robot_platform=robot_platform,
+    )
 
 
 def set_num_images_in_input(vla: Any, num_images: int) -> int:

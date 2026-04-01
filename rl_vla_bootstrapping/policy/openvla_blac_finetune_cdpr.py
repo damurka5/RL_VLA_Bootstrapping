@@ -29,6 +29,7 @@ except Exception:  # pragma: no cover - optional dependency
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.policy.openvla_actor_critic import (
     OpenVLAActorCriticStack,
+    configure_openvla_dimension_env_from_config,
     load_generate_config,
     load_openvla_runtime,
     resolve_llm_dim,
@@ -453,6 +454,10 @@ def _load_stack(config: Any, args: argparse.Namespace) -> tuple[OpenVLAActorCrit
     if policy_repo is None:
         raise RuntimeError("Config is missing `policy.repo_path`.")
 
+    configure_openvla_dimension_env_from_config(
+        config,
+        chunk_length=int(args.chunk_length or config.policy.action_codec.chunk_size),
+    )
     get_action_head, get_processor, _get_proprio_projector, get_vla, PeftModel, _repo = load_openvla_runtime(policy_repo)
     GenerateConfig, note = load_generate_config()
     if note:

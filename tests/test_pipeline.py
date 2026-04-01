@@ -120,6 +120,7 @@ class PipelineTests(unittest.TestCase):
                         "enabled": True,
                         "args": {
                             "total_updates": 1,
+                            "resume_actor_stats": False,
                             "wrapper_cleanup": False,
                             "lock_non_commanded_axes": True,
                             "lock_non_commanded_axes_threshold": 0.05,
@@ -150,6 +151,7 @@ class PipelineTests(unittest.TestCase):
             plans = pipeline.build_stage_plans(run_dir, ["all"])
             self.assertEqual([plan.name for plan in plans], ["preview", "rl", "sft"])
             self.assertIn("--total_updates", plans[1].command)
+            self.assertIn("--no-resume_actor_stats", plans[1].command)
             self.assertIn("--no-wrapper_cleanup", plans[1].command)
             self.assertNotIn("--lock_non_commanded_axes", plans[1].command)
             self.assertNotIn("--lock_non_commanded_axes_threshold", plans[1].command)
@@ -174,6 +176,10 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(plans[1].env["RLVLA_CDPR_RANDOMIZE_EE_START"], "1")
             self.assertEqual(plans[1].env["RLVLA_CDPR_EE_START_X_BOUNDS"], "[-0.12, 0.12]")
             self.assertEqual(plans[1].env["RLVLA_CDPR_EE_START_Y_BOUNDS"], "[-0.08, 0.1]")
+            self.assertEqual(plans[1].env["VLA_ROBOT"], "cdpr")
+            self.assertEqual(plans[1].env["VLA_ACTION_DIM"], "5")
+            self.assertEqual(plans[1].env["VLA_NUM_ACTIONS_CHUNK"], "8")
+            self.assertEqual(plans[1].env["VLA_PROPRIO_DIM"], "5")
             self.assertIn("--run_root_dir", plans[2].command)
 
             preview_only = pipeline.build_stage_plans(run_dir, ["preview"])

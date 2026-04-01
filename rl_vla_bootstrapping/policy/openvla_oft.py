@@ -7,6 +7,7 @@ from typing import Any
 
 from rl_vla_bootstrapping.core.commands import StagePlan, append_cli_arg
 from rl_vla_bootstrapping.core.specs import EntrypointRef, ProjectConfig
+from rl_vla_bootstrapping.policy.openvla_actor_critic import configure_openvla_dimension_env_from_config
 
 
 def _join_pythonpath(paths: list[Path]) -> str:
@@ -248,6 +249,12 @@ def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     stage_env = _shared_env(config)
     stage_env.update(_task_hook_env(config))
     stage_env.update(_extract_cdpr_env_overrides(injected))
+    stage_env.update(
+        configure_openvla_dimension_env_from_config(
+            config,
+            chunk_length=int(injected.get("num_open_loop_steps", config.policy.action_codec.chunk_size)),
+        )
+    )
 
     for key, value in injected.items():
         _append_openvla_script_arg(argv, key, value)

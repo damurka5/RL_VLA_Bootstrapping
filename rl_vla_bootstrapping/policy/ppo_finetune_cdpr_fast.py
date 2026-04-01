@@ -19,6 +19,8 @@ from PIL import Image
 @dataclass(frozen=True)
 class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
+    resume_value_head: bool = True
+    resume_actor_stats: bool = True
 
 
 @dataclass(frozen=True)
@@ -32,6 +34,8 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     forwarded: list[str] = []
     external_script: Path | None = None
     tensorboard_rollout_every_global_steps = 0
+    resume_value_head = True
+    resume_actor_stats = True
 
     idx = 0
     while idx < len(argv):
@@ -51,11 +55,29 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
                 raise SystemExit("--tensorboard_rollout_every_global_steps expects an integer.") from exc
             idx += 2
             continue
+        if arg in ("--resume_value_head", "--resume-value-head"):
+            resume_value_head = True
+            idx += 1
+            continue
+        if arg in ("--no-resume_value_head", "--no-resume-value-head"):
+            resume_value_head = False
+            idx += 1
+            continue
+        if arg in ("--resume_actor_stats", "--resume-actor-stats"):
+            resume_actor_stats = True
+            idx += 1
+            continue
+        if arg in ("--no-resume_actor_stats", "--no-resume-actor-stats"):
+            resume_actor_stats = False
+            idx += 1
+            continue
         forwarded.append(arg)
         idx += 1
 
     return external_script, forwarded, _FastWrapperArgs(
-        tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps
+        tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps,
+        resume_value_head=resume_value_head,
+        resume_actor_stats=resume_actor_stats,
     )
 
 
@@ -92,7 +114,15 @@ def _candidate_checkpoint_dirs(raw_path: str | Path) -> list[Path]:
     return deduped
 
 
-def _infer_resume_artifacts(argv: Sequence[str]) -> _ResumeArtifacts:
+def _infer_resume_artifacts(
+    argv: Sequence[str],
+    *,
+    resume_value_head: bool = True,
+    resume_actor_stats: bool = True,
+) -> _ResumeArtifacts:
+    if not resume_value_head and not resume_actor_stats:
+        return _ResumeArtifacts()
+
     raw_values = [
         _extract_cli_arg_value(argv, "--action_head_path"),
         _extract_cli_arg_value(argv, "--adapter_path"),
@@ -103,11 +133,13 @@ def _infer_resume_artifacts(argv: Sequence[str]) -> _ResumeArtifacts:
         for checkpoint_dir in _candidate_checkpoint_dirs(raw_value):
             value_head_path = checkpoint_dir / "value_head.pt"
             actor_stats_path = checkpoint_dir / "ppo_actor_stats.pt"
-            if value_head_path.is_file() or actor_stats_path.is_file():
+            resolved_value_head_path = value_head_path if resume_value_head and value_head_path.is_file() else None
+            resolved_actor_stats_path = actor_stats_path if resume_actor_stats and actor_stats_path.is_file() else None
+            if resolved_value_head_path is not None or resolved_actor_stats_path is not None:
                 return _ResumeArtifacts(
                     checkpoint_dir=checkpoint_dir,
-                    value_head_path=value_head_path if value_head_path.is_file() else None,
-                    actor_stats_path=actor_stats_path if actor_stats_path.is_file() else None,
+                    value_head_path=resolved_value_head_path,
+                    actor_stats_path=resolved_actor_stats_path,
                 )
     return _ResumeArtifacts()
 
@@ -275,8 +307,12 @@ def _find_log_std_tensor(payload: Any) -> torch.Tensor | None:
     return None
 
 
-def _patch_resume_artifacts(module, forwarded_argv: Sequence[str]) -> None:
-    artifacts = _infer_resume_artifacts(forwarded_argv)
+def _patch_resume_artifacts(module, forwarded_argv: Sequence[str], fast_args: _FastWrapperArgs) -> None:
+    artifacts = _infer_resume_artifacts(
+        forwarded_argv,
+        resume_value_head=fast_args.resume_value_head,
+        resume_actor_stats=fast_args.resume_actor_stats,
+    )
     if artifacts.checkpoint_dir is None:
         return
 
@@ -319,9 +355,14 @@ def _patch_resume_artifacts(module, forwarded_argv: Sequence[str]) -> None:
 
         module.OpenVLAPPOPolicy.__init__ = _policy_init_with_actor_resume
 
+    loaded_labels: list[str] = []
+    if artifacts.value_head_path is not None:
+        loaded_labels.append("value_head")
+    if artifacts.actor_stats_path is not None:
+        loaded_labels.append("ppo_actor_stats")
     print(
         "[rlvla-fast] Resume artifacts inferred from checkpoint dir: "
-        f"{artifacts.checkpoint_dir}",
+        f"{artifacts.checkpoint_dir} ({', '.join(loaded_labels)})",
         flush=True,
     )
 
@@ -577,7 +618,7 @@ def main() -> None:
     _enable_fast_runtime_flags()
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
-    _patch_resume_artifacts(module, forwarded_argv)
+    _patch_resume_artifacts(module, forwarded_argv, fast_args)
     _patch_rollout_tensorboard(
         module,
         every_global_steps=fast_args.tensorboard_rollout_every_global_steps,
