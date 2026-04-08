@@ -221,12 +221,12 @@ training:
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
-      num_parallel_envs: 12
+      num_parallel_envs: 8
       total_updates: 100
       rollout_steps: 170
       ppo_epochs: 4
-      minibatch_size: 32
-      microbatch_size: 16
+      minibatch_size: 8
+      microbatch_size: 8
       max_env_steps: 32
       gamma: 0.99
       learning_rate: 1.0e-5
