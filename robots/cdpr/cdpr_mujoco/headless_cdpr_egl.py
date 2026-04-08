@@ -1,5 +1,6 @@
 import os
 import time
+import copy
 from datetime import datetime
 
 import mujoco as mj
@@ -17,6 +18,33 @@ try:
 except ImportError:
     EGL_AVAILABLE = False
     print("EGL not available, falling back to software rendering")
+
+
+def _mujoco_snapshot_spec() -> int:
+    if mj is None:
+        return 0
+    spec = 0
+    state_names = (
+        "mjSTATE_FULLPHYSICS",
+        "mjSTATE_CTRL",
+        "mjSTATE_QFRC_APPLIED",
+        "mjSTATE_XFRC_APPLIED",
+        "mjSTATE_EQ_ACTIVE",
+        "mjSTATE_MOCAP_POS",
+        "mjSTATE_MOCAP_QUAT",
+        "mjSTATE_USER",
+        "mjSTATE_USERDATA",
+        "mjSTATE_PLUGIN",
+    )
+    for state_name in state_names:
+        state_enum = getattr(mj.mjtState, state_name, None)
+        if state_enum is None:
+            continue
+        spec |= int(getattr(state_enum, "value", state_enum))
+    return spec
+
+
+MUJOCO_SNAPSHOT_SPEC = _mujoco_snapshot_spec()
 
 def _id(model, objtype, name):
     return mj.mj_name2id(model, objtype, name)
@@ -149,6 +177,12 @@ class HeadlessCDPRSimulation:
         self.trajectory_data = []
 
         os.makedirs(output_dir, exist_ok=True)
+
+    @staticmethod
+    def _copy_frame(frame):
+        if frame is None:
+            return None
+        return np.asarray(frame).copy()
 
     def initialize(self):
         self.model = mj.MjModel.from_xml_path(self.xml_path)
@@ -638,12 +672,105 @@ class HeadlessCDPRSimulation:
         mj.mj_step(self.model, self.data)
 
         if capture_frame:
-            self.overview_frames.append(self.capture_frame(self.overview_cam, "overview"))
-            self.ee_camera_frames.append(self.capture_frame(self.ee_cam, "ee_camera"))
-            self.frame_capture_timestamps.append(float(self.data.time))
+            overview = self.capture_frame(self.overview_cam, "overview")
+            ee_camera = self.capture_frame(self.ee_cam, "ee_camera")
+            timestamp = float(self.data.time)
+            if self.record_trajectory:
+                self.overview_frames.append(overview)
+                self.ee_camera_frames.append(ee_camera)
+                self.frame_capture_timestamps.append(timestamp)
+            else:
+                self.overview_frames = [overview]
+                self.ee_camera_frames = [ee_camera]
+                self.frame_capture_timestamps = [timestamp]
 
         if self.record_trajectory:
             self.record_trajectory_step()
+
+    def capture_state(self):
+        if self.model is None or self.data is None:
+            raise RuntimeError("Simulation is not initialized.")
+
+        state = np.empty(mj.mj_stateSize(self.model, MUJOCO_SNAPSHOT_SPEC), dtype=np.float64)
+        mj.mj_getState(self.model, self.data, state, MUJOCO_SNAPSHOT_SPEC)
+
+        snapshot = {
+            "mujoco_state": state,
+            "target_pos": np.asarray(self.target_pos, dtype=np.float64).copy(),
+            "controller_pos": np.asarray(self.controller.pos, dtype=np.float64).copy(),
+            "controller_prev_lengths": np.asarray(self.controller.prev_lengths, dtype=np.float64).copy(),
+            "controller_attach_point_offset": np.asarray(
+                self.controller.attach_point_offset,
+                dtype=np.float64,
+            ).copy(),
+            "controller_dlength_dq": np.asarray(self.controller.dlength_dq, dtype=np.float64).copy(),
+            "controller_slider_q_per_length": np.asarray(
+                self.controller.slider_q_per_length,
+                dtype=np.float64,
+            ).copy(),
+            "controller_has_tendon_model": bool(self.controller.has_tendon_model),
+            "language_instruction": str(getattr(self, "language_instruction", "")),
+            "record_trajectory": bool(self.record_trajectory),
+            "overview_frames": None,
+            "ee_camera_frames": None,
+            "frame_capture_timestamps": None,
+            "trajectory_data": None,
+        }
+
+        if self.record_trajectory:
+            snapshot["overview_frames"] = [self._copy_frame(frame) for frame in self.overview_frames]
+            snapshot["ee_camera_frames"] = [self._copy_frame(frame) for frame in self.ee_camera_frames]
+            snapshot["frame_capture_timestamps"] = list(self.frame_capture_timestamps)
+            snapshot["trajectory_data"] = copy.deepcopy(self.trajectory_data)
+        else:
+            snapshot["overview_frames"] = (
+                [self._copy_frame(self.overview_frames[-1])] if self.overview_frames else []
+            )
+            snapshot["ee_camera_frames"] = (
+                [self._copy_frame(self.ee_camera_frames[-1])] if self.ee_camera_frames else []
+            )
+            snapshot["frame_capture_timestamps"] = (
+                [float(self.frame_capture_timestamps[-1])] if self.frame_capture_timestamps else []
+            )
+
+        return snapshot
+
+    def restore_state(self, snapshot):
+        if self.model is None or self.data is None:
+            raise RuntimeError("Simulation is not initialized.")
+
+        state = np.asarray(snapshot["mujoco_state"], dtype=np.float64)
+        mj.mj_setState(self.model, self.data, state, MUJOCO_SNAPSHOT_SPEC)
+        mj.mj_forward(self.model, self.data)
+
+        self.target_pos = np.asarray(snapshot["target_pos"], dtype=np.float64).copy()
+        self.controller.pos = np.asarray(snapshot["controller_pos"], dtype=np.float64).copy()
+        self.controller.prev_lengths = np.asarray(
+            snapshot["controller_prev_lengths"],
+            dtype=np.float64,
+        ).copy()
+        self.controller.attach_point_offset = np.asarray(
+            snapshot["controller_attach_point_offset"],
+            dtype=np.float64,
+        ).copy()
+        self.controller.dlength_dq = np.asarray(
+            snapshot["controller_dlength_dq"],
+            dtype=np.float64,
+        ).copy()
+        self.controller.slider_q_per_length = np.asarray(
+            snapshot["controller_slider_q_per_length"],
+            dtype=np.float64,
+        ).copy()
+        self.controller.has_tendon_model = bool(snapshot["controller_has_tendon_model"])
+        self.language_instruction = str(snapshot.get("language_instruction", ""))
+        self.record_trajectory = bool(snapshot.get("record_trajectory", self.record_trajectory))
+        self.overview_frames = [self._copy_frame(frame) for frame in snapshot.get("overview_frames") or []]
+        self.ee_camera_frames = [self._copy_frame(frame) for frame in snapshot.get("ee_camera_frames") or []]
+        self.frame_capture_timestamps = [float(ts) for ts in snapshot.get("frame_capture_timestamps") or []]
+        if self.record_trajectory:
+            self.trajectory_data = copy.deepcopy(snapshot.get("trajectory_data") or [])
+        else:
+            self.trajectory_data = []
 
     def run_trajectory(self, target_positions, trajectory_name="trajectory",
                        max_steps_per_target=600, capture_every_n=3):

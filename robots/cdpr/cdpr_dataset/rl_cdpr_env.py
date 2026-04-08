@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -1365,6 +1366,95 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._inverse_catalog_to_body = {}
         self._goal_position = np.zeros((3,), dtype=np.float32)
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
+
+    def capture_state(self) -> dict[str, Any]:
+        if self.sim is None:
+            raise RuntimeError("Environment was not reset before capture_state().")
+        if not hasattr(self.sim, "capture_state"):
+            raise RuntimeError("Underlying simulator does not support capture_state().")
+
+        return {
+            "sim_state": self.sim.capture_state(),
+            "step_count": int(self._step_count),
+            "yaw": float(self._yaw),
+            "last_gripper_cmd": float(self._last_gripper_cmd),
+            "instruction_spec": copy.deepcopy(self._instruction_spec),
+            "reward_state": copy.deepcopy(self._reward_state),
+            "scene_name": str(self._scene_name),
+            "target_catalog_name": str(self._target_catalog_name),
+            "target_body_name": str(self._target_body_name),
+            "catalog_to_body": dict(self._catalog_to_body),
+            "object_body_names": list(self._object_body_names),
+            "scene_catalog_objects": list(self._scene_catalog_objects),
+            "desk_texture_name": str(self._desk_texture_name),
+            "current_wrapper_xml": (
+                str(self._current_wrapper_xml)
+                if self._current_wrapper_xml is not None
+                else ""
+            ),
+            "inverse_catalog_to_body": dict(self._inverse_catalog_to_body),
+            "prev_object_positions": {
+                str(name): np.asarray(pos, dtype=np.float32).copy()
+                for name, pos in self._prev_object_positions.items()
+            },
+            "prev_ee_for_catch": np.asarray(self._prev_ee_for_catch, dtype=np.float32).copy(),
+            "last_caught_body": str(self._last_caught_body),
+            "last_caught_catalog": str(self._last_caught_catalog),
+            "support_surface_z": float(self._support_surface_z),
+            "ee_min_z": float(self._ee_min_z),
+            "ee_spawn_z": float(self._ee_spawn_z),
+            "locked_target_xyz": np.asarray(self._locked_target_xyz, dtype=np.float32).copy(),
+            "episode_ee_start": np.asarray(self._episode_ee_start, dtype=np.float32).copy(),
+            "goal_position": np.asarray(self._goal_position, dtype=np.float32).copy(),
+            "goal_motion_direction": np.asarray(self._goal_motion_direction, dtype=np.float32).copy(),
+            "episode_index": int(self._episode_index),
+            "reset_counter": int(self._reset_counter),
+            "instruction_cycle": list(self._instruction_cycle),
+            "rng_state": copy.deepcopy(self.np_random.bit_generator.state),
+        }
+
+    def restore_state(self, snapshot: dict[str, Any]) -> None:
+        if self.sim is None:
+            raise RuntimeError("Environment was not reset before restore_state().")
+        if not hasattr(self.sim, "restore_state"):
+            raise RuntimeError("Underlying simulator does not support restore_state().")
+
+        self.sim.restore_state(snapshot["sim_state"])
+        self._step_count = int(snapshot["step_count"])
+        self._yaw = float(snapshot["yaw"])
+        self._last_gripper_cmd = float(snapshot["last_gripper_cmd"])
+        self._instruction_spec = copy.deepcopy(snapshot["instruction_spec"])
+        self._reward_state = copy.deepcopy(snapshot["reward_state"])
+        self._scene_name = str(snapshot["scene_name"])
+        self._target_catalog_name = str(snapshot["target_catalog_name"])
+        self._target_body_name = str(snapshot["target_body_name"])
+        self._catalog_to_body = dict(snapshot["catalog_to_body"])
+        self._object_body_names = [str(name) for name in snapshot["object_body_names"]]
+        self._scene_catalog_objects = [str(name) for name in snapshot["scene_catalog_objects"]]
+        self._desk_texture_name = str(snapshot["desk_texture_name"])
+        wrapper_xml = str(snapshot.get("current_wrapper_xml", "") or "").strip()
+        self._current_wrapper_xml = Path(wrapper_xml) if wrapper_xml else None
+        self._inverse_catalog_to_body = dict(snapshot["inverse_catalog_to_body"])
+        self._prev_object_positions = {
+            str(name): np.asarray(pos, dtype=np.float32).copy()
+            for name, pos in dict(snapshot["prev_object_positions"]).items()
+        }
+        self._prev_ee_for_catch = np.asarray(snapshot["prev_ee_for_catch"], dtype=np.float32).copy()
+        self._last_caught_body = str(snapshot["last_caught_body"])
+        self._last_caught_catalog = str(snapshot["last_caught_catalog"])
+        self._support_surface_z = float(snapshot["support_surface_z"])
+        self._ee_min_z = float(snapshot["ee_min_z"])
+        self._ee_spawn_z = float(snapshot["ee_spawn_z"])
+        self._locked_target_xyz = np.asarray(snapshot["locked_target_xyz"], dtype=np.float32).copy()
+        self._episode_ee_start = np.asarray(snapshot["episode_ee_start"], dtype=np.float32).copy()
+        self._goal_position = np.asarray(snapshot["goal_position"], dtype=np.float32).copy()
+        self._goal_motion_direction = np.asarray(snapshot["goal_motion_direction"], dtype=np.float32).copy()
+        self._episode_index = int(snapshot["episode_index"])
+        self._reset_counter = int(snapshot["reset_counter"])
+        self._instruction_cycle = [str(item) for item in snapshot.get("instruction_cycle") or []]
+        self.np_random.bit_generator.state = copy.deepcopy(snapshot["rng_state"])
+        if self._instruction_spec is not None:
+            setattr(self.sim, "language_instruction", self._instruction_spec.text)
 
     def _sample_scene(self, options: Optional[dict[str, Any]]) -> SceneSpec:
         requested_scene = (options or {}).get("scene")
