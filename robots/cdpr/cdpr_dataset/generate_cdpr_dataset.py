@@ -177,6 +177,16 @@ def _wrapper_bundle_isolated(wrapper_xml: Path) -> bool:
     return True
 
 
+def _remove_local_wrapper_bundle_files(wrapper_xml: Path) -> None:
+    wrapper_path = Path(wrapper_xml).expanduser().resolve()
+    for path in reversed(list_wrapper_bundle_paths(wrapper_path)):
+        try:
+            if path.exists() and path.is_file():
+                path.unlink()
+        except Exception:
+            pass
+
+
 def _isolate_wrapper_bundle(wrapper_xml: Path) -> list[Path]:
     wrapper_path = wrapper_xml.resolve()
     if not wrapper_path.exists():
@@ -460,28 +470,46 @@ def build_wrapper_if_needed(scene_name: str,
             f"{obj}:{x:.3f},{y:.3f},{z:.3f}:{qx},{qy},{qz},{qw}"
         ]
         
-    # subprocess.run(cmd, check=True)
-    print(">>", " ".join(cmd))
-    proc = subprocess.run(cmd)  # NOTE: no check=True
+    last_bundle_reason: str | None = None
+    for attempt in range(2):
+        wrapper_path.parent.mkdir(parents=True, exist_ok=True)
 
-    if proc.returncode != 0:
-        # On macOS, cdpr_scene_switcher may segfault after writing wrapper XML.
-        # If the wrapper exists, we can safely continue.
-        if wrapper_path.exists() and wrapper_path.stat().st_size > 0:
+        print(">>", " ".join(cmd))
+        proc = subprocess.run(cmd)  # NOTE: no check=True
+
+        if proc.returncode != 0:
+            # On macOS, cdpr_scene_switcher may segfault after writing wrapper XML.
+            # If the wrapper exists, we can safely continue.
+            if wrapper_path.exists() and wrapper_path.stat().st_size > 0:
+                print(
+                    f"⚠️ cdpr_scene_switcher exited with code {proc.returncode}, "
+                    f"but wrapper was created. Continuing with: {wrapper_path}"
+                )
+            else:
+                raise RuntimeError(
+                    f"cdpr_scene_switcher failed (code {proc.returncode}) and wrapper was not created."
+                )
+
+        created_bundle_files = _isolate_wrapper_bundle(wrapper_path)
+        bundle_valid, bundle_reason = _validate_local_wrapper_bundle(wrapper_path)
+        if bundle_valid:
+            print(f"✅ Built wrapper: {wrapper_path}\n   Includes {len(object_names)} object(s).")
+            if created_bundle_files:
+                print(f"📦 Isolated wrapper bundle files: {len(created_bundle_files)}")
+            return wrapper_path
+
+        last_bundle_reason = bundle_reason or "wrapper bundle missing or incomplete"
+        if attempt == 0:
             print(
-                f"⚠️ cdpr_scene_switcher exited with code {proc.returncode}, "
-                f"but wrapper was created. Continuing with: {wrapper_path}"
+                f"♻️ Rebuilding missing/incomplete wrapper bundle ({last_bundle_reason}): {wrapper_path}",
+                flush=True,
             )
-        else:
-            raise RuntimeError(
-                f"cdpr_scene_switcher failed (code {proc.returncode}) and wrapper was not created."
-            )
+            _remove_local_wrapper_bundle_files(wrapper_path)
 
-    print(f"✅ Built wrapper: {wrapper_path}\n   Includes {len(object_names)} object(s).")
-    created_bundle_files = _isolate_wrapper_bundle(wrapper_path)
-    if created_bundle_files:
-        print(f"📦 Isolated wrapper bundle files: {len(created_bundle_files)}")
-    return wrapper_path
+    raise FileNotFoundError(
+        "Wrapper bundle was not materialized after rebuild. "
+        f"wrapper={wrapper_path} reason={last_bundle_reason or 'unknown'}"
+    )
 
 
 def _episode_out_dir(wrapper_xml: Path, task_name: str) -> Path:

@@ -688,6 +688,13 @@ def _build_textured_wrapper_variant(
     base_wrapper_xml = base_wrapper_xml.resolve()
     chosen_texture = chosen_texture.resolve()
     output_dir = base_wrapper_xml.parent.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if not _wrapper_bundle_exists(base_wrapper_xml):
+        raise FileNotFoundError(
+            "Base wrapper bundle is missing or incomplete before desk-texture patching. "
+            f"wrapper={base_wrapper_xml}"
+        )
 
     copied_texture = _shared_desk_texture_cache_path(chosen_texture)
     if not copied_texture.exists():
