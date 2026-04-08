@@ -8,6 +8,17 @@ from robots.cdpr.cdpr_dataset.rl_instruction_tasks import canonical_object_name,
 
 
 class InstructionTextTests(unittest.TestCase):
+    def test_move_to_object_instruction_uses_object_text(self):
+        spec = sample_instruction(
+            target_object="ycb_plate",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["move_to_object"],
+        )
+
+        self.assertEqual(spec.instruction_type, "move_to_object")
+        self.assertEqual(spec.text, "move to plate")
+        self.assertEqual(spec.target_object, "ycb_plate")
+
     def test_pick_up_instruction_uses_object_text(self):
         spec = sample_instruction(
             target_object="ycb_apple",
@@ -42,6 +53,12 @@ class InstructionTextTests(unittest.TestCase):
     def test_canonical_object_name_strips_known_prefixes(self):
         self.assertEqual(canonical_object_name("ycb_mug"), "mug")
         self.assertEqual(canonical_object_name("ycb_b_cups"), "cups")
+        self.assertEqual(canonical_object_name("ycb_plate"), "plate")
+        self.assertEqual(canonical_object_name("ycb_bowl"), "bowl")
+
+    def test_canonical_object_name_strips_prefixes_and_underscores_generically(self):
+        self.assertEqual(canonical_object_name("ycb_demo_object"), "demo object")
+        self.assertEqual(canonical_object_name("custom_test_item"), "custom test item")
 
     def test_sample_instruction_honors_explicit_instruction_type(self):
         spec = sample_instruction(

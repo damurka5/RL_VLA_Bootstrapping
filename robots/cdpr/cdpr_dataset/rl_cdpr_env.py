@@ -80,6 +80,7 @@ CDPR_RANDOMIZE_EE_START_ENV = "RLVLA_CDPR_RANDOMIZE_EE_START"
 CDPR_EE_START_X_BOUNDS_ENV = "RLVLA_CDPR_EE_START_X_BOUNDS"
 CDPR_EE_START_Y_BOUNDS_ENV = "RLVLA_CDPR_EE_START_Y_BOUNDS"
 CDPR_EE_START_Z_ENV = "RLVLA_CDPR_EE_START_Z"
+CDPR_RECORD_TRAJECTORY_ENV = "RLVLA_CDPR_RECORD_TRAJECTORY"
 DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
 DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
@@ -966,6 +967,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_start_x_bounds: Sequence[float] | None = None,
         ee_start_y_bounds: Sequence[float] | None = None,
         ee_start_z: float | None = None,
+        record_trajectory: bool | None = None,
         move_distance: float = 0.40,
         lift_distance: float = 0.10,
         capture_frames: bool = False,
@@ -1032,12 +1034,15 @@ class CDPRLanguageRLEnv(_EnvBase):
         if ee_start_z is None:
             loaded_ee_start_z = _load_float_env(CDPR_EE_START_Z_ENV, default=float("nan"))
             ee_start_z = None if not np.isfinite(loaded_ee_start_z) else float(loaded_ee_start_z)
+        if record_trajectory is None:
+            record_trajectory = _load_bool_env(CDPR_RECORD_TRAJECTORY_ENV, default=False)
         self.lock_non_commanded_axes = bool(lock_non_commanded_axes)
         self.lock_non_commanded_axes_threshold = max(0.0, float(lock_non_commanded_axes_threshold))
         self.randomize_ee_start = bool(randomize_ee_start)
         self.ee_start_x_bounds = _normalize_float_pair(ee_start_x_bounds, name="ee_start_x_bounds")
         self.ee_start_y_bounds = _normalize_float_pair(ee_start_y_bounds, name="ee_start_y_bounds")
         self.ee_start_z = None if ee_start_z is None else max(float(ee_start_z), MIN_EE_START_Z)
+        self.record_trajectory = bool(record_trajectory)
         self.move_distance = float(move_distance)
         self.lift_distance = float(lift_distance)
         self.capture_frames = bool(capture_frames)
@@ -1168,7 +1173,11 @@ class CDPRLanguageRLEnv(_EnvBase):
             try:
                 wrapper_xml = self._build_episode_wrapper(scene=scene, ee_start=episode_ee_start)
                 self._current_wrapper_xml = wrapper_xml
-                self.sim = self._sim_cls(xml_path=str(wrapper_xml), output_dir=str(DEFAULT_VIDEO_DIR))
+                self.sim = self._sim_cls(
+                    xml_path=str(wrapper_xml),
+                    output_dir=str(DEFAULT_VIDEO_DIR),
+                    record_trajectory=self.record_trajectory,
+                )
                 self.sim.initialize()
                 break
             except Exception:
@@ -2060,4 +2069,5 @@ class CDPRLanguageRLEnv(_EnvBase):
             "ee_start_z_override": (
                 float(self.ee_start_z) if self.ee_start_z is not None else float("nan")
             ),
+            "record_trajectory": bool(self.record_trajectory),
         }

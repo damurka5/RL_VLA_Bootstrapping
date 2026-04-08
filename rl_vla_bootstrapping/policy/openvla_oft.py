@@ -191,6 +191,8 @@ def _extract_cdpr_env_overrides(injected: dict[str, Any]) -> dict[str, str]:
         )
     if "ee_start_z" in injected:
         env["RLVLA_CDPR_EE_START_Z"] = str(float(injected.pop("ee_start_z")))
+    if "record_trajectory" in injected:
+        env["RLVLA_CDPR_RECORD_TRAJECTORY"] = "1" if bool(injected.pop("record_trajectory")) else "0"
     return env
 
 

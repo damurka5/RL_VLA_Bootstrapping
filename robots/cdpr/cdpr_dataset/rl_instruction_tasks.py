@@ -14,6 +14,7 @@ INSTRUCTION_TYPES: tuple[str, ...] = (
     "move_top",
     "move_bottom",
     "move_center",
+    "move_to_object",
     "pick_up",
 )
 
@@ -25,6 +26,7 @@ MOVE_DIRECTIONS: dict[str, np.ndarray] = {
     "move_top": np.array([0.0, 1.0, 0.0], dtype=np.float32),
     "move_bottom": np.array([0.0, -1.0, 0.0], dtype=np.float32),
     "move_center": np.zeros((3,), dtype=np.float32),
+    "move_to_object": np.zeros((3,), dtype=np.float32),
     "pick_up": np.zeros((3,), dtype=np.float32),
 }
 
@@ -45,10 +47,11 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "move_top": "move forward",
     "move_bottom": "move backward",
     "move_center": "move center",
+    "move_to_object": "move to object",
     "pick_up": "pick up object",
 }
 
-OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = ("pick_up",)
+OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = ("move_to_object", "pick_up")
 
 _OBJECT_LANGUAGE_ALIASES: dict[str, str] = {
     "ycb_apple": "apple",
@@ -57,6 +60,8 @@ _OBJECT_LANGUAGE_ALIASES: dict[str, str] = {
     "ycb_b_cups": "cups",
     "ycb_mug": "mug",
     "ycb_baseball": "baseball",
+    "ycb_plate": "plate",
+    "ycb_bowl": "bowl",
     "ycb_foam_brick": "foam brick",
     "ycb_ruiks_cube": "rubik's cube",
 }
@@ -148,7 +153,9 @@ def sample_instruction(
 
     instruction_text = INSTRUCTION_TEXT[selected_instruction_type]
     target_name = str(target_object or "").strip()
-    if instruction_uses_target_object(selected_instruction_type):
+    if selected_instruction_type == "move_to_object":
+        instruction_text = f"move to {canonical_object_name(target_name)}"
+    elif selected_instruction_type == "pick_up":
         instruction_text = f"pick up {canonical_object_name(target_name)}"
     return InstructionSpec(
         instruction_type=selected_instruction_type,
@@ -260,6 +267,15 @@ def compute_instruction_reward(
             caught_object_score=caught_object_score,
             caught_object_catalog=caught_object_catalog,
         )
+    if spec.instruction_type == "move_to_object":
+        return _compute_move_to_object_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            obj_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=task_metadata,
+        )
 
     distance_vec = goal_pos - ee_pos
     prev_distance_vec = prev_goal_pos - reward_state.prev_ee_pos
@@ -368,6 +384,134 @@ def compute_instruction_reward(
         "distance_ee_to_object_prev_xy": prev_xy_distance,
         "orientation_reward": camera_reward,
         "success_bonus": success_reward,
+    }
+    return reward, success, info
+
+
+def _compute_move_to_object_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    obj_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+) -> tuple[float, bool, dict[str, float]]:
+    task_metadata = dict(task_metadata or {})
+    prev_ee = np.asarray(reward_state.prev_ee_pos, dtype=np.float32)
+    prev_obj = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
+
+    xy_offset = np.asarray(obj_pos[:2] - ee_pos[:2], dtype=np.float32)
+    prev_xy_offset = np.asarray(prev_obj[:2] - prev_ee[:2], dtype=np.float32)
+    xy_distance = float(np.linalg.norm(xy_offset))
+    prev_xy_distance = float(np.linalg.norm(prev_xy_offset))
+    xy_distance_delta = float(prev_xy_distance - xy_distance)
+    xyz_distance = float(np.linalg.norm(obj_pos - ee_pos))
+    prev_xyz_distance = float(np.linalg.norm(prev_obj - prev_ee))
+
+    default_xy_tolerance = _metadata_float(task_metadata, "success_distance", 0.02)
+    xy_tolerance = max(
+        _metadata_float(task_metadata, "move_to_object_xy_tolerance", default_xy_tolerance),
+        1e-6,
+    )
+    xy_reward_scale = max(
+        _metadata_float(task_metadata, "move_to_object_xy_reward_scale", max(4.0 * xy_tolerance, 0.08)),
+        1e-6,
+    )
+    progress_weight = _metadata_float(task_metadata, "move_to_object_progress_weight", 1.25)
+    proximity_weight = _metadata_float(task_metadata, "move_to_object_proximity_weight", 0.75)
+    progress_clip = max(
+        _metadata_float(task_metadata, "move_to_object_progress_clip", xy_reward_scale),
+        1e-6,
+    )
+    above_target_bonus_weight = _metadata_float(task_metadata, "move_to_object_above_bonus", 0.50)
+    distance_reward_exponent = _metadata_float(task_metadata, "distance_reward_exponent", 2.0)
+    success_bonus = _metadata_float(task_metadata, "success_bonus", 1.0)
+    action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.95)
+    action_saturation_penalty_weight = _metadata_float(
+        task_metadata,
+        "action_saturation_penalty_weight",
+        1.0,
+    )
+    action_saturation_exponent = _metadata_float(task_metadata, "action_saturation_exponent", 2.0)
+
+    normalized_xy_distance = float(xy_distance / xy_reward_scale)
+    proximity_reward = float(
+        proximity_weight
+        / (1.0 + np.power(normalized_xy_distance, max(distance_reward_exponent, 1e-6)))
+    )
+    normalized_progress = float(np.clip(xy_distance_delta / progress_clip, -1.0, 1.0))
+    progress_reward = float(progress_weight * normalized_progress)
+    above_target = bool(xy_distance <= xy_tolerance)
+    above_target_bonus = float(above_target_bonus_weight if above_target else 0.0)
+
+    action_saturation_penalty_raw, action_saturation_rate, action_saturation_max_abs = _action_saturation_stats(
+        action,
+        threshold=action_saturation_threshold,
+        exponent=action_saturation_exponent,
+    )
+    action_saturation_penalty = float(action_saturation_penalty_weight * action_saturation_penalty_raw)
+
+    success = bool(above_target)
+    success_reward = float(success_bonus if success else 0.0)
+    reward = float(
+        progress_reward
+        + proximity_reward
+        + above_target_bonus
+        + success_reward
+        - action_saturation_penalty
+    )
+
+    reward_state.prev_ee_pos = ee_pos.copy()
+    reward_state.prev_obj_pos = obj_pos.copy()
+    reward_state.prev_distance = xy_distance
+    reward_state.prev_camera_align = None
+    reward_state.step_count += 1
+
+    goal_dir_unit, goal_dir_norm = _safe_unit(np.array([xy_offset[0], xy_offset[1], 0.0], dtype=np.float32))
+    info = {
+        "distance_to_goal": xy_distance,
+        "distance_to_goal_xy": xy_distance,
+        "distance_to_goal_prev": prev_xy_distance,
+        "distance_to_goal_prev_xy": prev_xy_distance,
+        "distance_delta": xy_distance_delta,
+        "distance_to_goal_normalized": normalized_xy_distance,
+        "distance_reward": proximity_reward,
+        "distance_reward_scale": float(xy_reward_scale),
+        "distance_reward_weight": float(proximity_weight),
+        "distance_reward_exponent": float(distance_reward_exponent),
+        "camera_alignment": 0.0,
+        "camera_alignment_delta": 0.0,
+        "camera_reward": 0.0,
+        "action_saturation_penalty": action_saturation_penalty,
+        "action_saturation_penalty_raw": action_saturation_penalty_raw,
+        "action_saturation_rate": action_saturation_rate,
+        "action_saturation_max_abs": action_saturation_max_abs,
+        "action_saturation_threshold": float(action_saturation_threshold),
+        "action_saturation_exponent": float(action_saturation_exponent),
+        "goal_direction_x": float(goal_dir_unit[0]),
+        "goal_direction_y": float(goal_dir_unit[1]),
+        "goal_direction_z": float(goal_dir_unit[2]),
+        "goal_direction_norm": goal_dir_norm,
+        "camera_required": 0.0,
+        "success_distance_threshold": float(xy_tolerance),
+        "success_camera_alignment_threshold": 0.0,
+        "distance_ee_to_object": xy_distance,
+        "distance_ee_to_object_xyz": xyz_distance,
+        "distance_ee_to_object_xy": xy_distance,
+        "distance_ee_to_object_prev": prev_xy_distance,
+        "distance_ee_to_object_prev_xyz": prev_xyz_distance,
+        "distance_ee_to_object_prev_xy": prev_xy_distance,
+        "orientation_reward": 0.0,
+        "success_bonus": success_reward,
+        "move_to_object_progress_reward": progress_reward,
+        "move_to_object_progress_clip": float(progress_clip),
+        "move_to_object_proximity_reward": proximity_reward,
+        "move_to_object_xy_distance": xy_distance,
+        "move_to_object_xy_distance_prev": prev_xy_distance,
+        "move_to_object_above_target": float(above_target),
+        "move_to_object_above_bonus": above_target_bonus,
+        "move_to_object_xy_tolerance": float(xy_tolerance),
     }
     return reward, success, info
 
@@ -592,6 +736,21 @@ def compute_instruction_validation_success(
     start_arr = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
     if ee_arr.size < 3 or start_arr.size < 3:
         return bool(current_success), {}
+
+    if spec.instruction_type == "move_to_object":
+        xy_tolerance = max(
+            _metadata_float(
+                task_metadata,
+                "move_to_object_xy_tolerance",
+                _metadata_float(task_metadata, "success_distance", 0.02),
+            ),
+            1e-6,
+        )
+        return bool(current_success), {
+            "validation_success_mode": 2.0,
+            "move_to_object_validation_success": float(bool(current_success)),
+            "move_to_object_validation_xy_tolerance": float(xy_tolerance),
+        }
 
     axis_spec = _DIRECTIONAL_SUCCESS_AXES.get(spec.instruction_type)
     if axis_spec is None:

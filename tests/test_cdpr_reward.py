@@ -19,6 +19,7 @@ class RewardDistanceTests(unittest.TestCase):
             "move_right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
             "move_up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
             "move_center": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            "move_to_object": np.array([0.0, 0.0, 0.0], dtype=np.float32),
             "pick_up": np.array([0.0, 0.0, 0.0], dtype=np.float32),
         }[instruction_type]
         text = instruction_type.replace("_", " ")
@@ -187,6 +188,73 @@ class RewardDistanceTests(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertEqual(info["validation_success_mode"], 0.0)
+
+    def test_move_to_object_reward_prefers_smaller_xy_distance(self):
+        spec = self._spec("move_to_object")
+        target = np.array([0.10, -0.10, 0.18], dtype=np.float32)
+
+        reward_far, success_far, info_far = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.25, 0.05, 0.50], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.25, 0.05, 0.50], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata={"move_to_object_xy_tolerance": 0.02},
+        )
+        reward_near, success_near, info_near = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.11, -0.09, 0.50], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.11, -0.09, 0.50], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata={"move_to_object_xy_tolerance": 0.02},
+        )
+
+        self.assertFalse(success_far)
+        self.assertTrue(success_near)
+        self.assertGreater(reward_near, reward_far)
+        self.assertGreater(info_far["move_to_object_xy_distance"], info_near["move_to_object_xy_distance"])
+        self.assertGreater(info_near["move_to_object_above_bonus"], 0.0)
+
+    def test_move_to_object_success_uses_xy_tolerance_only(self):
+        spec = self._spec("move_to_object")
+        target = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.015, -0.010, 0.48], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.06, 0.48], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata={"move_to_object_xy_tolerance": 0.02},
+        )
+
+        self.assertTrue(success)
+        self.assertGreater(reward, 1.0)
+        self.assertAlmostEqual(info["distance_to_goal"], np.linalg.norm([0.015, -0.010]), places=6)
+        self.assertAlmostEqual(info["distance_ee_to_object_xyz"], np.linalg.norm([0.015, -0.010, -0.32]), places=6)
+
+    def test_move_to_object_validation_success_uses_reward_result(self):
+        spec = self._spec("move_to_object")
+        initial = np.array([0.10, 0.00, 0.20], dtype=np.float32)
+
+        success, info = compute_instruction_validation_success(
+            spec=spec,
+            ee_pos=np.array([0.12, 0.01, 0.45], dtype=np.float32),
+            reward_state=init_reward_state(initial_ee_pos=initial, initial_obj_pos=initial),
+            task_metadata={"move_to_object_xy_tolerance": 0.02},
+            current_success=True,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(info["validation_success_mode"], 2.0)
+        self.assertEqual(info["move_to_object_validation_success"], 1.0)
 
     def test_pick_up_reward_prefers_open_centered_pregrasp(self):
         spec = self._spec("pick_up")

@@ -70,6 +70,26 @@ class InstructionGoalTests(unittest.TestCase):
 
         np.testing.assert_allclose(goal, np.array([0.07, -0.03, 0.17], dtype=np.float32), atol=1e-7)
 
+    def test_move_to_object_instruction_uses_live_target_object_position(self):
+        env = self._env()
+        env._target_body_name = "mug_body"
+        env._get_body_position = lambda body_name: np.array([-0.05, 0.06, 0.19], dtype=np.float32)
+        spec = InstructionSpec(
+            instruction_type="move_to_object",
+            text="move to mug",
+            target_object="ycb_mug",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+
+        goal = env._compute_instruction_goal(
+            spec=spec,
+            initial_ee_pos=np.array([0.12, -0.08, 0.40], dtype=np.float32),
+        )
+
+        np.testing.assert_allclose(goal, np.array([-0.05, 0.06, 0.19], dtype=np.float32), atol=1e-7)
+
 
 if __name__ == "__main__":
     unittest.main()

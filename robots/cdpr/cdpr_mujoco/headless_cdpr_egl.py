@@ -117,9 +117,10 @@ class HeadlessCDPRController:
 
 
 class HeadlessCDPRSimulation:
-    def __init__(self, xml_path, output_dir="trajectory_videos"):
+    def __init__(self, xml_path, output_dir="trajectory_videos", record_trajectory=True):
         self.xml_path = xml_path
         self.output_dir = output_dir
+        self.record_trajectory = bool(record_trajectory)
         self.model = None
         self.data = None
         self.gl_context = None
@@ -641,7 +642,8 @@ class HeadlessCDPRSimulation:
             self.ee_camera_frames.append(self.capture_frame(self.ee_cam, "ee_camera"))
             self.frame_capture_timestamps.append(float(self.data.time))
 
-        self.record_trajectory_step()
+        if self.record_trajectory:
+            self.record_trajectory_step()
 
     def run_trajectory(self, target_positions, trajectory_name="trajectory",
                        max_steps_per_target=600, capture_every_n=3):
