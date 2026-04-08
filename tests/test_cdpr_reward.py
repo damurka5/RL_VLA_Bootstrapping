@@ -19,6 +19,7 @@ class RewardDistanceTests(unittest.TestCase):
             "move_right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
             "move_up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
             "move_center": np.array([0.0, 0.0, 0.0], dtype=np.float32),
+            "pick_up": np.array([0.0, 0.0, 0.0], dtype=np.float32),
         }[instruction_type]
         text = instruction_type.replace("_", " ")
         return InstructionSpec(
@@ -186,6 +187,99 @@ class RewardDistanceTests(unittest.TestCase):
 
         self.assertTrue(success)
         self.assertEqual(info["validation_success_mode"], 0.0)
+
+    def test_pick_up_reward_prefers_open_centered_pregrasp(self):
+        spec = self._spec("pick_up")
+        initial_obj = np.array([0.0, 0.0, 0.18], dtype=np.float32)
+
+        reward_far, success_far, info_far = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.18, 0.18, 0.40], dtype=np.float32),
+            obj_pos=initial_obj,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.18, 0.18, 0.40], dtype=np.float32),
+                initial_obj_pos=initial_obj,
+            ),
+            gripper_opening=0.03,
+            support_surface_z=0.15,
+        )
+        reward_ready, success_ready, info_ready = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.01, 0.00, 0.26], dtype=np.float32),
+            obj_pos=initial_obj,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.01, 0.00, 0.26], dtype=np.float32),
+                initial_obj_pos=initial_obj,
+            ),
+            gripper_opening=0.03,
+            support_surface_z=0.15,
+        )
+
+        self.assertFalse(success_far)
+        self.assertFalse(success_ready)
+        self.assertGreater(reward_ready, reward_far)
+        self.assertGreater(info_ready["pick_open_reward"], 0.0)
+
+    def test_pick_up_reward_succeeds_when_target_is_caught_and_lifted(self):
+        spec = self._spec("pick_up")
+        initial_obj = np.array([0.0, 0.0, 0.16], dtype=np.float32)
+        state = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.28], dtype=np.float32),
+            initial_obj_pos=initial_obj,
+        )
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.30], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.27], dtype=np.float32),
+            reward_state=state,
+            gripper_opening=0.0,
+            support_surface_z=0.15,
+            caught_object_is_target=True,
+            caught_object_score=0.95,
+        )
+
+        self.assertTrue(success)
+        self.assertGreater(reward, 2.0)
+        self.assertEqual(info["grasped"], 1.0)
+        self.assertGreaterEqual(info["pick_target_lift"], 0.10)
+
+    def test_pick_up_reward_penalizes_wrong_object_grasp(self):
+        spec = self._spec("pick_up")
+        initial_obj = np.array([0.0, 0.0, 0.16], dtype=np.float32)
+        target_state = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.25], dtype=np.float32),
+            initial_obj_pos=initial_obj,
+        )
+        wrong_state = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.25], dtype=np.float32),
+            initial_obj_pos=initial_obj,
+        )
+
+        reward_target, _, info_target = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.27], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.24], dtype=np.float32),
+            reward_state=target_state,
+            gripper_opening=0.0,
+            support_surface_z=0.15,
+            caught_object_is_target=True,
+            caught_object_score=0.9,
+        )
+        reward_wrong, _, info_wrong = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.27], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.24], dtype=np.float32),
+            reward_state=wrong_state,
+            gripper_opening=0.0,
+            support_surface_z=0.15,
+            caught_object_is_target=False,
+            caught_object_score=0.9,
+            caught_object_catalog="ycb_pear",
+        )
+
+        self.assertGreater(info_wrong["pick_wrong_object_penalty"], 0.0)
+        self.assertGreater(reward_target, reward_wrong)
 
 
 if __name__ == "__main__":

@@ -39,6 +39,7 @@ from .rl_instruction_tasks import (
     INSTRUCTION_TYPES,
     compute_instruction_reward,
     init_reward_state,
+    instruction_uses_target_object,
     instruction_to_onehot,
     sample_instruction,
 )
@@ -279,7 +280,7 @@ def _build_scene_variants(
 
     scene_names = _unique_scene_names([SceneSpec(name=name, objects=()) for name in scene_names])
     targets = _dedupe_names(target_object_pool)
-    distractors = _dedupe_names([name for name in distractor_object_pool if name not in targets])
+    distractors = _dedupe_names(distractor_object_pool) if distractor_object_pool else targets
     total_pool = _dedupe_names([*targets, *distractors])
     rng = np.random.default_rng(0 if seed is None else int(seed))
 
@@ -372,7 +373,7 @@ def _configure_scene_sampling(
     if not target_pool:
         raise ValueError("Task metadata target_object_pool is empty and no allowed_objects were provided.")
 
-    distractor_pool = _dedupe_names([name for name in distractor_pool if name not in target_pool])
+    distractor_pool = _dedupe_names(distractor_pool) if distractor_pool else tuple(target_pool)
     allowed = _dedupe_names([*target_pool, *distractor_pool])
 
     min_scene_objects = int(task_metadata.get("min_scene_objects", 1))
@@ -523,6 +524,16 @@ def _wrapper_cache_prefix(scene_name: str, object_names: Sequence[str]) -> str:
     return f"{scene_name}__{obj_part}"
 
 
+def _wrapper_bundle_dir(
+    wrapper_dir: Path | str,
+    *,
+    scene_name: str,
+    object_names: Sequence[str],
+) -> Path:
+    wrapper_root = Path(wrapper_dir).expanduser().resolve()
+    return wrapper_root / _wrapper_cache_prefix(scene_name, object_names)
+
+
 def _candidate_existing_wrapper_paths(
     wrapper_dir: Path,
     *,
@@ -543,16 +554,43 @@ def _candidate_existing_wrapper_paths(
 
     candidates: list[Path] = []
     seen: set[Path] = set()
-    for pattern in patterns:
-        for path in sorted(wrapper_root.glob(pattern)):
-            resolved = path.resolve()
-            if resolved in seen:
-                continue
-            if not _wrapper_bundle_exists(resolved):
-                continue
-            seen.add(resolved)
-            candidates.append(resolved)
+    search_roots = [wrapper_root, _wrapper_bundle_dir(wrapper_root, scene_name=scene_name, object_names=object_names)]
+    for search_root in search_roots:
+        if not search_root.exists():
+            continue
+        for pattern in patterns:
+            for path in sorted(search_root.glob(pattern)):
+                resolved = path.resolve()
+                if resolved in seen:
+                    continue
+                if not _wrapper_bundle_exists(resolved):
+                    continue
+                seen.add(resolved)
+                candidates.append(resolved)
     return candidates
+
+
+def _stable_file_signature(path: Path) -> str:
+    resolved = Path(path).expanduser().resolve()
+    stat = resolved.stat()
+    mtime_ns = int(getattr(stat, "st_mtime_ns", int(stat.st_mtime * 1_000_000_000)))
+    payload = f"{resolved.as_posix()}::{int(stat.st_size)}::{mtime_ns}"
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:16]
+
+
+def _shared_desk_texture_cache_path(texture_path: Path) -> Path:
+    resolved = Path(texture_path).expanduser().resolve()
+    tex_dir = WRAP_DIR / "_desk_textures"
+    tex_dir.mkdir(parents=True, exist_ok=True)
+    return tex_dir / f"{_stable_file_signature(resolved)}__{resolved.name}"
+
+
+def _desk_texture_variant_tag(base_wrapper_xml: Path, chosen_texture: Path) -> str:
+    payload = (
+        f"{Path(base_wrapper_xml).expanduser().resolve().as_posix()}::"
+        f"{_stable_file_signature(chosen_texture)}"
+    )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
 
 def _ensure_asset_first(root: ET.Element) -> ET.Element:
@@ -591,6 +629,7 @@ def _patch_xml_tree_for_desk_material(
     variant_tag: str,
     desk_mat_name: str,
     table_regex: re.Pattern[str],
+    output_dir: Path,
     mapping: dict[Path, Path],
     generated_xmls: list[Path],
 ) -> int:
@@ -599,7 +638,9 @@ def _patch_xml_tree_for_desk_material(
         return 0
 
     path_hash = hashlib.sha1(source_xml.as_posix().encode("utf-8")).hexdigest()[:10]
-    patched_xml = WRAP_DIR / f"{source_xml.stem}__{path_hash}__desktex_{variant_tag}{source_xml.suffix}"
+    output_dir = Path(output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    patched_xml = output_dir / f"{source_xml.stem}__{path_hash}__desktex_{variant_tag}{source_xml.suffix}"
     mapping[source_xml] = patched_xml
 
     tree = ET.parse(source_xml)
@@ -615,6 +656,7 @@ def _patch_xml_tree_for_desk_material(
             variant_tag=variant_tag,
             desk_mat_name=desk_mat_name,
             table_regex=table_regex,
+            output_dir=output_dir,
             mapping=mapping,
             generated_xmls=generated_xmls,
         )
@@ -643,12 +685,11 @@ def _build_textured_wrapper_variant(
 ) -> DeskTexturePatchResult:
     base_wrapper_xml = base_wrapper_xml.resolve()
     chosen_texture = chosen_texture.resolve()
+    output_dir = base_wrapper_xml.parent.resolve()
 
-    tex_dir = WRAP_DIR / "_desk_textures"
-    tex_dir.mkdir(parents=True, exist_ok=True)
-
-    copied_texture = tex_dir / f"{variant_tag}__{chosen_texture.name}"
-    shutil.copy2(chosen_texture, copied_texture)
+    copied_texture = _shared_desk_texture_cache_path(chosen_texture)
+    if not copied_texture.exists():
+        shutil.copy2(chosen_texture, copied_texture)
 
     desk_tex_name = f"desktex_{variant_tag}"
     desk_mat_name = f"deskmat_{variant_tag}"
@@ -661,6 +702,7 @@ def _build_textured_wrapper_variant(
         variant_tag=variant_tag,
         desk_mat_name=desk_mat_name,
         table_regex=table_regex,
+        output_dir=output_dir,
         mapping=mapping,
         generated_xmls=generated_xmls,
     )
@@ -697,7 +739,7 @@ def _build_textured_wrapper_variant(
     return DeskTexturePatchResult(
         wrapper_xml=wrapper_copy,
         generated_xmls=generated_xmls,
-        generated_files=[copied_texture],
+        generated_files=[],
         chosen_texture=chosen_texture,
         matched_geoms=matched_geoms,
     )
@@ -904,7 +946,7 @@ class CDPRLanguageRLEnv(_EnvBase):
       - target_object_position: (3,) waypoint goal position
       - all_object_positions: (max_objects, 3)
       - object_position_mask: (max_objects,)
-      - instruction_onehot: (7,)
+      - instruction_onehot: (len(INSTRUCTION_TYPES),)
       - goal_direction: (3,) motion direction for the current waypoint goal.
     """
 
@@ -1027,6 +1069,13 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._dense_reward_terms = _load_json_env("RLVLA_TASK_DENSE_REWARD_TERMS_JSON")
         self._task_metadata = _load_json_env("RLVLA_TASK_METADATA_JSON")
         self._goal_relation = os.environ.get("RLVLA_TASK_GOAL_RELATION")
+        instruction_sampling_mode = str(self._task_metadata.get("instruction_sampling", "uniform_cycle")).strip().lower()
+        if instruction_sampling_mode not in {"uniform_cycle", "random"}:
+            raise ValueError(
+                "Task metadata `instruction_sampling` must be either `uniform_cycle` or `random`, "
+                f"got {instruction_sampling_mode!r}."
+            )
+        self.instruction_sampling = instruction_sampling_mode
         self._reward_fn = _load_callable_from_env(TASK_REWARD_PREFIX) or compute_instruction_reward
         self._success_fn = _load_callable_from_env(TASK_SUCCESS_PREFIX)
         (
@@ -1098,6 +1147,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._reset_counter = 0
         self._invalid_wrapper_paths: set[Path] = set()
         self._last_wrapper_reused_from_cache = False
+        self._instruction_cycle: list[str] = []
 
     def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
         self._prepare_episode_rng(seed)
@@ -1160,12 +1210,16 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._target_catalog_name = ""
         self._target_body_name = ""
 
+        self._target_catalog_name, self._target_body_name = self._select_target_object(scene)
+        instruction_type = self._sample_instruction_type(options=options)
+
         self._instruction_spec = sample_instruction(
-            target_object=None,
+            target_object=self._target_catalog_name or None,
             rng=self.np_random,
             allowed_instruction_types=self.instruction_types,
             move_distance=self.move_distance,
             lift_distance=self.lift_distance,
+            instruction_type=instruction_type,
         )
         setattr(self.sim, "language_instruction", self._instruction_spec.text)
 
@@ -1214,12 +1268,15 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._apply_action(action)
 
         ee = self._get_ee_position()
-        goal_pos = self._goal_position.astype(np.float32)
-        camera_alignment = self._get_ee_camera_alignment(direction=self._goal_motion_direction)
-        caught_body = ""
-        caught_catalog = ""
-        caught_score = 0.0
-        caught_is_target = False
+        goal_pos = self._current_target_reference_position()
+        gripper_opening = self._get_gripper_opening()
+        gripper_closed = self._is_gripper_closed(gripper_opening)
+        self._reward_state.gripper_closed = gripper_closed
+        if not gripper_closed:
+            self._reward_state.grasped = False
+        current_goal_direction = self._current_goal_motion_direction(ee_pos=ee, goal_pos=goal_pos)
+        camera_alignment = self._get_ee_camera_alignment(target_pos=goal_pos, direction=current_goal_direction)
+        caught_body, caught_catalog, caught_score, caught_is_target = self._detect_caught_object(ee)
         reward_kwargs = {
             "spec": self._instruction_spec,
             "ee_pos": ee,
@@ -1228,7 +1285,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             "reward_state": self._reward_state,
             "action": action,
             "camera_alignment": camera_alignment,
-            "goal_direction": self._goal_motion_direction,
+            "goal_direction": current_goal_direction,
             "goal_region": self._goal_region,
             "goal_relation": self._goal_relation,
             "dense_reward_terms": self._dense_reward_terms,
@@ -1238,6 +1295,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             "scene_name": self._scene_name,
             "target_catalog_name": self._target_catalog_name,
             "target_body_name": self._target_body_name,
+            "gripper_opening": gripper_opening,
+            "support_surface_z": self._support_surface_z,
             "caught_object_body": caught_body,
             "caught_object_catalog": caught_catalog,
             "caught_object_score": float(caught_score),
@@ -1261,6 +1320,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         if caught_body:
             self._last_caught_body = caught_body
             self._last_caught_catalog = caught_catalog
+        self._goal_position = goal_pos.astype(np.float32)
+        self._goal_motion_direction = self._current_goal_motion_direction(ee_pos=ee, goal_pos=goal_pos)
 
         self._step_count += 1
         terminated = bool(success)
@@ -1334,6 +1395,62 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_start[1] = float(self.np_random.uniform(*self.ee_start_y_bounds))
         return ee_start
 
+    def _allowed_instruction_candidates(self) -> tuple[str, ...]:
+        if self.instruction_types:
+            return tuple(str(item) for item in self.instruction_types)
+        return tuple(INSTRUCTION_TYPES)
+
+    def _sample_instruction_type(self, options: Optional[dict[str, Any]] = None) -> str:
+        candidates = self._allowed_instruction_candidates()
+        requested = (options or {}).get("instruction_type")
+        if requested is not None:
+            requested_type = str(requested).strip()
+            if requested_type not in candidates:
+                raise ValueError(
+                    f"Requested instruction_type {requested_type!r} is not in the allowed set {list(candidates)}."
+                )
+            return requested_type
+
+        if len(candidates) <= 1 or self.instruction_sampling != "uniform_cycle":
+            return str(candidates[int(self.np_random.integers(0, len(candidates)))])
+
+        cycle = [item for item in self._instruction_cycle if item in candidates]
+        if not cycle:
+            order = np.asarray(candidates, dtype=object)
+            perm = self.np_random.permutation(len(order))
+            cycle = [str(order[idx]) for idx in perm.tolist()]
+        selected = str(cycle.pop(0))
+        self._instruction_cycle = cycle
+        return selected
+
+    def _select_target_object(self, scene: SceneSpec) -> tuple[str, str]:
+        preferred_catalogs: list[str] = []
+        if scene.target_object:
+            preferred_catalogs.append(str(scene.target_object))
+        preferred_catalogs.extend(str(name) for name in scene.objects)
+
+        resolved_catalogs = [name for name in preferred_catalogs if name in self._catalog_to_body]
+        if resolved_catalogs:
+            chosen_catalog = (
+                str(scene.target_object)
+                if scene.target_object in self._catalog_to_body
+                else str(resolved_catalogs[int(self.np_random.integers(0, len(resolved_catalogs)))])
+            )
+            return chosen_catalog, str(self._catalog_to_body[chosen_catalog])
+
+        if self._object_body_names:
+            chosen_body = str(self._object_body_names[int(self.np_random.integers(0, len(self._object_body_names)))])
+            chosen_catalog = next(
+                (catalog for catalog, body in self._catalog_to_body.items() if body == chosen_body),
+                chosen_body,
+            )
+            return chosen_catalog, chosen_body
+
+        if preferred_catalogs:
+            chosen_catalog = str(preferred_catalogs[0])
+            return chosen_catalog, str(self._catalog_to_body.get(chosen_catalog, ""))
+        return "", ""
+
     def _goal_center(self) -> np.ndarray:
         raw_xy = self._task_metadata.get("goal_center_xy", self.defaults.get("goal_center_xy", DEFAULT_GOAL_CENTER_XY))
         xy = np.asarray(raw_xy, dtype=np.float32).reshape(-1)
@@ -1363,6 +1480,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             requested_goal = (options or {}).get("target_position")
         if requested_goal is not None:
             goal = np.asarray(clamp_xyz(requested_goal), dtype=np.float32)
+        elif instruction_uses_target_object(spec.instruction_type) and self._target_body_name:
+            goal = self._get_body_position(self._target_body_name).astype(np.float32)
         else:
             center = self._goal_center()
             lateral_offset = float(self._task_metadata.get("lateral_goal_offset", spec.target_displacement))
@@ -1382,6 +1501,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                 raise RuntimeError(f"Unsupported instruction type for goal generation: {spec.instruction_type}")
             goal = np.asarray(clamp_xyz(goal), dtype=np.float32)
 
+        if instruction_uses_target_object(spec.instruction_type) and requested_goal is None:
+            return goal.astype(np.float32)
         min_goal_height = float(self._task_metadata.get("min_goal_height_above_table", 0.02))
         goal[2] = max(float(goal[2]), float(self._support_surface_z + min_goal_height))
         if np.isfinite(self._ee_min_z):
@@ -1465,9 +1586,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         build_wrapper_if_needed, list_wrapper_bundle_paths = _import_wrapper_builder()
         default_ee_start = self._default_ee_start()
         episode_ee_start = default_ee_start if ee_start is None else _coerce_ee_start(ee_start)
-        unique_wrapper_bundle = bool(
-            self.randomize_ee_start or not np.allclose(episode_ee_start, default_ee_start, atol=1e-9)
-        )
+        reuse_cached_wrapper_across_ee_starts = bool(self.use_wrapper_cache and self.randomize_ee_start)
+        wrapper_ee_start = default_ee_start if reuse_cached_wrapper_across_ee_starts else episode_ee_start
+        unique_wrapper_bundle = bool(not np.allclose(wrapper_ee_start, default_ee_start, atol=1e-9))
         wrapper_out = None
         use_cache = bool(self.use_wrapper_cache and not unique_wrapper_bundle)
         if (not use_cache) or self.wrapper_cleanup:
@@ -1478,7 +1599,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             scene_name=scene.name,
             object_names=list(scene.objects),
             scene_z=self.defaults.get("scene_z", -0.85),
-            ee_start=tuple(float(x) for x in episode_ee_start),
+            ee_start=tuple(float(x) for x in wrapper_ee_start),
             table_z=self.defaults.get("table_z", 0.15),
             settle_time=self.defaults.get("settle_time", 0.0),
             wrapper_out=wrapper_out,
@@ -1492,7 +1613,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         if self.desk_texture_files:
             tex_idx = int(self.np_random.integers(0, len(self.desk_texture_files)))
             chosen_texture = self.desk_texture_files[tex_idx]
-            variant_tag = f"rl_{int(time.time_ns())}"
+            variant_tag = _desk_texture_variant_tag(wrapper_xml, chosen_texture)
             patched = _build_textured_wrapper_variant(
                 base_wrapper_xml=wrapper_xml,
                 chosen_texture=chosen_texture,
@@ -1560,9 +1681,11 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._locked_target_xyz = target.astype(np.float32)
 
     def _temporary_wrapper_path(self, scene: SceneSpec) -> Path:
-        obj_part = "-".join(sorted(scene.objects))
         stamp = int(time.time_ns())
-        return self.wrapper_dir / f"{scene.name}__{obj_part}__rltmp_{stamp}.xml"
+        bundle_dir = _wrapper_bundle_dir(self.wrapper_dir, scene_name=scene.name, object_names=scene.objects)
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        prefix = _wrapper_cache_prefix(scene.name, scene.objects)
+        return bundle_dir / f"{prefix}__rltmp_{stamp}.xml"
 
     def _clear_sim_recording_buffers(self):
         if self.sim is None:
@@ -1708,6 +1831,35 @@ class CDPRLanguageRLEnv(_EnvBase):
             raise RuntimeError(f"Body '{body_name}' not found in MuJoCo model.")
         return np.asarray(self.sim.data.body_xpos[bid], dtype=np.float32).copy()
 
+    def _current_target_reference_position(self) -> np.ndarray:
+        if (
+            self._instruction_spec is not None
+            and instruction_uses_target_object(self._instruction_spec.instruction_type)
+            and self._target_body_name
+        ):
+            try:
+                return self._get_body_position(self._target_body_name).astype(np.float32)
+            except Exception:
+                pass
+        return self._goal_position.astype(np.float32)
+
+    def _get_gripper_opening(self) -> float | None:
+        if hasattr(self.sim, "get_gripper_opening"):
+            try:
+                opening = float(self.sim.get_gripper_opening())
+            except Exception:
+                return None
+            return opening if np.isfinite(opening) else None
+        return None
+
+    def _is_gripper_closed(self, opening: float | None) -> bool:
+        if opening is None or not np.isfinite(opening):
+            return bool(self._reward_state.gripper_closed) if self._reward_state is not None else False
+        grip_min = float(getattr(self.sim, "gripper_min", 0.0))
+        grip_max = float(getattr(self.sim, "gripper_max", 0.03))
+        threshold = grip_min + 0.35 * max(grip_max - grip_min, 1e-6)
+        return bool(float(opening) <= threshold)
+
     def _get_geom_position(self, geom_name: str) -> Optional[np.ndarray]:
         gid = mj.mj_name2id(self.sim.model, mj.mjtObj.mjOBJ_GEOM, geom_name)
         if gid == -1:
@@ -1784,6 +1936,28 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         return float(np.clip(np.dot(cam_forward, desired), 0.0, 1.0))
 
+    def _current_goal_motion_direction(
+        self,
+        *,
+        ee_pos: Optional[np.ndarray] = None,
+        goal_pos: Optional[np.ndarray] = None,
+    ) -> np.ndarray:
+        if self._instruction_spec is None:
+            return self._goal_motion_direction.astype(np.float32)
+        if not instruction_uses_target_object(self._instruction_spec.instruction_type):
+            return self._goal_motion_direction.astype(np.float32)
+
+        if self._reward_state is not None and self._reward_state.grasped:
+            return np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+        live_ee = self._get_ee_position() if ee_pos is None else np.asarray(ee_pos, dtype=np.float32)
+        live_goal = self._current_target_reference_position() if goal_pos is None else np.asarray(goal_pos, dtype=np.float32)
+        return self._compute_goal_motion_direction(
+            initial_ee_pos=live_ee,
+            goal_pos=live_goal,
+            instruction_direction=self._instruction_spec.direction,
+        )
+
     def _apply_action(self, action: np.ndarray):
         ee = self._get_ee_position()
         action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
@@ -1826,7 +2000,7 @@ class CDPRLanguageRLEnv(_EnvBase):
 
     def _get_obs(self) -> dict[str, np.ndarray]:
         ee_pos = self._get_ee_position()
-        target_pos = self._goal_position.astype(np.float32)
+        target_pos = self._current_target_reference_position()
 
         obj_pos = np.zeros((self.max_objects, 3), dtype=np.float32)
         obj_mask = np.zeros((self.max_objects,), dtype=np.float32)
@@ -1838,7 +2012,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                 continue
 
         onehot = instruction_to_onehot(self._instruction_spec)
-        goal_direction = self._goal_motion_direction.astype(np.float32)
+        goal_direction = self._current_goal_motion_direction(ee_pos=ee_pos, goal_pos=target_pos)
 
         obs = {
             "ee_position": ee_pos.astype(np.float32),
@@ -1851,6 +2025,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         return obs
 
     def _base_info(self) -> dict[str, Any]:
+        live_goal_position = self._current_target_reference_position()
+        live_goal_direction = self._current_goal_motion_direction(goal_pos=live_goal_position)
         return {
             "scene": self._scene_name,
             "episode_index": int(self._episode_index),
@@ -1863,12 +2039,13 @@ class CDPRLanguageRLEnv(_EnvBase):
             "target_object_body": self._target_body_name,
             "language_instruction": self._instruction_spec.text,
             "instruction_type": self._instruction_spec.instruction_type,
-            "goal_position": [float(x) for x in self._goal_position.tolist()],
-            "goal_motion_direction": [float(x) for x in self._goal_motion_direction.tolist()],
+            "goal_position": [float(x) for x in live_goal_position.tolist()],
+            "goal_motion_direction": [float(x) for x in live_goal_direction.tolist()],
             "goal_region": dict(self._goal_region),
             "goal_relation": self._goal_relation or "",
             "dense_reward_terms": dict(self._dense_reward_terms),
             "gripper_command": float(self._last_gripper_cmd),
+            "gripper_opening": float(self._get_gripper_opening() or 0.0),
             "desk_texture": self._desk_texture_name,
             "wrapper_xml": str(self._current_wrapper_xml) if self._current_wrapper_xml else "",
             "ee_start": [float(x) for x in self._episode_ee_start.tolist()],

@@ -21,6 +21,7 @@ from rl_vla_bootstrapping.cli.run_cdpr_policy import (
     _control_spec_from_config,
     _load_openvla_modules,
     _make_observation,
+    _normalize_policy_chunk,
     _predict_normalized_action_chunk,
     _resolve_llm_dim,
     _set_num_images_in_input,
@@ -164,6 +165,12 @@ def _build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="Open-loop chunk length. Defaults to the config action codec chunk size.",
+    )
+    parser.add_argument(
+        "--replan-every",
+        type=int,
+        default=None,
+        help="Consume only the first N actions from each predicted chunk before replanning. Defaults to full chunk length.",
     )
     parser.add_argument("--hold-steps", type=int, default=None, help="Override extra simulator substeps per action.")
     parser.add_argument(
@@ -474,7 +481,7 @@ def _predict_policy_chunk(
     instruction: str,
     config: Any,
 ) -> np.ndarray:
-    chunk = np.asarray(
+    return _normalize_policy_chunk(
         _predict_normalized_action_chunk(
             vla=runtime["vla"],
             processor=runtime["processor"],
@@ -486,13 +493,8 @@ def _predict_policy_chunk(
             device=runtime["device"],
             pixel_dtype=runtime["pixel_dtype"],
         ),
-        dtype=np.float32,
+        replan_every=runtime.get("replan_every"),
     )
-    if chunk.ndim == 1:
-        chunk = chunk.reshape(1, -1)
-    if chunk.shape[1] < 5:
-        raise RuntimeError(f"Expected at least 5 action dimensions, got chunk shape {chunk.shape}.")
-    return chunk[:, :5]
 
 
 def _load_policy_runtime(
@@ -523,6 +525,7 @@ def _load_policy_runtime(
         print(f"[info] {generate_config_note}")
 
     chunk_length = int(args.chunk_length or config.policy.action_codec.chunk_size)
+    replan_every = None if args.replan_every is None else max(1, min(int(args.replan_every), chunk_length))
     cfg = GenerateConfig(
         pretrained_checkpoint=args.base_ckpt or config.policy.base_checkpoint,
         use_l1_regression=True,
@@ -572,6 +575,7 @@ def _load_policy_runtime(
         "device": param.device,
         "pixel_dtype": param.dtype,
         "chunk_length": chunk_length,
+        "replan_every": replan_every,
         "num_images_in_input": int(cfg.num_images_in_input),
     }
 
@@ -865,6 +869,7 @@ def main() -> int:
         "episodes_per_instruction": int(args.episodes_per_instruction),
         "max_steps": int(max_steps),
         "chunk_length": int(runtime["chunk_length"]),
+        "replan_every": int(runtime["replan_every"] or runtime["chunk_length"]),
         "num_images_in_input": int(runtime["num_images_in_input"]),
         "center_crop": bool(args.center_crop),
         "hold_steps": int(_control_spec_from_config(config, args.hold_steps).hold_steps),

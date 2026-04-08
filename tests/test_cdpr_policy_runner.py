@@ -11,6 +11,7 @@ from rl_vla_bootstrapping.cli.run_cdpr_policy import (
     _control_spec_from_config,
     _load_generate_config,
     _motion_diagnostics_for_log,
+    _normalize_policy_chunk,
     _predict_normalized_action_chunk,
     _resolve_llm_dim,
     _set_num_images_in_input,
@@ -189,6 +190,16 @@ class PolicyRunnerConfigTests(unittest.TestCase):
         )
         self.assertAlmostEqual(float(diag["realized_vs_command_gain"]), 0.5, delta=1e-6)
         self.assertAlmostEqual(float(diag["realized_vs_command_cosine"]), 1.0, delta=1e-6)
+
+    def test_normalize_policy_chunk_truncates_to_replan_interval(self):
+        chunk = _normalize_policy_chunk(
+            np.arange(24, dtype=np.float32).reshape(4, 6),
+            replan_every=2,
+        )
+
+        self.assertEqual(chunk.shape, (2, 5))
+        np.testing.assert_allclose(chunk[0], np.array([0, 1, 2, 3, 4], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(chunk[1], np.array([6, 7, 8, 9, 10], dtype=np.float32), atol=1e-7)
 
 
 if __name__ == "__main__":

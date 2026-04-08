@@ -230,7 +230,7 @@ class WrapperBundleTests(unittest.TestCase):
         self.assertIs(build_wrapper_if_needed, self.mod.build_wrapper_if_needed)
         self.assertIs(list_wrapper_bundle_paths, self.mod.list_wrapper_bundle_paths)
 
-    def test_rl_env_build_wrapper_uses_unique_temp_bundle_for_randomized_ee_start(self):
+    def test_rl_env_build_wrapper_reuses_cached_bundle_for_randomized_ee_start(self):
         scene = self.rl_env_mod.SceneSpec(name="desk", objects=("ycb_apple",))
 
         with TemporaryDirectory() as tmp:
@@ -243,8 +243,9 @@ class WrapperBundleTests(unittest.TestCase):
                 wrapper_path = (
                     Path(wrapper_out).resolve()
                     if wrapper_out is not None
-                    else (root / "desk__plate-ycb_apple_wrapper_rebuilt.xml").resolve()
+                    else (root / "desk__ycb_apple" / "desk__ycb_apple_wrapper.xml").resolve()
                 )
+                wrapper_path.parent.mkdir(parents=True, exist_ok=True)
                 wrapper_path.write_text("<mujoco/>", encoding="utf-8")
                 return wrapper_path
 
@@ -280,14 +281,11 @@ class WrapperBundleTests(unittest.TestCase):
                 wrapper_xml = env._build_wrapper(scene=scene, ee_start=ee_start)
 
             self.assertTrue(wrapper_xml.exists())
-            self.assertFalse(bool(issued["use_cache"]))
-            self.assertEqual(Path(issued["wrapper_out"]).parent, root)
-            self.assertIn(wrapper_xml.resolve(), env._cleanup_paths)
+            self.assertTrue(bool(issued["use_cache"]))
+            self.assertIsNone(issued["wrapper_out"])
+            self.assertEqual(env._cleanup_paths, [])
             sampled = np.asarray(issued["ee_start"], dtype=np.float32)
-            self.assertGreaterEqual(float(sampled[0]), -0.10)
-            self.assertLessEqual(float(sampled[0]), 0.10)
-            self.assertGreaterEqual(float(sampled[1]), -0.08)
-            self.assertLessEqual(float(sampled[1]), 0.05)
+            np.testing.assert_allclose(sampled[:2], np.array([0.0, 0.0], dtype=np.float32), atol=1e-7)
             self.assertAlmostEqual(float(sampled[2]), 0.40, places=6)
 
     def test_candidate_existing_wrapper_paths_discovers_cached_variants(self):
@@ -309,6 +307,28 @@ class WrapperBundleTests(unittest.TestCase):
             self.assertEqual(
                 candidates,
                 [cached.resolve(), textured.resolve(), temp_variant.resolve()],
+            )
+
+    def test_candidate_existing_wrapper_paths_discovers_nested_bundle_variants(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            bundle = root / "desk__plate-ycb_apple"
+            bundle.mkdir(parents=True, exist_ok=True)
+            cached = bundle / "desk__plate-ycb_apple_wrapper.xml"
+            textured = bundle / "desk__plate-ycb_apple_wrapper__abc123__desktex_rl_1.xml"
+
+            for path in (cached, textured):
+                path.write_text("<mujoco/>", encoding="utf-8")
+
+            candidates = self.rl_env_mod._candidate_existing_wrapper_paths(
+                root,
+                scene_name="desk",
+                object_names=("ycb_apple", "plate"),
+            )
+
+            self.assertEqual(
+                candidates,
+                [cached.resolve(), textured.resolve()],
             )
 
     def test_rl_env_build_wrapper_reuses_existing_cached_variants(self):

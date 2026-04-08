@@ -69,6 +69,11 @@ def _wrapper_name(scene: str, object_names: list[str]) -> str:
     return f"{scene}__{objs}_wrapper.xml"
 
 
+def _wrapper_bundle_dir(scene: str, object_names: list[str]) -> Path:
+    wrapper_name = _wrapper_name(scene, object_names)
+    return WRAP_DIR / wrapper_name.removesuffix(".xml")
+
+
 def _scene_switcher_command(*, scene_name: str, scene_z: float, ee_start: np.ndarray, table_z: float, settle_time: float, wrapper_path: Path) -> list[str]:
     if not SCENE_SWITCHER.exists():
         raise FileNotFoundError(f"Scene switcher script not found: {SCENE_SWITCHER}")
@@ -299,7 +304,9 @@ def build_wrapper_if_needed(scene_name: str,
     """
     WRAP_DIR.mkdir(parents=True, exist_ok=True)
     if wrapper_out is None:
-        wrapper_path = WRAP_DIR / _wrapper_name(scene_name, object_names)
+        bundle_dir = _wrapper_bundle_dir(scene_name, object_names)
+        bundle_dir.mkdir(parents=True, exist_ok=True)
+        wrapper_path = bundle_dir / _wrapper_name(scene_name, object_names)
     else:
         wrapper_path = Path(wrapper_out).expanduser().resolve()
         wrapper_path.parent.mkdir(parents=True, exist_ok=True)

@@ -68,6 +68,32 @@ class SceneSamplingTests(unittest.TestCase):
             self.assertLessEqual(len(scene.objects), 4)
             self.assertEqual(len(scene.objects), len(set(scene.objects)))
 
+    def test_configure_scene_sampling_uses_target_pool_as_distractors_when_not_provided(self):
+        base_scenes = [SceneSpec(name="desk", objects=("ycb_apple",))]
+        metadata = {
+            "target_object_pool": ["ycb_apple", "ycb_pear", "ycb_peach"],
+            "min_scene_objects": 1,
+            "max_scene_objects": 3,
+            "scene_variant_count": 12,
+        }
+
+        scenes, allowed, targets, distractors = _configure_scene_sampling(
+            base_scenes=base_scenes,
+            allowed_objects=("ycb_apple",),
+            task_metadata=metadata,
+            seed=13,
+        )
+
+        self.assertEqual(targets, ("ycb_apple", "ycb_pear", "ycb_peach"))
+        self.assertEqual(distractors, ("ycb_apple", "ycb_pear", "ycb_peach"))
+        self.assertEqual(allowed, ("ycb_apple", "ycb_pear", "ycb_peach"))
+        self.assertTrue(any(len(scene.objects) > 1 for scene in scenes))
+        for scene in scenes:
+            self.assertIn(scene.target_object, targets)
+            self.assertIn(scene.target_object, scene.objects)
+            self.assertGreaterEqual(len(scene.objects), 1)
+            self.assertLessEqual(len(scene.objects), 3)
+
     def test_configure_scene_sampling_falls_back_to_allowed_objects_without_metadata(self):
         base_scenes = [SceneSpec(name="desk", objects=("ycb_apple", "ycb_pear"))]
 

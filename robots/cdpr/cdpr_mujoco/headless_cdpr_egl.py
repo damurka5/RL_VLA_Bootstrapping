@@ -971,11 +971,22 @@ class HeadlessCDPRSimulation:
                 f.write(f"Final target position: {self.trajectory_data[-1]['target_position']}\n")
     
     def cleanup(self):
-        if hasattr(self, "context"):
+        context = getattr(self, "context", None)
+        if context is not None:
             try:
-                mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_WINDOW, self.context)
-            except:
+                if self.gl_context is not None:
+                    self.gl_context.make_current()
+            except Exception:
                 pass
+            try:
+                mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_WINDOW, context)
+            except Exception:
+                pass
+            try:
+                context.free()
+            except Exception:
+                pass
+        self.context = None
 
         if getattr(self, "_glfw_window", None) is not None:
             try:
@@ -990,6 +1001,9 @@ class HeadlessCDPRSimulation:
                 self.gl_context.free()
             except:
                 pass
+            self.gl_context = None
+        self.model = None
+        self.data = None
         print("Simulation cleanup completed")
 
 

@@ -66,6 +66,12 @@ def _build_parser() -> argparse.ArgumentParser:
         default=None,
         help="Open-loop chunk length. Defaults to config action codec chunk size.",
     )
+    parser.add_argument(
+        "--replan-every",
+        type=int,
+        default=None,
+        help="Consume only the first N actions from each predicted chunk before replanning. Defaults to full chunk length.",
+    )
     parser.add_argument("--hold-steps", type=int, default=None, help="Extra simulator substeps per policy action.")
     parser.add_argument(
         "--center-crop",
@@ -562,6 +568,19 @@ def _predict_normalized_action_chunk(
         return predicted_actions[0].detach().to(dtype=torch.float32).cpu().numpy()
 
 
+def _normalize_policy_chunk(chunk: np.ndarray, *, replan_every: int | None = None) -> np.ndarray:
+    current_chunk = np.asarray(chunk, dtype=np.float32)
+    if current_chunk.ndim == 1:
+        current_chunk = current_chunk.reshape(1, -1)
+    if current_chunk.shape[1] < 5:
+        raise RuntimeError(f"Expected at least 5 action dimensions, got chunk shape {current_chunk.shape}")
+    current_chunk = current_chunk[:, :5]
+    if replan_every is not None:
+        interval = max(1, int(replan_every))
+        current_chunk = current_chunk[:interval]
+    return current_chunk
+
+
 def main() -> int:
     parser = _build_parser()
     args = parser.parse_args()
@@ -603,6 +622,8 @@ def main() -> int:
     setattr(sim, "language_instruction", instruction)
 
     control_spec = _control_spec_from_config(config, args.hold_steps)
+    configured_chunk_length = int(args.chunk_length or config.policy.action_codec.chunk_size)
+    replan_every = None if args.replan_every is None else max(1, min(int(args.replan_every), configured_chunk_length))
     sim_dt = float(getattr(getattr(sim, "controller", None), "dt", 1.0 / 60.0))
     action_period = policy_action_period_s(sim_dt, control_spec.hold_steps)
     action_hz = policy_action_frequency_hz(sim_dt, control_spec.hold_steps)
@@ -627,12 +648,13 @@ def main() -> int:
         f"dt={sim_dt:.6f}s, hold_steps={control_spec.hold_steps}, "
         f"sim_steps_per_action={control_spec.sim_steps_per_policy_action}, "
         f"policy_period={action_period:.6f}s (~{action_hz:.2f} Hz), "
-        f"action_step_xyz={control_spec.action_step_xyz}, action_step_yaw={control_spec.action_step_yaw}"
+        f"action_step_xyz={control_spec.action_step_xyz}, action_step_yaw={control_spec.action_step_yaw}, "
+        f"chunk_length={configured_chunk_length}, replan_every={replan_every or configured_chunk_length}"
     )
 
     configure_openvla_dimension_env_from_config(
         config,
-        chunk_length=int(args.chunk_length or config.policy.action_codec.chunk_size),
+        chunk_length=configured_chunk_length,
     )
     (
         GenerateConfig,
@@ -656,7 +678,7 @@ def main() -> int:
         load_in_8bit=False,
         load_in_4bit=False,
         center_crop=bool(args.center_crop),
-        num_open_loop_steps=int(args.chunk_length or config.policy.action_codec.chunk_size),
+        num_open_loop_steps=configured_chunk_length,
         unnorm_key=None,
     )
     cfg.cdpr_action_head_path = str(Path(args.action_head_path).expanduser().resolve())
@@ -686,7 +708,7 @@ def main() -> int:
         proprio_projector = proprio_projector.to(device=param.device, dtype=param.dtype)
         proprio_projector.eval()
 
-    current_chunk = np.asarray(
+    current_chunk = _normalize_policy_chunk(
         _predict_normalized_action_chunk(
             vla=vla,
             processor=processor,
@@ -698,20 +720,15 @@ def main() -> int:
             device=param.device,
             pixel_dtype=param.dtype,
         ),
-        dtype=np.float32,
+        replan_every=replan_every,
     )
-    if current_chunk.ndim == 1:
-        current_chunk = current_chunk.reshape(1, -1)
-    if current_chunk.shape[1] < 5:
-        raise RuntimeError(f"Expected at least 5 action dimensions, got chunk shape {current_chunk.shape}")
-    current_chunk = current_chunk[:, :5]
     chunk_idx = 0
     log_every = max(1, int(args.log_every))
 
     for step in range(int(args.steps)):
         if chunk_idx >= len(current_chunk):
             obs, _ = _make_observation(sim, instruction, gripper_range)
-            current_chunk = np.asarray(
+            current_chunk = _normalize_policy_chunk(
                 _predict_normalized_action_chunk(
                     vla=vla,
                     processor=processor,
@@ -723,11 +740,8 @@ def main() -> int:
                     device=param.device,
                     pixel_dtype=param.dtype,
                 ),
-                dtype=np.float32,
+                replan_every=replan_every,
             )
-            if current_chunk.ndim == 1:
-                current_chunk = current_chunk.reshape(1, -1)
-            current_chunk = current_chunk[:, :5]
             chunk_idx = 0
 
         action = np.asarray(current_chunk[chunk_idx], dtype=np.float32).reshape(5)
