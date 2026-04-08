@@ -284,6 +284,21 @@ def _patch_scene_wrapper_cache(module) -> None:
     env_cls._activate_scene_wrapper_cache = _activate_scene_wrapper_cache_checked
 
 
+def _patch_desk_texture_prepare(module) -> None:
+    original_prepare = getattr(module, "_prepare_desk_textures_dir", None)
+    broadcast_object = getattr(module, "_broadcast_object", None)
+    if not callable(original_prepare) or not callable(broadcast_object):
+        return
+
+    def _prepare_desk_textures_dir_single_writer(src_dir, run_dir, is_main, rank, max_textures):
+        rank_int = int(rank)
+        if rank_int != 0:
+            return broadcast_object(None, rank_int)
+        return original_prepare(src_dir, run_dir, is_main, rank_int, max_textures)
+
+    module._prepare_desk_textures_dir = _prepare_desk_textures_dir_single_writer
+
+
 def _load_state_dict(module, checkpoint_path: Path) -> dict[str, torch.Tensor]:
     state_raw = torch.load(checkpoint_path, map_location="cpu")
     if hasattr(module, "_extract_state_dict"):
@@ -618,6 +633,7 @@ def main() -> None:
     _enable_fast_runtime_flags()
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
+    _patch_desk_texture_prepare(module)
     _patch_resume_artifacts(module, forwarded_argv, fast_args)
     _patch_rollout_tensorboard(
         module,

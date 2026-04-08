@@ -35,6 +35,7 @@ if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
 
 from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _infer_resume_artifacts,
+    _patch_desk_texture_prepare,
     _split_wrapper_argv,
 )
 
@@ -43,6 +44,28 @@ if _INSERTED_TORCH_STUB:
 
 
 class FastGRPOWrapperTests(unittest.TestCase):
+    def test_patch_desk_texture_prepare_uses_single_writer(self):
+        calls: list[tuple[str, int]] = []
+
+        def original_prepare(src_dir, run_dir, is_main, rank, max_textures):
+            calls.append(("prepare", int(rank)))
+            return f"prepared:{rank}"
+
+        def broadcast_object(obj, rank):
+            calls.append(("broadcast", int(rank)))
+            return "broadcasted"
+
+        module = types.SimpleNamespace(
+            _prepare_desk_textures_dir=original_prepare,
+            _broadcast_object=broadcast_object,
+        )
+
+        _patch_desk_texture_prepare(module)
+
+        self.assertEqual(module._prepare_desk_textures_dir("/tmp/src", Path("/tmp/run"), False, 1, 5), "broadcasted")
+        self.assertEqual(module._prepare_desk_textures_dir("/tmp/src", Path("/tmp/run"), True, 0, 5), "prepared:0")
+        self.assertEqual(calls, [("broadcast", 1), ("prepare", 0)])
+
     def test_split_wrapper_argv_strips_wrapper_only_options(self):
         external_script, forwarded, fast_args = _split_wrapper_argv(
             [
