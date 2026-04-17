@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import types
 import unittest
 
 import numpy as np
 
+import robots.cdpr.cdpr_dataset.rl_cdpr_env as rl_cdpr_env_mod
 from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv
 from robots.cdpr.cdpr_dataset.rl_instruction_tasks import InstructionSpec
 
@@ -89,6 +91,33 @@ class InstructionGoalTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(goal, np.array([-0.05, 0.06, 0.19], dtype=np.float32), atol=1e-7)
+
+    def test_get_body_position_falls_back_to_xpos_when_body_xpos_is_missing(self):
+        env = self._env()
+        env.sim = types.SimpleNamespace(
+            model=object(),
+            data=types.SimpleNamespace(
+                xpos=np.array(
+                    [
+                        [0.0, 0.0, 0.0],
+                        [0.11, -0.07, 0.23],
+                    ],
+                    dtype=np.float32,
+                )
+            ),
+        )
+
+        original_mj = rl_cdpr_env_mod.mj
+        rl_cdpr_env_mod.mj = types.SimpleNamespace(
+            mj_name2id=lambda model, obj_type, name: 1,
+            mjtObj=types.SimpleNamespace(mjOBJ_BODY=0),
+        )
+        try:
+            pos = env._get_body_position("apple_body")
+        finally:
+            rl_cdpr_env_mod.mj = original_mj
+
+        np.testing.assert_allclose(pos, np.array([0.11, -0.07, 0.23], dtype=np.float32), atol=1e-7)
 
 
 if __name__ == "__main__":

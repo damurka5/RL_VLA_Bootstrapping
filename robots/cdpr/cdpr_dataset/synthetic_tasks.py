@@ -25,6 +25,32 @@ SETTLE_STEPS = 20
 FALLBACK_MAX_STEPS = 120
 
 
+def _body_world_position(data, body_id, body_name=None):
+    for attr in ("body_xpos", "xpos"):
+        positions = getattr(data, attr, None)
+        if positions is None:
+            continue
+        try:
+            return np.asarray(positions[body_id], dtype=float).copy()
+        except Exception:
+            continue
+
+    body_accessor = getattr(data, "body", None)
+    if callable(body_accessor):
+        for key in (body_name, body_id):
+            if key is None:
+                continue
+            try:
+                return np.asarray(body_accessor(key).xpos, dtype=float).copy()
+            except Exception:
+                continue
+
+    raise AttributeError(
+        "MuJoCo data object does not expose a compatible body position accessor. "
+        "Tried `body_xpos`, `xpos`, and `body(...).xpos`."
+    )
+
+
 def _set_ee_target_if_available(sim, target_xyz):
     target = np.asarray(target_xyz, dtype=float).reshape(3)
     if hasattr(sim, "set_end_effector_target"):
@@ -213,8 +239,8 @@ def aabb_of_body(sim, body_name, include_subtree=True):
         geoms = [g for g in range(m.ngeom) if m.geom_bodyid[g] == bid]
 
     if not geoms:
-        # fallback to body_xpos
-        c = d.body_xpos[bid].copy()
+        # Fallback to the body origin when the subtree has no geoms.
+        c = _body_world_position(d, bid, body_name=body_name)
         return c - 1e-3, c + 1e-3
 
     xyz_min = np.array([ np.inf,  np.inf,  np.inf], dtype=float)

@@ -1931,11 +1931,35 @@ class CDPRLanguageRLEnv(_EnvBase):
             return np.asarray(self.sim.get_end_effector_position(), dtype=np.float32)
         raise RuntimeError("Simulator has no get_end_effector_position method.")
 
+    def _read_named_body_position(self, body_name: str, body_id: int) -> np.ndarray:
+        data = self.sim.data
+        for attr in ("body_xpos", "xpos"):
+            positions = getattr(data, attr, None)
+            if positions is None:
+                continue
+            try:
+                return np.asarray(positions[body_id], dtype=np.float32).copy()
+            except Exception:
+                continue
+
+        body_accessor = getattr(data, "body", None)
+        if callable(body_accessor):
+            for key in (body_name, body_id):
+                try:
+                    return np.asarray(body_accessor(key).xpos, dtype=np.float32).copy()
+                except Exception:
+                    continue
+
+        raise AttributeError(
+            "MuJoCo data object does not expose a compatible body position accessor. "
+            "Tried `body_xpos`, `xpos`, and `body(...).xpos`."
+        )
+
     def _get_body_position(self, body_name: str) -> np.ndarray:
         bid = mj.mj_name2id(self.sim.model, mj.mjtObj.mjOBJ_BODY, body_name)
         if bid == -1:
             raise RuntimeError(f"Body '{body_name}' not found in MuJoCo model.")
-        return np.asarray(self.sim.data.body_xpos[bid], dtype=np.float32).copy()
+        return self._read_named_body_position(body_name, bid)
 
     def _current_target_reference_position(self) -> np.ndarray:
         if (
