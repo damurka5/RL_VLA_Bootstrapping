@@ -68,6 +68,7 @@ class EpisodeResult:
     scene: str
     goal_position: list[float]
     ee_start: list[float]
+    target_object_catalog: str | None = None
 
 
 @dataclass(frozen=True)
@@ -80,6 +81,18 @@ class InstructionSummary:
     mean_reward: float
     mean_steps: float
     video_path: str | None
+
+
+@dataclass(frozen=True)
+class InstructionTextSummary:
+    instruction_text: str
+    instruction_types: tuple[str, ...]
+    target_object_catalogs: tuple[str, ...]
+    successes: int
+    episodes: int
+    success_rate: float
+    mean_reward: float
+    mean_steps: float
 
 
 def _rl_args(config: Any) -> dict[str, Any]:
@@ -182,6 +195,16 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--run-dir", default=None, help="Optional output directory.")
     parser.add_argument("--run-name", default="cdpr_policy_validation", help="Artifact name prefix.")
     parser.add_argument(
+        "--instruction-types",
+        nargs="+",
+        default=None,
+        help=(
+            "Optional instruction override. Accepts internal names such as `move_left`, "
+            "`move_top`, `move_to_object`, or human-friendly aliases like `left`, `right`, "
+            "`forward`, `backward`, `move forward`, `move backward`."
+        ),
+    )
+    parser.add_argument(
         "--action-guard",
         type=float,
         default=1.25,
@@ -230,6 +253,74 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Show only a tqdm progress bar and suppress the validator's other console output.",
     )
     return parser
+
+
+_INSTRUCTION_TYPE_ALIASES: dict[str, str] = {
+    "up": "move_up",
+    "move_up": "move_up",
+    "down": "move_down",
+    "move_down": "move_down",
+    "left": "move_left",
+    "move_left": "move_left",
+    "right": "move_right",
+    "move_right": "move_right",
+    "forward": "move_top",
+    "move_forward": "move_top",
+    "top": "move_top",
+    "move_top": "move_top",
+    "backward": "move_bottom",
+    "move_backward": "move_bottom",
+    "bottom": "move_bottom",
+    "move_bottom": "move_bottom",
+    "center": "move_center",
+    "centre": "move_center",
+    "move_center": "move_center",
+    "move_centre": "move_center",
+    "object": "move_to_object",
+    "move_to": "move_to_object",
+    "move_to_object": "move_to_object",
+    "pick": "pick_up",
+    "pickup": "pick_up",
+    "pick_up": "pick_up",
+}
+
+
+def _parse_instruction_types(raw_values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
+    resolved: list[str] = []
+    seen: set[str] = set()
+    for raw_value in raw_values:
+        for token in str(raw_value).split(","):
+            normalized = str(token).strip().lower().replace("-", "_").replace(" ", "_")
+            if not normalized:
+                continue
+            candidates = INSTRUCTION_TYPES if normalized == "all" else (_INSTRUCTION_TYPE_ALIASES.get(normalized),)
+            if normalized != "all" and candidates[0] is None:
+                if normalized in INSTRUCTION_TYPES:
+                    candidates = (normalized,)
+                else:
+                    supported = ", ".join(sorted(set(_INSTRUCTION_TYPE_ALIASES) | set(INSTRUCTION_TYPES) | {"all"}))
+                    raise ValueError(
+                        f"Unknown instruction type alias {raw_value!r}. Supported names: {supported}"
+                    )
+            for candidate in candidates:
+                if candidate in seen:
+                    continue
+                seen.add(str(candidate))
+                resolved.append(str(candidate))
+    if not resolved:
+        raise ValueError("Instruction selection removed every instruction type.")
+    return tuple(resolved)
+
+
+def _resolve_instruction_types(config: Any, args: argparse.Namespace) -> tuple[str, ...]:
+    raw_values = getattr(args, "instruction_types", None)
+    if raw_values:
+        return _parse_instruction_types(raw_values)
+
+    configured = tuple(getattr(config.task, "instruction_types", ()) or ())
+    if configured:
+        return _parse_instruction_types(configured)
+    return tuple(INSTRUCTION_TYPES)
 
 
 def _candidate_checkpoint_dirs(raw_path: str | Path) -> list[Path]:
@@ -652,6 +743,67 @@ def _write_success_rate_csv(output_path: Path, summaries: list[InstructionSummar
             )
 
 
+def _summarize_instruction_text_results(episode_results: list[EpisodeResult]) -> list[InstructionTextSummary]:
+    grouped: dict[str, list[EpisodeResult]] = {}
+    for episode_result in episode_results:
+        grouped.setdefault(str(episode_result.instruction_text), []).append(episode_result)
+
+    summaries: list[InstructionTextSummary] = []
+    for instruction_text in sorted(grouped):
+        items = grouped[instruction_text]
+        rewards = np.asarray([item.reward_total for item in items], dtype=np.float32)
+        steps = np.asarray([item.steps for item in items], dtype=np.float32)
+        successes = sum(1 for item in items if item.success)
+        instruction_types = tuple(sorted({str(item.instruction_type) for item in items}))
+        target_object_catalogs = tuple(
+            sorted({str(item.target_object_catalog) for item in items if str(item.target_object_catalog or "").strip()})
+        )
+        total = len(items)
+        summaries.append(
+            InstructionTextSummary(
+                instruction_text=instruction_text,
+                instruction_types=instruction_types,
+                target_object_catalogs=target_object_catalogs,
+                successes=int(successes),
+                episodes=int(total),
+                success_rate=float(successes / max(total, 1)),
+                mean_reward=float(np.mean(rewards)) if rewards.size > 0 else 0.0,
+                mean_steps=float(np.mean(steps)) if steps.size > 0 else 0.0,
+            )
+        )
+    return summaries
+
+
+def _write_instruction_text_csv(output_path: Path, summaries: list[InstructionTextSummary]) -> None:
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "instruction_text",
+                "instruction_types",
+                "target_object_catalogs",
+                "successes",
+                "episodes",
+                "success_rate",
+                "mean_reward",
+                "mean_steps",
+            ]
+        )
+        for summary in summaries:
+            writer.writerow(
+                [
+                    summary.instruction_text,
+                    "|".join(summary.instruction_types),
+                    "|".join(summary.target_object_catalogs),
+                    summary.successes,
+                    summary.episodes,
+                    f"{summary.success_rate:.6f}",
+                    f"{summary.mean_reward:.6f}",
+                    f"{summary.mean_steps:.6f}",
+                ]
+            )
+
+
 def _run_instruction_validation(
     *,
     instruction_type: str,
@@ -734,6 +886,10 @@ def _run_instruction_validation(
                 scene=str(final_info.get("scene", "")),
                 goal_position=[float(value) for value in final_info.get("goal_position", [])],
                 ee_start=[float(value) for value in final_info.get("ee_start", [])],
+                target_object_catalog=str(
+                    final_info.get("target_object_catalog", reset_info.get("target_object_catalog", ""))
+                )
+                or None,
             )
             episode_results.append(episode_result)
             successes += int(episode_result.success)
@@ -804,7 +960,7 @@ def main() -> int:
     videos_dir = ensure_directory(run_dir / "videos")
     max_steps = _default_max_steps(config, args)
     base_seed = None if args.seed is None or int(args.seed) < 0 else int(args.seed)
-    instruction_types = tuple(config.task.instruction_types) or INSTRUCTION_TYPES
+    instruction_types = _resolve_instruction_types(config, args)
     wrapper_dir = _resolve_wrapper_dir(config, args)
 
     if not args.progress_only:
@@ -835,6 +991,7 @@ def main() -> int:
             )
 
         instruction_summaries: list[InstructionSummary] = []
+        flattened_episode_results: list[EpisodeResult] = []
         instruction_episodes: dict[str, list[dict[str, Any]]] = {}
         progress = _progress_bar(total=len(instruction_types) * int(args.episodes_per_instruction))
         try:
@@ -852,9 +1009,12 @@ def main() -> int:
                     wrapper_dir=wrapper_dir,
                 )
                 instruction_summaries.append(summary)
+                flattened_episode_results.extend(episode_results)
                 instruction_episodes[instruction_type] = [asdict(result) for result in episode_results]
         finally:
             progress.close()
+
+    instruction_text_summaries = _summarize_instruction_text_results(flattened_episode_results)
 
     manifest = {
         "run_dir": run_dir.as_posix(),
@@ -879,6 +1039,7 @@ def main() -> int:
         "directional_displacement_threshold": float(args.directional_displacement_threshold),
         "reuse_existing_wrapper_variants": bool(args.reuse_existing_wrapper_variants),
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
+        "instruction_text_summaries": [asdict(summary) for summary in instruction_text_summaries],
         "episodes": instruction_episodes,
     }
 
@@ -886,10 +1047,13 @@ def main() -> int:
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
     csv_path = run_dir / "instruction_success_rates.csv"
     _write_success_rate_csv(csv_path, instruction_summaries)
+    text_csv_path = run_dir / "instruction_text_success_rates.csv"
+    _write_instruction_text_csv(text_csv_path, instruction_text_summaries)
 
     if not args.progress_only:
         print(f"Manifest saved: {manifest_path}")
         print(f"CSV saved: {csv_path}")
+        print(f"Instruction text CSV saved: {text_csv_path}")
     return 0
 
 

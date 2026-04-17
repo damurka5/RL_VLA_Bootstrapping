@@ -6,8 +6,10 @@ from pathlib import Path
 
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _default_max_steps,
+    _parse_instruction_types,
     _resolve_policy_artifacts,
     _summarize_instruction_results,
+    _summarize_instruction_text_results,
     _validation_env_vars,
     EpisodeResult,
 )
@@ -128,6 +130,90 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(summary.mean_reward, 1.0, places=7)
         self.assertAlmostEqual(summary.mean_steps, 22.0, places=7)
         self.assertEqual(summary.video_path, "/tmp/move_up.mp4")
+
+    def test_parse_instruction_types_accepts_human_friendly_aliases(self):
+        instruction_types = _parse_instruction_types(
+            ["left", "right", "forward", "backward", "move to object"]
+        )
+
+        self.assertEqual(
+            instruction_types,
+            ("move_left", "move_right", "move_top", "move_bottom", "move_to_object"),
+        )
+
+    def test_summarize_instruction_text_results_groups_object_prompts_separately(self):
+        episode_results = [
+            EpisodeResult(
+                episode_index=0,
+                seed=1,
+                instruction_type="move_left",
+                instruction_text="move left",
+                success=True,
+                terminated=True,
+                truncated=False,
+                steps=10,
+                reward_total=1.0,
+                scene="desk_a",
+                goal_position=[0.0, 0.0, 0.1],
+                ee_start=[0.0, 0.0, 0.4],
+            ),
+            EpisodeResult(
+                episode_index=1,
+                seed=2,
+                instruction_type="move_to_object",
+                instruction_text="move to apple",
+                success=True,
+                terminated=True,
+                truncated=False,
+                steps=14,
+                reward_total=2.0,
+                scene="desk_b",
+                goal_position=[0.1, 0.1, 0.1],
+                ee_start=[0.0, 0.0, 0.4],
+                target_object_catalog="ycb_apple",
+            ),
+            EpisodeResult(
+                episode_index=2,
+                seed=3,
+                instruction_type="move_to_object",
+                instruction_text="move to apple",
+                success=False,
+                terminated=False,
+                truncated=True,
+                steps=32,
+                reward_total=0.5,
+                scene="desk_c",
+                goal_position=[0.1, 0.1, 0.1],
+                ee_start=[0.0, 0.0, 0.4],
+                target_object_catalog="ycb_apple",
+            ),
+            EpisodeResult(
+                episode_index=3,
+                seed=4,
+                instruction_type="move_to_object",
+                instruction_text="move to pear",
+                success=True,
+                terminated=True,
+                truncated=False,
+                steps=18,
+                reward_total=1.5,
+                scene="desk_d",
+                goal_position=[0.1, -0.1, 0.1],
+                ee_start=[0.0, 0.0, 0.4],
+                target_object_catalog="ycb_pear",
+            ),
+        ]
+
+        summaries = _summarize_instruction_text_results(episode_results)
+        by_text = {summary.instruction_text: summary for summary in summaries}
+
+        self.assertEqual(set(by_text), {"move left", "move to apple", "move to pear"})
+        self.assertEqual(by_text["move left"].instruction_types, ("move_left",))
+        self.assertEqual(by_text["move to apple"].target_object_catalogs, ("ycb_apple",))
+        self.assertEqual(by_text["move to apple"].episodes, 2)
+        self.assertAlmostEqual(by_text["move to apple"].success_rate, 0.5, places=7)
+        self.assertEqual(by_text["move to pear"].episodes, 1)
+        self.assertAlmostEqual(by_text["move to pear"].success_rate, 1.0, places=7)
 
     def test_validation_env_vars_override_success_behavior(self):
         config = type(
