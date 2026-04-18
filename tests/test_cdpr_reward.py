@@ -195,20 +195,20 @@ class RewardDistanceTests(unittest.TestCase):
 
         reward_far, success_far, info_far = compute_instruction_reward(
             spec=spec,
-            ee_pos=np.array([0.25, 0.05, 0.50], dtype=np.float32),
+            ee_pos=np.array([0.25, 0.05, 0.15], dtype=np.float32),
             obj_pos=target,
             reward_state=init_reward_state(
-                initial_ee_pos=np.array([0.25, 0.05, 0.50], dtype=np.float32),
+                initial_ee_pos=np.array([0.25, 0.05, 0.15], dtype=np.float32),
                 initial_obj_pos=target,
             ),
             task_metadata={"move_to_object_xy_tolerance": 0.02},
         )
         reward_near, success_near, info_near = compute_instruction_reward(
             spec=spec,
-            ee_pos=np.array([0.11, -0.09, 0.50], dtype=np.float32),
+            ee_pos=np.array([0.11, -0.09, 0.15], dtype=np.float32),
             obj_pos=target,
             reward_state=init_reward_state(
-                initial_ee_pos=np.array([0.11, -0.09, 0.50], dtype=np.float32),
+                initial_ee_pos=np.array([0.11, -0.09, 0.15], dtype=np.float32),
                 initial_obj_pos=target,
             ),
             task_metadata={"move_to_object_xy_tolerance": 0.02},
@@ -218,27 +218,126 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertTrue(success_near)
         self.assertGreater(reward_near, reward_far)
         self.assertGreater(info_far["move_to_object_xy_distance"], info_near["move_to_object_xy_distance"])
-        self.assertGreater(info_near["move_to_object_above_bonus"], 0.0)
+        self.assertAlmostEqual(info_near["move_to_object_above_bonus"], 0.0, places=6)
+        self.assertGreater(info_near["move_to_object_distance_reward"], info_far["move_to_object_distance_reward"])
 
-    def test_move_to_object_success_uses_xy_tolerance_only(self):
+    def test_move_to_object_success_requires_xy_tolerance_and_z_window(self):
         spec = self._spec("move_to_object")
         target = np.array([0.00, 0.00, 0.16], dtype=np.float32)
 
-        reward, success, info = compute_instruction_reward(
+        reward_good, success_good, info_good = compute_instruction_reward(
             spec=spec,
-            ee_pos=np.array([0.015, -0.010, 0.48], dtype=np.float32),
+            ee_pos=np.array([0.015, -0.010, 0.15], dtype=np.float32),
             obj_pos=target,
             reward_state=init_reward_state(
-                initial_ee_pos=np.array([0.06, 0.06, 0.48], dtype=np.float32),
+                initial_ee_pos=np.array([0.06, 0.06, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata={"move_to_object_xy_tolerance": 0.02},
+        )
+        reward_high, success_high, info_high = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.015, -0.010, 0.28], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.06, 0.28], dtype=np.float32),
                 initial_obj_pos=target,
             ),
             task_metadata={"move_to_object_xy_tolerance": 0.02},
         )
 
+        self.assertTrue(success_good)
+        self.assertFalse(success_high)
+        self.assertGreater(reward_good, reward_high)
+        self.assertAlmostEqual(info_good["distance_to_goal"], np.linalg.norm([0.015, -0.010]), places=6)
+        self.assertAlmostEqual(info_high["distance_ee_to_object_xyz"], np.linalg.norm([0.015, -0.010, -0.12]), places=6)
+        self.assertEqual(info_good["move_to_object_z_in_window"], 1.0)
+        self.assertGreater(info_high["move_to_object_z_penalty"], 0.0)
+
+    def test_move_to_object_distance_reward_has_configured_maximum(self):
+        spec = self._spec("move_to_object")
+        target = np.array([0.10, -0.10, 0.16], dtype=np.float32)
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.10, -0.10, 0.15], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.10, -0.10, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata={"move_to_object_distance_reward_weight": 1.0},
+        )
+
         self.assertTrue(success)
-        self.assertGreater(reward, 1.0)
-        self.assertAlmostEqual(info["distance_to_goal"], np.linalg.norm([0.015, -0.010]), places=6)
-        self.assertAlmostEqual(info["distance_ee_to_object_xyz"], np.linalg.norm([0.015, -0.010, -0.32]), places=6)
+        self.assertAlmostEqual(reward, 1.0, places=6)
+        self.assertAlmostEqual(info["move_to_object_distance_reward"], 1.0, places=6)
+        self.assertAlmostEqual(info["move_to_object_distance_reward_max"], 1.0, places=6)
+
+    def test_move_to_object_z_window_penalty_applies_only_outside_band(self):
+        spec = self._spec("move_to_object")
+        target = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+
+        reward_in_band, _, info_in_band = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.00, 0.15], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.00, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+        )
+        reward_above_band, _, info_above_band = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.00, 0.27], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.00, 0.27], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+        )
+
+        self.assertEqual(info_in_band["move_to_object_z_penalty"], 0.0)
+        self.assertGreater(info_above_band["move_to_object_z_penalty"], 0.0)
+        self.assertLess(reward_above_band, reward_in_band)
+
+    def test_move_to_object_saturation_penalty_is_linear_and_can_include_gripper(self):
+        spec = self._spec("move_to_object")
+        target = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+        metadata = {
+            "action_saturation_threshold": 0.70,
+            "action_saturation_penalty_weight": 0.20,
+            "action_saturation_exponent": 1.0,
+            "action_saturation_include_gripper": True,
+        }
+
+        reward_threshold, _, info_threshold = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.00, 0.15], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.00, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            action=np.array([0.70, 0.00, 0.00, 0.00, 0.70], dtype=np.float32),
+            task_metadata=metadata,
+        )
+        reward_high, _, info_high = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.00, 0.15], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.00, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            action=np.array([0.90, 0.00, 0.00, 0.00, 0.90], dtype=np.float32),
+            task_metadata=metadata,
+        )
+
+        self.assertEqual(info_threshold["action_saturation_penalty"], 0.0)
+        self.assertGreater(info_high["action_saturation_penalty"], 0.0)
+        self.assertGreater(info_high["action_saturation_penalty_raw"], info_threshold["action_saturation_penalty_raw"])
+        self.assertLess(reward_high, reward_threshold)
 
     def test_move_to_object_validation_success_uses_reward_result(self):
         spec = self._spec("move_to_object")

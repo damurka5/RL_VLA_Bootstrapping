@@ -1,5 +1,5 @@
 project:
-  name: cdpr_openvla_grpo_resume_380_to_480_move_to_object
+  name: cdpr_openvla_grpo_resume_380_to_480_move_to_object_xy_only_15_updates
   output_root: ../../runs
   python_executable: python3
 
@@ -16,8 +16,8 @@ remote:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     TOKENIZERS_PARALLELISM: "false"
   notes:
-    - Resume GRPO from the PPO step_0163200 actor checkpoint.
-    - Uses grouped branch rollouts from identical CDPR simulator snapshots.
+    - Resume GRPO from the PPO step_0163200 actor checkpoint for a short 15-update refinement run.
+    - Uses only `move to <object>` instructions with XY-only distance reward plus smoothness penalties.
     - Remote server path expects `openvla-oft` at `/root/repo/openvla-oft`.
 
 assets:
@@ -100,7 +100,7 @@ embodiment:
     close_gripper_threshold: 0.2
 
 task:
-  instruction_types: [move_left, move_right, move_top, move_bottom, move_to_object]
+  instruction_types: [move_to_object]
   target_objects:
     [
       ycb_apple,
@@ -151,15 +151,18 @@ task:
     distance_reward_weight: 1.0
     distance_reward_exponent: 2.0
     success_distance: 0.03
-    success_bonus: 1.0
-    move_to_object_xy_reward_scale: 0.08
-    move_to_object_progress_weight: 1.25
-    move_to_object_proximity_weight: 0.75
+    success_bonus: 0.0
+    move_to_object_xy_reward_scale: 0.10
+    move_to_object_distance_reward_weight: 1.0
     move_to_object_xy_tolerance: 0.02
-    move_to_object_above_bonus: 0.50
-    action_saturation_threshold: 0.95
-    action_saturation_penalty_weight: 1.0
-    action_saturation_exponent: 2.0
+    move_to_object_z_window_low: 0.10
+    move_to_object_z_window_high: 0.20
+    move_to_object_z_penalty_scale: 0.05
+    move_to_object_z_penalty_weight: 0.20
+    action_saturation_threshold: 0.70
+    action_saturation_penalty_weight: 0.20
+    action_saturation_exponent: 1.0
+    action_saturation_include_gripper: true
 
 simulation:
   entrypoint:
@@ -222,7 +225,7 @@ training:
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
       num_parallel_envs: 10
-      total_updates: 100
+      total_updates: 15
       rollout_steps: 170
       ppo_epochs: 4
       minibatch_size: 16
@@ -241,14 +244,14 @@ training:
       lock_non_commanded_axes: true
       lock_non_commanded_axes_threshold: 0.05
       randomize_ee_start: true
-      ee_start_x_bounds: [-0.03, 0.03]
-      ee_start_y_bounds: [-0.03, 0.03]
+      ee_start_x_bounds: [-0.18, 0.18]
+      ee_start_y_bounds: [-0.18, 0.18]
       ee_start_z: 0.15
       record_trajectory: false
       delta_closer_reward_coef: 0.0
       delta_farther_penalty_coef: 0.0
-      save_every: 20
-      validate_every_updates: 50
+      save_every: 15
+      validate_every_updates: 15
       validation_episodes: 1
       validation_max_steps: 32
       tensorboard_rollout_every_global_steps: 128

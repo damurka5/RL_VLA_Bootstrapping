@@ -204,17 +204,35 @@ def _metadata_float(task_metadata: dict[str, Any] | None, key: str, default: flo
         raise ValueError(f"Task metadata `{key}` must be numeric, got {raw!r}") from exc
 
 
+def _metadata_bool(task_metadata: dict[str, Any] | None, key: str, default: bool) -> bool:
+    if not isinstance(task_metadata, dict) or key not in task_metadata:
+        return bool(default)
+    raw = task_metadata.get(key)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    raise ValueError(f"Task metadata `{key}` must be boolean-like, got {raw!r}")
+
+
 def _action_saturation_stats(
     action: np.ndarray | None,
     *,
     threshold: float,
     exponent: float,
+    include_gripper: bool = False,
 ) -> tuple[float, float, float]:
     if action is None:
         return 0.0, 0.0, 0.0
 
     action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
-    if action_arr.size > 1:
+    if action_arr.size > 1 and not include_gripper:
         # Exclude the gripper dimension so deliberate open/close commands are not punished.
         action_arr = action_arr[:-1]
     if action_arr.size == 0:
@@ -225,7 +243,7 @@ def _action_saturation_stats(
     denom = max(1e-6, 1.0 - normalized_threshold)
     excess = np.clip((abs_action - normalized_threshold) / denom, 0.0, 1.0)
     penalty_raw = float(np.mean(np.power(excess, float(max(exponent, 1e-6)))))
-    saturation_rate = float(np.mean(abs_action >= normalized_threshold))
+    saturation_rate = float(np.mean(abs_action > normalized_threshold))
     saturation_max_abs = float(np.max(abs_action))
     return penalty_raw, saturation_rate, saturation_max_abs
 
@@ -418,49 +436,60 @@ def _compute_move_to_object_reward(
         _metadata_float(task_metadata, "move_to_object_xy_reward_scale", max(4.0 * xy_tolerance, 0.08)),
         1e-6,
     )
-    progress_weight = _metadata_float(task_metadata, "move_to_object_progress_weight", 1.25)
-    proximity_weight = _metadata_float(task_metadata, "move_to_object_proximity_weight", 0.75)
-    progress_clip = max(
-        _metadata_float(task_metadata, "move_to_object_progress_clip", xy_reward_scale),
+    distance_reward_weight = _metadata_float(
+        task_metadata,
+        "move_to_object_distance_reward_weight",
+        _metadata_float(task_metadata, "move_to_object_proximity_weight", 1.0),
+    )
+    distance_reward_exponent = _metadata_float(task_metadata, "distance_reward_exponent", 2.0)
+    z_window_low = _metadata_float(task_metadata, "move_to_object_z_window_low", 0.10)
+    z_window_high = _metadata_float(task_metadata, "move_to_object_z_window_high", 0.20)
+    z_window_low, z_window_high = sorted((float(z_window_low), float(z_window_high)))
+    z_penalty_scale = max(
+        _metadata_float(task_metadata, "move_to_object_z_penalty_scale", 0.05),
         1e-6,
     )
-    above_target_bonus_weight = _metadata_float(task_metadata, "move_to_object_above_bonus", 0.50)
-    distance_reward_exponent = _metadata_float(task_metadata, "distance_reward_exponent", 2.0)
-    success_bonus = _metadata_float(task_metadata, "success_bonus", 1.0)
-    action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.95)
+    z_penalty_weight = _metadata_float(task_metadata, "move_to_object_z_penalty_weight", 0.20)
+    action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.70)
     action_saturation_penalty_weight = _metadata_float(
         task_metadata,
         "action_saturation_penalty_weight",
-        1.0,
+        0.20,
     )
-    action_saturation_exponent = _metadata_float(task_metadata, "action_saturation_exponent", 2.0)
+    action_saturation_exponent = _metadata_float(task_metadata, "action_saturation_exponent", 1.0)
+    action_saturation_include_gripper = _metadata_bool(
+        task_metadata,
+        "action_saturation_include_gripper",
+        True,
+    )
 
     normalized_xy_distance = float(xy_distance / xy_reward_scale)
-    proximity_reward = float(
-        proximity_weight
+    distance_reward = float(
+        distance_reward_weight
         / (1.0 + np.power(normalized_xy_distance, max(distance_reward_exponent, 1e-6)))
     )
-    normalized_progress = float(np.clip(xy_distance_delta / progress_clip, -1.0, 1.0))
-    progress_reward = float(progress_weight * normalized_progress)
     above_target = bool(xy_distance <= xy_tolerance)
-    above_target_bonus = float(above_target_bonus_weight if above_target else 0.0)
+    ee_z = float(ee_pos[2])
+    if ee_z < z_window_low:
+        z_outside_distance = float(z_window_low - ee_z)
+    elif ee_z > z_window_high:
+        z_outside_distance = float(ee_z - z_window_high)
+    else:
+        z_outside_distance = 0.0
+    z_in_window = bool(z_outside_distance <= 1e-9)
+    z_penalty_raw = float(z_outside_distance / z_penalty_scale)
+    z_penalty = float(z_penalty_weight * z_penalty_raw)
 
     action_saturation_penalty_raw, action_saturation_rate, action_saturation_max_abs = _action_saturation_stats(
         action,
         threshold=action_saturation_threshold,
         exponent=action_saturation_exponent,
+        include_gripper=action_saturation_include_gripper,
     )
     action_saturation_penalty = float(action_saturation_penalty_weight * action_saturation_penalty_raw)
 
-    success = bool(above_target)
-    success_reward = float(success_bonus if success else 0.0)
-    reward = float(
-        progress_reward
-        + proximity_reward
-        + above_target_bonus
-        + success_reward
-        - action_saturation_penalty
-    )
+    success = bool(above_target and z_in_window)
+    reward = float(distance_reward - z_penalty - action_saturation_penalty)
 
     reward_state.prev_ee_pos = ee_pos.copy()
     reward_state.prev_obj_pos = obj_pos.copy()
@@ -476,9 +505,9 @@ def _compute_move_to_object_reward(
         "distance_to_goal_prev_xy": prev_xy_distance,
         "distance_delta": xy_distance_delta,
         "distance_to_goal_normalized": normalized_xy_distance,
-        "distance_reward": proximity_reward,
+        "distance_reward": distance_reward,
         "distance_reward_scale": float(xy_reward_scale),
-        "distance_reward_weight": float(proximity_weight),
+        "distance_reward_weight": float(distance_reward_weight),
         "distance_reward_exponent": float(distance_reward_exponent),
         "camera_alignment": 0.0,
         "camera_alignment_delta": 0.0,
@@ -503,15 +532,26 @@ def _compute_move_to_object_reward(
         "distance_ee_to_object_prev_xyz": prev_xyz_distance,
         "distance_ee_to_object_prev_xy": prev_xy_distance,
         "orientation_reward": 0.0,
-        "success_bonus": success_reward,
-        "move_to_object_progress_reward": progress_reward,
-        "move_to_object_progress_clip": float(progress_clip),
-        "move_to_object_proximity_reward": proximity_reward,
+        "success_bonus": 0.0,
+        "move_to_object_progress_reward": 0.0,
+        "move_to_object_progress_clip": 0.0,
+        "move_to_object_proximity_reward": distance_reward,
+        "move_to_object_distance_reward": distance_reward,
+        "move_to_object_distance_reward_weight": float(distance_reward_weight),
+        "move_to_object_distance_reward_max": float(distance_reward_weight),
         "move_to_object_xy_distance": xy_distance,
         "move_to_object_xy_distance_prev": prev_xy_distance,
         "move_to_object_above_target": float(above_target),
-        "move_to_object_above_bonus": above_target_bonus,
+        "move_to_object_above_bonus": 0.0,
         "move_to_object_xy_tolerance": float(xy_tolerance),
+        "move_to_object_z": ee_z,
+        "move_to_object_z_in_window": float(z_in_window),
+        "move_to_object_z_window_low": float(z_window_low),
+        "move_to_object_z_window_high": float(z_window_high),
+        "move_to_object_z_outside_distance": z_outside_distance,
+        "move_to_object_z_penalty_raw": z_penalty_raw,
+        "move_to_object_z_penalty": z_penalty,
+        "move_to_object_z_penalty_scale": float(z_penalty_scale),
     }
     return reward, success, info
 
