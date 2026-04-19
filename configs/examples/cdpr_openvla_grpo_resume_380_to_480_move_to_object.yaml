@@ -1,5 +1,5 @@
 project:
-  name: cdpr_openvla_grpo_resume_380_to_480_move_to_object_xy_only_15_updates
+  name: cdpr_openvla_grpo_resume_380_to_480_move_to_object_xy_only_from_0170000_10_updates
   output_root: ../../runs
   python_executable: python3
 
@@ -16,7 +16,8 @@ remote:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     TOKENIZERS_PARALLELISM: "false"
   notes:
-    - Resume GRPO from the PPO step_0163200 actor checkpoint for a short 15-update refinement run.
+    - Resume GRPO from `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_resume_380_to_480_move_to_object_20260408_173829/rl/step_0170000`.
+    - Continue from the saved adapter, action head, and GRPO actor stats for a short 10-update refinement run.
     - Uses only `move to <object>` instructions with XY-only distance reward plus smoothness penalties.
     - Remote server path expects `openvla-oft` at `/root/repo/openvla-oft`.
 
@@ -216,16 +217,16 @@ training:
       nproc_per_node: 2
     args:
       external_grpo_script: vla-scripts/grpo_finetune_cdpr.py
-      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_bootstrap_fast_resume_280_to_380/rl/step_0163200/vla_cdpr_adapter
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_resume_380_to_480_move_to_object_20260408_173829/rl/step_0170000/vla_cdpr_adapter
       train_loaded_adapter: true
-      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_bootstrap_fast_resume_280_to_380/rl/step_0163200/action_head_cdpr.pt
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_resume_380_to_480_move_to_object_20260408_173829/rl/step_0170000/action_head_cdpr.pt
       resume_actor_stats: true
       grpo_group_size: 2
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
       num_parallel_envs: 10
-      total_updates: 15
+      total_updates: 10
       rollout_steps: 170
       ppo_epochs: 4
       minibatch_size: 16
@@ -250,8 +251,8 @@ training:
       record_trajectory: false
       delta_closer_reward_coef: 0.0
       delta_farther_penalty_coef: 0.0
-      save_every: 15
-      validate_every_updates: 15
+      save_every: 10
+      validate_every_updates: 10
       validation_episodes: 1
       validation_max_steps: 32
       tensorboard_rollout_every_global_steps: 128
