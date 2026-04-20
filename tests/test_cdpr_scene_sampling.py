@@ -2,10 +2,45 @@ from __future__ import annotations
 
 import unittest
 
-from robots.cdpr.cdpr_dataset.rl_cdpr_env import SceneSpec, _configure_scene_sampling
+from robots.cdpr.cdpr_dataset.rl_cdpr_env import (
+    SceneSpec,
+    _configure_scene_sampling,
+    _resolve_object_spawn_config,
+)
 
 
 class SceneSamplingTests(unittest.TestCase):
+    def test_resolve_object_spawn_config_defaults_match_previous_central_window(self):
+        config = _resolve_object_spawn_config({}, support_surface_z=0.15)
+
+        self.assertEqual(config["xy_bounds"], ((-0.20, 0.20), (-0.20, 0.20), 0.15))
+        self.assertEqual(config["min_gap"], 0.02)
+        self.assertEqual(config["min_ee_dist"], 0.10)
+        self.assertEqual(config["avoid_xy_center"], (0.0, 0.0))
+        self.assertEqual(config["avoid_xy_radius"], 0.0)
+
+    def test_resolve_object_spawn_config_honors_wide_off_center_metadata(self):
+        metadata = {
+            "goal_center_xy": [0.05, -0.03],
+            "object_spawn_x_bounds": [-0.30, 0.32],
+            "object_spawn_y_bounds": [-0.28, 0.31],
+            "object_spawn_center_exclusion_radius": 0.17,
+            "object_spawn_min_gap": 0.04,
+            "object_spawn_min_ee_dist": 0.12,
+            "object_spawn_max_tries": 320,
+            "object_spawn_support_clearance": 0.006,
+        }
+
+        config = _resolve_object_spawn_config(metadata, support_surface_z=0.18)
+
+        self.assertEqual(config["xy_bounds"], ((-0.30, 0.32), (-0.28, 0.31), 0.18))
+        self.assertEqual(config["min_gap"], 0.04)
+        self.assertEqual(config["min_ee_dist"], 0.12)
+        self.assertEqual(config["max_tries"], 320)
+        self.assertEqual(config["support_clearance"], 0.006)
+        self.assertEqual(config["avoid_xy_center"], (0.05, -0.03))
+        self.assertEqual(config["avoid_xy_radius"], 0.17)
+
     def test_configure_scene_sampling_builds_scene_variants_from_single_pool(self):
         base_scenes = [SceneSpec(name="desk", objects=("ycb_apple",))]
         metadata = {

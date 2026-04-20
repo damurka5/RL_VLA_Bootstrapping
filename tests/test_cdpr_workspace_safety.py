@@ -5,7 +5,7 @@ from unittest import mock
 
 import numpy as np
 
-from robots.cdpr.cdpr_dataset.synthetic_tasks import prepare_cdpr_workspace
+from robots.cdpr.cdpr_dataset.synthetic_tasks import _xy_candidate_is_valid, prepare_cdpr_workspace
 
 
 class _FakeWorkspaceSim:
@@ -36,6 +36,60 @@ class _FakeWorkspaceSim:
 
 
 class WorkspaceSafetyTests(unittest.TestCase):
+    def test_xy_candidate_is_invalid_inside_center_exclusion_radius(self):
+        is_valid = _xy_candidate_is_valid(
+            0.04,
+            0.03,
+            radius=0.05,
+            placed=[],
+            min_gap=0.02,
+            ee_xy=(0.25, 0.25),
+            min_ee_dist=0.10,
+            avoid_xy_center=(0.0, 0.0),
+            avoid_xy_radius=0.08,
+        )
+
+        self.assertFalse(is_valid)
+
+    def test_xy_candidate_is_invalid_when_overlapping_or_too_close_to_ee(self):
+        overlap_invalid = _xy_candidate_is_valid(
+            0.10,
+            0.10,
+            radius=0.05,
+            placed=[(0.16, 0.10, 0.04)],
+            min_gap=0.02,
+            ee_xy=(0.30, 0.30),
+            min_ee_dist=0.10,
+            avoid_xy_center=None,
+            avoid_xy_radius=0.0,
+        )
+        ee_invalid = _xy_candidate_is_valid(
+            0.12,
+            0.08,
+            radius=0.05,
+            placed=[],
+            min_gap=0.02,
+            ee_xy=(0.10, 0.10),
+            min_ee_dist=0.05,
+            avoid_xy_center=None,
+            avoid_xy_radius=0.0,
+        )
+        valid = _xy_candidate_is_valid(
+            0.24,
+            -0.20,
+            radius=0.05,
+            placed=[(-0.18, 0.15, 0.04)],
+            min_gap=0.02,
+            ee_xy=(0.00, 0.00),
+            min_ee_dist=0.10,
+            avoid_xy_center=(0.0, 0.0),
+            avoid_xy_radius=0.12,
+        )
+
+        self.assertFalse(overlap_invalid)
+        self.assertFalse(ee_invalid)
+        self.assertTrue(valid)
+
     @mock.patch("robots.cdpr.cdpr_dataset.synthetic_tasks.body_bottom_offset", return_value=0.156)
     @mock.patch("robots.cdpr.cdpr_dataset.synthetic_tasks.infer_workspace_surface_z", return_value=0.0)
     def test_prepare_workspace_lifts_and_clears_buffers(self, _surface_mock, _bottom_mock):

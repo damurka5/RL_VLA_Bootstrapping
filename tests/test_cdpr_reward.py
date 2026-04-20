@@ -301,6 +301,39 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertGreater(info_above_band["move_to_object_z_penalty"], 0.0)
         self.assertLess(reward_above_band, reward_in_band)
 
+    def test_move_to_object_reward_can_disable_z_penalty_for_xy_only_training(self):
+        spec = self._spec("move_to_object")
+        target = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+        metadata = {
+            "move_to_object_xy_tolerance": 0.02,
+            "move_to_object_z_penalty_weight": 0.0,
+        }
+
+        reward_in_band, _, info_in_band = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.00, 0.15], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.00, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata=metadata,
+        )
+        reward_above_band, _, info_above_band = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.00, 0.27], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.06, 0.00, 0.27], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata=metadata,
+        )
+
+        self.assertGreater(info_above_band["move_to_object_z_penalty_raw"], 0.0)
+        self.assertEqual(info_above_band["move_to_object_z_penalty"], 0.0)
+        self.assertAlmostEqual(reward_above_band, reward_in_band, places=6)
+
     def test_move_to_object_saturation_penalty_is_linear_and_can_include_gripper(self):
         spec = self._spec("move_to_object")
         target = np.array([0.00, 0.00, 0.16], dtype=np.float32)

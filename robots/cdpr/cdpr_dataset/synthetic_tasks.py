@@ -774,6 +774,39 @@ def infer_workspace_surface_z(sim, fallback_z=0.0):
 def body_bottom_offset(sim, body_name):
     return _body_bottom_offset(sim, body_name)
 
+
+def _xy_candidate_is_valid(
+    x,
+    y,
+    *,
+    radius,
+    placed,
+    min_gap,
+    ee_xy,
+    min_ee_dist,
+    avoid_xy_center=None,
+    avoid_xy_radius=0.0,
+):
+    ee_x, ee_y = float(ee_xy[0]), float(ee_xy[1])
+    if (x - ee_x) ** 2 + (y - ee_y) ** 2 < float(min_ee_dist) ** 2:
+        return False
+
+    avoid_radius = max(0.0, float(avoid_xy_radius))
+    if avoid_xy_center is not None and avoid_radius > 0.0:
+        center_xy = np.asarray(avoid_xy_center, dtype=float).reshape(-1)
+        if center_xy.size < 2:
+            raise ValueError("avoid_xy_center must provide at least two coordinates.")
+        center_x = float(center_xy[0])
+        center_y = float(center_xy[1])
+        if (x - center_x) ** 2 + (y - center_y) ** 2 < avoid_radius ** 2:
+            return False
+
+    return all(
+        (x - px) ** 2 + (y - py) ** 2 >= (float(radius) + float(pr) + float(min_gap)) ** 2
+        for (px, py, pr) in placed
+    )
+
+
 def place_objects_non_overlapping(
     sim,
     object_body_names,
@@ -782,6 +815,8 @@ def place_objects_non_overlapping(
     max_tries=200,
     min_ee_dist=0.08,
     support_clearance=0.002,
+    avoid_xy_center=None,
+    avoid_xy_radius=0.0,
 ):
     """
     Randomly place objects by setting their body pose XY while grounding each object on
@@ -808,9 +843,6 @@ def place_objects_non_overlapping(
         # fallback: assume EE at origin if we can't query it
         ee_x, ee_y = 0.0, 0.0
 
-    def far_from_ee(x, y, min_dist=min_ee_dist):
-        return (x - ee_x) ** 2 + (y - ee_y) ** 2 >= (min_dist ** 2)
-
     placed = []
     for name in object_body_names:
         bid = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, name)
@@ -828,32 +860,37 @@ def place_objects_non_overlapping(
             x = random.uniform(xmin + r, xmax - r)
             y = random.uniform(ymin + r, ymax - r)
 
-            # NEW: skip positions too close to EE
-            if not far_from_ee(x, y):
+            if not _xy_candidate_is_valid(
+                x,
+                y,
+                radius=r,
+                placed=placed,
+                min_gap=min_gap,
+                ee_xy=(ee_x, ee_y),
+                min_ee_dist=min_ee_dist,
+                avoid_xy_center=avoid_xy_center,
+                avoid_xy_radius=avoid_xy_radius,
+            ):
                 continue
 
-            # Existing non-overlap condition with already placed objects
-            if all((x - px)**2 + (y - py)**2 >= (r + pr + min_gap)**2
-                   for (px, py, pr) in placed):
+            # Try free joint first (typical for movable objects)
+            j = model.body_jntnum[bid]
+            jadr = model.body_jntadr[bid]
+            free_found = False
+            for k in range(j):
+                jid = jadr + k
+                if model.jnt_type[jid] == mj.mjtJoint.mjJNT_FREE:
+                    qadr = model.jnt_qposadr[jid]
+                    data.qpos[qadr:qadr+3] = np.array([x, y, z_target], dtype=float)
+                    free_found = True
+                    break
+            if not free_found:
+                # fallback: move kinematic body via xpos (rare for LIBERO objects)
+                data.xpos[bid] = np.array([x, y, z_target], dtype=float)
 
-                # Try free joint first (typical for movable objects)
-                j = model.body_jntnum[bid]
-                jadr = model.body_jntadr[bid]
-                free_found = False
-                for k in range(j):
-                    jid = jadr + k
-                    if model.jnt_type[jid] == mj.mjtJoint.mjJNT_FREE:
-                        qadr = model.jnt_qposadr[jid]
-                        data.qpos[qadr:qadr+3] = np.array([x, y, z_target], dtype=float)
-                        free_found = True
-                        break
-                if not free_found:
-                    # fallback: move kinematic body via xpos (rare for LIBERO objects)
-                    data.xpos[bid] = np.array([x, y, z_target], dtype=float)
-
-                placed.append((x, y, r))
-                ok = True
-                break
+            placed.append((x, y, r))
+            ok = True
+            break
 
         if not ok:
             raise RuntimeError(f"Could not place object '{name}' without overlap in {max_tries} tries.")

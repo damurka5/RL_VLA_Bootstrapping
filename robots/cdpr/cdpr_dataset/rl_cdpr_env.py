@@ -195,6 +195,60 @@ def _metadata_name_list(task_metadata: dict[str, Any], key: str) -> tuple[str, .
     return _dedupe_names([str(item) for item in raw])
 
 
+def _metadata_float(task_metadata: dict[str, Any], key: str, default: float) -> float:
+    raw = task_metadata.get(key, default)
+    if raw is None:
+        return float(default)
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"Task metadata `{key}` must be numeric, got {raw!r}") from exc
+    if not np.isfinite(value):
+        raise ValueError(f"Task metadata `{key}` must be finite, got {raw!r}")
+    return value
+
+
+def _metadata_float_pair(task_metadata: dict[str, Any], key: str, default: Sequence[float]) -> tuple[float, float]:
+    raw = task_metadata.get(key, default)
+    if raw is None:
+        raw = default
+    return _normalize_float_pair(raw, name=f"task metadata `{key}`")
+
+
+def _metadata_xy_pair(task_metadata: dict[str, Any], key: str, default: Sequence[float]) -> tuple[float, float]:
+    raw = task_metadata.get(key, default)
+    if raw is None:
+        raw = default
+    arr = np.asarray(raw, dtype=float).reshape(-1)
+    if arr.size < 2:
+        raise ValueError(f"Task metadata `{key}` must provide at least two floats, got {raw!r}")
+    x = float(arr[0])
+    y = float(arr[1])
+    if not np.isfinite(x) or not np.isfinite(y):
+        raise ValueError(f"Task metadata `{key}` must be finite, got {raw!r}")
+    return x, y
+
+
+def _resolve_object_spawn_config(
+    task_metadata: dict[str, Any],
+    *,
+    support_surface_z: float,
+) -> dict[str, Any]:
+    center_default = task_metadata.get("goal_center_xy", DEFAULT_GOAL_CENTER_XY)
+    x_bounds = _metadata_float_pair(task_metadata, "object_spawn_x_bounds", (-0.20, 0.20))
+    y_bounds = _metadata_float_pair(task_metadata, "object_spawn_y_bounds", (-0.20, 0.20))
+    center_xy = _metadata_xy_pair(task_metadata, "object_spawn_center_xy", center_default)
+    return {
+        "xy_bounds": (x_bounds, y_bounds, float(support_surface_z)),
+        "min_gap": max(0.0, _metadata_float(task_metadata, "object_spawn_min_gap", 0.02)),
+        "max_tries": max(1, int(round(_metadata_float(task_metadata, "object_spawn_max_tries", 200.0)))),
+        "min_ee_dist": max(0.0, _metadata_float(task_metadata, "object_spawn_min_ee_dist", 0.10)),
+        "support_clearance": max(0.0, _metadata_float(task_metadata, "object_spawn_support_clearance", 0.002)),
+        "avoid_xy_center": center_xy,
+        "avoid_xy_radius": max(0.0, _metadata_float(task_metadata, "object_spawn_center_exclusion_radius", 0.0)),
+    }
+
+
 def _unique_scene_names(scenes: Sequence[SceneSpec]) -> tuple[str, ...]:
     names = _dedupe_names([scene.name for scene in scenes if getattr(scene, "name", "")])
     if names:
@@ -1213,12 +1267,20 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._inverse_catalog_to_body = {v: k for k, v in self._catalog_to_body.items()}
         if self._object_body_names:
             try:
+                object_spawn_config = _resolve_object_spawn_config(
+                    self._task_metadata,
+                    support_surface_z=self._support_surface_z,
+                )
                 place_objects_non_overlapping(
                     self.sim,
                     self._object_body_names,
-                    xy_bounds=((-0.20, 0.20), (-0.20, 0.20), self._support_surface_z),
-                    min_gap=0.02,
-                    min_ee_dist=0.10,
+                    xy_bounds=object_spawn_config["xy_bounds"],
+                    min_gap=object_spawn_config["min_gap"],
+                    max_tries=object_spawn_config["max_tries"],
+                    min_ee_dist=object_spawn_config["min_ee_dist"],
+                    support_clearance=object_spawn_config["support_clearance"],
+                    avoid_xy_center=object_spawn_config["avoid_xy_center"],
+                    avoid_xy_radius=object_spawn_config["avoid_xy_radius"],
                 )
             except Exception:
                 # Continue if placement fails; wrapper-provided placement is still valid.
