@@ -237,8 +237,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--directional-displacement-threshold",
         type=float,
-        default=0.20,
-        help="Validation displacement threshold in meters for move_left/right/top/bottom/up/down.",
+        default=0.05,
+        help=(
+            "Validation threshold in meters for directional commands. "
+            "Left/right/forward/backward use signed distance from the workspace center; "
+            "up/down use signed displacement from the episode start."
+        ),
     )
     parser.add_argument(
         "--reuse-existing-wrapper-variants",
@@ -445,17 +449,62 @@ def _validation_task_metadata(config: Any, args: argparse.Namespace) -> dict[str
     metadata = dict(getattr(config.task, "metadata", {}) or {})
     metadata["success_distance"] = float(args.success_distance)
     metadata["directional_success_displacement_threshold"] = float(args.directional_displacement_threshold)
+    metadata["directional_success_center_threshold"] = float(args.directional_displacement_threshold)
     return metadata
 
 
-def _validation_env_vars(config: Any, args: argparse.Namespace) -> dict[str, str]:
+def _dedupe_object_names(values: Any) -> list[str]:
+    if values is None:
+        return []
+    if isinstance(values, str):
+        values = [values]
+
+    out: list[str] = []
+    seen: set[str] = set()
+    for raw in values:
+        name = str(raw).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return out
+
+
+def _instruction_validation_task_metadata(
+    config: Any,
+    args: argparse.Namespace,
+    *,
+    instruction_type: str | None = None,
+) -> dict[str, Any]:
+    metadata = _validation_task_metadata(config, args)
+    if instruction_type != "move_to_object":
+        return metadata
+
+    metadata.pop("scene_object_pool", None)
+    target_pool = _dedupe_object_names(metadata.get("target_object_pool"))
+    if not target_pool:
+        target_pool = _dedupe_object_names(_allowed_objects_from_config(config))
+    if target_pool:
+        metadata["target_object_pool"] = target_pool
+    metadata["distractor_object_pool"] = []
+    metadata["min_scene_objects"] = 1
+    metadata["max_scene_objects"] = 1
+    return metadata
+
+
+def _validation_env_vars(
+    config: Any,
+    args: argparse.Namespace,
+    *,
+    instruction_type: str | None = None,
+) -> dict[str, str]:
     rl_args = _rl_args(config)
     env = {str(k): str(v) for k, v in getattr(config.project, "env", {}).items()}
     env.update({str(k): str(v) for k, v in getattr(config.remote, "env_vars", {}).items()})
     env.update(_task_hook_env(config))
     env.update(_extract_cdpr_env_overrides(dict(rl_args)))
     env["RLVLA_TASK_METADATA_JSON"] = json.dumps(
-        _validation_task_metadata(config, args),
+        _instruction_validation_task_metadata(config, args, instruction_type=instruction_type),
         sort_keys=True,
     )
     env["RLVLA_TASK_SUCCESS_ATTRIBUTE"] = "compute_instruction_validation_success"
@@ -975,27 +1024,30 @@ def main() -> int:
         print(f"Record success videos: {bool(args.record_success_videos)}")
         print(f"Validation success distance: {float(args.success_distance):.3f} m")
         print(
-            "Directional displacement threshold: "
+            "Directional validation threshold: "
             f"{float(args.directional_displacement_threshold):.3f} m"
         )
+        print("Move-to-object validation scenes: single target object only")
         print(f"Reuse existing wrapper variants: {bool(args.reuse_existing_wrapper_variants)}")
         print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
 
-    with _temporary_env_vars(_validation_env_vars(config, args)):
-        with _silence_output(bool(args.progress_only)):
-            runtime = _load_policy_runtime(
-                config=config,
-                artifacts=artifacts,
-                args=args,
-                quiet=bool(args.progress_only),
-            )
+    with _silence_output(bool(args.progress_only)):
+        runtime = _load_policy_runtime(
+            config=config,
+            artifacts=artifacts,
+            args=args,
+            quiet=bool(args.progress_only),
+        )
 
-        instruction_summaries: list[InstructionSummary] = []
-        flattened_episode_results: list[EpisodeResult] = []
-        instruction_episodes: dict[str, list[dict[str, Any]]] = {}
-        progress = _progress_bar(total=len(instruction_types) * int(args.episodes_per_instruction))
-        try:
-            for instruction_index, instruction_type in enumerate(instruction_types):
+    instruction_summaries: list[InstructionSummary] = []
+    flattened_episode_results: list[EpisodeResult] = []
+    instruction_episodes: dict[str, list[dict[str, Any]]] = {}
+    progress = _progress_bar(total=len(instruction_types) * int(args.episodes_per_instruction))
+    try:
+        for instruction_index, instruction_type in enumerate(instruction_types):
+            with _temporary_env_vars(
+                _validation_env_vars(config, args, instruction_type=instruction_type)
+            ):
                 summary, episode_results = _run_instruction_validation(
                     instruction_type=instruction_type,
                     instruction_index=instruction_index,
@@ -1008,11 +1060,11 @@ def main() -> int:
                     progress=progress,
                     wrapper_dir=wrapper_dir,
                 )
-                instruction_summaries.append(summary)
-                flattened_episode_results.extend(episode_results)
-                instruction_episodes[instruction_type] = [asdict(result) for result in episode_results]
-        finally:
-            progress.close()
+            instruction_summaries.append(summary)
+            flattened_episode_results.extend(episode_results)
+            instruction_episodes[instruction_type] = [asdict(result) for result in episode_results]
+    finally:
+        progress.close()
 
     instruction_text_summaries = _summarize_instruction_text_results(flattened_episode_results)
 
@@ -1037,6 +1089,7 @@ def main() -> int:
         "record_success_videos": bool(args.record_success_videos),
         "success_distance": float(args.success_distance),
         "directional_displacement_threshold": float(args.directional_displacement_threshold),
+        "move_to_object_single_target_scene": bool("move_to_object" in instruction_types),
         "reuse_existing_wrapper_variants": bool(args.reuse_existing_wrapper_variants),
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
         "instruction_text_summaries": [asdict(summary) for summary in instruction_text_summaries],

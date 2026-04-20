@@ -6,6 +6,7 @@ from pathlib import Path
 
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _default_max_steps,
+    _instruction_validation_task_metadata,
     _parse_instruction_types,
     _resolve_policy_artifacts,
     _summarize_instruction_results,
@@ -253,6 +254,53 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertIn('"directional_success_displacement_threshold": 0.2', env["RLVLA_TASK_METADATA_JSON"])
         self.assertEqual(env["RLVLA_TASK_SUCCESS_ATTRIBUTE"], "compute_instruction_validation_success")
         self.assertIn("rl_instruction_tasks.py", env["RLVLA_TASK_SUCCESS_FILE"])
+
+    def test_move_to_object_validation_metadata_forces_single_target_scenes(self):
+        config = type(
+            "_Config",
+            (),
+            {
+                "project": type("_Project", (), {"env": {}})(),
+                "remote": type("_Remote", (), {"env_vars": {}})(),
+                "task": type(
+                    "_Task",
+                    (),
+                    {
+                        "metadata": {
+                            "target_object_pool": ["ycb_apple", "ycb_pear"],
+                            "distractor_object_pool": ["ycb_plate"],
+                            "min_scene_objects": 1,
+                            "max_scene_objects": 3,
+                        },
+                        "target_objects": ["ycb_apple", "ycb_pear"],
+                        "reward": None,
+                        "success_predicate": None,
+                        "goal_region": {},
+                        "goal_relation": None,
+                        "dense_reward_terms": {},
+                    },
+                )(),
+                "training": type("_Training", (), {"rl": type("_RL", (), {"args": {}})()})(),
+            },
+        )()
+        args = type(
+            "_Args",
+            (),
+            {
+                "success_distance": 0.05,
+                "directional_displacement_threshold": 0.05,
+            },
+        )()
+
+        metadata = _instruction_validation_task_metadata(config, args, instruction_type="move_to_object")
+        env = _validation_env_vars(config, args, instruction_type="move_to_object")
+
+        self.assertEqual(metadata["target_object_pool"], ["ycb_apple", "ycb_pear"])
+        self.assertEqual(metadata["distractor_object_pool"], [])
+        self.assertEqual(metadata["min_scene_objects"], 1)
+        self.assertEqual(metadata["max_scene_objects"], 1)
+        self.assertIn('"distractor_object_pool": []', env["RLVLA_TASK_METADATA_JSON"])
+        self.assertIn('"max_scene_objects": 1', env["RLVLA_TASK_METADATA_JSON"])
 
 
 if __name__ == "__main__":

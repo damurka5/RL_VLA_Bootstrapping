@@ -771,6 +771,8 @@ def compute_instruction_validation_success(
     reward_state: RewardState,
     task_metadata: Optional[dict[str, Any]] = None,
     current_success: bool = False,
+    obj_pos: Optional[np.ndarray] = None,
+    goal_pos: Optional[np.ndarray] = None,
 ) -> tuple[bool, dict[str, float]]:
     ee_arr = np.asarray(ee_pos, dtype=np.float32).reshape(-1)
     start_arr = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
@@ -778,18 +780,23 @@ def compute_instruction_validation_success(
         return bool(current_success), {}
 
     if spec.instruction_type == "move_to_object":
-        xy_tolerance = max(
-            _metadata_float(
-                task_metadata,
-                "move_to_object_xy_tolerance",
-                _metadata_float(task_metadata, "success_distance", 0.02),
-            ),
-            1e-6,
-        )
-        return bool(current_success), {
+        target_source = obj_pos if obj_pos is not None else goal_pos
+        if target_source is None:
+            return bool(current_success), {}
+        target_arr = np.asarray(target_source, dtype=np.float32).reshape(-1)
+        if target_arr.size < 3:
+            return bool(current_success), {}
+
+        distance_threshold = max(_metadata_float(task_metadata, "success_distance", 0.05), 1e-6)
+        distance_xyz = float(np.linalg.norm(target_arr[:3] - ee_arr[:3]))
+        distance_xy = float(np.linalg.norm(target_arr[:2] - ee_arr[:2]))
+        success = bool(distance_xyz <= float(distance_threshold))
+        return success, {
             "validation_success_mode": 2.0,
-            "move_to_object_validation_success": float(bool(current_success)),
-            "move_to_object_validation_xy_tolerance": float(xy_tolerance),
+            "move_to_object_validation_success": float(success),
+            "move_to_object_validation_distance_xyz": distance_xyz,
+            "move_to_object_validation_distance_xy": distance_xy,
+            "move_to_object_validation_distance_threshold": float(distance_threshold),
         }
 
     axis_spec = _DIRECTIONAL_SUCCESS_AXES.get(spec.instruction_type)
@@ -799,20 +806,46 @@ def compute_instruction_validation_success(
         }
 
     axis_idx, axis_sign = axis_spec
-    displacement_threshold = _metadata_float(
+    threshold = _metadata_float(
         task_metadata,
-        "directional_success_displacement_threshold",
-        0.20,
+        "directional_success_center_threshold",
+        _metadata_float(
+            task_metadata,
+            "directional_success_displacement_threshold",
+            0.05,
+        ),
     )
-    raw_displacement = float(ee_arr[axis_idx] - start_arr[axis_idx])
-    signed_displacement = float(axis_sign * raw_displacement)
-    success = bool(signed_displacement >= float(displacement_threshold))
+    if axis_idx in (0, 1):
+        default_goal_center_xy = (0.0, 0.0)
+        raw_center_xy = (
+            task_metadata.get("goal_center_xy", default_goal_center_xy)
+            if isinstance(task_metadata, dict)
+            else default_goal_center_xy
+        )
+        center_xy = np.asarray(raw_center_xy, dtype=np.float32).reshape(-1)
+        if center_xy.size < 2:
+            padded = np.zeros((2,), dtype=np.float32)
+            padded[: center_xy.size] = center_xy
+            center_xy = padded
+        reference_value = float(center_xy[axis_idx])
+    else:
+        reference_value = float(start_arr[axis_idx])
 
-    return success, {
+    raw_displacement = float(ee_arr[axis_idx] - reference_value)
+    signed_displacement = float(axis_sign * raw_displacement)
+    success = bool(signed_displacement >= float(threshold))
+
+    info: dict[str, float] = {
         "validation_success_mode": 1.0,
         "directional_success_axis": float(axis_idx),
         "directional_success_sign": float(axis_sign),
+        "directional_success_reference_value": reference_value,
         "directional_success_raw_displacement": raw_displacement,
         "directional_success_signed_displacement": signed_displacement,
-        "directional_success_threshold": float(displacement_threshold),
+        "directional_success_threshold": float(threshold),
     }
+    if axis_idx in (0, 1):
+        info["directional_success_reference_is_workspace_center"] = 1.0
+    else:
+        info["directional_success_reference_is_workspace_center"] = 0.0
+    return success, info
