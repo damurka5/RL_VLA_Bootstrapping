@@ -1,5 +1,50 @@
 # RL VLA Bootstrapping
 
+## Research Update: PPO -> GRPO Validation On CDPR (April 20, 2026)
+
+We evaluated an OpenVLA-based policy on the cable-driven parallel robot (CDPR) embodiment under a zero-dataset reinforcement-learning pipeline. The model was first trained with PPO for 175 hours on two NVIDIA A40 GPUs, then continued from the PPO checkpoint with GRPO for 170 additional hours on the same two-GPU setup. In total, this report summarizes 345 hours of RL training with no demonstration dataset.
+
+The main result is qualitative as well as quantitative: language-conditioned RL on a new embodiment is already producing non-trivial visuomotor behavior. These runs are therefore more than a speculative proof-of-concept. They are an early empirical indication that RL-only bootstrapping can become a workable methodology for grounding a VLA on a new robot.
+
+### Quantitative Validation Summary
+
+| Instruction | PPO after 175 h | PPO -> GRPO after +170 h | GRPO successes / trials |
+| --- | --- | --- | --- |
+| `move left` | 17% | 52% | 52 / 100 |
+| `move right` | 43% | 52% | 52 / 100 |
+| `move forward` | 62% | 62% | 62 / 100 |
+| `move backward` | 15% | 48% | 48 / 100 |
+| `move to <object>` | not used in PPO stage | 9.7% | 39 / 400 |
+
+For the four directional instructions that were shared across both stages, GRPO continuation either improved performance or preserved the best previously reached result. The largest gains were on `move left` (`+35` percentage points) and `move backward` (`+33` percentage points), while `move forward` stayed at `62%`.
+
+The new `move to <object>` instruction family was introduced only in the GRPO stage and evaluated over eight target objects. Its strict success rate is still low, but the failure mode is informative rather than random: in many rollouts the end effector first moves toward the correct target object and reaches its vicinity, then later becomes unstable, drifts far away, and remains off-target. This is why the scalar success rate underestimates the number of qualitatively good object-conditioned samples.
+
+### Qualitative Evidence
+
+The attached validation videos are central to the research claim because they show that zero-dataset RL is already generating task-relevant behavior in closed loop:
+
+- [`overview_video_2.mp4`](assets/research/grpo_validation/overview_video_2.mp4) and [`ee_camera_video_2.mp4`](assets/research/grpo_validation/ee_camera_video_2.mp4) provide synchronized overview and end-effector camera evidence that the RL-only policy can follow language-conditioned motion objectives.
+- [`overview_video_1.mp4`](assets/research/grpo_validation/overview_video_1.mp4) shows a shortcut behavior similar to the "pushcuts" discussed in [SimpleVLA-RL: Scaling VLA Training via Reinforcement Learning](https://arxiv.org/abs/2509.09674): the policy learns an easier reward-increasing behavior that is not exactly the behavior intended by the instruction.
+
+This qualitative split is important for interpreting early RL results. The videos show that the method is already working behaviorally, while also exposing the reward-design and stability problems that still separate partial competence from robust task completion.
+
+### Object-Conditioned Qualitative Samples
+
+Even with a strict `9.7%` success rate on `move to <object>`, the validation rollouts frequently contained visually correct approach behavior across the full object set:
+
+| Bowl | Plate | Baseball | Mug |
+| --- | --- | --- | --- |
+| ![Move to bowl](assets/research/grpo_validation/move_to_bowl.jpg) | ![Move to plate](assets/research/grpo_validation/move_to_plate.jpg) | ![Move to baseball](assets/research/grpo_validation/move_to_baseball.jpg) | ![Move to mug](assets/research/grpo_validation/move_to_mug.jpg) |
+
+| Cup | Peach | Pear | Apple |
+| --- | --- | --- | --- |
+| ![Move to cup](assets/research/grpo_validation/move_to_cup.jpg) | ![Move to peach](assets/research/grpo_validation/move_to_peach.jpg) | ![Move to pear](assets/research/grpo_validation/move_to_pear.jpg) | ![Move to apple](assets/research/grpo_validation/move_to_apple.jpg) |
+
+Taken together, the current evidence suggests a concrete research direction: bootstrap instruction following with RL alone, use qualitative rollouts to detect shortcut behaviors early, and treat stability near the target as the next major bottleneck rather than evidence that the core methodology does not work.
+
+---
+
 `rl_vla_bootstrapping` is an embodiment-first orchestration framework for building language-conditioned visuomotor training stacks around a new robot without starting from demonstrations.
 
 For remote CDPR PPO runs on OpenVLA-OFT, the recommended config in this repo is `configs/examples/cdpr_openvla_bootstrap_fast.yaml`. It assumes the remote server keeps OpenVLA-OFT at `/root/repo/openvla-oft`:
