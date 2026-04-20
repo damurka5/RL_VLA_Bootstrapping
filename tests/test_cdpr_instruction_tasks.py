@@ -106,7 +106,7 @@ class InstructionTextTests(unittest.TestCase):
         self.assertAlmostEqual(info["directional_success_signed_displacement"], 0.06, places=6)
         self.assertEqual(info["directional_success_reference_is_workspace_center"], 1.0)
 
-    def test_move_to_object_validation_uses_xyz_distance_threshold(self):
+    def test_move_to_object_validation_uses_xy_distance_threshold(self):
         spec = InstructionSpec(
             instruction_type="move_to_object",
             text="move to apple",
@@ -122,7 +122,7 @@ class InstructionTextTests(unittest.TestCase):
 
         success, info = compute_instruction_validation_success(
             spec=spec,
-            ee_pos=np.array([0.01, 0.02, 0.20], dtype=np.float32),
+            ee_pos=np.array([0.01, 0.02, 0.30], dtype=np.float32),
             reward_state=reward_state,
             task_metadata={"success_distance": 0.05},
             current_success=False,
@@ -130,7 +130,8 @@ class InstructionTextTests(unittest.TestCase):
         )
 
         self.assertTrue(success)
-        self.assertLess(info["move_to_object_validation_distance_xyz"], 0.05)
+        self.assertGreater(info["move_to_object_validation_distance_xyz"], 0.05)
+        self.assertLess(info["move_to_object_validation_distance_xy"], 0.05)
         self.assertAlmostEqual(info["move_to_object_validation_distance_threshold"], 0.05, places=7)
 
 
