@@ -7,6 +7,7 @@ from pathlib import Path
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _default_max_steps,
     _instruction_validation_task_metadata,
+    _validation_buckets,
     _parse_instruction_types,
     _resolve_policy_artifacts,
     _summarize_instruction_results,
@@ -301,6 +302,90 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertEqual(metadata["max_scene_objects"], 1)
         self.assertIn('"distractor_object_pool": []', env["RLVLA_TASK_METADATA_JSON"])
         self.assertIn('"max_scene_objects": 1', env["RLVLA_TASK_METADATA_JSON"])
+
+    def test_move_to_object_validation_uses_minimum_episode_budget_per_target(self):
+        config = type(
+            "_Config",
+            (),
+            {
+                "project": type("_Project", (), {"env": {}})(),
+                "remote": type("_Remote", (), {"env_vars": {}})(),
+                "task": type(
+                    "_Task",
+                    (),
+                    {
+                        "metadata": {
+                            "target_object_pool": ["ycb_apple", "ycb_pear", "ycb_peach"],
+                        },
+                        "target_objects": ["ycb_apple", "ycb_pear", "ycb_peach"],
+                        "reward": None,
+                        "success_predicate": None,
+                        "goal_region": {},
+                        "goal_relation": None,
+                        "dense_reward_terms": {},
+                    },
+                )(),
+                "training": type("_Training", (), {"rl": type("_RL", (), {"args": {}})()})(),
+            },
+        )()
+        args = type(
+            "_Args",
+            (),
+            {
+                "episodes_per_instruction": 100,
+                "move_to_object_episodes_per_target": 50,
+                "success_distance": 0.05,
+                "directional_displacement_threshold": 0.05,
+            },
+        )()
+
+        buckets = _validation_buckets(config, args, instruction_type="move_to_object")
+
+        self.assertEqual(len(buckets), 3)
+        self.assertEqual([bucket.target_object for bucket in buckets], ["ycb_apple", "ycb_pear", "ycb_peach"])
+        self.assertTrue(all(bucket.episodes == 50 for bucket in buckets))
+        self.assertTrue(all('"max_scene_objects": 1' in bucket.env_vars["RLVLA_TASK_METADATA_JSON"] for bucket in buckets))
+
+    def test_move_to_object_validation_scales_up_when_base_budget_is_larger(self):
+        config = type(
+            "_Config",
+            (),
+            {
+                "project": type("_Project", (), {"env": {}})(),
+                "remote": type("_Remote", (), {"env_vars": {}})(),
+                "task": type(
+                    "_Task",
+                    (),
+                    {
+                        "metadata": {
+                            "target_object_pool": ["ycb_apple", "ycb_pear"],
+                        },
+                        "target_objects": ["ycb_apple", "ycb_pear"],
+                        "reward": None,
+                        "success_predicate": None,
+                        "goal_region": {},
+                        "goal_relation": None,
+                        "dense_reward_terms": {},
+                    },
+                )(),
+                "training": type("_Training", (), {"rl": type("_RL", (), {"args": {}})()})(),
+            },
+        )()
+        args = type(
+            "_Args",
+            (),
+            {
+                "episodes_per_instruction": 130,
+                "move_to_object_episodes_per_target": 50,
+                "success_distance": 0.05,
+                "directional_displacement_threshold": 0.05,
+            },
+        )()
+
+        buckets = _validation_buckets(config, args, instruction_type="move_to_object")
+
+        self.assertEqual(len(buckets), 2)
+        self.assertTrue(all(bucket.episodes == 65 for bucket in buckets))
 
 
 if __name__ == "__main__":

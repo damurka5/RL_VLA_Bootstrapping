@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 import sys
 from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
@@ -93,6 +94,15 @@ class InstructionTextSummary:
     success_rate: float
     mean_reward: float
     mean_steps: float
+
+
+@dataclass(frozen=True)
+class ValidationBucket:
+    instruction_type: str
+    target_object: str | None
+    episodes: int
+    env_vars: dict[str, str]
+    log_label: str
 
 
 def _rl_args(config: Any) -> dict[str, Any]:
@@ -242,6 +252,16 @@ def _build_parser() -> argparse.ArgumentParser:
             "Validation threshold in meters for directional commands. "
             "Left/right/forward/backward use signed distance from the workspace center; "
             "up/down use signed displacement from the episode start."
+        ),
+    )
+    parser.add_argument(
+        "--move-to-object-episodes-per-target",
+        type=int,
+        default=50,
+        help=(
+            "Minimum validation episodes to run for each target object when validating "
+            "`move to <object>`. The validator will increase the total episode budget "
+            "for that instruction type as needed."
         ),
     )
     parser.add_argument(
@@ -475,6 +495,7 @@ def _instruction_validation_task_metadata(
     args: argparse.Namespace,
     *,
     instruction_type: str | None = None,
+    target_object: str | None = None,
 ) -> dict[str, Any]:
     metadata = _validation_task_metadata(config, args)
     if instruction_type != "move_to_object":
@@ -486,6 +507,8 @@ def _instruction_validation_task_metadata(
         target_pool = _dedupe_object_names(_allowed_objects_from_config(config))
     if target_pool:
         metadata["target_object_pool"] = target_pool
+    if target_object:
+        metadata["target_object_pool"] = [str(target_object)]
     metadata["distractor_object_pool"] = []
     metadata["min_scene_objects"] = 1
     metadata["max_scene_objects"] = 1
@@ -497,14 +520,20 @@ def _validation_env_vars(
     args: argparse.Namespace,
     *,
     instruction_type: str | None = None,
+    task_metadata_override: dict[str, Any] | None = None,
 ) -> dict[str, str]:
     rl_args = _rl_args(config)
     env = {str(k): str(v) for k, v in getattr(config.project, "env", {}).items()}
     env.update({str(k): str(v) for k, v in getattr(config.remote, "env_vars", {}).items()})
     env.update(_task_hook_env(config))
     env.update(_extract_cdpr_env_overrides(dict(rl_args)))
+    metadata = (
+        dict(task_metadata_override)
+        if task_metadata_override is not None
+        else _instruction_validation_task_metadata(config, args, instruction_type=instruction_type)
+    )
     env["RLVLA_TASK_METADATA_JSON"] = json.dumps(
-        _instruction_validation_task_metadata(config, args, instruction_type=instruction_type),
+        metadata,
         sort_keys=True,
     )
     env["RLVLA_TASK_SUCCESS_ATTRIBUTE"] = "compute_instruction_validation_success"
@@ -513,6 +542,82 @@ def _validation_env_vars(
     ).as_posix()
     env.pop("RLVLA_TASK_SUCCESS_MODULE", None)
     return env
+
+
+def _move_to_object_validation_targets(config: Any, args: argparse.Namespace) -> tuple[str, ...]:
+    metadata = _instruction_validation_task_metadata(config, args, instruction_type="move_to_object")
+    targets = _dedupe_object_names(metadata.get("target_object_pool"))
+    if targets:
+        return tuple(targets)
+    return tuple(_dedupe_object_names(_allowed_objects_from_config(config)))
+
+
+def _move_to_object_validation_episodes_per_target(
+    config: Any,
+    args: argparse.Namespace,
+) -> tuple[tuple[str, ...], int]:
+    targets = _move_to_object_validation_targets(config, args)
+    if not targets:
+        return (), int(args.episodes_per_instruction)
+
+    base_total = max(1, int(args.episodes_per_instruction))
+    minimum_per_target = max(1, int(args.move_to_object_episodes_per_target))
+    episodes_per_target = max(minimum_per_target, int(math.ceil(base_total / len(targets))))
+    return targets, episodes_per_target
+
+
+def _validation_buckets(
+    config: Any,
+    args: argparse.Namespace,
+    *,
+    instruction_type: str,
+) -> list[ValidationBucket]:
+    if instruction_type != "move_to_object":
+        return [
+            ValidationBucket(
+                instruction_type=instruction_type,
+                target_object=None,
+                episodes=max(1, int(args.episodes_per_instruction)),
+                env_vars=_validation_env_vars(config, args, instruction_type=instruction_type),
+                log_label=instruction_type,
+            )
+        ]
+
+    targets, episodes_per_target = _move_to_object_validation_episodes_per_target(config, args)
+    if not targets:
+        return [
+            ValidationBucket(
+                instruction_type=instruction_type,
+                target_object=None,
+                episodes=max(1, int(args.episodes_per_instruction)),
+                env_vars=_validation_env_vars(config, args, instruction_type=instruction_type),
+                log_label=instruction_type,
+            )
+        ]
+
+    buckets: list[ValidationBucket] = []
+    for target_object in targets:
+        metadata = _instruction_validation_task_metadata(
+            config,
+            args,
+            instruction_type=instruction_type,
+            target_object=target_object,
+        )
+        buckets.append(
+            ValidationBucket(
+                instruction_type=instruction_type,
+                target_object=target_object,
+                episodes=episodes_per_target,
+                env_vars=_validation_env_vars(
+                    config,
+                    args,
+                    instruction_type=instruction_type,
+                    task_metadata_override=metadata,
+                ),
+                log_label=f"{instruction_type}:{target_object}",
+            )
+        )
+    return buckets
 
 
 def _resolve_wrapper_dir(config: Any, args: argparse.Namespace) -> Path | None:
@@ -865,6 +970,9 @@ def _run_instruction_validation(
     base_seed: int | None,
     progress,
     wrapper_dir: Path | None,
+    episodes_to_run: int,
+    episode_index_offset: int = 0,
+    log_label: str | None = None,
 ) -> tuple[InstructionSummary, list[EpisodeResult]]:
     should_capture = bool(args.record_success_videos)
     env = _build_validation_env(
@@ -884,7 +992,9 @@ def _run_instruction_validation(
     successes = 0
 
     try:
-        for episode_index in range(int(args.episodes_per_instruction)):
+        effective_log_label = str(log_label or instruction_type)
+        for episode_offset in range(int(episodes_to_run)):
+            episode_index = int(episode_index_offset) + int(episode_offset)
             env.capture_frames = bool(args.record_success_videos and video_path is None)
             seed = _episode_seed(base_seed, instruction_index, episode_index)
             with _silence_output(bool(args.progress_only)):
@@ -961,17 +1071,17 @@ def _run_instruction_validation(
                 clear_sim_recording_buffers(env.sim)
 
             if progress is not None:
-                progress.set_description_str(instruction_type)
-                progress.set_postfix_str(f"success={successes}/{episode_index + 1}")
+                progress.set_description_str(effective_log_label)
+                progress.set_postfix_str(f"success={successes}/{episode_offset + 1}")
                 progress.update(1)
             elif (
                 episode_result.success
-                or episode_index == 0
-                or (episode_index + 1) % max(1, int(args.log_every_episode)) == 0
-                or episode_index == (int(args.episodes_per_instruction) - 1)
+                or episode_offset == 0
+                or (episode_offset + 1) % max(1, int(args.log_every_episode)) == 0
+                or episode_offset == (int(episodes_to_run) - 1)
             ):
                 print(
-                    f"[{instruction_type}] episode={episode_index + 1:03d}/{int(args.episodes_per_instruction):03d} "
+                    f"[{effective_log_label}] episode={episode_offset + 1:03d}/{int(episodes_to_run):03d} "
                     f"success={episode_result.success} steps={episode_result.steps} "
                     f"reward={episode_result.reward_total:.4f} scene={episode_result.scene}"
                 )
@@ -1011,6 +1121,15 @@ def main() -> int:
     base_seed = None if args.seed is None or int(args.seed) < 0 else int(args.seed)
     instruction_types = _resolve_instruction_types(config, args)
     wrapper_dir = _resolve_wrapper_dir(config, args)
+    instruction_buckets = {
+        instruction_type: _validation_buckets(config, args, instruction_type=instruction_type)
+        for instruction_type in instruction_types
+    }
+    total_validation_episodes = sum(
+        bucket.episodes
+        for instruction_type in instruction_types
+        for bucket in instruction_buckets[instruction_type]
+    )
 
     if not args.progress_only:
         print(f"Run directory: {run_dir}")
@@ -1027,7 +1146,15 @@ def main() -> int:
             "Directional validation threshold: "
             f"{float(args.directional_displacement_threshold):.3f} m"
         )
-        print("Move-to-object validation scenes: single target object only")
+        print(f"Move-to-object minimum episodes per target: {int(args.move_to_object_episodes_per_target)}")
+        if "move_to_object" in instruction_buckets:
+            move_to_object_buckets = instruction_buckets["move_to_object"]
+            print("Move-to-object validation scenes: single target object only")
+            print(f"Move-to-object target objects: {len(move_to_object_buckets)}")
+            print(
+                "Move-to-object effective total episodes: "
+                f"{sum(bucket.episodes for bucket in move_to_object_buckets)}"
+            )
         print(f"Reuse existing wrapper variants: {bool(args.reuse_existing_wrapper_variants)}")
         print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
 
@@ -1042,27 +1169,41 @@ def main() -> int:
     instruction_summaries: list[InstructionSummary] = []
     flattened_episode_results: list[EpisodeResult] = []
     instruction_episodes: dict[str, list[dict[str, Any]]] = {}
-    progress = _progress_bar(total=len(instruction_types) * int(args.episodes_per_instruction))
+    progress = _progress_bar(total=total_validation_episodes)
     try:
         for instruction_index, instruction_type in enumerate(instruction_types):
-            with _temporary_env_vars(
-                _validation_env_vars(config, args, instruction_type=instruction_type)
-            ):
-                summary, episode_results = _run_instruction_validation(
-                    instruction_type=instruction_type,
-                    instruction_index=instruction_index,
-                    config=config,
-                    runtime=runtime,
-                    args=args,
-                    videos_dir=videos_dir,
-                    max_steps=max_steps,
-                    base_seed=base_seed,
-                    progress=progress,
-                    wrapper_dir=wrapper_dir,
-                )
+            instruction_episode_results: list[EpisodeResult] = []
+            video_path: str | None = None
+            episode_index_offset = 0
+            for bucket in instruction_buckets[instruction_type]:
+                with _temporary_env_vars(bucket.env_vars):
+                    bucket_summary, episode_results = _run_instruction_validation(
+                        instruction_type=instruction_type,
+                        instruction_index=instruction_index,
+                        config=config,
+                        runtime=runtime,
+                        args=args,
+                        videos_dir=videos_dir,
+                        max_steps=max_steps,
+                        base_seed=base_seed,
+                        progress=progress,
+                        wrapper_dir=wrapper_dir,
+                        episodes_to_run=int(bucket.episodes),
+                        episode_index_offset=int(episode_index_offset),
+                        log_label=bucket.log_label,
+                    )
+                instruction_episode_results.extend(episode_results)
+                episode_index_offset += int(bucket.episodes)
+                if video_path is None:
+                    video_path = bucket_summary.video_path
+            summary = _summarize_instruction_results(
+                instruction_type=instruction_type,
+                episode_results=instruction_episode_results,
+                video_path=video_path,
+            )
             instruction_summaries.append(summary)
-            flattened_episode_results.extend(episode_results)
-            instruction_episodes[instruction_type] = [asdict(result) for result in episode_results]
+            flattened_episode_results.extend(instruction_episode_results)
+            instruction_episodes[instruction_type] = [asdict(result) for result in instruction_episode_results]
     finally:
         progress.close()
 
@@ -1079,6 +1220,7 @@ def main() -> int:
         "scene": args.scene,
         "wrapper_dir": None if wrapper_dir is None else wrapper_dir.as_posix(),
         "episodes_per_instruction": int(args.episodes_per_instruction),
+        "total_validation_episodes": int(total_validation_episodes),
         "max_steps": int(max_steps),
         "chunk_length": int(runtime["chunk_length"]),
         "replan_every": int(runtime["replan_every"] or runtime["chunk_length"]),
@@ -1089,6 +1231,7 @@ def main() -> int:
         "record_success_videos": bool(args.record_success_videos),
         "success_distance": float(args.success_distance),
         "directional_displacement_threshold": float(args.directional_displacement_threshold),
+        "move_to_object_episodes_per_target": int(args.move_to_object_episodes_per_target),
         "move_to_object_single_target_scene": bool("move_to_object" in instruction_types),
         "reuse_existing_wrapper_variants": bool(args.reuse_existing_wrapper_variants),
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
