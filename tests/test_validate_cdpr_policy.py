@@ -300,8 +300,10 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertEqual(metadata["distractor_object_pool"], [])
         self.assertEqual(metadata["min_scene_objects"], 1)
         self.assertEqual(metadata["max_scene_objects"], 1)
+        self.assertAlmostEqual(metadata["move_to_object_validation_distance_threshold"], 0.10, places=7)
         self.assertIn('"distractor_object_pool": []', env["RLVLA_TASK_METADATA_JSON"])
         self.assertIn('"max_scene_objects": 1', env["RLVLA_TASK_METADATA_JSON"])
+        self.assertIn('"move_to_object_validation_distance_threshold": 0.1', env["RLVLA_TASK_METADATA_JSON"])
 
     def test_move_to_object_validation_uses_minimum_episode_budget_per_target(self):
         config = type(

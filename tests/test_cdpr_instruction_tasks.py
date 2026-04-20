@@ -124,15 +124,16 @@ class InstructionTextTests(unittest.TestCase):
             spec=spec,
             ee_pos=np.array([0.01, 0.02, 0.30], dtype=np.float32),
             reward_state=reward_state,
-            task_metadata={"success_distance": 0.05},
+            task_metadata={"move_to_object_validation_distance_threshold": 0.10},
             current_success=False,
-            obj_pos=np.array([0.03, 0.02, 0.16], dtype=np.float32),
+            obj_pos=np.array([0.09, 0.02, 0.16], dtype=np.float32),
         )
 
         self.assertTrue(success)
-        self.assertGreater(info["move_to_object_validation_distance_xyz"], 0.05)
-        self.assertLess(info["move_to_object_validation_distance_xy"], 0.05)
-        self.assertAlmostEqual(info["move_to_object_validation_distance_threshold"], 0.05, places=7)
+        self.assertGreater(info["move_to_object_validation_distance_xyz"], 0.10)
+        self.assertGreater(info["move_to_object_validation_distance_xy"], 0.05)
+        self.assertLess(info["move_to_object_validation_distance_xy"], 0.10)
+        self.assertAlmostEqual(info["move_to_object_validation_distance_threshold"], 0.10, places=7)
 
 
 if __name__ == "__main__":

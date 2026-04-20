@@ -787,7 +787,14 @@ def compute_instruction_validation_success(
         if target_arr.size < 3:
             return bool(current_success), {}
 
-        distance_threshold = max(_metadata_float(task_metadata, "success_distance", 0.05), 1e-6)
+        distance_threshold = max(
+            _metadata_float(
+                task_metadata,
+                "move_to_object_validation_distance_threshold",
+                _metadata_float(task_metadata, "success_distance", 0.05),
+            ),
+            1e-6,
+        )
         distance_xyz = float(np.linalg.norm(target_arr[:3] - ee_arr[:3]))
         distance_xy = float(np.linalg.norm(target_arr[:2] - ee_arr[:2]))
         success = bool(distance_xy <= float(distance_threshold))

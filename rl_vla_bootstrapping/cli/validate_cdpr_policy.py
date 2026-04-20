@@ -245,6 +245,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Validation success tolerance in meters for reaching the target point.",
     )
     parser.add_argument(
+        "--move-to-object-success-distance",
+        type=float,
+        default=0.10,
+        help="Validation XY success tolerance in meters for `move to <object>`.",
+    )
+    parser.add_argument(
         "--directional-displacement-threshold",
         type=float,
         default=0.05,
@@ -509,6 +515,9 @@ def _instruction_validation_task_metadata(
         metadata["target_object_pool"] = target_pool
     if target_object:
         metadata["target_object_pool"] = [str(target_object)]
+    metadata["move_to_object_validation_distance_threshold"] = float(
+        getattr(args, "move_to_object_success_distance", 0.10)
+    )
     metadata["distractor_object_pool"] = []
     metadata["min_scene_objects"] = 1
     metadata["max_scene_objects"] = 1
@@ -1143,6 +1152,10 @@ def main() -> int:
         print(f"Record success videos: {bool(args.record_success_videos)}")
         print(f"Validation success distance: {float(args.success_distance):.3f} m")
         print(
+            "Move-to-object validation XY threshold: "
+            f"{float(args.move_to_object_success_distance):.3f} m"
+        )
+        print(
             "Directional validation threshold: "
             f"{float(args.directional_displacement_threshold):.3f} m"
         )
@@ -1230,6 +1243,7 @@ def main() -> int:
         "seed": base_seed,
         "record_success_videos": bool(args.record_success_videos),
         "success_distance": float(args.success_distance),
+        "move_to_object_success_distance": float(args.move_to_object_success_distance),
         "directional_displacement_threshold": float(args.directional_displacement_threshold),
         "move_to_object_episodes_per_target": int(args.move_to_object_episodes_per_target),
         "move_to_object_single_target_scene": bool("move_to_object" in instruction_types),
