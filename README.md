@@ -22,10 +22,17 @@ The new `move to <object>` instruction family was introduced only in the GRPO st
 
 ### Qualitative Evidence
 
-The attached validation videos are central to the research claim because they show that zero-dataset RL is already generating task-relevant behavior in closed loop:
+The validation videos are central to the research claim because they show that zero-dataset RL is already generating task-relevant behavior in closed loop. For quick inspection, the report now includes inline GIF previews generated from the original MP4 files:
 
-- [`overview_video_2.mp4`](assets/research/grpo_validation/overview_video_2.mp4) and [`ee_camera_video_2.mp4`](assets/research/grpo_validation/ee_camera_video_2.mp4) provide synchronized overview and end-effector camera evidence that the RL-only policy can follow language-conditioned motion objectives.
-- [`overview_video_1.mp4`](assets/research/grpo_validation/overview_video_1.mp4) shows a shortcut behavior similar to the "pushcuts" discussed in [SimpleVLA-RL: Scaling VLA Training via Reinforcement Learning](https://arxiv.org/abs/2509.09674): the policy learns an easier reward-increasing behavior that is not exactly the behavior intended by the instruction.
+| Overview camera | End-effector camera |
+| --- | --- |
+| ![Overview validation GIF](assets/research/grpo_validation/overview_video_2.gif) | ![End-effector validation GIF](assets/research/grpo_validation/ee_camera_video_2.gif) |
+
+The synchronized pair above corresponds to [`overview_video_2.mp4`](assets/research/grpo_validation/overview_video_2.mp4) and [`ee_camera_video_2.mp4`](assets/research/grpo_validation/ee_camera_video_2.mp4), and provides overview plus wrist-camera evidence that the RL-only policy can follow language-conditioned motion objectives.
+
+![Pushcut shortcut GIF](assets/research/grpo_validation/overview_video_1.gif)
+
+The clip above corresponds to [`overview_video_1.mp4`](assets/research/grpo_validation/overview_video_1.mp4) and shows a shortcut behavior similar to the "pushcuts" discussed in [SimpleVLA-RL: Scaling VLA Training via Reinforcement Learning](https://arxiv.org/abs/2509.09674): the policy learns an easier reward-increasing behavior that is not exactly the behavior intended by the instruction.
 
 This qualitative split is important for interpreting early RL results. The videos show that the method is already working behaviorally, while also exposing the reward-design and stability problems that still separate partial competence from robust task completion.
 
