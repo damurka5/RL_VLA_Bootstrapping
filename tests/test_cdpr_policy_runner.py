@@ -84,6 +84,7 @@ class PolicyRunnerConfigTests(unittest.TestCase):
         spec = _control_spec_from_config(config, hold_steps=None)
 
         self.assertAlmostEqual(spec.action_step_xyz, 0.02, places=7)
+        self.assertAlmostEqual(spec.action_step_gripper, 0.05, places=7)
 
     def test_predict_normalized_action_chunk_uses_action_head_path(self):
         try:

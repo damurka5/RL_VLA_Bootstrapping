@@ -193,6 +193,8 @@ def _extract_cdpr_env_overrides(injected: dict[str, Any]) -> dict[str, str]:
         env["RLVLA_CDPR_EE_START_Z"] = str(float(injected.pop("ee_start_z")))
     if "record_trajectory" in injected:
         env["RLVLA_CDPR_RECORD_TRAJECTORY"] = "1" if bool(injected.pop("record_trajectory")) else "0"
+    if "action_step_gripper" in injected:
+        env["RLVLA_CDPR_ACTION_STEP_GRIPPER"] = str(float(injected["action_step_gripper"]))
     return env
 
 
@@ -242,6 +244,9 @@ def build_openvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     yaw_step = config.embodiment.action_adapter.controller_scales.get("yaw")
     if yaw_step is not None and "action_step_yaw" not in injected:
         injected["action_step_yaw"] = float(yaw_step)
+    gripper_step = config.embodiment.action_adapter.controller_scales.get("gripper")
+    if gripper_step is not None and "action_step_gripper" not in injected:
+        injected["action_step_gripper"] = float(gripper_step)
     if "num_images_in_input" not in injected:
         injected["num_images_in_input"] = config.policy.num_images_in_input
 

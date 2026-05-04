@@ -699,6 +699,7 @@ def _build_validation_env(
         max_steps=int(max_steps),
         action_step_xyz=float(control_spec.action_step_xyz),
         action_step_yaw=float(control_spec.action_step_yaw),
+        action_step_gripper=float(control_spec.action_step_gripper),
         hold_steps=int(control_spec.hold_steps),
         lock_non_commanded_axes=rl_args.get("lock_non_commanded_axes"),
         lock_non_commanded_axes_threshold=rl_args.get("lock_non_commanded_axes_threshold"),

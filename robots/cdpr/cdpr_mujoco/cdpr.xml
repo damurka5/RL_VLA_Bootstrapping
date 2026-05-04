@@ -208,7 +208,8 @@
     <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
     <!-- Tool yaw and gripper -->
     <position name="act_ee_yaw" joint="ee_yaw" kp="30" ctrlrange="-180 180"/>
-    <position name="act_gripper" joint="finger_l" kp="300" ctrlrange="0 0.03"/>
+    <!-- Normalized gripper target: ctrl=0 is closed, ctrl=1 maps to 0.03 m finger travel. -->
+    <position name="act_gripper" joint="finger_l" kp="0.27" gear="33.3333333333" ctrlrange="0 1"/>
   </actuator>
 
 

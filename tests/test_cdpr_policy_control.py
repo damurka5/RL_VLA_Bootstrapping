@@ -16,7 +16,7 @@ class _FakeSim:
         self.ee = np.array([0.0, 0.0, 0.30], dtype=np.float32)
         self.target = self.ee.copy()
         self.yaw = 0.10
-        self.gripper = 0.03
+        self.gripper = 1.0
         self.capture_history: list[bool] = []
         self.closed = 0
         self.opened = 0
@@ -32,6 +32,12 @@ class _FakeSim:
 
     def set_yaw(self, yaw):
         self.yaw = float(yaw)
+
+    def set_gripper(self, position):
+        self.gripper = float(np.clip(position, 0.0, 1.0))
+
+    def get_gripper_target(self):
+        return float(self.gripper)
 
     def close_gripper(self):
         self.closed += 1
@@ -61,7 +67,7 @@ class PolicyControlTests(unittest.TestCase):
 
         result = apply_normalized_cdpr_action(
             sim,
-            np.array([1.0, -1.0, 0.5, 1.0, 0.3], dtype=np.float32),
+            np.array([1.0, -1.0, 0.5, 1.0, -1.0], dtype=np.float32),
             spec,
             ee_min_z=0.12,
             capture_last_frame=True,
@@ -69,7 +75,9 @@ class PolicyControlTests(unittest.TestCase):
 
         np.testing.assert_allclose(result["target_xyz"], np.array([0.006, -0.006, 0.303], dtype=np.float32))
         self.assertAlmostEqual(result["target_yaw"], 0.18, places=6)
-        self.assertEqual(sim.closed, 1)
+        self.assertAlmostEqual(result["gripper_target"], 0.95, places=6)
+        self.assertAlmostEqual(sim.gripper, 0.95, places=6)
+        self.assertEqual(sim.closed, 0)
         self.assertEqual(sim.opened, 0)
         self.assertEqual(result["sim_steps"], 5)
         self.assertEqual(sim.capture_history, [False, False, False, False, True])
@@ -93,7 +101,8 @@ class PolicyControlTests(unittest.TestCase):
         )
 
         np.testing.assert_allclose(result["target_xyz"], np.array([0.8, 0.8, 0.12], dtype=np.float32))
-        self.assertEqual(sim.opened, 1)
+        self.assertAlmostEqual(result["gripper_target"], 0.975, places=6)
+        self.assertEqual(sim.opened, 0)
         self.assertEqual(sim.capture_history, [False])
 
     def test_apply_normalized_action_can_capture_all_substeps(self):

@@ -82,6 +82,7 @@ CDPR_EE_START_X_BOUNDS_ENV = "RLVLA_CDPR_EE_START_X_BOUNDS"
 CDPR_EE_START_Y_BOUNDS_ENV = "RLVLA_CDPR_EE_START_Y_BOUNDS"
 CDPR_EE_START_Z_ENV = "RLVLA_CDPR_EE_START_Z"
 CDPR_RECORD_TRAJECTORY_ENV = "RLVLA_CDPR_RECORD_TRAJECTORY"
+CDPR_ACTION_STEP_GRIPPER_ENV = "RLVLA_CDPR_ACTION_STEP_GRIPPER"
 DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
 DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
@@ -1002,7 +1003,8 @@ class CDPRLanguageRLEnv(_EnvBase):
       - Box(5): [dx, dy, dz, dyaw, gripper_cmd], each in [-1, 1]
       - dx/dy/dz are delta end-effector commands scaled by action_step_xyz.
       - dyaw is scaled by action_step_yaw.
-      - gripper_cmd > +0.2 closes gripper; < -0.2 opens gripper.
+      - gripper_cmd is a delta applied to normalized gripper target 0..1.
+        Positive values open, negative values close, scaled by action_step_gripper.
 
     Observation space:
       - ee_position: (3,)
@@ -1022,6 +1024,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         max_objects: int = 8,
         action_step_xyz: float = 0.02,
         action_step_yaw: float = 0.25,
+        action_step_gripper: float | None = None,
         hold_steps: int = 0,
         lock_non_commanded_axes: bool | None = None,
         lock_non_commanded_axes_threshold: float | None = None,
@@ -1073,6 +1076,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.max_objects = int(max_objects)
         self.action_step_xyz = float(action_step_xyz)
         self.action_step_yaw = float(action_step_yaw)
+        if action_step_gripper is None:
+            action_step_gripper = _load_float_env(CDPR_ACTION_STEP_GRIPPER_ENV, default=0.05)
+        self.action_step_gripper = max(0.0, float(action_step_gripper))
         self.hold_steps = max(0, int(hold_steps))
         if lock_non_commanded_axes is None:
             lock_non_commanded_axes = _load_bool_env(CDPR_LOCK_NON_COMMANDED_AXES_ENV, default=False)
@@ -2044,11 +2050,33 @@ class CDPRLanguageRLEnv(_EnvBase):
             return opening if np.isfinite(opening) else None
         return None
 
+    def _get_gripper_target(self) -> float:
+        if hasattr(self.sim, "get_gripper_target"):
+            try:
+                target = float(self.sim.get_gripper_target())
+                if np.isfinite(target):
+                    return float(np.clip(target, 0.0, 1.0))
+            except Exception:
+                pass
+        opening = self._get_gripper_opening()
+        if opening is not None and np.isfinite(opening):
+            return float(np.clip(opening, 0.0, 1.0))
+        return 1.0
+
+    def _set_gripper_target(self, target_01: float) -> None:
+        target = float(np.clip(target_01, 0.0, 1.0))
+        if hasattr(self.sim, "set_gripper"):
+            self.sim.set_gripper(target)
+        elif target <= 0.0 and hasattr(self.sim, "close_gripper"):
+            self.sim.close_gripper()
+        elif target >= 1.0 and hasattr(self.sim, "open_gripper"):
+            self.sim.open_gripper()
+
     def _is_gripper_closed(self, opening: float | None) -> bool:
         if opening is None or not np.isfinite(opening):
             return bool(self._reward_state.gripper_closed) if self._reward_state is not None else False
         grip_min = float(getattr(self.sim, "gripper_min", 0.0))
-        grip_max = float(getattr(self.sim, "gripper_max", 0.03))
+        grip_max = float(getattr(self.sim, "gripper_max", 1.0))
         threshold = grip_min + 0.35 * max(grip_max - grip_min, 1e-6)
         return bool(float(opening) <= threshold)
 
@@ -2180,10 +2208,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                 pass
 
         self._last_gripper_cmd = float(action_arr[4])
-        if self._last_gripper_cmd >= 0.2 and hasattr(self.sim, "close_gripper"):
-            self.sim.close_gripper()
-        elif self._last_gripper_cmd <= -0.2 and hasattr(self.sim, "open_gripper"):
-            self.sim.open_gripper()
+        gripper_target = self._get_gripper_target() + self._last_gripper_cmd * float(self.action_step_gripper)
+        self._set_gripper_target(gripper_target)
 
         total_sim_steps = 1 + int(self.hold_steps)
         for sub_idx in range(total_sim_steps):
@@ -2238,6 +2264,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             "dense_reward_terms": dict(self._dense_reward_terms),
             "gripper_command": float(self._last_gripper_cmd),
             "gripper_opening": float(self._get_gripper_opening() or 0.0),
+            "gripper_target": float(self._get_gripper_target()),
             "desk_texture": self._desk_texture_name,
             "wrapper_xml": str(self._current_wrapper_xml) if self._current_wrapper_xml else "",
             "ee_start": [float(x) for x in self._episode_ee_start.tolist()],
@@ -2253,4 +2280,5 @@ class CDPRLanguageRLEnv(_EnvBase):
                 float(self.ee_start_z) if self.ee_start_z is not None else float("nan")
             ),
             "record_trajectory": bool(self.record_trajectory),
+            "action_step_gripper": float(self.action_step_gripper),
         }

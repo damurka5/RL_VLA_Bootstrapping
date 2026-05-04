@@ -88,13 +88,13 @@ embodiment:
       y: 0.015
       z: 0.015
       yaw: 0.08
-      gripper: 1.0
+      gripper: 0.05
     controller_limits:
       x: [-0.8, 0.8]
       y: [-0.8, 0.8]
       z: [0.08, 1.2]
       yaw: [-3.141592653589793, 3.141592653589793]
-      gripper: [0.0, 0.03]
+      gripper: [0.0, 1.0]
     open_gripper_threshold: -0.2
     close_gripper_threshold: 0.2
 
@@ -198,6 +198,7 @@ training:
       gradient_checkpointing: true
       action_step_xyz: 0.015
       action_step_yaw: 0.08
+      action_step_gripper: 0.05
       hold_steps: 10
       lock_non_commanded_axes: true
       lock_non_commanded_axes_threshold: 0.05

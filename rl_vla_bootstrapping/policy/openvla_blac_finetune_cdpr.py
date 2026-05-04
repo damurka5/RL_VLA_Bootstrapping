@@ -342,6 +342,7 @@ def parse_args(argv: Sequence[str] | None = None) -> tuple[argparse.Namespace, l
     parser.add_argument("--max_objects", type=int, default=8)
     parser.add_argument("--action_step_xyz", type=float, default=0.02)
     parser.add_argument("--action_step_yaw", type=float, default=0.25)
+    parser.add_argument("--action_step_gripper", type=float, default=0.05)
     parser.add_argument("--hold_steps", type=int, default=0)
     _bool_arg(parser, "lock_non_commanded_axes", default=False, help_text="Forwarded to the CDPR env.")
     parser.add_argument("--lock_non_commanded_axes_threshold", type=float, default=0.05)
@@ -397,6 +398,7 @@ def _build_env(args: argparse.Namespace):
         max_objects=args.max_objects,
         action_step_xyz=args.action_step_xyz,
         action_step_yaw=args.action_step_yaw,
+        action_step_gripper=args.action_step_gripper,
         hold_steps=args.hold_steps,
         lock_non_commanded_axes=args.lock_non_commanded_axes,
         lock_non_commanded_axes_threshold=args.lock_non_commanded_axes_threshold,

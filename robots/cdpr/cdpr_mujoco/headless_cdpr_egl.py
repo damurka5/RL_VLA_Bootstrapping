@@ -165,7 +165,12 @@ class HeadlessCDPRSimulation:
         self.controller = HeadlessCDPRController(self.frame_points)
         self.target_pos = np.array([0, 0, 0.40], dtype=float)
         self.gripper_min = 0.0
-        self.gripper_max = 0.03
+        self.gripper_max = 1.0
+        self.gripper_joint_min = 0.0
+        self.gripper_joint_max = 0.03
+        self._gripper_ctrl_min = 0.0
+        self._gripper_ctrl_max = 1.0
+        self._gripper_ctrl_is_normalized = True
         self.yaw_min = -np.pi
         self.yaw_max = np.pi
         self.jnt_finger_l_qadr = None
@@ -227,17 +232,29 @@ class HeadlessCDPRSimulation:
             self.yaw_min = float(-np.pi)
             self.yaw_max = float(np.pi)
 
-        # Read gripper limits from the active model so wrappers and base XML stay consistent.
-        if self.act_gripper != -1 and bool(self.model.actuator_ctrllimited[self.act_gripper]):
-            g_lo, g_hi = self.model.actuator_ctrlrange[self.act_gripper]
-        elif self.jnt_finger_l != -1 and bool(self.model.jnt_limited[self.jnt_finger_l]):
-            g_lo, g_hi = self.model.jnt_range[self.jnt_finger_l]
+        # Public gripper commands are normalized: 0.0 is closed, 1.0 is fully open.
+        # The physical slide joint still travels in meters, and older generated wrappers
+        # may still use meter-valued actuator controls. Detect both forms here.
+        if self.jnt_finger_l != -1 and bool(self.model.jnt_limited[self.jnt_finger_l]):
+            q_lo, q_hi = self.model.jnt_range[self.jnt_finger_l]
         else:
-            g_lo, g_hi = 0.0, 0.03
-        self.gripper_min = float(min(g_lo, g_hi))
-        self.gripper_max = float(max(g_lo, g_hi))
-        if self.gripper_max <= self.gripper_min:
-            self.gripper_min, self.gripper_max = 0.0, 0.03
+            q_lo, q_hi = 0.0, 0.03
+        self.gripper_joint_min = float(min(q_lo, q_hi))
+        self.gripper_joint_max = float(max(q_lo, q_hi))
+        if self.gripper_joint_max <= self.gripper_joint_min:
+            self.gripper_joint_min, self.gripper_joint_max = 0.0, 0.03
+
+        if self.act_gripper != -1 and bool(self.model.actuator_ctrllimited[self.act_gripper]):
+            c_lo, c_hi = self.model.actuator_ctrlrange[self.act_gripper]
+        else:
+            c_lo, c_hi = 0.0, 1.0
+        self._gripper_ctrl_min = float(min(c_lo, c_hi))
+        self._gripper_ctrl_max = float(max(c_lo, c_hi))
+        if self._gripper_ctrl_max <= self._gripper_ctrl_min:
+            self._gripper_ctrl_min, self._gripper_ctrl_max = 0.0, 1.0
+        self._gripper_ctrl_is_normalized = (self._gripper_ctrl_max - self._gripper_ctrl_min) > 0.5
+        self.gripper_min = 0.0
+        self.gripper_max = 1.0
 
         # Target object (body + geom). If the geom is unnamed, we’ll find it by body.
         # self.body_target = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, "target_object")
@@ -541,18 +558,51 @@ class HeadlessCDPRSimulation:
         return np.linalg.norm(ee_pos - self.target_pos) < self.controller.threshold
 
     # === Gripper / yaw helpers ===
+    def _normalize_gripper_joint_position(self, opening_m):
+        span = max(float(self.gripper_joint_max - self.gripper_joint_min), 1e-9)
+        return float(np.clip((float(opening_m) - self.gripper_joint_min) / span, 0.0, 1.0))
+
+    def _gripper_ctrl_from_normalized(self, position_01):
+        position = float(np.clip(position_01, self.gripper_min, self.gripper_max))
+        if self._gripper_ctrl_is_normalized:
+            ctrl_span = max(float(self._gripper_ctrl_max - self._gripper_ctrl_min), 1e-9)
+            return float(self._gripper_ctrl_min + position * ctrl_span)
+        joint_span = max(float(self.gripper_joint_max - self.gripper_joint_min), 1e-9)
+        opening_m = self.gripper_joint_min + position * joint_span
+        return float(np.clip(opening_m, self._gripper_ctrl_min, self._gripper_ctrl_max))
+
+    def _normalized_gripper_from_ctrl(self, ctrl):
+        ctrl = float(ctrl)
+        if self._gripper_ctrl_is_normalized:
+            span = max(float(self._gripper_ctrl_max - self._gripper_ctrl_min), 1e-9)
+            return float(np.clip((ctrl - self._gripper_ctrl_min) / span, 0.0, 1.0))
+        return self._normalize_gripper_joint_position(ctrl)
+
     def get_gripper_opening(self):
         if self.jnt_finger_l_qadr is not None:
-            return float(self.data.qpos[self.jnt_finger_l_qadr])
-        # Fallback if finger joint is absent.
-        return float(self.data.ctrl[self.act_gripper])
+            return self._normalize_gripper_joint_position(self.data.qpos[self.jnt_finger_l_qadr])
+        if self.act_gripper != -1:
+            return self._normalized_gripper_from_ctrl(self.data.ctrl[self.act_gripper])
+        return 0.0
 
-    def set_gripper(self, opening_m):
-        """Set desired opening for left finger (right follows)."""
+    def get_gripper_target(self):
+        if self.act_gripper == -1:
+            return self.get_gripper_opening()
+        return self._normalized_gripper_from_ctrl(self.data.ctrl[self.act_gripper])
+
+    def get_gripper_opening_meters(self):
+        if self.jnt_finger_l_qadr is not None:
+            return float(self.data.qpos[self.jnt_finger_l_qadr])
+        return float(self.gripper_joint_min + self.get_gripper_opening() * (self.gripper_joint_max - self.gripper_joint_min))
+
+    def set_gripper(self, position_01):
+        """Set desired normalized gripper opening: 0 closed, 1 fully open."""
         if self.act_gripper == -1:
             return
-        opening = float(np.clip(opening_m, self.gripper_min, self.gripper_max))
-        self.data.ctrl[self.act_gripper] = opening
+        self.data.ctrl[self.act_gripper] = self._gripper_ctrl_from_normalized(position_01)
+
+    def set_gripper_opening_meters(self, opening_m):
+        self.set_gripper(self._normalize_gripper_joint_position(opening_m))
 
     def open_gripper(self):
         self.set_gripper(self.gripper_max)
@@ -577,6 +627,9 @@ class HeadlessCDPRSimulation:
             'timestamp': self.data.time,
             'ee_position': ee_pos.copy(),
             'target_position': self.target_pos.copy(),
+            'ee_yaw': self.get_yaw(),
+            'gripper_opening': self.get_gripper_opening(),
+            'gripper_target': self.get_gripper_target(),
             'slider_positions': slider_q.copy(),
             'cable_lengths': cable_lengths.copy(),
             'control_signals': self.data.ctrl.copy() if self.model.nu > 0 else np.zeros(0),
@@ -933,7 +986,7 @@ class HeadlessCDPRSimulation:
         # Scaling factors (tune as needed; keep consistent with your training config)
         k_xyz  = 0.05   # meters per normalized unit (x, y, z)
         k_yaw  = 0.25   # radians per normalized unit (yaw)
-        k_grip = 1.0    # grip is assumed to already be in [-1, 1]
+        k_grip = 0.05   # normalized gripper position delta per policy unit
 
         scales = np.array([k_xyz, k_xyz, k_xyz, k_yaw, k_grip], dtype=np.float32)
 
@@ -996,6 +1049,9 @@ class HeadlessCDPRSimulation:
             'timestamp',
             'ee_position',
             'target_position',
+            'ee_yaw',
+            'gripper_opening',
+            'gripper_target',
             'slider_positions',
             'cable_lengths',
             'control_signals',
@@ -1014,21 +1070,18 @@ class HeadlessCDPRSimulation:
             return
 
         # ----------------------------------------------------------
-        # 2) Extract ABSOLUTE actions from control_signals
+        # 2) Build ABSOLUTE controller targets [x, y, z, yaw, grip]
         # ----------------------------------------------------------
-        control = trajectory_dict.get("control_signals")
-        if control is None:
-            raise RuntimeError("trajectory_data has no 'control_signals', cannot compute actions.")
-
-        control = np.asarray(control, dtype=np.float32)
-
-        if control.ndim != 2 or control.shape[1] < 5:
-            raise ValueError(
-                f"'control_signals' expected shape (T,>=5), got {control.shape}"
-            )
-
-        # Interpret first 5 dims as [x, y, z, yaw, grip]
-        actions_abs = control[:, :5]        # (T,5)
+        xyz_abs = np.asarray(trajectory_dict.get("target_position", trajectory_dict["ee_position"]), dtype=np.float32)
+        if xyz_abs.ndim != 2 or xyz_abs.shape[1] < 3:
+            raise ValueError(f"Expected absolute XYZ shape (T,>=3), got {xyz_abs.shape}")
+        yaw_abs = np.asarray(trajectory_dict.get("ee_yaw", np.zeros((T,), dtype=np.float32)), dtype=np.float32).reshape(T, 1)
+        grip_abs = np.asarray(
+            trajectory_dict.get("gripper_target", trajectory_dict.get("gripper_opening", np.ones((T,), dtype=np.float32))),
+            dtype=np.float32,
+        ).reshape(T, 1)
+        grip_abs = np.clip(grip_abs, 0.0, 1.0)
+        actions_abs = np.concatenate([xyz_abs[:, :3], yaw_abs, grip_abs], axis=1)
         trajectory_dict["actions_abs"] = actions_abs
 
         # ----------------------------------------------------------
@@ -1037,7 +1090,7 @@ class HeadlessCDPRSimulation:
         # Scaling constants (tune if needed; keep consistent with training config)
         k_xyz  = 0.05   # meters per normalized unit
         k_yaw  = 0.25   # radians per normalized unit
-        k_grip = 1.0    # grip assumed [-1,1]
+        k_grip = 0.05   # normalized gripper position delta per policy unit
 
         scales = np.array([k_xyz, k_xyz, k_xyz, k_yaw, k_grip], dtype=np.float32)
 

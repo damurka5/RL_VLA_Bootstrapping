@@ -11,6 +11,7 @@ class CDPRPolicyControlSpec:
     xyz_limits: tuple[tuple[float, float], tuple[float, float], tuple[float, float]]
     action_step_xyz: float
     action_step_yaw: float
+    action_step_gripper: float = 0.05
     open_gripper_threshold: float = -0.2
     close_gripper_threshold: float = 0.2
     hold_steps: int = 4
@@ -58,6 +59,25 @@ def _set_ee_target(sim: Any, xyz: np.ndarray) -> None:
     raise RuntimeError("Simulator has no supported end-effector target setter.")
 
 
+def _get_gripper_target(sim: Any) -> float:
+    if hasattr(sim, "get_gripper_target"):
+        return float(sim.get_gripper_target())
+    if hasattr(sim, "get_gripper_opening"):
+        return float(sim.get_gripper_opening())
+    return 1.0
+
+
+def _set_gripper_target(sim: Any, target_01: float) -> None:
+    target = float(np.clip(target_01, 0.0, 1.0))
+    if hasattr(sim, "set_gripper"):
+        sim.set_gripper(target)
+        return
+    if target <= 0.0 and hasattr(sim, "close_gripper"):
+        sim.close_gripper()
+    elif target >= 1.0 and hasattr(sim, "open_gripper"):
+        sim.open_gripper()
+
+
 def apply_normalized_cdpr_action(
     sim: Any,
     normalized_action: np.ndarray,
@@ -88,11 +108,12 @@ def apply_normalized_cdpr_action(
         if hasattr(sim, "set_yaw"):
             sim.set_yaw(target_yaw)
 
-    gripper_command = float(action[4])
-    if gripper_command >= float(spec.close_gripper_threshold) and hasattr(sim, "close_gripper"):
-        sim.close_gripper()
-    elif gripper_command <= float(spec.open_gripper_threshold) and hasattr(sim, "open_gripper"):
-        sim.open_gripper()
+    gripper_delta_command = float(action[4])
+    gripper_before = _get_gripper_target(sim)
+    gripper_target = float(
+        np.clip(gripper_before + gripper_delta_command * float(spec.action_step_gripper), 0.0, 1.0)
+    )
+    _set_gripper_target(sim, gripper_target)
 
     steps = spec.sim_steps_per_policy_action
     for step_idx in range(steps):
@@ -102,7 +123,8 @@ def apply_normalized_cdpr_action(
     result: dict[str, Any] = {
         "commanded_action": action.copy(),
         "target_xyz": target_xyz.copy(),
-        "gripper_command": gripper_command,
+        "gripper_command": gripper_delta_command,
+        "gripper_target": gripper_target,
         "sim_steps": steps,
     }
     if target_yaw is not None:

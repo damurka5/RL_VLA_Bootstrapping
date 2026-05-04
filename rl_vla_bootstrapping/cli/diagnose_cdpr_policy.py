@@ -67,6 +67,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--hold-steps", type=int, default=None, help="Override extra simulator substeps per policy action.")
     parser.add_argument("--action-step-xyz", type=float, default=None, help="Optional override for XYZ step size in meters.")
     parser.add_argument("--action-step-yaw", type=float, default=None, help="Optional override for yaw step size in radians.")
+    parser.add_argument("--action-step-gripper", type=float, default=None, help="Optional override for normalized gripper delta step.")
     parser.add_argument(
         "--randomize-ee-start",
         action=argparse.BooleanOptionalAction,
@@ -315,6 +316,24 @@ def _set_ee_target(sim: Any, xyz: np.ndarray) -> bool:
     return False
 
 
+def _get_gripper_target(sim: Any) -> float:
+    if hasattr(sim, "get_gripper_target"):
+        return float(np.clip(float(sim.get_gripper_target()), 0.0, 1.0))
+    if hasattr(sim, "get_gripper_opening"):
+        return float(np.clip(float(sim.get_gripper_opening()), 0.0, 1.0))
+    return 1.0
+
+
+def _set_gripper_target(sim: Any, target_01: float) -> None:
+    target = float(np.clip(target_01, 0.0, 1.0))
+    if hasattr(sim, "set_gripper"):
+        sim.set_gripper(target)
+    elif target <= 0.0 and hasattr(sim, "close_gripper"):
+        sim.close_gripper()
+    elif target >= 1.0 and hasattr(sim, "open_gripper"):
+        sim.open_gripper()
+
+
 def _apply_diagnostic_action(
     sim: Any,
     normalized_action: np.ndarray,
@@ -355,10 +374,10 @@ def _apply_diagnostic_action(
             sim.set_yaw(target_yaw)
 
     gripper_command = float(action[4])
-    if gripper_command >= float(control_spec.close_gripper_threshold) and hasattr(sim, "close_gripper"):
-        sim.close_gripper()
-    elif gripper_command <= float(control_spec.open_gripper_threshold) and hasattr(sim, "open_gripper"):
-        sim.open_gripper()
+    gripper_target = float(
+        np.clip(_get_gripper_target(sim) + gripper_command * float(control_spec.action_step_gripper), 0.0, 1.0)
+    )
+    _set_gripper_target(sim, gripper_target)
 
     steps = control_spec.sim_steps_per_policy_action
     for step_idx in range(steps):
@@ -369,6 +388,7 @@ def _apply_diagnostic_action(
         "commanded_action": action.copy(),
         "target_xyz": target_xyz.copy(),
         "gripper_command": gripper_command,
+        "gripper_target": gripper_target,
         "sim_steps": steps,
     }
     if target_yaw is not None:
@@ -500,6 +520,7 @@ def _collect_demo_record(
         "gripper_before": None if gripper_before is None else float(gripper_before),
         "gripper_after": None if "gripper_opening" not in result else float(result["gripper_opening"]),
         "gripper_command": None if "gripper_command" not in result else float(result["gripper_command"]),
+        "gripper_target": None if "gripper_target" not in result else float(result["gripper_target"]),
         "target_xyz": np.asarray(motion_diag["target_xyz"], dtype=np.float32).reshape(-1)[:3].tolist(),
         "commanded_xyz_delta_raw": np.asarray(motion_diag["commanded_xyz_delta_raw"], dtype=np.float32).reshape(-1)[:3].tolist(),
         "commanded_xyz_delta_effective": np.asarray(motion_diag["commanded_xyz_delta_effective"], dtype=np.float32).reshape(-1)[:3].tolist(),
@@ -855,6 +876,8 @@ def main() -> int:
         control_spec = replace(control_spec, action_step_xyz=float(args.action_step_xyz))
     if args.action_step_yaw is not None:
         control_spec = replace(control_spec, action_step_yaw=float(args.action_step_yaw))
+    if args.action_step_gripper is not None:
+        control_spec = replace(control_spec, action_step_gripper=float(args.action_step_gripper))
 
     print(f"Run directory: {run_dir}")
     print(f"Scene: {scene_name}")
@@ -922,7 +945,8 @@ def main() -> int:
         f"dt={sim_dt:.6f}s, hold_steps={control_spec.hold_steps}, "
         f"sim_steps_per_action={control_spec.sim_steps_per_policy_action}, "
         f"policy_period={action_period:.6f}s (~{action_hz:.2f} Hz), "
-        f"action_step_xyz={control_spec.action_step_xyz}, action_step_yaw={control_spec.action_step_yaw}"
+        f"action_step_xyz={control_spec.action_step_xyz}, action_step_yaw={control_spec.action_step_yaw}, "
+        f"action_step_gripper={control_spec.action_step_gripper}"
     )
 
     manifest = {

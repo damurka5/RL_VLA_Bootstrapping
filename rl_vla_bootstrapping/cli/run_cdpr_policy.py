@@ -162,6 +162,12 @@ def _control_spec_from_config(config, hold_steps: int | None) -> CDPRPolicyContr
         ),
         action_step_xyz=float(config.training.rl.args.get("action_step_xyz", config.embodiment.action_adapter.controller_scales.get("x", 0.02))),
         action_step_yaw=float(config.training.rl.args.get("action_step_yaw", config.embodiment.action_adapter.controller_scales.get("yaw", 0.25))),
+        action_step_gripper=float(
+            config.training.rl.args.get(
+                "action_step_gripper",
+                config.embodiment.action_adapter.controller_scales.get("gripper", 0.05),
+            )
+        ),
         open_gripper_threshold=float(config.embodiment.action_adapter.open_gripper_threshold),
         close_gripper_threshold=float(config.embodiment.action_adapter.close_gripper_threshold),
         hold_steps=int(config.training.rl.args.get("hold_steps", 0) if hold_steps is None else hold_steps),
@@ -649,6 +655,7 @@ def main() -> int:
         f"sim_steps_per_action={control_spec.sim_steps_per_policy_action}, "
         f"policy_period={action_period:.6f}s (~{action_hz:.2f} Hz), "
         f"action_step_xyz={control_spec.action_step_xyz}, action_step_yaw={control_spec.action_step_yaw}, "
+        f"action_step_gripper={control_spec.action_step_gripper}, "
         f"chunk_length={configured_chunk_length}, replan_every={replan_every or configured_chunk_length}"
     )
 
