@@ -296,7 +296,7 @@ training:
       scene_refresh_every_steps: -1
       wrapper_cleanup: false
       use_wrapper_cache: true
-      capture_frames: false
+      capture_frames: true
       save_validation_frames: false
       rollout_tap_every_updates: -1
       device: cuda
