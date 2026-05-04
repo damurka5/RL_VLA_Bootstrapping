@@ -127,6 +127,7 @@ class PipelineTests(unittest.TestCase):
                             "randomize_ee_start": True,
                             "ee_start_x_bounds": [-0.12, 0.12],
                             "ee_start_y_bounds": [-0.08, 0.10],
+                            "action_step_gripper": 0.05,
                         },
                     },
                     "sft": {"enabled": True, "args": {"resume_from_rl": False}},
@@ -158,6 +159,7 @@ class PipelineTests(unittest.TestCase):
             self.assertNotIn("--randomize_ee_start", plans[1].command)
             self.assertNotIn("--ee_start_x_bounds", plans[1].command)
             self.assertNotIn("--ee_start_y_bounds", plans[1].command)
+            self.assertNotIn("--action_step_gripper", plans[1].command)
             desk_textures_idx = plans[1].command.index("--desk_textures_dir") + 1
             self.assertTrue(Path(plans[1].command[desk_textures_idx]).samefile(dataset_root / "textures"))
             self.assertIn("--run_root_dir", plans[1].command)
@@ -176,6 +178,7 @@ class PipelineTests(unittest.TestCase):
             self.assertEqual(plans[1].env["RLVLA_CDPR_RANDOMIZE_EE_START"], "1")
             self.assertEqual(plans[1].env["RLVLA_CDPR_EE_START_X_BOUNDS"], "[-0.12, 0.12]")
             self.assertEqual(plans[1].env["RLVLA_CDPR_EE_START_Y_BOUNDS"], "[-0.08, 0.1]")
+            self.assertEqual(plans[1].env["RLVLA_CDPR_ACTION_STEP_GRIPPER"], "0.05")
             self.assertEqual(plans[1].env["VLA_ROBOT"], "cdpr")
             self.assertEqual(plans[1].env["VLA_ACTION_DIM"], "5")
             self.assertEqual(plans[1].env["VLA_NUM_ACTIONS_CHUNK"], "8")

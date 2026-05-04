@@ -194,7 +194,7 @@ def _extract_cdpr_env_overrides(injected: dict[str, Any]) -> dict[str, str]:
     if "record_trajectory" in injected:
         env["RLVLA_CDPR_RECORD_TRAJECTORY"] = "1" if bool(injected.pop("record_trajectory")) else "0"
     if "action_step_gripper" in injected:
-        env["RLVLA_CDPR_ACTION_STEP_GRIPPER"] = str(float(injected["action_step_gripper"]))
+        env["RLVLA_CDPR_ACTION_STEP_GRIPPER"] = str(float(injected.pop("action_step_gripper")))
     return env
 
 
