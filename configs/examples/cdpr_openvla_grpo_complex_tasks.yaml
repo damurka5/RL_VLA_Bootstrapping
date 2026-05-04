@@ -1,0 +1,309 @@
+project:
+  name: cdpr_openvla_grpo_complex_tasks
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  openvla_oft: /root/repo/openvla-oft
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  conda_env_file: ../../environments/openvla-oft-remote.yaml
+  env_vars:
+    MUJOCO_GL: egl
+    PYOPENGL_PLATFORM: egl
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+    TOKENIZERS_PARALLELISM: "false"
+  notes:
+    - GRPO starts from the step_390_to_490 move-to-object checkpoint and uses a grab-first instruction curriculum before harder object relations.
+    - Rollout TensorBoard scalars are emitted every 8 global environment steps, plus update summaries every optimizer update.
+
+assets:
+  bundles:
+    - name: ycb
+      kind: asset
+      source_path: ../../../../repo/CDPR-Dataset/cdpr_dataset/external_assets/ycb_dataset/ycb
+      target_path: ../../assets/externals/ycb
+      required: true
+      description: YCB object meshes and MJCFs used by CDPR randomized scenes.
+    - name: libero
+      kind: asset
+      source_path: ../../../../repo/LIBERO/libero/libero/assets
+      target_path: ../../assets/externals/libero
+      required: true
+      description: LIBERO scene XMLs, textures, and scanned/stable object assets.
+    - name: desk_textures_cache
+      kind: asset
+      source_path: ../../../../repo/CDPR-Dataset/cdpr_dataset/wrappers/_desk_textures
+      target_path: ../../assets/externals/desk_textures_cache
+      required: false
+      description: Optional CDPR desk texture cache.
+
+embodiment:
+  name: cdpr_5dof
+  kind: mujoco
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr.xml
+  dof: 5
+  extra_python_paths:
+    - ../../robots/cdpr
+    - /root/repo/openvla-oft
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs:
+      output_dir: "{run_dir}"
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 1.0]
+    open_gripper_threshold: -0.2
+    close_gripper_threshold: 0.2
+
+task:
+  instruction_types:
+    [
+      move_to_object,
+      grab_object,
+      pick_up,
+      push_left,
+      push_right,
+      put_into_plate,
+      move_left_of_object,
+      move_right_of_object,
+      move_between_objects,
+    ]
+  target_objects:
+    [
+      ycb_apple,
+      ycb_pear,
+      ycb_peach,
+      ycb_b_cups,
+      ycb_mug,
+      ycb_baseball,
+      plate,
+      bowl,
+    ]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    zero_demo_first: true
+    instruction_sampling: uniform_cycle
+    instruction_curriculum:
+      - until_episode: 80
+        instruction_types: [grab_object]
+      - until_episode: 160
+        instruction_types: [grab_object, pick_up]
+      - until_episode: 260
+        instruction_types: [grab_object, pick_up, push_left, push_right]
+      - until_episode: 420
+        instruction_types: [grab_object, pick_up, push_left, push_right, put_into_plate]
+      - instruction_types:
+          [
+            grab_object,
+            pick_up,
+            push_left,
+            push_right,
+            put_into_plate,
+            move_left_of_object,
+            move_right_of_object,
+            move_between_objects,
+          ]
+    target_object_pool:
+      [
+        ycb_apple,
+        ycb_pear,
+        ycb_peach,
+        ycb_b_cups,
+        ycb_mug,
+        ycb_baseball,
+      ]
+    distractor_object_pool:
+      [
+        ycb_apple,
+        ycb_pear,
+        ycb_peach,
+        ycb_b_cups,
+        ycb_mug,
+        ycb_baseball,
+        plate,
+        bowl,
+      ]
+    min_scene_objects: 3
+    max_scene_objects: 4
+    scene_variant_count: 256
+    goal_center_xy: [0.0, 0.0]
+    goal_height_above_table: 0.10
+    lateral_goal_offset: 0.40
+    vertical_goal_offset: 0.10
+
+    sparse_success_reward: 1.0
+    sparse_failure_reward: 0.0
+    grab_xy_tolerance: 0.045
+    grab_closed_opening_threshold: 0.35
+    push_success_displacement: 0.08
+    put_plate_xy_tolerance: 0.08
+    put_plate_z_tolerance: 0.10
+    put_require_release: false
+    relation_left_right_offset: 0.08
+    relation_y_tolerance: 0.12
+    relation_min_target_motion: 0.02
+    between_xy_tolerance: 0.07
+
+    pick_lift_success_height: 0.05
+    pick_grasp_xy_threshold: 0.04
+    pick_gripper_closed_opening_threshold: 0.010
+    move_to_object_xy_tolerance: 0.025
+    move_to_object_validation_distance_threshold: 0.025
+    action_saturation_threshold: 0.85
+    action_saturation_penalty_weight: 0.0
+    object_spawn_x_bounds: [-0.30, 0.30]
+    object_spawn_y_bounds: [-0.30, 0.30]
+    object_spawn_center_xy: [0.0, 0.0]
+    object_spawn_center_exclusion_radius: 0.14
+    object_spawn_min_gap: 0.04
+    object_spawn_min_ee_dist: 0.12
+    object_spawn_max_tries: 300
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [ycb_apple, plate, ycb_mug]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  object_roots:
+    - ../../assets/externals/ycb
+    - ../../assets/externals/libero/stable_hope_objects
+    - ../../assets/externals/libero/stable_scanned_objects
+  desk_textures_dir: ../../assets/externals/desk_textures_cache
+  desk_textures_fallback_dir: ../../assets/externals/libero/textures
+  build_kwargs:
+    scene_z: -0.85
+    table_z: 0.15
+    settle_time: 0.0
+    ee_start: [0.0, 0.0, 0.40]
+  randomization:
+    random_scene_count: 100
+    max_objects: 4
+    use_domain_randomization: true
+
+policy:
+  type: openvla_oft
+  repo_path: /root/repo/openvla-oft
+  base_checkpoint: openvla/openvla-7b
+  rl_script: /root/repo/openvla-oft/vla-scripts/grpo_finetune_cdpr.py
+  sft_script: /root/repo/openvla-oft/vla-scripts/finetune.py
+  action_head: L1RegressionActionHead
+  num_images_in_input: 2
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: true
+      bins: 256
+    export_filename: openvla_action_codec.json
+
+training:
+  preview_before_rl: true
+  rl:
+    enabled: true
+    algorithm: grpo
+    script_path: ../../rl_vla_bootstrapping/policy/grpo_finetune_cdpr_fast.py
+    launcher: torchrun
+    launcher_args:
+      nproc_per_node: 2
+    args:
+      external_grpo_script: vla-scripts/grpo_finetune_cdpr.py
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/step_390_to_490_movetoobj_20260420_153108/rl/step_0170000/vla_cdpr_adapter
+      train_loaded_adapter: true
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/step_390_to_490_movetoobj_20260420_153108/rl/step_0170000/action_head_cdpr.pt
+      resume_actor_stats: true
+      grpo_group_size: 2
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      num_parallel_envs: 10
+      total_updates: 120
+      rollout_steps: 240
+      ppo_epochs: 4
+      minibatch_size: 16
+      microbatch_size: 16
+      max_env_steps: 120
+      gamma: 0.99
+      learning_rate: 5.0e-6
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      normalize_advantage: false
+      init_log_std: -1.2
+      gradient_checkpointing: true
+      num_images_in_input: 2
+
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      hold_steps: 6
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      randomize_ee_start: true
+      ee_start_x_bounds: [-0.25, 0.25]
+      ee_start_y_bounds: [-0.25, 0.25]
+      ee_start_z: 0.15
+      record_trajectory: false
+      delta_closer_reward_coef: 0.0
+      delta_farther_penalty_coef: 0.0
+      save_every: 10
+      validate_every_updates: 5
+      validation_episodes: 2
+      validation_max_steps: 120
+      tensorboard_rollout_every_global_steps: 8
+      tensorboard_every_updates: 1
+      prebuild_scene_cache: true
+      scene_pool_size: 64
+      texture_pool_size: 10
+      scene_sampling: round_robin
+      scene_refresh_every_steps: -1
+      wrapper_cleanup: false
+      use_wrapper_cache: true
+      capture_frames: false
+      save_validation_frames: false
+      rollout_tap_every_updates: -1
+      device: cuda
+      quiet_env_logs: true
+      status_bar: true
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks: []

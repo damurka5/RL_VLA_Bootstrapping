@@ -16,6 +16,13 @@ INSTRUCTION_TYPES: tuple[str, ...] = (
     "move_center",
     "move_to_object",
     "pick_up",
+    "grab_object",
+    "put_into_plate",
+    "move_left_of_object",
+    "move_right_of_object",
+    "move_between_objects",
+    "push_left",
+    "push_right",
 )
 
 MOVE_DIRECTIONS: dict[str, np.ndarray] = {
@@ -28,6 +35,13 @@ MOVE_DIRECTIONS: dict[str, np.ndarray] = {
     "move_center": np.zeros((3,), dtype=np.float32),
     "move_to_object": np.zeros((3,), dtype=np.float32),
     "pick_up": np.zeros((3,), dtype=np.float32),
+    "grab_object": np.zeros((3,), dtype=np.float32),
+    "put_into_plate": np.zeros((3,), dtype=np.float32),
+    "move_left_of_object": np.zeros((3,), dtype=np.float32),
+    "move_right_of_object": np.zeros((3,), dtype=np.float32),
+    "move_between_objects": np.zeros((3,), dtype=np.float32),
+    "push_left": np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+    "push_right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
 }
 
 _DIRECTIONAL_SUCCESS_AXES: dict[str, tuple[int, float]] = {
@@ -49,9 +63,43 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "move_center": "move center",
     "move_to_object": "move to object",
     "pick_up": "pick up object",
+    "grab_object": "grab object",
+    "put_into_plate": "put object into plate",
+    "move_left_of_object": "move object to the left of object",
+    "move_right_of_object": "move object to the right of object",
+    "move_between_objects": "move object between two objects",
+    "push_left": "push object left",
+    "push_right": "push object right",
 }
 
-OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = ("move_to_object", "pick_up")
+OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "move_to_object",
+    "pick_up",
+    "grab_object",
+    "put_into_plate",
+    "move_left_of_object",
+    "move_right_of_object",
+    "move_between_objects",
+    "push_left",
+    "push_right",
+)
+
+REFERENCE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "put_into_plate",
+    "move_left_of_object",
+    "move_right_of_object",
+    "move_between_objects",
+)
+
+MANIPULATION_SPARSE_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "grab_object",
+    "put_into_plate",
+    "move_left_of_object",
+    "move_right_of_object",
+    "move_between_objects",
+    "push_left",
+    "push_right",
+)
 
 _OBJECT_LANGUAGE_ALIASES: dict[str, str] = {
     "ycb_apple": "apple",
@@ -75,6 +123,8 @@ class InstructionSpec:
     direction: np.ndarray
     target_displacement: float
     lift_target: float
+    reference_object: str = ""
+    second_reference_object: str = ""
 
 
 @dataclass
@@ -111,6 +161,10 @@ def instruction_uses_target_object(instruction_type: str) -> bool:
     return str(instruction_type) in OBJECT_CENTRIC_INSTRUCTION_TYPES
 
 
+def instruction_uses_reference_object(instruction_type: str) -> bool:
+    return str(instruction_type) in REFERENCE_OBJECT_INSTRUCTION_TYPES
+
+
 def instruction_type_to_index(instruction_type: str) -> int:
     try:
         return INSTRUCTION_TYPES.index(instruction_type)
@@ -131,6 +185,8 @@ def sample_instruction(
     move_distance: float = 0.40,
     lift_distance: float = 0.10,
     instruction_type: str | None = None,
+    reference_object: str | None = None,
+    second_reference_object: str | None = None,
 ) -> InstructionSpec:
     if allowed_instruction_types is None:
         candidates = list(INSTRUCTION_TYPES)
@@ -153,10 +209,30 @@ def sample_instruction(
 
     instruction_text = INSTRUCTION_TEXT[selected_instruction_type]
     target_name = str(target_object or "").strip()
+    reference_name = str(reference_object or "").strip()
+    second_reference_name = str(second_reference_object or "").strip()
+    target_text = canonical_object_name(target_name)
+    reference_text = canonical_object_name(reference_name)
+    second_reference_text = canonical_object_name(second_reference_name)
     if selected_instruction_type == "move_to_object":
-        instruction_text = f"move to {canonical_object_name(target_name)}"
+        instruction_text = f"move to {target_text}"
     elif selected_instruction_type == "pick_up":
-        instruction_text = f"pick up {canonical_object_name(target_name)}"
+        instruction_text = f"pick up {target_text}"
+    elif selected_instruction_type == "grab_object":
+        instruction_text = f"grab {target_text}"
+    elif selected_instruction_type == "put_into_plate":
+        plate_text = reference_text if reference_name else "plate"
+        instruction_text = f"put {target_text} into {plate_text}"
+    elif selected_instruction_type == "move_left_of_object":
+        instruction_text = f"move {target_text} to the left of {reference_text}"
+    elif selected_instruction_type == "move_right_of_object":
+        instruction_text = f"move {target_text} to the right of {reference_text}"
+    elif selected_instruction_type == "move_between_objects":
+        instruction_text = f"move {target_text} between {reference_text} and {second_reference_text}"
+    elif selected_instruction_type == "push_left":
+        instruction_text = f"push {target_text} left"
+    elif selected_instruction_type == "push_right":
+        instruction_text = f"push {target_text} right"
     return InstructionSpec(
         instruction_type=selected_instruction_type,
         text=instruction_text,
@@ -164,6 +240,8 @@ def sample_instruction(
         direction=MOVE_DIRECTIONS[selected_instruction_type].astype(np.float32),
         target_displacement=float(move_distance),
         lift_target=float(lift_distance),
+        reference_object=reference_name,
+        second_reference_object=second_reference_name,
     )
 
 
@@ -266,11 +344,33 @@ def compute_instruction_reward(
     caught_object_is_target: bool = False,
     caught_object_score: float = 0.0,
     caught_object_catalog: str | None = None,
+    env: Any | None = None,
+    target_body_name: str | None = None,
+    reference_body_name: str | None = None,
+    second_reference_body_name: str | None = None,
 ) -> tuple[float, bool, dict[str, float]]:
     ee_pos = np.asarray(ee_pos, dtype=np.float32)
     goal_pos = np.asarray(obj_pos, dtype=np.float32)
     prev_goal_pos = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
 
+    if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
+        return _compute_sparse_manipulation_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=task_metadata,
+            gripper_opening=gripper_opening,
+            support_surface_z=support_surface_z,
+            caught_object_is_target=caught_object_is_target,
+            caught_object_score=caught_object_score,
+            caught_object_catalog=caught_object_catalog,
+            env=env,
+            target_body_name=target_body_name,
+            reference_body_name=reference_body_name,
+            second_reference_body_name=second_reference_body_name,
+        )
     if spec.instruction_type == "pick_up":
         return _compute_pick_up_reward(
             spec=spec,
@@ -402,6 +502,206 @@ def compute_instruction_reward(
         "distance_ee_to_object_prev_xy": prev_xy_distance,
         "orientation_reward": camera_reward,
         "success_bonus": success_reward,
+    }
+    return reward, success, info
+
+
+def _read_env_body_position(env: Any | None, body_name: str | None) -> np.ndarray | None:
+    if env is None or not body_name:
+        return None
+    getter = getattr(env, "_get_body_position", None)
+    if not callable(getter):
+        return None
+    try:
+        pos = np.asarray(getter(str(body_name)), dtype=np.float32).reshape(-1)
+    except Exception:
+        return None
+    if pos.size < 3 or not np.all(np.isfinite(pos[:3])):
+        return None
+    return pos[:3].astype(np.float32)
+
+
+def _sparse_reward_value(
+    *,
+    success: bool,
+    task_metadata: Optional[dict[str, Any]],
+) -> float:
+    success_reward = _metadata_float(task_metadata, "sparse_success_reward", 1.0)
+    failure_reward = _metadata_float(task_metadata, "sparse_failure_reward", 0.0)
+    return float(success_reward if success else failure_reward)
+
+
+def _target_motion_from_initial(target_pos: np.ndarray, reward_state: RewardState) -> tuple[np.ndarray, float]:
+    initial = np.asarray(reward_state.initial_obj_pos, dtype=np.float32).reshape(-1)
+    if initial.size < 3:
+        padded = np.zeros((3,), dtype=np.float32)
+        padded[: initial.size] = initial
+        initial = padded
+    delta = np.asarray(target_pos[:3] - initial[:3], dtype=np.float32)
+    return delta, float(np.linalg.norm(delta[:2]))
+
+
+def _compute_sparse_manipulation_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+    gripper_opening: Optional[float] = None,
+    support_surface_z: Optional[float] = None,
+    caught_object_is_target: bool = False,
+    caught_object_score: float = 0.0,
+    caught_object_catalog: str | None = None,
+    env: Any | None = None,
+    target_body_name: str | None = None,
+    reference_body_name: str | None = None,
+    second_reference_body_name: str | None = None,
+) -> tuple[float, bool, dict[str, float]]:
+    task_metadata = dict(task_metadata or {})
+    target_pos = _read_env_body_position(env, target_body_name)
+    if target_pos is None:
+        target_pos = np.asarray(goal_pos, dtype=np.float32).reshape(-1)[:3]
+    reference_pos = _read_env_body_position(env, reference_body_name)
+    second_reference_pos = _read_env_body_position(env, second_reference_body_name)
+
+    ee_distance = float(np.linalg.norm(np.asarray(target_pos[:3] - ee_pos[:3], dtype=np.float32)))
+    ee_xy_distance = float(np.linalg.norm(np.asarray(target_pos[:2] - ee_pos[:2], dtype=np.float32)))
+    target_delta, target_motion_xy = _target_motion_from_initial(target_pos, reward_state)
+    gripper_value = float("nan") if gripper_opening is None else float(gripper_opening)
+    gripper_closed = bool(reward_state.gripper_closed)
+    if np.isfinite(gripper_value):
+        gripper_closed = bool(gripper_value <= _metadata_float(task_metadata, "grab_closed_opening_threshold", 0.35))
+
+    action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.95)
+    action_saturation_penalty_weight = _metadata_float(
+        task_metadata,
+        "action_saturation_penalty_weight",
+        0.0,
+    )
+    action_saturation_exponent = _metadata_float(task_metadata, "action_saturation_exponent", 2.0)
+    action_saturation_penalty_raw, action_saturation_rate, action_saturation_max_abs = _action_saturation_stats(
+        action,
+        threshold=action_saturation_threshold,
+        exponent=action_saturation_exponent,
+    )
+    action_saturation_penalty = float(action_saturation_penalty_weight * action_saturation_penalty_raw)
+
+    success = False
+    mode = 0.0
+    relation_error = float("inf")
+    signed_relation_offset = 0.0
+    relation_motion_required = 0.0
+    relation_motion_ok = True
+
+    if spec.instruction_type == "grab_object":
+        mode = 3.0
+        grab_xy_tolerance = _metadata_float(task_metadata, "grab_xy_tolerance", 0.045)
+        success = bool(
+            gripper_closed
+            and (
+                bool(caught_object_is_target)
+                or ee_xy_distance <= float(grab_xy_tolerance)
+            )
+        )
+        reward_state.grasped = bool(success or reward_state.grasped)
+
+    elif spec.instruction_type in {"push_left", "push_right"}:
+        mode = 4.0
+        sign = -1.0 if spec.instruction_type == "push_left" else 1.0
+        push_distance = _metadata_float(task_metadata, "push_success_displacement", 0.08)
+        signed_motion = float(sign * target_delta[0])
+        signed_relation_offset = signed_motion
+        relation_error = float(max(0.0, push_distance - signed_motion))
+        success = bool(signed_motion >= float(push_distance))
+
+    elif spec.instruction_type == "put_into_plate":
+        mode = 5.0
+        plate_pos = reference_pos if reference_pos is not None else goal_pos
+        plate_xy_tolerance = _metadata_float(task_metadata, "put_plate_xy_tolerance", 0.08)
+        plate_z_tolerance = _metadata_float(task_metadata, "put_plate_z_tolerance", 0.10)
+        release_threshold = _metadata_float(task_metadata, "put_release_opening_threshold", 0.55)
+        require_release = _metadata_bool(task_metadata, "put_require_release", False)
+        xy_error = float(np.linalg.norm(target_pos[:2] - plate_pos[:2]))
+        z_error = float(abs(float(target_pos[2]) - float(plate_pos[2])))
+        relation_error = xy_error
+        release_ok = bool((not require_release) or (np.isfinite(gripper_value) and gripper_value >= release_threshold))
+        success = bool(xy_error <= plate_xy_tolerance and z_error <= plate_z_tolerance and release_ok)
+
+    elif spec.instruction_type in {"move_left_of_object", "move_right_of_object"}:
+        mode = 6.0
+        ref_pos = reference_pos if reference_pos is not None else goal_pos
+        sign = -1.0 if spec.instruction_type == "move_left_of_object" else 1.0
+        offset = _metadata_float(task_metadata, "relation_left_right_offset", 0.08)
+        y_tolerance = _metadata_float(task_metadata, "relation_y_tolerance", 0.12)
+        relation_motion_required = _metadata_float(task_metadata, "relation_min_target_motion", 0.02)
+        signed_relation_offset = float(sign * (target_pos[0] - ref_pos[0]))
+        y_error = float(abs(float(target_pos[1]) - float(ref_pos[1])))
+        relation_error = float(max(0.0, offset - signed_relation_offset) + max(0.0, y_error - y_tolerance))
+        relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
+        success = bool(
+            signed_relation_offset >= float(offset)
+            and y_error <= float(y_tolerance)
+            and relation_motion_ok
+        )
+
+    elif spec.instruction_type == "move_between_objects":
+        mode = 7.0
+        if reference_pos is not None and second_reference_pos is not None:
+            midpoint = 0.5 * (reference_pos[:2] + second_reference_pos[:2])
+            segment = second_reference_pos[:2] - reference_pos[:2]
+            seg_len_sq = float(np.dot(segment, segment))
+            if seg_len_sq <= 1e-8:
+                projection = 0.5
+            else:
+                projection = float(np.dot(target_pos[:2] - reference_pos[:2], segment) / seg_len_sq)
+            between_tolerance = _metadata_float(task_metadata, "between_xy_tolerance", 0.07)
+            relation_motion_required = _metadata_float(task_metadata, "relation_min_target_motion", 0.02)
+            relation_error = float(np.linalg.norm(target_pos[:2] - midpoint))
+            relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
+            success = bool(
+                relation_error <= float(between_tolerance)
+                and 0.0 <= projection <= 1.0
+                and relation_motion_ok
+            )
+            signed_relation_offset = projection
+        else:
+            success = False
+
+    reward = _sparse_reward_value(success=success, task_metadata=task_metadata) - action_saturation_penalty
+    reward_state.prev_ee_pos = ee_pos.copy()
+    reward_state.prev_obj_pos = target_pos.copy()
+    reward_state.prev_distance = relation_error if np.isfinite(relation_error) else ee_distance
+    reward_state.prev_camera_align = None
+    reward_state.gripper_closed = bool(gripper_closed)
+    reward_state.step_count += 1
+
+    info = {
+        "sparse_success": float(success),
+        "sparse_reward_mode": float(mode),
+        "distance_ee_to_object": ee_distance,
+        "distance_ee_to_object_xyz": ee_distance,
+        "distance_ee_to_object_xy": ee_xy_distance,
+        "target_motion_x": float(target_delta[0]),
+        "target_motion_y": float(target_delta[1]),
+        "target_motion_z": float(target_delta[2]),
+        "target_motion_xy": float(target_motion_xy),
+        "relation_error": float(relation_error) if np.isfinite(relation_error) else -1.0,
+        "signed_relation_offset": float(signed_relation_offset),
+        "relation_motion_required": float(relation_motion_required),
+        "relation_motion_ok": float(relation_motion_ok),
+        "gripper_closed": float(gripper_closed),
+        "grasped": float(reward_state.grasped),
+        "caught_object_score": float(caught_object_score),
+        "caught_object_is_target": float(bool(caught_object_is_target)),
+        "success_bonus": float(_metadata_float(task_metadata, "sparse_success_reward", 1.0) if success else 0.0),
+        "action_saturation_penalty": action_saturation_penalty,
+        "action_saturation_penalty_raw": action_saturation_penalty_raw,
+        "action_saturation_rate": action_saturation_rate,
+        "action_saturation_max_abs": action_saturation_max_abs,
+        "action_saturation_threshold": float(action_saturation_threshold),
+        "action_saturation_exponent": float(action_saturation_exponent),
     }
     return reward, success, info
 
@@ -773,16 +1073,66 @@ def compute_instruction_validation_success(
     current_success: bool = False,
     obj_pos: Optional[np.ndarray] = None,
     goal_pos: Optional[np.ndarray] = None,
+    reward_info: Optional[dict[str, Any]] = None,
+    env: Any | None = None,
+    target_body_name: str | None = None,
+    reference_body_name: str | None = None,
+    second_reference_body_name: str | None = None,
+    gripper_opening: Optional[float] = None,
+    caught_object_is_target: bool = False,
+    caught_object_score: float = 0.0,
 ) -> tuple[bool, dict[str, float]]:
     ee_arr = np.asarray(ee_pos, dtype=np.float32).reshape(-1)
     start_arr = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
     if ee_arr.size < 3 or start_arr.size < 3:
         return bool(current_success), {}
 
+    if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
+        sparse_success = bool(current_success)
+        if isinstance(reward_info, dict) and "sparse_success" in reward_info:
+            sparse_success = bool(float(reward_info.get("sparse_success", 0.0)) >= 0.5)
+        elif not sparse_success:
+            reward_state_copy = RewardState(
+                initial_ee_pos=np.asarray(reward_state.initial_ee_pos, dtype=np.float32).copy(),
+                initial_obj_pos=np.asarray(reward_state.initial_obj_pos, dtype=np.float32).copy(),
+                prev_ee_pos=np.asarray(reward_state.prev_ee_pos, dtype=np.float32).copy(),
+                prev_obj_pos=np.asarray(reward_state.prev_obj_pos, dtype=np.float32).copy(),
+                prev_distance=reward_state.prev_distance,
+                prev_camera_align=reward_state.prev_camera_align,
+                gripper_closed=bool(reward_state.gripper_closed),
+                grasped=bool(reward_state.grasped),
+                step_count=int(reward_state.step_count),
+            )
+            target_source = obj_pos if obj_pos is not None else goal_pos
+            if target_source is None:
+                target_source = np.zeros((3,), dtype=np.float32)
+            _, sparse_success, _ = _compute_sparse_manipulation_reward(
+                spec=spec,
+                ee_pos=ee_arr[:3],
+                goal_pos=np.asarray(target_source, dtype=np.float32).reshape(-1)[:3],
+                reward_state=reward_state_copy,
+                task_metadata=task_metadata,
+                gripper_opening=gripper_opening,
+                caught_object_is_target=caught_object_is_target,
+                caught_object_score=caught_object_score,
+                env=env,
+                target_body_name=target_body_name,
+                reference_body_name=reference_body_name,
+                second_reference_body_name=second_reference_body_name,
+            )
+        return sparse_success, {
+            "validation_success_mode": 3.0,
+            "manipulation_validation_success": float(sparse_success),
+        }
+
     if spec.instruction_type == "move_to_object":
         target_source = obj_pos if obj_pos is not None else goal_pos
         if target_source is None:
-            return bool(current_success), {}
+            success = bool(current_success)
+            return success, {
+                "validation_success_mode": 2.0,
+                "move_to_object_validation_success": float(success),
+            }
         target_arr = np.asarray(target_source, dtype=np.float32).reshape(-1)
         if target_arr.size < 3:
             return bool(current_success), {}
@@ -822,7 +1172,15 @@ def compute_instruction_validation_success(
             0.05,
         ),
     )
-    if axis_idx in (0, 1):
+    use_workspace_center = bool(
+        axis_idx in (0, 1)
+        and isinstance(task_metadata, dict)
+        and (
+            "goal_center_xy" in task_metadata
+            or "directional_success_center_threshold" in task_metadata
+        )
+    )
+    if use_workspace_center:
         default_goal_center_xy = (0.0, 0.0)
         raw_center_xy = (
             task_metadata.get("goal_center_xy", default_goal_center_xy)
@@ -852,7 +1210,7 @@ def compute_instruction_validation_success(
         "directional_success_threshold": float(threshold),
     }
     if axis_idx in (0, 1):
-        info["directional_success_reference_is_workspace_center"] = 1.0
+        info["directional_success_reference_is_workspace_center"] = float(use_workspace_center)
     else:
         info["directional_success_reference_is_workspace_center"] = 0.0
     return success, info

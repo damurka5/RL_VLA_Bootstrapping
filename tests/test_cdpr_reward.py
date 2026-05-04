@@ -388,6 +388,99 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertEqual(info["validation_success_mode"], 2.0)
         self.assertEqual(info["move_to_object_validation_success"], 1.0)
 
+    def test_grab_object_sparse_reward_succeeds_when_target_is_caught(self):
+        spec = InstructionSpec(
+            instruction_type="grab_object",
+            text="grab apple",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        target = np.array([0.02, 0.00, 0.16], dtype=np.float32)
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.02, 0.00, 0.18], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.02, 0.00, 0.20], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            gripper_opening=0.0,
+            caught_object_is_target=True,
+            caught_object_score=0.9,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertEqual(info["sparse_success"], 1.0)
+        self.assertEqual(info["grasped"], 1.0)
+
+    def test_push_right_sparse_reward_uses_object_displacement(self):
+        spec = InstructionSpec(
+            instruction_type="push_right",
+            text="push apple right",
+            target_object="ycb_apple",
+            direction=np.array([1.0, 0.0, 0.0], dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        initial = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+        moved = np.array([0.09, 0.00, 0.16], dtype=np.float32)
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.08, 0.00, 0.18], dtype=np.float32),
+            obj_pos=moved,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+                initial_obj_pos=initial,
+            ),
+            task_metadata={"push_success_displacement": 0.08},
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertAlmostEqual(info["signed_relation_offset"], 0.09, places=6)
+
+    def test_left_of_object_sparse_reward_requires_relation_and_motion(self):
+        class _Env:
+            def _get_body_position(self, body_name):
+                return {
+                    "target_body": np.array([-0.09, 0.01, 0.16], dtype=np.float32),
+                    "ref_body": np.array([0.02, 0.00, 0.16], dtype=np.float32),
+                }[body_name]
+
+        spec = InstructionSpec(
+            instruction_type="move_left_of_object",
+            text="move apple to the left of pear",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+            reference_object="ycb_pear",
+        )
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([-0.08, 0.01, 0.18], dtype=np.float32),
+            obj_pos=np.array([-0.06, 0.00, 0.16], dtype=np.float32),
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+                initial_obj_pos=np.array([-0.02, 0.00, 0.16], dtype=np.float32),
+            ),
+            task_metadata={"relation_left_right_offset": 0.08, "relation_min_target_motion": 0.02},
+            env=_Env(),
+            target_body_name="target_body",
+            reference_body_name="ref_body",
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertGreater(info["signed_relation_offset"], 0.08)
+        self.assertEqual(info["relation_motion_ok"], 1.0)
+
     def test_pick_up_reward_prefers_open_centered_pregrasp(self):
         spec = self._spec("pick_up")
         initial_obj = np.array([0.0, 0.0, 0.18], dtype=np.float32)

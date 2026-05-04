@@ -1197,6 +1197,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._scene_name = ""
         self._target_catalog_name = ""
         self._target_body_name = ""
+        self._reference_catalog_name = ""
+        self._reference_body_name = ""
+        self._second_reference_catalog_name = ""
+        self._second_reference_body_name = ""
         self._catalog_to_body: dict[str, str] = {}
         self._object_body_names: list[str] = []
         self._scene_catalog_objects: list[str] = []
@@ -1292,11 +1296,15 @@ class CDPRLanguageRLEnv(_EnvBase):
                 # Continue if placement fails; wrapper-provided placement is still valid.
                 pass
 
-        self._target_catalog_name = ""
-        self._target_body_name = ""
-
-        self._target_catalog_name, self._target_body_name = self._select_target_object(scene)
         instruction_type = self._sample_instruction_type(options=options)
+        (
+            self._target_catalog_name,
+            self._target_body_name,
+            self._reference_catalog_name,
+            self._reference_body_name,
+            self._second_reference_catalog_name,
+            self._second_reference_body_name,
+        ) = self._select_instruction_objects(scene, instruction_type=instruction_type, options=options)
 
         self._instruction_spec = sample_instruction(
             target_object=self._target_catalog_name or None,
@@ -1305,6 +1313,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             move_distance=self.move_distance,
             lift_distance=self.lift_distance,
             instruction_type=instruction_type,
+            reference_object=self._reference_catalog_name or None,
+            second_reference_object=self._second_reference_catalog_name or None,
         )
         setattr(self.sim, "language_instruction", self._instruction_spec.text)
 
@@ -1319,7 +1329,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             goal_pos=self._goal_position,
             instruction_direction=self._instruction_spec.direction,
         )
-        self._reward_state = init_reward_state(ee0, self._goal_position)
+        reward_target_pos = self._current_manipulated_object_position(default=self._goal_position)
+        self._reward_state = init_reward_state(ee0, reward_target_pos)
         self._step_count = 0
         self._yaw = self._read_current_yaw()
         self._last_gripper_cmd = 0.0
@@ -1380,6 +1391,10 @@ class CDPRLanguageRLEnv(_EnvBase):
             "scene_name": self._scene_name,
             "target_catalog_name": self._target_catalog_name,
             "target_body_name": self._target_body_name,
+            "reference_catalog_name": self._reference_catalog_name,
+            "reference_body_name": self._reference_body_name,
+            "second_reference_catalog_name": self._second_reference_catalog_name,
+            "second_reference_body_name": self._second_reference_body_name,
             "gripper_opening": gripper_opening,
             "support_surface_z": self._support_surface_z,
             "caught_object_body": caught_body,
@@ -1439,6 +1454,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._desk_texture_name = ""
         self._prev_object_positions = {}
         self._inverse_catalog_to_body = {}
+        self._reference_catalog_name = ""
+        self._reference_body_name = ""
+        self._second_reference_catalog_name = ""
+        self._second_reference_body_name = ""
         self._goal_position = np.zeros((3,), dtype=np.float32)
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
 
@@ -1458,6 +1477,10 @@ class CDPRLanguageRLEnv(_EnvBase):
             "scene_name": str(self._scene_name),
             "target_catalog_name": str(self._target_catalog_name),
             "target_body_name": str(self._target_body_name),
+            "reference_catalog_name": str(getattr(self, "_reference_catalog_name", "")),
+            "reference_body_name": str(getattr(self, "_reference_body_name", "")),
+            "second_reference_catalog_name": str(getattr(self, "_second_reference_catalog_name", "")),
+            "second_reference_body_name": str(getattr(self, "_second_reference_body_name", "")),
             "catalog_to_body": dict(self._catalog_to_body),
             "object_body_names": list(self._object_body_names),
             "scene_catalog_objects": list(self._scene_catalog_objects),
@@ -1503,6 +1526,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._scene_name = str(snapshot["scene_name"])
         self._target_catalog_name = str(snapshot["target_catalog_name"])
         self._target_body_name = str(snapshot["target_body_name"])
+        self._reference_catalog_name = str(snapshot.get("reference_catalog_name", ""))
+        self._reference_body_name = str(snapshot.get("reference_body_name", ""))
+        self._second_reference_catalog_name = str(snapshot.get("second_reference_catalog_name", ""))
+        self._second_reference_body_name = str(snapshot.get("second_reference_body_name", ""))
         self._catalog_to_body = dict(snapshot["catalog_to_body"])
         self._object_body_names = [str(name) for name in snapshot["object_body_names"]]
         self._scene_catalog_objects = [str(name) for name in snapshot["scene_catalog_objects"]]
@@ -1538,6 +1565,16 @@ class CDPRLanguageRLEnv(_EnvBase):
             for scene in self.scenes:
                 if scene.name == requested_scene:
                     return scene
+        required_raw = (options or {}).get("required_objects")
+        if required_raw is not None:
+            if isinstance(required_raw, str):
+                required = {required_raw}
+            else:
+                required = {str(item) for item in required_raw}
+            candidates = [scene for scene in self.scenes if required.issubset({str(obj) for obj in scene.objects})]
+            if candidates:
+                idx = int(self.np_random.integers(0, len(candidates)))
+                return candidates[idx]
         idx = int(self.np_random.integers(0, len(self.scenes)))
         return self.scenes[idx]
 
@@ -1571,8 +1608,64 @@ class CDPRLanguageRLEnv(_EnvBase):
 
     def _allowed_instruction_candidates(self) -> tuple[str, ...]:
         if self.instruction_types:
-            return tuple(str(item) for item in self.instruction_types)
-        return tuple(INSTRUCTION_TYPES)
+            base_candidates = tuple(str(item) for item in self.instruction_types)
+        else:
+            base_candidates = tuple(INSTRUCTION_TYPES)
+
+        curriculum_candidates = self._instruction_curriculum_candidates()
+        if curriculum_candidates is None:
+            return base_candidates
+
+        curriculum_set = set(curriculum_candidates)
+        allowed = tuple(item for item in base_candidates if item in curriculum_set)
+        if not allowed:
+            raise ValueError(
+                "Active instruction curriculum stage has no overlap with the allowed instruction types. "
+                f"Stage: {list(curriculum_candidates)}; allowed: {list(base_candidates)}"
+            )
+        return allowed
+
+    def _instruction_curriculum_candidates(self) -> tuple[str, ...] | None:
+        raw = getattr(self, "_task_metadata", {}).get("instruction_curriculum")
+        if raw is None:
+            return None
+        if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+            raise ValueError("Task metadata `instruction_curriculum` must be a list of stage mappings.")
+
+        episode_index = int(getattr(self, "_episode_index", 0))
+        cumulative_episodes = 0
+        fallback: tuple[str, ...] | None = None
+        for stage in raw:
+            if not isinstance(stage, dict):
+                raise ValueError("Each instruction curriculum stage must be a mapping.")
+
+            stage_types_raw = stage.get("instruction_types")
+            if stage_types_raw is None:
+                raise ValueError("Each instruction curriculum stage must include `instruction_types`.")
+            if isinstance(stage_types_raw, str):
+                stage_types_raw = [stage_types_raw]
+            if isinstance(stage_types_raw, (bytes, str)) or not isinstance(stage_types_raw, Sequence):
+                raise ValueError("Instruction curriculum `instruction_types` must be a list of names.")
+            stage_candidates = _dedupe_names([str(item) for item in stage_types_raw])
+            if not stage_candidates:
+                continue
+            fallback = stage_candidates
+
+            if "until_episode" in stage:
+                until_episode = int(stage["until_episode"])
+                if episode_index < until_episode:
+                    return stage_candidates
+                continue
+
+            if "episodes" in stage:
+                cumulative_episodes += max(0, int(stage["episodes"]))
+                if episode_index < cumulative_episodes:
+                    return stage_candidates
+                continue
+
+            return stage_candidates
+
+        return fallback
 
     def _sample_instruction_type(self, options: Optional[dict[str, Any]] = None) -> str:
         candidates = self._allowed_instruction_candidates()
@@ -1625,6 +1718,96 @@ class CDPRLanguageRLEnv(_EnvBase):
             return chosen_catalog, str(self._catalog_to_body.get(chosen_catalog, ""))
         return "", ""
 
+    def _resolve_requested_catalog(self, raw: Any) -> tuple[str, str]:
+        if raw is None:
+            return "", ""
+        catalog = str(raw).strip()
+        if not catalog:
+            return "", ""
+        body = str(self._catalog_to_body.get(catalog, ""))
+        return catalog, body
+
+    def _choose_catalog(self, candidates: Sequence[str], *, fallback: Sequence[str] = ()) -> tuple[str, str]:
+        pool = [str(name) for name in candidates if str(name) in self._catalog_to_body]
+        if not pool:
+            pool = [str(name) for name in fallback if str(name) in self._catalog_to_body]
+        if not pool:
+            return "", ""
+        chosen = str(pool[int(self.np_random.integers(0, len(pool)))])
+        return chosen, str(self._catalog_to_body.get(chosen, ""))
+
+    def _select_instruction_objects(
+        self,
+        scene: SceneSpec,
+        *,
+        instruction_type: str,
+        options: Optional[dict[str, Any]] = None,
+    ) -> tuple[str, str, str, str, str, str]:
+        options = dict(options or {})
+        requested_target = self._resolve_requested_catalog(
+            options.get("target_object", options.get("target_catalog_name"))
+        )
+        requested_reference = self._resolve_requested_catalog(
+            options.get("reference_object", options.get("reference_catalog_name"))
+        )
+        requested_second_reference = self._resolve_requested_catalog(
+            options.get("second_reference_object", options.get("second_reference_catalog_name"))
+        )
+
+        scene_catalogs = [str(name) for name in scene.objects if str(name) in self._catalog_to_body]
+        if not scene_catalogs:
+            target_catalog, target_body = self._select_target_object(scene)
+            return target_catalog, target_body, "", "", "", ""
+
+        def _not_selected(*selected: str) -> list[str]:
+            blocked = {str(item) for item in selected if str(item)}
+            return [name for name in scene_catalogs if name not in blocked]
+
+        target_catalog, target_body = requested_target
+        reference_catalog, reference_body = requested_reference
+        second_reference_catalog, second_reference_body = requested_second_reference
+
+        if not target_catalog:
+            if str(instruction_type) == "put_into_plate":
+                plate_like = [name for name in scene_catalogs if "plate" in name.lower()]
+                excluded = set(plate_like) if len(scene_catalogs) > len(plate_like) else set()
+                target_catalog, target_body = self._choose_catalog(
+                    [name for name in scene_catalogs if name not in excluded],
+                    fallback=scene_catalogs,
+                )
+            else:
+                target_catalog, target_body = self._select_target_object(scene)
+                if target_catalog not in self._catalog_to_body:
+                    target_catalog, target_body = self._choose_catalog(scene_catalogs)
+
+        if str(instruction_type) == "put_into_plate" and not reference_catalog:
+            plate_like = [name for name in scene_catalogs if "plate" in name.lower()]
+            reference_catalog, reference_body = self._choose_catalog(
+                [name for name in plate_like if name != target_catalog],
+                fallback=_not_selected(target_catalog),
+            )
+
+        elif str(instruction_type) in {"move_left_of_object", "move_right_of_object"} and not reference_catalog:
+            reference_catalog, reference_body = self._choose_catalog(_not_selected(target_catalog), fallback=scene_catalogs)
+
+        elif str(instruction_type) == "move_between_objects":
+            if not reference_catalog:
+                reference_catalog, reference_body = self._choose_catalog(_not_selected(target_catalog), fallback=scene_catalogs)
+            if not second_reference_catalog:
+                second_reference_catalog, second_reference_body = self._choose_catalog(
+                    _not_selected(target_catalog, reference_catalog),
+                    fallback=_not_selected(target_catalog),
+                )
+
+        return (
+            str(target_catalog),
+            str(target_body),
+            str(reference_catalog),
+            str(reference_body),
+            str(second_reference_catalog),
+            str(second_reference_body),
+        )
+
     def _goal_center(self) -> np.ndarray:
         raw_xy = self._task_metadata.get("goal_center_xy", self.defaults.get("goal_center_xy", DEFAULT_GOAL_CENTER_XY))
         xy = np.asarray(raw_xy, dtype=np.float32).reshape(-1)
@@ -1642,6 +1825,68 @@ class CDPRLanguageRLEnv(_EnvBase):
             center[2] = max(float(center[2]), float(self._ee_min_z))
         return center
 
+    def _body_position_or_none(self, body_name: str) -> np.ndarray | None:
+        if not body_name:
+            return None
+        try:
+            return self._get_body_position(str(body_name)).astype(np.float32)
+        except Exception:
+            return None
+
+    def _current_manipulated_object_position(self, *, default: np.ndarray | None = None) -> np.ndarray:
+        pos = self._body_position_or_none(self._target_body_name)
+        if pos is not None:
+            return pos
+        if default is None:
+            default = self._goal_position
+        return np.asarray(default, dtype=np.float32).reshape(-1)[:3].astype(np.float32)
+
+    def _reference_object_position(self, *, second: bool = False, default: np.ndarray | None = None) -> np.ndarray:
+        body_name = self._second_reference_body_name if second else self._reference_body_name
+        pos = self._body_position_or_none(body_name)
+        if pos is not None:
+            return pos
+        if default is None:
+            default = self._goal_position
+        return np.asarray(default, dtype=np.float32).reshape(-1)[:3].astype(np.float32)
+
+    def _compute_relation_goal_position(self, *, spec, target_pos: np.ndarray) -> np.ndarray:
+        instruction_type = str(spec.instruction_type)
+        if instruction_type == "put_into_plate":
+            ref_pos = self._reference_object_position(default=target_pos)
+            goal = ref_pos.copy()
+            goal[2] = max(float(goal[2]), float(self._support_surface_z + 0.02))
+            return goal.astype(np.float32)
+
+        if instruction_type in {"move_left_of_object", "move_right_of_object"}:
+            ref_pos = self._reference_object_position(default=target_pos)
+            offset = float(self._task_metadata.get("relation_left_right_offset", 0.08))
+            sign = -1.0 if instruction_type == "move_left_of_object" else 1.0
+            goal = ref_pos.copy()
+            goal[0] += sign * offset
+            return np.asarray(clamp_xyz(goal), dtype=np.float32)
+
+        if instruction_type == "move_between_objects":
+            ref_a = self._reference_object_position(default=target_pos)
+            ref_b = self._reference_object_position(second=True, default=target_pos)
+            goal = 0.5 * (ref_a + ref_b)
+            return np.asarray(clamp_xyz(goal), dtype=np.float32)
+
+        if instruction_type in {"push_left", "push_right"}:
+            distance = float(self._task_metadata.get("push_success_displacement", 0.08))
+            sign = -1.0 if instruction_type == "push_left" else 1.0
+            goal = np.asarray(target_pos, dtype=np.float32).copy()
+            initial = (
+                np.asarray(self._reward_state.initial_obj_pos, dtype=np.float32)
+                if self._reward_state is not None
+                else goal
+            )
+            goal = initial.copy()
+            goal[0] += sign * distance
+            return np.asarray(clamp_xyz(goal), dtype=np.float32)
+
+        return target_pos.astype(np.float32)
+
     def _compute_instruction_goal(
         self,
         *,
@@ -1655,7 +1900,18 @@ class CDPRLanguageRLEnv(_EnvBase):
         if requested_goal is not None:
             goal = np.asarray(clamp_xyz(requested_goal), dtype=np.float32)
         elif instruction_uses_target_object(spec.instruction_type) and self._target_body_name:
-            goal = self._get_body_position(self._target_body_name).astype(np.float32)
+            target_pos = self._get_body_position(self._target_body_name).astype(np.float32)
+            if spec.instruction_type in {
+                "put_into_plate",
+                "move_left_of_object",
+                "move_right_of_object",
+                "move_between_objects",
+                "push_left",
+                "push_right",
+            }:
+                goal = self._compute_relation_goal_position(spec=spec, target_pos=target_pos)
+            else:
+                goal = target_pos
         else:
             center = self._goal_center()
             lateral_offset = float(self._task_metadata.get("lateral_goal_offset", spec.target_displacement))
@@ -2036,7 +2292,20 @@ class CDPRLanguageRLEnv(_EnvBase):
             and self._target_body_name
         ):
             try:
-                return self._get_body_position(self._target_body_name).astype(np.float32)
+                target_pos = self._get_body_position(self._target_body_name).astype(np.float32)
+                if self._instruction_spec.instruction_type in {
+                    "put_into_plate",
+                    "move_left_of_object",
+                    "move_right_of_object",
+                    "move_between_objects",
+                    "push_left",
+                    "push_right",
+                }:
+                    return self._compute_relation_goal_position(
+                        spec=self._instruction_spec,
+                        target_pos=target_pos,
+                    )
+                return target_pos
             except Exception:
                 pass
         return self._goal_position.astype(np.float32)
@@ -2245,6 +2514,9 @@ class CDPRLanguageRLEnv(_EnvBase):
     def _base_info(self) -> dict[str, Any]:
         live_goal_position = self._current_target_reference_position()
         live_goal_direction = self._current_goal_motion_direction(goal_pos=live_goal_position)
+        target_object_position = self._current_manipulated_object_position(default=live_goal_position)
+        reference_object_position = self._reference_object_position(default=live_goal_position)
+        second_reference_object_position = self._reference_object_position(second=True, default=live_goal_position)
         return {
             "scene": self._scene_name,
             "episode_index": int(self._episode_index),
@@ -2255,6 +2527,13 @@ class CDPRLanguageRLEnv(_EnvBase):
             "distractor_object_pool": list(self.distractor_object_pool),
             "target_object_catalog": self._target_catalog_name,
             "target_object_body": self._target_body_name,
+            "target_object_position_actual": [float(x) for x in target_object_position.tolist()],
+            "reference_object_catalog": self._reference_catalog_name,
+            "reference_object_body": self._reference_body_name,
+            "reference_object_position": [float(x) for x in reference_object_position.tolist()],
+            "second_reference_object_catalog": self._second_reference_catalog_name,
+            "second_reference_object_body": self._second_reference_body_name,
+            "second_reference_object_position": [float(x) for x in second_reference_object_position.tolist()],
             "language_instruction": self._instruction_spec.text,
             "instruction_type": self._instruction_spec.instruction_type,
             "goal_position": [float(x) for x in live_goal_position.tolist()],

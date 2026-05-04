@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv
+from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv, SceneSpec
 
 
 class EnvInstructionSamplingTests(unittest.TestCase):
@@ -32,6 +32,41 @@ class EnvInstructionSamplingTests(unittest.TestCase):
 
         self.assertEqual(selected, "move_up")
         self.assertEqual(env._instruction_cycle, ["move_down"])
+
+    def test_sample_scene_can_filter_required_objects(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.scenes = [
+            SceneSpec(name="desk_a", objects=("ycb_apple", "ycb_mug")),
+            SceneSpec(name="desk_b", objects=("ycb_apple", "ycb_plate")),
+        ]
+        env.np_random = np.random.default_rng(0)
+
+        scene = env._sample_scene(options={"required_objects": ["ycb_plate"]})
+
+        self.assertEqual(scene.name, "desk_b")
+
+    def test_instruction_curriculum_filters_allowed_candidates_by_episode(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.instruction_types = ("grab_object", "push_left", "put_into_plate")
+        env._task_metadata = {
+            "instruction_curriculum": [
+                {"until_episode": 2, "instruction_types": ["grab_object"]},
+                {"until_episode": 4, "instruction_types": ["grab_object", "push_left"]},
+                {"instruction_types": ["grab_object", "push_left", "put_into_plate"]},
+            ],
+        }
+
+        env._episode_index = 0
+        self.assertEqual(env._allowed_instruction_candidates(), ("grab_object",))
+
+        env._episode_index = 3
+        self.assertEqual(env._allowed_instruction_candidates(), ("grab_object", "push_left"))
+
+        env._episode_index = 4
+        self.assertEqual(
+            env._allowed_instruction_candidates(),
+            ("grab_object", "push_left", "put_into_plate"),
+        )
 
 
 if __name__ == "__main__":

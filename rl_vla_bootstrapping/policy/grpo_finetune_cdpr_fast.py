@@ -364,6 +364,22 @@ class _RolloutTensorboardLogger:
             "reward_clip_rate": deque(maxlen=self.every_global_steps or 1),
             "reward_non_finite_rate": deque(maxlen=self.every_global_steps or 1),
             "distance_to_goal": deque(maxlen=self.every_global_steps or 1),
+            "distance_to_goal_xy": deque(maxlen=self.every_global_steps or 1),
+            "distance_ee_to_object": deque(maxlen=self.every_global_steps or 1),
+            "distance_ee_to_object_xy": deque(maxlen=self.every_global_steps or 1),
+            "sparse_success": deque(maxlen=self.every_global_steps or 1),
+            "gripper_closed": deque(maxlen=self.every_global_steps or 1),
+            "grasped": deque(maxlen=self.every_global_steps or 1),
+            "caught_object_score": deque(maxlen=self.every_global_steps or 1),
+            "caught_object_is_target": deque(maxlen=self.every_global_steps or 1),
+            "target_motion_x": deque(maxlen=self.every_global_steps or 1),
+            "target_motion_y": deque(maxlen=self.every_global_steps or 1),
+            "target_motion_z": deque(maxlen=self.every_global_steps or 1),
+            "target_motion_xy": deque(maxlen=self.every_global_steps or 1),
+            "relation_error": deque(maxlen=self.every_global_steps or 1),
+            "signed_relation_offset": deque(maxlen=self.every_global_steps or 1),
+            "relation_motion_required": deque(maxlen=self.every_global_steps or 1),
+            "relation_motion_ok": deque(maxlen=self.every_global_steps or 1),
             "action_saturation_penalty": deque(maxlen=self.every_global_steps or 1),
             "action_saturation_rate": deque(maxlen=self.every_global_steps or 1),
         }
@@ -426,6 +442,22 @@ class _RolloutTensorboardLogger:
         self._append("reward_clip_rate", 1.0 if bool(info.get("reward_env_clipped", False)) else 0.0)
         self._append("reward_non_finite_rate", 1.0 if bool(info.get("reward_env_non_finite", False)) else 0.0)
         self._append_optional("distance_to_goal", info.get("distance_to_goal"))
+        self._append_optional("distance_to_goal_xy", info.get("distance_to_goal_xy"))
+        self._append_optional("distance_ee_to_object", info.get("distance_ee_to_object"))
+        self._append_optional("distance_ee_to_object_xy", info.get("distance_ee_to_object_xy"))
+        self._append_optional("sparse_success", info.get("sparse_success"))
+        self._append_optional("gripper_closed", info.get("gripper_closed"))
+        self._append_optional("grasped", info.get("grasped"))
+        self._append_optional("caught_object_score", info.get("caught_object_score"))
+        self._append_optional("caught_object_is_target", info.get("caught_object_is_target"))
+        self._append_optional("target_motion_x", info.get("target_motion_x"))
+        self._append_optional("target_motion_y", info.get("target_motion_y"))
+        self._append_optional("target_motion_z", info.get("target_motion_z"))
+        self._append_optional("target_motion_xy", info.get("target_motion_xy"))
+        self._append_optional("relation_error", info.get("relation_error"))
+        self._append_optional("signed_relation_offset", info.get("signed_relation_offset"))
+        self._append_optional("relation_motion_required", info.get("relation_motion_required"))
+        self._append_optional("relation_motion_ok", info.get("relation_motion_ok"))
         self._append_optional("action_saturation_penalty", info.get("action_saturation_penalty"))
         self._append_optional("action_saturation_rate", info.get("action_saturation_rate"))
 

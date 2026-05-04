@@ -34,6 +34,7 @@ if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
     sys.modules["PIL.Image"] = image_stub
 
 from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
+    _RolloutTensorboardLogger,
     _infer_resume_artifacts,
     _patch_desk_texture_prepare,
     _split_wrapper_argv,
@@ -44,6 +45,55 @@ if _INSERTED_TORCH_STUB:
 
 
 class FastGRPOWrapperTests(unittest.TestCase):
+    def test_rollout_tensorboard_logger_emits_sparse_manipulation_metrics(self):
+        class FakeSummaryWriter:
+            scalars: list[tuple[str, float, int]] = []
+
+            def __init__(self, log_dir: str, flush_secs: int = 10):
+                self.log_dir = log_dir
+                self.flush_secs = flush_secs
+
+            def add_scalar(self, tag: str, value: float, step: int):
+                self.scalars.append((tag, float(value), int(step)))
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            FakeSummaryWriter.scalars.clear()
+            logger = _RolloutTensorboardLogger(FakeSummaryWriter, every_global_steps=2)
+            logger.set_run_dir(Path(tmp))
+
+            for idx in range(2):
+                logger.capture_reward(
+                    env_reward=1.0,
+                    shaped_reward=1.0,
+                    closer_bonus=0.0,
+                    farther_penalty=0.0,
+                    distance_delta_raw=0.0,
+                )
+                logger.finalize_step(
+                    {
+                        "success": idx == 1,
+                        "sparse_success": idx == 1,
+                        "distance_ee_to_object_xy": 0.03 + 0.01 * idx,
+                        "target_motion_xy": 0.05 * idx,
+                        "relation_error": 0.08 - 0.02 * idx,
+                        "gripper_closed": 1.0,
+                        "caught_object_is_target": idx == 1,
+                    },
+                    {},
+                )
+
+            tags = {tag for tag, _, _ in FakeSummaryWriter.scalars}
+            self.assertIn("rollout_step/sparse_success_mean", tags)
+            self.assertIn("rollout_step/distance_ee_to_object_xy_mean", tags)
+            self.assertIn("rollout_step/relation_error_mean", tags)
+            self.assertIn("rollout_step/target_motion_xy_mean", tags)
+
     def test_patch_desk_texture_prepare_uses_single_writer(self):
         calls: list[tuple[str, int]] = []
 

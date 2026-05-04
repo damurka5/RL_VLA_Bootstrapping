@@ -36,6 +36,29 @@ class InstructionTextTests(unittest.TestCase):
         self.assertEqual(spec.text, "pick up apple")
         self.assertEqual(spec.target_object, "ycb_apple")
 
+    def test_complex_manipulation_instructions_use_reference_text(self):
+        spec = sample_instruction(
+            target_object="ycb_apple",
+            reference_object="ycb_plate",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["put_into_plate"],
+        )
+
+        self.assertEqual(spec.instruction_type, "put_into_plate")
+        self.assertEqual(spec.text, "put apple into plate")
+        self.assertEqual(spec.reference_object, "ycb_plate")
+
+        between = sample_instruction(
+            target_object="ycb_mug",
+            reference_object="ycb_apple",
+            second_reference_object="ycb_pear",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["move_between_objects"],
+        )
+
+        self.assertEqual(between.text, "move mug between apple and pear")
+        self.assertEqual(between.second_reference_object, "ycb_pear")
+
     def test_move_top_instruction_uses_forward_text(self):
         spec = sample_instruction(
             target_object="ycb_apple",
