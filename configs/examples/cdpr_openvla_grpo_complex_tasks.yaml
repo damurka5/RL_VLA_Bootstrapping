@@ -119,26 +119,8 @@ task:
   metadata:
     zero_demo_first: true
     instruction_sampling: uniform_cycle
-    instruction_curriculum:
-      - until_episode: 80
-        instruction_types: [grab_object]
-      - until_episode: 160
-        instruction_types: [grab_object, pick_up]
-      - until_episode: 260
-        instruction_types: [grab_object, pick_up, push_left, push_right]
-      - until_episode: 420
-        instruction_types: [grab_object, pick_up, push_left, push_right, put_into_plate]
-      - instruction_types:
-          [
-            grab_object,
-            pick_up,
-            push_left,
-            push_right,
-            put_into_plate,
-            move_left_of_object,
-            move_right_of_object,
-            move_between_objects,
-          ]
+    # LC-HOL++ owns option sampling through success-gated stages in the GRPO wrapper.
+    instruction_curriculum: null
     target_object_pool:
       [
         ycb_apple,
@@ -254,6 +236,20 @@ training:
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
+      lchol_enabled: true
+      lchol_group_score: phase_shaped
+      lchol_hindsight_bc_coef: 0.20
+      lchol_hindsight_done_weight: 2.0
+      lchol_hindsight_replay_capacity: 20000
+      lchol_hindsight_replay_ratio: 0.50
+      lchol_hindsight_prefix_max_steps: 16
+      lchol_option_prior_bc_coef: 0.20
+      lchol_option_prior_min_coef: 0.035
+      lchol_option_prior_decay_updates: 80
+      lchol_curriculum: strict_staged
+      lchol_strict_min_success_samples: 24
+      lchol_weakest_mode_oversample_strength: 2.5
+      lchol_newest_stage_weight: 1.4
       num_parallel_envs: 10
       total_updates: 120
       rollout_steps: 240

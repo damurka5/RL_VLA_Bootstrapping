@@ -7,6 +7,7 @@ import importlib.util
 import math
 import os
 import sys
+import types
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
@@ -20,6 +21,25 @@ from PIL import Image
 class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
     resume_actor_stats: bool = True
+    lchol: "_LCHOLWrapperArgs | None" = None
+
+
+@dataclass(frozen=True)
+class _LCHOLWrapperArgs:
+    enabled: bool = False
+    group_score: str = "phase_shaped"
+    hindsight_bc_coef: float = 0.20
+    hindsight_done_weight: float = 2.0
+    hindsight_replay_capacity: int = 20_000
+    hindsight_replay_ratio: float = 0.50
+    hindsight_prefix_max_steps: int = 16
+    option_prior_bc_coef: float = 0.20
+    option_prior_min_coef: float = 0.035
+    option_prior_decay_updates: int = 80
+    curriculum: str = "strict_staged"
+    strict_min_success_samples: int = 24
+    weakest_mode_oversample_strength: float = 2.5
+    newest_stage_weight: float = 1.4
 
 
 @dataclass(frozen=True)
@@ -28,11 +48,43 @@ class _ResumeArtifacts:
     actor_stats_path: Path | None = None
 
 
+_LCHOL_VALUE_FIELDS: dict[str, tuple[str, type]] = {
+    "lchol_group_score": ("group_score", str),
+    "lchol_hindsight_bc_coef": ("hindsight_bc_coef", float),
+    "lchol_hindsight_done_weight": ("hindsight_done_weight", float),
+    "lchol_hindsight_replay_capacity": ("hindsight_replay_capacity", int),
+    "lchol_hindsight_replay_ratio": ("hindsight_replay_ratio", float),
+    "lchol_hindsight_prefix_max_steps": ("hindsight_prefix_max_steps", int),
+    "lchol_option_prior_bc_coef": ("option_prior_bc_coef", float),
+    "lchol_option_prior_min_coef": ("option_prior_min_coef", float),
+    "lchol_option_prior_decay_updates": ("option_prior_decay_updates", int),
+    "lchol_curriculum": ("curriculum", str),
+    "lchol_strict_min_success_samples": ("strict_min_success_samples", int),
+    "lchol_weakest_mode_oversample_strength": ("weakest_mode_oversample_strength", float),
+    "lchol_newest_stage_weight": ("newest_stage_weight", float),
+}
+
+
+def _strip_lchol_prefix(flag: str) -> str:
+    out = str(flag).lstrip("-")
+    return out.replace("-", "_")
+
+
+def _parse_lchol_bool(raw: str) -> bool:
+    value = str(raw).strip().lower()
+    if value in {"1", "true", "yes", "on"}:
+        return True
+    if value in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"Expected boolean LC-HOL value, got {raw!r}.")
+
+
 def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _FastWrapperArgs]:
     forwarded: list[str] = []
     external_script: Path | None = None
     tensorboard_rollout_every_global_steps = 0
     resume_actor_stats = True
+    lchol_values = dict(_LCHOLWrapperArgs().__dict__)
 
     idx = 0
     while idx < len(argv):
@@ -60,12 +112,43 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
             resume_actor_stats = False
             idx += 1
             continue
+
+        normalized_arg = _strip_lchol_prefix(arg.split("=", 1)[0])
+        if normalized_arg in {"lchol_enabled", "no_lchol_enabled"}:
+            if "=" in arg:
+                lchol_values["enabled"] = _parse_lchol_bool(arg.split("=", 1)[1])
+            elif normalized_arg == "no_lchol_enabled":
+                lchol_values["enabled"] = False
+            elif idx + 1 < len(argv) and not str(argv[idx + 1]).startswith("--"):
+                lchol_values["enabled"] = _parse_lchol_bool(str(argv[idx + 1]))
+                idx += 1
+            else:
+                lchol_values["enabled"] = True
+            idx += 1
+            continue
+
+        if normalized_arg in _LCHOL_VALUE_FIELDS:
+            attr, caster = _LCHOL_VALUE_FIELDS[normalized_arg]
+            if "=" in arg:
+                raw_value = arg.split("=", 1)[1]
+            else:
+                if idx + 1 >= len(argv):
+                    raise SystemExit(f"{arg} expects a value.")
+                idx += 1
+                raw_value = argv[idx]
+            try:
+                lchol_values[attr] = caster(raw_value)
+            except ValueError as exc:
+                raise SystemExit(f"{arg} received invalid value {raw_value!r}.") from exc
+            idx += 1
+            continue
         forwarded.append(arg)
         idx += 1
 
     return external_script, forwarded, _FastWrapperArgs(
         tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps,
         resume_actor_stats=resume_actor_stats,
+        lchol=_LCHOLWrapperArgs(**lchol_values),
     )
 
 
@@ -170,10 +253,132 @@ def _resolve_external_script(cli_path: Path | None) -> Path:
     )
 
 
-def _load_external_module(script_path: Path):
+def _transform_external_grpo_source_for_lchol(source: str) -> str:
+    transformed = source
+    replacements = [
+        (
+            "    branch_rng = np.random.default_rng(args.seed + 90_000 + rank)\n",
+            "    branch_rng = np.random.default_rng(args.seed + 90_000 + rank)\n"
+            "    _rlvla_lchol_set_runtime(\n"
+            "        _rlvla_lchol_build_runtime(args, is_main=is_main, rank=rank, seed=args.seed + rank)\n"
+            "    )\n",
+        ),
+        (
+            "            loss_total_values: List[float] = []\n",
+            "            loss_total_values: List[float] = []\n"
+            "            loss_lchol_bc_values: List[float] = []\n",
+        ),
+        (
+            "                        reward_components = _extract_reward_components(step_info if isinstance(step_info, dict) else {})\n",
+            "                        lchol_group_score = _rlvla_lchol_phase_score(step_info, fallback=reward)\n"
+            "                        if isinstance(step_info, dict):\n"
+            "                            step_info[\"lchol_group_score\"] = float(lchol_group_score)\n"
+            "                        reward_components = _extract_reward_components(step_info if isinstance(step_info, dict) else {})\n",
+        ),
+        (
+            "                        candidate_results.append(candidate)\n"
+            "                        candidate_rewards.append(float(reward))\n"
+            "                        env.restore_state(base_state)\n",
+            "                        candidate_results.append(candidate)\n"
+            "                        candidate_group_score = (\n"
+            "                            step_info.get(\"lchol_group_score\", reward)\n"
+            "                            if isinstance(step_info, dict)\n"
+            "                            else reward\n"
+            "                        )\n"
+            "                        candidate_rewards.append(float(candidate_group_score))\n"
+            "                        _rlvla_lchol_capture_candidate(\n"
+            "                            obs=obs,\n"
+            "                            step_info=step_info if isinstance(step_info, dict) else {},\n"
+            "                            sampled_action=sampled_actions_group[group_idx][env_idx],\n"
+            "                            group_score=float(candidate_group_score),\n"
+            "                            update=update,\n"
+            "                            global_step=global_step + 1,\n"
+            "                        )\n"
+            "                        env.restore_state(base_state)\n",
+        ),
+        (
+            "                            \"reward_shaped\": float(selected.reward),\n",
+            "                            \"reward_shaped\": float(selected.reward),\n"
+            "                            \"lchol_group_score\": float(selected.step_info.get(\"lchol_group_score\", selected.reward)),\n",
+        ),
+        (
+            "            advantages = np.asarray([transition.advantage for transition in transitions], dtype=np.float32)\n\n"
+            "            policy.train()\n",
+            "            advantages = np.asarray([transition.advantage for transition in transitions], dtype=np.float32)\n"
+            "            _rlvla_lchol_after_rollout(update=update)\n\n"
+            "            policy.train()\n",
+        ),
+        (
+            "                            loss = policy_loss + args.ent_coef * entropy_loss\n",
+            "                            lchol_bc_loss = _rlvla_lchol_bc_loss(\n"
+            "                                policy,\n"
+            "                                ppo,\n"
+            "                                device,\n"
+            "                                args,\n"
+            "                                num_actions_chunk=NUM_ACTIONS_CHUNK,\n"
+            "                            )\n"
+            "                            loss = policy_loss + args.ent_coef * entropy_loss + lchol_bc_loss\n",
+        ),
+        (
+            "                                loss_total_values.append(float(loss.item()))\n",
+            "                                loss_total_values.append(float(loss.item()))\n"
+            "                                loss_lchol_bc_values.append(float(lchol_bc_loss.detach().item()))\n",
+        ),
+        (
+            "            avg_total_loss = float(np.mean(loss_total_values)) if loss_total_values else 0.0\n",
+            "            avg_total_loss = float(np.mean(loss_total_values)) if loss_total_values else 0.0\n"
+            "            avg_lchol_bc_loss = float(np.mean(loss_lchol_bc_values)) if loss_lchol_bc_values else 0.0\n",
+        ),
+        (
+            "                    f\"loss_total_mean={avg_total_loss:.4f} \"\n",
+            "                    f\"loss_total_mean={avg_total_loss:.4f} \"\n"
+            "                    f\"loss_lchol_bc_mean={avg_lchol_bc_loss:.4f} \"\n",
+        ),
+        (
+            "                tb_writer.add_scalar(\"train/loss_total_mean\", avg_total_loss, global_step)\n",
+            "                tb_writer.add_scalar(\"train/loss_total_mean\", avg_total_loss, global_step)\n"
+            "                tb_writer.add_scalar(\"train/loss_lchol_bc_mean\", avg_lchol_bc_loss, global_step)\n",
+        ),
+        (
+            "                tb_writer.flush()\n\n"
+            "            if (\n"
+            "                is_main\n"
+            "                and args.rollout_tap_every_updates > 0\n",
+            "                tb_writer.flush()\n\n"
+            "            _rlvla_lchol_log_update(\n"
+            "                update=update,\n"
+            "                global_step=global_step,\n"
+            "                tb_writer=tb_writer,\n"
+            "                is_main=is_main,\n"
+            "            )\n\n"
+            "            if (\n"
+            "                is_main\n"
+            "                and args.rollout_tap_every_updates > 0\n",
+        ),
+    ]
+    for old, new in replacements:
+        if old not in transformed:
+            raise RuntimeError(
+                "Could not apply LC-HOL patch to external GRPO trainer; "
+                f"missing source anchor: {old[:80]!r}"
+            )
+        transformed = transformed.replace(old, new, 1)
+    return transformed
+
+
+def _load_external_module(script_path: Path, *, enable_lchol: bool = False):
     spec = importlib.util.spec_from_file_location("rlvla_external_grpo_finetune_cdpr", script_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not load module spec from {script_path}")
+    if enable_lchol:
+        source = script_path.read_text(encoding="utf-8")
+        source = _transform_external_grpo_source_for_lchol(source)
+        module = types.ModuleType(spec.name)
+        module.__file__ = str(script_path)
+        module.__package__ = ""
+        sys.modules[spec.name] = module
+        exec(compile(source, str(script_path), "exec"), module.__dict__)
+        return module
     module = importlib.util.module_from_spec(spec)
     sys.modules[spec.name] = module
     spec.loader.exec_module(module)
@@ -382,6 +587,7 @@ class _RolloutTensorboardLogger:
             "relation_motion_ok": deque(maxlen=self.every_global_steps or 1),
             "action_saturation_penalty": deque(maxlen=self.every_global_steps or 1),
             "action_saturation_rate": deque(maxlen=self.every_global_steps or 1),
+            "lchol_group_score": deque(maxlen=self.every_global_steps or 1),
         }
 
     def set_run_dir(self, run_dir: Path | str | None) -> None:
@@ -460,6 +666,7 @@ class _RolloutTensorboardLogger:
         self._append_optional("relation_motion_ok", info.get("relation_motion_ok"))
         self._append_optional("action_saturation_penalty", info.get("action_saturation_penalty"))
         self._append_optional("action_saturation_rate", info.get("action_saturation_rate"))
+        self._append_optional("lchol_group_score", info.get("lchol_group_score"))
 
         if self.global_step % self.every_global_steps != 0:
             return
@@ -601,6 +808,148 @@ def _patch_rollout_tensorboard(module, *, every_global_steps: int) -> None:
     module.run_validation_rollouts = _run_validation_rollouts_without_rollout_tb
 
 
+def _lchol_args_to_runtime_config(lchol_args: _LCHOLWrapperArgs):
+    from rl_vla_bootstrapping.lchol.grpo_runtime import LCHOLGRPOConfig
+
+    return LCHOLGRPOConfig(
+        enabled=bool(lchol_args.enabled),
+        group_score=str(lchol_args.group_score),
+        hindsight_bc_coef=float(lchol_args.hindsight_bc_coef),
+        hindsight_done_weight=float(lchol_args.hindsight_done_weight),
+        hindsight_replay_capacity=int(lchol_args.hindsight_replay_capacity),
+        hindsight_replay_ratio=float(lchol_args.hindsight_replay_ratio),
+        hindsight_prefix_max_steps=int(lchol_args.hindsight_prefix_max_steps),
+        option_prior_bc_coef=float(lchol_args.option_prior_bc_coef),
+        option_prior_min_coef=float(lchol_args.option_prior_min_coef),
+        option_prior_decay_updates=int(lchol_args.option_prior_decay_updates),
+        curriculum=str(lchol_args.curriculum),
+        strict_min_success_samples=int(lchol_args.strict_min_success_samples),
+        weakest_mode_oversample_strength=float(lchol_args.weakest_mode_oversample_strength),
+        newest_stage_weight=float(lchol_args.newest_stage_weight),
+    )
+
+
+def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
+    lchol_args = lchol_args or _LCHOLWrapperArgs()
+    module._rlvla_lchol_runtime = None
+
+    original_parse_args = module.parse_args
+
+    def _parse_args_with_lchol():
+        args = original_parse_args()
+        setattr(args, "lchol_enabled", bool(lchol_args.enabled))
+        for field_name, value in lchol_args.__dict__.items():
+            setattr(args, f"lchol_{field_name}", value)
+        return args
+
+    module.parse_args = _parse_args_with_lchol
+
+    def _build_runtime(args, *, is_main: bool, rank: int, seed: int):
+        if not bool(getattr(args, "lchol_enabled", False)):
+            return None
+        from robots.cdpr.cdpr_dataset.cdpr_lchol_spec import CDPRLCHOLSpec
+        from rl_vla_bootstrapping.lchol.grpo_runtime import LCHOLGRPORuntime
+
+        runtime = LCHOLGRPORuntime(
+            config=_lchol_args_to_runtime_config(lchol_args),
+            spec=CDPRLCHOLSpec(),
+            available_options=getattr(args, "instruction_types", None) or CDPRLCHOLSpec.option_names,
+            seed=int(seed),
+        )
+        if is_main:
+            print(
+                "[lchol] enabled "
+                f"group_score={lchol_args.group_score} "
+                f"hindsight_bc_coef={lchol_args.hindsight_bc_coef} "
+                f"replay_capacity={lchol_args.hindsight_replay_capacity} "
+                f"curriculum={lchol_args.curriculum} "
+                f"rank={rank}",
+                flush=True,
+            )
+        return runtime
+
+    def _set_runtime(runtime) -> None:
+        module._rlvla_lchol_runtime = runtime
+
+    def _runtime():
+        return getattr(module, "_rlvla_lchol_runtime", None)
+
+    def _phase_score(step_info: dict[str, Any], *, fallback: float) -> float:
+        runtime = _runtime()
+        if runtime is None:
+            return float(fallback)
+        return float(runtime.phase_score(step_info if isinstance(step_info, dict) else {}, fallback=float(fallback)))
+
+    def _capture_candidate(
+        *,
+        obs: dict[str, Any],
+        step_info: dict[str, Any],
+        sampled_action: Any,
+        group_score: float,
+        update: int,
+        global_step: int,
+    ) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            return
+        runtime.capture_candidate(
+            obs=obs if isinstance(obs, dict) else {},
+            step_info=step_info if isinstance(step_info, dict) else {},
+            sampled_action=sampled_action,
+            group_score=float(group_score),
+            update=int(update),
+            global_step=int(global_step),
+        )
+
+    def _after_rollout(*, update: int) -> None:
+        del update
+
+    def _bc_loss(policy, ppo_module, device, args, *, num_actions_chunk: int):
+        runtime = _runtime()
+        if runtime is None:
+            return torch.zeros((), dtype=torch.float32, device=device)
+        return runtime.bc_loss(
+            policy=policy,
+            ppo_module=ppo_module,
+            device=device,
+            args=args,
+            num_actions_chunk=int(num_actions_chunk),
+        )
+
+    def _log_update(*, update: int, global_step: int, tb_writer, is_main: bool) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            return
+        runtime.log_update(
+            update=int(update),
+            global_step=int(global_step),
+            tb_writer=tb_writer,
+            is_main=bool(is_main),
+        )
+
+    module._rlvla_lchol_build_runtime = _build_runtime
+    module._rlvla_lchol_set_runtime = _set_runtime
+    module._rlvla_lchol_phase_score = _phase_score
+    module._rlvla_lchol_capture_candidate = _capture_candidate
+    module._rlvla_lchol_after_rollout = _after_rollout
+    module._rlvla_lchol_bc_loss = _bc_loss
+    module._rlvla_lchol_log_update = _log_update
+
+    original_reset = module.CDPRVisionLanguageEnv.reset
+
+    def _reset_with_lchol_curriculum(self, options=None):
+        runtime = _runtime()
+        if runtime is not None:
+            options = dict(options or {})
+            if "instruction_type" not in options:
+                sampled = runtime.sample_instruction_type()
+                if sampled:
+                    options["instruction_type"] = sampled
+        return original_reset(self, options=options)
+
+    module.CDPRVisionLanguageEnv.reset = _reset_with_lchol_curriculum
+
+
 def _enable_fast_runtime_flags() -> None:
     if not torch.cuda.is_available():
         return
@@ -615,13 +964,17 @@ def _enable_fast_runtime_flags() -> None:
 def main() -> None:
     external_arg, forwarded_argv, fast_args = _split_wrapper_argv(sys.argv[1:])
     external_script = _resolve_external_script(external_arg)
-    module = _load_external_module(external_script)
+    module = _load_external_module(
+        external_script,
+        enable_lchol=bool(fast_args.lchol and fast_args.lchol.enabled),
+    )
 
     _enable_fast_runtime_flags()
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
     _patch_desk_texture_prepare(module)
     _patch_resume_artifacts(module, forwarded_argv, fast_args)
+    _patch_lchol_runtime(module, fast_args.lchol)
     _patch_rollout_tensorboard(
         module,
         every_global_steps=fast_args.tensorboard_rollout_every_global_steps,
