@@ -17,6 +17,11 @@ import torch
 from PIL import Image
 
 
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+if str(_REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_ROOT))
+
+
 @dataclass(frozen=True)
 class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
@@ -847,7 +852,10 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
     def _build_runtime(args, *, is_main: bool, rank: int, seed: int):
         if not bool(getattr(args, "lchol_enabled", False)):
             return None
-        from robots.cdpr.cdpr_dataset.cdpr_lchol_spec import CDPRLCHOLSpec
+        try:
+            from robots.cdpr.cdpr_dataset.cdpr_lchol_spec import CDPRLCHOLSpec
+        except ModuleNotFoundError:
+            from cdpr_dataset.cdpr_lchol_spec import CDPRLCHOLSpec
         from rl_vla_bootstrapping.lchol.grpo_runtime import LCHOLGRPORuntime
 
         runtime = LCHOLGRPORuntime(
