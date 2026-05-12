@@ -243,7 +243,7 @@ training:
       lchol_hindsight_bc_coef: 0.20
       lchol_hindsight_done_weight: 2.0
       lchol_hindsight_replay_capacity: 20000
-      lchol_hindsight_replay_ratio: 0.50
+      lchol_hindsight_replay_ratio: 0.25
       lchol_hindsight_prefix_max_steps: 16
       lchol_option_prior_bc_coef: 0.20
       lchol_option_prior_min_coef: 0.035
@@ -255,9 +255,9 @@ training:
       num_parallel_envs: 10
       total_updates: 120
       rollout_steps: 240
-      ppo_epochs: 4
-      minibatch_size: 16
-      microbatch_size: 16
+      ppo_epochs: 2
+      minibatch_size: 8
+      microbatch_size: 8
       max_env_steps: 120
       gamma: 0.99
       learning_rate: 5.0e-6
