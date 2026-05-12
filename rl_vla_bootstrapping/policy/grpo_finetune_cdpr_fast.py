@@ -10,6 +10,7 @@ import sys
 import types
 from collections import deque
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -26,6 +27,7 @@ if str(_REPO_ROOT) not in sys.path:
 class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
     resume_actor_stats: bool = True
+    ddp_timeout_seconds: int = 0
     lchol: "_LCHOLWrapperArgs | None" = None
 
 
@@ -89,6 +91,10 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     external_script: Path | None = None
     tensorboard_rollout_every_global_steps = 0
     resume_actor_stats = True
+    try:
+        ddp_timeout_seconds = max(0, int(os.environ.get("RLVLA_DDP_TIMEOUT_SECONDS", "0")))
+    except ValueError:
+        ddp_timeout_seconds = 0
     lchol_values = dict(_LCHOLWrapperArgs().__dict__)
 
     idx = 0
@@ -117,8 +123,30 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
             resume_actor_stats = False
             idx += 1
             continue
+        if arg in ("--ddp_timeout_seconds", "--ddp-timeout-seconds"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects an integer.")
+            try:
+                ddp_timeout_seconds = max(0, int(argv[idx + 1]))
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects an integer.") from exc
+            idx += 2
+            continue
 
         normalized_arg = _strip_lchol_prefix(arg.split("=", 1)[0])
+        if normalized_arg == "ddp_timeout_seconds":
+            raw_value = arg.split("=", 1)[1] if "=" in arg else None
+            if raw_value is None:
+                if idx + 1 >= len(argv):
+                    raise SystemExit(f"{arg} expects an integer.")
+                idx += 1
+                raw_value = argv[idx]
+            try:
+                ddp_timeout_seconds = max(0, int(raw_value))
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects an integer.") from exc
+            idx += 1
+            continue
         if normalized_arg in {"lchol_enabled", "no_lchol_enabled"}:
             if "=" in arg:
                 lchol_values["enabled"] = _parse_lchol_bool(arg.split("=", 1)[1])
@@ -153,6 +181,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     return external_script, forwarded, _FastWrapperArgs(
         tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps,
         resume_actor_stats=resume_actor_stats,
+        ddp_timeout_seconds=ddp_timeout_seconds,
         lchol=_LCHOLWrapperArgs(**lchol_values),
     )
 
@@ -371,13 +400,39 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
     return transformed
 
 
-def _load_external_module(script_path: Path, *, enable_lchol: bool = False):
+def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
+    transformed = source
+    update_anchor = "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n"
+    if update_anchor in transformed:
+        transformed = transformed.replace(
+            update_anchor,
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update)\n"
+            "            policy.eval()\n",
+            1,
+        )
+
+    train_anchor = "            policy.train()\n"
+    if train_anchor in transformed:
+        transformed = transformed.replace(
+            train_anchor,
+            "            _rlvla_ddp_sync(\"pre_train\", update=update)\n"
+            "            policy.train()\n",
+            1,
+        )
+    return transformed
+
+
+def _load_external_module(script_path: Path, *, enable_lchol: bool = False, enable_ddp_sync: bool = False):
     spec = importlib.util.spec_from_file_location("rlvla_external_grpo_finetune_cdpr", script_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not load module spec from {script_path}")
-    if enable_lchol:
+    if enable_lchol or enable_ddp_sync:
         source = script_path.read_text(encoding="utf-8")
-        source = _transform_external_grpo_source_for_lchol(source)
+        if enable_lchol:
+            source = _transform_external_grpo_source_for_lchol(source)
+        if enable_ddp_sync:
+            source = _transform_external_grpo_source_for_ddp_sync(source)
         module = types.ModuleType(spec.name)
         module.__file__ = str(script_path)
         module.__package__ = ""
@@ -496,6 +551,59 @@ def _patch_desk_texture_prepare(module) -> None:
         return original_prepare(src_dir, run_dir, is_main, rank_int, max_textures)
 
     module._prepare_desk_textures_dir = _prepare_desk_textures_dir_single_writer
+
+
+def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
+    if timeout_seconds <= 0:
+        return
+    ppo_module = getattr(module, "ppo", None)
+    if ppo_module is None:
+        return
+    dist_module = getattr(ppo_module, "dist", None)
+    torch_module = getattr(ppo_module, "torch", torch)
+    if dist_module is None or not callable(getattr(dist_module, "init_process_group", None)):
+        return
+
+    timeout = timedelta(seconds=max(1, int(timeout_seconds)))
+
+    def _init_distributed_with_timeout():
+        world_size = int(os.environ.get("WORLD_SIZE", "1"))
+        rank = int(os.environ.get("RANK", "0"))
+        local_rank = int(os.environ.get("LOCAL_RANK", "0"))
+
+        if world_size > 1 and not dist_module.is_initialized():
+            backend = "nccl" if torch_module.cuda.is_available() else "gloo"
+            dist_module.init_process_group(backend=backend, timeout=timeout)
+            if rank == 0:
+                print(
+                    f"[rlvla-ddp] process-group timeout set to {int(timeout.total_seconds())}s",
+                    flush=True,
+                )
+        return rank, local_rank, world_size
+
+    ppo_module._init_distributed = _init_distributed_with_timeout
+
+
+def _patch_ddp_sync(module) -> None:
+    dist_module = getattr(module, "dist", None)
+    if dist_module is None:
+        return
+
+    def _rlvla_ddp_sync(label: str, *, update: int) -> None:
+        if not (dist_module.is_available() and dist_module.is_initialized()):
+            return
+        import time
+
+        start = time.monotonic()
+        dist_module.barrier()
+        waited = time.monotonic() - start
+        if waited >= 30.0 and os.environ.get("RANK", "0") == "0":
+            print(
+                f"[rlvla-ddp] waited {waited:.1f}s at {label} sync for update {int(update)}",
+                flush=True,
+            )
+
+    module._rlvla_ddp_sync = _rlvla_ddp_sync
 
 
 def _find_log_std_tensor(payload: Any) -> torch.Tensor | None:
@@ -975,12 +1083,15 @@ def main() -> None:
     module = _load_external_module(
         external_script,
         enable_lchol=bool(fast_args.lchol and fast_args.lchol.enabled),
+        enable_ddp_sync=True,
     )
 
     _enable_fast_runtime_flags()
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
     _patch_desk_texture_prepare(module)
+    _patch_distributed_timeout(module, timeout_seconds=fast_args.ddp_timeout_seconds)
+    _patch_ddp_sync(module)
     _patch_resume_artifacts(module, forwarded_argv, fast_args)
     _patch_lchol_runtime(module, fast_args.lchol)
     _patch_rollout_tensorboard(

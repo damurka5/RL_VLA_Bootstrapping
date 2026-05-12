@@ -232,6 +232,8 @@ training:
       train_loaded_adapter: true
       action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/step_390_to_490_movetoobj_20260420_153108/rl/step_0170000/action_head_cdpr.pt
       resume_actor_stats: true
+      # Complex CDPR rollouts can skew across DDP ranks by more than PyTorch's 10-minute default.
+      ddp_timeout_seconds: 14400
       grpo_group_size: 2
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true

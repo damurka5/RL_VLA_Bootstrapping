@@ -4,6 +4,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest import mock
 from pathlib import Path
 
 _INSERTED_TORCH_STUB = False
@@ -36,8 +37,10 @@ if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
 from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _RolloutTensorboardLogger,
     _infer_resume_artifacts,
+    _patch_distributed_timeout,
     _patch_desk_texture_prepare,
     _split_wrapper_argv,
+    _transform_external_grpo_source_for_ddp_sync,
 )
 
 if _INSERTED_TORCH_STUB:
@@ -124,6 +127,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
                 "--tensorboard_rollout_every_global_steps",
                 "100",
                 "--no-resume_actor_stats",
+                "--ddp_timeout_seconds",
+                "14400",
                 "--rollout_steps",
                 "170",
             ]
@@ -133,6 +138,49 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(forwarded, ["--rollout_steps", "170"])
         self.assertEqual(fast_args.tensorboard_rollout_every_global_steps, 100)
         self.assertFalse(fast_args.resume_actor_stats)
+        self.assertEqual(fast_args.ddp_timeout_seconds, 14400)
+
+    def test_patch_distributed_timeout_overrides_external_ppo_init(self):
+        calls: list[tuple[str, float]] = []
+
+        class FakeDist:
+            @staticmethod
+            def is_initialized():
+                return False
+
+            @staticmethod
+            def init_process_group(*, backend, timeout):
+                calls.append((backend, float(timeout.total_seconds())))
+
+        fake_ppo = types.SimpleNamespace(
+            dist=FakeDist,
+            torch=types.SimpleNamespace(cuda=types.SimpleNamespace(is_available=lambda: True)),
+        )
+        module = types.SimpleNamespace(ppo=fake_ppo)
+
+        _patch_distributed_timeout(module, timeout_seconds=14400)
+
+        with mock.patch.dict(
+            "os.environ",
+            {"WORLD_SIZE": "2", "RANK": "0", "LOCAL_RANK": "1"},
+            clear=False,
+        ):
+            self.assertEqual(fake_ppo._init_distributed(), (0, 1, 2))
+
+        self.assertEqual(calls, [("nccl", 14400.0)])
+
+    def test_ddp_sync_transform_adds_rank_barriers_before_update_and_train(self):
+        source = (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            policy.eval()\n"
+            "            do_rollout()\n"
+            "            policy.train()\n"
+        )
+
+        patched = _transform_external_grpo_source_for_ddp_sync(source)
+
+        self.assertIn('_rlvla_ddp_sync("pre_update", update=update)', patched)
+        self.assertIn('_rlvla_ddp_sync("pre_train", update=update)', patched)
 
     def test_infer_resume_artifacts_prefers_grpo_actor_stats(self):
         with tempfile.TemporaryDirectory() as tmp:
