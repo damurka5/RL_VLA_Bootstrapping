@@ -46,6 +46,8 @@ _ACTION_HEAD_FILENAMES = (
     "action_head_cdpr.pt",
     "action_head_latest.pt",
 )
+_VALIDATION_VIDEO_FPS = 10.0
+_MAX_SYNTHETIC_VIDEO_FRAMES = 600
 
 
 @dataclass(frozen=True)
@@ -726,6 +728,7 @@ def _build_validation_env(
         move_distance=float(metadata.get("lateral_goal_offset", 0.40)),
         lift_distance=float(metadata.get("vertical_goal_offset", 0.10)),
         capture_frames=bool(capture_frames),
+        record_trajectory=bool(capture_frames),
         instruction_types=[instruction_type],
         allowed_objects=_allowed_objects_from_config(config),
         desk_textures_dir=desk_textures_dir,
@@ -857,6 +860,18 @@ def _safe_filename_token(value: str | None) -> str:
     return token.strip("_")
 
 
+def _validation_episode_video_frames(sim: Any, episode_result: EpisodeResult) -> list[Any]:
+    frames = list(getattr(sim, "overview_frames", []) or [])
+    if len(frames) != 1:
+        return frames
+
+    # Older/non-trajectory simulation objects keep only the latest overview frame.
+    # Preserve a non-zero duration in that fallback case, while the normal
+    # validation path records one overview frame per env step.
+    target_frame_count = max(2, min(int(episode_result.steps), _MAX_SYNTHETIC_VIDEO_FRAMES))
+    return frames * target_frame_count
+
+
 def _save_episode_video(
     *,
     sim: Any,
@@ -865,11 +880,11 @@ def _save_episode_video(
     episode_result: EpisodeResult,
     outcome: str,
 ) -> str | None:
-    frames = list(getattr(sim, "overview_frames", []) or [])
+    frames = _validation_episode_video_frames(sim, episode_result)
     if not frames or not hasattr(sim, "save_video"):
         return None
 
-    fps = float(sim._estimate_video_fps()) if hasattr(sim, "_estimate_video_fps") else 20.0
+    fps = _VALIDATION_VIDEO_FPS
     target_token = _safe_filename_token(episode_result.target_object_catalog)
     target_part = f"_{target_token}" if target_token else ""
     output_path = (
@@ -885,6 +900,9 @@ def _save_episode_video(
     summary_data = asdict(episode_result)
     summary_data["video_kind"] = str(outcome)
     summary_data["video_path"] = output_path.as_posix()
+    summary_data["video_frame_count"] = len(frames)
+    summary_data["video_fps"] = fps
+    summary_data["video_duration_sec"] = len(frames) / fps
     summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
     return output_path.as_posix()
 

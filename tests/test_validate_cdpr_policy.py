@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -207,7 +208,13 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
             self.assertIsNotNone(path)
             self.assertTrue(Path(path).name.startswith("move_to_object_ycb_apple_failure_episode_003"))
             self.assertTrue(Path(path).exists())
-            self.assertTrue((output_dir / "move_to_object_ycb_apple_failure_episode_003_summary.json").exists())
+            self.assertEqual(Path(path).read_text(encoding="utf-8"), "120:10.0")
+            summary_path = output_dir / "move_to_object_ycb_apple_failure_episode_003_summary.json"
+            self.assertTrue(summary_path.exists())
+            summary = json.loads(summary_path.read_text(encoding="utf-8"))
+            self.assertEqual(summary["video_frame_count"], 120)
+            self.assertAlmostEqual(summary["video_fps"], 10.0, places=7)
+            self.assertAlmostEqual(summary["video_duration_sec"], 12.0, places=7)
 
     def test_parse_instruction_types_accepts_human_friendly_aliases(self):
         instruction_types = _parse_instruction_types(
