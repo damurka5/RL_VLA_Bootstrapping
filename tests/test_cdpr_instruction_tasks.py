@@ -5,6 +5,8 @@ import unittest
 import numpy as np
 
 from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
+    INSTRUCTION_SUCCESS_CRITERIA,
+    INSTRUCTION_TYPES,
     InstructionSpec,
     canonical_object_name,
     compute_instruction_validation_success,
@@ -14,6 +16,12 @@ from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
 
 
 class InstructionTextTests(unittest.TestCase):
+    def test_every_instruction_type_has_success_criteria_text(self):
+        self.assertEqual(set(INSTRUCTION_SUCCESS_CRITERIA), set(INSTRUCTION_TYPES))
+        for instruction_type, criteria in INSTRUCTION_SUCCESS_CRITERIA.items():
+            self.assertIn(instruction_type, INSTRUCTION_TYPES)
+            self.assertTrue(criteria.strip())
+
     def test_move_to_object_instruction_uses_object_text(self):
         spec = sample_instruction(
             target_object="ycb_plate",

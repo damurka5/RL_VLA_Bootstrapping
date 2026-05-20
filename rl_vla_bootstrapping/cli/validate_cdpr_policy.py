@@ -7,7 +7,7 @@ import math
 import os
 import sys
 from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
@@ -70,6 +70,8 @@ class EpisodeResult:
     goal_position: list[float]
     ee_start: list[float]
     target_object_catalog: str | None = None
+    video_path: str | None = None
+    video_kind: str | None = None
 
 
 @dataclass(frozen=True)
@@ -82,6 +84,8 @@ class InstructionSummary:
     mean_reward: float
     mean_steps: float
     video_path: str | None
+    success_video_path: str | None = None
+    failure_video_path: str | None = None
 
 
 @dataclass(frozen=True)
@@ -225,6 +229,18 @@ def _build_parser() -> argparse.ArgumentParser:
         action=argparse.BooleanOptionalAction,
         default=True,
         help="Save one overview video for the first successful episode of each instruction type.",
+    )
+    parser.add_argument(
+        "--record-failure-videos",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Save one overview video for the first failed episode of each instruction type.",
+    )
+    parser.add_argument(
+        "--record-all-success-videos",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Save an overview video for every successful episode instead of only the first success.",
     )
     parser.add_argument(
         "--seed",
@@ -835,23 +851,41 @@ def _load_policy_runtime(
     }
 
 
-def _save_success_video(
+def _safe_filename_token(value: str | None) -> str:
+    token = str(value or "").strip().lower().replace(" ", "_")
+    token = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in token)
+    return token.strip("_")
+
+
+def _save_episode_video(
     *,
     sim: Any,
     output_dir: Path,
     instruction_type: str,
     episode_result: EpisodeResult,
+    outcome: str,
 ) -> str | None:
     frames = list(getattr(sim, "overview_frames", []) or [])
     if not frames or not hasattr(sim, "save_video"):
         return None
 
     fps = float(sim._estimate_video_fps()) if hasattr(sim, "_estimate_video_fps") else 20.0
-    output_path = output_dir / f"{instruction_type}_episode_{episode_result.episode_index:03d}_overview.mp4"
+    target_token = _safe_filename_token(episode_result.target_object_catalog)
+    target_part = f"_{target_token}" if target_token else ""
+    output_path = (
+        output_dir
+        / f"{instruction_type}{target_part}_{outcome}_episode_{episode_result.episode_index:03d}_overview.mp4"
+    )
     sim.save_video(frames, str(output_path), fps=fps)
 
-    summary_path = output_dir / f"{instruction_type}_episode_{episode_result.episode_index:03d}_summary.json"
-    summary_path.write_text(json.dumps(asdict(episode_result), indent=2), encoding="utf-8")
+    summary_path = (
+        output_dir
+        / f"{instruction_type}{target_part}_{outcome}_episode_{episode_result.episode_index:03d}_summary.json"
+    )
+    summary_data = asdict(episode_result)
+    summary_data["video_kind"] = str(outcome)
+    summary_data["video_path"] = output_path.as_posix()
+    summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
     return output_path.as_posix()
 
 
@@ -860,11 +894,18 @@ def _summarize_instruction_results(
     instruction_type: str,
     episode_results: list[EpisodeResult],
     video_path: str | None,
+    success_video_path: str | None = None,
+    failure_video_path: str | None = None,
 ) -> InstructionSummary:
     successes = sum(1 for item in episode_results if item.success)
     rewards = np.asarray([item.reward_total for item in episode_results], dtype=np.float32)
     steps = np.asarray([item.steps for item in episode_results], dtype=np.float32)
     total = len(episode_results)
+    resolved_success_video = success_video_path
+    if resolved_success_video is None and failure_video_path is None:
+        resolved_success_video = video_path
+    resolved_failure_video = failure_video_path
+    resolved_video = resolved_success_video or resolved_failure_video or video_path
     return InstructionSummary(
         instruction_type=instruction_type,
         instruction_text=INSTRUCTION_TEXT.get(instruction_type, instruction_type.replace("_", " ")),
@@ -873,7 +914,9 @@ def _summarize_instruction_results(
         success_rate=float(successes / max(total, 1)),
         mean_reward=float(np.mean(rewards)) if rewards.size > 0 else 0.0,
         mean_steps=float(np.mean(steps)) if steps.size > 0 else 0.0,
-        video_path=video_path,
+        video_path=resolved_video,
+        success_video_path=resolved_success_video,
+        failure_video_path=resolved_failure_video,
     )
 
 
@@ -890,6 +933,8 @@ def _write_success_rate_csv(output_path: Path, summaries: list[InstructionSummar
                 "mean_reward",
                 "mean_steps",
                 "video_path",
+                "success_video_path",
+                "failure_video_path",
             ]
         )
         for summary in summaries:
@@ -903,6 +948,8 @@ def _write_success_rate_csv(output_path: Path, summaries: list[InstructionSummar
                     f"{summary.mean_reward:.6f}",
                     f"{summary.mean_steps:.6f}",
                     summary.video_path or "",
+                    summary.success_video_path or "",
+                    summary.failure_video_path or "",
                 ]
             )
 
@@ -984,7 +1031,7 @@ def _run_instruction_validation(
     episode_index_offset: int = 0,
     log_label: str | None = None,
 ) -> tuple[InstructionSummary, list[EpisodeResult]]:
-    should_capture = bool(args.record_success_videos)
+    should_capture = bool(args.record_success_videos or args.record_failure_videos)
     env = _build_validation_env(
         config=config,
         instruction_type=instruction_type,
@@ -998,14 +1045,18 @@ def _run_instruction_validation(
 
     reset_options = {"scene": args.scene} if args.scene else None
     episode_results: list[EpisodeResult] = []
-    video_path: str | None = None
+    success_video_path: str | None = None
+    failure_video_path: str | None = None
     successes = 0
 
     try:
         effective_log_label = str(log_label or instruction_type)
         for episode_offset in range(int(episodes_to_run)):
             episode_index = int(episode_index_offset) + int(episode_offset)
-            env.capture_frames = bool(args.record_success_videos and video_path is None)
+            env.capture_frames = bool(
+                (args.record_success_videos and (args.record_all_success_videos or success_video_path is None))
+                or (args.record_failure_videos and failure_video_path is None)
+            )
             seed = _episode_seed(base_seed, instruction_index, episode_index)
             with _silence_output(bool(args.progress_only)):
                 _obs, reset_info = env.reset(seed=seed, options=reset_options)
@@ -1063,22 +1114,57 @@ def _run_instruction_validation(
             episode_results.append(episode_result)
             successes += int(episode_result.success)
 
-            if episode_result.success and video_path is None and bool(args.record_success_videos):
+            saved_video_path: str | None = None
+            saved_video_kind: str | None = None
+            if (
+                episode_result.success
+                and bool(args.record_success_videos)
+                and (bool(args.record_all_success_videos) or success_video_path is None)
+            ):
                 try:
                     with _silence_output(bool(args.progress_only)):
-                        video_path = _save_success_video(
+                        saved_video_path = _save_episode_video(
                             sim=env.sim,
                             output_dir=videos_dir,
                             instruction_type=instruction_type,
                             episode_result=episode_result,
+                            outcome="success",
                         )
+                    if success_video_path is None:
+                        success_video_path = saved_video_path
+                    saved_video_kind = "success" if saved_video_path else None
                 except Exception as exc:
                     if not args.progress_only:
                         print(f"[warn] Failed to save success video for {instruction_type}: {exc}")
                 finally:
                     clear_sim_recording_buffers(env.sim)
+            elif (not episode_result.success) and failure_video_path is None and bool(args.record_failure_videos):
+                try:
+                    with _silence_output(bool(args.progress_only)):
+                        saved_video_path = _save_episode_video(
+                            sim=env.sim,
+                            output_dir=videos_dir,
+                            instruction_type=instruction_type,
+                            episode_result=episode_result,
+                            outcome="failure",
+                        )
+                    failure_video_path = saved_video_path or failure_video_path
+                    saved_video_kind = "failure" if saved_video_path else None
+                except Exception as exc:
+                    if not args.progress_only:
+                        print(f"[warn] Failed to save failure video for {instruction_type}: {exc}")
+                finally:
+                    clear_sim_recording_buffers(env.sim)
             elif getattr(env, "sim", None) is not None:
                 clear_sim_recording_buffers(env.sim)
+
+            if saved_video_path:
+                episode_result = replace(
+                    episode_result,
+                    video_path=saved_video_path,
+                    video_kind=saved_video_kind,
+                )
+                episode_results[-1] = episode_result
 
             if progress is not None:
                 progress.set_description_str(effective_log_label)
@@ -1099,7 +1185,9 @@ def _run_instruction_validation(
         summary = _summarize_instruction_results(
             instruction_type=instruction_type,
             episode_results=episode_results,
-            video_path=video_path,
+            video_path=success_video_path or failure_video_path,
+            success_video_path=success_video_path,
+            failure_video_path=failure_video_path,
         )
         return summary, episode_results
     finally:
@@ -1151,6 +1239,8 @@ def main() -> int:
         print(f"Episodes per instruction: {int(args.episodes_per_instruction)}")
         print(f"Episode max steps: {max_steps}")
         print(f"Record success videos: {bool(args.record_success_videos)}")
+        print(f"Record all success videos: {bool(args.record_all_success_videos)}")
+        print(f"Record failure videos: {bool(args.record_failure_videos)}")
         print(f"Validation success distance: {float(args.success_distance):.3f} m")
         print(
             "Move-to-object validation XY threshold: "
@@ -1187,7 +1277,8 @@ def main() -> int:
     try:
         for instruction_index, instruction_type in enumerate(instruction_types):
             instruction_episode_results: list[EpisodeResult] = []
-            video_path: str | None = None
+            success_video_path: str | None = None
+            failure_video_path: str | None = None
             episode_index_offset = 0
             for bucket in instruction_buckets[instruction_type]:
                 with _temporary_env_vars(bucket.env_vars):
@@ -1208,12 +1299,16 @@ def main() -> int:
                     )
                 instruction_episode_results.extend(episode_results)
                 episode_index_offset += int(bucket.episodes)
-                if video_path is None:
-                    video_path = bucket_summary.video_path
+                if success_video_path is None:
+                    success_video_path = bucket_summary.success_video_path
+                if failure_video_path is None:
+                    failure_video_path = bucket_summary.failure_video_path
             summary = _summarize_instruction_results(
                 instruction_type=instruction_type,
                 episode_results=instruction_episode_results,
-                video_path=video_path,
+                video_path=success_video_path or failure_video_path,
+                success_video_path=success_video_path,
+                failure_video_path=failure_video_path,
             )
             instruction_summaries.append(summary)
             flattened_episode_results.extend(instruction_episode_results)
@@ -1243,6 +1338,8 @@ def main() -> int:
         "hold_steps": int(_control_spec_from_config(config, args.hold_steps).hold_steps),
         "seed": base_seed,
         "record_success_videos": bool(args.record_success_videos),
+        "record_all_success_videos": bool(args.record_all_success_videos),
+        "record_failure_videos": bool(args.record_failure_videos),
         "success_distance": float(args.success_distance),
         "move_to_object_success_distance": float(args.move_to_object_success_distance),
         "directional_displacement_threshold": float(args.directional_displacement_threshold),

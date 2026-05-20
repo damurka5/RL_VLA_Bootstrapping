@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import os
 from dataclasses import asdict, dataclass
 from datetime import datetime
@@ -38,6 +39,8 @@ class MetricSpec:
     y_label: str
     tags: tuple[str, ...]
     filename_stem: str
+    preferred_direction: str
+    analysis_note: str
 
 
 @dataclass(frozen=True)
@@ -47,6 +50,23 @@ class ScalarPoint:
     wall_time: float
 
 
+@dataclass(frozen=True)
+class MetricSummary:
+    point_count: int
+    step_start: int | None
+    step_end: int | None
+    first_value: float | None
+    last_value: float | None
+    min_value: float | None
+    max_value: float | None
+    mean_value: float | None
+    start_window_mean: float | None
+    end_window_mean: float | None
+    delta: float | None
+    window_points: int
+    trend: str
+
+
 _METRIC_SPECS: dict[str, MetricSpec] = {
     "action_saturation_rate": MetricSpec(
         key="action_saturation_rate",
@@ -54,6 +74,11 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         y_label="Rate",
         tags=("rollout_step/action_saturation_rate_mean",),
         filename_stem="action_saturation_rate",
+        preferred_direction="lower",
+        analysis_note=(
+            "Lower values are usually better here because they suggest the policy is spending "
+            "less time at action limits or in clipped control regimes."
+        ),
     ),
     "env_reward_mean": MetricSpec(
         key="env_reward_mean",
@@ -61,6 +86,10 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         y_label="Reward",
         tags=("rollout_step/reward_env_mean",),
         filename_stem="env_reward_mean",
+        preferred_direction="higher",
+        analysis_note=(
+            "Higher values are better when reward shaping is aligned with task progress."
+        ),
     ),
     "success_rate": MetricSpec(
         key="success_rate",
@@ -68,6 +97,11 @@ _METRIC_SPECS: dict[str, MetricSpec] = {
         y_label="Rate",
         tags=("rollout_step/success_rate_mean",),
         filename_stem="success_rate",
+        preferred_direction="higher",
+        analysis_note=(
+            "Higher values are better because they reflect more successful rollouts in the "
+            "logging window."
+        ),
     ),
 }
 
@@ -206,6 +240,319 @@ def _dedupe_scalar_points(points: list[ScalarPoint]) -> list[ScalarPoint]:
     for point in sorted(points, key=lambda item: (int(item.step), float(item.wall_time))):
         deduped[int(point.step)] = point
     return [deduped[step] for step in sorted(deduped)]
+
+
+def _mean(values: list[float]) -> float | None:
+    if not values:
+        return None
+    return float(sum(values) / len(values))
+
+
+def _analysis_window_len(point_count: int) -> int:
+    if point_count <= 0:
+        return 0
+    if point_count == 1:
+        return 1
+    return min(max(1, point_count // 2), max(1, max(5, int(math.ceil(point_count * 0.1)))))
+
+
+def _trend_threshold(metric: MetricSpec) -> float:
+    if metric.key == "env_reward_mean":
+        return 0.1
+    return 0.01
+
+
+def _summarize_metric_points(metric: MetricSpec, points: list[ScalarPoint]) -> MetricSummary:
+    if not points:
+        return MetricSummary(
+            point_count=0,
+            step_start=None,
+            step_end=None,
+            first_value=None,
+            last_value=None,
+            min_value=None,
+            max_value=None,
+            mean_value=None,
+            start_window_mean=None,
+            end_window_mean=None,
+            delta=None,
+            window_points=0,
+            trend="no_data",
+        )
+
+    values = [float(point.value) for point in points]
+    window_points = _analysis_window_len(len(values))
+    start_window_mean = _mean(values[:window_points])
+    end_window_mean = _mean(values[-window_points:])
+    delta = None
+    trend = "stable"
+    if start_window_mean is not None and end_window_mean is not None:
+        delta = float(end_window_mean - start_window_mean)
+        threshold = _trend_threshold(metric)
+        if abs(delta) < threshold:
+            trend = "stable"
+        else:
+            improved = delta > 0.0 if metric.preferred_direction == "higher" else delta < 0.0
+            trend = "improving" if improved else "worsening"
+
+    return MetricSummary(
+        point_count=len(points),
+        step_start=int(points[0].step),
+        step_end=int(points[-1].step),
+        first_value=float(values[0]),
+        last_value=float(values[-1]),
+        min_value=float(min(values)),
+        max_value=float(max(values)),
+        mean_value=_mean(values),
+        start_window_mean=start_window_mean,
+        end_window_mean=end_window_mean,
+        delta=delta,
+        window_points=window_points,
+        trend=trend,
+    )
+
+
+def _format_float(value: float | None, precision: int = 4) -> str:
+    if value is None:
+        return ""
+    return f"{float(value):.{precision}f}"
+
+
+def _improvement_score(metric: MetricSpec, summary: MetricSummary) -> float | None:
+    if summary.delta is None:
+        return None
+    return float(summary.delta) if metric.preferred_direction == "higher" else float(-summary.delta)
+
+
+def _build_metric_observations(
+    metric: MetricSpec,
+    runs: list[RunSpec],
+    summaries: dict[str, MetricSummary],
+) -> list[str]:
+    valid = [(run, summaries.get(run.label)) for run in runs]
+    valid = [(run, summary) for run, summary in valid if summary is not None and summary.point_count > 0]
+    if not valid:
+        return ["No scalar data was found for this metric in the supplied TensorBoard logs."]
+
+    reverse_final = metric.preferred_direction == "higher"
+    best_final_run, best_final_summary = sorted(
+        valid,
+        key=lambda item: float(item[1].last_value if item[1].last_value is not None else 0.0),
+        reverse=reverse_final,
+    )[0]
+    direction_label = "highest" if reverse_final else "lowest"
+    observations = [
+        (
+            f"`{best_final_run.label}` finishes with the {direction_label} final "
+            f"{metric.title.lower()} ({_format_float(best_final_summary.last_value)})."
+        )
+    ]
+
+    if len(valid) == 1:
+        run, summary = valid[0]
+        if summary.trend == "no_data":
+            return observations
+        observations.append(
+            (
+                f"`{run.label}` trends `{summary.trend}` over the last analysis window: "
+                f"{_format_float(summary.start_window_mean)} -> {_format_float(summary.end_window_mean)} "
+                f"across {summary.window_points} points."
+            )
+        )
+        return observations
+
+    scored = []
+    for run, summary in valid:
+        score = _improvement_score(metric, summary)
+        if score is None:
+            continue
+        scored.append((run, summary, score))
+
+    threshold = _trend_threshold(metric)
+    if scored:
+        best_delta_run, best_delta_summary, best_score = max(scored, key=lambda item: item[2])
+        if best_score >= threshold:
+            observations.append(
+                (
+                    f"`{best_delta_run.label}` shows the strongest windowed improvement: "
+                    f"{_format_float(best_delta_summary.start_window_mean)} -> "
+                    f"{_format_float(best_delta_summary.end_window_mean)}."
+                )
+            )
+
+        worst_delta_run, worst_delta_summary, worst_score = min(scored, key=lambda item: item[2])
+        if worst_score <= -threshold:
+            observations.append(
+                (
+                    f"`{worst_delta_run.label}` moves in the wrong direction over the same window: "
+                    f"{_format_float(worst_delta_summary.start_window_mean)} -> "
+                    f"{_format_float(worst_delta_summary.end_window_mean)}."
+                )
+            )
+
+    if metric.key == "success_rate":
+        peak_summary = max(valid, key=lambda item: float(item[1].max_value if item[1].max_value is not None else 0.0))
+        peak_run, peak_values = peak_summary
+        if (peak_values.max_value or 0.0) < 0.05:
+            observations.append("All runs stay below a 5% logged success rate, so task completion remains rare.")
+        elif (
+            peak_values.max_value is not None
+            and len(valid) > 1
+            and all(
+                other_summary.max_value is not None and peak_values.max_value >= other_summary.max_value
+                for _, other_summary in valid
+            )
+        ):
+            observations.append(
+                (
+                    f"`{peak_run.label}` is the only run to reach a clearly non-trivial peak success rate "
+                    f"({_format_float(peak_values.max_value)})."
+                )
+            )
+
+    return observations[:3]
+
+
+def _build_overall_observations(
+    metrics: list[MetricSpec],
+    runs: list[RunSpec],
+    metric_summaries: dict[str, dict[str, MetricSummary]],
+) -> list[str]:
+    observations: list[str] = []
+    best_runs: dict[str, tuple[RunSpec, MetricSummary]] = {}
+
+    for metric in metrics:
+        valid = []
+        for run in runs:
+            summary = metric_summaries.get(metric.key, {}).get(run.label)
+            if summary is None or summary.point_count <= 0 or summary.last_value is None:
+                continue
+            valid.append((run, summary))
+        if not valid:
+            continue
+        reverse_final = metric.preferred_direction == "higher"
+        best_runs[metric.key] = sorted(
+            valid,
+            key=lambda item: float(item[1].last_value if item[1].last_value is not None else 0.0),
+            reverse=reverse_final,
+        )[0]
+
+    reward_best = best_runs.get("env_reward_mean")
+    success_best = best_runs.get("success_rate")
+    saturation_best = best_runs.get("action_saturation_rate")
+
+    if reward_best is not None:
+        run, summary = reward_best
+        observations.append(
+            f"Best final environment reward mean: `{run.label}` at {_format_float(summary.last_value)}."
+        )
+    if success_best is not None:
+        run, summary = success_best
+        observations.append(f"Best final success rate: `{run.label}` at {_format_float(summary.last_value)}.")
+    if saturation_best is not None:
+        run, summary = saturation_best
+        observations.append(
+            f"Lowest final action saturation rate: `{run.label}` at {_format_float(summary.last_value)}."
+        )
+
+    if reward_best is not None and success_best is not None and reward_best[0].label != success_best[0].label:
+        observations.append(
+            (
+                f"Reward leadership and success leadership split across runs: reward is best in "
+                f"`{reward_best[0].label}`, while success is best in `{success_best[0].label}`. "
+                "That usually means the shaped reward is not perfectly aligned with completed tasks."
+            )
+        )
+
+    return observations[:4]
+
+
+def _render_report_markdown(
+    *,
+    runs: list[RunSpec],
+    metrics: list[MetricSpec],
+    metric_summaries: dict[str, dict[str, MetricSummary]],
+    metric_tags: dict[str, dict[str, str | None]],
+    output_dir: Path,
+    combined_path: Path | None,
+) -> str:
+    lines: list[str] = [
+        "# TensorBoard Metrics Report",
+        "",
+        f"Generated at: {datetime.now().isoformat()}",
+        f"Output directory: `{output_dir.as_posix()}`",
+        "",
+        "## Runs",
+        "",
+        "| Run | TensorBoard path |",
+        "| --- | --- |",
+    ]
+    for run in runs:
+        lines.append(f"| `{run.label}` | `{run.path.as_posix()}` |")
+
+    overall_observations = _build_overall_observations(metrics, runs, metric_summaries)
+    if overall_observations:
+        lines.extend(["", "## Overall Takeaways", ""])
+        for observation in overall_observations:
+            lines.append(f"- {observation}")
+
+    lines.extend(["", "## Plot Files", "", "| Metric | Plot |", "| --- | --- |"])
+    for metric in metrics:
+        lines.append(
+            f"| `{metric.key}` | `{(output_dir / f'{metric.filename_stem}.png').as_posix()}` |"
+        )
+    if combined_path is not None:
+        lines.append(f"| `combined` | `{combined_path.as_posix()}` |")
+
+    for metric in metrics:
+        lines.extend(
+            [
+                "",
+                f"## {metric.title}",
+                "",
+                metric.analysis_note,
+                "",
+                "| Run | Tag | Points | Step range | First | Last | Mean | Min | Max | Start window | End window | Delta | Trend |",
+                "| --- | --- | ---: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |",
+            ]
+        )
+        for run in runs:
+            summary = metric_summaries.get(metric.key, {}).get(run.label)
+            tag = metric_tags.get(metric.key, {}).get(run.label) or ""
+            if summary is None:
+                summary = _summarize_metric_points(metric, [])
+            step_range = ""
+            if summary.step_start is not None and summary.step_end is not None:
+                step_range = f"{summary.step_start} -> {summary.step_end}"
+            lines.append(
+                "| "
+                + " | ".join(
+                    [
+                        f"`{run.label}`",
+                        f"`{tag}`" if tag else "",
+                        str(summary.point_count),
+                        step_range,
+                        _format_float(summary.first_value),
+                        _format_float(summary.last_value),
+                        _format_float(summary.mean_value),
+                        _format_float(summary.min_value),
+                        _format_float(summary.max_value),
+                        _format_float(summary.start_window_mean),
+                        _format_float(summary.end_window_mean),
+                        _format_float(summary.delta),
+                        summary.trend,
+                    ]
+                )
+                + " |"
+            )
+        lines.extend(["", "Observations:"])
+        for observation in _build_metric_observations(
+            metric, runs, metric_summaries.get(metric.key, {})
+        ):
+            lines.append(f"- {observation}")
+
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _load_scalar_points(path: Path, tag: str) -> list[ScalarPoint]:
@@ -360,7 +707,30 @@ def _write_scalar_csv(
                             f"{point.value:.10f}",
                             f"{point.wall_time:.6f}",
                         ]
-                    )
+                        )
+
+
+def _write_report(
+    output_path: Path,
+    *,
+    runs: list[RunSpec],
+    metrics: list[MetricSpec],
+    metric_summaries: dict[str, dict[str, MetricSummary]],
+    metric_tags: dict[str, dict[str, str | None]],
+    output_dir: Path,
+    combined_path: Path | None,
+) -> None:
+    output_path.write_text(
+        _render_report_markdown(
+            runs=runs,
+            metrics=metrics,
+            metric_summaries=metric_summaries,
+            metric_tags=metric_tags,
+            output_dir=output_dir,
+            combined_path=combined_path,
+        ),
+        encoding="utf-8",
+    )
 
 
 def main() -> int:
@@ -377,13 +747,16 @@ def main() -> int:
 
     metric_points: dict[str, dict[str, list[ScalarPoint]]] = {}
     metric_tags: dict[str, dict[str, str | None]] = {}
+    metric_summaries: dict[str, dict[str, MetricSummary]] = {}
     for metric in metrics:
         metric_points[metric.key] = {}
         metric_tags[metric.key] = {}
+        metric_summaries[metric.key] = {}
         for run in runs:
             tag, points = _load_metric_points(run.path, metric)
             metric_points[metric.key][run.label] = points
             metric_tags[metric.key][run.label] = tag
+            metric_summaries[metric.key][run.label] = _summarize_metric_points(metric, points)
 
     for metric in metrics:
         _plot_metric(
@@ -411,6 +784,16 @@ def main() -> int:
         metric_points=metric_points,
         metric_tags=metric_tags,
     )
+    report_path = output_dir / "tensorboard_metrics_report.md"
+    _write_report(
+        report_path,
+        runs=runs,
+        metrics=metrics,
+        metric_summaries=metric_summaries,
+        metric_tags=metric_tags,
+        output_dir=output_dir,
+        combined_path=combined_path,
+    )
 
     manifest = {
         "generated_at": datetime.now().isoformat(),
@@ -418,6 +801,13 @@ def main() -> int:
         "runs": [{"label": run.label, "path": run.path.as_posix()} for run in runs],
         "metrics": [asdict(metric) for metric in metrics],
         "metric_tags": metric_tags,
+        "metric_summaries": {
+            metric.key: {
+                run.label: asdict(metric_summaries.get(metric.key, {}).get(run.label))
+                for run in runs
+            }
+            for metric in metrics
+        },
         "points_per_run": {
             metric.key: {
                 run.label: len(metric_points.get(metric.key, {}).get(run.label, []))
@@ -433,6 +823,7 @@ def main() -> int:
             },
         },
         "csv_path": csv_path.as_posix(),
+        "report_path": report_path.as_posix(),
     }
     manifest_path = output_dir / "manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
@@ -440,6 +831,7 @@ def main() -> int:
     print(f"Saved plots and CSV to: {output_dir}")
     print(f"Combined figure: {combined_path}")
     print(f"Scalar CSV: {csv_path}")
+    print(f"Report: {report_path}")
     print(f"Manifest: {manifest_path}")
     return 0
 

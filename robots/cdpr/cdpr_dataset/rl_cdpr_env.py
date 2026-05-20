@@ -1433,6 +1433,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         info["success"] = bool(success)
         info["reward"] = float(reward)
         info["step"] = int(self._step_count)
+        info["terminated"] = bool(terminated)
+        info["truncated"] = bool(truncated)
+        info["env_done"] = bool(terminated or truncated)
+        info["episode_timeout"] = bool(truncated and not terminated)
         info["target_grasped"] = bool(float(reward_info.get("grasped", 0.0)) >= 0.5)
         info["caught_object_body"] = caught_body
         info["caught_object_catalog"] = caught_catalog

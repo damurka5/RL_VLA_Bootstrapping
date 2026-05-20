@@ -149,6 +149,7 @@ task:
     lateral_goal_offset: 0.40
     vertical_goal_offset: 0.10
 
+    reward_mode: sparse_binary
     sparse_success_reward: 1.0
     sparse_failure_reward: 0.0
     grab_xy_tolerance: 0.045
@@ -239,9 +240,9 @@ training:
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
       lchol_enabled: true
-      lchol_group_score: phase_shaped
+      lchol_group_score: env_reward
       lchol_hindsight_bc_coef: 0.20
-      lchol_hindsight_done_weight: 2.0
+      lchol_hindsight_done_weight: 0.20
       lchol_hindsight_replay_capacity: 20000
       lchol_hindsight_replay_ratio: 0.25
       lchol_hindsight_prefix_max_steps: 16

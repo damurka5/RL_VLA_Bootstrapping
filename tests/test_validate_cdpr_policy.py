@@ -7,6 +7,7 @@ from pathlib import Path
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _default_max_steps,
     _instruction_validation_task_metadata,
+    _save_episode_video,
     _validation_buckets,
     _parse_instruction_types,
     _resolve_policy_artifacts,
@@ -132,6 +133,81 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertAlmostEqual(summary.mean_reward, 1.0, places=7)
         self.assertAlmostEqual(summary.mean_steps, 22.0, places=7)
         self.assertEqual(summary.video_path, "/tmp/move_up.mp4")
+        self.assertEqual(summary.success_video_path, "/tmp/move_up.mp4")
+        self.assertIsNone(summary.failure_video_path)
+
+    def test_summarize_instruction_results_keeps_failure_video(self):
+        episode_results = [
+            EpisodeResult(
+                episode_index=0,
+                seed=1,
+                instruction_type="grab_object",
+                instruction_text="grab apple",
+                success=False,
+                terminated=False,
+                truncated=True,
+                steps=120,
+                reward_total=0.0,
+                scene="desk",
+                goal_position=[0.0, 0.0, 0.1],
+                ee_start=[0.0, 0.0, 0.4],
+            )
+        ]
+
+        summary = _summarize_instruction_results(
+            instruction_type="grab_object",
+            episode_results=episode_results,
+            video_path="/tmp/grab_failure.mp4",
+            failure_video_path="/tmp/grab_failure.mp4",
+        )
+
+        self.assertEqual(summary.successes, 0)
+        self.assertEqual(summary.video_path, "/tmp/grab_failure.mp4")
+        self.assertIsNone(summary.success_video_path)
+        self.assertEqual(summary.failure_video_path, "/tmp/grab_failure.mp4")
+
+    def test_save_episode_video_names_success_and_failure_artifacts(self):
+        class FakeSim:
+            overview_frames = ["frame"]
+
+            @staticmethod
+            def _estimate_video_fps():
+                return 20.0
+
+            @staticmethod
+            def save_video(frames, output_path: str, fps: float):
+                Path(output_path).write_text(f"{len(frames)}:{fps}", encoding="utf-8")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            output_dir = Path(tmp)
+            episode = EpisodeResult(
+                episode_index=3,
+                seed=1,
+                instruction_type="move_to_object",
+                instruction_text="move to apple",
+                success=False,
+                terminated=False,
+                truncated=True,
+                steps=120,
+                reward_total=0.0,
+                scene="desk",
+                goal_position=[0.0, 0.0, 0.1],
+                ee_start=[0.0, 0.0, 0.4],
+                target_object_catalog="ycb_apple",
+            )
+
+            path = _save_episode_video(
+                sim=FakeSim(),
+                output_dir=output_dir,
+                instruction_type="move_to_object",
+                episode_result=episode,
+                outcome="failure",
+            )
+
+            self.assertIsNotNone(path)
+            self.assertTrue(Path(path).name.startswith("move_to_object_ycb_apple_failure_episode_003"))
+            self.assertTrue(Path(path).exists())
+            self.assertTrue((output_dir / "move_to_object_ycb_apple_failure_episode_003_summary.json").exists())
 
     def test_parse_instruction_types_accepts_human_friendly_aliases(self):
         instruction_types = _parse_instruction_types(

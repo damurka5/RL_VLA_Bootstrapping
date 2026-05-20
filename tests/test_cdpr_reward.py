@@ -274,6 +274,42 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertAlmostEqual(info["move_to_object_distance_reward"], 1.0, places=6)
         self.assertAlmostEqual(info["move_to_object_distance_reward_max"], 1.0, places=6)
 
+    def test_sparse_binary_mode_replaces_move_to_object_shaping(self):
+        spec = self._spec("move_to_object")
+        target = np.array([0.10, -0.10, 0.16], dtype=np.float32)
+        metadata = {
+            "reward_mode": "sparse_binary",
+            "move_to_object_validation_distance_threshold": 0.03,
+        }
+
+        reward_far, success_far, info_far = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.20, -0.10, 0.15], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.20, -0.10, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata=metadata,
+        )
+        reward_near, success_near, info_near = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.11, -0.10, 0.15], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.20, -0.10, 0.15], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            task_metadata=metadata,
+        )
+
+        self.assertFalse(success_far)
+        self.assertEqual(reward_far, 0.0)
+        self.assertTrue(success_near)
+        self.assertEqual(reward_near, 1.0)
+        self.assertEqual(info_near["sparse_binary_reward"], 1.0)
+        self.assertEqual(info_near["distance_reward"], 0.0)
+
     def test_move_to_object_z_window_penalty_applies_only_outside_band(self):
         spec = self._spec("move_to_object")
         target = np.array([0.00, 0.00, 0.16], dtype=np.float32)
@@ -536,6 +572,30 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertGreater(reward, 2.0)
         self.assertEqual(info["grasped"], 1.0)
         self.assertGreaterEqual(info["pick_target_lift"], 0.10)
+
+    def test_sparse_binary_mode_replaces_pick_up_shaping(self):
+        spec = self._spec("pick_up")
+        initial_obj = np.array([0.0, 0.0, 0.16], dtype=np.float32)
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.30], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.24], dtype=np.float32),
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.0, 0.0, 0.28], dtype=np.float32),
+                initial_obj_pos=initial_obj,
+            ),
+            task_metadata={"reward_mode": "sparse_binary", "pick_lift_success_height": 0.05},
+            gripper_opening=0.0,
+            support_surface_z=0.15,
+            caught_object_is_target=True,
+            caught_object_score=0.95,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertEqual(info["sparse_success"], 1.0)
+        self.assertEqual(info["distance_reward"], 0.0)
 
     def test_pick_up_reward_penalizes_wrong_object_grasp(self):
         spec = self._spec("pick_up")

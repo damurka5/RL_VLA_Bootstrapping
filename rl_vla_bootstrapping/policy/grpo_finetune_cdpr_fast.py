@@ -36,7 +36,7 @@ class _LCHOLWrapperArgs:
     enabled: bool = False
     group_score: str = "phase_shaped"
     hindsight_bc_coef: float = 0.20
-    hindsight_done_weight: float = 2.0
+    hindsight_done_weight: float = 0.20
     hindsight_replay_capacity: int = 20_000
     hindsight_replay_ratio: float = 0.50
     hindsight_prefix_max_steps: int = 16
@@ -291,6 +291,33 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
     transformed = source
     replacements = [
         (
+            "@dataclass\n"
+            "class Transition:\n"
+            "    img_primary: np.ndarray\n"
+            "    img_wrist: Optional[np.ndarray]\n"
+            "    instruction: str\n"
+            "    action: np.ndarray\n"
+            "    logprob: float\n"
+            "    env_reward: float\n"
+            "    reward: float\n"
+            "    advantage: float\n",
+            "@dataclass\n"
+            "class Transition:\n"
+            "    img_primary: np.ndarray\n"
+            "    img_wrist: Optional[np.ndarray]\n"
+            "    instruction: str\n"
+            "    action: np.ndarray\n"
+            "    logprob: float\n"
+            "    env_reward: float\n"
+            "    reward: float\n"
+            "    advantage: float\n"
+            "    source: str\n"
+            "    collection_prompt: str = \"\"\n"
+            "    policy_version: int = 0\n"
+            "    was_relabelled: bool = False\n"
+            "    from_replay: bool = False\n",
+        ),
+        (
             "    branch_rng = np.random.default_rng(args.seed + 90_000 + rank)\n",
             "    branch_rng = np.random.default_rng(args.seed + 90_000 + rank)\n"
             "    _rlvla_lchol_set_runtime(\n"
@@ -339,8 +366,20 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
             "            advantages = np.asarray([transition.advantage for transition in transitions], dtype=np.float32)\n\n"
             "            policy.train()\n",
             "            advantages = np.asarray([transition.advantage for transition in transitions], dtype=np.float32)\n"
+            "            _rlvla_lchol_validate_grpo_transitions(transitions)\n"
             "            _rlvla_lchol_after_rollout(update=update)\n\n"
             "            policy.train()\n",
+        ),
+        (
+            "                                advantage=float(group_advantages[group_idx]),\n"
+            "                            )\n",
+            "                                advantage=float(group_advantages[group_idx]),\n"
+            "                                source=\"pg\",\n"
+            "                                collection_prompt=str(obs.get(\"instruction\", \"\")),\n"
+            "                                policy_version=int(update),\n"
+            "                                was_relabelled=False,\n"
+            "                                from_replay=False,\n"
+            "                            )\n",
         ),
         (
             "                            loss = policy_loss + args.ent_coef * entropy_loss\n",
@@ -677,6 +716,8 @@ class _RolloutTensorboardLogger:
             "reward_component_r_obj": deque(maxlen=self.every_global_steps or 1),
             "reward_component_r_success": deque(maxlen=self.every_global_steps or 1),
             "success_rate": deque(maxlen=self.every_global_steps or 1),
+            "episode_success_rate": deque(maxlen=self.every_global_steps or 1),
+            "episode_timeout_rate": deque(maxlen=self.every_global_steps or 1),
             "target_grasped_rate": deque(maxlen=self.every_global_steps or 1),
             "unstable_transition_rate": deque(maxlen=self.every_global_steps or 1),
             "reward_clip_rate": deque(maxlen=self.every_global_steps or 1),
@@ -755,7 +796,12 @@ class _RolloutTensorboardLogger:
         self._append("reward_component_r_orient", reward_components.get("r_orient", 0.0))
         self._append("reward_component_r_obj", reward_components.get("r_obj", 0.0))
         self._append("reward_component_r_success", reward_components.get("r_success", 0.0))
-        self._append("success_rate", 1.0 if bool(info.get("success", False)) else 0.0)
+        success_value = self._success_value(info)
+        done_value = self._done_value(info, success_value=success_value)
+        self._append("success_rate", success_value)
+        if done_value:
+            self._append("episode_success_rate", success_value)
+            self._append("episode_timeout_rate", 1.0 if self._truthy(info.get("episode_timeout")) else 0.0)
         self._append("target_grasped_rate", 1.0 if bool(info.get("target_grasped", False)) else 0.0)
         self._append("unstable_transition_rate", 1.0 if bool(info.get("unstable_transition", False)) else 0.0)
         self._append("reward_clip_rate", 1.0 if bool(info.get("reward_env_clipped", False)) else 0.0)
@@ -824,6 +870,36 @@ class _RolloutTensorboardLogger:
         if not math.isfinite(numeric):
             return
         self._append(key, numeric)
+
+    def _success_value(self, info: dict[str, Any]) -> float:
+        if self._truthy(info.get("success")):
+            return 1.0
+        try:
+            sparse_success = float(info.get("sparse_success"))
+        except (TypeError, ValueError):
+            return 0.0
+        if not math.isfinite(sparse_success):
+            return 0.0
+        return 1.0 if sparse_success >= 0.5 else 0.0
+
+    def _done_value(self, info: dict[str, Any], *, success_value: float) -> bool:
+        if success_value >= 0.5:
+            return True
+        return bool(
+            self._truthy(info.get("env_done"))
+            or self._truthy(info.get("terminated"))
+            or self._truthy(info.get("truncated"))
+        )
+
+    @staticmethod
+    def _truthy(value: Any) -> bool:
+        if isinstance(value, str):
+            return value.strip().lower() in {"1", "true", "yes", "on"}
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return bool(value)
+        return bool(math.isfinite(numeric) and numeric >= 0.5)
 
     def _ensure_writer(self):
         if self.writer is not None:
@@ -1032,6 +1108,40 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
             num_actions_chunk=int(num_actions_chunk),
         )
 
+    def _validate_grpo_transitions(transitions) -> None:
+        invalid: list[str] = []
+        non_pg = 0
+        for idx, transition in enumerate(transitions):
+            source = str(getattr(transition, "source", ""))
+            if source != "pg":
+                non_pg += 1
+                invalid.append(f"idx={idx} source={source!r}")
+            if bool(getattr(transition, "was_relabelled", False)):
+                invalid.append(f"idx={idx} was_relabelled=True")
+            if bool(getattr(transition, "from_replay", False)):
+                invalid.append(f"idx={idx} from_replay=True")
+            collection_prompt = str(getattr(transition, "collection_prompt", "") or "")
+            instruction = str(getattr(transition, "instruction", "") or "")
+            if collection_prompt and collection_prompt != instruction:
+                invalid.append(f"idx={idx} collection_prompt_mismatch")
+            try:
+                old_logprob = float(getattr(transition, "logprob"))
+            except (TypeError, ValueError):
+                invalid.append(f"idx={idx} old_logprob_missing")
+            else:
+                if not math.isfinite(old_logprob):
+                    invalid.append(f"idx={idx} old_logprob_non_finite")
+
+        runtime = _runtime()
+        if runtime is not None:
+            recorder = getattr(runtime, "record_grpo_batch_audit", None)
+            if callable(recorder):
+                recorder(total=len(transitions), non_pg=non_pg)
+        if invalid:
+            preview = ", ".join(invalid[:8])
+            extra = "" if len(invalid) <= 8 else f", ... +{len(invalid) - 8} more"
+            raise RuntimeError(f"LC-HOL GRPO batch audit failed: {preview}{extra}")
+
     def _log_update(*, update: int, global_step: int, tb_writer, is_main: bool) -> None:
         runtime = _runtime()
         if runtime is None:
@@ -1049,6 +1159,7 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
     module._rlvla_lchol_capture_candidate = _capture_candidate
     module._rlvla_lchol_after_rollout = _after_rollout
     module._rlvla_lchol_bc_loss = _bc_loss
+    module._rlvla_lchol_validate_grpo_transitions = _validate_grpo_transitions
     module._rlvla_lchol_log_update = _log_update
 
     original_reset = module.CDPRVisionLanguageEnv.reset

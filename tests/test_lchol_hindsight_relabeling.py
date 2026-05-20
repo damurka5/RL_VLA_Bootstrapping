@@ -48,7 +48,47 @@ class LCHOLHindsightRelabelingTests(unittest.TestCase):
         self.assertEqual(record.first_timestep, 1)
         self.assertEqual(record.instruction, "grab apple")
         self.assertEqual(len(record.prefix_actions), 2)
+        self.assertEqual(record.metadata["original_instruction"], "put apple into plate")
+        self.assertEqual(record.metadata["relabeled_instruction"], "grab apple")
+        self.assertEqual(record.metadata["prefix_end_timestep"], 1)
         np.testing.assert_array_equal(record.action, np.ones((4,), dtype=np.float32))
+
+    def test_wrong_object_contact_blocks_grab_relabel(self):
+        spec = CDPRLCHOLSpec()
+        trajectory = [
+            {
+                "instruction_type": "put_into_plate",
+                "source_instruction": "put apple into plate",
+                "target_object_catalog": "ycb_apple",
+                "distance_ee_to_object_xy": 0.02,
+                "gripper_closed": 1.0,
+                "caught_object_is_target": 0.0,
+                "caught_object_score": 0.95,
+                "action": np.ones((4,), dtype=np.float32),
+            }
+        ]
+
+        records = spec.build_hindsight_records(trajectory, prefix_max_steps=16)
+
+        self.assertNotIn("grab_object", {record.option_name for record in records})
+
+    def test_same_instruction_is_not_hindsight_record(self):
+        spec = CDPRLCHOLSpec()
+        trajectory = [
+            {
+                "instruction_type": "grab_object",
+                "source_instruction": "grab apple",
+                "target_object_catalog": "ycb_apple",
+                "distance_ee_to_object_xy": 0.02,
+                "gripper_closed": 1.0,
+                "caught_object_is_target": 1.0,
+                "action": np.ones((4,), dtype=np.float32),
+            }
+        ]
+
+        records = spec.build_hindsight_records(trajectory, prefix_max_steps=16)
+
+        self.assertNotIn("grab_object", {record.option_name for record in records})
 
 
 if __name__ == "__main__":

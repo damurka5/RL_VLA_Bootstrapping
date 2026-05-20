@@ -82,6 +82,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
                     {
                         "success": idx == 1,
                         "sparse_success": idx == 1,
+                        "env_done": idx == 1,
                         "distance_ee_to_object_xy": 0.03 + 0.01 * idx,
                         "target_motion_xy": 0.05 * idx,
                         "relation_error": 0.08 - 0.02 * idx,
@@ -93,6 +94,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
             tags = {tag for tag, _, _ in FakeSummaryWriter.scalars}
             self.assertIn("rollout_step/sparse_success_mean", tags)
+            self.assertIn("rollout_step/success_rate_mean", tags)
+            self.assertIn("rollout_step/episode_success_rate_mean", tags)
             self.assertIn("rollout_step/distance_ee_to_object_xy_mean", tags)
             self.assertIn("rollout_step/relation_error_mean", tags)
             self.assertIn("rollout_step/target_motion_xy_mean", tags)

@@ -51,6 +51,7 @@ class GRPOLCHOLPatchTests(unittest.TestCase):
         self.assertEqual(forwarded, ["--rollout_steps", "4"])
         self.assertTrue(fast_args.lchol.enabled)
         self.assertAlmostEqual(fast_args.lchol.hindsight_bc_coef, 0.35)
+        self.assertAlmostEqual(fast_args.lchol.hindsight_done_weight, 0.20)
 
     def test_source_transform_adds_phase_score_and_bc_loss(self):
         external = Path("/Users/damirnurtdinov/Desktop/My Courses/Диплом/openvla-oft/vla-scripts/grpo_finetune_cdpr.py")
@@ -58,10 +59,14 @@ class GRPOLCHOLPatchTests(unittest.TestCase):
             self.skipTest("Local OpenVLA-OFT GRPO script is not available.")
 
         patched = _transform_external_grpo_source_for_lchol(external.read_text(encoding="utf-8"))
+        compile(patched, str(external), "exec")
 
         self.assertIn("candidate_rewards.append(float(candidate_group_score))", patched)
         self.assertIn("lchol_bc_loss = _rlvla_lchol_bc_loss", patched)
         self.assertIn("loss_lchol_bc_mean", patched)
+        self.assertIn("source: str", patched)
+        self.assertIn("source=\"pg\"", patched)
+        self.assertIn("_rlvla_lchol_validate_grpo_transitions(transitions)", patched)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,8 @@
 runs/
 __pycache__/
 *.pyc
+.DS_Store
+MUJOCO_LOG.TXT
 assets/externals/*
 !assets/externals/.gitkeep
 benchmarks/externals/*

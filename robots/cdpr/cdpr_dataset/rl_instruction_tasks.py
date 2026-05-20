@@ -72,6 +72,25 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "push_right": "push object right",
 }
 
+INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
+    "move_up": "end effector moves upward by the configured directional threshold",
+    "move_down": "end effector moves downward by the configured directional threshold",
+    "move_left": "end effector crosses the left workspace-center threshold",
+    "move_right": "end effector crosses the right workspace-center threshold",
+    "move_top": "end effector crosses the forward workspace-center threshold",
+    "move_bottom": "end effector crosses the backward workspace-center threshold",
+    "move_center": "falls back to the task point-success predicate",
+    "move_to_object": "end-effector XY distance to the target object is within the configured tolerance",
+    "pick_up": "target object is grasped and lifted by the configured height",
+    "grab_object": "gripper is closed while the target object is caught or within the grab XY tolerance",
+    "put_into_plate": "target object is within the plate XY/Z tolerance, with release required only when configured",
+    "move_left_of_object": "target object is left of the reference by the configured offset, aligned in Y, and moved enough",
+    "move_right_of_object": "target object is right of the reference by the configured offset, aligned in Y, and moved enough",
+    "move_between_objects": "target object is near the midpoint between two references and projects onto their segment",
+    "push_left": "target object has moved left by the configured push displacement",
+    "push_right": "target object has moved right by the configured push displacement",
+}
+
 OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = (
     "move_to_object",
     "pick_up",
@@ -299,6 +318,26 @@ def _metadata_bool(task_metadata: dict[str, Any] | None, key: str, default: bool
     raise ValueError(f"Task metadata `{key}` must be boolean-like, got {raw!r}")
 
 
+def _metadata_reward_mode(task_metadata: dict[str, Any] | None) -> str:
+    if not isinstance(task_metadata, dict):
+        return ""
+    for key in ("reward_mode", "reward_type", "sparse_reward_mode"):
+        raw = task_metadata.get(key)
+        if raw is not None:
+            return str(raw).strip().lower().replace("-", "_").replace(" ", "_")
+    return ""
+
+
+def _use_sparse_binary_reward(task_metadata: dict[str, Any] | None) -> bool:
+    mode = _metadata_reward_mode(task_metadata)
+    if mode in {"sparse", "binary", "binary_sparse", "sparse_binary", "sparse_binary_reward"}:
+        return True
+    try:
+        return _metadata_bool(task_metadata, "binary_sparse_reward", False)
+    except ValueError:
+        return False
+
+
 def _action_saturation_stats(
     action: np.ndarray | None,
     *,
@@ -352,6 +391,25 @@ def compute_instruction_reward(
     ee_pos = np.asarray(ee_pos, dtype=np.float32)
     goal_pos = np.asarray(obj_pos, dtype=np.float32)
     prev_goal_pos = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
+
+    if _use_sparse_binary_reward(task_metadata):
+        return _compute_sparse_binary_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=task_metadata,
+            gripper_opening=gripper_opening,
+            support_surface_z=support_surface_z,
+            caught_object_is_target=caught_object_is_target,
+            caught_object_score=caught_object_score,
+            caught_object_catalog=caught_object_catalog,
+            env=env,
+            target_body_name=target_body_name,
+            reference_body_name=reference_body_name,
+            second_reference_body_name=second_reference_body_name,
+        )
 
     if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
         return _compute_sparse_manipulation_reward(
@@ -529,6 +587,251 @@ def _sparse_reward_value(
     success_reward = _metadata_float(task_metadata, "sparse_success_reward", 1.0)
     failure_reward = _metadata_float(task_metadata, "sparse_failure_reward", 0.0)
     return float(success_reward if success else failure_reward)
+
+
+def _force_binary_sparse_metadata(task_metadata: Optional[dict[str, Any]]) -> dict[str, Any]:
+    metadata = dict(task_metadata or {})
+    metadata["action_saturation_penalty_weight"] = 0.0
+    return metadata
+
+
+def _compute_sparse_binary_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+    gripper_opening: Optional[float] = None,
+    support_surface_z: Optional[float] = None,
+    caught_object_is_target: bool = False,
+    caught_object_score: float = 0.0,
+    caught_object_catalog: str | None = None,
+    env: Any | None = None,
+    target_body_name: str | None = None,
+    reference_body_name: str | None = None,
+    second_reference_body_name: str | None = None,
+) -> tuple[float, bool, dict[str, float]]:
+    metadata = _force_binary_sparse_metadata(task_metadata)
+    if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
+        reward, success, info = _compute_sparse_manipulation_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=metadata,
+            gripper_opening=gripper_opening,
+            support_surface_z=support_surface_z,
+            caught_object_is_target=caught_object_is_target,
+            caught_object_score=caught_object_score,
+            caught_object_catalog=caught_object_catalog,
+            env=env,
+            target_body_name=target_body_name,
+            reference_body_name=reference_body_name,
+            second_reference_body_name=second_reference_body_name,
+        )
+        info["sparse_binary_reward"] = 1.0
+        return float(reward), bool(success), info
+
+    if spec.instruction_type == "pick_up":
+        return _compute_sparse_pick_up_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=metadata,
+            gripper_opening=gripper_opening,
+            support_surface_z=support_surface_z,
+            caught_object_is_target=caught_object_is_target,
+            caught_object_score=caught_object_score,
+            caught_object_catalog=caught_object_catalog,
+            env=env,
+            target_body_name=target_body_name,
+        )
+
+    success, validation_info = compute_instruction_validation_success(
+        spec=spec,
+        ee_pos=ee_pos,
+        reward_state=reward_state,
+        task_metadata=metadata,
+        current_success=False,
+        obj_pos=goal_pos,
+        goal_pos=goal_pos,
+        reward_info=None,
+        env=env,
+        target_body_name=target_body_name,
+        reference_body_name=reference_body_name,
+        second_reference_body_name=second_reference_body_name,
+        gripper_opening=gripper_opening,
+        support_surface_z=support_surface_z,
+        caught_object_is_target=caught_object_is_target,
+        caught_object_score=caught_object_score,
+    )
+
+    prev_goal_pos = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
+    prev_ee_pos = np.asarray(reward_state.prev_ee_pos, dtype=np.float32)
+    distance_vec = goal_pos - ee_pos
+    prev_distance_vec = prev_goal_pos - prev_ee_pos
+    distance = float(np.linalg.norm(distance_vec))
+    prev_distance = float(np.linalg.norm(prev_distance_vec))
+    xy_distance = float(np.linalg.norm(distance_vec[:2]))
+    prev_xy_distance = float(np.linalg.norm(prev_distance_vec[:2]))
+    action_saturation_threshold = _metadata_float(metadata, "action_saturation_threshold", 0.95)
+    action_saturation_exponent = _metadata_float(metadata, "action_saturation_exponent", 2.0)
+    action_saturation_penalty_raw, action_saturation_rate, action_saturation_max_abs = _action_saturation_stats(
+        action,
+        threshold=action_saturation_threshold,
+        exponent=action_saturation_exponent,
+    )
+
+    reward = _sparse_reward_value(success=bool(success), task_metadata=metadata)
+    reward_state.prev_ee_pos = ee_pos.copy()
+    reward_state.prev_obj_pos = goal_pos.copy()
+    reward_state.prev_distance = xy_distance if spec.instruction_type == "move_to_object" else distance
+    reward_state.prev_camera_align = None
+    reward_state.step_count += 1
+
+    info = {
+        "sparse_success": float(bool(success)),
+        "sparse_reward_mode": 1.0,
+        "sparse_binary_reward": 1.0,
+        "distance_to_goal": xy_distance if spec.instruction_type == "move_to_object" else distance,
+        "distance_to_goal_xy": xy_distance,
+        "distance_to_goal_prev": prev_xy_distance if spec.instruction_type == "move_to_object" else prev_distance,
+        "distance_to_goal_prev_xy": prev_xy_distance,
+        "distance_delta": float(prev_distance - distance),
+        "distance_reward": 0.0,
+        "camera_alignment": 0.0,
+        "camera_alignment_delta": 0.0,
+        "camera_reward": 0.0,
+        "action_saturation_penalty": 0.0,
+        "action_saturation_penalty_raw": action_saturation_penalty_raw,
+        "action_saturation_rate": action_saturation_rate,
+        "action_saturation_max_abs": action_saturation_max_abs,
+        "action_saturation_threshold": float(action_saturation_threshold),
+        "action_saturation_exponent": float(action_saturation_exponent),
+        "distance_ee_to_object": distance,
+        "distance_ee_to_object_xyz": distance,
+        "distance_ee_to_object_xy": xy_distance,
+        "distance_ee_to_object_prev": prev_distance,
+        "distance_ee_to_object_prev_xyz": prev_distance,
+        "distance_ee_to_object_prev_xy": prev_xy_distance,
+        "orientation_reward": 0.0,
+        "success_bonus": float(_metadata_float(metadata, "sparse_success_reward", 1.0) if success else 0.0),
+    }
+    info.update({str(key): float(value) for key, value in validation_info.items()})
+    return float(reward), bool(success), info
+
+
+def _compute_sparse_pick_up_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+    gripper_opening: Optional[float] = None,
+    support_surface_z: Optional[float] = None,
+    caught_object_is_target: bool = False,
+    caught_object_score: float = 0.0,
+    caught_object_catalog: str | None = None,
+    env: Any | None = None,
+    target_body_name: str | None = None,
+) -> tuple[float, bool, dict[str, float]]:
+    metadata = _force_binary_sparse_metadata(task_metadata)
+    target_pos = _read_env_body_position(env, target_body_name)
+    if target_pos is None:
+        target_pos = np.asarray(goal_pos, dtype=np.float32).reshape(-1)[:3]
+    ee_distance = float(np.linalg.norm(np.asarray(target_pos[:3] - ee_pos[:3], dtype=np.float32)))
+    ee_xy_distance = float(np.linalg.norm(np.asarray(target_pos[:2] - ee_pos[:2], dtype=np.float32)))
+    prev_distance = float(np.linalg.norm(np.asarray(reward_state.prev_obj_pos[:3] - reward_state.prev_ee_pos[:3])))
+    prev_xy_distance = float(np.linalg.norm(np.asarray(reward_state.prev_obj_pos[:2] - reward_state.prev_ee_pos[:2])))
+
+    closed_threshold = _metadata_float(metadata, "pick_gripper_closed_opening_threshold", 0.010)
+    if gripper_opening is None or not np.isfinite(gripper_opening):
+        gripper_closed = bool(reward_state.gripper_closed)
+    else:
+        gripper_closed = bool(float(gripper_opening) <= closed_threshold)
+    if not gripper_closed:
+        reward_state.grasped = False
+    if bool(caught_object_is_target) and gripper_closed:
+        reward_state.grasped = True
+
+    initial_obj_z = float(np.asarray(reward_state.initial_obj_pos, dtype=np.float32).reshape(-1)[2])
+    support_height = initial_obj_z
+    if support_surface_z is not None and np.isfinite(support_surface_z):
+        support_height = max(float(support_surface_z), support_height)
+    target_lift = max(float(target_pos[2]) - support_height, 0.0)
+    lift_success_height = max(
+        _metadata_float(metadata, "pick_lift_success_height", max(float(spec.lift_target), 0.05)),
+        1e-6,
+    )
+    normalized_lift = float(np.clip(target_lift / lift_success_height, 0.0, 1.0))
+    success = bool(reward_state.grasped and target_lift >= lift_success_height)
+
+    target_delta, target_motion_xy = _target_motion_from_initial(target_pos, reward_state)
+    action_saturation_threshold = _metadata_float(metadata, "action_saturation_threshold", 0.95)
+    action_saturation_exponent = _metadata_float(metadata, "action_saturation_exponent", 2.0)
+    action_saturation_penalty_raw, action_saturation_rate, action_saturation_max_abs = _action_saturation_stats(
+        action,
+        threshold=action_saturation_threshold,
+        exponent=action_saturation_exponent,
+    )
+    reward = _sparse_reward_value(success=success, task_metadata=metadata)
+
+    reward_state.prev_ee_pos = ee_pos.copy()
+    reward_state.prev_obj_pos = target_pos.copy()
+    reward_state.prev_distance = ee_distance
+    reward_state.prev_camera_align = None
+    reward_state.gripper_closed = bool(gripper_closed)
+    reward_state.step_count += 1
+
+    info = {
+        "sparse_success": float(success),
+        "sparse_reward_mode": 8.0,
+        "sparse_binary_reward": 1.0,
+        "distance_to_goal": ee_distance,
+        "distance_to_goal_xy": ee_xy_distance,
+        "distance_to_goal_prev": prev_distance,
+        "distance_to_goal_prev_xy": prev_xy_distance,
+        "distance_delta": float(prev_distance - ee_distance),
+        "distance_reward": 0.0,
+        "camera_alignment": 0.0,
+        "camera_alignment_delta": 0.0,
+        "camera_reward": 0.0,
+        "action_saturation_penalty": 0.0,
+        "action_saturation_penalty_raw": action_saturation_penalty_raw,
+        "action_saturation_rate": action_saturation_rate,
+        "action_saturation_max_abs": action_saturation_max_abs,
+        "action_saturation_threshold": float(action_saturation_threshold),
+        "action_saturation_exponent": float(action_saturation_exponent),
+        "distance_ee_to_object": ee_distance,
+        "distance_ee_to_object_xyz": ee_distance,
+        "distance_ee_to_object_xy": ee_xy_distance,
+        "distance_ee_to_object_prev": prev_distance,
+        "distance_ee_to_object_prev_xyz": prev_distance,
+        "distance_ee_to_object_prev_xy": prev_xy_distance,
+        "target_motion_x": float(target_delta[0]),
+        "target_motion_y": float(target_delta[1]),
+        "target_motion_z": float(target_delta[2]),
+        "target_motion_xy": float(target_motion_xy),
+        "orientation_reward": 0.0,
+        "success_bonus": float(_metadata_float(metadata, "sparse_success_reward", 1.0) if success else 0.0),
+        "gripper_closed": float(gripper_closed),
+        "grasped": float(reward_state.grasped),
+        "pick_target_lift": float(target_lift),
+        "pick_target_lift_normalized": normalized_lift,
+        "pick_lift_success_height": float(lift_success_height),
+        "caught_object_score": float(caught_object_score),
+        "caught_object_is_target": float(bool(caught_object_is_target)),
+        "caught_object_catalog_matches_target": float(bool(caught_object_is_target)),
+        "caught_object_catalog": 1.0 if (caught_object_catalog or "") else 0.0,
+    }
+    return reward, success, info
 
 
 def _target_motion_from_initial(target_pos: np.ndarray, reward_state: RewardState) -> tuple[np.ndarray, float]:
@@ -1079,6 +1382,7 @@ def compute_instruction_validation_success(
     reference_body_name: str | None = None,
     second_reference_body_name: str | None = None,
     gripper_opening: Optional[float] = None,
+    support_surface_z: Optional[float] = None,
     caught_object_is_target: bool = False,
     caught_object_score: float = 0.0,
 ) -> tuple[bool, dict[str, float]]:
@@ -1086,6 +1390,41 @@ def compute_instruction_validation_success(
     start_arr = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
     if ee_arr.size < 3 or start_arr.size < 3:
         return bool(current_success), {}
+
+    if spec.instruction_type == "pick_up" and _use_sparse_binary_reward(task_metadata):
+        reward_state_copy = RewardState(
+            initial_ee_pos=np.asarray(reward_state.initial_ee_pos, dtype=np.float32).copy(),
+            initial_obj_pos=np.asarray(reward_state.initial_obj_pos, dtype=np.float32).copy(),
+            prev_ee_pos=np.asarray(reward_state.prev_ee_pos, dtype=np.float32).copy(),
+            prev_obj_pos=np.asarray(reward_state.prev_obj_pos, dtype=np.float32).copy(),
+            prev_distance=reward_state.prev_distance,
+            prev_camera_align=reward_state.prev_camera_align,
+            gripper_closed=bool(reward_state.gripper_closed),
+            grasped=bool(reward_state.grasped),
+            step_count=int(reward_state.step_count),
+        )
+        target_source = obj_pos if obj_pos is not None else goal_pos
+        if target_source is None:
+            target_source = np.zeros((3,), dtype=np.float32)
+        _, sparse_success, sparse_info = _compute_sparse_pick_up_reward(
+            spec=spec,
+            ee_pos=ee_arr[:3],
+            goal_pos=np.asarray(target_source, dtype=np.float32).reshape(-1)[:3],
+            reward_state=reward_state_copy,
+            task_metadata=task_metadata,
+            gripper_opening=gripper_opening,
+            support_surface_z=support_surface_z,
+            caught_object_is_target=caught_object_is_target,
+            caught_object_score=caught_object_score,
+            env=env,
+            target_body_name=target_body_name,
+        )
+        return sparse_success, {
+            "validation_success_mode": 4.0,
+            "pick_up_validation_success": float(sparse_success),
+            "pick_target_lift": float(sparse_info.get("pick_target_lift", 0.0)),
+            "pick_lift_success_height": float(sparse_info.get("pick_lift_success_height", 0.0)),
+        }
 
     if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
         sparse_success = bool(current_success)

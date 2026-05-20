@@ -15,7 +15,7 @@ class LCHOLGRPOConfig:
     enabled: bool = False
     group_score: str = "phase_shaped"
     hindsight_bc_coef: float = 0.20
-    hindsight_done_weight: float = 2.0
+    hindsight_done_weight: float = 0.20
     hindsight_replay_capacity: int = 20_000
     hindsight_replay_ratio: float = 0.50
     hindsight_prefix_max_steps: int = 16
@@ -55,6 +55,8 @@ class LCHOLGRPORuntime:
             "option_prior_bc": 0,
         }
         self.phase_scores: list[float] = []
+        self.grpo_non_pg_count = 0
+        self.grpo_batch_count = 0
         self._last_log_update = 0
 
     def sample_instruction_type(self) -> str | None:
@@ -119,6 +121,10 @@ class LCHOLGRPORuntime:
         self.source_counts["hindsight_replay"] += len(records)
         return records
 
+    def record_grpo_batch_audit(self, *, total: int, non_pg: int) -> None:
+        self.grpo_batch_count += max(0, int(total))
+        self.grpo_non_pg_count += max(0, int(non_pg))
+
     def bc_loss(
         self,
         *,
@@ -163,6 +169,8 @@ class LCHOLGRPORuntime:
         out: dict[str, float] = {
             f"source/{key}": float(value) for key, value in self.source_counts.items()
         }
+        out["grpo/batch_count"] = float(self.grpo_batch_count)
+        out["grpo/non_pg_count"] = float(self.grpo_non_pg_count)
         out.update({f"replay/{key}": float(value) for key, value in self.replay.sizes().items()})
         out.update({f"curriculum/{key}": float(value) for key, value in self.curriculum.metrics().items()})
         if self.phase_scores:
@@ -184,6 +192,7 @@ class LCHOLGRPORuntime:
             f"phase_mean={metrics.get('phase_score/mean', 0.0):.4f} "
             f"hindsight_new={int(self.source_counts['hindsight_new'])} "
             f"hindsight_replay={int(self.source_counts['hindsight_replay'])} "
+            f"grpo_non_pg={int(self.grpo_non_pg_count)} "
             f"replay_total={len(self.replay)}",
             flush=True,
         )
@@ -193,6 +202,8 @@ class LCHOLGRPORuntime:
             tb_writer.flush()
         self.phase_scores.clear()
         self.source_counts["hindsight_replay"] = 0
+        self.grpo_non_pg_count = 0
+        self.grpo_batch_count = 0
 
     def _option_sample_weights(self, options: Sequence[str]) -> dict[str, float]:
         weights: dict[str, float] = {}
