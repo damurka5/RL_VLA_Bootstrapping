@@ -1016,6 +1016,7 @@ class CDPRLanguageRLEnv(_EnvBase):
     """
 
     metadata = {"render.modes": []}
+    _next_env_instance_id = 0
 
     def __init__(
         self,
@@ -1048,6 +1049,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         seed: Optional[int] = None,
     ) -> None:
         super().__init__()
+        self._env_instance_id = int(type(self)._next_env_instance_id)
+        type(self)._next_env_instance_id += 1
 
         if gym is None or spaces is None:
             raise ImportError(
@@ -2522,6 +2525,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         reference_object_position = self._reference_object_position(default=live_goal_position)
         second_reference_object_position = self._reference_object_position(second=True, default=live_goal_position)
         return {
+            "env_instance_id": int(self._env_instance_id),
             "scene": self._scene_name,
             "episode_index": int(self._episode_index),
             "scene_objects": list(self._scene_catalog_objects),

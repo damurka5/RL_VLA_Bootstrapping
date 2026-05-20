@@ -83,11 +83,17 @@ class FastGRPOWrapperTests(unittest.TestCase):
                         "success": idx == 1,
                         "sparse_success": idx == 1,
                         "env_done": idx == 1,
-                        "distance_ee_to_object_xy": 0.03 + 0.01 * idx,
+                        "env_instance_id": 0,
+                        "episode_index": 0,
+                        "instruction_type": "pick_up",
+                        "distance_ee_to_object_xy": 0.02,
                         "target_motion_xy": 0.05 * idx,
                         "relation_error": 0.08 - 0.02 * idx,
                         "gripper_closed": 1.0,
                         "caught_object_is_target": idx == 1,
+                        "grasped": idx == 1,
+                        "pick_target_lift": 0.06 if idx == 1 else 0.0,
+                        "pick_lift_success_height": 0.05,
                     },
                     {},
                 )
@@ -99,6 +105,64 @@ class FastGRPOWrapperTests(unittest.TestCase):
             self.assertIn("rollout_step/distance_ee_to_object_xy_mean", tags)
             self.assertIn("rollout_step/relation_error_mean", tags)
             self.assertIn("rollout_step/target_motion_xy_mean", tags)
+            self.assertIn("rollout_episode/instruction_success_rate/pick_up", tags)
+            self.assertIn("rollout_episode/subgoal_success_rate/move_to_object", tags)
+            self.assertIn("rollout_episode/subgoal_success_rate/grab_object", tags)
+            self.assertIn("rollout_episode/subgoal_success_rate/pick_up", tags)
+
+    def test_rollout_tensorboard_logger_records_partial_subgoal_successes_for_failed_attempt(self):
+        class FakeSummaryWriter:
+            scalars: list[tuple[str, float, int]] = []
+
+            def __init__(self, log_dir: str, flush_secs: int = 10):
+                self.log_dir = log_dir
+                self.flush_secs = flush_secs
+
+            def add_scalar(self, tag: str, value: float, step: int):
+                self.scalars.append((tag, float(value), int(step)))
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            FakeSummaryWriter.scalars.clear()
+            logger = _RolloutTensorboardLogger(FakeSummaryWriter, every_global_steps=2)
+            logger.set_run_dir(Path(tmp))
+
+            for idx in range(2):
+                logger.capture_reward(
+                    env_reward=0.0,
+                    shaped_reward=0.0,
+                    closer_bonus=0.0,
+                    farther_penalty=0.0,
+                    distance_delta_raw=0.0,
+                )
+                logger.finalize_step(
+                    {
+                        "success": False,
+                        "sparse_success": 0.0,
+                        "env_done": idx == 1,
+                        "env_instance_id": 0,
+                        "episode_index": 0,
+                        "instruction_type": "put_into_plate",
+                        "distance_ee_to_object_xy": 0.01,
+                        "gripper_closed": 1.0,
+                        "caught_object_is_target": idx == 1,
+                        "grasped": idx == 1,
+                        "pick_target_lift": 0.08 if idx == 1 else 0.0,
+                        "pick_lift_success_height": 0.05,
+                    },
+                    {},
+                )
+
+            scalars = {tag: value for tag, value, _ in FakeSummaryWriter.scalars}
+            self.assertEqual(scalars["rollout_episode/instruction_success_rate/put_into_plate"], 0.0)
+            self.assertEqual(scalars["rollout_episode/subgoal_success_rate/grab_object"], 1.0)
+            self.assertEqual(scalars["rollout_episode/subgoal_success_rate/pick_up"], 1.0)
+            self.assertEqual(scalars["rollout_episode/subgoal_success_rate/put_into_plate"], 0.0)
 
     def test_patch_desk_texture_prepare_uses_single_writer(self):
         calls: list[tuple[str, int]] = []

@@ -22,6 +22,18 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 if str(_REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(_REPO_ROOT))
 
+_CDPR_CURRICULUM_OPTIONS = (
+    "move_to_object",
+    "grab_object",
+    "pick_up",
+    "push_left",
+    "push_right",
+    "put_into_plate",
+    "move_left_of_object",
+    "move_right_of_object",
+    "move_between_objects",
+)
+
 
 @dataclass(frozen=True)
 class _FastWrapperArgs:
@@ -705,6 +717,7 @@ class _RolloutTensorboardLogger:
         self.training_enabled = True
         self._registered_atexit = False
         self._pending_reward: dict[str, float] | None = None
+        self._episode_buffers: dict[tuple[Any, ...], list[dict[str, Any]]] = {}
         self._windows: dict[str, deque[float]] = {
             "reward_env": deque(maxlen=self.every_global_steps or 1),
             "reward_shaped": deque(maxlen=self.every_global_steps or 1),
@@ -742,6 +755,12 @@ class _RolloutTensorboardLogger:
             "action_saturation_penalty": deque(maxlen=self.every_global_steps or 1),
             "action_saturation_rate": deque(maxlen=self.every_global_steps or 1),
             "lchol_group_score": deque(maxlen=self.every_global_steps or 1),
+        }
+        self._instruction_episode_windows: dict[str, deque[float]] = {
+            name: deque(maxlen=self.every_global_steps or 1) for name in _CDPR_CURRICULUM_OPTIONS
+        }
+        self._subgoal_episode_windows: dict[str, deque[float]] = {
+            name: deque(maxlen=self.every_global_steps or 1) for name in _CDPR_CURRICULUM_OPTIONS
         }
 
     def set_run_dir(self, run_dir: Path | str | None) -> None:
@@ -798,6 +817,7 @@ class _RolloutTensorboardLogger:
         self._append("reward_component_r_success", reward_components.get("r_success", 0.0))
         success_value = self._success_value(info)
         done_value = self._done_value(info, success_value=success_value)
+        self._record_episode_progress(info, success_value=success_value, done_value=done_value)
         self._append("success_rate", success_value)
         if done_value:
             self._append("episode_success_rate", success_value)
@@ -843,6 +863,7 @@ class _RolloutTensorboardLogger:
                 self.global_step,
             )
         writer.add_scalar("rollout_step/window_size", float(self._window_len()), self.global_step)
+        self._write_episode_windows(writer)
         writer.flush()
 
     def close(self) -> None:
@@ -871,6 +892,152 @@ class _RolloutTensorboardLogger:
             return
         self._append(key, numeric)
 
+    def _record_episode_progress(self, info: dict[str, Any], *, success_value: float, done_value: bool) -> None:
+        key = self._episode_key(info)
+        buffer = self._episode_buffers.setdefault(key, [])
+        buffer.append(dict(info))
+        if not done_value:
+            return
+
+        trajectory = self._episode_buffers.pop(key, buffer)
+        instruction = self._safe_tag_token(str(info.get("instruction_type") or "unknown"))
+        if instruction:
+            window = self._instruction_episode_windows.setdefault(
+                instruction,
+                deque(maxlen=self.every_global_steps or 1),
+            )
+            window.append(float(success_value))
+
+        achieved = self._subgoal_successes(trajectory)
+        for option in _CDPR_CURRICULUM_OPTIONS:
+            window = self._subgoal_episode_windows.setdefault(
+                option,
+                deque(maxlen=self.every_global_steps or 1),
+            )
+            window.append(1.0 if option in achieved else 0.0)
+
+    def _write_episode_windows(self, writer) -> None:
+        for instruction, values in sorted(self._instruction_episode_windows.items()):
+            if not values:
+                continue
+            writer.add_scalar(
+                f"rollout_episode/instruction_success_rate/{instruction}",
+                float(sum(values) / len(values)),
+                self.global_step,
+            )
+        for option, values in sorted(self._subgoal_episode_windows.items()):
+            if not values:
+                continue
+            writer.add_scalar(
+                f"rollout_episode/subgoal_success_rate/{option}",
+                float(sum(values) / len(values)),
+                self.global_step,
+            )
+        writer.add_scalar(
+            "rollout_episode/window_size",
+            float(max((len(values) for values in self._subgoal_episode_windows.values()), default=0)),
+            self.global_step,
+        )
+
+    def _episode_key(self, info: dict[str, Any]) -> tuple[Any, ...]:
+        return (
+            info.get("env_instance_id", ""),
+            info.get("episode_index", ""),
+            info.get("instruction_type", ""),
+            info.get("target_object_body", ""),
+            info.get("reference_object_body", ""),
+            info.get("second_reference_object_body", ""),
+            info.get("scene", ""),
+        )
+
+    def _subgoal_successes(self, trajectory: Sequence[dict[str, Any]]) -> set[str]:
+        achieved: set[str] = set()
+        for info in trajectory:
+            achieved.update(self._instant_subgoal_successes(info))
+        return achieved
+
+    def _instant_subgoal_successes(self, info: dict[str, Any]) -> set[str]:
+        achieved: set[str] = set()
+        if self._move_to_object_success(info):
+            achieved.add("move_to_object")
+        if self._grab_object_success(info):
+            achieved.add("grab_object")
+        if self._pick_up_success(info):
+            achieved.add("pick_up")
+
+        push = self._push_success(info)
+        if push:
+            achieved.add(push)
+
+        relation = self._relation_success(info)
+        if relation:
+            achieved.add(relation)
+        return achieved
+
+    def _move_to_object_success(self, info: dict[str, Any]) -> bool:
+        distance = self._finite_float(
+            info.get("move_to_object_validation_distance_xy"),
+            fallback=self._finite_float(
+                info.get("move_to_object_xy_distance"),
+                fallback=self._finite_float(info.get("distance_ee_to_object_xy"), fallback=float("nan")),
+            ),
+        )
+        threshold = self._finite_float(
+            info.get("move_to_object_validation_distance_threshold"),
+            fallback=self._finite_float(info.get("move_to_object_xy_tolerance"), fallback=0.025),
+        )
+        return bool(math.isfinite(distance) and distance <= max(float(threshold), 1e-6))
+
+    def _grab_object_success(self, info: dict[str, Any]) -> bool:
+        if self._wrong_object_contact(info) >= 0.20:
+            return False
+        if self._truthy(info.get("caught_object_is_target")) or self._truthy(info.get("target_grasped")):
+            return True
+        distance_xy = self._finite_float(info.get("distance_ee_to_object_xy"), fallback=float("inf"))
+        return bool(self._truthy(info.get("gripper_closed")) and distance_xy <= 0.045)
+
+    def _pick_up_success(self, info: dict[str, Any]) -> bool:
+        if self._wrong_object_contact(info) >= 0.20:
+            return False
+        if not (
+            self._truthy(info.get("grasped"))
+            or self._truthy(info.get("target_grasped"))
+            or self._truthy(info.get("caught_object_is_target"))
+        ):
+            return False
+        lift = self._finite_float(info.get("pick_target_lift"), fallback=0.0)
+        threshold = max(self._finite_float(info.get("pick_lift_success_height"), fallback=0.05), 1e-6)
+        return bool(lift >= threshold)
+
+    def _push_success(self, info: dict[str, Any]) -> str:
+        if self._wrong_object_contact(info) >= 0.20:
+            return ""
+        motion_x = self._finite_float(info.get("target_motion_x"), fallback=0.0)
+        threshold = max(self._finite_float(info.get("push_success_displacement"), fallback=0.08), 0.02)
+        if motion_x >= threshold:
+            return "push_right"
+        if motion_x <= -threshold:
+            return "push_left"
+        return ""
+
+    def _relation_success(self, info: dict[str, Any]) -> str:
+        instruction = str(info.get("instruction_type") or "")
+        if instruction == "put_into_plate" and self._success_value(info) >= 0.5:
+            return "put_into_plate"
+        if instruction == "move_between_objects" and self._success_value(info) >= 0.5:
+            return "move_between_objects"
+        if instruction in {"move_left_of_object", "move_right_of_object"} and self._success_value(info) >= 0.5:
+            return instruction
+
+        signed = self._finite_float(info.get("signed_relation_offset"), fallback=0.0)
+        offset = max(self._finite_float(info.get("relation_left_right_offset"), fallback=0.08), 1e-6)
+        motion_ok = self._truthy(info.get("relation_motion_ok", True))
+        if signed >= offset and motion_ok:
+            return "move_right_of_object"
+        if signed <= -offset and motion_ok:
+            return "move_left_of_object"
+        return ""
+
     def _success_value(self, info: dict[str, Any]) -> float:
         if self._truthy(info.get("success")):
             return 1.0
@@ -890,6 +1057,28 @@ class _RolloutTensorboardLogger:
             or self._truthy(info.get("terminated"))
             or self._truthy(info.get("truncated"))
         )
+
+    def _wrong_object_contact(self, info: dict[str, Any]) -> float:
+        if self._truthy(info.get("caught_object_is_target")):
+            return 0.0
+        return max(
+            0.0,
+            self._finite_float(info.get("caught_object_score"), fallback=0.0),
+        )
+
+    @staticmethod
+    def _finite_float(value: Any, *, fallback: float) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return float(fallback)
+        return float(numeric) if math.isfinite(numeric) else float(fallback)
+
+    @staticmethod
+    def _safe_tag_token(value: str) -> str:
+        token = str(value).strip().lower().replace(" ", "_")
+        token = "".join(char if char.isalnum() or char in {"_", "-", "."} else "_" for char in token)
+        return token.strip("_")
 
     @staticmethod
     def _truthy(value: Any) -> bool:
@@ -914,7 +1103,8 @@ class _RolloutTensorboardLogger:
             self._registered_atexit = True
         print(
             "[rlvla-fast] Rollout TensorBoard metrics: "
-            f"every {self.every_global_steps} global steps -> {logdir} (tags: rollout_step/*)",
+            f"every {self.every_global_steps} global steps -> {logdir} "
+            "(tags: rollout_step/*, rollout_episode/*)",
             flush=True,
         )
         return self.writer
