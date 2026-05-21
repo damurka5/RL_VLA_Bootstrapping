@@ -1,4 +1,6 @@
 runs/
+outputs/
+robots/cdpr/cdpr_dataset/wrappers/
 __pycache__/
 *.pyc
 .DS_Store

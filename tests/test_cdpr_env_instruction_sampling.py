@@ -140,6 +140,37 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertTrue(env._caught_object_start_active)
         self.assertEqual(env._caught_object_start_body, "apple_body")
         np.testing.assert_allclose(placed["apple_body"], np.array([0.10, -0.05, 0.38], dtype=np.float32))
+        np.testing.assert_allclose(
+            env._caught_object_start_ee_offset,
+            np.array([0.0, 0.0, -0.04], dtype=np.float32),
+            atol=1e-6,
+        )
+
+    def test_caught_object_start_pose_follows_closed_gripper_until_release(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {"caught_object_start_release_opening_threshold": 0.10}
+        env._caught_object_start_active = True
+        env._caught_object_start_body = "apple_body"
+        env._caught_object_start_catalog = "ycb_apple"
+        env._caught_object_start_position = np.array([0.10, -0.05, 0.38], dtype=np.float32)
+        env._caught_object_start_ee_offset = np.array([0.0, 0.0, -0.04], dtype=np.float32)
+        env._get_ee_position = lambda: np.array([0.20, 0.10, 0.44], dtype=np.float32)
+        env._get_gripper_target = lambda: 0.0
+        env._get_gripper_opening = lambda: 0.0
+        placed: dict[str, np.ndarray] = {}
+
+        def _set_body_position(body_name, xyz):
+            placed[str(body_name)] = np.asarray(xyz, dtype=np.float32).copy()
+            return True
+
+        env._set_body_position = _set_body_position
+
+        self.assertTrue(env._maintain_caught_object_start_pose())
+        np.testing.assert_allclose(placed["apple_body"], np.array([0.20, 0.10, 0.40], dtype=np.float32))
+
+        env._get_gripper_target = lambda: 0.25
+        self.assertFalse(env._maintain_caught_object_start_pose())
+        self.assertFalse(env._caught_object_start_active)
 
     def test_caught_object_start_does_not_apply_to_grab_task_by_default(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)

@@ -203,6 +203,7 @@ task:
     caught_object_start_xy_jitter: 0.012
     caught_object_start_z_jitter: 0.006
     caught_object_start_min_height_above_table: 0.08
+    caught_object_start_release_opening_threshold: 0.010
 
     pick_lift_success_height: 0.05
     pick_grasp_xy_threshold: 0.04

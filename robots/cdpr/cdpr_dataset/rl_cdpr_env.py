@@ -1247,6 +1247,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_body = ""
         self._caught_object_start_catalog = ""
         self._caught_object_start_position = np.zeros((3,), dtype=np.float32)
+        self._caught_object_start_ee_offset = np.zeros((3,), dtype=np.float32)
         self._support_surface_z = 0.0
         self._ee_min_z = float("-inf")
         self._ee_spawn_z = float("-inf")
@@ -1551,6 +1552,10 @@ class CDPRLanguageRLEnv(_EnvBase):
                 getattr(self, "_caught_object_start_position", np.zeros((3,), dtype=np.float32)),
                 dtype=np.float32,
             ).copy(),
+            "caught_object_start_ee_offset": np.asarray(
+                getattr(self, "_caught_object_start_ee_offset", np.zeros((3,), dtype=np.float32)),
+                dtype=np.float32,
+            ).copy(),
             "support_surface_z": float(self._support_surface_z),
             "ee_min_z": float(self._ee_min_z),
             "ee_spawn_z": float(self._ee_spawn_z),
@@ -1604,6 +1609,10 @@ class CDPRLanguageRLEnv(_EnvBase):
             snapshot.get("caught_object_start_position", np.zeros((3,), dtype=np.float32)),
             dtype=np.float32,
         ).reshape(3).copy()
+        self._caught_object_start_ee_offset = np.asarray(
+            snapshot.get("caught_object_start_ee_offset", np.zeros((3,), dtype=np.float32)),
+            dtype=np.float32,
+        ).reshape(3).copy()
         self._support_surface_z = float(snapshot["support_surface_z"])
         self._ee_min_z = float(snapshot["ee_min_z"])
         self._ee_spawn_z = float(snapshot["ee_spawn_z"])
@@ -1623,6 +1632,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_body = ""
         self._caught_object_start_catalog = ""
         self._caught_object_start_position = np.zeros((3,), dtype=np.float32)
+        self._caught_object_start_ee_offset = np.zeros((3,), dtype=np.float32)
 
     def _caught_object_start_instruction_types(self) -> tuple[str, ...]:
         configured = _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
@@ -1706,6 +1716,48 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_active = True
         self._caught_object_start_body = str(self._target_body_name)
         self._caught_object_start_catalog = str(self._target_catalog_name)
+        self._caught_object_start_position = target_pos.astype(np.float32)
+        self._caught_object_start_ee_offset = (target_pos - ee_pos).astype(np.float32)
+        return True
+
+    def _caught_object_start_release_opening_threshold(self) -> float:
+        return _metadata_float(
+            self._task_metadata,
+            "caught_object_start_release_opening_threshold",
+            _metadata_float(self._task_metadata, "pick_gripper_closed_opening_threshold", 0.010),
+        )
+
+    def _caught_object_start_gripper_is_closed(self) -> bool:
+        threshold = float(max(0.0, self._caught_object_start_release_opening_threshold()))
+        try:
+            target = float(self._get_gripper_target())
+            if np.isfinite(target):
+                return bool(target <= threshold)
+        except Exception:
+            pass
+        opening = self._get_gripper_opening()
+        if opening is not None and np.isfinite(opening):
+            return bool(float(opening) <= threshold)
+        return True
+
+    def _maintain_caught_object_start_pose(self) -> bool:
+        if not bool(getattr(self, "_caught_object_start_active", False)):
+            return False
+        if not str(getattr(self, "_caught_object_start_body", "")):
+            return False
+        if not self._caught_object_start_gripper_is_closed():
+            self._caught_object_start_active = False
+            return False
+
+        ee_pos = self._get_ee_position().astype(np.float32)
+        offset = np.asarray(
+            getattr(self, "_caught_object_start_ee_offset", np.zeros((3,), dtype=np.float32)),
+            dtype=np.float32,
+        ).reshape(3)
+        target_pos = np.asarray(ee_pos + offset, dtype=np.float32)
+        target_pos = np.asarray(clamp_xyz(target_pos), dtype=np.float32)
+        if not self._set_body_position(self._caught_object_start_body, target_pos):
+            return False
         self._caught_object_start_position = target_pos.astype(np.float32)
         return True
 
@@ -2761,6 +2813,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         for sub_idx in range(total_sim_steps):
             capture = bool(self.capture_frames and sub_idx == (total_sim_steps - 1))
             self.sim.run_simulation_step(capture_frame=capture)
+            self._maintain_caught_object_start_pose()
 
     def _get_obs(self) -> dict[str, np.ndarray]:
         ee_pos = self._get_ee_position()
