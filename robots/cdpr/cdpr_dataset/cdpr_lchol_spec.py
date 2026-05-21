@@ -23,6 +23,8 @@ class CDPRLCHOLSpec:
         "put_into_plate",
         "move_left_of_object",
         "move_right_of_object",
+        "put_in_front_of_object",
+        "put_behind_object",
         "move_between_objects",
     )
 
@@ -85,15 +87,23 @@ class CDPRLCHOLSpec:
             )
             return _phase_total_score(sparse_success=sparse_success, progress=progress)
 
-        if option in {"move_left_of_object", "move_right_of_object", "move_between_objects"}:
+        if option in {
+            "move_left_of_object",
+            "move_right_of_object",
+            "put_in_front_of_object",
+            "put_behind_object",
+            "move_between_objects",
+        }:
             relation = _relation_score(info, default_scale=0.20)
             motion_ok = 1.0 if _boolish(info.get("relation_motion_ok", True)) else 0.0
+            grasp_ok = 1.0 if _boolish(info.get("relation_grasp_ok", True)) else 0.0
             wrong_direction = _wrong_relation_direction(info, option)
             progress = (
                 + 0.15 * approach
                 + 0.25 * float(caught_target)
                 + 0.35 * relation
-                + 0.25 * motion_ok
+                + 0.15 * motion_ok
+                + 0.10 * grasp_ok
                 - 0.20 * wrong_direction
                 - 0.20 * premature
                 - 0.20 * saturation
@@ -259,6 +269,10 @@ class CDPRLCHOLSpec:
             return f"move {target_text} to the left of {reference_text}"
         if option == "move_right_of_object":
             return f"move {target_text} to the right of {reference_text}"
+        if option == "put_in_front_of_object":
+            return f"put {target_text} in front of {reference_text}"
+        if option == "put_behind_object":
+            return f"put {target_text} behind {reference_text}"
         if option == "move_between_objects":
             return f"move {target_text} between {reference_text} and {second_text}"
         return option.replace("_", " ")
@@ -342,11 +356,14 @@ def _premature_stop(info: Mapping[str, Any], *, sparse_success: float) -> float:
 
 
 def _wrong_relation_direction(info: Mapping[str, Any], option: str) -> float:
-    if option not in {"move_left_of_object", "move_right_of_object"}:
+    if option not in {
+        "move_left_of_object",
+        "move_right_of_object",
+        "put_in_front_of_object",
+        "put_behind_object",
+    }:
         return 0.0
     signed = _float(info.get("signed_relation_offset"), 0.0)
-    if option == "move_left_of_object":
-        return 1.0 if signed > 1e-6 else 0.0
     return 1.0 if signed < -1e-6 else 0.0
 
 
@@ -363,7 +380,10 @@ def _grab_predicate(info: Mapping[str, Any]) -> bool:
         return False
     if _boolish(info.get("caught_object_is_target")) or _boolish(info.get("target_grasped")):
         return True
-    return bool(_boolish(info.get("gripper_closed")) and _float(info.get("distance_ee_to_object_xy"), 1.0) <= 0.045)
+    if _boolish(info.get("grab_require_caught", True)):
+        return False
+    threshold = max(_float(info.get("grab_xy_tolerance"), 0.025), 1e-6)
+    return bool(_boolish(info.get("gripper_closed")) and _float(info.get("distance_ee_to_object_xy"), 1.0) <= threshold)
 
 
 def _pick_predicate(info: Mapping[str, Any]) -> bool:
@@ -394,7 +414,12 @@ def _relation_achievement(info: Mapping[str, Any]) -> str:
         return "put_into_plate"
     if instruction == "move_between_objects" and _success(info) >= 0.5:
         return "move_between_objects"
-    if instruction in {"move_left_of_object", "move_right_of_object"} and _success(info) >= 0.5:
+    if instruction in {
+        "move_left_of_object",
+        "move_right_of_object",
+        "put_in_front_of_object",
+        "put_behind_object",
+    } and _success(info) >= 0.5:
         return instruction
     signed = _float(info.get("signed_relation_offset"), 0.0)
     offset = max(_float(info.get("relation_left_right_offset"), 0.08), 1e-6)

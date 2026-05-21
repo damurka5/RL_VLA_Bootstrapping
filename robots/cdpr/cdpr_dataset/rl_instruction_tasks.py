@@ -20,6 +20,8 @@ INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_into_plate",
     "move_left_of_object",
     "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
     "move_between_objects",
     "push_left",
     "push_right",
@@ -39,6 +41,8 @@ MOVE_DIRECTIONS: dict[str, np.ndarray] = {
     "put_into_plate": np.zeros((3,), dtype=np.float32),
     "move_left_of_object": np.zeros((3,), dtype=np.float32),
     "move_right_of_object": np.zeros((3,), dtype=np.float32),
+    "put_in_front_of_object": np.zeros((3,), dtype=np.float32),
+    "put_behind_object": np.zeros((3,), dtype=np.float32),
     "move_between_objects": np.zeros((3,), dtype=np.float32),
     "push_left": np.array([-1.0, 0.0, 0.0], dtype=np.float32),
     "push_right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
@@ -67,6 +71,8 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "put_into_plate": "put object into plate",
     "move_left_of_object": "move object to the left of object",
     "move_right_of_object": "move object to the right of object",
+    "put_in_front_of_object": "put object in front of object",
+    "put_behind_object": "put object behind object",
     "move_between_objects": "move object between two objects",
     "push_left": "push object left",
     "push_right": "push object right",
@@ -82,11 +88,13 @@ INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
     "move_center": "falls back to the task point-success predicate",
     "move_to_object": "end-effector XY distance to the target object is within the configured tolerance",
     "pick_up": "target object is grasped and lifted by the configured height",
-    "grab_object": "gripper is closed while the target object is caught or within the grab XY tolerance",
-    "put_into_plate": "target object is within the plate XY/Z tolerance, with release required only when configured",
-    "move_left_of_object": "target object is left of the reference by the configured offset, aligned in Y, and moved enough",
-    "move_right_of_object": "target object is right of the reference by the configured offset, aligned in Y, and moved enough",
-    "move_between_objects": "target object is near the midpoint between two references and projects onto their segment",
+    "grab_object": "gripper is closed while the target object is detected as caught",
+    "put_into_plate": "catchable target object is within the bowl/plate XY/Z tolerance, with release required only when configured",
+    "move_left_of_object": "catchable target object is left of the reference by the configured offset, aligned in Y, moved enough, and grasped when configured",
+    "move_right_of_object": "catchable target object is right of the reference by the configured offset, aligned in Y, moved enough, and grasped when configured",
+    "put_in_front_of_object": "catchable target object is in front of the reference by the configured offset, aligned in X, moved enough, and grasped when configured",
+    "put_behind_object": "catchable target object is behind the reference by the configured offset, aligned in X, moved enough, and grasped when configured",
+    "move_between_objects": "catchable target object is near the midpoint between two references, projects onto their segment, moved enough, and grasped when configured",
     "push_left": "target object has moved left by the configured push displacement",
     "push_right": "target object has moved right by the configured push displacement",
 }
@@ -98,6 +106,8 @@ OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_into_plate",
     "move_left_of_object",
     "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
     "move_between_objects",
     "push_left",
     "push_right",
@@ -107,6 +117,8 @@ REFERENCE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_into_plate",
     "move_left_of_object",
     "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
     "move_between_objects",
 )
 
@@ -115,16 +127,52 @@ MANIPULATION_SPARSE_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_into_plate",
     "move_left_of_object",
     "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
     "move_between_objects",
     "push_left",
     "push_right",
+)
+
+CATCHABLE_TARGET_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "grab_object",
+    "pick_up",
+    "put_into_plate",
+    "move_left_of_object",
+    "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
+    "move_between_objects",
+)
+
+PLANAR_RELATION_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "move_left_of_object",
+    "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
+    "move_between_objects",
+)
+
+DEFAULT_CATCHABLE_OBJECTS: tuple[str, ...] = (
+    "ycb_apple",
+    "ycb_pear",
+    "ycb_peach",
+    "ycb_baseball",
+    "ycb_b_cups",
+)
+
+DEFAULT_CONTAINER_OBJECTS: tuple[str, ...] = (
+    "plate",
+    "bowl",
+    "ycb_plate",
+    "ycb_bowl",
 )
 
 _OBJECT_LANGUAGE_ALIASES: dict[str, str] = {
     "ycb_apple": "apple",
     "ycb_pear": "pear",
     "ycb_peach": "peach",
-    "ycb_b_cups": "cups",
+    "ycb_b_cups": "cup",
     "ycb_mug": "mug",
     "ycb_baseball": "baseball",
     "ycb_plate": "plate",
@@ -246,6 +294,10 @@ def sample_instruction(
         instruction_text = f"move {target_text} to the left of {reference_text}"
     elif selected_instruction_type == "move_right_of_object":
         instruction_text = f"move {target_text} to the right of {reference_text}"
+    elif selected_instruction_type == "put_in_front_of_object":
+        instruction_text = f"put {target_text} in front of {reference_text}"
+    elif selected_instruction_type == "put_behind_object":
+        instruction_text = f"put {target_text} behind {reference_text}"
     elif selected_instruction_type == "move_between_objects":
         instruction_text = f"move {target_text} between {reference_text} and {second_reference_text}"
     elif selected_instruction_type == "push_left":
@@ -876,6 +928,10 @@ def _compute_sparse_manipulation_reward(
     gripper_closed = bool(reward_state.gripper_closed)
     if np.isfinite(gripper_value):
         gripper_closed = bool(gripper_value <= _metadata_float(task_metadata, "grab_closed_opening_threshold", 0.35))
+    if not gripper_closed:
+        reward_state.grasped = False
+    elif bool(caught_object_is_target):
+        reward_state.grasped = True
 
     action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.95)
     action_saturation_penalty_weight = _metadata_float(
@@ -897,15 +953,23 @@ def _compute_sparse_manipulation_reward(
     signed_relation_offset = 0.0
     relation_motion_required = 0.0
     relation_motion_ok = True
+    relation_grasp_required = False
+    relation_grasp_ok = True
 
     if spec.instruction_type == "grab_object":
         mode = 3.0
-        grab_xy_tolerance = _metadata_float(task_metadata, "grab_xy_tolerance", 0.045)
+        grab_xy_tolerance = _metadata_float(task_metadata, "grab_xy_tolerance", 0.025)
+        require_caught = _metadata_bool(task_metadata, "grab_require_caught", True)
+        proximity_success = bool(
+            (not require_caught)
+            and gripper_closed
+            and ee_xy_distance <= float(grab_xy_tolerance)
+        )
         success = bool(
             gripper_closed
             and (
                 bool(caught_object_is_target)
-                or ee_xy_distance <= float(grab_xy_tolerance)
+                or proximity_success
             )
         )
         reward_state.grasped = bool(success or reward_state.grasped)
@@ -922,15 +986,33 @@ def _compute_sparse_manipulation_reward(
     elif spec.instruction_type == "put_into_plate":
         mode = 5.0
         plate_pos = reference_pos if reference_pos is not None else goal_pos
-        plate_xy_tolerance = _metadata_float(task_metadata, "put_plate_xy_tolerance", 0.08)
-        plate_z_tolerance = _metadata_float(task_metadata, "put_plate_z_tolerance", 0.10)
+        plate_xy_tolerance = _metadata_float(
+            task_metadata,
+            "put_container_xy_tolerance",
+            _metadata_float(task_metadata, "put_plate_xy_tolerance", 0.08),
+        )
+        plate_z_tolerance = _metadata_float(
+            task_metadata,
+            "put_container_z_tolerance",
+            _metadata_float(task_metadata, "put_plate_z_tolerance", 0.10),
+        )
         release_threshold = _metadata_float(task_metadata, "put_release_opening_threshold", 0.55)
         require_release = _metadata_bool(task_metadata, "put_require_release", False)
+        relation_motion_required = _metadata_float(task_metadata, "put_min_target_motion", 0.0)
+        relation_grasp_required = _metadata_bool(task_metadata, "put_require_target_grasp", False)
         xy_error = float(np.linalg.norm(target_pos[:2] - plate_pos[:2]))
         z_error = float(abs(float(target_pos[2]) - float(plate_pos[2])))
         relation_error = xy_error
         release_ok = bool((not require_release) or (np.isfinite(gripper_value) and gripper_value >= release_threshold))
-        success = bool(xy_error <= plate_xy_tolerance and z_error <= plate_z_tolerance and release_ok)
+        relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
+        relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
+        success = bool(
+            xy_error <= plate_xy_tolerance
+            and z_error <= plate_z_tolerance
+            and release_ok
+            and relation_motion_ok
+            and relation_grasp_ok
+        )
 
     elif spec.instruction_type in {"move_left_of_object", "move_right_of_object"}:
         mode = 6.0
@@ -943,10 +1025,41 @@ def _compute_sparse_manipulation_reward(
         y_error = float(abs(float(target_pos[1]) - float(ref_pos[1])))
         relation_error = float(max(0.0, offset - signed_relation_offset) + max(0.0, y_error - y_tolerance))
         relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
+        relation_grasp_required = _metadata_bool(task_metadata, "relation_require_target_grasp", True)
+        relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
         success = bool(
             signed_relation_offset >= float(offset)
             and y_error <= float(y_tolerance)
             and relation_motion_ok
+            and relation_grasp_ok
+        )
+
+    elif spec.instruction_type in {"put_in_front_of_object", "put_behind_object"}:
+        mode = 8.0
+        ref_pos = reference_pos if reference_pos is not None else goal_pos
+        sign = 1.0 if spec.instruction_type == "put_in_front_of_object" else -1.0
+        offset = _metadata_float(
+            task_metadata,
+            "relation_front_behind_offset",
+            _metadata_float(task_metadata, "relation_left_right_offset", 0.08),
+        )
+        x_tolerance = _metadata_float(
+            task_metadata,
+            "relation_x_tolerance",
+            _metadata_float(task_metadata, "relation_y_tolerance", 0.12),
+        )
+        relation_motion_required = _metadata_float(task_metadata, "relation_min_target_motion", 0.02)
+        signed_relation_offset = float(sign * (target_pos[1] - ref_pos[1]))
+        x_error = float(abs(float(target_pos[0]) - float(ref_pos[0])))
+        relation_error = float(max(0.0, offset - signed_relation_offset) + max(0.0, x_error - x_tolerance))
+        relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
+        relation_grasp_required = _metadata_bool(task_metadata, "relation_require_target_grasp", True)
+        relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
+        success = bool(
+            signed_relation_offset >= float(offset)
+            and x_error <= float(x_tolerance)
+            and relation_motion_ok
+            and relation_grasp_ok
         )
 
     elif spec.instruction_type == "move_between_objects":
@@ -963,10 +1076,13 @@ def _compute_sparse_manipulation_reward(
             relation_motion_required = _metadata_float(task_metadata, "relation_min_target_motion", 0.02)
             relation_error = float(np.linalg.norm(target_pos[:2] - midpoint))
             relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
+            relation_grasp_required = _metadata_bool(task_metadata, "relation_require_target_grasp", True)
+            relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
             success = bool(
                 relation_error <= float(between_tolerance)
                 and 0.0 <= projection <= 1.0
                 and relation_motion_ok
+                and relation_grasp_ok
             )
             signed_relation_offset = projection
         else:
@@ -994,6 +1110,8 @@ def _compute_sparse_manipulation_reward(
         "signed_relation_offset": float(signed_relation_offset),
         "relation_motion_required": float(relation_motion_required),
         "relation_motion_ok": float(relation_motion_ok),
+        "relation_grasp_required": float(relation_grasp_required),
+        "relation_grasp_ok": float(relation_grasp_ok),
         "gripper_closed": float(gripper_closed),
         "grasped": float(reward_state.grasped),
         "caught_object_score": float(caught_object_score),

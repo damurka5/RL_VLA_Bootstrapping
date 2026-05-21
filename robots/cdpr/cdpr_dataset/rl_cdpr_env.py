@@ -37,6 +37,9 @@ except Exception:  # pragma: no cover - optional runtime dependency
     Image = None
 
 from .rl_instruction_tasks import (
+    CATCHABLE_TARGET_INSTRUCTION_TYPES,
+    DEFAULT_CATCHABLE_OBJECTS,
+    DEFAULT_CONTAINER_OBJECTS,
     INSTRUCTION_TYPES,
     compute_instruction_reward,
     init_reward_state,
@@ -87,6 +90,15 @@ DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
 DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
 DEFAULT_GOAL_HEIGHT_ABOVE_TABLE = 0.10
+DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "put_into_plate",
+    "move_left_of_object",
+    "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
+    "move_between_objects",
+)
+DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, -0.035)
 _TEXTURE_VALIDATION_CACHE: dict[Path, tuple[tuple[tuple[str, int, int], ...], list[Path], list[Path]]] = {}
 _TEXTURE_VALIDATION_WARNED: set[Path] = set()
 
@@ -327,6 +339,7 @@ def _build_scene_variants(
     scene_names: Sequence[str],
     target_object_pool: Sequence[str],
     distractor_object_pool: Sequence[str],
+    required_object_pool: Sequence[str] = (),
     min_scene_objects: int,
     max_scene_objects: int,
     scene_variant_count: int,
@@ -338,7 +351,8 @@ def _build_scene_variants(
     scene_names = _unique_scene_names([SceneSpec(name=name, objects=()) for name in scene_names])
     targets = _dedupe_names(target_object_pool)
     distractors = _dedupe_names(distractor_object_pool) if distractor_object_pool else targets
-    total_pool = _dedupe_names([*targets, *distractors])
+    required_objects = _dedupe_names(required_object_pool)
+    total_pool = _dedupe_names([*targets, *distractors, *required_objects])
     rng = np.random.default_rng(0 if seed is None else int(seed))
 
     requested = max(int(scene_variant_count), len(scene_names) * len(targets))
@@ -352,12 +366,20 @@ def _build_scene_variants(
             max_objects=max_scene_objects,
             total_available=len(total_pool),
         )
-        max_distractors = max(0, desired_count - 1)
-        distractor_candidates = [name for name in distractors if name != target_name]
         chosen: list[str] = []
+
+        required_candidates = [name for name in required_objects if name != target_name]
+        if desired_count > 1 and required_candidates:
+            chosen.append(str(required_candidates[int(rng.integers(0, len(required_candidates)))]))
+
+        max_distractors = max(0, desired_count - 1 - len(chosen))
+        distractor_candidates = [
+            name for name in _dedupe_names([*distractors, *required_objects])
+            if name != target_name and name not in chosen
+        ]
         if distractor_candidates and max_distractors > 0:
             sample_size = min(max_distractors, len(distractor_candidates))
-            chosen = list(rng.choice(distractor_candidates, size=sample_size, replace=False))
+            chosen.extend(str(name) for name in rng.choice(distractor_candidates, size=sample_size, replace=False))
             chosen.sort()
         return SceneSpec(
             name=scene_name,
@@ -420,6 +442,10 @@ def _configure_scene_sampling(
 
     target_pool = _metadata_name_list(task_metadata, "target_object_pool")
     distractor_pool = _metadata_name_list(task_metadata, "distractor_object_pool")
+    required_scene_pool = _metadata_name_list(task_metadata, "required_scene_object_pool")
+    container_pool = _metadata_name_list(task_metadata, "container_object_pool")
+    if container_pool:
+        required_scene_pool = _dedupe_names([*required_scene_pool, *container_pool])
 
     if not target_pool and not distractor_pool:
         allowed = _dedupe_names(allowed_objects)
@@ -431,7 +457,7 @@ def _configure_scene_sampling(
         raise ValueError("Task metadata target_object_pool is empty and no allowed_objects were provided.")
 
     distractor_pool = _dedupe_names(distractor_pool) if distractor_pool else tuple(target_pool)
-    allowed = _dedupe_names([*target_pool, *distractor_pool])
+    allowed = _dedupe_names([*target_pool, *distractor_pool, *required_scene_pool])
 
     min_scene_objects = int(task_metadata.get("min_scene_objects", 1))
     max_scene_objects = int(task_metadata.get("max_scene_objects", max(min_scene_objects, len(allowed))))
@@ -446,6 +472,7 @@ def _configure_scene_sampling(
         scene_names=_unique_scene_names(base_scenes),
         target_object_pool=target_pool,
         distractor_object_pool=distractor_pool,
+        required_object_pool=required_scene_pool,
         min_scene_objects=min_scene_objects,
         max_scene_objects=max_scene_objects,
         scene_variant_count=scene_variant_count,
@@ -1216,6 +1243,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._prev_ee_for_catch = np.zeros((3,), dtype=np.float32)
         self._last_caught_body = ""
         self._last_caught_catalog = ""
+        self._caught_object_start_active = False
+        self._caught_object_start_body = ""
+        self._caught_object_start_catalog = ""
+        self._caught_object_start_position = np.zeros((3,), dtype=np.float32)
         self._support_surface_z = 0.0
         self._ee_min_z = float("-inf")
         self._ee_spawn_z = float("-inf")
@@ -1321,6 +1352,12 @@ class CDPRLanguageRLEnv(_EnvBase):
         )
         setattr(self.sim, "language_instruction", self._instruction_spec.text)
 
+        self._reset_caught_object_start_state()
+        self._maybe_spawn_target_caught_at_ee(
+            instruction_type=self._instruction_spec.instruction_type,
+            options=options,
+        )
+
         ee0 = self._get_ee_position()
         self._goal_position = self._compute_instruction_goal(
             spec=self._instruction_spec,
@@ -1334,6 +1371,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         )
         reward_target_pos = self._current_manipulated_object_position(default=self._goal_position)
         self._reward_state = init_reward_state(ee0, reward_target_pos)
+        self._reward_state.gripper_closed = self._is_gripper_closed(self._get_gripper_opening())
         self._step_count = 0
         self._yaw = self._read_current_yaw()
         self._last_gripper_cmd = 0.0
@@ -1344,8 +1382,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                 self._prev_object_positions[body_name] = self._get_body_position(body_name)
             except Exception:
                 continue
-        self._last_caught_body = ""
-        self._last_caught_catalog = ""
+        self._last_caught_body = self._caught_object_start_body if self._caught_object_start_active else ""
+        self._last_caught_catalog = self._caught_object_start_catalog if self._caught_object_start_active else ""
         self._locked_target_xyz = self._get_ee_position().astype(np.float32)
 
         obs = self._get_obs()
@@ -1465,6 +1503,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._reference_body_name = ""
         self._second_reference_catalog_name = ""
         self._second_reference_body_name = ""
+        self._reset_caught_object_start_state()
         self._goal_position = np.zeros((3,), dtype=np.float32)
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
 
@@ -1505,6 +1544,13 @@ class CDPRLanguageRLEnv(_EnvBase):
             "prev_ee_for_catch": np.asarray(self._prev_ee_for_catch, dtype=np.float32).copy(),
             "last_caught_body": str(self._last_caught_body),
             "last_caught_catalog": str(self._last_caught_catalog),
+            "caught_object_start_active": bool(getattr(self, "_caught_object_start_active", False)),
+            "caught_object_start_body": str(getattr(self, "_caught_object_start_body", "")),
+            "caught_object_start_catalog": str(getattr(self, "_caught_object_start_catalog", "")),
+            "caught_object_start_position": np.asarray(
+                getattr(self, "_caught_object_start_position", np.zeros((3,), dtype=np.float32)),
+                dtype=np.float32,
+            ).copy(),
             "support_surface_z": float(self._support_surface_z),
             "ee_min_z": float(self._ee_min_z),
             "ee_spawn_z": float(self._ee_spawn_z),
@@ -1551,6 +1597,13 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._prev_ee_for_catch = np.asarray(snapshot["prev_ee_for_catch"], dtype=np.float32).copy()
         self._last_caught_body = str(snapshot["last_caught_body"])
         self._last_caught_catalog = str(snapshot["last_caught_catalog"])
+        self._caught_object_start_active = bool(snapshot.get("caught_object_start_active", False))
+        self._caught_object_start_body = str(snapshot.get("caught_object_start_body", ""))
+        self._caught_object_start_catalog = str(snapshot.get("caught_object_start_catalog", ""))
+        self._caught_object_start_position = np.asarray(
+            snapshot.get("caught_object_start_position", np.zeros((3,), dtype=np.float32)),
+            dtype=np.float32,
+        ).reshape(3).copy()
         self._support_surface_z = float(snapshot["support_surface_z"])
         self._ee_min_z = float(snapshot["ee_min_z"])
         self._ee_spawn_z = float(snapshot["ee_spawn_z"])
@@ -1564,6 +1617,97 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.np_random.bit_generator.state = copy.deepcopy(snapshot["rng_state"])
         if self._instruction_spec is not None:
             setattr(self.sim, "language_instruction", self._instruction_spec.text)
+
+    def _reset_caught_object_start_state(self) -> None:
+        self._caught_object_start_active = False
+        self._caught_object_start_body = ""
+        self._caught_object_start_catalog = ""
+        self._caught_object_start_position = np.zeros((3,), dtype=np.float32)
+
+    def _caught_object_start_instruction_types(self) -> tuple[str, ...]:
+        configured = _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
+        return configured or DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES
+
+    def _should_spawn_target_caught_at_ee(
+        self,
+        *,
+        instruction_type: str,
+        options: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        options = dict(options or {})
+        instruction_type = str(instruction_type)
+        if instruction_type not in set(self._caught_object_start_instruction_types()):
+            return False
+        if not self._target_body_name:
+            return False
+
+        forced = options.get("start_with_caught_object", options.get("caught_object_start"))
+        if forced is not None:
+            if isinstance(forced, str):
+                return forced.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(forced)
+
+        probability = _metadata_float(self._task_metadata, "caught_object_start_probability", 0.0)
+        probability = float(np.clip(probability, 0.0, 1.0))
+        if probability <= 0.0:
+            return False
+        return bool(float(self.np_random.random()) < probability)
+
+    def _caught_object_start_offset(self) -> np.ndarray:
+        raw = self._task_metadata.get(
+            "caught_object_start_object_offset",
+            DEFAULT_CAUGHT_OBJECT_START_OFFSET,
+        )
+        arr = np.asarray(raw, dtype=np.float32).reshape(-1)
+        if arr.size < 3:
+            raise ValueError(
+                "Task metadata `caught_object_start_object_offset` must provide three floats: dx dy dz."
+            )
+        offset = arr[:3].astype(np.float32).copy()
+
+        xy_jitter = max(0.0, _metadata_float(self._task_metadata, "caught_object_start_xy_jitter", 0.0))
+        if xy_jitter > 0.0:
+            offset[:2] += self.np_random.uniform(-xy_jitter, xy_jitter, size=(2,)).astype(np.float32)
+
+        z_jitter = max(0.0, _metadata_float(self._task_metadata, "caught_object_start_z_jitter", 0.0))
+        if z_jitter > 0.0:
+            offset[2] += float(self.np_random.uniform(-z_jitter, z_jitter))
+        return offset
+
+    def _maybe_spawn_target_caught_at_ee(
+        self,
+        *,
+        instruction_type: str,
+        options: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        if not self._should_spawn_target_caught_at_ee(instruction_type=instruction_type, options=options):
+            return False
+
+        ee_pos = self._get_ee_position().astype(np.float32)
+        target_pos = ee_pos + self._caught_object_start_offset()
+        min_height = _metadata_float(
+            self._task_metadata,
+            "caught_object_start_min_height_above_table",
+            0.08,
+        )
+        target_pos[2] = max(float(target_pos[2]), float(self._support_surface_z + max(0.0, min_height)))
+        target_pos = np.asarray(clamp_xyz(target_pos), dtype=np.float32)
+
+        if not self._set_body_position(self._target_body_name, target_pos):
+            return False
+
+        self._force_gripper_opening(0.0)
+        warm_steps = max(0, int(round(_metadata_float(self._task_metadata, "caught_object_start_warm_steps", 0.0))))
+        if warm_steps > 0 and hasattr(self.sim, "run_simulation_step"):
+            for _ in range(warm_steps):
+                self.sim.run_simulation_step(capture_frame=False)
+            self._force_gripper_opening(0.0)
+
+        self._caught_object_start_active = True
+        self._caught_object_start_body = str(self._target_body_name)
+        self._caught_object_start_catalog = str(self._target_catalog_name)
+        self._caught_object_start_position = target_pos.astype(np.float32)
+        return True
 
     def _sample_scene(self, options: Optional[dict[str, Any]]) -> SceneSpec:
         requested_scene = (options or {}).get("scene")
@@ -1734,6 +1878,35 @@ class CDPRLanguageRLEnv(_EnvBase):
         body = str(self._catalog_to_body.get(catalog, ""))
         return catalog, body
 
+    def _metadata_catalog_pool(self, *keys: str, default: Sequence[str] = ()) -> tuple[str, ...]:
+        for key in keys:
+            pool = _metadata_name_list(self._task_metadata, key)
+            if pool:
+                return pool
+        return _dedupe_names(default)
+
+    @staticmethod
+    def _catalogs_in_pool(catalogs: Sequence[str], pool: Sequence[str]) -> list[str]:
+        allowed = {str(name) for name in pool}
+        if not allowed:
+            return []
+        return [str(name) for name in catalogs if str(name) in allowed]
+
+    def _catchable_scene_catalogs(self, scene_catalogs: Sequence[str]) -> list[str]:
+        pool = self._metadata_catalog_pool(
+            "catchable_object_pool",
+            "grippable_object_pool",
+            default=DEFAULT_CATCHABLE_OBJECTS,
+        )
+        return self._catalogs_in_pool(scene_catalogs, pool)
+
+    def _container_scene_catalogs(self, scene_catalogs: Sequence[str]) -> list[str]:
+        pool = self._metadata_catalog_pool("container_object_pool", default=DEFAULT_CONTAINER_OBJECTS)
+        candidates = self._catalogs_in_pool(scene_catalogs, pool)
+        if candidates:
+            return candidates
+        return [name for name in scene_catalogs if "plate" in name.lower() or "bowl" in name.lower()]
+
     def _choose_catalog(self, candidates: Sequence[str], *, fallback: Sequence[str] = ()) -> tuple[str, str]:
         pool = [str(name) for name in candidates if str(name) in self._catalog_to_body]
         if not pool:
@@ -1775,26 +1948,39 @@ class CDPRLanguageRLEnv(_EnvBase):
         second_reference_catalog, second_reference_body = requested_second_reference
 
         if not target_catalog:
-            if str(instruction_type) == "put_into_plate":
-                plate_like = [name for name in scene_catalogs if "plate" in name.lower()]
-                excluded = set(plate_like) if len(scene_catalogs) > len(plate_like) else set()
-                target_catalog, target_body = self._choose_catalog(
-                    [name for name in scene_catalogs if name not in excluded],
-                    fallback=scene_catalogs,
-                )
+            if str(instruction_type) in CATCHABLE_TARGET_INSTRUCTION_TYPES:
+                catchable = self._catchable_scene_catalogs(scene_catalogs)
+                target_catalog, target_body = self._choose_catalog(catchable)
+                if not target_catalog:
+                    raise ValueError(
+                        f"Instruction {instruction_type!r} requires a catchable target object. "
+                        f"Scene {scene.name!r} contains {scene_catalogs}; catchable pool is "
+                        f"{list(self._metadata_catalog_pool('catchable_object_pool', 'grippable_object_pool', default=DEFAULT_CATCHABLE_OBJECTS))}."
+                    )
             else:
                 target_catalog, target_body = self._select_target_object(scene)
                 if target_catalog not in self._catalog_to_body:
                     target_catalog, target_body = self._choose_catalog(scene_catalogs)
 
         if str(instruction_type) == "put_into_plate" and not reference_catalog:
-            plate_like = [name for name in scene_catalogs if "plate" in name.lower()]
+            container_like = self._container_scene_catalogs(scene_catalogs)
             reference_catalog, reference_body = self._choose_catalog(
-                [name for name in plate_like if name != target_catalog],
-                fallback=_not_selected(target_catalog),
+                [name for name in container_like if name != target_catalog],
+                fallback=[name for name in container_like if name != target_catalog],
             )
+            if not reference_catalog:
+                raise ValueError(
+                    f"Instruction {instruction_type!r} requires a bowl/plate reference object. "
+                    f"Scene {scene.name!r} contains {scene_catalogs}; container pool is "
+                    f"{list(self._metadata_catalog_pool('container_object_pool', default=DEFAULT_CONTAINER_OBJECTS))}."
+                )
 
-        elif str(instruction_type) in {"move_left_of_object", "move_right_of_object"} and not reference_catalog:
+        elif str(instruction_type) in {
+            "move_left_of_object",
+            "move_right_of_object",
+            "put_in_front_of_object",
+            "put_behind_object",
+        } and not reference_catalog:
             reference_catalog, reference_body = self._choose_catalog(_not_selected(target_catalog), fallback=scene_catalogs)
 
         elif str(instruction_type) == "move_between_objects":
@@ -1873,6 +2059,19 @@ class CDPRLanguageRLEnv(_EnvBase):
             goal[0] += sign * offset
             return np.asarray(clamp_xyz(goal), dtype=np.float32)
 
+        if instruction_type in {"put_in_front_of_object", "put_behind_object"}:
+            ref_pos = self._reference_object_position(default=target_pos)
+            offset = float(
+                self._task_metadata.get(
+                    "relation_front_behind_offset",
+                    self._task_metadata.get("relation_left_right_offset", 0.08),
+                )
+            )
+            sign = 1.0 if instruction_type == "put_in_front_of_object" else -1.0
+            goal = ref_pos.copy()
+            goal[1] += sign * offset
+            return np.asarray(clamp_xyz(goal), dtype=np.float32)
+
         if instruction_type == "move_between_objects":
             ref_a = self._reference_object_position(default=target_pos)
             ref_b = self._reference_object_position(second=True, default=target_pos)
@@ -1912,6 +2111,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                 "put_into_plate",
                 "move_left_of_object",
                 "move_right_of_object",
+                "put_in_front_of_object",
+                "put_behind_object",
                 "move_between_objects",
                 "push_left",
                 "push_right",
@@ -2184,7 +2385,13 @@ class CDPRLanguageRLEnv(_EnvBase):
                 best_dist = dist
 
         self._prev_ee_for_catch = ee_now.copy()
-        is_caught = bool(gripper_closed and best_score >= 0.30 and best_dist <= 0.09)
+        score_threshold = _metadata_float(self._task_metadata, "catch_score_threshold", 0.30)
+        distance_threshold = _metadata_float(self._task_metadata, "catch_distance_threshold", 0.055)
+        is_caught = bool(
+            gripper_closed
+            and best_score >= float(score_threshold)
+            and best_dist <= float(distance_threshold)
+        )
         if not is_caught:
             return "", "", float(best_score), False
 
@@ -2292,6 +2499,45 @@ class CDPRLanguageRLEnv(_EnvBase):
             raise RuntimeError(f"Body '{body_name}' not found in MuJoCo model.")
         return self._read_named_body_position(body_name, bid)
 
+    def _set_body_position(self, body_name: str, xyz: Sequence[float] | np.ndarray) -> bool:
+        if not body_name or self.sim is None:
+            return False
+        bid = mj.mj_name2id(self.sim.model, mj.mjtObj.mjOBJ_BODY, str(body_name))
+        if bid == -1:
+            return False
+
+        target = np.asarray(xyz, dtype=float).reshape(-1)
+        if target.size < 3 or not np.all(np.isfinite(target[:3])):
+            return False
+        target = target[:3].astype(float)
+
+        model = self.sim.model
+        data = self.sim.data
+        jnum = int(model.body_jntnum[bid])
+        jadr = int(model.body_jntadr[bid])
+        for offset in range(jnum):
+            jid = jadr + offset
+            if model.jnt_type[jid] != mj.mjtJoint.mjJNT_FREE:
+                continue
+            qadr = int(model.jnt_qposadr[jid])
+            data.qpos[qadr : qadr + 3] = target
+            if hasattr(data, "qvel") and hasattr(model, "jnt_dofadr"):
+                dofadr = int(model.jnt_dofadr[jid])
+                if 0 <= dofadr < len(data.qvel):
+                    data.qvel[dofadr : min(dofadr + 6, len(data.qvel))] = 0.0
+            mj.mj_forward(model, data)
+            return True
+
+        positions = getattr(data, "xpos", None)
+        if positions is not None:
+            try:
+                positions[bid] = target
+                mj.mj_forward(model, data)
+                return True
+            except Exception:
+                return False
+        return False
+
     def _current_target_reference_position(self) -> np.ndarray:
         if (
             self._instruction_spec is not None
@@ -2304,6 +2550,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                     "put_into_plate",
                     "move_left_of_object",
                     "move_right_of_object",
+                    "put_in_front_of_object",
+                    "put_behind_object",
                     "move_between_objects",
                     "push_left",
                     "push_right",
@@ -2347,6 +2595,28 @@ class CDPRLanguageRLEnv(_EnvBase):
             self.sim.close_gripper()
         elif target >= 1.0 and hasattr(self.sim, "open_gripper"):
             self.sim.open_gripper()
+
+    def _force_gripper_opening(self, target_01: float) -> None:
+        self._set_gripper_target(target_01)
+        if self.sim is None or not hasattr(self.sim, "data") or not hasattr(self.sim, "model"):
+            return
+        qadr = getattr(self.sim, "jnt_finger_l_qadr", None)
+        if qadr is None:
+            return
+        target = float(np.clip(target_01, 0.0, 1.0))
+        joint_min = float(getattr(self.sim, "gripper_joint_min", 0.0))
+        joint_max = float(getattr(self.sim, "gripper_joint_max", 0.03))
+        joint_pos = joint_min + target * max(joint_max - joint_min, 0.0)
+        try:
+            self.sim.data.qpos[int(qadr)] = float(joint_pos)
+            joint_id = getattr(self.sim, "jnt_finger_l", None)
+            if joint_id is not None and hasattr(self.sim.data, "qvel") and hasattr(self.sim.model, "jnt_dofadr"):
+                dofadr = int(self.sim.model.jnt_dofadr[int(joint_id)])
+                if 0 <= dofadr < len(self.sim.data.qvel):
+                    self.sim.data.qvel[dofadr] = 0.0
+            mj.mj_forward(self.sim.model, self.sim.data)
+        except Exception:
+            return
 
     def _is_gripper_closed(self, opening: float | None) -> bool:
         if opening is None or not np.isfinite(opening):
@@ -2536,6 +2806,16 @@ class CDPRLanguageRLEnv(_EnvBase):
             "target_object_catalog": self._target_catalog_name,
             "target_object_body": self._target_body_name,
             "target_object_position_actual": [float(x) for x in target_object_position.tolist()],
+            "caught_object_start": bool(getattr(self, "_caught_object_start_active", False)),
+            "caught_object_start_body": str(getattr(self, "_caught_object_start_body", "")),
+            "caught_object_start_catalog": str(getattr(self, "_caught_object_start_catalog", "")),
+            "caught_object_start_position": [
+                float(x)
+                for x in np.asarray(
+                    getattr(self, "_caught_object_start_position", np.zeros((3,), dtype=np.float32)),
+                    dtype=np.float32,
+                ).reshape(3).tolist()
+            ],
             "reference_object_catalog": self._reference_catalog_name,
             "reference_object_body": self._reference_body_name,
             "reference_object_position": [float(x) for x in reference_object_position.tolist()],

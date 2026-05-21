@@ -51,6 +51,37 @@ class CDPRLCHOLSpecTests(unittest.TestCase):
 
         self.assertGreater(good, wrong)
 
+    def test_left_relation_signed_offset_is_not_treated_as_wrong_direction(self):
+        spec = CDPRLCHOLSpec()
+        good_left = spec.phase_score(
+            [
+                {
+                    "instruction_type": "move_left_of_object",
+                    "sparse_success": 0.0,
+                    "distance_ee_to_object_xy": 0.04,
+                    "relation_error": 0.02,
+                    "signed_relation_offset": 0.09,
+                    "relation_motion_ok": 1.0,
+                    "relation_grasp_ok": 1.0,
+                }
+            ]
+        )
+        wrong_left = spec.phase_score(
+            [
+                {
+                    "instruction_type": "move_left_of_object",
+                    "sparse_success": 0.0,
+                    "distance_ee_to_object_xy": 0.04,
+                    "relation_error": 0.02,
+                    "signed_relation_offset": -0.09,
+                    "relation_motion_ok": 1.0,
+                    "relation_grasp_ok": 1.0,
+                }
+            ]
+        )
+
+        self.assertGreater(good_left, wrong_left)
+
 
 if __name__ == "__main__":
     unittest.main()

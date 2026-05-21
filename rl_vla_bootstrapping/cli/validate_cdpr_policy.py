@@ -330,6 +330,19 @@ _INSTRUCTION_TYPE_ALIASES: dict[str, str] = {
     "pick": "pick_up",
     "pickup": "pick_up",
     "pick_up": "pick_up",
+    "grab": "grab_object",
+    "grab_object": "grab_object",
+    "left_of_object": "move_left_of_object",
+    "move_left_of_object": "move_left_of_object",
+    "right_of_object": "move_right_of_object",
+    "move_right_of_object": "move_right_of_object",
+    "front_of_object": "put_in_front_of_object",
+    "in_front_of_object": "put_in_front_of_object",
+    "put_in_front_of_object": "put_in_front_of_object",
+    "behind_object": "put_behind_object",
+    "put_behind_object": "put_behind_object",
+    "between_objects": "move_between_objects",
+    "move_between_objects": "move_between_objects",
 }
 
 

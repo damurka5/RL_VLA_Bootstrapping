@@ -67,6 +67,22 @@ class InstructionTextTests(unittest.TestCase):
         self.assertEqual(between.text, "move mug between apple and pear")
         self.assertEqual(between.second_reference_object, "ycb_pear")
 
+        front = sample_instruction(
+            target_object="ycb_apple",
+            reference_object="ycb_pear",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["put_in_front_of_object"],
+        )
+        behind = sample_instruction(
+            target_object="ycb_apple",
+            reference_object="ycb_pear",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["put_behind_object"],
+        )
+
+        self.assertEqual(front.text, "put apple in front of pear")
+        self.assertEqual(behind.text, "put apple behind pear")
+
     def test_move_top_instruction_uses_forward_text(self):
         spec = sample_instruction(
             target_object="ycb_apple",
@@ -89,7 +105,7 @@ class InstructionTextTests(unittest.TestCase):
 
     def test_canonical_object_name_strips_known_prefixes(self):
         self.assertEqual(canonical_object_name("ycb_mug"), "mug")
-        self.assertEqual(canonical_object_name("ycb_b_cups"), "cups")
+        self.assertEqual(canonical_object_name("ycb_b_cups"), "cup")
         self.assertEqual(canonical_object_name("ycb_plate"), "plate")
         self.assertEqual(canonical_object_name("ycb_bowl"), "bowl")
 

@@ -453,6 +453,34 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertEqual(info["sparse_success"], 1.0)
         self.assertEqual(info["grasped"], 1.0)
 
+    def test_grab_object_sparse_reward_requires_caught_target_by_default(self):
+        spec = InstructionSpec(
+            instruction_type="grab_object",
+            text="grab apple",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        target = np.array([0.02, 0.00, 0.16], dtype=np.float32)
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.021, 0.00, 0.18], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.02, 0.00, 0.20], dtype=np.float32),
+                initial_obj_pos=target,
+            ),
+            gripper_opening=0.0,
+            caught_object_is_target=False,
+            caught_object_score=0.0,
+        )
+
+        self.assertFalse(success)
+        self.assertEqual(reward, 0.0)
+        self.assertEqual(info["sparse_success"], 0.0)
+
     def test_push_right_sparse_reward_uses_object_displacement(self):
         spec = InstructionSpec(
             instruction_type="push_right",
@@ -510,12 +538,98 @@ class RewardDistanceTests(unittest.TestCase):
             env=_Env(),
             target_body_name="target_body",
             reference_body_name="ref_body",
+            gripper_opening=0.0,
+            caught_object_is_target=True,
         )
 
         self.assertTrue(success)
         self.assertEqual(reward, 1.0)
         self.assertGreater(info["signed_relation_offset"], 0.08)
         self.assertEqual(info["relation_motion_ok"], 1.0)
+        self.assertEqual(info["relation_grasp_ok"], 1.0)
+
+    def test_front_of_object_sparse_reward_uses_y_relation_and_motion(self):
+        class _Env:
+            def _get_body_position(self, body_name):
+                return {
+                    "target_body": np.array([0.01, 0.13, 0.16], dtype=np.float32),
+                    "ref_body": np.array([0.00, 0.02, 0.16], dtype=np.float32),
+                }[body_name]
+
+        spec = InstructionSpec(
+            instruction_type="put_in_front_of_object",
+            text="put apple in front of pear",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+            reference_object="ycb_pear",
+        )
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.01, 0.13, 0.18], dtype=np.float32),
+            obj_pos=np.array([0.01, 0.13, 0.16], dtype=np.float32),
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+                initial_obj_pos=np.array([0.01, 0.08, 0.16], dtype=np.float32),
+            ),
+            task_metadata={"relation_front_behind_offset": 0.08, "relation_min_target_motion": 0.04},
+            env=_Env(),
+            target_body_name="target_body",
+            reference_body_name="ref_body",
+            gripper_opening=0.0,
+            caught_object_is_target=True,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertGreater(info["signed_relation_offset"], 0.08)
+        self.assertEqual(info["relation_motion_ok"], 1.0)
+
+    def test_put_into_plate_can_require_target_grasp_and_motion(self):
+        class _Env:
+            def _get_body_position(self, body_name):
+                return {
+                    "target_body": np.array([0.00, 0.00, 0.16], dtype=np.float32),
+                    "plate_body": np.array([0.01, 0.00, 0.16], dtype=np.float32),
+                }[body_name]
+
+        spec = InstructionSpec(
+            instruction_type="put_into_plate",
+            text="put apple into plate",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+            reference_object="plate",
+        )
+        metadata = {
+            "put_min_target_motion": 0.04,
+            "put_require_target_grasp": True,
+        }
+        state = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            initial_obj_pos=np.array([0.06, 0.00, 0.16], dtype=np.float32),
+        )
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.18], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.16], dtype=np.float32),
+            reward_state=state,
+            task_metadata=metadata,
+            env=_Env(),
+            target_body_name="target_body",
+            reference_body_name="plate_body",
+            gripper_opening=0.0,
+            caught_object_is_target=True,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertEqual(info["relation_motion_ok"], 1.0)
+        self.assertEqual(info["relation_grasp_ok"], 1.0)
 
     def test_pick_up_reward_prefers_open_centered_pregrasp(self):
         spec = self._spec("pick_up")

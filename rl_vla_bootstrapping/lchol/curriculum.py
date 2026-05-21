@@ -51,6 +51,8 @@ DEFAULT_CDPR_STAGES: tuple[CurriculumStage, ...] = (
             "put_into_plate",
             "move_left_of_object",
             "move_right_of_object",
+            "put_in_front_of_object",
+            "put_behind_object",
         ),
         gate_options=("move_left_of_object", "move_right_of_object"),
         success_threshold=0.40,
@@ -66,9 +68,11 @@ DEFAULT_CDPR_STAGES: tuple[CurriculumStage, ...] = (
             "put_into_plate",
             "move_left_of_object",
             "move_right_of_object",
+            "put_in_front_of_object",
+            "put_behind_object",
             "move_between_objects",
         ),
-        gate_options=("move_between_objects",),
+        gate_options=("move_between_objects", "put_in_front_of_object", "put_behind_object"),
         success_threshold=0.35,
     ),
 )
@@ -164,7 +168,7 @@ class StrictSuccessCurriculum:
 
 
 def _success_value(info: Mapping[str, Any]) -> float:
-    for key in ("success", "sparse_success", "caught_object_is_target", "relation_motion_ok"):
+    for key in ("success", "sparse_success"):
         if key not in info:
             continue
         raw = info.get(key)

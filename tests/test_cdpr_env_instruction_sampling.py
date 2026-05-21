@@ -68,6 +68,87 @@ class EnvInstructionSamplingTests(unittest.TestCase):
             ("grab_object", "push_left", "put_into_plate"),
         )
 
+    def test_put_instruction_uses_catchable_target_and_container_reference(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "catchable_object_pool": ["ycb_apple", "ycb_pear"],
+            "container_object_pool": ["plate", "bowl"],
+        }
+        env._catalog_to_body = {
+            "ycb_apple": "apple_body",
+            "plate": "plate_body",
+            "bowl": "bowl_body",
+        }
+        env.np_random = np.random.default_rng(0)
+        scene = SceneSpec(name="desk", objects=("ycb_apple", "plate", "bowl"))
+
+        target_catalog, _target_body, reference_catalog, _reference_body, _second_catalog, _second_body = (
+            env._select_instruction_objects(scene, instruction_type="put_into_plate")
+        )
+
+        self.assertEqual(target_catalog, "ycb_apple")
+        self.assertIn(reference_catalog, {"plate", "bowl"})
+
+    def test_relation_instruction_uses_catchable_target(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "catchable_object_pool": ["ycb_apple"],
+            "container_object_pool": ["plate", "bowl"],
+        }
+        env._catalog_to_body = {
+            "ycb_apple": "apple_body",
+            "plate": "plate_body",
+            "bowl": "bowl_body",
+        }
+        env.np_random = np.random.default_rng(1)
+        scene = SceneSpec(name="desk", objects=("plate", "ycb_apple", "bowl"))
+
+        target_catalog, _target_body, reference_catalog, _reference_body, _second_catalog, _second_body = (
+            env._select_instruction_objects(scene, instruction_type="put_in_front_of_object")
+        )
+
+        self.assertEqual(target_catalog, "ycb_apple")
+        self.assertIn(reference_catalog, {"plate", "bowl"})
+
+    def test_caught_object_start_spawns_target_at_end_effector_for_relation_task(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "caught_object_start_probability": 1.0,
+            "caught_object_start_object_offset": [0.0, 0.0, -0.04],
+            "caught_object_start_xy_jitter": 0.0,
+            "caught_object_start_z_jitter": 0.0,
+        }
+        env.np_random = np.random.default_rng(0)
+        env._support_surface_z = 0.15
+        env._target_body_name = "apple_body"
+        env._target_catalog_name = "ycb_apple"
+        env.sim = object()
+        env._get_ee_position = lambda: np.array([0.10, -0.05, 0.42], dtype=np.float32)
+        env._force_gripper_opening = lambda target: None
+        placed: dict[str, np.ndarray] = {}
+
+        def _set_body_position(body_name, xyz):
+            placed[str(body_name)] = np.asarray(xyz, dtype=np.float32).copy()
+            return True
+
+        env._set_body_position = _set_body_position
+        env._reset_caught_object_start_state()
+
+        spawned = env._maybe_spawn_target_caught_at_ee(instruction_type="move_between_objects")
+
+        self.assertTrue(spawned)
+        self.assertTrue(env._caught_object_start_active)
+        self.assertEqual(env._caught_object_start_body, "apple_body")
+        np.testing.assert_allclose(placed["apple_body"], np.array([0.10, -0.05, 0.38], dtype=np.float32))
+
+    def test_caught_object_start_does_not_apply_to_grab_task_by_default(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {"caught_object_start_probability": 1.0}
+        env.np_random = np.random.default_rng(0)
+        env._target_body_name = "apple_body"
+
+        self.assertFalse(env._should_spawn_target_caught_at_ee(instruction_type="grab_object"))
+
 
 if __name__ == "__main__":
     unittest.main()

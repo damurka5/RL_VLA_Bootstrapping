@@ -31,6 +31,8 @@ _CDPR_CURRICULUM_OPTIONS = (
     "put_into_plate",
     "move_left_of_object",
     "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
     "move_between_objects",
 )
 
@@ -38,8 +40,12 @@ _CDPR_CURRICULUM_OPTIONS = (
 @dataclass(frozen=True)
 class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
+    tensorboard_metric_profile: str = "compact"
     resume_actor_stats: bool = True
     ddp_timeout_seconds: int = 0
+    lr_scheduler: str = "constant"
+    lr_warmup_updates: int = 0
+    lr_min_factor: float = 1.0
     lchol: "_LCHOLWrapperArgs | None" = None
 
 
@@ -102,7 +108,11 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     forwarded: list[str] = []
     external_script: Path | None = None
     tensorboard_rollout_every_global_steps = 0
+    tensorboard_metric_profile = "compact"
     resume_actor_stats = True
+    lr_scheduler = "constant"
+    lr_warmup_updates = 0
+    lr_min_factor = 1.0
     try:
         ddp_timeout_seconds = max(0, int(os.environ.get("RLVLA_DDP_TIMEOUT_SECONDS", "0")))
     except ValueError:
@@ -127,6 +137,14 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
                 raise SystemExit("--tensorboard_rollout_every_global_steps expects an integer.") from exc
             idx += 2
             continue
+        if arg in ("--tensorboard_metric_profile", "--tensorboard-metric-profile"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects `compact` or `full`.")
+            tensorboard_metric_profile = str(argv[idx + 1]).strip().lower()
+            if tensorboard_metric_profile not in {"compact", "full"}:
+                raise SystemExit(f"{arg} expects `compact` or `full`, got {argv[idx + 1]!r}.")
+            idx += 2
+            continue
         if arg in ("--resume_actor_stats", "--resume-actor-stats"):
             resume_actor_stats = True
             idx += 1
@@ -142,6 +160,35 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
                 ddp_timeout_seconds = max(0, int(argv[idx + 1]))
             except ValueError as exc:
                 raise SystemExit(f"{arg} expects an integer.") from exc
+            idx += 2
+            continue
+        if arg in ("--lr_scheduler", "--lr-scheduler"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects `constant`, `cosine`, or `linear`.")
+            lr_scheduler = str(argv[idx + 1]).strip().lower()
+            if lr_scheduler not in {"constant", "none", "cosine", "linear"}:
+                raise SystemExit(f"{arg} expects `constant`, `cosine`, or `linear`, got {argv[idx + 1]!r}.")
+            idx += 2
+            continue
+        if arg in ("--lr_warmup_updates", "--lr-warmup-updates"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects an integer.")
+            try:
+                lr_warmup_updates = max(0, int(argv[idx + 1]))
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects an integer.") from exc
+            idx += 2
+            continue
+        if arg in ("--lr_min_factor", "--lr-min-factor"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects a float.")
+            try:
+                lr_min_factor = float(argv[idx + 1])
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects a float.") from exc
+            if not math.isfinite(lr_min_factor):
+                raise SystemExit(f"{arg} expects a finite float.")
+            lr_min_factor = float(min(max(lr_min_factor, 0.0), 1.0))
             idx += 2
             continue
 
@@ -192,8 +239,12 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
 
     return external_script, forwarded, _FastWrapperArgs(
         tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps,
+        tensorboard_metric_profile=tensorboard_metric_profile,
         resume_actor_stats=resume_actor_stats,
         ddp_timeout_seconds=ddp_timeout_seconds,
+        lr_scheduler=lr_scheduler,
+        lr_warmup_updates=lr_warmup_updates,
+        lr_min_factor=lr_min_factor,
         lchol=_LCHOLWrapperArgs(**lchol_values),
     )
 
@@ -474,16 +525,65 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
     return transformed
 
 
-def _load_external_module(script_path: Path, *, enable_lchol: bool = False, enable_ddp_sync: bool = False):
+def _transform_external_grpo_source_for_lr_scheduler(source: str) -> str:
+    transformed = source
+    loop_anchors = (
+        (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update)\n"
+            "            policy.eval()\n"
+        ),
+        "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n",
+    )
+    loop_replacement = None
+    for anchor in loop_anchors:
+        if anchor in transformed:
+            loop_replacement = anchor.replace(
+                "            policy.eval()\n",
+                "            _rlvla_apply_lr_schedule(optimizer, update=update, total_updates=args.total_updates)\n"
+                "            policy.eval()\n",
+                1,
+            )
+            transformed = transformed.replace(anchor, loop_replacement, 1)
+            break
+    if loop_replacement is None:
+        raise RuntimeError(
+            "Could not apply LR scheduler patch to external GRPO trainer; missing update-loop anchor."
+        )
+
+    tb_anchor = '                tb_writer.add_scalar("train/loss_total_mean", avg_total_loss, global_step)\n'
+    if tb_anchor in transformed:
+        transformed = transformed.replace(
+            tb_anchor,
+            tb_anchor
+            + '                tb_writer.add_scalar("train/learning_rate", _rlvla_current_lr(optimizer), global_step)\n',
+            1,
+        )
+    else:
+        raise RuntimeError(
+            "Could not apply LR scheduler patch to external GRPO trainer; missing TensorBoard train/loss_total_mean anchor."
+        )
+    return transformed
+
+
+def _load_external_module(
+    script_path: Path,
+    *,
+    enable_lchol: bool = False,
+    enable_ddp_sync: bool = False,
+    enable_lr_scheduler: bool = False,
+):
     spec = importlib.util.spec_from_file_location("rlvla_external_grpo_finetune_cdpr", script_path)
     if spec is None or spec.loader is None:
         raise ImportError(f"Could not load module spec from {script_path}")
-    if enable_lchol or enable_ddp_sync:
+    if enable_lchol or enable_ddp_sync or enable_lr_scheduler:
         source = script_path.read_text(encoding="utf-8")
         if enable_lchol:
             source = _transform_external_grpo_source_for_lchol(source)
         if enable_ddp_sync:
             source = _transform_external_grpo_source_for_ddp_sync(source)
+        if enable_lr_scheduler:
+            source = _transform_external_grpo_source_for_lr_scheduler(source)
         module = types.ModuleType(spec.name)
         module.__file__ = str(script_path)
         module.__package__ = ""
@@ -706,6 +806,157 @@ def _patch_resume_artifacts(module, forwarded_argv: Sequence[str], fast_args: _F
     )
 
 
+def _lr_schedule_factor(
+    *,
+    scheduler: str,
+    update: int,
+    total_updates: int,
+    warmup_updates: int,
+    min_factor: float,
+) -> float:
+    mode = str(scheduler).strip().lower()
+    if mode in {"", "constant", "none"}:
+        return 1.0
+
+    update_i = max(1, int(update))
+    total_i = max(1, int(total_updates))
+    warmup_i = max(0, int(warmup_updates))
+    min_f = float(min(max(float(min_factor), 0.0), 1.0))
+
+    if warmup_i > 0 and update_i <= warmup_i:
+        return float(update_i / max(1, warmup_i))
+
+    denom = max(1, total_i - warmup_i)
+    progress = float(min(max((update_i - warmup_i) / denom, 0.0), 1.0))
+    if mode == "linear":
+        return float(min_f + (1.0 - min_f) * (1.0 - progress))
+    if mode == "cosine":
+        return float(min_f + (1.0 - min_f) * 0.5 * (1.0 + math.cos(math.pi * progress)))
+    return 1.0
+
+
+def _patch_lr_scheduler(module, fast_args: _FastWrapperArgs) -> None:
+    config = {
+        "scheduler": str(fast_args.lr_scheduler).strip().lower(),
+        "warmup_updates": int(fast_args.lr_warmup_updates),
+        "min_factor": float(fast_args.lr_min_factor),
+    }
+
+    def _current_lr(optimizer) -> float:
+        try:
+            return float(optimizer.param_groups[0]["lr"])
+        except Exception:
+            return 0.0
+
+    def _apply_lr_schedule(optimizer, *, update: int, total_updates: int) -> float:
+        factor = _lr_schedule_factor(
+            scheduler=str(config["scheduler"]),
+            update=int(update),
+            total_updates=int(total_updates),
+            warmup_updates=int(config["warmup_updates"]),
+            min_factor=float(config["min_factor"]),
+        )
+        for group in getattr(optimizer, "param_groups", []):
+            if "initial_lr" not in group:
+                group["initial_lr"] = float(group.get("lr", 0.0))
+            group["lr"] = float(group["initial_lr"]) * float(factor)
+        return _current_lr(optimizer)
+
+    module._rlvla_current_lr = _current_lr
+    module._rlvla_apply_lr_schedule = _apply_lr_schedule
+    if str(config["scheduler"]) not in {"", "constant", "none"}:
+        print(
+            "[rlvla-fast] LR scheduler enabled: "
+            f"{config['scheduler']} warmup_updates={config['warmup_updates']} "
+            f"min_factor={config['min_factor']}",
+            flush=True,
+        )
+
+
+_COMPACT_TENSORBOARD_SCALARS: set[str] = {
+    "train/reward_env_mean",
+    "train/episode_return_env_mean",
+    "train/loss_policy_mean",
+    "train/entropy_mean",
+    "train/loss_total_mean",
+    "train/loss_lchol_bc_mean",
+    "train/approx_kl_mean",
+    "train/clip_fraction_mean",
+    "train/group_advantage_std",
+    "train/log_std_mean",
+    "train/learning_rate",
+    "validation/env_return_mean",
+    "validation/success_rate",
+    "rollout_step/reward_env_mean",
+    "rollout_step/reward_shaped_mean",
+    "rollout_step/success_rate_mean",
+    "rollout_step/episode_success_rate_mean",
+    "rollout_step/episode_timeout_rate_mean",
+    "rollout_step/target_grasped_rate_mean",
+    "rollout_step/unstable_transition_rate_mean",
+    "rollout_step/reward_clip_rate_mean",
+    "rollout_step/reward_non_finite_rate_mean",
+    "rollout_step/distance_ee_to_object_xy_mean",
+    "rollout_step/sparse_success_mean",
+    "rollout_step/caught_object_is_target_mean",
+    "rollout_step/target_motion_xy_mean",
+    "rollout_step/relation_error_mean",
+    "rollout_step/action_saturation_rate_mean",
+    "rollout_step/lchol_group_score_mean",
+    "lchol/source/hindsight_new",
+    "lchol/source/hindsight_replay",
+    "lchol/replay/total_records",
+    "lchol/replay/episodes_total",
+    "lchol/curriculum/stage_index",
+    "lchol/phase_score/mean",
+}
+_COMPACT_TENSORBOARD_PREFIXES: tuple[str, ...] = (
+    "rollout_episode/instruction_success_rate/",
+    "rollout_episode/subgoal_success_rate/",
+    "lchol/replay/episodes/",
+    "lchol/curriculum/success_rate/",
+)
+
+
+def _tensorboard_tag_allowed(tag: str, *, profile: str = "compact", kind: str = "scalar") -> bool:
+    if str(profile).strip().lower() == "full":
+        return True
+    if str(kind) != "scalar":
+        return False
+    tag = str(tag)
+    return tag in _COMPACT_TENSORBOARD_SCALARS or any(
+        tag.startswith(prefix) for prefix in _COMPACT_TENSORBOARD_PREFIXES
+    )
+
+
+def _patch_tensorboard_metric_filter(module, *, profile: str) -> None:
+    if str(profile).strip().lower() == "full":
+        return
+    writer_cls = getattr(module, "SummaryWriter", None)
+    if writer_cls is None:
+        return
+
+    class _FilteredSummaryWriter:
+        def __init__(self, *args, **kwargs):
+            self._inner = writer_cls(*args, **kwargs)
+
+        def add_scalar(self, tag, scalar_value, *args, **kwargs):
+            if _tensorboard_tag_allowed(str(tag), profile=profile, kind="scalar"):
+                return self._inner.add_scalar(tag, scalar_value, *args, **kwargs)
+            return None
+
+        def add_histogram(self, tag, values, *args, **kwargs):
+            if _tensorboard_tag_allowed(str(tag), profile=profile, kind="histogram"):
+                return self._inner.add_histogram(tag, values, *args, **kwargs)
+            return None
+
+        def __getattr__(self, name: str):
+            return getattr(self._inner, name)
+
+    module.SummaryWriter = _FilteredSummaryWriter
+    print("[rlvla-fast] TensorBoard metric profile: compact", flush=True)
+
+
 class _RolloutTensorboardLogger:
     def __init__(self, summary_writer_cls, every_global_steps: int):
         self.summary_writer_cls = summary_writer_cls
@@ -721,13 +972,6 @@ class _RolloutTensorboardLogger:
         self._windows: dict[str, deque[float]] = {
             "reward_env": deque(maxlen=self.every_global_steps or 1),
             "reward_shaped": deque(maxlen=self.every_global_steps or 1),
-            "closer_bonus": deque(maxlen=self.every_global_steps or 1),
-            "farther_penalty": deque(maxlen=self.every_global_steps or 1),
-            "distance_delta_raw": deque(maxlen=self.every_global_steps or 1),
-            "reward_component_r_xyz": deque(maxlen=self.every_global_steps or 1),
-            "reward_component_r_orient": deque(maxlen=self.every_global_steps or 1),
-            "reward_component_r_obj": deque(maxlen=self.every_global_steps or 1),
-            "reward_component_r_success": deque(maxlen=self.every_global_steps or 1),
             "success_rate": deque(maxlen=self.every_global_steps or 1),
             "episode_success_rate": deque(maxlen=self.every_global_steps or 1),
             "episode_timeout_rate": deque(maxlen=self.every_global_steps or 1),
@@ -735,24 +979,11 @@ class _RolloutTensorboardLogger:
             "unstable_transition_rate": deque(maxlen=self.every_global_steps or 1),
             "reward_clip_rate": deque(maxlen=self.every_global_steps or 1),
             "reward_non_finite_rate": deque(maxlen=self.every_global_steps or 1),
-            "distance_to_goal": deque(maxlen=self.every_global_steps or 1),
-            "distance_to_goal_xy": deque(maxlen=self.every_global_steps or 1),
-            "distance_ee_to_object": deque(maxlen=self.every_global_steps or 1),
             "distance_ee_to_object_xy": deque(maxlen=self.every_global_steps or 1),
             "sparse_success": deque(maxlen=self.every_global_steps or 1),
-            "gripper_closed": deque(maxlen=self.every_global_steps or 1),
-            "grasped": deque(maxlen=self.every_global_steps or 1),
-            "caught_object_score": deque(maxlen=self.every_global_steps or 1),
             "caught_object_is_target": deque(maxlen=self.every_global_steps or 1),
-            "target_motion_x": deque(maxlen=self.every_global_steps or 1),
-            "target_motion_y": deque(maxlen=self.every_global_steps or 1),
-            "target_motion_z": deque(maxlen=self.every_global_steps or 1),
             "target_motion_xy": deque(maxlen=self.every_global_steps or 1),
             "relation_error": deque(maxlen=self.every_global_steps or 1),
-            "signed_relation_offset": deque(maxlen=self.every_global_steps or 1),
-            "relation_motion_required": deque(maxlen=self.every_global_steps or 1),
-            "relation_motion_ok": deque(maxlen=self.every_global_steps or 1),
-            "action_saturation_penalty": deque(maxlen=self.every_global_steps or 1),
             "action_saturation_rate": deque(maxlen=self.every_global_steps or 1),
             "lchol_group_score": deque(maxlen=self.every_global_steps or 1),
         }
@@ -808,13 +1039,6 @@ class _RolloutTensorboardLogger:
 
         self._append("reward_env", pending["reward_env"])
         self._append("reward_shaped", pending["reward_shaped"])
-        self._append("closer_bonus", pending["closer_bonus"])
-        self._append("farther_penalty", pending["farther_penalty"])
-        self._append("distance_delta_raw", pending["distance_delta_raw"])
-        self._append("reward_component_r_xyz", reward_components.get("r_xyz", 0.0))
-        self._append("reward_component_r_orient", reward_components.get("r_orient", 0.0))
-        self._append("reward_component_r_obj", reward_components.get("r_obj", 0.0))
-        self._append("reward_component_r_success", reward_components.get("r_success", 0.0))
         success_value = self._success_value(info)
         done_value = self._done_value(info, success_value=success_value)
         self._record_episode_progress(info, success_value=success_value, done_value=done_value)
@@ -826,24 +1050,11 @@ class _RolloutTensorboardLogger:
         self._append("unstable_transition_rate", 1.0 if bool(info.get("unstable_transition", False)) else 0.0)
         self._append("reward_clip_rate", 1.0 if bool(info.get("reward_env_clipped", False)) else 0.0)
         self._append("reward_non_finite_rate", 1.0 if bool(info.get("reward_env_non_finite", False)) else 0.0)
-        self._append_optional("distance_to_goal", info.get("distance_to_goal"))
-        self._append_optional("distance_to_goal_xy", info.get("distance_to_goal_xy"))
-        self._append_optional("distance_ee_to_object", info.get("distance_ee_to_object"))
         self._append_optional("distance_ee_to_object_xy", info.get("distance_ee_to_object_xy"))
         self._append_optional("sparse_success", info.get("sparse_success"))
-        self._append_optional("gripper_closed", info.get("gripper_closed"))
-        self._append_optional("grasped", info.get("grasped"))
-        self._append_optional("caught_object_score", info.get("caught_object_score"))
         self._append_optional("caught_object_is_target", info.get("caught_object_is_target"))
-        self._append_optional("target_motion_x", info.get("target_motion_x"))
-        self._append_optional("target_motion_y", info.get("target_motion_y"))
-        self._append_optional("target_motion_z", info.get("target_motion_z"))
         self._append_optional("target_motion_xy", info.get("target_motion_xy"))
         self._append_optional("relation_error", info.get("relation_error"))
-        self._append_optional("signed_relation_offset", info.get("signed_relation_offset"))
-        self._append_optional("relation_motion_required", info.get("relation_motion_required"))
-        self._append_optional("relation_motion_ok", info.get("relation_motion_ok"))
-        self._append_optional("action_saturation_penalty", info.get("action_saturation_penalty"))
         self._append_optional("action_saturation_rate", info.get("action_saturation_rate"))
         self._append_optional("lchol_group_score", info.get("lchol_group_score"))
 
@@ -862,7 +1073,6 @@ class _RolloutTensorboardLogger:
                 float(sum(values) / len(values)),
                 self.global_step,
             )
-        writer.add_scalar("rollout_step/window_size", float(self._window_len()), self.global_step)
         self._write_episode_windows(writer)
         writer.flush()
 
@@ -933,11 +1143,6 @@ class _RolloutTensorboardLogger:
                 float(sum(values) / len(values)),
                 self.global_step,
             )
-        writer.add_scalar(
-            "rollout_episode/window_size",
-            float(max((len(values) for values in self._subgoal_episode_windows.values()), default=0)),
-            self.global_step,
-        )
 
     def _episode_key(self, info: dict[str, Any]) -> tuple[Any, ...]:
         return (
@@ -993,8 +1198,11 @@ class _RolloutTensorboardLogger:
             return False
         if self._truthy(info.get("caught_object_is_target")) or self._truthy(info.get("target_grasped")):
             return True
+        if self._truthy(info.get("grab_require_caught", True)):
+            return False
         distance_xy = self._finite_float(info.get("distance_ee_to_object_xy"), fallback=float("inf"))
-        return bool(self._truthy(info.get("gripper_closed")) and distance_xy <= 0.045)
+        threshold = self._finite_float(info.get("grab_xy_tolerance"), fallback=0.025)
+        return bool(self._truthy(info.get("gripper_closed")) and distance_xy <= max(float(threshold), 1e-6))
 
     def _pick_up_success(self, info: dict[str, Any]) -> bool:
         if self._wrong_object_contact(info) >= 0.20:
@@ -1026,7 +1234,12 @@ class _RolloutTensorboardLogger:
             return "put_into_plate"
         if instruction == "move_between_objects" and self._success_value(info) >= 0.5:
             return "move_between_objects"
-        if instruction in {"move_left_of_object", "move_right_of_object"} and self._success_value(info) >= 0.5:
+        if instruction in {
+            "move_left_of_object",
+            "move_right_of_object",
+            "put_in_front_of_object",
+            "put_behind_object",
+        } and self._success_value(info) >= 0.5:
             return instruction
 
         signed = self._finite_float(info.get("signed_relation_offset"), fallback=0.0)
@@ -1385,6 +1598,7 @@ def main() -> None:
         external_script,
         enable_lchol=bool(fast_args.lchol and fast_args.lchol.enabled),
         enable_ddp_sync=True,
+        enable_lr_scheduler=str(fast_args.lr_scheduler).strip().lower() not in {"", "constant", "none"},
     )
 
     _enable_fast_runtime_flags()
@@ -1394,7 +1608,9 @@ def main() -> None:
     _patch_distributed_timeout(module, timeout_seconds=fast_args.ddp_timeout_seconds)
     _patch_ddp_sync(module)
     _patch_resume_artifacts(module, forwarded_argv, fast_args)
+    _patch_lr_scheduler(module, fast_args)
     _patch_lchol_runtime(module, fast_args.lchol)
+    _patch_tensorboard_metric_filter(module, profile=fast_args.tensorboard_metric_profile)
     _patch_rollout_tensorboard(
         module,
         every_global_steps=fast_args.tensorboard_rollout_every_global_steps,

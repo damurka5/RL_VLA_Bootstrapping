@@ -54,6 +54,8 @@ class LCHOLGRPORuntime:
             "hindsight_replay": 0,
             "option_prior_bc": 0,
         }
+        self.replay_episode_keys: set[tuple[Any, ...]] = set()
+        self.replay_episode_keys_by_option: dict[str, set[tuple[Any, ...]]] = {}
         self.phase_scores: list[float] = []
         self.grpo_non_pg_count = 0
         self.grpo_batch_count = 0
@@ -107,6 +109,9 @@ class LCHOLGRPORuntime:
             records = []
         for record in records:
             self.replay.add(record.option_name, record)
+            episode_key = self._episode_key(info)
+            self.replay_episode_keys.add(episode_key)
+            self.replay_episode_keys_by_option.setdefault(str(record.option_name), set()).add(episode_key)
             self.source_counts["hindsight_new"] += 1
 
     def sample_bc_records(self, batch_size: int) -> list[HindsightBCRecord]:
@@ -171,7 +176,15 @@ class LCHOLGRPORuntime:
         }
         out["grpo/batch_count"] = float(self.grpo_batch_count)
         out["grpo/non_pg_count"] = float(self.grpo_non_pg_count)
+        out["replay/total_records"] = float(len(self.replay))
+        out["replay/episodes_total"] = float(len(self.replay_episode_keys))
         out.update({f"replay/{key}": float(value) for key, value in self.replay.sizes().items()})
+        out.update(
+            {
+                f"replay/episodes/{key}": float(len(value))
+                for key, value in sorted(self.replay_episode_keys_by_option.items())
+            }
+        )
         out.update({f"curriculum/{key}": float(value) for key, value in self.curriculum.metrics().items()})
         if self.phase_scores:
             out["phase_score/mean"] = float(np.mean(np.asarray(self.phase_scores, dtype=np.float32)))
@@ -193,7 +206,8 @@ class LCHOLGRPORuntime:
             f"hindsight_new={int(self.source_counts['hindsight_new'])} "
             f"hindsight_replay={int(self.source_counts['hindsight_replay'])} "
             f"grpo_non_pg={int(self.grpo_non_pg_count)} "
-            f"replay_total={len(self.replay)}",
+            f"replay_total={len(self.replay)} "
+            f"replay_episodes={len(self.replay_episode_keys)}",
             flush=True,
         )
         if tb_writer is not None:
@@ -211,3 +225,18 @@ class LCHOLGRPORuntime:
             rate = self.curriculum.success_rate(option)
             weights[str(option)] = 1.0 + float(self.config.weakest_mode_oversample_strength) * (1.0 - rate)
         return weights
+
+    @staticmethod
+    def _episode_key(info: Mapping[str, Any]) -> tuple[Any, ...]:
+        explicit = info.get("source_rollout_id") or info.get("rollout_id")
+        if explicit:
+            return ("rollout", str(explicit))
+        return (
+            info.get("env_instance_id", ""),
+            info.get("episode_index", ""),
+            info.get("instruction_type", ""),
+            info.get("target_object_catalog", info.get("target_object_name", "")),
+            info.get("reference_object_catalog", ""),
+            info.get("second_reference_object_catalog", ""),
+            info.get("scene", ""),
+        )

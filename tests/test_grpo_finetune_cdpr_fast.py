@@ -37,10 +37,13 @@ if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
 from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _RolloutTensorboardLogger,
     _infer_resume_artifacts,
+    _lr_schedule_factor,
     _patch_distributed_timeout,
     _patch_desk_texture_prepare,
     _split_wrapper_argv,
+    _tensorboard_tag_allowed,
     _transform_external_grpo_source_for_ddp_sync,
+    _transform_external_grpo_source_for_lr_scheduler,
 )
 
 if _INSERTED_TORCH_STUB:
@@ -105,6 +108,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
             self.assertIn("rollout_step/distance_ee_to_object_xy_mean", tags)
             self.assertIn("rollout_step/relation_error_mean", tags)
             self.assertIn("rollout_step/target_motion_xy_mean", tags)
+            self.assertNotIn("rollout_step/window_size", tags)
+            self.assertNotIn("rollout_step/reward_component_r_xyz_mean", tags)
             self.assertIn("rollout_episode/instruction_success_rate/pick_up", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/move_to_object", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/grab_object", tags)
@@ -193,9 +198,17 @@ class FastGRPOWrapperTests(unittest.TestCase):
                 "/tmp/external_grpo.py",
                 "--tensorboard_rollout_every_global_steps",
                 "100",
+                "--tensorboard_metric_profile",
+                "compact",
                 "--no-resume_actor_stats",
                 "--ddp_timeout_seconds",
                 "14400",
+                "--lr_scheduler",
+                "cosine",
+                "--lr_warmup_updates",
+                "5",
+                "--lr_min_factor",
+                "0.25",
                 "--rollout_steps",
                 "170",
             ]
@@ -204,8 +217,12 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(external_script, Path("/tmp/external_grpo.py").resolve())
         self.assertEqual(forwarded, ["--rollout_steps", "170"])
         self.assertEqual(fast_args.tensorboard_rollout_every_global_steps, 100)
+        self.assertEqual(fast_args.tensorboard_metric_profile, "compact")
         self.assertFalse(fast_args.resume_actor_stats)
         self.assertEqual(fast_args.ddp_timeout_seconds, 14400)
+        self.assertEqual(fast_args.lr_scheduler, "cosine")
+        self.assertEqual(fast_args.lr_warmup_updates, 5)
+        self.assertAlmostEqual(fast_args.lr_min_factor, 0.25)
 
     def test_patch_distributed_timeout_overrides_external_ppo_init(self):
         calls: list[tuple[str, float]] = []
@@ -248,6 +265,48 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
         self.assertIn('_rlvla_ddp_sync("pre_update", update=update)', patched)
         self.assertIn('_rlvla_ddp_sync("pre_train", update=update)', patched)
+
+    def test_lr_scheduler_transform_applies_schedule_once_per_update_and_logs_lr(self):
+        source = (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update)\n"
+            "            policy.eval()\n"
+            "                tb_writer.add_scalar(\"train/loss_total_mean\", avg_total_loss, global_step)\n"
+        )
+
+        patched = _transform_external_grpo_source_for_lr_scheduler(source)
+
+        self.assertIn("_rlvla_apply_lr_schedule(optimizer, update=update, total_updates=args.total_updates)", patched)
+        self.assertIn('tb_writer.add_scalar("train/learning_rate", _rlvla_current_lr(optimizer), global_step)', patched)
+
+    def test_cosine_lr_schedule_uses_warmup_then_decays_to_min_factor(self):
+        self.assertAlmostEqual(
+            _lr_schedule_factor(
+                scheduler="cosine",
+                update=1,
+                total_updates=10,
+                warmup_updates=2,
+                min_factor=0.25,
+            ),
+            0.5,
+        )
+        self.assertAlmostEqual(
+            _lr_schedule_factor(
+                scheduler="cosine",
+                update=10,
+                total_updates=10,
+                warmup_updates=2,
+                min_factor=0.25,
+            ),
+            0.25,
+        )
+
+    def test_compact_tensorboard_profile_keeps_high_signal_tags_only(self):
+        self.assertTrue(_tensorboard_tag_allowed("train/learning_rate"))
+        self.assertTrue(_tensorboard_tag_allowed("rollout_episode/instruction_success_rate/pick_up"))
+        self.assertTrue(_tensorboard_tag_allowed("lchol/replay/episodes_total"))
+        self.assertFalse(_tensorboard_tag_allowed("train/update_index"))
+        self.assertFalse(_tensorboard_tag_allowed("validation/action_x_hist", kind="histogram"))
 
     def test_infer_resume_artifacts_prefers_grpo_actor_stats(self):
         with tempfile.TemporaryDirectory() as tmp:

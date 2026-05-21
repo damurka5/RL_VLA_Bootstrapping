@@ -103,6 +103,32 @@ class SceneSamplingTests(unittest.TestCase):
             self.assertLessEqual(len(scene.objects), 4)
             self.assertEqual(len(scene.objects), len(set(scene.objects)))
 
+    def test_configure_scene_sampling_can_require_container_reference(self):
+        base_scenes = [SceneSpec(name="desk", objects=("ycb_apple",))]
+        metadata = {
+            "target_object_pool": ["ycb_apple", "ycb_pear"],
+            "distractor_object_pool": ["ycb_peach"],
+            "container_object_pool": ["plate", "bowl"],
+            "min_scene_objects": 3,
+            "max_scene_objects": 3,
+            "scene_variant_count": 8,
+        }
+
+        scenes, allowed, targets, distractors = _configure_scene_sampling(
+            base_scenes=base_scenes,
+            allowed_objects=("ycb_apple",),
+            task_metadata=metadata,
+            seed=11,
+        )
+
+        self.assertIn("plate", allowed)
+        self.assertIn("bowl", allowed)
+        self.assertEqual(targets, ("ycb_apple", "ycb_pear"))
+        self.assertEqual(distractors, ("ycb_peach",))
+        for scene in scenes:
+            self.assertTrue({"plate", "bowl"}.intersection(scene.objects))
+            self.assertIn(scene.target_object, scene.objects)
+
     def test_configure_scene_sampling_uses_target_pool_as_distractors_when_not_provided(self):
         base_scenes = [SceneSpec(name="desk", objects=("ycb_apple",))]
         metadata = {
