@@ -39,7 +39,7 @@ _TEMPLATES: dict[str, str] = {
     "move_between_objects": "move <object> between <ref1> and <ref2>",
 }
 
-_DEFAULT_HELD_OBJECT_OFFSET = np.array([0.0, 0.0, -0.035], dtype=np.float32)
+_DEFAULT_HELD_OBJECT_OFFSET = np.array([0.0, 0.0, -0.020], dtype=np.float32)
 _YCB_CAUGHT_OBJECT_MEASUREMENTS: dict[str, dict[str, float]] = {
     "ycb_apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
     "apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
@@ -517,7 +517,17 @@ def _held_object_offset(env: Any) -> np.ndarray:
 def _held_gripper_opening(env: Any, body_name: str) -> float:
     measurement = _target_measurement(env, body_name)
     if measurement is not None and "opening" in measurement:
-        return float(np.clip(float(measurement["opening"]), 0.0, 1.0))
+        joint_span = float(
+            max(
+                float(getattr(getattr(env, "sim", None), "gripper_joint_max", 0.03))
+                - float(getattr(getattr(env, "sim", None), "gripper_joint_min", 0.0)),
+                1e-6,
+            )
+        )
+        clearance = max(0.0, _metadata_float(env, "caught_object_start_gripper_clearance", 0.0))
+        compression = max(0.0, _metadata_float(env, "caught_object_start_grip_compression", 0.0))
+        opening = float(measurement["opening"]) + (clearance - compression) / joint_span
+        return float(np.clip(opening, 0.0, 1.0))
     if hasattr(env, "_caught_object_start_gripper_opening_for_body"):
         try:
             return float(np.clip(float(env._caught_object_start_gripper_opening_for_body(body_name)), 0.0, 1.0))

@@ -100,7 +100,7 @@ DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_behind_object",
     "move_between_objects",
 )
-DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, -0.035)
+DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, -0.020)
 YCB_CAUGHT_OBJECT_MEASUREMENTS: dict[str, dict[str, float]] = {
     "ycb_apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
     "apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
@@ -2024,7 +2024,17 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         measurement = self._caught_object_start_measurement_for_body(body_name)
         if measurement is not None:
-            return float(np.clip(float(measurement["opening"]), 0.0, 1.0))
+            joint_span = float(
+                max(
+                    float(getattr(getattr(self, "sim", None), "gripper_joint_max", 0.03))
+                    - float(getattr(getattr(self, "sim", None), "gripper_joint_min", 0.0)),
+                    1e-6,
+                )
+            )
+            clearance = max(0.0, _metadata_float(self._task_metadata, "caught_object_start_gripper_clearance", 0.0))
+            compression = max(0.0, _metadata_float(self._task_metadata, "caught_object_start_grip_compression", 0.0))
+            opening = float(measurement["opening"]) + (clearance - compression) / joint_span
+            return float(np.clip(opening, 0.0, 1.0))
 
         geometry = self._finger_pair_geometry()
         if geometry is None:

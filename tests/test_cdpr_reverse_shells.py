@@ -47,7 +47,8 @@ class _FakeEnv:
             "put_require_target_grasp": False,
             "put_require_release": True,
             "put_release_opening_threshold": 0.55,
-            "caught_object_start_object_offset": [0.0, 0.0, -0.035],
+            "caught_object_start_object_offset": [0.0, 0.0, -0.020],
+            "caught_object_start_grip_compression": 0.001,
         }
         self._bodies = {
             "apple_body": np.array([-0.10, -0.05, 0.03], dtype=np.float32),
@@ -111,10 +112,10 @@ class CDPRReverseShellTests(unittest.TestCase):
         self.assertLessEqual(float(np.linalg.norm(apple[:2] - plate[:2])), 0.020)
         self.assertGreaterEqual(float(apple[2] - plate[2]), 0.010)
         self.assertLessEqual(float(apple[2] - plate[2]), 0.020)
-        self.assertAlmostEqual(info["curriculum_held_gripper_opening"], 0.8852, places=4)
+        self.assertAlmostEqual(info["curriculum_held_gripper_opening"], 0.8519, places=4)
         np.testing.assert_allclose(
             env._caught_object_start_hold_offset,
-            np.array([0.0, 0.0, -0.035], dtype=np.float32),
+            np.array([0.0, 0.0, -0.020], dtype=np.float32),
             atol=1e-6,
         )
         np.testing.assert_allclose(

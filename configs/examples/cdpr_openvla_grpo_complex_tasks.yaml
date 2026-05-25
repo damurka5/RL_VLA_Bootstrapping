@@ -199,13 +199,13 @@ task:
         put_behind_object,
         move_between_objects,
       ]
-    caught_object_start_object_offset: [0.0, 0.0, -0.035]
+    caught_object_start_object_offset: [0.0, 0.0, -0.020]
     caught_object_start_xy_jitter: 0.012
     caught_object_start_z_jitter: 0.006
     caught_object_start_fit_gripper: true
     caught_object_start_pin_object: false
     caught_object_start_gripper_clearance: 0.0
-    caught_object_start_grip_compression: 0.006
+    caught_object_start_grip_compression: 0.001
     caught_object_start_min_height_above_table: 0.08
     caught_object_start_release_opening_threshold: 0.010
     caught_object_start_release_opening_margin: 0.04
