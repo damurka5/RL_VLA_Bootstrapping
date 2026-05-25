@@ -7,6 +7,11 @@ import numpy as np
 
 from rl_vla_bootstrapping.lchol.curriculum import StrictSuccessCurriculum
 from rl_vla_bootstrapping.lchol.embodiment_spec import HindsightBCRecord
+from rl_vla_bootstrapping.lchol.frontier_scheduler import (
+    FrontierScheduler,
+    FrontierSchedulerConfig,
+    ShellValidationResult,
+)
 from rl_vla_bootstrapping.lchol.replay_buffers import PerOptionReplayBuffer
 
 
@@ -26,6 +31,14 @@ class LCHOLGRPOConfig:
     strict_min_success_samples: int = 24
     weakest_mode_oversample_strength: float = 2.5
     newest_stage_weight: float = 1.4
+    reverse_promotion_success: float = 0.50
+    reverse_demotion_success: float = 0.20
+    reverse_validation_rollouts_per_shell: int = 50
+    reverse_min_train_updates_before_validation: int = 5
+    reverse_max_shell_jump: int = 1
+    reverse_saturation_abort_threshold: float = 0.30
+    reverse_sample_frontier_probability: float = 0.80
+    reverse_sample_rehearsal_probability: float = 0.20
 
 
 class LCHOLGRPORuntime:
@@ -48,6 +61,21 @@ class LCHOLGRPORuntime:
             weakest_mode_oversample_strength=float(config.weakest_mode_oversample_strength),
             newest_stage_weight=float(config.newest_stage_weight),
         )
+        self.reverse_scheduler: FrontierScheduler | None = None
+        if self._curriculum_name() == "reverse_frontier":
+            self.reverse_scheduler = FrontierScheduler(
+                specs=self._build_reverse_shell_specs(),
+                config=FrontierSchedulerConfig(
+                    promotion_success=float(config.reverse_promotion_success),
+                    demotion_success=float(config.reverse_demotion_success),
+                    validation_rollouts_per_shell=int(config.reverse_validation_rollouts_per_shell),
+                    min_train_updates_before_validation=int(config.reverse_min_train_updates_before_validation),
+                    max_shell_jump=int(config.reverse_max_shell_jump),
+                    saturation_abort_threshold=float(config.reverse_saturation_abort_threshold),
+                    sample_frontier_probability=float(config.reverse_sample_frontier_probability),
+                    sample_rehearsal_probability=float(config.reverse_sample_rehearsal_probability),
+                ),
+            )
         self.source_counts = {
             "pg": 0,
             "hindsight_new": 0,
@@ -62,9 +90,23 @@ class LCHOLGRPORuntime:
         self._last_log_update = 0
 
     def sample_instruction_type(self) -> str | None:
-        if str(self.config.curriculum).strip().lower() != "strict_staged":
+        if self.reverse_scheduler is not None:
+            return self.sample_reset_options().get("instruction_type")
+        if self._curriculum_name() != "strict_staged":
             return None
         return self.curriculum.sample_option(rng=self.rng, available_options=self.available_options)
+
+    def sample_reset_options(self) -> dict[str, Any]:
+        if self.reverse_scheduler is not None:
+            sample = self.reverse_scheduler.sample(rng=self.rng)
+            return {
+                "instruction_type": sample.instruction_id,
+                "curriculum_mode": "reverse_frontier",
+                "curriculum_shell": int(sample.shell_id),
+                "curriculum_sample_source": sample.source,
+            }
+        sampled = self.sample_instruction_type()
+        return {"instruction_type": sampled} if sampled else {}
 
     def phase_score(self, info: Mapping[str, Any], *, fallback: float) -> float:
         if str(self.config.group_score).strip().lower() != "phase_shaped":
@@ -115,7 +157,10 @@ class LCHOLGRPORuntime:
             self.source_counts["hindsight_new"] += 1
 
     def sample_bc_records(self, batch_size: int) -> list[HindsightBCRecord]:
-        allowed = self.curriculum.allowed_options(self.available_options)
+        if self._curriculum_name() == "strict_staged":
+            allowed = self.curriculum.allowed_options(self.available_options)
+        else:
+            allowed = self.available_options
         weights = self._option_sample_weights(allowed)
         records = self.replay.sample_balanced(
             batch_size=batch_size,
@@ -186,6 +231,8 @@ class LCHOLGRPORuntime:
             }
         )
         out.update({f"curriculum/{key}": float(value) for key, value in self.curriculum.metrics().items()})
+        if self.reverse_scheduler is not None:
+            out.update({f"curriculum/{key}": float(value) for key, value in self.reverse_scheduler.metrics().items()})
         if self.phase_scores:
             out["phase_score/mean"] = float(np.mean(np.asarray(self.phase_scores, dtype=np.float32)))
             out["phase_score/std"] = float(np.std(np.asarray(self.phase_scores, dtype=np.float32)))
@@ -219,12 +266,75 @@ class LCHOLGRPORuntime:
         self.grpo_non_pg_count = 0
         self.grpo_batch_count = 0
 
+    def after_rollout(self, *, update: int) -> None:
+        del update
+        if self.reverse_scheduler is not None:
+            self.reverse_scheduler.record_train_update()
+
+    def reverse_validation_options(self, instruction_id: str, shell_id: int) -> dict[str, Any]:
+        return {
+            "instruction_type": str(instruction_id),
+            "curriculum_mode": "reverse_frontier",
+            "curriculum_shell": int(shell_id),
+        }
+
+    def reverse_validation_plan(self) -> list[tuple[str, int]]:
+        if self.reverse_scheduler is None:
+            return []
+        return [
+            (instruction_id, int(shell_id))
+            for instruction_id, shell_id in sorted(self.reverse_scheduler.active_shells.items())
+        ]
+
+    def record_reverse_validation(
+        self,
+        results: Sequence[Mapping[str, Any]],
+        *,
+        run_dir: Any | None = None,
+        update: int | None = None,
+    ) -> None:
+        if self.reverse_scheduler is None:
+            return
+        coerced = [
+            ShellValidationResult(
+                instruction_id=str(item["instruction_id"]),
+                shell_id=int(item["shell_id"]),
+                success_rate=float(item["success_rate"]),
+                rollouts=int(item["rollouts"]),
+                action_saturation_rate=float(item.get("action_saturation_rate", 0.0)),
+            )
+            for item in results
+        ]
+        self.reverse_scheduler.update(coerced)
+        if run_dir is not None:
+            from pathlib import Path
+
+            state_dir = Path(run_dir) / "lchol_reverse_frontier"
+            state_dir.mkdir(parents=True, exist_ok=True)
+            if update is not None:
+                self.reverse_scheduler.save(state_dir / f"state_update_{int(update):05d}.json")
+            self.reverse_scheduler.save(state_dir / "state_latest.json")
+
     def _option_sample_weights(self, options: Sequence[str]) -> dict[str, float]:
         weights: dict[str, float] = {}
         for option in options:
             rate = self.curriculum.success_rate(option)
             weights[str(option)] = 1.0 + float(self.config.weakest_mode_oversample_strength) * (1.0 - rate)
         return weights
+
+    def _curriculum_name(self) -> str:
+        return str(self.config.curriculum).strip().lower()
+
+    def _build_reverse_shell_specs(self):
+        try:
+            from robots.cdpr.cdpr_dataset.cdpr_reverse_shells import get_cdpr_reverse_shell_specs
+        except ModuleNotFoundError:
+            from cdpr_dataset.cdpr_reverse_shells import get_cdpr_reverse_shell_specs
+
+        specs = get_cdpr_reverse_shell_specs(self.available_options)
+        if not specs:
+            raise ValueError("No CDPR reverse shell specs match the available LC-HOL options.")
+        return specs
 
     @staticmethod
     def _episode_key(info: Mapping[str, Any]) -> tuple[Any, ...]:

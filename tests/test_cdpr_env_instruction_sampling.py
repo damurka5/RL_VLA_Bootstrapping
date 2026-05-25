@@ -33,6 +33,21 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertEqual(selected, "move_up")
         self.assertEqual(env._instruction_cycle, ["move_down"])
 
+    def test_instruction_text_can_infer_type_and_object_bindings(self):
+        from robots.cdpr.cdpr_dataset.rl_cdpr_env import (
+            _infer_instruction_object_options,
+            _infer_instruction_type_from_text,
+        )
+
+        self.assertEqual(_infer_instruction_type_from_text("put apple into plate"), "put_into_plate")
+        self.assertEqual(
+            _infer_instruction_object_options(
+                "put apple into plate",
+                candidate_catalogs=["ycb_apple", "plate", "ycb_baseball"],
+            ),
+            {"target_object": "ycb_apple", "reference_object": "plate"},
+        )
+
     def test_sample_scene_can_filter_required_objects(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         env.scenes = [
@@ -148,7 +163,10 @@ class EnvInstructionSamplingTests(unittest.TestCase):
 
     def test_caught_object_start_pose_follows_closed_gripper_until_release(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
-        env._task_metadata = {"caught_object_start_release_opening_threshold": 0.10}
+        env._task_metadata = {
+            "caught_object_start_pin_object": True,
+            "caught_object_start_release_opening_threshold": 0.10,
+        }
         env._caught_object_start_active = True
         env._caught_object_start_body = "apple_body"
         env._caught_object_start_catalog = "ycb_apple"
@@ -171,6 +189,90 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         env._get_gripper_target = lambda: 0.25
         self.assertFalse(env._maintain_caught_object_start_pose())
         self.assertFalse(env._caught_object_start_active)
+
+    def test_caught_object_start_physical_mode_does_not_pin_body_pose(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "caught_object_start_pin_object": False,
+            "caught_object_start_release_opening_threshold": 0.10,
+        }
+        env._caught_object_start_active = True
+        env._caught_object_start_body = "apple_body"
+        env._caught_object_start_catalog = "ycb_apple"
+        env._caught_object_start_position = np.array([0.10, -0.05, 0.38], dtype=np.float32)
+        env._caught_object_start_ee_offset = np.array([0.0, 0.0, -0.04], dtype=np.float32)
+        env._caught_object_start_hold_offset = np.array([0.0, 0.0, -0.04], dtype=np.float32)
+        env._get_gripper_target = lambda: 0.0
+        env._get_gripper_opening = lambda: 0.0
+        env._get_body_position = lambda body_name: np.array([0.12, -0.02, 0.36], dtype=np.float32)
+        calls: list[tuple[str, np.ndarray]] = []
+        env._set_body_position = lambda body_name, xyz: calls.append((str(body_name), np.asarray(xyz))) or True
+
+        self.assertTrue(env._maintain_caught_object_start_pose())
+        self.assertEqual(calls, [])
+        np.testing.assert_allclose(
+            env._caught_object_start_position,
+            np.array([0.12, -0.02, 0.36], dtype=np.float32),
+        )
+
+    def test_caught_object_start_held_opening_counts_as_closed_until_release_margin(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "caught_object_start_release_opening_threshold": 0.01,
+            "caught_object_start_release_opening_margin": 0.08,
+        }
+        env._caught_object_start_active = True
+        env._caught_object_start_gripper_opening = 0.42
+        env.sim = type("Sim", (), {"gripper_min": 0.0, "gripper_max": 1.0})()
+
+        self.assertAlmostEqual(env._caught_object_start_release_opening_threshold(), 0.50, places=6)
+        self.assertTrue(env._is_gripper_closed(0.49))
+        self.assertFalse(env._is_gripper_closed(0.51))
+
+    def test_caught_object_start_uses_measured_ycb_openings(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {}
+        env._target_body_name = "p2_ycb_baseball"
+        env._target_catalog_name = "ycb_baseball"
+        env._inverse_catalog_to_body = {}
+
+        self.assertAlmostEqual(
+            env._caught_object_start_gripper_opening_for_body("p2_ycb_baseball"),
+            0.8337,
+            places=4,
+        )
+
+    def test_body_width_along_axis_uses_mesh_vertices(self):
+        try:
+            import mujoco as mj
+        except Exception as exc:
+            self.skipTest(f"MuJoCo is not available: {exc}")
+
+        model = mj.MjModel.from_xml_string(
+            """
+            <mujoco>
+              <asset>
+                <mesh name="wedge"
+                  vertex="-0.03 0 0 0.02 0 0 0.02 0.02 0 -0.03 0.02 0 0 0.01 0.02"
+                  face="0 1 4 1 2 4 2 3 4 3 0 4 0 3 2 0 2 1"/>
+              </asset>
+              <worldbody>
+                <body name="object" pos="0.1 0 0">
+                  <geom name="object_geom" type="mesh" mesh="wedge"/>
+                </body>
+              </worldbody>
+            </mujoco>
+            """
+        )
+        data = mj.MjData(model)
+        mj.mj_forward(model, data)
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.sim = type("Sim", (), {"model": model, "data": data})()
+
+        width = env._body_width_along_axis("object", np.array([1.0, 0.0, 0.0], dtype=np.float32))
+
+        self.assertIsNotNone(width)
+        self.assertAlmostEqual(float(width), 0.05, places=6)
 
     def test_caught_object_start_does_not_apply_to_grab_task_by_default(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)

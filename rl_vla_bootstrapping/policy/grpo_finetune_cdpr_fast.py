@@ -14,6 +14,7 @@ from datetime import timedelta
 from pathlib import Path
 from typing import Any, Sequence
 
+import numpy as np
 import torch
 from PIL import Image
 
@@ -65,6 +66,14 @@ class _LCHOLWrapperArgs:
     strict_min_success_samples: int = 24
     weakest_mode_oversample_strength: float = 2.5
     newest_stage_weight: float = 1.4
+    reverse_promotion_success: float = 0.50
+    reverse_demotion_success: float = 0.20
+    reverse_validation_rollouts_per_shell: int = 50
+    reverse_min_train_updates_before_validation: int = 5
+    reverse_max_shell_jump: int = 1
+    reverse_saturation_abort_threshold: float = 0.30
+    reverse_sample_frontier_probability: float = 0.80
+    reverse_sample_rehearsal_probability: float = 0.20
 
 
 @dataclass(frozen=True)
@@ -87,6 +96,14 @@ _LCHOL_VALUE_FIELDS: dict[str, tuple[str, type]] = {
     "lchol_strict_min_success_samples": ("strict_min_success_samples", int),
     "lchol_weakest_mode_oversample_strength": ("weakest_mode_oversample_strength", float),
     "lchol_newest_stage_weight": ("newest_stage_weight", float),
+    "lchol_reverse_promotion_success": ("reverse_promotion_success", float),
+    "lchol_reverse_demotion_success": ("reverse_demotion_success", float),
+    "lchol_reverse_validation_rollouts_per_shell": ("reverse_validation_rollouts_per_shell", int),
+    "lchol_reverse_min_train_updates_before_validation": ("reverse_min_train_updates_before_validation", int),
+    "lchol_reverse_max_shell_jump": ("reverse_max_shell_jump", int),
+    "lchol_reverse_saturation_abort_threshold": ("reverse_saturation_abort_threshold", float),
+    "lchol_reverse_sample_frontier_probability": ("reverse_sample_frontier_probability", float),
+    "lchol_reverse_sample_rehearsal_probability": ("reverse_sample_rehearsal_probability", float),
 }
 
 
@@ -1418,6 +1435,14 @@ def _lchol_args_to_runtime_config(lchol_args: _LCHOLWrapperArgs):
         strict_min_success_samples=int(lchol_args.strict_min_success_samples),
         weakest_mode_oversample_strength=float(lchol_args.weakest_mode_oversample_strength),
         newest_stage_weight=float(lchol_args.newest_stage_weight),
+        reverse_promotion_success=float(lchol_args.reverse_promotion_success),
+        reverse_demotion_success=float(lchol_args.reverse_demotion_success),
+        reverse_validation_rollouts_per_shell=int(lchol_args.reverse_validation_rollouts_per_shell),
+        reverse_min_train_updates_before_validation=int(lchol_args.reverse_min_train_updates_before_validation),
+        reverse_max_shell_jump=int(lchol_args.reverse_max_shell_jump),
+        reverse_saturation_abort_threshold=float(lchol_args.reverse_saturation_abort_threshold),
+        reverse_sample_frontier_probability=float(lchol_args.reverse_sample_frontier_probability),
+        reverse_sample_rehearsal_probability=float(lchol_args.reverse_sample_rehearsal_probability),
     )
 
 
@@ -1458,6 +1483,7 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
                 f"hindsight_bc_coef={lchol_args.hindsight_bc_coef} "
                 f"replay_capacity={lchol_args.hindsight_replay_capacity} "
                 f"curriculum={lchol_args.curriculum} "
+                f"reverse_validation_rollouts={lchol_args.reverse_validation_rollouts_per_shell} "
                 f"rank={rank}",
                 flush=True,
             )
@@ -1497,7 +1523,12 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
         )
 
     def _after_rollout(*, update: int) -> None:
-        del update
+        runtime = _runtime()
+        if runtime is None:
+            return
+        after_rollout = getattr(runtime, "after_rollout", None)
+        if callable(after_rollout):
+            after_rollout(update=int(update))
 
     def _bc_loss(policy, ppo_module, device, args, *, num_actions_chunk: int):
         runtime = _runtime()
@@ -1571,13 +1602,99 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
         runtime = _runtime()
         if runtime is not None:
             options = dict(options or {})
-            if "instruction_type" not in options:
-                sampled = runtime.sample_instruction_type()
-                if sampled:
-                    options["instruction_type"] = sampled
+            if "instruction_type" not in options and "curriculum_shell" not in options:
+                sampled_options = runtime.sample_reset_options()
+                options.update({key: value for key, value in sampled_options.items() if value is not None})
         return original_reset(self, options=options)
 
     module.CDPRVisionLanguageEnv.reset = _reset_with_lchol_curriculum
+
+    original_run_validation_rollouts = module.run_validation_rollouts
+
+    def _action_saturation_rate(summary: dict[str, Any]) -> float:
+        action_dim_stats = summary.get("action_dim_stats", {}) if isinstance(summary, dict) else {}
+        values = []
+        if isinstance(action_dim_stats, dict):
+            for stats in action_dim_stats.values():
+                if isinstance(stats, dict) and "sat_frac_abs_ge_0_99" in stats:
+                    try:
+                        values.append(float(stats["sat_frac_abs_ge_0_99"]))
+                    except (TypeError, ValueError):
+                        pass
+        return float(max(values) if values else 0.0)
+
+    def _run_validation_rollouts_with_reverse_frontier(*args, **kwargs):
+        runtime = _runtime()
+        plan = runtime.reverse_validation_plan() if runtime is not None else []
+        if not plan:
+            return original_run_validation_rollouts(*args, **kwargs)
+
+        base_next_reset_options = kwargs.get("next_reset_options")
+        if base_next_reset_options is None:
+            return original_run_validation_rollouts(*args, **kwargs)
+
+        run_dir = kwargs.get("run_dir")
+        update = kwargs.get("update")
+        requested_num_episodes = int(kwargs.get("num_episodes", 1))
+        validation_rollouts = max(
+            1,
+            int(
+                getattr(
+                    getattr(runtime, "config", None),
+                    "reverse_validation_rollouts_per_shell",
+                    requested_num_episodes,
+                )
+            ),
+        )
+        summaries: list[dict[str, Any]] = []
+        scheduler_results: list[dict[str, Any]] = []
+        for instruction_id, shell_id in plan:
+            def _shell_next_reset_options(
+                instruction_id=instruction_id,
+                shell_id=shell_id,
+                base_next_reset_options=base_next_reset_options,
+            ):
+                options = dict(base_next_reset_options() if callable(base_next_reset_options) else {})
+                options.update(runtime.reverse_validation_options(instruction_id, int(shell_id)))
+                return options
+
+            shell_kwargs = dict(kwargs)
+            shell_kwargs["num_episodes"] = validation_rollouts
+            shell_kwargs["next_reset_options"] = _shell_next_reset_options
+            summary = original_run_validation_rollouts(*args, **shell_kwargs)
+            summary = dict(summary) if isinstance(summary, dict) else {}
+            summary["instruction_id"] = str(instruction_id)
+            summary["curriculum_shell"] = int(shell_id)
+            summaries.append(summary)
+            scheduler_results.append(
+                {
+                    "instruction_id": str(instruction_id),
+                    "shell_id": int(shell_id),
+                    "success_rate": float(summary.get("success_rate", 0.0)),
+                    "rollouts": int(summary.get("episodes", validation_rollouts)),
+                    "action_saturation_rate": _action_saturation_rate(summary),
+                }
+            )
+
+        runtime.record_reverse_validation(scheduler_results, run_dir=run_dir, update=update)
+        mean_success = float(np.mean([item["success_rate"] for item in scheduler_results])) if scheduler_results else 0.0
+        mean_env_return = float(np.mean([float(item.get("mean_env_return", 0.0)) for item in summaries])) if summaries else 0.0
+        mean_shaped_return = (
+            float(np.mean([float(item.get("mean_shaped_return", 0.0)) for item in summaries]))
+            if summaries
+            else 0.0
+        )
+        return {
+            **(summaries[-1] if summaries else {}),
+            "episodes": int(sum(item["rollouts"] for item in scheduler_results)),
+            "mean_env_return": mean_env_return,
+            "mean_shaped_return": mean_shaped_return,
+            "success_rate": mean_success,
+            "reverse_frontier_results": scheduler_results,
+            "reverse_frontier_summaries": summaries,
+        }
+
+    module.run_validation_rollouts = _run_validation_rollouts_with_reverse_frontier
 
 
 def _enable_fast_runtime_flags() -> None:

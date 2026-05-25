@@ -180,8 +180,8 @@ task:
     put_container_xy_tolerance: 0.08
     put_container_z_tolerance: 0.10
     put_min_target_motion: 0.04
-    put_require_target_grasp: true
-    put_require_release: false
+    put_require_target_grasp: false
+    put_require_release: true
     relation_left_right_offset: 0.08
     relation_front_behind_offset: 0.08
     relation_y_tolerance: 0.12
@@ -202,8 +202,13 @@ task:
     caught_object_start_object_offset: [0.0, 0.0, -0.035]
     caught_object_start_xy_jitter: 0.012
     caught_object_start_z_jitter: 0.006
+    caught_object_start_fit_gripper: true
+    caught_object_start_pin_object: false
+    caught_object_start_gripper_clearance: 0.0
+    caught_object_start_grip_compression: 0.006
     caught_object_start_min_height_above_table: 0.08
     caught_object_start_release_opening_threshold: 0.010
+    caught_object_start_release_opening_margin: 0.04
 
     pick_lift_success_height: 0.05
     pick_grasp_xy_threshold: 0.04
@@ -219,6 +224,16 @@ task:
     object_spawn_min_gap: 0.04
     object_spawn_min_ee_dist: 0.12
     object_spawn_max_tries: 300
+    reverse_curriculum:
+      enabled: true
+      promotion_success: 0.50
+      demotion_success: 0.20
+      validation_rollouts_per_shell: 50
+      min_train_updates_before_validation: 5
+      max_shell_jump: 1
+      saturation_abort_threshold: 0.30
+      sample_frontier_probability: 0.80
+      sample_rehearsal_probability: 0.20
 
 simulation:
   entrypoint:
@@ -291,10 +306,18 @@ training:
       lchol_option_prior_bc_coef: 0.20
       lchol_option_prior_min_coef: 0.035
       lchol_option_prior_decay_updates: 80
-      lchol_curriculum: strict_staged
+      lchol_curriculum: reverse_frontier
       lchol_strict_min_success_samples: 24
       lchol_weakest_mode_oversample_strength: 2.5
       lchol_newest_stage_weight: 1.4
+      lchol_reverse_promotion_success: 0.50
+      lchol_reverse_demotion_success: 0.20
+      lchol_reverse_validation_rollouts_per_shell: 50
+      lchol_reverse_min_train_updates_before_validation: 5
+      lchol_reverse_max_shell_jump: 1
+      lchol_reverse_saturation_abort_threshold: 0.30
+      lchol_reverse_sample_frontier_probability: 0.80
+      lchol_reverse_sample_rehearsal_probability: 0.20
       num_parallel_envs: 10
       total_updates: 120
       rollout_steps: 240

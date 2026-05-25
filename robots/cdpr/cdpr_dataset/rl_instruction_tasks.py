@@ -619,7 +619,9 @@ def compute_instruction_reward(
 def _read_env_body_position(env: Any | None, body_name: str | None) -> np.ndarray | None:
     if env is None or not body_name:
         return None
-    getter = getattr(env, "_get_body_position", None)
+    getter = getattr(env, "_get_task_body_position", None)
+    if not callable(getter):
+        getter = getattr(env, "_get_body_position", None)
     if not callable(getter):
         return None
     try:

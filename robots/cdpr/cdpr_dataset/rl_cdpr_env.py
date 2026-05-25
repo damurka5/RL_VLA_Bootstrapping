@@ -41,6 +41,7 @@ from .rl_instruction_tasks import (
     DEFAULT_CATCHABLE_OBJECTS,
     DEFAULT_CONTAINER_OBJECTS,
     INSTRUCTION_TYPES,
+    canonical_object_name,
     compute_instruction_reward,
     init_reward_state,
     instruction_uses_target_object,
@@ -48,6 +49,7 @@ from .rl_instruction_tasks import (
     sample_instruction,
 )
 from .synthetic_tasks import (
+    aabb_of_body,
     clamp_xyz,
     compute_cdpr_workspace_safety,
     clear_sim_recording_buffers,
@@ -99,6 +101,16 @@ DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     "move_between_objects",
 )
 DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, -0.035)
+YCB_CAUGHT_OBJECT_MEASUREMENTS: dict[str, dict[str, float]] = {
+    "ycb_apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
+    "apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
+    "ycb_pear": {"width_m": 0.0662, "opening": 0.7369, "finger_qpos_m": 0.0221},
+    "pear": {"width_m": 0.0662, "opening": 0.7369, "finger_qpos_m": 0.0221},
+    "ycb_peach": {"width_m": 0.0591, "opening": 0.6186, "finger_qpos_m": 0.0186},
+    "peach": {"width_m": 0.0591, "opening": 0.6186, "finger_qpos_m": 0.0186},
+    "ycb_baseball": {"width_m": 0.0720, "opening": 0.8337, "finger_qpos_m": 0.0250},
+    "baseball": {"width_m": 0.0720, "opening": 0.8337, "finger_qpos_m": 0.0250},
+}
 _TEXTURE_VALIDATION_CACHE: dict[Path, tuple[tuple[tuple[str, int, int], ...], list[Path], list[Path]]] = {}
 _TEXTURE_VALIDATION_WARNED: set[Path] = set()
 
@@ -195,6 +207,58 @@ def _dedupe_names(values: Sequence[str]) -> tuple[str, ...]:
         seen.add(name)
         out.append(name)
     return tuple(out)
+
+
+def _infer_instruction_type_from_text(instruction: str) -> str | None:
+    text = re.sub(r"\s+", " ", str(instruction).strip().lower())
+    if not text:
+        return None
+    if text.startswith("move to ") or text.startswith("go to "):
+        return "move_to_object"
+    if text.startswith("grab "):
+        return "grab_object"
+    if text.startswith("pick up "):
+        return "pick_up"
+    if text.startswith("push ") and text.endswith(" left"):
+        return "push_left"
+    if text.startswith("push ") and text.endswith(" right"):
+        return "push_right"
+    if text.startswith("put ") and (" plate" in text or " bowl" in text or " into " in text or " on " in text):
+        return "put_into_plate"
+    if text.startswith("move ") and " to the left of " in text:
+        return "move_left_of_object"
+    if text.startswith("move ") and " to the right of " in text:
+        return "move_right_of_object"
+    if text.startswith("put ") and " in front of " in text:
+        return "put_in_front_of_object"
+    if text.startswith("put ") and " behind " in text:
+        return "put_behind_object"
+    if text.startswith("move ") and " between " in text and " and " in text:
+        return "move_between_objects"
+    return None
+
+
+def _infer_instruction_object_options(
+    instruction: str,
+    *,
+    candidate_catalogs: Sequence[str],
+) -> dict[str, str]:
+    text = re.sub(r"\s+", " ", str(instruction).strip().lower())
+    if not text:
+        return {}
+    matches: list[str] = []
+    for catalog in _dedupe_names(candidate_catalogs):
+        name = canonical_object_name(str(catalog)).strip().lower()
+        if name and re.search(rf"(?<![a-z0-9]){re.escape(name)}(?![a-z0-9])", text):
+            matches.append(str(catalog))
+    if not matches:
+        return {}
+    out = {"target_object": matches[0]}
+    if len(matches) >= 2:
+        out["reference_object"] = matches[1]
+    if len(matches) >= 3:
+        out["second_reference_object"] = matches[2]
+    return out
 
 
 def _metadata_name_list(task_metadata: dict[str, Any], key: str) -> tuple[str, ...]:
@@ -1248,6 +1312,11 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_catalog = ""
         self._caught_object_start_position = np.zeros((3,), dtype=np.float32)
         self._caught_object_start_ee_offset = np.zeros((3,), dtype=np.float32)
+        self._caught_object_start_hold_offset = np.zeros((3,), dtype=np.float32)
+        self._caught_object_start_gripper_opening = 0.0
+        self._curriculum_mode = ""
+        self._curriculum_shell: int | None = None
+        self._curriculum_reset_info: dict[str, Any] = {}
         self._support_surface_z = 0.0
         self._ee_min_z = float("-inf")
         self._ee_spawn_z = float("-inf")
@@ -1261,7 +1330,37 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._last_wrapper_reused_from_cache = False
         self._instruction_cycle: list[str] = []
 
-    def reset(self, *, seed: Optional[int] = None, options: Optional[dict[str, Any]] = None):
+    def reset(
+        self,
+        *,
+        seed: Optional[int] = None,
+        options: Optional[dict[str, Any]] = None,
+        instruction: str | None = None,
+        curriculum_shell: int | None = None,
+        curriculum_mode: str | None = None,
+    ):
+        options = dict(options or {})
+        if instruction is not None:
+            options["instruction"] = str(instruction)
+        if curriculum_shell is not None:
+            options["curriculum_shell"] = int(curriculum_shell)
+        if curriculum_mode is not None:
+            options["curriculum_mode"] = str(curriculum_mode)
+        if "instruction_type" not in options and options.get("instruction") is not None:
+            inferred = _infer_instruction_type_from_text(str(options.get("instruction", "")))
+            if inferred:
+                options["instruction_type"] = inferred
+            binding_options = _infer_instruction_object_options(
+                str(options.get("instruction", "")),
+                candidate_catalogs=(
+                    list(getattr(self, "target_object_pool", ()))
+                    + list(getattr(self, "allowed_objects", ()))
+                    + list(getattr(self, "scene_object_pool", ()))
+                ),
+            )
+            for key, value in binding_options.items():
+                options.setdefault(key, value)
+
         self._prepare_episode_rng(seed)
 
         self.close()
@@ -1358,6 +1457,23 @@ class CDPRLanguageRLEnv(_EnvBase):
             instruction_type=self._instruction_spec.instruction_type,
             options=options,
         )
+        self._curriculum_mode = str(options.get("curriculum_mode") or "")
+        self._curriculum_shell = (
+            None
+            if options.get("curriculum_shell") is None
+            else int(options.get("curriculum_shell"))
+        )
+        self._curriculum_reset_info = {}
+        if self._curriculum_mode == "reverse_frontier" and self._curriculum_shell is not None:
+            from .cdpr_reverse_shells import apply_cdpr_reverse_shell
+
+            self._curriculum_reset_info = dict(
+                apply_cdpr_reverse_shell(
+                    self,
+                    shell_id=int(self._curriculum_shell),
+                    rng=self.np_random,
+                )
+            )
 
         ee0 = self._get_ee_position()
         self._goal_position = self._compute_instruction_goal(
@@ -1372,6 +1488,13 @@ class CDPRLanguageRLEnv(_EnvBase):
         )
         reward_target_pos = self._current_manipulated_object_position(default=self._goal_position)
         self._reward_state = init_reward_state(ee0, reward_target_pos)
+        reward_initial = self._curriculum_reset_info.get("curriculum_reward_initial_obj_pos")
+        if reward_initial is not None:
+            reward_initial_arr = np.asarray(reward_initial, dtype=np.float32).reshape(-1)
+            if reward_initial_arr.size >= 3 and np.all(np.isfinite(reward_initial_arr[:3])):
+                self._reward_state.initial_obj_pos = reward_initial_arr[:3].astype(np.float32).copy()
+        if bool(self._curriculum_reset_info.get("curriculum_target_grasped", False)):
+            self._reward_state.grasped = True
         self._reward_state.gripper_closed = self._is_gripper_closed(self._get_gripper_opening())
         self._step_count = 0
         self._yaw = self._read_current_yaw()
@@ -1389,6 +1512,7 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         obs = self._get_obs()
         info = self._base_info()
+        info.update(self._curriculum_reset_info)
         info["success"] = False
         return obs, info
 
@@ -1505,6 +1629,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._second_reference_catalog_name = ""
         self._second_reference_body_name = ""
         self._reset_caught_object_start_state()
+        self._curriculum_mode = ""
+        self._curriculum_shell = None
+        self._curriculum_reset_info = {}
         self._goal_position = np.zeros((3,), dtype=np.float32)
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
 
@@ -1556,6 +1683,16 @@ class CDPRLanguageRLEnv(_EnvBase):
                 getattr(self, "_caught_object_start_ee_offset", np.zeros((3,), dtype=np.float32)),
                 dtype=np.float32,
             ).copy(),
+            "caught_object_start_hold_offset": np.asarray(
+                getattr(self, "_caught_object_start_hold_offset", np.zeros((3,), dtype=np.float32)),
+                dtype=np.float32,
+            ).copy(),
+            "caught_object_start_gripper_opening": float(
+                getattr(self, "_caught_object_start_gripper_opening", 0.0)
+            ),
+            "curriculum_mode": str(getattr(self, "_curriculum_mode", "")),
+            "curriculum_shell": copy.deepcopy(getattr(self, "_curriculum_shell", None)),
+            "curriculum_reset_info": copy.deepcopy(getattr(self, "_curriculum_reset_info", {})),
             "support_surface_z": float(self._support_surface_z),
             "ee_min_z": float(self._ee_min_z),
             "ee_spawn_z": float(self._ee_spawn_z),
@@ -1613,6 +1750,14 @@ class CDPRLanguageRLEnv(_EnvBase):
             snapshot.get("caught_object_start_ee_offset", np.zeros((3,), dtype=np.float32)),
             dtype=np.float32,
         ).reshape(3).copy()
+        self._caught_object_start_hold_offset = np.asarray(
+            snapshot.get("caught_object_start_hold_offset", np.zeros((3,), dtype=np.float32)),
+            dtype=np.float32,
+        ).reshape(3).copy()
+        self._caught_object_start_gripper_opening = float(snapshot.get("caught_object_start_gripper_opening", 0.0))
+        self._curriculum_mode = str(snapshot.get("curriculum_mode", ""))
+        self._curriculum_shell = copy.deepcopy(snapshot.get("curriculum_shell", None))
+        self._curriculum_reset_info = dict(snapshot.get("curriculum_reset_info", {}) or {})
         self._support_surface_z = float(snapshot["support_surface_z"])
         self._ee_min_z = float(snapshot["ee_min_z"])
         self._ee_spawn_z = float(snapshot["ee_spawn_z"])
@@ -1633,6 +1778,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_catalog = ""
         self._caught_object_start_position = np.zeros((3,), dtype=np.float32)
         self._caught_object_start_ee_offset = np.zeros((3,), dtype=np.float32)
+        self._caught_object_start_hold_offset = np.zeros((3,), dtype=np.float32)
+        self._caught_object_start_gripper_opening = 0.0
 
     def _caught_object_start_instruction_types(self) -> tuple[str, ...]:
         configured = _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
@@ -1684,6 +1831,256 @@ class CDPRLanguageRLEnv(_EnvBase):
             offset[2] += float(self.np_random.uniform(-z_jitter, z_jitter))
         return offset
 
+    def _caught_object_start_fit_gripper_enabled(self) -> bool:
+        raw = self._task_metadata.get("caught_object_start_fit_gripper", True)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() not in {"0", "false", "no", "off"}
+        return bool(raw)
+
+    def _caught_object_start_pin_object_enabled(self) -> bool:
+        raw = self._task_metadata.get("caught_object_start_pin_object", False)
+        if isinstance(raw, bool):
+            return raw
+        if isinstance(raw, str):
+            return raw.strip().lower() in {"1", "true", "yes", "on"}
+        return bool(raw)
+
+    def _geom_half_extent_along_axis(self, geom_id: int, axis: np.ndarray) -> float:
+        model = self.sim.model
+        data = self.sim.data
+        gid = int(geom_id)
+        axis_arr = np.asarray(axis, dtype=np.float64).reshape(3)
+        axis_norm = float(np.linalg.norm(axis_arr))
+        if axis_norm < 1e-9:
+            return 0.0
+        axis_arr /= axis_norm
+
+        try:
+            g_box = int(mj.mjtGeom.mjGEOM_BOX)
+            g_cylinder = int(mj.mjtGeom.mjGEOM_CYLINDER)
+            g_capsule = int(mj.mjtGeom.mjGEOM_CAPSULE)
+            g_sphere = int(mj.mjtGeom.mjGEOM_SPHERE)
+        except Exception:
+            g_box, g_cylinder, g_capsule, g_sphere = 6, 4, 3, 0
+
+        gtype = int(model.geom_type[gid])
+        size = np.asarray(model.geom_size[gid], dtype=np.float64)
+        if gtype == g_box:
+            half_local = np.array([size[0], size[1], size[2]], dtype=np.float64)
+        elif gtype == g_cylinder:
+            half_local = np.array([size[0], size[0], size[1]], dtype=np.float64)
+        elif gtype == g_capsule:
+            half_local = np.array([size[0], size[0], size[1] + size[0]], dtype=np.float64)
+        elif gtype == g_sphere:
+            half_local = np.array([size[0], size[0], size[0]], dtype=np.float64)
+        else:
+            radius = float(model.geom_rbound[gid]) if hasattr(model, "geom_rbound") else float(size[0])
+            half_local = np.array([radius, radius, radius], dtype=np.float64)
+
+        xmat = np.asarray(data.geom_xmat[gid], dtype=np.float64).reshape(3, 3)
+        return float(np.sum(np.abs(xmat.T @ axis_arr) * half_local))
+
+    def _finger_pair_geometry(self) -> dict[str, np.ndarray | float] | None:
+        sim = getattr(self, "sim", None)
+        if sim is None or not hasattr(sim, "model") or not hasattr(sim, "data"):
+            return None
+
+        def _first_geom_id(names: Sequence[str]) -> int:
+            for name in names:
+                gid = mj.mj_name2id(self.sim.model, mj.mjtObj.mjOBJ_GEOM, str(name))
+                if gid != -1:
+                    return int(gid)
+            return -1
+
+        left_gid = _first_geom_id(("finger_l_tip", "finger_l_link"))
+        right_gid = _first_geom_id(("finger_r_tip", "finger_r_link"))
+        if left_gid == -1 or right_gid == -1:
+            return None
+
+        left_pos = np.asarray(self.sim.data.geom_xpos[left_gid], dtype=np.float64).reshape(3)
+        right_pos = np.asarray(self.sim.data.geom_xpos[right_gid], dtype=np.float64).reshape(3)
+        separation = left_pos - right_pos
+        distance = float(np.linalg.norm(separation))
+        if distance < 1e-9:
+            return None
+        axis = separation / distance
+        left_half = self._geom_half_extent_along_axis(left_gid, axis)
+        right_half = self._geom_half_extent_along_axis(right_gid, axis)
+        return {
+            "center": (0.5 * (left_pos + right_pos)).astype(np.float32),
+            "axis": axis.astype(np.float32),
+            "inner_gap": float(max(0.0, distance - left_half - right_half)),
+        }
+
+    def _body_width_along_axis(self, body_name: str, axis: np.ndarray) -> float | None:
+        model = self.sim.model
+        data = self.sim.data
+        axis_arr = np.asarray(axis, dtype=np.float64).reshape(3)
+        axis_norm = float(np.linalg.norm(axis_arr))
+        if axis_norm < 1e-9:
+            return None
+        axis_arr /= axis_norm
+
+        body_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, str(body_name))
+        if body_id == -1:
+            return None
+
+        children = {idx: [] for idx in range(model.nbody)}
+        for idx in range(1, model.nbody):
+            parent = int(model.body_parentid[idx])
+            if parent >= 0:
+                children.setdefault(parent, []).append(idx)
+
+        stack = [int(body_id)]
+        body_ids: set[int] = set()
+        while stack:
+            bid = int(stack.pop())
+            body_ids.add(bid)
+            stack.extend(children.get(bid, ()))
+
+        try:
+            mesh_type = int(mj.mjtGeom.mjGEOM_MESH)
+        except Exception:
+            mesh_type = 7
+
+        lo = float("inf")
+        hi = float("-inf")
+        for geom_id in range(model.ngeom):
+            if int(model.geom_bodyid[geom_id]) not in body_ids:
+                continue
+
+            center = np.asarray(data.geom_xpos[geom_id], dtype=np.float64).reshape(3)
+            gtype = int(model.geom_type[geom_id])
+            mesh_id = int(model.geom_dataid[geom_id]) if hasattr(model, "geom_dataid") else -1
+            if (
+                gtype == mesh_type
+                and mesh_id >= 0
+                and hasattr(model, "mesh_vert")
+                and hasattr(model, "mesh_vertadr")
+                and hasattr(model, "mesh_vertnum")
+            ):
+                start = int(model.mesh_vertadr[mesh_id])
+                count = int(model.mesh_vertnum[mesh_id])
+                if count > 0:
+                    verts = np.asarray(model.mesh_vert[start : start + count], dtype=np.float64)
+                    xmat = np.asarray(data.geom_xmat[geom_id], dtype=np.float64).reshape(3, 3)
+                    projected = (center + verts @ xmat.T) @ axis_arr
+                    lo = min(lo, float(np.min(projected)))
+                    hi = max(hi, float(np.max(projected)))
+                    continue
+
+            center_projection = float(np.dot(center, axis_arr))
+            half_extent = self._geom_half_extent_along_axis(int(geom_id), axis_arr)
+            lo = min(lo, center_projection - half_extent)
+            hi = max(hi, center_projection + half_extent)
+
+        width = float(hi - lo)
+        if np.isfinite(width) and width > 0.0:
+            return width
+
+        try:
+            mn, mx = aabb_of_body(self.sim, str(body_name), include_subtree=True)
+        except Exception:
+            return None
+        extents = np.asarray(mx - mn, dtype=np.float64).reshape(3)
+        abs_axis = np.abs(axis_arr)
+        width = float(np.dot(abs_axis, np.maximum(extents, 0.0)))
+        return width if np.isfinite(width) and width > 0.0 else None
+
+    def _caught_object_start_measurement_for_body(self, body_name: str) -> dict[str, float] | None:
+        candidates: list[str] = []
+        body = str(body_name or "")
+        if body:
+            candidates.append(body)
+        if body and body == str(getattr(self, "_target_body_name", "")):
+            candidates.append(str(getattr(self, "_target_catalog_name", "")))
+        inverse = getattr(self, "_inverse_catalog_to_body", {}) or {}
+        if body in inverse:
+            candidates.append(str(inverse[body]))
+        if body:
+            match = re.search(r"ycb_[A-Za-z0-9_]+", body)
+            if match:
+                candidates.append(match.group(0))
+
+        for candidate in candidates:
+            raw = str(candidate or "").strip()
+            if not raw:
+                continue
+            keys = (raw, canonical_object_name(raw).replace(" ", "_"), canonical_object_name(raw))
+            for key in keys:
+                measurement = YCB_CAUGHT_OBJECT_MEASUREMENTS.get(str(key))
+                if measurement is not None:
+                    return measurement
+        return None
+
+    def _caught_object_start_gripper_opening_for_body(self, body_name: str) -> float:
+        override = self._task_metadata.get("caught_object_start_gripper_opening")
+        if override is not None:
+            return float(np.clip(float(override), 0.0, 1.0))
+        if not self._caught_object_start_fit_gripper_enabled():
+            return 0.0
+
+        measurement = self._caught_object_start_measurement_for_body(body_name)
+        if measurement is not None:
+            return float(np.clip(float(measurement["opening"]), 0.0, 1.0))
+
+        geometry = self._finger_pair_geometry()
+        if geometry is None:
+            return 0.0
+
+        width = self._body_width_along_axis(str(body_name), np.asarray(geometry["axis"], dtype=np.float32))
+        if width is None:
+            return 0.0
+
+        clearance = max(0.0, _metadata_float(self._task_metadata, "caught_object_start_gripper_clearance", 0.0))
+        compression = max(0.0, _metadata_float(self._task_metadata, "caught_object_start_grip_compression", 0.001))
+        desired_gap = max(0.0, float(width + 2.0 * clearance - 2.0 * compression))
+        closed_gap = float(geometry["inner_gap"])
+        joint_span = float(
+            max(
+                float(getattr(self.sim, "gripper_joint_max", 0.03))
+                - float(getattr(self.sim, "gripper_joint_min", 0.0)),
+                1e-6,
+            )
+        )
+        opening = (desired_gap - closed_gap) / (2.0 * joint_span)
+        min_opening = _metadata_float(self._task_metadata, "caught_object_start_min_gripper_opening", 0.0)
+        max_opening = _metadata_float(self._task_metadata, "caught_object_start_max_gripper_opening", 1.0)
+        return float(
+            np.clip(
+                opening,
+                min(float(min_opening), float(max_opening)),
+                max(float(min_opening), float(max_opening)),
+            )
+        )
+
+    def _caught_object_start_hold_center(self) -> np.ndarray | None:
+        geometry = self._finger_pair_geometry()
+        if geometry is None:
+            return None
+        center = np.asarray(geometry["center"], dtype=np.float32).reshape(3)
+        if not np.all(np.isfinite(center)):
+            return None
+        return center
+
+    def _caught_object_start_target_position(self) -> np.ndarray:
+        hold_center = self._caught_object_start_hold_center()
+        if hold_center is not None:
+            offset = np.asarray(
+                getattr(self, "_caught_object_start_hold_offset", np.zeros((3,), dtype=np.float32)),
+                dtype=np.float32,
+            ).reshape(3)
+            return np.asarray(clamp_xyz(hold_center + offset), dtype=np.float32)
+
+        ee_pos = self._get_ee_position().astype(np.float32)
+        offset = np.asarray(
+            getattr(self, "_caught_object_start_ee_offset", np.zeros((3,), dtype=np.float32)),
+            dtype=np.float32,
+        ).reshape(3)
+        return np.asarray(clamp_xyz(ee_pos + offset), dtype=np.float32)
+
     def _maybe_spawn_target_caught_at_ee(
         self,
         *,
@@ -1693,39 +2090,64 @@ class CDPRLanguageRLEnv(_EnvBase):
         if not self._should_spawn_target_caught_at_ee(instruction_type=instruction_type, options=options):
             return False
 
+        if self.sim is not None:
+            self._force_gripper_opening(0.0)
+
         ee_pos = self._get_ee_position().astype(np.float32)
-        target_pos = ee_pos + self._caught_object_start_offset()
+        target_offset = self._caught_object_start_offset()
         min_height = _metadata_float(
             self._task_metadata,
             "caught_object_start_min_height_above_table",
             0.08,
         )
+
+        gripper_opening = self._caught_object_start_gripper_opening_for_body(self._target_body_name)
+        self._force_gripper_opening(gripper_opening)
+
+        hold_center = self._caught_object_start_hold_center()
+        if hold_center is not None:
+            target_pos = hold_center + target_offset
+        else:
+            target_pos = ee_pos + target_offset
         target_pos[2] = max(float(target_pos[2]), float(self._support_surface_z + max(0.0, min_height)))
         target_pos = np.asarray(clamp_xyz(target_pos), dtype=np.float32)
 
         if not self._set_body_position(self._target_body_name, target_pos):
             return False
 
-        self._force_gripper_opening(0.0)
-        warm_steps = max(0, int(round(_metadata_float(self._task_metadata, "caught_object_start_warm_steps", 0.0))))
-        if warm_steps > 0 and hasattr(self.sim, "run_simulation_step"):
-            for _ in range(warm_steps):
-                self.sim.run_simulation_step(capture_frame=False)
-            self._force_gripper_opening(0.0)
-
         self._caught_object_start_active = True
         self._caught_object_start_body = str(self._target_body_name)
         self._caught_object_start_catalog = str(self._target_catalog_name)
         self._caught_object_start_position = target_pos.astype(np.float32)
         self._caught_object_start_ee_offset = (target_pos - ee_pos).astype(np.float32)
+        self._caught_object_start_gripper_opening = float(gripper_opening)
+        hold_center = self._caught_object_start_hold_center()
+        if hold_center is not None:
+            self._caught_object_start_hold_offset = (target_pos - hold_center).astype(np.float32)
+        else:
+            self._caught_object_start_hold_offset = np.zeros((3,), dtype=np.float32)
+
+        warm_steps = max(0, int(round(_metadata_float(self._task_metadata, "caught_object_start_warm_steps", 0.0))))
+        if warm_steps > 0 and hasattr(self.sim, "run_simulation_step"):
+            for _ in range(warm_steps):
+                self._maintain_caught_object_start_pose()
+                self.sim.run_simulation_step(capture_frame=False)
+                self._maintain_caught_object_start_pose()
+            self._force_gripper_opening(gripper_opening)
         return True
 
     def _caught_object_start_release_opening_threshold(self) -> float:
-        return _metadata_float(
+        threshold = _metadata_float(
             self._task_metadata,
             "caught_object_start_release_opening_threshold",
             _metadata_float(self._task_metadata, "pick_gripper_closed_opening_threshold", 0.010),
         )
+        if bool(getattr(self, "_caught_object_start_active", False)):
+            hold_opening = float(getattr(self, "_caught_object_start_gripper_opening", 0.0))
+            margin = max(0.0, _metadata_float(self._task_metadata, "caught_object_start_release_opening_margin", 0.08))
+            if np.isfinite(hold_opening):
+                threshold = max(float(threshold), hold_opening + margin)
+        return float(np.clip(threshold, 0.0, 1.0))
 
     def _caught_object_start_gripper_is_closed(self) -> bool:
         threshold = float(max(0.0, self._caught_object_start_release_opening_threshold()))
@@ -1749,16 +2171,17 @@ class CDPRLanguageRLEnv(_EnvBase):
             self._caught_object_start_active = False
             return False
 
-        ee_pos = self._get_ee_position().astype(np.float32)
-        offset = np.asarray(
-            getattr(self, "_caught_object_start_ee_offset", np.zeros((3,), dtype=np.float32)),
-            dtype=np.float32,
-        ).reshape(3)
-        target_pos = np.asarray(ee_pos + offset, dtype=np.float32)
-        target_pos = np.asarray(clamp_xyz(target_pos), dtype=np.float32)
-        if not self._set_body_position(self._caught_object_start_body, target_pos):
-            return False
-        self._caught_object_start_position = target_pos.astype(np.float32)
+        if self._caught_object_start_pin_object_enabled():
+            target_pos = self._caught_object_start_target_position()
+            if not self._set_body_position(self._caught_object_start_body, target_pos):
+                return False
+            self._caught_object_start_position = target_pos.astype(np.float32)
+            return True
+
+        try:
+            self._caught_object_start_position = self._get_body_position(self._caught_object_start_body).astype(np.float32)
+        except Exception:
+            pass
         return True
 
     def _sample_scene(self, options: Optional[dict[str, Any]]) -> SceneSpec:
@@ -2074,7 +2497,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         if not body_name:
             return None
         try:
-            return self._get_body_position(str(body_name)).astype(np.float32)
+            return self._get_task_body_position(str(body_name)).astype(np.float32)
         except Exception:
             return None
 
@@ -2551,6 +2974,25 @@ class CDPRLanguageRLEnv(_EnvBase):
             raise RuntimeError(f"Body '{body_name}' not found in MuJoCo model.")
         return self._read_named_body_position(body_name, bid)
 
+    def _get_task_body_position(self, body_name: str) -> np.ndarray:
+        pos = self._get_body_position(body_name)
+        catalog = str(getattr(self, "_inverse_catalog_to_body", {}).get(str(body_name), ""))
+        is_container = bool("plate" in catalog.lower() or "bowl" in catalog.lower())
+        if catalog:
+            try:
+                is_container = is_container or catalog in self._container_scene_catalogs([catalog])
+            except Exception:
+                pass
+        if is_container:
+            try:
+                mn, mx = aabb_of_body(self.sim, str(body_name), include_subtree=True)
+                center = 0.5 * (np.asarray(mn, dtype=np.float32) + np.asarray(mx, dtype=np.float32))
+                if np.all(np.isfinite(center)):
+                    return center.astype(np.float32)
+            except Exception:
+                pass
+        return pos
+
     def _set_body_position(self, body_name: str, xyz: Sequence[float] | np.ndarray) -> bool:
         if not body_name or self.sim is None:
             return False
@@ -2652,20 +3094,33 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._set_gripper_target(target_01)
         if self.sim is None or not hasattr(self.sim, "data") or not hasattr(self.sim, "model"):
             return
-        qadr = getattr(self.sim, "jnt_finger_l_qadr", None)
-        if qadr is None:
-            return
         target = float(np.clip(target_01, 0.0, 1.0))
         joint_min = float(getattr(self.sim, "gripper_joint_min", 0.0))
         joint_max = float(getattr(self.sim, "gripper_joint_max", 0.03))
         joint_pos = joint_min + target * max(joint_max - joint_min, 0.0)
         try:
-            self.sim.data.qpos[int(qadr)] = float(joint_pos)
-            joint_id = getattr(self.sim, "jnt_finger_l", None)
-            if joint_id is not None and hasattr(self.sim.data, "qvel") and hasattr(self.sim.model, "jnt_dofadr"):
-                dofadr = int(self.sim.model.jnt_dofadr[int(joint_id)])
-                if 0 <= dofadr < len(self.sim.data.qvel):
-                    self.sim.data.qvel[dofadr] = 0.0
+            joint_ids: list[int] = []
+            for joint_name in ("finger_l", "finger_r"):
+                jid = mj.mj_name2id(self.sim.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
+                if jid != -1:
+                    joint_ids.append(int(jid))
+            fallback_joint_id = getattr(self.sim, "jnt_finger_l", None)
+            if fallback_joint_id is not None and int(fallback_joint_id) not in joint_ids:
+                joint_ids.append(int(fallback_joint_id))
+
+            if not joint_ids:
+                qadr = getattr(self.sim, "jnt_finger_l_qadr", None)
+                if qadr is None:
+                    return
+                self.sim.data.qpos[int(qadr)] = float(joint_pos)
+
+            for joint_id in joint_ids:
+                joint_qadr = int(self.sim.model.jnt_qposadr[int(joint_id)])
+                self.sim.data.qpos[joint_qadr] = float(joint_pos)
+                if hasattr(self.sim.data, "qvel") and hasattr(self.sim.model, "jnt_dofadr"):
+                    dofadr = int(self.sim.model.jnt_dofadr[int(joint_id)])
+                    if 0 <= dofadr < len(self.sim.data.qvel):
+                        self.sim.data.qvel[dofadr] = 0.0
             mj.mj_forward(self.sim.model, self.sim.data)
         except Exception:
             return
@@ -2676,6 +3131,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         grip_min = float(getattr(self.sim, "gripper_min", 0.0))
         grip_max = float(getattr(self.sim, "gripper_max", 1.0))
         threshold = grip_min + 0.35 * max(grip_max - grip_min, 1e-6)
+        if bool(getattr(self, "_caught_object_start_active", False)):
+            threshold = max(threshold, self._caught_object_start_release_opening_threshold())
         return bool(float(opening) <= threshold)
 
     def _get_geom_position(self, geom_name: str) -> Optional[np.ndarray]:
@@ -2807,6 +3264,11 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         self._last_gripper_cmd = float(action_arr[4])
         gripper_target = self._get_gripper_target() + self._last_gripper_cmd * float(self.action_step_gripper)
+        if (
+            bool(getattr(self, "_caught_object_start_active", False))
+            and self._caught_object_start_fit_gripper_enabled()
+        ):
+            gripper_target = max(gripper_target, float(getattr(self, "_caught_object_start_gripper_opening", 0.0)))
         self._set_gripper_target(gripper_target)
 
         total_sim_steps = 1 + int(self.hold_steps)
@@ -2869,6 +3331,18 @@ class CDPRLanguageRLEnv(_EnvBase):
                     dtype=np.float32,
                 ).reshape(3).tolist()
             ],
+            "caught_object_start_gripper_opening": float(
+                getattr(self, "_caught_object_start_gripper_opening", 0.0)
+            ),
+            "caught_object_start_release_opening_threshold": float(
+                self._caught_object_start_release_opening_threshold()
+                if bool(getattr(self, "_caught_object_start_active", False))
+                else _metadata_float(
+                    self._task_metadata,
+                    "caught_object_start_release_opening_threshold",
+                    _metadata_float(self._task_metadata, "pick_gripper_closed_opening_threshold", 0.010),
+                )
+            ),
             "reference_object_catalog": self._reference_catalog_name,
             "reference_object_body": self._reference_body_name,
             "reference_object_position": [float(x) for x in reference_object_position.tolist()],
@@ -2901,4 +3375,13 @@ class CDPRLanguageRLEnv(_EnvBase):
             ),
             "record_trajectory": bool(self.record_trajectory),
             "action_step_gripper": float(self.action_step_gripper),
+            "curriculum_mode": str(getattr(self, "_curriculum_mode", "")),
+            "curriculum_shell": (
+                -1
+                if getattr(self, "_curriculum_shell", None) is None
+                else int(getattr(self, "_curriculum_shell"))
+            ),
+            "curriculum_instruction_id": str(
+                getattr(self, "_curriculum_reset_info", {}).get("curriculum_instruction_id", "")
+            ),
         }
