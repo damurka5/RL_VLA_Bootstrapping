@@ -89,6 +89,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
                         "env_instance_id": 0,
                         "episode_index": 0,
                         "instruction_type": "pick_up",
+                        "curriculum_mode": "reverse_frontier",
+                        "curriculum_shell": 2,
                         "distance_ee_to_object_xy": 0.02,
                         "target_motion_xy": 0.05 * idx,
                         "relation_error": 0.08 - 0.02 * idx,
@@ -111,6 +113,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
             self.assertNotIn("rollout_step/window_size", tags)
             self.assertNotIn("rollout_step/reward_component_r_xyz_mean", tags)
             self.assertIn("rollout_episode/instruction_success_rate/pick_up", tags)
+            self.assertIn("rollout_episode/shell_success_rate/pick_up/shell_02", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/move_to_object", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/grab_object", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/pick_up", tags)
@@ -304,7 +307,10 @@ class FastGRPOWrapperTests(unittest.TestCase):
     def test_compact_tensorboard_profile_keeps_high_signal_tags_only(self):
         self.assertTrue(_tensorboard_tag_allowed("train/learning_rate"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/instruction_success_rate/pick_up"))
+        self.assertTrue(_tensorboard_tag_allowed("rollout_episode/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/replay/episodes_total"))
+        self.assertTrue(_tensorboard_tag_allowed("lchol/reverse_frontier/shell_success_rate/put_into_plate/shell_00"))
+        self.assertTrue(_tensorboard_tag_allowed("lchol/curriculum/reverse_frontier/put_into_plate/active_shell"))
         self.assertFalse(_tensorboard_tag_allowed("train/update_index"))
         self.assertFalse(_tensorboard_tag_allowed("validation/action_x_hist", kind="histogram"))
 

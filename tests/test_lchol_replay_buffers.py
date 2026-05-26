@@ -59,6 +59,33 @@ class LCHOLReplayBufferTests(unittest.TestCase):
         self.assertEqual(metrics["replay/episodes_total"], 1.0)
         self.assertEqual(metrics["replay/episodes/grab_object"], 1.0)
 
+    def test_runtime_metrics_include_reverse_shell_success_rates(self):
+        runtime = LCHOLGRPORuntime(
+            config=LCHOLGRPOConfig(enabled=True, curriculum="reverse_frontier"),
+            spec=CDPRLCHOLSpec(),
+            available_options=("put_into_plate",),
+            seed=0,
+        )
+
+        runtime.record_reverse_validation(
+            [
+                {
+                    "instruction_id": "put_into_plate",
+                    "shell_id": 2,
+                    "success_rate": 0.42,
+                    "rollouts": 50,
+                    "action_saturation_rate": 0.10,
+                }
+            ]
+        )
+
+        metrics = runtime.metrics()
+
+        self.assertAlmostEqual(
+            metrics["reverse_frontier/shell_success_rate/put_into_plate/shell_02"],
+            0.42,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

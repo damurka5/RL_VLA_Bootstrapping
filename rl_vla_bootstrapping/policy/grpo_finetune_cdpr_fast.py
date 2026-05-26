@@ -929,9 +929,12 @@ _COMPACT_TENSORBOARD_SCALARS: set[str] = {
 }
 _COMPACT_TENSORBOARD_PREFIXES: tuple[str, ...] = (
     "rollout_episode/instruction_success_rate/",
+    "rollout_episode/shell_success_rate/",
     "rollout_episode/subgoal_success_rate/",
     "lchol/replay/episodes/",
     "lchol/curriculum/success_rate/",
+    "lchol/curriculum/reverse_frontier/",
+    "lchol/reverse_frontier/shell_success_rate/",
 )
 
 
@@ -1010,6 +1013,7 @@ class _RolloutTensorboardLogger:
         self._subgoal_episode_windows: dict[str, deque[float]] = {
             name: deque(maxlen=self.every_global_steps or 1) for name in _CDPR_CURRICULUM_OPTIONS
         }
+        self._shell_episode_windows: dict[str, deque[float]] = {}
 
     def set_run_dir(self, run_dir: Path | str | None) -> None:
         if run_dir is None:
@@ -1134,6 +1138,13 @@ class _RolloutTensorboardLogger:
                 deque(maxlen=self.every_global_steps or 1),
             )
             window.append(float(success_value))
+        shell_key = self._shell_success_key(info)
+        if shell_key:
+            window = self._shell_episode_windows.setdefault(
+                shell_key,
+                deque(maxlen=self.every_global_steps or 1),
+            )
+            window.append(float(success_value))
 
         achieved = self._subgoal_successes(trajectory)
         for option in _CDPR_CURRICULUM_OPTIONS:
@@ -1152,6 +1163,14 @@ class _RolloutTensorboardLogger:
                 float(sum(values) / len(values)),
                 self.global_step,
             )
+        for shell_key, values in sorted(self._shell_episode_windows.items()):
+            if not values:
+                continue
+            writer.add_scalar(
+                f"rollout_episode/shell_success_rate/{shell_key}",
+                float(sum(values) / len(values)),
+                self.global_step,
+            )
         for option, values in sorted(self._subgoal_episode_windows.items()):
             if not values:
                 continue
@@ -1166,11 +1185,27 @@ class _RolloutTensorboardLogger:
             info.get("env_instance_id", ""),
             info.get("episode_index", ""),
             info.get("instruction_type", ""),
+            info.get("curriculum_shell", ""),
             info.get("target_object_body", ""),
             info.get("reference_object_body", ""),
             info.get("second_reference_object_body", ""),
             info.get("scene", ""),
         )
+
+    def _shell_success_key(self, info: dict[str, Any]) -> str:
+        raw_shell = info.get("curriculum_shell")
+        if raw_shell is None or raw_shell == "":
+            return ""
+        try:
+            shell_id = int(raw_shell)
+        except (TypeError, ValueError):
+            return ""
+        instruction = self._safe_tag_token(
+            str(info.get("curriculum_instruction_id") or info.get("instruction_type") or "unknown")
+        )
+        if not instruction:
+            instruction = "unknown"
+        return f"{instruction}/shell_{max(0, shell_id):02d}"
 
     def _subgoal_successes(self, trajectory: Sequence[dict[str, Any]]) -> set[str]:
         achieved: set[str] = set()

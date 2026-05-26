@@ -88,6 +88,7 @@ class LCHOLGRPORuntime:
         self.grpo_non_pg_count = 0
         self.grpo_batch_count = 0
         self._last_log_update = 0
+        self.reverse_shell_validation: dict[tuple[str, int], ShellValidationResult] = {}
 
     def sample_instruction_type(self) -> str | None:
         if self.reverse_scheduler is not None:
@@ -233,6 +234,11 @@ class LCHOLGRPORuntime:
         out.update({f"curriculum/{key}": float(value) for key, value in self.curriculum.metrics().items()})
         if self.reverse_scheduler is not None:
             out.update({f"curriculum/{key}": float(value) for key, value in self.reverse_scheduler.metrics().items()})
+            for (instruction_id, shell_id), result in sorted(self.reverse_shell_validation.items()):
+                instruction_tag = self._metric_token(instruction_id)
+                out[
+                    f"reverse_frontier/shell_success_rate/{instruction_tag}/shell_{int(shell_id):02d}"
+                ] = float(result.success_rate)
         if self.phase_scores:
             out["phase_score/mean"] = float(np.mean(np.asarray(self.phase_scores, dtype=np.float32)))
             out["phase_score/std"] = float(np.std(np.asarray(self.phase_scores, dtype=np.float32)))
@@ -305,6 +311,8 @@ class LCHOLGRPORuntime:
             )
             for item in results
         ]
+        for result in coerced:
+            self.reverse_shell_validation[(str(result.instruction_id), int(result.shell_id))] = result
         self.reverse_scheduler.update(coerced)
         if run_dir is not None:
             from pathlib import Path
@@ -335,6 +343,12 @@ class LCHOLGRPORuntime:
         if not specs:
             raise ValueError("No CDPR reverse shell specs match the available LC-HOL options.")
         return specs
+
+    @staticmethod
+    def _metric_token(value: Any) -> str:
+        token = str(value).strip().lower().replace(" ", "_")
+        token = "".join(char if char.isalnum() or char in {"_", "-", "."} else "_" for char in token)
+        return token.strip("_") or "unknown"
 
     @staticmethod
     def _episode_key(info: Mapping[str, Any]) -> tuple[Any, ...]:
