@@ -521,6 +521,14 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
 
 def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
     transformed = source
+    init_anchor = "    rank, local_rank, world_size = ppo._init_distributed()\n"
+    if init_anchor in transformed:
+        transformed = transformed.replace(
+            init_anchor,
+            "    rank, local_rank, world_size = _rlvla_init_distributed()\n",
+            1,
+        )
+
     update_anchor = "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n"
     if update_anchor in transformed:
         transformed = transformed.replace(
@@ -763,17 +771,24 @@ def _patch_desk_texture_prepare(module) -> None:
 
 
 def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
-    if timeout_seconds <= 0:
-        return
     ppo_module = getattr(module, "ppo", None)
+    original_init = (
+        getattr(ppo_module, "_init_distributed", None)
+        if ppo_module is not None
+        else getattr(module, "_init_distributed", None)
+    )
     if ppo_module is None:
+        if callable(original_init):
+            module._rlvla_init_distributed = original_init
         return
-    dist_module = getattr(ppo_module, "dist", None)
-    torch_module = getattr(ppo_module, "torch", torch)
+    dist_module = getattr(ppo_module, "dist", None) or getattr(module, "dist", None)
+    torch_module = getattr(ppo_module, "torch", None) or getattr(module, "torch", torch)
     if dist_module is None or not callable(getattr(dist_module, "init_process_group", None)):
+        if callable(original_init):
+            module._rlvla_init_distributed = original_init
         return
 
-    timeout = timedelta(seconds=max(1, int(timeout_seconds)))
+    timeout = timedelta(seconds=max(1, int(timeout_seconds))) if timeout_seconds > 0 else None
 
     def _init_distributed_with_timeout():
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
@@ -782,14 +797,18 @@ def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
 
         if world_size > 1 and not dist_module.is_initialized():
             backend = "nccl" if torch_module.cuda.is_available() else "gloo"
-            dist_module.init_process_group(backend=backend, timeout=timeout)
-            if rank == 0:
+            kwargs = {"backend": backend}
+            if timeout is not None:
+                kwargs["timeout"] = timeout
+            dist_module.init_process_group(**kwargs)
+            if timeout is not None and rank == 0:
                 print(
                     f"[rlvla-ddp] process-group timeout set to {int(timeout.total_seconds())}s",
                     flush=True,
                 )
         return rank, local_rank, world_size
 
+    module._rlvla_init_distributed = _init_distributed_with_timeout
     ppo_module._init_distributed = _init_distributed_with_timeout
 
 

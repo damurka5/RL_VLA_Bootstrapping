@@ -308,9 +308,22 @@ class FastGRPOWrapperTests(unittest.TestCase):
             {"WORLD_SIZE": "2", "RANK": "0", "LOCAL_RANK": "1"},
             clear=False,
         ):
-            self.assertEqual(fake_ppo._init_distributed(), (0, 1, 2))
+            self.assertEqual(module._rlvla_init_distributed(), (0, 1, 2))
 
         self.assertEqual(calls, [("nccl", 14400.0)])
+        self.assertIs(fake_ppo._init_distributed, module._rlvla_init_distributed)
+
+    def test_ddp_sync_transform_routes_distributed_init_through_wrapper(self):
+        source = (
+            "def main():\n"
+            "    rank, local_rank, world_size = ppo._init_distributed()\n"
+            "    return rank, local_rank, world_size\n"
+        )
+
+        patched = _transform_external_grpo_source_for_ddp_sync(source)
+
+        self.assertIn("rank, local_rank, world_size = _rlvla_init_distributed()", patched)
+        self.assertNotIn("ppo._init_distributed()", patched)
 
     def test_ddp_sync_transform_adds_rank_barriers_before_update_and_train(self):
         source = (
