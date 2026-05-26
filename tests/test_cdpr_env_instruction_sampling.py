@@ -91,6 +91,50 @@ class EnvInstructionSamplingTests(unittest.TestCase):
 
         self.assertEqual(scene.objects, ("ycb_apple", "ycb_pear", "plate"))
 
+    def test_sample_scene_augments_relation_instruction_with_catchable_target(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.scenes = [
+            SceneSpec(name="desk", objects=("plate",)),
+        ]
+        env._task_metadata = {
+            "catchable_object_pool": ["ycb_apple", "ycb_pear"],
+            "container_object_pool": ["plate", "bowl"],
+        }
+        env.allowed_objects = ("ycb_apple", "ycb_pear", "plate", "bowl")
+        env.np_random = np.random.default_rng(0)
+
+        scene = env._sample_scene(options={"scene": "desk", "instruction_type": "move_right_of_object"})
+
+        self.assertIn("plate", scene.objects)
+        self.assertTrue({"ycb_apple", "ycb_pear"}.intersection(scene.objects))
+        self.assertTrue(env._scene_supports_instruction_type(scene, "move_right_of_object"))
+
+        env._catalog_to_body = {name: f"{name}_body" for name in scene.objects}
+        target_catalog, _target_body, reference_catalog, _reference_body, _second_catalog, _second_body = (
+            env._select_instruction_objects(scene, instruction_type="move_right_of_object")
+        )
+        self.assertIn(target_catalog, {"ycb_apple", "ycb_pear"})
+        self.assertEqual(reference_catalog, "plate")
+
+    def test_sample_scene_augments_between_instruction_to_three_objects(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.scenes = [
+            SceneSpec(name="desk", objects=("plate",)),
+        ]
+        env._task_metadata = {
+            "catchable_object_pool": ["ycb_apple"],
+            "container_object_pool": ["plate", "bowl"],
+            "distractor_object_pool": ["bowl"],
+        }
+        env.allowed_objects = ("ycb_apple", "plate", "bowl")
+        env.np_random = np.random.default_rng(0)
+
+        scene = env._sample_scene(options={"instruction_type": "move_between_objects"})
+
+        self.assertEqual(len(set(scene.objects)), 3)
+        self.assertIn("ycb_apple", scene.objects)
+        self.assertTrue(env._scene_supports_instruction_type(scene, "move_between_objects"))
+
     def test_instruction_curriculum_filters_allowed_candidates_by_episode(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         env.instruction_types = ("grab_object", "push_left", "put_into_plate")

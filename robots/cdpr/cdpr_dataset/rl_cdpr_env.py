@@ -2237,22 +2237,75 @@ class CDPRLanguageRLEnv(_EnvBase):
 
     def _augment_scene_for_instruction_type(self, scene: SceneSpec, instruction_type: str) -> SceneSpec:
         instruction_type = str(instruction_type).strip()
-        if instruction_type != "put_into_plate":
+        if not instruction_type:
             return scene
 
-        scene_catalogs = _dedupe_names([str(name) for name in scene.objects if str(name)])
-        if self._container_scene_catalogs(scene_catalogs) or not self._catchable_scene_catalogs(scene_catalogs):
+        scene_catalogs = list(_dedupe_names([str(name) for name in scene.objects if str(name)]))
+        if instruction_type not in CATCHABLE_TARGET_INSTRUCTION_TYPES:
             return scene
 
-        for container in self._metadata_catalog_pool("container_object_pool", default=DEFAULT_CONTAINER_OBJECTS):
-            container = str(container)
-            if container and container not in scene_catalogs:
-                return SceneSpec(
-                    name=scene.name,
-                    objects=tuple([*scene_catalogs, container]),
-                    target_object=scene.target_object,
+        def _append_first_available(pool: Sequence[str], *, blocked: set[str] | None = None) -> bool:
+            blocked = set() if blocked is None else {str(name) for name in blocked}
+            existing = set(scene_catalogs)
+            for raw_name in pool:
+                name = str(raw_name).strip()
+                if not name or name in existing or name in blocked:
+                    continue
+                scene_catalogs.append(name)
+                return True
+            return False
+
+        if not self._catchable_scene_catalogs(scene_catalogs):
+            _append_first_available(
+                self._metadata_catalog_pool(
+                    "catchable_object_pool",
+                    "grippable_object_pool",
+                    "target_object_pool",
+                    default=DEFAULT_CATCHABLE_OBJECTS,
                 )
-        return scene
+            )
+
+        if instruction_type == "put_into_plate":
+            catchable = self._catchable_scene_catalogs(scene_catalogs)
+            containers = self._container_scene_catalogs(scene_catalogs)
+            if any(container != target for target in catchable for container in containers):
+                return SceneSpec(name=scene.name, objects=tuple(scene_catalogs), target_object=scene.target_object)
+
+            _append_first_available(
+                self._metadata_catalog_pool("container_object_pool", default=DEFAULT_CONTAINER_OBJECTS),
+                blocked=set(catchable),
+            )
+            return SceneSpec(name=scene.name, objects=tuple(scene_catalogs), target_object=scene.target_object)
+
+        reference_pool = _dedupe_names(
+            [
+                *self._metadata_catalog_pool("distractor_object_pool", default=()),
+                *self._metadata_catalog_pool("required_scene_object_pool", default=()),
+                *self._metadata_catalog_pool("container_object_pool", default=DEFAULT_CONTAINER_OBJECTS),
+                *self._metadata_catalog_pool("target_object_pool", default=DEFAULT_CATCHABLE_OBJECTS),
+                *getattr(self, "allowed_objects", ()),
+            ]
+        )
+        catchable = self._catchable_scene_catalogs(scene_catalogs)
+        if instruction_type in {
+            "move_left_of_object",
+            "move_right_of_object",
+            "put_in_front_of_object",
+            "put_behind_object",
+        }:
+            if not any(ref != target for target in catchable for ref in scene_catalogs):
+                _append_first_available(reference_pool, blocked=set(catchable))
+            return SceneSpec(name=scene.name, objects=tuple(scene_catalogs), target_object=scene.target_object)
+
+        if instruction_type == "move_between_objects":
+            while len(set(scene_catalogs)) < 3:
+                before = len(scene_catalogs)
+                _append_first_available(reference_pool, blocked=set(catchable))
+                if len(scene_catalogs) == before:
+                    break
+            return SceneSpec(name=scene.name, objects=tuple(scene_catalogs), target_object=scene.target_object)
+
+        return SceneSpec(name=scene.name, objects=tuple(scene_catalogs), target_object=scene.target_object)
 
     def _scene_supports_instruction_type(self, scene: SceneSpec, instruction_type: str) -> bool:
         instruction_type = str(instruction_type).strip()
