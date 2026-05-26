@@ -24,12 +24,29 @@ if str(CDPR_ROOT) not in sys.path:
     sys.path.insert(0, str(CDPR_ROOT))
 
 DEFAULT_OUTPUT = ROOT / "runs" / "cdpr_reverse_frontier_shell_videos"
-DEFAULT_OBJECTS = ("ycb_apple", "ycb_pear", "ycb_baseball")
-DEFAULT_INSTRUCTION = "put_into_plate"
+DEFAULT_OBJECTS = ("ycb_apple",)
+DEFAULT_INSTRUCTION_TYPES = (
+    "move_to_object",
+    "grab_object",
+    "pick_up",
+    "put_into_plate",
+    "push_left",
+    "push_right",
+    "move_left_of_object",
+    "move_right_of_object",
+    "put_in_front_of_object",
+    "put_behind_object",
+    "move_between_objects",
+)
+REFERENCE_OBJECT = "ycb_pear"
+SECOND_REFERENCE_OBJECT = "ycb_baseball"
+CONTAINER_OBJECT = "plate"
 
 
 def _task_metadata(objects: list[str]) -> dict[str, Any]:
-    object_pool = list(dict.fromkeys([*objects, "plate", "bowl"]))
+    object_pool = list(
+        dict.fromkeys([*objects, REFERENCE_OBJECT, SECOND_REFERENCE_OBJECT, CONTAINER_OBJECT, "bowl"])
+    )
     return {
         "instruction_sampling": "uniform_cycle",
         "reward_mode": "sparse_binary",
@@ -38,8 +55,8 @@ def _task_metadata(objects: list[str]) -> dict[str, Any]:
         "target_object_pool": objects,
         "catchable_object_pool": objects,
         "grippable_object_pool": objects,
-        "container_object_pool": ["plate", "bowl"],
-        "required_scene_object_pool": ["plate"],
+        "container_object_pool": [CONTAINER_OBJECT, "bowl"],
+        "required_scene_object_pool": [CONTAINER_OBJECT],
         "scene_object_pool": object_pool,
         "distractor_object_pool": object_pool,
         "min_scene_objects": 3,
@@ -157,18 +174,61 @@ def _capture(env, *, object_name: str, instruction_type: str, shell_id: int, lab
     )
 
 
-def _scripted_action(env, *, instruction_type: str, shell_id: int) -> np.ndarray:
-    del shell_id
+def _object_label(object_name: str) -> str:
+    return str(object_name).replace("ycb_", "").replace("_", " ")
+
+
+def _instruction_text(instruction_type: str, object_name: str) -> str:
+    obj = _object_label(object_name)
+    ref = _object_label(REFERENCE_OBJECT)
+    second = _object_label(SECOND_REFERENCE_OBJECT)
+    if instruction_type == "move_to_object":
+        return f"move to {obj}"
+    if instruction_type == "grab_object":
+        return f"grab {obj}"
+    if instruction_type == "pick_up":
+        return f"pick up {obj}"
     if instruction_type == "put_into_plate":
-        target = np.asarray(env._current_target_reference_position(), dtype=np.float32)
-        ee = np.asarray(env._get_ee_position(), dtype=np.float32)
-        delta = target - ee
-        action = np.zeros((5,), dtype=np.float32)
-        if float(np.linalg.norm(delta[:3])) > 1e-6:
-            action[:3] = np.clip(delta[:3] / max(float(getattr(env, "action_step_xyz", 0.02)), 1e-6), -0.5, 0.5)
-        action[4] = 1.0
-        return action
-    return np.array([0.0, 0.0, 0.0, 0.0, 0.5], dtype=np.float32)
+        return f"put {obj} into plate"
+    if instruction_type == "push_left":
+        return f"push {obj} left"
+    if instruction_type == "push_right":
+        return f"push {obj} right"
+    if instruction_type == "move_left_of_object":
+        return f"move {obj} left of {ref}"
+    if instruction_type == "move_right_of_object":
+        return f"move {obj} right of {ref}"
+    if instruction_type == "put_in_front_of_object":
+        return f"put {obj} in front of {ref}"
+    if instruction_type == "put_behind_object":
+        return f"put {obj} behind {ref}"
+    if instruction_type == "move_between_objects":
+        return f"move {obj} between {ref} and {second}"
+    return instruction_type.replace("_", " ")
+
+
+def _reset_options(*, instruction_type: str, object_name: str) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "instruction_type": str(instruction_type),
+        "target_object": str(object_name),
+        "required_objects": [str(object_name)],
+    }
+    if instruction_type == "put_into_plate":
+        options["reference_object"] = CONTAINER_OBJECT
+        options["required_objects"] = [str(object_name), CONTAINER_OBJECT]
+    elif instruction_type in {
+        "move_left_of_object",
+        "move_right_of_object",
+        "put_in_front_of_object",
+        "put_behind_object",
+    }:
+        options["reference_object"] = REFERENCE_OBJECT
+        options["required_objects"] = [str(object_name), REFERENCE_OBJECT]
+    elif instruction_type == "move_between_objects":
+        options["reference_object"] = REFERENCE_OBJECT
+        options["second_reference_object"] = SECOND_REFERENCE_OBJECT
+        options["required_objects"] = [str(object_name), REFERENCE_OBJECT, SECOND_REFERENCE_OBJECT]
+    return options
 
 
 def _render_shell(
@@ -178,6 +238,7 @@ def _render_shell(
     shell_id: int,
     run_dir: Path,
     fps: float,
+    hold_seconds: float,
     keep_frames: bool,
     seed: int,
 ) -> dict[str, Any]:
@@ -198,7 +259,7 @@ def _render_shell(
         hold_steps=4,
         capture_frames=False,
         instruction_types=[instruction_type],
-        allowed_objects=[object_name, "plate", "bowl", "ycb_pear", "ycb_apple", "ycb_baseball"],
+        allowed_objects=[object_name, CONTAINER_OBJECT, "bowl", REFERENCE_OBJECT, SECOND_REFERENCE_OBJECT],
         wrapper_cleanup=False,
         use_wrapper_cache=True,
         reuse_existing_wrapper_variants=True,
@@ -206,47 +267,34 @@ def _render_shell(
     )
     frames: list[np.ndarray] = []
     try:
+        options = _reset_options(instruction_type=instruction_type, object_name=object_name)
         obs, info = env.reset(
             options={
-                "required_objects": [object_name, "plate"],
-                "target_object": object_name,
-                "reference_object": "plate",
+                **options,
             },
-            instruction=f"put {object_name.replace('ycb_', '').replace('_', ' ')} into plate",
+            instruction=_instruction_text(instruction_type, object_name),
             curriculum_mode="reverse_frontier",
             curriculum_shell=shell_id,
         )
         del obs
-        for _ in range(8):
+        if hasattr(env.sim, "hold_current_pose"):
+            env.sim.hold_current_pose(warm_steps=0)
+
+        hold_frames = max(1, int(round(float(fps) * max(float(hold_seconds), 0.1))))
+        for _ in range(hold_frames):
             frames.append(
                 _capture(
                     env,
                     object_name=object_name,
                     instruction_type=instruction_type,
                     shell_id=shell_id,
-                    label="reverse shell reset",
+                    label=f"held reverse shell reset ({hold_seconds:.1f}s)",
                 )
             )
-            if hasattr(env.sim, "run_simulation_step"):
-                env.sim.run_simulation_step(capture_frame=False)
 
-        action = _scripted_action(env, instruction_type=instruction_type, shell_id=shell_id)
-        for step_idx in range(18):
-            _obs, _reward, done, truncated, step_info = env.step(action)
-            frames.append(
-                _capture(
-                    env,
-                    object_name=object_name,
-                    instruction_type=instruction_type,
-                    shell_id=shell_id,
-                    label=f"scripted sparse probe step {step_idx + 1}",
-                )
-            )
-            if done or truncated:
-                break
-
-        object_dir = run_dir / object_name
-        video_path = object_dir / f"{instruction_type}_shell_{shell_id:02d}.mp4"
+        object_dir = run_dir / object_name / instruction_type
+        video_path = object_dir / f"{object_name}_{instruction_type}_shell_{shell_id:02d}.mp4"
+        final_info = env._base_info()
         _write_video(frames, video_path, fps=fps, keep_frames=keep_frames)
         summary = {
             "object": object_name,
@@ -256,7 +304,7 @@ def _render_shell(
             "video": str(video_path),
             "frames": len(frames),
             "reset_info": info,
-            "final_info": step_info if "step_info" in locals() else info,
+            "final_info": final_info,
         }
         (video_path.with_suffix(".json")).write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
         return summary
@@ -267,12 +315,21 @@ def _render_shell(
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--objects", nargs="*", default=list(DEFAULT_OBJECTS))
-    parser.add_argument("--instruction-type", default=DEFAULT_INSTRUCTION)
+    parser.add_argument("--instruction-type", default=None)
+    parser.add_argument("--instruction-types", nargs="*", default=None)
     parser.add_argument("--output", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--fps", type=float, default=12.0)
+    parser.add_argument("--hold-seconds", type=float, default=2.5)
     parser.add_argument("--keep-frames", action="store_true")
     parser.add_argument("--seed", type=int, default=20260525)
     args = parser.parse_args()
+
+    if args.instruction_type:
+        instruction_types = [str(args.instruction_type)]
+    elif args.instruction_types:
+        instruction_types = [str(item) for item in args.instruction_types]
+    else:
+        instruction_types = list(DEFAULT_INSTRUCTION_TYPES)
 
     run_dir = args.output / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -282,28 +339,35 @@ def main() -> None:
     try:
         from robots.cdpr.cdpr_dataset.cdpr_reverse_shells import get_cdpr_reverse_shell_specs
 
-        specs = {spec.instruction_id: spec for spec in get_cdpr_reverse_shell_specs([args.instruction_type])}
-        shell_count = int(specs[str(args.instruction_type)].shell_count)
+        specs = {spec.instruction_id: spec for spec in get_cdpr_reverse_shell_specs(instruction_types)}
         summaries: list[dict[str, Any]] = []
         for object_idx, object_name in enumerate(args.objects):
-            for shell_id in range(shell_count):
-                print(f"[render] object={object_name} instruction={args.instruction_type} shell={shell_id}/{shell_count - 1}")
-                summaries.append(
-                    _render_shell(
-                        object_name=str(object_name),
-                        instruction_type=str(args.instruction_type),
-                        shell_id=shell_id,
-                        run_dir=run_dir,
-                        fps=float(args.fps),
-                        keep_frames=bool(args.keep_frames),
-                        seed=int(args.seed) + object_idx * 100 + shell_id,
+            for instruction_idx, instruction_type in enumerate(instruction_types):
+                if instruction_type not in specs:
+                    raise ValueError(f"No reverse shell spec for instruction_type={instruction_type!r}.")
+                shell_count = int(specs[instruction_type].shell_count)
+                for shell_id in range(shell_count):
+                    print(
+                        f"[render] object={object_name} instruction={instruction_type} "
+                        f"shell={shell_id}/{shell_count - 1}"
                     )
-                )
+                    summaries.append(
+                        _render_shell(
+                            object_name=str(object_name),
+                            instruction_type=str(instruction_type),
+                            shell_id=shell_id,
+                            run_dir=run_dir,
+                            fps=float(args.fps),
+                            hold_seconds=float(args.hold_seconds),
+                            keep_frames=bool(args.keep_frames),
+                            seed=int(args.seed) + object_idx * 1000 + instruction_idx * 100 + shell_id,
+                        )
+                    )
         manifest = {
             "run_dir": str(run_dir),
             "objects": [str(obj) for obj in args.objects],
-            "instruction_type": str(args.instruction_type),
-            "shell_count": shell_count,
+            "instruction_types": instruction_types,
+            "hold_seconds": float(args.hold_seconds),
             "videos": summaries,
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
