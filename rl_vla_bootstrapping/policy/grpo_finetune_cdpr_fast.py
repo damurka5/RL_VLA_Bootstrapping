@@ -29,9 +29,13 @@ _CDPR_CURRICULUM_OPTIONS = (
     "pick_up",
     "push_left",
     "push_right",
+    "push_forward",
+    "push_backward",
     "put_into_plate",
     "move_left_of_object",
     "move_right_of_object",
+    "move_in_front_of_object",
+    "move_behind_object",
     "put_in_front_of_object",
     "put_behind_object",
     "move_between_objects",
@@ -1333,11 +1337,16 @@ class _RolloutTensorboardLogger:
         if self._wrong_object_contact(info) >= 0.20:
             return ""
         motion_x = self._finite_float(info.get("target_motion_x"), fallback=0.0)
+        motion_y = self._finite_float(info.get("target_motion_y"), fallback=0.0)
         threshold = max(self._finite_float(info.get("push_success_displacement"), fallback=0.08), 0.02)
         if motion_x >= threshold:
             return "push_right"
         if motion_x <= -threshold:
             return "push_left"
+        if motion_y >= threshold:
+            return "push_forward"
+        if motion_y <= -threshold:
+            return "push_backward"
         return ""
 
     def _relation_success(self, info: dict[str, Any]) -> str:
@@ -1349,18 +1358,33 @@ class _RolloutTensorboardLogger:
         if instruction in {
             "move_left_of_object",
             "move_right_of_object",
+            "move_in_front_of_object",
+            "move_behind_object",
             "put_in_front_of_object",
             "put_behind_object",
         } and self._success_value(info) >= 0.5:
             return instruction
 
         signed = self._finite_float(info.get("signed_relation_offset"), fallback=0.0)
-        offset = max(self._finite_float(info.get("relation_left_right_offset"), fallback=0.08), 1e-6)
+        axis = int(round(self._finite_float(info.get("relation_axis"), fallback=0.0)))
+        sign = self._finite_float(info.get("relation_axis_sign"), fallback=1.0)
+        offset_key = "relation_front_behind_offset" if axis == 1 else "relation_left_right_offset"
+        offset = max(
+            self._finite_float(
+                info.get(offset_key),
+                fallback=self._finite_float(info.get("relation_left_right_offset"), fallback=0.08),
+            ),
+            1e-6,
+        )
         motion_ok = self._truthy(info.get("relation_motion_ok", True))
         if signed >= offset and motion_ok:
-            return "move_right_of_object"
+            if axis == 1:
+                return "move_behind_object" if sign > 0.0 else "move_in_front_of_object"
+            return "move_right_of_object" if sign > 0.0 else "move_left_of_object"
         if signed <= -offset and motion_ok:
-            return "move_left_of_object"
+            if axis == 1:
+                return "move_in_front_of_object" if sign > 0.0 else "move_behind_object"
+            return "move_left_of_object" if sign > 0.0 else "move_right_of_object"
         return ""
 
     def _success_value(self, info: dict[str, Any]) -> float:

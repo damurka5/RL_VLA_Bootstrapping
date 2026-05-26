@@ -22,6 +22,22 @@ class CDPRLCHOLSpecTests(unittest.TestCase):
         self.assertEqual(achieved[0].option_name, "push_left")
         self.assertEqual(spec.relabel_instruction(achieved[0]), "push apple left")
 
+    def test_push_forward_is_relabelled_from_y_motion(self):
+        spec = CDPRLCHOLSpec()
+        achieved = spec.achieved_options(
+            [
+                {
+                    "instruction_type": "push_backward",
+                    "source_instruction": "push apple backward",
+                    "target_object_catalog": "ycb_apple",
+                    "target_motion_y": 0.10,
+                }
+            ]
+        )
+
+        self.assertEqual(achieved[0].option_name, "push_forward")
+        self.assertEqual(spec.relabel_instruction(achieved[0]), "push apple forward")
+
     def test_relation_score_penalizes_wrong_side(self):
         spec = CDPRLCHOLSpec()
         good = spec.phase_score(

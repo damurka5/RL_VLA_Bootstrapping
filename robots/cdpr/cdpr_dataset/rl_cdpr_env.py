@@ -86,16 +86,21 @@ CDPR_RANDOMIZE_EE_START_ENV = "RLVLA_CDPR_RANDOMIZE_EE_START"
 CDPR_EE_START_X_BOUNDS_ENV = "RLVLA_CDPR_EE_START_X_BOUNDS"
 CDPR_EE_START_Y_BOUNDS_ENV = "RLVLA_CDPR_EE_START_Y_BOUNDS"
 CDPR_EE_START_Z_ENV = "RLVLA_CDPR_EE_START_Z"
+CDPR_RANDOMIZE_EE_YAW_ENV = "RLVLA_CDPR_RANDOMIZE_EE_YAW"
+CDPR_EE_YAW_BOUNDS_ENV = "RLVLA_CDPR_EE_YAW_BOUNDS"
 CDPR_RECORD_TRAJECTORY_ENV = "RLVLA_CDPR_RECORD_TRAJECTORY"
 CDPR_ACTION_STEP_GRIPPER_ENV = "RLVLA_CDPR_ACTION_STEP_GRIPPER"
 DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
+DEFAULT_RANDOM_EE_YAW_BOUNDS = (-np.pi, np.pi)
 DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
 DEFAULT_GOAL_HEIGHT_ABOVE_TABLE = 0.10
 DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_into_plate",
     "move_left_of_object",
     "move_right_of_object",
+    "move_in_front_of_object",
+    "move_behind_object",
     "put_in_front_of_object",
     "put_behind_object",
     "move_between_objects",
@@ -223,12 +228,20 @@ def _infer_instruction_type_from_text(instruction: str) -> str | None:
         return "push_left"
     if text.startswith("push ") and text.endswith(" right"):
         return "push_right"
+    if text.startswith("push ") and text.endswith(" forward"):
+        return "push_forward"
+    if text.startswith("push ") and text.endswith(" backward"):
+        return "push_backward"
     if text.startswith("put ") and (" plate" in text or " bowl" in text or " into " in text or " on " in text):
         return "put_into_plate"
     if text.startswith("move ") and " to the left of " in text:
         return "move_left_of_object"
     if text.startswith("move ") and " to the right of " in text:
         return "move_right_of_object"
+    if text.startswith("move ") and " in front of " in text:
+        return "move_in_front_of_object"
+    if text.startswith("move ") and " behind " in text:
+        return "move_behind_object"
     if text.startswith("put ") and " in front of " in text:
         return "put_in_front_of_object"
     if text.startswith("put ") and " behind " in text:
@@ -1184,6 +1197,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_start_x_bounds: Sequence[float] | None = None,
         ee_start_y_bounds: Sequence[float] | None = None,
         ee_start_z: float | None = None,
+        randomize_ee_yaw: bool | None = None,
+        ee_yaw_bounds: Sequence[float] | None = None,
         record_trajectory: bool | None = None,
         move_distance: float = 0.40,
         lift_distance: float = 0.10,
@@ -1256,6 +1271,13 @@ class CDPRLanguageRLEnv(_EnvBase):
         if ee_start_z is None:
             loaded_ee_start_z = _load_float_env(CDPR_EE_START_Z_ENV, default=float("nan"))
             ee_start_z = None if not np.isfinite(loaded_ee_start_z) else float(loaded_ee_start_z)
+        if randomize_ee_yaw is None:
+            randomize_ee_yaw = _load_bool_env(CDPR_RANDOMIZE_EE_YAW_ENV, default=False)
+        if ee_yaw_bounds is None:
+            ee_yaw_bounds = _load_float_pair_env(
+                CDPR_EE_YAW_BOUNDS_ENV,
+                default=DEFAULT_RANDOM_EE_YAW_BOUNDS,
+            )
         if record_trajectory is None:
             record_trajectory = _load_bool_env(CDPR_RECORD_TRAJECTORY_ENV, default=False)
         self.lock_non_commanded_axes = bool(lock_non_commanded_axes)
@@ -1264,6 +1286,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.ee_start_x_bounds = _normalize_float_pair(ee_start_x_bounds, name="ee_start_x_bounds")
         self.ee_start_y_bounds = _normalize_float_pair(ee_start_y_bounds, name="ee_start_y_bounds")
         self.ee_start_z = None if ee_start_z is None else max(float(ee_start_z), MIN_EE_START_Z)
+        self.randomize_ee_yaw = bool(randomize_ee_yaw)
+        self.ee_yaw_bounds = _normalize_float_pair(ee_yaw_bounds, name="ee_yaw_bounds")
         self.record_trajectory = bool(record_trajectory)
         self.move_distance = float(move_distance)
         self.lift_distance = float(lift_distance)
@@ -1382,6 +1406,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._ee_spawn_z = float("-inf")
         self._locked_target_xyz = np.zeros((3,), dtype=np.float32)
         self._episode_ee_start = self._default_ee_start().astype(np.float32)
+        self._episode_ee_yaw = 0.0
         self._goal_position = np.zeros((3,), dtype=np.float32)
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
         self._episode_index = -1
@@ -1494,6 +1519,10 @@ class CDPRLanguageRLEnv(_EnvBase):
                     rng=self.np_random,
                 )
             )
+
+        episode_ee_yaw = self._sample_episode_ee_yaw(options=options)
+        if episode_ee_yaw is not None:
+            self._set_ee_yaw(float(episode_ee_yaw))
 
         ee0 = self._get_ee_position()
         self._goal_position = self._compute_instruction_goal(
@@ -2401,6 +2430,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         if instruction_type in {
             "move_left_of_object",
             "move_right_of_object",
+            "move_in_front_of_object",
+            "move_behind_object",
             "put_in_front_of_object",
             "put_behind_object",
         }:
@@ -2437,6 +2468,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         if instruction_type in {
             "move_left_of_object",
             "move_right_of_object",
+            "move_in_front_of_object",
+            "move_behind_object",
             "put_in_front_of_object",
             "put_behind_object",
         }:
@@ -2474,6 +2507,14 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_start[0] = float(self.np_random.uniform(*self.ee_start_x_bounds))
         ee_start[1] = float(self.np_random.uniform(*self.ee_start_y_bounds))
         return ee_start
+
+    def _sample_episode_ee_yaw(self, options: Optional[dict[str, Any]] = None) -> float | None:
+        requested = (options or {}).get("ee_yaw")
+        if requested is not None:
+            return float(requested)
+        if not bool(getattr(self, "randomize_ee_yaw", False)):
+            return None
+        return float(self.np_random.uniform(*getattr(self, "ee_yaw_bounds", DEFAULT_RANDOM_EE_YAW_BOUNDS)))
 
     def _allowed_instruction_candidates(self) -> tuple[str, ...]:
         if self.instruction_types:
@@ -2696,6 +2737,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         elif str(instruction_type) in {
             "move_left_of_object",
             "move_right_of_object",
+            "move_in_front_of_object",
+            "move_behind_object",
             "put_in_front_of_object",
             "put_behind_object",
         } and not reference_catalog:
@@ -2777,7 +2820,12 @@ class CDPRLanguageRLEnv(_EnvBase):
             goal[0] += sign * offset
             return np.asarray(clamp_xyz(goal), dtype=np.float32)
 
-        if instruction_type in {"put_in_front_of_object", "put_behind_object"}:
+        if instruction_type in {
+            "move_in_front_of_object",
+            "move_behind_object",
+            "put_in_front_of_object",
+            "put_behind_object",
+        }:
             ref_pos = self._reference_object_position(default=target_pos)
             offset = float(
                 self._task_metadata.get(
@@ -2785,7 +2833,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                     self._task_metadata.get("relation_left_right_offset", 0.08),
                 )
             )
-            sign = 1.0 if instruction_type == "put_in_front_of_object" else -1.0
+            sign = -1.0 if instruction_type in {"move_in_front_of_object", "put_in_front_of_object"} else 1.0
             goal = ref_pos.copy()
             goal[1] += sign * offset
             return np.asarray(clamp_xyz(goal), dtype=np.float32)
@@ -2796,9 +2844,14 @@ class CDPRLanguageRLEnv(_EnvBase):
             goal = 0.5 * (ref_a + ref_b)
             return np.asarray(clamp_xyz(goal), dtype=np.float32)
 
-        if instruction_type in {"push_left", "push_right"}:
+        if instruction_type in {"push_left", "push_right", "push_forward", "push_backward"}:
             distance = float(self._task_metadata.get("push_success_displacement", 0.08))
-            sign = -1.0 if instruction_type == "push_left" else 1.0
+            if instruction_type in {"push_left", "push_right"}:
+                axis = 0
+                sign = -1.0 if instruction_type == "push_left" else 1.0
+            else:
+                axis = 1
+                sign = 1.0 if instruction_type == "push_forward" else -1.0
             goal = np.asarray(target_pos, dtype=np.float32).copy()
             initial = (
                 np.asarray(self._reward_state.initial_obj_pos, dtype=np.float32)
@@ -2806,7 +2859,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                 else goal
             )
             goal = initial.copy()
-            goal[0] += sign * distance
+            goal[axis] += sign * distance
             return np.asarray(clamp_xyz(goal), dtype=np.float32)
 
         return target_pos.astype(np.float32)
@@ -2829,11 +2882,15 @@ class CDPRLanguageRLEnv(_EnvBase):
                 "put_into_plate",
                 "move_left_of_object",
                 "move_right_of_object",
+                "move_in_front_of_object",
+                "move_behind_object",
                 "put_in_front_of_object",
                 "put_behind_object",
                 "move_between_objects",
                 "push_left",
                 "push_right",
+                "push_forward",
+                "push_backward",
             }:
                 goal = self._compute_relation_goal_position(spec=spec, target_pos=target_pos)
             else:
@@ -3172,6 +3229,44 @@ class CDPRLanguageRLEnv(_EnvBase):
                 return 0.0
         return 0.0
 
+    def _set_ee_yaw(self, yaw: float) -> None:
+        if self.sim is None:
+            self._yaw = float(yaw)
+            self._episode_ee_yaw = float(yaw)
+            return
+
+        yaw_value = float(yaw)
+        yaw_min = float(getattr(self.sim, "yaw_min", -np.pi))
+        yaw_max = float(getattr(self.sim, "yaw_max", np.pi))
+        yaw_value = float(np.clip(yaw_value, min(yaw_min, yaw_max), max(yaw_min, yaw_max)))
+
+        if hasattr(self.sim, "set_yaw"):
+            try:
+                self.sim.set_yaw(yaw_value)
+            except Exception:
+                pass
+
+        qadr = getattr(self.sim, "jnt_yaw_qadr", None)
+        data = getattr(self.sim, "data", None)
+        if qadr is not None and data is not None and hasattr(data, "qpos"):
+            try:
+                data.qpos[int(qadr)] = yaw_value
+                model = getattr(self.sim, "model", None)
+                if hasattr(data, "qvel"):
+                    joint_id = getattr(self.sim, "jnt_yaw", None)
+                    dofadr = None
+                    if model is not None and joint_id is not None and hasattr(model, "jnt_dofadr"):
+                        dofadr = int(model.jnt_dofadr[int(joint_id)])
+                    if dofadr is not None and 0 <= dofadr < len(data.qvel):
+                        data.qvel[dofadr] = 0.0
+                if mj is not None and model is not None:
+                    mj.mj_forward(model, data)
+            except Exception:
+                pass
+
+        self._yaw = yaw_value
+        self._episode_ee_yaw = yaw_value
+
     def _set_ee_target(self, xyz: np.ndarray):
         if hasattr(self.sim, "set_end_effector_target"):
             self.sim.set_end_effector_target(xyz)
@@ -3287,11 +3382,15 @@ class CDPRLanguageRLEnv(_EnvBase):
                     "put_into_plate",
                     "move_left_of_object",
                     "move_right_of_object",
+                    "move_in_front_of_object",
+                    "move_behind_object",
                     "put_in_front_of_object",
                     "put_behind_object",
                     "move_between_objects",
                     "push_left",
                     "push_right",
+                    "push_forward",
+                    "push_backward",
                 }:
                     return self._compute_relation_goal_position(
                         spec=self._instruction_spec,
@@ -3616,6 +3715,12 @@ class CDPRLanguageRLEnv(_EnvBase):
             "ee_start_z_override": (
                 float(self.ee_start_z) if self.ee_start_z is not None else float("nan")
             ),
+            "randomize_ee_yaw": bool(getattr(self, "randomize_ee_yaw", False)),
+            "ee_yaw_bounds": [
+                float(getattr(self, "ee_yaw_bounds", DEFAULT_RANDOM_EE_YAW_BOUNDS)[0]),
+                float(getattr(self, "ee_yaw_bounds", DEFAULT_RANDOM_EE_YAW_BOUNDS)[1]),
+            ],
+            "episode_ee_yaw": float(getattr(self, "_episode_ee_yaw", self._yaw)),
             "record_trajectory": bool(self.record_trajectory),
             "action_step_gripper": float(self.action_step_gripper),
             "curriculum_mode": str(getattr(self, "_curriculum_mode", "")),

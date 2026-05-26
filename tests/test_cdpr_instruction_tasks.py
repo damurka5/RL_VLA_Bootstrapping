@@ -79,9 +79,33 @@ class InstructionTextTests(unittest.TestCase):
             rng=np.random.default_rng(0),
             allowed_instruction_types=["put_behind_object"],
         )
+        move_front = sample_instruction(
+            target_object="ycb_apple",
+            reference_object="ycb_pear",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["move_in_front_of_object"],
+        )
+        move_behind = sample_instruction(
+            target_object="ycb_apple",
+            reference_object="ycb_pear",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["move_behind_object"],
+        )
 
         self.assertEqual(front.text, "put apple in front of pear")
         self.assertEqual(behind.text, "put apple behind pear")
+        self.assertEqual(move_front.text, "move apple in front of pear")
+        self.assertEqual(move_behind.text, "move apple behind pear")
+
+    def test_push_forward_instruction_uses_object_text(self):
+        spec = sample_instruction(
+            target_object="ycb_apple",
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["push_forward"],
+        )
+
+        self.assertEqual(spec.instruction_type, "push_forward")
+        self.assertEqual(spec.text, "push apple forward")
 
     def test_move_top_instruction_uses_forward_text(self):
         spec = sample_instruction(

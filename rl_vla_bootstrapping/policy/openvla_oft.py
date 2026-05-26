@@ -191,6 +191,12 @@ def _extract_cdpr_env_overrides(injected: dict[str, Any]) -> dict[str, str]:
         )
     if "ee_start_z" in injected:
         env["RLVLA_CDPR_EE_START_Z"] = str(float(injected.pop("ee_start_z")))
+    if "randomize_ee_yaw" in injected:
+        env["RLVLA_CDPR_RANDOMIZE_EE_YAW"] = "1" if bool(injected.pop("randomize_ee_yaw")) else "0"
+    if "ee_yaw_bounds" in injected:
+        env["RLVLA_CDPR_EE_YAW_BOUNDS"] = json.dumps(
+            [float(value) for value in injected.pop("ee_yaw_bounds")]
+        )
     if "record_trajectory" in injected:
         env["RLVLA_CDPR_RECORD_TRAJECTORY"] = "1" if bool(injected.pop("record_trajectory")) else "0"
     if "action_step_gripper" in injected:

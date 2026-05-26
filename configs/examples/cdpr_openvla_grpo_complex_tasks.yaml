@@ -94,9 +94,13 @@ task:
       pick_up,
       push_left,
       push_right,
+      push_forward,
+      push_backward,
       put_into_plate,
       move_left_of_object,
       move_right_of_object,
+      move_in_front_of_object,
+      move_behind_object,
       put_in_front_of_object,
       put_behind_object,
       move_between_objects,
@@ -174,7 +178,7 @@ task:
     grab_closed_opening_threshold: 0.35
     catch_distance_threshold: 0.055
     catch_score_threshold: 0.30
-    push_success_displacement: 0.08
+    push_success_displacement: 0.05
     put_plate_xy_tolerance: 0.08
     put_plate_z_tolerance: 0.10
     put_container_xy_tolerance: 0.08
@@ -186,6 +190,9 @@ task:
     relation_front_behind_offset: 0.08
     relation_y_tolerance: 0.12
     relation_x_tolerance: 0.12
+    move_relation_success_zone_size: 0.05
+    move_relation_min_target_motion: 0.0
+    move_relation_require_target_grasp: false
     relation_min_target_motion: 0.04
     relation_require_target_grasp: true
     between_xy_tolerance: 0.07
@@ -195,6 +202,8 @@ task:
         put_into_plate,
         move_left_of_object,
         move_right_of_object,
+        move_in_front_of_object,
+        move_behind_object,
         put_in_front_of_object,
         put_behind_object,
         move_between_objects,
@@ -347,6 +356,8 @@ training:
       ee_start_x_bounds: [-0.25, 0.25]
       ee_start_y_bounds: [-0.25, 0.25]
       ee_start_z: 0.15
+      randomize_ee_yaw: true
+      ee_yaw_bounds: [-3.141592653589793, 3.141592653589793]
       record_trajectory: false
       delta_closer_reward_coef: 0.0
       delta_farther_penalty_coef: 0.0

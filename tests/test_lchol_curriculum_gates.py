@@ -49,10 +49,12 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
             curriculum.record({"instruction_type": option, "success": True})
         for option in ("grab_object", "pick_up"):
             curriculum.record({"instruction_type": option, "success": True})
-        for option in ("push_left", "push_right"):
+        for option in ("push_left", "push_right", "push_forward", "push_backward"):
             curriculum.record({"instruction_type": option, "success": True})
         curriculum.record({"instruction_type": "put_into_plate", "success": True})
 
+        self.assertIn("move_in_front_of_object", curriculum.allowed_options())
+        self.assertIn("move_behind_object", curriculum.allowed_options())
         self.assertIn("put_in_front_of_object", curriculum.allowed_options())
         self.assertIn("put_behind_object", curriculum.allowed_options())
 

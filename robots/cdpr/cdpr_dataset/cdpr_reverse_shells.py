@@ -18,8 +18,12 @@ _SHELL_COUNTS: dict[str, int] = {
     "put_into_plate": 6,
     "push_left": 5,
     "push_right": 5,
+    "push_forward": 5,
+    "push_backward": 5,
     "move_left_of_object": 5,
     "move_right_of_object": 5,
+    "move_in_front_of_object": 5,
+    "move_behind_object": 5,
     "put_in_front_of_object": 5,
     "put_behind_object": 5,
     "move_between_objects": 5,
@@ -32,8 +36,12 @@ _TEMPLATES: dict[str, str] = {
     "put_into_plate": "put <object> into <receptacle>",
     "push_left": "push <object> left",
     "push_right": "push <object> right",
+    "push_forward": "push <object> forward",
+    "push_backward": "push <object> backward",
     "move_left_of_object": "move <object> left of <reference>",
     "move_right_of_object": "move <object> right of <reference>",
+    "move_in_front_of_object": "move <object> in front of <reference>",
+    "move_behind_object": "move <object> behind <reference>",
     "put_in_front_of_object": "put <object> in front of <reference>",
     "put_behind_object": "put <object> behind <reference>",
     "move_between_objects": "move <object> between <ref1> and <ref2>",
@@ -150,11 +158,13 @@ def apply_cdpr_reverse_shell(
         info.update(_apply_grab_shell(env, shell_id=shell_id, rng=rng))
     elif instruction_type == "put_into_plate":
         info.update(_apply_put_shell(env, shell_id=shell_id, rng=rng))
-    elif instruction_type in {"push_left", "push_right"}:
+    elif instruction_type in {"push_left", "push_right", "push_forward", "push_backward"}:
         info.update(_apply_push_shell(env, shell_id=shell_id, rng=rng))
     elif instruction_type in {
         "move_left_of_object",
         "move_right_of_object",
+        "move_in_front_of_object",
+        "move_behind_object",
         "put_in_front_of_object",
         "put_behind_object",
     }:
@@ -253,18 +263,25 @@ def _apply_push_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> d
     if target is None:
         return {}
     instruction_type = str(getattr(getattr(env, "_instruction_spec", None), "instruction_type", "push_right"))
-    sign = -1.0 if instruction_type == "push_left" else 1.0
+    if instruction_type in {"push_left", "push_right"}:
+        axis = 0
+        sign = -1.0 if instruction_type == "push_left" else 1.0
+        tolerance_axis = 1
+    else:
+        axis = 1
+        sign = 1.0 if instruction_type == "push_forward" else -1.0
+        tolerance_axis = 0
     push_distance = _metadata_float(env, "push_success_displacement", 0.08)
     one_step = max(0.005, min(0.020, 0.5 * float(getattr(env, "action_step_xyz", 0.02))))
     current_progress = max(0.0, float(push_distance) - one_step) if shell_id == 0 else 0.0
     reward_initial = np.asarray(target, dtype=np.float32).copy()
-    reward_initial[0] -= sign * current_progress
+    reward_initial[axis] -= sign * current_progress
 
     behind_ranges = ((0.000, 0.005), (0.010, 0.020), (0.050, 0.100), (0.150, 0.200))
     behind = _uniform_range(rng, behind_ranges[min(shell_id, len(behind_ranges) - 1)])
     ee = np.asarray(target, dtype=np.float32).copy()
-    ee[0] -= sign * (behind + 0.020)
-    ee[1] += float(rng.uniform(-0.010, 0.010))
+    ee[axis] -= sign * (behind + 0.020)
+    ee[tolerance_axis] += float(rng.uniform(-0.010, 0.010))
     ee[2] = _ee_task_height(env, target, clearance=0.045)
     _force_gripper(env, 0.0)
     _move_ee(env, ee)
@@ -666,6 +683,6 @@ def _relation_axis(env: Any, instruction_type: str) -> tuple[int, float, float, 
         return 0, -1.0, _metadata_float(env, "relation_left_right_offset", 0.08), 1
     if instruction_type == "move_right_of_object":
         return 0, 1.0, _metadata_float(env, "relation_left_right_offset", 0.08), 1
-    if instruction_type == "put_in_front_of_object":
-        return 1, 1.0, _metadata_float(env, "relation_front_behind_offset", 0.08), 0
-    return 1, -1.0, _metadata_float(env, "relation_front_behind_offset", 0.08), 0
+    if instruction_type in {"move_in_front_of_object", "put_in_front_of_object"}:
+        return 1, -1.0, _metadata_float(env, "relation_front_behind_offset", 0.08), 0
+    return 1, 1.0, _metadata_float(env, "relation_front_behind_offset", 0.08), 0

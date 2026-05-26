@@ -179,6 +179,8 @@ class CDPRReverseShellTests(unittest.TestCase):
         self.assertEqual(specs["grab_object"], 5)
         self.assertEqual(specs["put_into_plate"], 6)
         self.assertEqual(specs["push_left"], 5)
+        self.assertEqual(specs["push_forward"], 5)
+        self.assertEqual(specs["move_in_front_of_object"], 5)
         self.assertEqual(specs["move_between_objects"], 5)
 
 

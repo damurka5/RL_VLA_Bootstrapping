@@ -33,6 +33,44 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertEqual(selected, "move_up")
         self.assertEqual(env._instruction_cycle, ["move_down"])
 
+    def test_episode_yaw_randomization_samples_within_bounds(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.randomize_ee_yaw = True
+        env.ee_yaw_bounds = (-0.25, 0.25)
+        env.np_random = np.random.default_rng(4)
+
+        yaw = env._sample_episode_ee_yaw()
+
+        self.assertGreaterEqual(yaw, -0.25)
+        self.assertLessEqual(yaw, 0.25)
+
+    def test_set_ee_yaw_updates_sim_qpos_immediately(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        data = type("Data", (), {"qpos": np.zeros(3, dtype=np.float32), "qvel": np.ones(3, dtype=np.float32)})()
+        model = type("Model", (), {"jnt_dofadr": np.array([1], dtype=np.int32)})()
+        calls: list[float] = []
+        env.sim = type(
+            "Sim",
+            (),
+            {
+                "yaw_min": -1.0,
+                "yaw_max": 1.0,
+                "jnt_yaw_qadr": 2,
+                "jnt_yaw": 0,
+                "data": data,
+                "model": model,
+                "set_yaw": lambda self, yaw: calls.append(float(yaw)),
+            },
+        )()
+        env._yaw = 0.0
+
+        env._set_ee_yaw(0.42)
+
+        self.assertEqual(calls, [0.42])
+        self.assertAlmostEqual(float(data.qpos[2]), 0.42, places=6)
+        self.assertAlmostEqual(float(data.qvel[1]), 0.0, places=6)
+        self.assertAlmostEqual(env._yaw, 0.42, places=6)
+
     def test_instruction_text_can_infer_type_and_object_bindings(self):
         from robots.cdpr.cdpr_dataset.rl_cdpr_env import (
             _infer_instruction_object_options,
@@ -40,6 +78,8 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         )
 
         self.assertEqual(_infer_instruction_type_from_text("put apple into plate"), "put_into_plate")
+        self.assertEqual(_infer_instruction_type_from_text("push apple forward"), "push_forward")
+        self.assertEqual(_infer_instruction_type_from_text("move apple in front of pear"), "move_in_front_of_object")
         self.assertEqual(
             _infer_instruction_object_options(
                 "put apple into plate",

@@ -20,9 +20,13 @@ class CDPRLCHOLSpec:
         "pick_up",
         "push_left",
         "push_right",
+        "push_forward",
+        "push_backward",
         "put_into_plate",
         "move_left_of_object",
         "move_right_of_object",
+        "move_in_front_of_object",
+        "move_behind_object",
         "put_in_front_of_object",
         "put_behind_object",
         "move_between_objects",
@@ -55,12 +59,16 @@ class CDPRLCHOLSpec:
             )
             return _phase_total_score(sparse_success=sparse_success, progress=progress)
 
-        if option in {"push_left", "push_right"}:
-            sign = -1.0 if option == "push_left" else 1.0
-            motion_x = _float(info.get("target_motion_x"), 0.0)
-            target_motion_xy = _float(info.get("target_motion_xy"), abs(motion_x))
-            progress = _clip01(sign * motion_x / max(_float(info.get("push_success_displacement"), 0.08), 1e-6))
-            wrong_direction = _clip01((-sign * motion_x) / max(abs(motion_x), 0.08, 1e-6))
+        if option in {"push_left", "push_right", "push_forward", "push_backward"}:
+            if option in {"push_left", "push_right"}:
+                sign = -1.0 if option == "push_left" else 1.0
+                motion = _float(info.get("target_motion_x"), 0.0)
+            else:
+                sign = 1.0 if option == "push_forward" else -1.0
+                motion = _float(info.get("target_motion_y"), 0.0)
+            target_motion_xy = _float(info.get("target_motion_xy"), abs(motion))
+            progress = _clip01(sign * motion / max(_float(info.get("push_success_displacement"), 0.08), 1e-6))
+            wrong_direction = _clip01((-sign * motion) / max(abs(motion), 0.08, 1e-6))
             contact = max(_clip01(target_motion_xy / 0.08), 1.0 if caught_target else 0.0)
             shaped = (
                 + 0.20 * approach
@@ -90,6 +98,8 @@ class CDPRLCHOLSpec:
         if option in {
             "move_left_of_object",
             "move_right_of_object",
+            "move_in_front_of_object",
+            "move_behind_object",
             "put_in_front_of_object",
             "put_behind_object",
             "move_between_objects",
@@ -146,12 +156,13 @@ class CDPRLCHOLSpec:
 
             push = _push_achievement(info)
             if push and push not in achieved:
+                push_motion_key = "target_motion_y" if push in {"push_forward", "push_backward"} else "target_motion_x"
                 achieved[push] = AchievedOption(
                     option_name=push,
                     first_timestep=timestep,
                     instruction=self._instruction_text(push, target, reference, second_reference),
                     target_object=target,
-                    predicate_value=abs(_float(info.get("target_motion_x"), 0.0)),
+                    predicate_value=abs(_float(info.get(push_motion_key), 0.0)),
                     metadata={"source_instruction": source_instruction},
                 )
 
@@ -263,12 +274,20 @@ class CDPRLCHOLSpec:
             return f"push {target_text} left"
         if option == "push_right":
             return f"push {target_text} right"
+        if option == "push_forward":
+            return f"push {target_text} forward"
+        if option == "push_backward":
+            return f"push {target_text} backward"
         if option == "put_into_plate":
             return f"put {target_text} into {reference_text or 'plate'}"
         if option == "move_left_of_object":
             return f"move {target_text} to the left of {reference_text}"
         if option == "move_right_of_object":
             return f"move {target_text} to the right of {reference_text}"
+        if option == "move_in_front_of_object":
+            return f"move {target_text} in front of {reference_text}"
+        if option == "move_behind_object":
+            return f"move {target_text} behind {reference_text}"
         if option == "put_in_front_of_object":
             return f"put {target_text} in front of {reference_text}"
         if option == "put_behind_object":
@@ -359,6 +378,8 @@ def _wrong_relation_direction(info: Mapping[str, Any], option: str) -> float:
     if option not in {
         "move_left_of_object",
         "move_right_of_object",
+        "move_in_front_of_object",
+        "move_behind_object",
         "put_in_front_of_object",
         "put_behind_object",
     }:
@@ -368,10 +389,14 @@ def _wrong_relation_direction(info: Mapping[str, Any], option: str) -> float:
 
 
 def _wrong_direction_motion(info: Mapping[str, Any], option: str) -> float:
-    if option in {"push_left", "push_right"}:
-        sign = -1.0 if option == "push_left" else 1.0
-        motion_x = _float(info.get("target_motion_x"), 0.0)
-        return _clip01((-sign * motion_x) / max(abs(motion_x), 0.08, 1e-6))
+    if option in {"push_left", "push_right", "push_forward", "push_backward"}:
+        if option in {"push_left", "push_right"}:
+            sign = -1.0 if option == "push_left" else 1.0
+            motion = _float(info.get("target_motion_x"), 0.0)
+        else:
+            sign = 1.0 if option == "push_forward" else -1.0
+            motion = _float(info.get("target_motion_y"), 0.0)
+        return _clip01((-sign * motion) / max(abs(motion), 0.08, 1e-6))
     return _wrong_relation_direction(info, option)
 
 
@@ -400,11 +425,16 @@ def _push_achievement(info: Mapping[str, Any]) -> str:
     if _wrong_object_contact(info) >= _WRONG_CONTACT_BLOCK_THRESHOLD:
         return ""
     motion_x = _float(info.get("target_motion_x"), 0.0)
+    motion_y = _float(info.get("target_motion_y"), 0.0)
     threshold = max(_float(info.get("push_success_displacement"), 0.08), 0.02)
     if motion_x >= threshold:
         return "push_right"
     if motion_x <= -threshold:
         return "push_left"
+    if motion_y >= threshold:
+        return "push_forward"
+    if motion_y <= -threshold:
+        return "push_backward"
     return ""
 
 
@@ -417,14 +447,23 @@ def _relation_achievement(info: Mapping[str, Any]) -> str:
     if instruction in {
         "move_left_of_object",
         "move_right_of_object",
+        "move_in_front_of_object",
+        "move_behind_object",
         "put_in_front_of_object",
         "put_behind_object",
     } and _success(info) >= 0.5:
         return instruction
     signed = _float(info.get("signed_relation_offset"), 0.0)
-    offset = max(_float(info.get("relation_left_right_offset"), 0.08), 1e-6)
+    axis = int(round(_float(info.get("relation_axis"), 0.0)))
+    sign = _float(info.get("relation_axis_sign"), 1.0)
+    offset_key = "relation_front_behind_offset" if axis == 1 else "relation_left_right_offset"
+    offset = max(_float(info.get(offset_key), _float(info.get("relation_left_right_offset"), 0.08)), 1e-6)
     if signed >= offset and _boolish(info.get("relation_motion_ok", True)):
-        return "move_right_of_object"
+        if axis == 1:
+            return "move_behind_object" if sign > 0.0 else "move_in_front_of_object"
+        return "move_right_of_object" if sign > 0.0 else "move_left_of_object"
     if signed <= -offset and _boolish(info.get("relation_motion_ok", True)):
-        return "move_left_of_object"
+        if axis == 1:
+            return "move_in_front_of_object" if sign > 0.0 else "move_behind_object"
+        return "move_left_of_object" if sign > 0.0 else "move_right_of_object"
     return ""

@@ -182,7 +182,37 @@ class InstructionGoalTests(unittest.TestCase):
             initial_ee_pos=np.array([0.12, -0.08, 0.40], dtype=np.float32),
         )
 
-        np.testing.assert_allclose(goal, np.array([0.20, 0.12, 0.17], dtype=np.float32), atol=1e-7)
+        np.testing.assert_allclose(goal, np.array([0.20, -0.06, 0.17], dtype=np.float32), atol=1e-7)
+
+    def test_move_front_instruction_uses_reference_y_offset_goal(self):
+        env = self._env()
+        env._target_body_name = "apple_body"
+        env._reference_body_name = "pear_body"
+        env._task_metadata = {"relation_front_behind_offset": 0.09}
+
+        def _body_pos(body_name):
+            return {
+                "apple_body": np.array([0.04, 0.02, 0.17], dtype=np.float32),
+                "pear_body": np.array([0.20, 0.03, 0.17], dtype=np.float32),
+            }[body_name]
+
+        env._get_body_position = _body_pos
+        spec = InstructionSpec(
+            instruction_type="move_in_front_of_object",
+            text="move apple in front of pear",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+            reference_object="ycb_pear",
+        )
+
+        goal = env._compute_instruction_goal(
+            spec=spec,
+            initial_ee_pos=np.array([0.12, -0.08, 0.40], dtype=np.float32),
+        )
+
+        np.testing.assert_allclose(goal, np.array([0.20, -0.06, 0.17], dtype=np.float32), atol=1e-7)
 
     def test_get_body_position_falls_back_to_xpos_when_body_xpos_is_missing(self):
         env = self._env()
