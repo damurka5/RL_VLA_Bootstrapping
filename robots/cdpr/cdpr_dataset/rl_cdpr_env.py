@@ -1373,65 +1373,23 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         episode_ee_start = self._sample_episode_ee_start(options=options)
         self._episode_ee_start = episode_ee_start.astype(np.float32)
-        wrapper_xml: Path | None = None
-        original_reuse_existing = bool(getattr(self, "reuse_existing_wrapper_variants", False))
-        for attempt in range(2):
-            if attempt > 0:
-                self.reuse_existing_wrapper_variants = False
-
-            try:
-                wrapper_xml = self._build_episode_wrapper(scene=scene, ee_start=episode_ee_start)
-                self._current_wrapper_xml = wrapper_xml
-                self.sim = self._sim_cls(
-                    xml_path=str(wrapper_xml),
-                    output_dir=str(DEFAULT_VIDEO_DIR),
-                    record_trajectory=self.record_trajectory,
-                )
-                self.sim.initialize()
-                break
-            except Exception:
-                if bool(getattr(self, "_last_wrapper_reused_from_cache", False)) and wrapper_xml is not None:
-                    self._invalid_wrapper_paths.add(Path(wrapper_xml).resolve())
-                if self.sim is not None:
-                    try:
-                        self.sim.cleanup()
-                    except Exception:
-                        pass
-                self.sim = None
-                self._current_wrapper_xml = None
-                if attempt == 0 and bool(getattr(self, "_last_wrapper_reused_from_cache", False)):
-                    continue
-                raise
-            finally:
-                self.reuse_existing_wrapper_variants = original_reuse_existing
-        if hasattr(self.sim, "hold_current_pose"):
-            self.sim.hold_current_pose(warm_steps=10)
-        self._refresh_workspace_safety()
-        self._move_ee_to_episode_start()
-        self._clear_sim_recording_buffers()
-
-        self._catalog_to_body, self._object_body_names = self._resolve_objects(scene.objects)
-        self._inverse_catalog_to_body = {v: k for k, v in self._catalog_to_body.items()}
-        if self._object_body_names:
-            try:
-                object_spawn_config = _resolve_object_spawn_config(
-                    self._task_metadata,
-                    support_surface_z=self._support_surface_z,
-                )
-                place_objects_non_overlapping(
-                    self.sim,
-                    self._object_body_names,
-                    xy_bounds=object_spawn_config["xy_bounds"],
-                    min_gap=object_spawn_config["min_gap"],
-                    max_tries=object_spawn_config["max_tries"],
-                    min_ee_dist=object_spawn_config["min_ee_dist"],
-                    support_clearance=object_spawn_config["support_clearance"],
-                    avoid_xy_center=object_spawn_config["avoid_xy_center"],
-                    avoid_xy_radius=object_spawn_config["avoid_xy_radius"],
-                )
-            except Exception:
-                # Continue if placement fails; wrapper-provided placement is still valid.
-                pass
+        self._initialize_episode_scene(scene=scene, ee_start=episode_ee_start)
+        if not self._resolved_scene_supports_instruction_type(scene, instruction_type):
+            stale_wrapper = self._current_wrapper_xml
+            if stale_wrapper is not None:
+                self._invalid_wrapper_paths.add(Path(stale_wrapper).resolve())
+            self.close()
+            self._scene_name = scene.name
+            self._scene_catalog_objects = list(scene.objects)
+            self._episode_ee_start = episode_ee_start.astype(np.float32)
+            self._initialize_episode_scene(scene=scene, ee_start=episode_ee_start, force_rebuild=True)
+        if not self._resolved_scene_supports_instruction_type(scene, instruction_type):
+            resolved_scene = self._resolved_scene_spec(scene)
+            raise ValueError(
+                f"Instruction {instruction_type!r} has no compatible resolved wrapper bodies. "
+                f"Requested scene {scene.name!r} objects {list(scene.objects)}; resolved objects "
+                f"{list(resolved_scene.objects)}; wrapper={self._current_wrapper_xml}."
+            )
 
         (
             self._target_catalog_name,
@@ -1636,6 +1594,94 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._curriculum_reset_info = {}
         self._goal_position = np.zeros((3,), dtype=np.float32)
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
+
+    def _initialize_episode_scene(
+        self,
+        *,
+        scene: SceneSpec,
+        ee_start: Sequence[float] | np.ndarray,
+        force_rebuild: bool = False,
+    ) -> None:
+        wrapper_xml: Path | None = None
+        original_reuse_existing = bool(getattr(self, "reuse_existing_wrapper_variants", False))
+        original_use_wrapper_cache = bool(getattr(self, "use_wrapper_cache", False))
+        if force_rebuild:
+            self.reuse_existing_wrapper_variants = False
+            self.use_wrapper_cache = False
+        try:
+            for attempt in range(2):
+                if attempt > 0:
+                    self.reuse_existing_wrapper_variants = False
+
+                try:
+                    wrapper_xml = self._build_episode_wrapper(scene=scene, ee_start=ee_start)
+                    self._current_wrapper_xml = wrapper_xml
+                    self.sim = self._sim_cls(
+                        xml_path=str(wrapper_xml),
+                        output_dir=str(DEFAULT_VIDEO_DIR),
+                        record_trajectory=self.record_trajectory,
+                    )
+                    self.sim.initialize()
+                    break
+                except Exception:
+                    if bool(getattr(self, "_last_wrapper_reused_from_cache", False)) and wrapper_xml is not None:
+                        self._invalid_wrapper_paths.add(Path(wrapper_xml).resolve())
+                    if self.sim is not None:
+                        try:
+                            self.sim.cleanup()
+                        except Exception:
+                            pass
+                    self.sim = None
+                    self._current_wrapper_xml = None
+                    if attempt == 0 and bool(getattr(self, "_last_wrapper_reused_from_cache", False)):
+                        continue
+                    raise
+
+            if self.sim is None:
+                raise RuntimeError(f"Failed to initialize wrapper for scene {scene.name!r}.")
+
+            if hasattr(self.sim, "hold_current_pose"):
+                self.sim.hold_current_pose(warm_steps=10)
+            self._refresh_workspace_safety()
+            self._move_ee_to_episode_start()
+            self._clear_sim_recording_buffers()
+
+            self._catalog_to_body, self._object_body_names = self._resolve_objects(scene.objects)
+            self._inverse_catalog_to_body = {v: k for k, v in self._catalog_to_body.items()}
+            if self._object_body_names:
+                try:
+                    object_spawn_config = _resolve_object_spawn_config(
+                        self._task_metadata,
+                        support_surface_z=self._support_surface_z,
+                    )
+                    place_objects_non_overlapping(
+                        self.sim,
+                        self._object_body_names,
+                        xy_bounds=object_spawn_config["xy_bounds"],
+                        min_gap=object_spawn_config["min_gap"],
+                        max_tries=object_spawn_config["max_tries"],
+                        min_ee_dist=object_spawn_config["min_ee_dist"],
+                        support_clearance=object_spawn_config["support_clearance"],
+                        avoid_xy_center=object_spawn_config["avoid_xy_center"],
+                        avoid_xy_radius=object_spawn_config["avoid_xy_radius"],
+                    )
+                except Exception:
+                    # Continue if placement fails; wrapper-provided placement is still valid.
+                    pass
+        finally:
+            self.reuse_existing_wrapper_variants = original_reuse_existing
+            self.use_wrapper_cache = original_use_wrapper_cache
+
+    def _resolved_scene_spec(self, scene: SceneSpec) -> SceneSpec:
+        resolved_objects = tuple(str(name) for name in scene.objects if str(name) in self._catalog_to_body)
+        target_object = str(scene.target_object) if scene.target_object in self._catalog_to_body else None
+        return SceneSpec(name=scene.name, objects=resolved_objects, target_object=target_object)
+
+    def _resolved_scene_supports_instruction_type(self, scene: SceneSpec, instruction_type: str) -> bool:
+        instruction_type = str(instruction_type).strip()
+        if not instruction_type:
+            return True
+        return self._scene_supports_instruction_type(self._resolved_scene_spec(scene), instruction_type)
 
     def capture_state(self) -> dict[str, Any]:
         if self.sim is None:

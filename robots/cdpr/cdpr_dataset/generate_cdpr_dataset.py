@@ -161,6 +161,61 @@ def _validate_local_wrapper_bundle(wrapper_xml: Path) -> tuple[bool, str | None]
     return True, None
 
 
+def _object_body_aliases(object_name: str) -> tuple[str, ...]:
+    name = str(object_name).strip()
+    aliases: list[str] = []
+    for candidate in (name, name.removeprefix("ycb_") if name.startswith("ycb_") else ""):
+        if candidate and candidate not in aliases:
+            aliases.append(candidate)
+    return tuple(aliases)
+
+
+def _local_wrapper_body_names(wrapper_xml: Path) -> set[str]:
+    wrapper_path = Path(wrapper_xml).expanduser().resolve()
+    seen: set[Path] = set()
+    queue = [wrapper_path]
+    bodies: set[str] = set()
+
+    while queue:
+        current_xml = queue.pop()
+        if current_xml in seen:
+            continue
+        seen.add(current_xml)
+        if not current_xml.exists():
+            continue
+        try:
+            root = ET.parse(current_xml).getroot()
+        except (ET.ParseError, OSError):
+            continue
+
+        for body in root.iter("body"):
+            name = str(body.get("name") or "").strip()
+            if name:
+                bodies.add(name)
+
+        for include in root.iter("include"):
+            file_attr = include.get("file")
+            if not file_attr:
+                continue
+            include_path = _resolve_include_path(current_xml, file_attr)
+            if include_path.parent == wrapper_path.parent:
+                queue.append(include_path)
+
+    return bodies
+
+
+def _wrapper_missing_requested_objects(wrapper_xml: Path, object_names: list[str]) -> list[str]:
+    body_names = _local_wrapper_body_names(wrapper_xml)
+    missing: list[str] = []
+    for object_name in object_names:
+        aliases = _object_body_aliases(str(object_name))
+        if not aliases:
+            continue
+        if not any(any(alias in body_name for alias in aliases) for body_name in body_names):
+            missing.append(str(object_name))
+    return missing
+
+
 def list_wrapper_bundle_paths(wrapper_xml: str | Path) -> list[Path]:
     wrapper_path = Path(wrapper_xml).expanduser().resolve()
     bundle_paths = [wrapper_path]
@@ -323,11 +378,14 @@ def build_wrapper_if_needed(scene_name: str,
 
     if use_cache and wrapper_path.exists():
         bundle_valid, bundle_reason = _validate_local_wrapper_bundle(wrapper_path)
-        if bundle_valid and _wrapper_bundle_isolated(wrapper_path):
+        missing_objects = _wrapper_missing_requested_objects(wrapper_path, object_names) if bundle_valid else []
+        if bundle_valid and _wrapper_bundle_isolated(wrapper_path) and not missing_objects:
             print(f"✅ Using cached wrapper: {wrapper_path}")
             return wrapper_path
         if not bundle_valid:
             print(f"♻️ Rebuilding corrupt cached wrapper ({bundle_reason}): {wrapper_path}")
+        elif missing_objects:
+            print(f"♻️ Rebuilding cached wrapper missing requested object bodies {missing_objects}: {wrapper_path}")
         else:
             print(f"♻️ Rebuilding cached wrapper with isolated includes: {wrapper_path}")
 
@@ -492,13 +550,21 @@ def build_wrapper_if_needed(scene_name: str,
 
         created_bundle_files = _isolate_wrapper_bundle(wrapper_path)
         bundle_valid, bundle_reason = _validate_local_wrapper_bundle(wrapper_path)
-        if bundle_valid:
+        missing_objects = _wrapper_missing_requested_objects(wrapper_path, object_names) if bundle_valid else []
+        if bundle_valid and not missing_objects:
             print(f"✅ Built wrapper: {wrapper_path}\n   Includes {len(object_names)} object(s).")
             if created_bundle_files:
                 print(f"📦 Isolated wrapper bundle files: {len(created_bundle_files)}")
             return wrapper_path
 
-        last_bundle_reason = bundle_reason or "wrapper bundle missing or incomplete"
+        last_bundle_reason = (
+            bundle_reason
+            or (
+                f"wrapper missing requested object bodies: {missing_objects}"
+                if missing_objects
+                else "wrapper bundle missing or incomplete"
+            )
+        )
         if attempt == 0:
             print(
                 f"♻️ Rebuilding missing/incomplete wrapper bundle ({last_bundle_reason}): {wrapper_path}",

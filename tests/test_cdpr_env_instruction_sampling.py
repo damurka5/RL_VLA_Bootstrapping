@@ -200,6 +200,26 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertEqual(target_catalog, "ycb_apple")
         self.assertIn(reference_catalog, {"plate", "bowl"})
 
+    def test_resolved_scene_support_requires_loaded_catchable_body(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "catchable_object_pool": ["ycb_apple"],
+            "container_object_pool": ["plate", "bowl"],
+        }
+        scene = SceneSpec(name="desk", objects=("plate", "ycb_apple"))
+
+        env._catalog_to_body = {"plate": "plate_body"}
+        self.assertFalse(env._resolved_scene_supports_instruction_type(scene, "put_into_plate"))
+
+        env._catalog_to_body = {"plate": "plate_body", "ycb_apple": "p1_ycb_apple"}
+        self.assertTrue(env._resolved_scene_supports_instruction_type(scene, "put_into_plate"))
+
+    def test_ycb_logical_body_aliases_include_stripped_name(self):
+        from robots.cdpr.cdpr_dataset.synthetic_tasks import _logical_body_aliases
+
+        self.assertEqual(_logical_body_aliases("ycb_apple"), ("ycb_apple", "apple"))
+        self.assertEqual(_logical_body_aliases("plate"), ("plate",))
+
     def test_caught_object_start_spawns_target_at_end_effector_for_relation_task(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         env._task_metadata = {

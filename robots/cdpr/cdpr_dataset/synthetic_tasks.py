@@ -276,24 +276,34 @@ def aabb_of_body(sim, body_name, include_subtree=True):
 
     return xyz_min, xyz_max
 
+def _logical_body_aliases(logical_name: str):
+    name = str(logical_name).strip()
+    aliases = []
+    for candidate in (name, name.removeprefix("ycb_") if name.startswith("ycb_") else ""):
+        if candidate and candidate not in aliases:
+            aliases.append(candidate)
+    return tuple(aliases)
+
+
 def resolve_body_name(sim, logical_name: str) -> str:
     """
     Resolve a logical body name to an actual MuJoCo body name.
     - First tries exact match.
-    - Then falls back to substring search (useful for prefixed LIBERO objects like 'p0_red_bowl').
+    - Then falls back to alias/substring search (useful for prefixed LIBERO/YCB objects like 'p0_red_bowl' or 'p0_apple').
     """
     import mujoco as mj
     m = sim.model
 
-    # exact match
-    bid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_BODY, logical_name)
-    if bid != -1:
-        return logical_name
+    aliases = _logical_body_aliases(logical_name)
+    for alias in aliases:
+        bid = mj.mj_name2id(m, mj.mjtObj.mjOBJ_BODY, alias)
+        if bid != -1:
+            return alias
 
     # substring fallback
     for i in range(m.nbody):
         nm = mj.mj_id2name(m, mj.mjtObj.mjOBJ_BODY, i)
-        if nm and logical_name in nm:
+        if nm and any(alias in nm for alias in aliases):
             return nm
 
     raise ValueError(f"Could not resolve body name for '{logical_name}'.")
