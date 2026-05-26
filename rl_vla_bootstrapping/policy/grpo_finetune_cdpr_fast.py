@@ -543,14 +543,6 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
             1,
         )
 
-    train_anchor = "            policy.train()\n"
-    if train_anchor in transformed:
-        transformed = transformed.replace(
-            train_anchor,
-            "            _rlvla_ddp_sync(\"pre_train\", update=update)\n"
-            "            policy.train()\n",
-            1,
-        )
     return transformed
 
 
@@ -793,6 +785,11 @@ def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
         return
 
     timeout = timedelta(seconds=max(1, int(timeout_seconds))) if timeout_seconds > 0 else None
+    if timeout is not None and os.environ.get("RANK", "0") == "0":
+        print(
+            f"[rlvla-ddp] wrapper requested process-group timeout {int(timeout.total_seconds())}s",
+            flush=True,
+        )
 
     def _init_distributed_with_timeout():
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
