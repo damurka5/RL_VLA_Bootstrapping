@@ -178,7 +178,7 @@ task:
     grab_closed_opening_threshold: 0.35
     catch_distance_threshold: 0.055
     catch_score_threshold: 0.30
-    push_success_displacement: 0.05
+    push_success_displacement: 0.10
     put_plate_xy_tolerance: 0.08
     put_plate_z_tolerance: 0.10
     put_container_xy_tolerance: 0.08
