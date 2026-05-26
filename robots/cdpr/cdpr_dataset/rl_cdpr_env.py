@@ -667,6 +667,64 @@ def _wrapper_bundle_exists(wrapper_xml: Path) -> bool:
     return True
 
 
+def _wrapper_body_name_aliases(object_name: str) -> tuple[str, ...]:
+    name = str(object_name).strip()
+    aliases: list[str] = []
+    for candidate in (name, name.removeprefix("ycb_") if name.startswith("ycb_") else ""):
+        if candidate and candidate not in aliases:
+            aliases.append(candidate)
+    return tuple(aliases)
+
+
+def _wrapper_local_body_names(wrapper_xml: Path) -> set[str]:
+    wrapper_xml = Path(wrapper_xml).expanduser().resolve()
+    wrap_root = WRAP_DIR.resolve()
+    queue = [wrapper_xml]
+    seen: set[Path] = set()
+    bodies: set[str] = set()
+
+    while queue:
+        current = queue.pop()
+        if current in seen:
+            continue
+        seen.add(current)
+        if not current.exists():
+            continue
+
+        try:
+            tree = ET.parse(current)
+        except Exception:
+            continue
+        root = tree.getroot()
+
+        for body in root.iter("body"):
+            name = str(body.get("name") or "").strip()
+            if name:
+                bodies.add(name)
+
+        for _, file_attr in _iter_includes(root):
+            include_path = _resolve_include_path(current, file_attr)
+            include_is_local = current.parent in include_path.parents or wrap_root in include_path.parents
+            if include_is_local:
+                queue.append(include_path)
+
+    return bodies
+
+
+def _wrapper_missing_requested_objects(wrapper_xml: Path, object_names: Sequence[str]) -> list[str]:
+    body_names = _wrapper_local_body_names(wrapper_xml)
+    missing: list[str] = []
+    for object_name in object_names:
+        aliases = _wrapper_body_name_aliases(str(object_name))
+        if aliases and not any(any(alias in body_name for alias in aliases) for body_name in body_names):
+            missing.append(str(object_name))
+    return missing
+
+
+def _wrapper_contains_requested_objects(wrapper_xml: Path, object_names: Sequence[str]) -> bool:
+    return not _wrapper_missing_requested_objects(wrapper_xml, object_names)
+
+
 def _wrapper_cache_prefix(scene_name: str, object_names: Sequence[str]) -> str:
     obj_part = "-".join(sorted(str(name) for name in object_names))
     return f"{scene_name}__{obj_part}"
@@ -712,6 +770,8 @@ def _candidate_existing_wrapper_paths(
                 if resolved in seen:
                     continue
                 if not _wrapper_bundle_exists(resolved):
+                    continue
+                if not _wrapper_contains_requested_objects(resolved, object_names):
                     continue
                 seen.add(resolved)
                 candidates.append(resolved)
@@ -1608,6 +1668,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         if force_rebuild:
             self.reuse_existing_wrapper_variants = False
             self.use_wrapper_cache = False
+        patched_build_wrapper = getattr(self, "_build_wrapper", None)
+        if force_rebuild and hasattr(self, "_build_wrapper_original"):
+            self._build_wrapper = self._build_wrapper_original
         try:
             for attempt in range(2):
                 if attempt > 0:
@@ -1669,6 +1732,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                     # Continue if placement fails; wrapper-provided placement is still valid.
                     pass
         finally:
+            if force_rebuild and patched_build_wrapper is not None:
+                self._build_wrapper = patched_build_wrapper
             self.reuse_existing_wrapper_variants = original_reuse_existing
             self.use_wrapper_cache = original_use_wrapper_cache
 

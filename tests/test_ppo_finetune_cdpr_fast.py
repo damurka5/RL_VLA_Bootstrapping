@@ -37,6 +37,7 @@ from rl_vla_bootstrapping.policy.ppo_finetune_cdpr_fast import (
     _RolloutTensorboardLogger,
     _infer_resume_artifacts,
     _patch_desk_texture_prepare,
+    _patch_scene_wrapper_cache,
     _split_wrapper_argv,
 )
 
@@ -90,6 +91,53 @@ class FastPPOWrapperTests(unittest.TestCase):
         self.assertEqual(module._prepare_desk_textures_dir("/tmp/src", Path("/tmp/run"), False, 1, 5), "broadcasted")
         self.assertEqual(module._prepare_desk_textures_dir("/tmp/src", Path("/tmp/run"), True, 0, 5), "prepared:0")
         self.assertEqual(calls, [("broadcast", 1), ("prepare", 0)])
+
+    def test_scene_wrapper_cache_falls_back_when_no_variant_matches_objects(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+            wrong = tmp_path / "wrong.xml"
+            rebuilt = tmp_path / "rebuilt.xml"
+            wrong.write_text(
+                "<mujoco><worldbody><body name='p0_plate'/><body name='p1_ycb_apple'/></worldbody></mujoco>",
+                encoding="utf-8",
+            )
+
+            class FakeRL:
+                def __init__(self):
+                    self._desk_texture_name = "old"
+
+                def _build_wrapper(self, scene, ee_start=None):
+                    del scene, ee_start
+                    return rebuilt
+
+            class FakeVisionEnv:
+                def __init__(self):
+                    self.env = FakeRL()
+                    self._scene_wrapper_cache = {}
+                    self._texture_name_by_wrapper = {}
+
+                def _activate_scene_wrapper_cache(self, scene_wrapper_cache, texture_name_by_wrapper):
+                    del texture_name_by_wrapper
+                    self._scene_wrapper_cache = {str(k): [Path(p).resolve() for p in v] for k, v in scene_wrapper_cache.items()}
+
+                    def cached_builder(rl_self, scene):
+                        del rl_self
+                        return self._scene_wrapper_cache[str(scene.name)][0]
+
+                    self.env._build_wrapper_original = self.env._build_wrapper
+                    self.env._build_wrapper = types.MethodType(cached_builder, self.env)
+                    return {}
+
+            module = types.SimpleNamespace(CDPRVisionLanguageEnv=FakeVisionEnv, types=types)
+            _patch_scene_wrapper_cache(module)
+            env = module.CDPRVisionLanguageEnv()
+            env._activate_scene_wrapper_cache({"desk": [wrong]}, {})
+            scene = types.SimpleNamespace(name="desk", objects=("ycb_apple", "bowl", "ycb_baseball"))
+
+            out = env.env._build_wrapper(scene)
+
+            self.assertEqual(out, rebuilt)
+            self.assertEqual(env.env._desk_texture_name, "")
 
     def test_split_wrapper_argv_strips_wrapper_only_options(self):
         external_script, forwarded, fast_args = _split_wrapper_argv(

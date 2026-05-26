@@ -31,6 +31,11 @@ def _load_rl_env_module():
     return importlib.import_module("robots.cdpr.cdpr_dataset.rl_cdpr_env")
 
 
+def _wrapper_xml_with_bodies(*body_names: str) -> str:
+    bodies = "".join(f"<body name='{name}'/>" for name in body_names)
+    return f"<mujoco><worldbody>{bodies}</worldbody></mujoco>"
+
+
 class WrapperBundleTests(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
@@ -163,7 +168,7 @@ class WrapperBundleTests(unittest.TestCase):
 
             def fake_run(cmd, *args, **kwargs):
                 issued_cmd[:] = list(cmd)
-                wrapper.write_text("<mujoco/>", encoding="utf-8")
+                wrapper.write_text(_wrapper_xml_with_bodies("p0_ycb_apple"), encoding="utf-8")
                 return SimpleNamespace(returncode=0)
 
             with mock.patch.object(self.mod.subprocess, "run", side_effect=fake_run):
@@ -194,7 +199,7 @@ class WrapperBundleTests(unittest.TestCase):
 
             def fake_run(cmd, *args, **kwargs):
                 issued_cmd[:] = list(cmd)
-                wrapper.write_text("<mujoco/>", encoding="utf-8")
+                wrapper.write_text(_wrapper_xml_with_bodies("p0_ycb_apple"), encoding="utf-8")
                 return SimpleNamespace(returncode=0)
 
             with mock.patch.object(self.mod.subprocess, "run", side_effect=fake_run):
@@ -219,7 +224,7 @@ class WrapperBundleTests(unittest.TestCase):
                 attempts["count"] += 1
                 if attempts["count"] == 2:
                     wrapper.parent.mkdir(parents=True, exist_ok=True)
-                    wrapper.write_text("<mujoco/>", encoding="utf-8")
+                    wrapper.write_text(_wrapper_xml_with_bodies("p0_ycb_apple"), encoding="utf-8")
                 return SimpleNamespace(returncode=0)
 
             with mock.patch.object(self.mod.subprocess, "run", side_effect=fake_run):
@@ -321,7 +326,7 @@ class WrapperBundleTests(unittest.TestCase):
             temp_variant = root / "desk__plate-ycb_apple__rltmp_123.xml"
 
             for path in (cached, textured, temp_variant):
-                path.write_text("<mujoco/>", encoding="utf-8")
+                path.write_text(_wrapper_xml_with_bodies("p0_plate", "p1_ycb_apple"), encoding="utf-8")
 
             candidates = self.rl_env_mod._candidate_existing_wrapper_paths(
                 root,
@@ -343,7 +348,7 @@ class WrapperBundleTests(unittest.TestCase):
             textured = bundle / "desk__plate-ycb_apple_wrapper__abc123__desktex_rl_1.xml"
 
             for path in (cached, textured):
-                path.write_text("<mujoco/>", encoding="utf-8")
+                path.write_text(_wrapper_xml_with_bodies("p0_plate", "p1_ycb_apple"), encoding="utf-8")
 
             candidates = self.rl_env_mod._candidate_existing_wrapper_paths(
                 root,
@@ -363,8 +368,8 @@ class WrapperBundleTests(unittest.TestCase):
             root = Path(tmp)
             existing_a = root / "desk__plate-ycb_apple_wrapper.xml"
             existing_b = root / "desk__plate-ycb_apple__rltmp_123.xml"
-            existing_a.write_text("<mujoco/>", encoding="utf-8")
-            existing_b.write_text("<mujoco/>", encoding="utf-8")
+            existing_a.write_text(_wrapper_xml_with_bodies("p0_plate", "p1_ycb_apple"), encoding="utf-8")
+            existing_b.write_text(_wrapper_xml_with_bodies("p0_plate", "p1_ycb_apple"), encoding="utf-8")
 
             env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
             env.defaults = {
