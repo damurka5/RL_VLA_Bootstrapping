@@ -39,7 +39,7 @@ _TEMPLATES: dict[str, str] = {
     "move_between_objects": "move <object> between <ref1> and <ref2>",
 }
 
-_DEFAULT_HELD_OBJECT_OFFSET = np.array([0.0, 0.0, -0.020], dtype=np.float32)
+_DEFAULT_HELD_OBJECT_OFFSET = np.array([0.0, 0.0, 0.005], dtype=np.float32)
 _YCB_CAUGHT_OBJECT_MEASUREMENTS: dict[str, dict[str, float]] = {
     "ycb_apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
     "apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},

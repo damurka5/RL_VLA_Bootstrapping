@@ -100,7 +100,7 @@ DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_behind_object",
     "move_between_objects",
 )
-DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, -0.020)
+DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, 0.005)
 YCB_CAUGHT_OBJECT_MEASUREMENTS: dict[str, dict[str, float]] = {
     "ycb_apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
     "apple": {"width_m": 0.0751, "opening": 0.8852, "finger_qpos_m": 0.0266},
@@ -1364,7 +1364,10 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._prepare_episode_rng(seed)
 
         self.close()
-        scene = self._sample_scene(options=options)
+        instruction_type = self._sample_instruction_type(options=options)
+        scene_options = dict(options)
+        scene_options["_sampled_instruction_type"] = instruction_type
+        scene = self._sample_scene(options=scene_options)
         self._scene_name = scene.name
         self._scene_catalog_objects = list(scene.objects)
 
@@ -1430,7 +1433,6 @@ class CDPRLanguageRLEnv(_EnvBase):
                 # Continue if placement fails; wrapper-provided placement is still valid.
                 pass
 
-        instruction_type = self._sample_instruction_type(options=options)
         (
             self._target_catalog_name,
             self._target_body_name,
@@ -2195,24 +2197,91 @@ class CDPRLanguageRLEnv(_EnvBase):
         return True
 
     def _sample_scene(self, options: Optional[dict[str, Any]]) -> SceneSpec:
-        requested_scene = (options or {}).get("scene")
+        options = dict(options or {})
+        requested_scene = options.get("scene")
+        candidates = list(self.scenes)
         if requested_scene is not None:
             requested_scene = str(requested_scene)
-            for scene in self.scenes:
-                if scene.name == requested_scene:
-                    return scene
-        required_raw = (options or {}).get("required_objects")
+            requested_candidates = [scene for scene in self.scenes if scene.name == requested_scene]
+            if requested_candidates:
+                candidates = requested_candidates
+
+        required_raw = options.get("required_objects")
         if required_raw is not None:
             if isinstance(required_raw, str):
                 required = {required_raw}
             else:
                 required = {str(item) for item in required_raw}
-            candidates = [scene for scene in self.scenes if required.issubset({str(obj) for obj in scene.objects})]
-            if candidates:
-                idx = int(self.np_random.integers(0, len(candidates)))
-                return candidates[idx]
-        idx = int(self.np_random.integers(0, len(self.scenes)))
-        return self.scenes[idx]
+            required_candidates = [scene for scene in candidates if required.issubset({str(obj) for obj in scene.objects})]
+            if required_candidates:
+                candidates = required_candidates
+
+        instruction_type = str(options.get("_sampled_instruction_type") or options.get("instruction_type") or "").strip()
+        if instruction_type:
+            compatible = [scene for scene in candidates if self._scene_supports_instruction_type(scene, instruction_type)]
+            if not compatible:
+                augmented = [self._augment_scene_for_instruction_type(scene, instruction_type) for scene in candidates]
+                compatible = [
+                    scene for scene in augmented if self._scene_supports_instruction_type(scene, instruction_type)
+                ]
+            if compatible:
+                candidates = compatible
+            elif requested_scene is not None or required_raw is not None:
+                raise ValueError(
+                    f"Instruction {instruction_type!r} has no compatible scene among "
+                    f"{[scene.name for scene in candidates]}."
+                )
+
+        idx = int(self.np_random.integers(0, len(candidates)))
+        return candidates[idx]
+
+    def _augment_scene_for_instruction_type(self, scene: SceneSpec, instruction_type: str) -> SceneSpec:
+        instruction_type = str(instruction_type).strip()
+        if instruction_type != "put_into_plate":
+            return scene
+
+        scene_catalogs = _dedupe_names([str(name) for name in scene.objects if str(name)])
+        if self._container_scene_catalogs(scene_catalogs) or not self._catchable_scene_catalogs(scene_catalogs):
+            return scene
+
+        for container in self._metadata_catalog_pool("container_object_pool", default=DEFAULT_CONTAINER_OBJECTS):
+            container = str(container)
+            if container and container not in scene_catalogs:
+                return SceneSpec(
+                    name=scene.name,
+                    objects=tuple([*scene_catalogs, container]),
+                    target_object=scene.target_object,
+                )
+        return scene
+
+    def _scene_supports_instruction_type(self, scene: SceneSpec, instruction_type: str) -> bool:
+        instruction_type = str(instruction_type).strip()
+        if not instruction_type:
+            return True
+        scene_catalogs = [str(name) for name in scene.objects if str(name)]
+        if not scene_catalogs:
+            return not instruction_uses_target_object(instruction_type)
+
+        catchable = self._catchable_scene_catalogs(scene_catalogs)
+        if instruction_type in CATCHABLE_TARGET_INSTRUCTION_TYPES and not catchable:
+            return False
+
+        if instruction_type == "put_into_plate":
+            containers = self._container_scene_catalogs(scene_catalogs)
+            return any(container != target for target in catchable for container in containers)
+
+        if instruction_type in {
+            "move_left_of_object",
+            "move_right_of_object",
+            "put_in_front_of_object",
+            "put_behind_object",
+        }:
+            return any(ref != target for target in catchable for ref in scene_catalogs)
+
+        if instruction_type == "move_between_objects":
+            return bool(catchable) and len(set(scene_catalogs)) >= 3
+
+        return True
 
     def _prepare_episode_rng(self, seed: Optional[int]) -> None:
         episode_index = int(self._reset_counter)

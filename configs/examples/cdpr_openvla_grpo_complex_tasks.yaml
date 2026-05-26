@@ -199,7 +199,7 @@ task:
         put_behind_object,
         move_between_objects,
       ]
-    caught_object_start_object_offset: [0.0, 0.0, -0.020]
+    caught_object_start_object_offset: [0.0, 0.0, 0.005]
     caught_object_start_xy_jitter: 0.012
     caught_object_start_z_jitter: 0.006
     caught_object_start_fit_gripper: true

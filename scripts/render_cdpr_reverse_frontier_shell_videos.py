@@ -71,7 +71,7 @@ def _task_metadata(objects: list[str]) -> dict[str, Any]:
         "relation_min_target_motion": 0.04,
         "relation_require_target_grasp": True,
         "between_xy_tolerance": 0.07,
-        "caught_object_start_object_offset": [0.0, 0.0, -0.020],
+        "caught_object_start_object_offset": [0.0, 0.0, 0.005],
         "caught_object_start_fit_gripper": True,
         "caught_object_start_pin_object": False,
         "caught_object_start_gripper_clearance": 0.0,

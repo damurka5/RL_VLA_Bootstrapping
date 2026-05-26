@@ -60,6 +60,37 @@ class EnvInstructionSamplingTests(unittest.TestCase):
 
         self.assertEqual(scene.name, "desk_b")
 
+    def test_sample_scene_filters_put_instruction_to_container_scene(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.scenes = [
+            SceneSpec(name="desk", objects=("ycb_apple", "ycb_pear")),
+            SceneSpec(name="desk", objects=("ycb_apple", "plate")),
+        ]
+        env._task_metadata = {
+            "catchable_object_pool": ["ycb_apple", "ycb_pear"],
+            "container_object_pool": ["plate", "bowl"],
+        }
+        env.np_random = np.random.default_rng(0)
+
+        scene = env._sample_scene(options={"scene": "desk", "instruction_type": "put_into_plate"})
+
+        self.assertEqual(scene.objects, ("ycb_apple", "plate"))
+
+    def test_sample_scene_augments_put_instruction_with_container(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.scenes = [
+            SceneSpec(name="desk", objects=("ycb_apple", "ycb_pear")),
+        ]
+        env._task_metadata = {
+            "catchable_object_pool": ["ycb_apple", "ycb_pear"],
+            "container_object_pool": ["plate", "bowl"],
+        }
+        env.np_random = np.random.default_rng(0)
+
+        scene = env._sample_scene(options={"instruction_type": "put_into_plate"})
+
+        self.assertEqual(scene.objects, ("ycb_apple", "ycb_pear", "plate"))
+
     def test_instruction_curriculum_filters_allowed_candidates_by_episode(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         env.instruction_types = ("grab_object", "push_left", "put_into_plate")
