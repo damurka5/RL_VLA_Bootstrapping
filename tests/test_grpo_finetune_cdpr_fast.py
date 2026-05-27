@@ -342,7 +342,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertIn("rank, local_rank, world_size = _rlvla_init_distributed()", patched)
         self.assertNotIn("ppo._init_distributed()", patched)
 
-    def test_ddp_sync_transform_adds_update_barrier_without_extra_pre_train_barrier(self):
+    def test_ddp_sync_transform_adds_rank_barriers_before_update_and_train(self):
         source = (
             "        for update in range(1, args.total_updates + 1):\n"
             "            policy.eval()\n"
@@ -353,7 +353,20 @@ class FastGRPOWrapperTests(unittest.TestCase):
         patched = _transform_external_grpo_source_for_ddp_sync(source)
 
         self.assertIn('_rlvla_ddp_sync("pre_update", update=update)', patched)
-        self.assertNotIn('_rlvla_ddp_sync("pre_train", update=update)', patched)
+        self.assertIn('_rlvla_ddp_sync("pre_train", update=update)', patched)
+
+    def test_ddp_sync_transform_disables_ddp_buffer_broadcasts(self):
+        source = (
+            "        ddp_kwargs = dict(\n"
+            "            device_ids=[device.index],\n"
+            "            find_unused_parameters=bool(args.ddp_find_unused_parameters),\n"
+            "            gradient_as_bucket_view=True,\n"
+            "        )\n"
+        )
+
+        patched = _transform_external_grpo_source_for_ddp_sync(source)
+
+        self.assertIn("broadcast_buffers=False", patched)
 
     def test_lr_scheduler_transform_applies_schedule_once_per_update_and_logs_lr(self):
         source = (

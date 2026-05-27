@@ -533,6 +533,14 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
             1,
         )
 
+    ddp_kwargs_anchor = "            gradient_as_bucket_view=True,\n"
+    if ddp_kwargs_anchor in transformed:
+        transformed = transformed.replace(
+            ddp_kwargs_anchor,
+            ddp_kwargs_anchor + "            broadcast_buffers=False,\n",
+            1,
+        )
+
     update_anchor = "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n"
     if update_anchor in transformed:
         transformed = transformed.replace(
@@ -540,6 +548,15 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
             "        for update in range(1, args.total_updates + 1):\n"
             "            _rlvla_ddp_sync(\"pre_update\", update=update)\n"
             "            policy.eval()\n",
+            1,
+        )
+
+    train_anchor = "            policy.train()\n"
+    if train_anchor in transformed:
+        transformed = transformed.replace(
+            train_anchor,
+            "            _rlvla_ddp_sync(\"pre_train\", update=update)\n"
+            "            policy.train()\n",
             1,
         )
 
