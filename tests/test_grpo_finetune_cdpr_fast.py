@@ -313,6 +313,23 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(calls, [("nccl", 14400.0)])
         self.assertIs(fake_ppo._init_distributed, module._rlvla_init_distributed)
 
+    def test_patch_distributed_timeout_wraps_direct_dist_init(self):
+        calls: list[tuple[str, float]] = []
+
+        class FakeDist:
+            @staticmethod
+            def init_process_group(*, backend, timeout):
+                calls.append((backend, float(timeout.total_seconds())))
+
+        original_init = lambda: (0, 0, 1)
+        module = types.SimpleNamespace(dist=FakeDist, _init_distributed=original_init)
+
+        _patch_distributed_timeout(module, timeout_seconds=14400)
+        module.dist.init_process_group(backend="nccl")
+
+        self.assertEqual(calls, [("nccl", 14400.0)])
+        self.assertIs(module._rlvla_init_distributed, original_init)
+
     def test_ddp_sync_transform_routes_distributed_init_through_wrapper(self):
         source = (
             "def main():\n"

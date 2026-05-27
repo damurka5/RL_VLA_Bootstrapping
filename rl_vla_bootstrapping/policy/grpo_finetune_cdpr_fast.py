@@ -766,6 +766,25 @@ def _patch_desk_texture_prepare(module) -> None:
     module._prepare_desk_textures_dir = _prepare_desk_textures_dir_single_writer
 
 
+def _wrap_process_group_init_timeout(dist_module, *, timeout: timedelta | None) -> None:
+    if timeout is None:
+        return
+    original_init_process_group = getattr(dist_module, "init_process_group", None)
+    if not callable(original_init_process_group):
+        return
+    if getattr(original_init_process_group, "_rlvla_timeout_wrapped", False):
+        return
+
+    def _init_process_group_with_timeout(*args, **kwargs):
+        if kwargs.get("timeout") is None:
+            kwargs["timeout"] = timeout
+        return original_init_process_group(*args, **kwargs)
+
+    _init_process_group_with_timeout._rlvla_timeout_wrapped = True  # type: ignore[attr-defined]
+    _init_process_group_with_timeout._rlvla_original = original_init_process_group  # type: ignore[attr-defined]
+    dist_module.init_process_group = _init_process_group_with_timeout
+
+
 def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
     ppo_module = getattr(module, "ppo", None)
     original_init = (
@@ -773,6 +792,18 @@ def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
         if ppo_module is not None
         else getattr(module, "_init_distributed", None)
     )
+    timeout = timedelta(seconds=max(1, int(timeout_seconds))) if timeout_seconds > 0 else None
+    for dist_candidate in (
+        getattr(ppo_module, "dist", None) if ppo_module is not None else None,
+        getattr(module, "dist", None),
+    ):
+        if dist_candidate is not None:
+            _wrap_process_group_init_timeout(dist_candidate, timeout=timeout)
+    if timeout is not None and os.environ.get("RANK", "0") == "0":
+        print(
+            f"[rlvla-ddp] wrapper requested process-group timeout {int(timeout.total_seconds())}s",
+            flush=True,
+        )
     if ppo_module is None:
         if callable(original_init):
             module._rlvla_init_distributed = original_init
@@ -783,13 +814,6 @@ def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
         if callable(original_init):
             module._rlvla_init_distributed = original_init
         return
-
-    timeout = timedelta(seconds=max(1, int(timeout_seconds))) if timeout_seconds > 0 else None
-    if timeout is not None and os.environ.get("RANK", "0") == "0":
-        print(
-            f"[rlvla-ddp] wrapper requested process-group timeout {int(timeout.total_seconds())}s",
-            flush=True,
-        )
 
     def _init_distributed_with_timeout():
         world_size = int(os.environ.get("WORLD_SIZE", "1"))
