@@ -331,8 +331,8 @@ training:
       total_updates: 120
       rollout_steps: 240
       ppo_epochs: 2
-      minibatch_size: 8
-      microbatch_size: 8
+      minibatch_size: 12
+      microbatch_size: 12
       max_env_steps: 120
       gamma: 0.99
       learning_rate: 1.5e-5
@@ -349,7 +349,7 @@ training:
       action_step_xyz: 0.015
       action_step_yaw: 0.08
       action_step_gripper: 0.05
-      hold_steps: 6
+      hold_steps: 2
       lock_non_commanded_axes: false
       lock_non_commanded_axes_threshold: 0.05
       randomize_ee_start: true
