@@ -238,7 +238,7 @@ task:
       promotion_success: 0.50
       demotion_success: 0.20
       validation_rollouts_per_shell: 50
-      min_train_updates_before_validation: 5
+      min_train_updates_before_validation: 3
       max_shell_jump: 1
       saturation_abort_threshold: 0.30
       sample_frontier_probability: 0.80
@@ -322,7 +322,7 @@ training:
       lchol_reverse_promotion_success: 0.50
       lchol_reverse_demotion_success: 0.20
       lchol_reverse_validation_rollouts_per_shell: 50
-      lchol_reverse_min_train_updates_before_validation: 5
+      lchol_reverse_min_train_updates_before_validation: 3
       lchol_reverse_max_shell_jump: 1
       lchol_reverse_saturation_abort_threshold: 0.30
       lchol_reverse_sample_frontier_probability: 0.80
