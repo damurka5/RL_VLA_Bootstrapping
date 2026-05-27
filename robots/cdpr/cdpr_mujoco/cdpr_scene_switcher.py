@@ -18,7 +18,7 @@ Notes:
 - Scene names and object names correspond to directory names under LIBERO assets.
 """
 
-import os, sys, argparse, tempfile, shutil, textwrap
+import os, sys, argparse, tempfile, shutil, textwrap, time
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import numpy as np
@@ -132,6 +132,42 @@ ROBOTWIN_ROOTS = _resolve_robotwin_roots()
 
 CDPR_XML = HERE / "cdpr.xml"
 
+
+def _atomic_temp_path(path: Path) -> Path:
+    path = Path(path)
+    return path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+
+
+def _atomic_write_xml_tree(tree: ET.ElementTree, path: Path) -> None:
+    path = Path(path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _atomic_temp_path(path)
+    try:
+        tree.write(tmp_path, encoding="utf-8", xml_declaration=True)
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _atomic_write_text(path: Path, content: str) -> None:
+    path = Path(path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _atomic_temp_path(path)
+    try:
+        tmp_path.write_text(content, encoding="utf-8")
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
 # replace your existing preprocess_scene_with_zoffset(...) with this:
 def preprocess_scene_with_zoffset(scene_xml: Path, z_offset: float, out_xml: Path):
     """
@@ -165,7 +201,7 @@ def preprocess_scene_with_zoffset(scene_xml: Path, z_offset: float, out_xml: Pat
         ET.indent(tree)
     except Exception:
         pass
-    tree.write(out_xml, encoding="utf-8", xml_declaration=True)
+    _atomic_write_xml_tree(tree, out_xml)
 
 def preprocess_cdpr_set_ee_start(cdpr_xml: Path, ee_xyz: np.ndarray, out_xml: Path):
     """
@@ -190,7 +226,7 @@ def preprocess_cdpr_set_ee_start(cdpr_xml: Path, ee_xyz: np.ndarray, out_xml: Pa
         ET.indent(tree)
     except Exception:
         pass
-    tree.write(out_xml, encoding="utf-8", xml_declaration=True)
+    _atomic_write_xml_tree(tree, out_xml)
 
 
 def parse_object_arg(arg: str):
@@ -452,7 +488,7 @@ def make_placed_object_xml(orig_object_xml: Path,
         ET.indent(mj)
     except Exception:
         pass
-    ET.ElementTree(mj).write(out_xml, encoding="utf-8", xml_declaration=True)
+    _atomic_write_xml_tree(ET.ElementTree(mj), out_xml)
 
 def build_wrapper_mjcf(scene_xml: Path, cdpr_xml: Path, placed_object_xmls: list[Path], out_xml: Path):
     scene_xml = scene_xml.resolve()
@@ -479,7 +515,7 @@ def build_wrapper_mjcf(scene_xml: Path, cdpr_xml: Path, placed_object_xmls: list
     </mujoco>
     """
     out_xml.parent.mkdir(parents=True, exist_ok=True)  # ensure /.../wrappers/ exists
-    out_xml.write_text(content, encoding="utf-8")
+    _atomic_write_text(out_xml, content)
 
 
     

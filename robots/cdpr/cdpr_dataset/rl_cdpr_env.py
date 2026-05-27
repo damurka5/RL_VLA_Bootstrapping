@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional, Sequence
@@ -18,6 +19,11 @@ import xml.etree.ElementTree as ET
 
 import numpy as np
 import yaml
+
+try:
+    import fcntl
+except Exception:  # pragma: no cover - unavailable on some non-POSIX platforms
+    fcntl = None
 
 try:
     import mujoco as mj
@@ -579,6 +585,59 @@ def _relpath_or_abs(target: Path, base_dir: Path) -> str:
         return target.as_posix()
 
 
+def _atomic_temp_path(path: Path) -> Path:
+    path = Path(path)
+    return path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+
+
+def _atomic_write_xml_tree(tree: ET.ElementTree, path: Path) -> None:
+    path = Path(path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _atomic_temp_path(path)
+    try:
+        tree.write(tmp_path, encoding="utf-8", xml_declaration=True)
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _atomic_copy2(src: Path, dst: Path) -> None:
+    src = Path(src).expanduser().resolve()
+    dst = Path(dst).expanduser().resolve()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _atomic_temp_path(dst)
+    try:
+        shutil.copy2(src, tmp_path)
+        os.replace(tmp_path, dst)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+@contextmanager
+def _path_lock(lock_path: Path):
+    lock_path = Path(lock_path).expanduser().resolve()
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    handle = lock_path.open("a", encoding="utf-8")
+    try:
+        if fcntl is not None:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if fcntl is not None:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
+
+
 def _candidate_texture_files(tex_dir: Path) -> list[Path]:
     return sorted(p for p in tex_dir.iterdir() if p.suffix.lower() in (".png", ".jpg", ".jpeg"))
 
@@ -651,6 +710,11 @@ def _wrapper_bundle_exists(wrapper_xml: Path) -> bool:
             continue
         seen.add(current)
         if not current.exists():
+            return False
+        try:
+            if current.stat().st_size <= 0:
+                return False
+        except OSError:
             return False
 
         try:
@@ -892,12 +956,31 @@ def _patch_xml_tree_for_desk_material(
             geom.set("material", desk_mat_name)
             matched += 1
 
-    tree.write(patched_xml, encoding="utf-8", xml_declaration=True)
+    _atomic_write_xml_tree(tree, patched_xml)
     generated_xmls.append(patched_xml)
     return matched
 
 
 def _build_textured_wrapper_variant(
+    base_wrapper_xml: Path,
+    chosen_texture: Path,
+    variant_tag: str,
+    desk_geom_regex: str,
+    desk_texrepeat: tuple[int, int],
+) -> DeskTexturePatchResult:
+    base_wrapper_xml = Path(base_wrapper_xml).expanduser().resolve()
+    lock_path = base_wrapper_xml.parent / f".{base_wrapper_xml.stem}__desktex_{variant_tag}.lock"
+    with _path_lock(lock_path):
+        return _build_textured_wrapper_variant_locked(
+            base_wrapper_xml=base_wrapper_xml,
+            chosen_texture=chosen_texture,
+            variant_tag=variant_tag,
+            desk_geom_regex=desk_geom_regex,
+            desk_texrepeat=desk_texrepeat,
+        )
+
+
+def _build_textured_wrapper_variant_locked(
     base_wrapper_xml: Path,
     chosen_texture: Path,
     variant_tag: str,
@@ -917,7 +1000,7 @@ def _build_textured_wrapper_variant(
 
     copied_texture = _shared_desk_texture_cache_path(chosen_texture)
     if not copied_texture.exists():
-        shutil.copy2(chosen_texture, copied_texture)
+        _atomic_copy2(chosen_texture, copied_texture)
 
     desk_tex_name = f"desktex_{variant_tag}"
     desk_mat_name = f"deskmat_{variant_tag}"
@@ -962,7 +1045,13 @@ def _build_textured_wrapper_variant(
     mat_el.set("texrepeat", f"{int(desk_texrepeat[0])} {int(desk_texrepeat[1])}")
     mat_el.set("texuniform", "false")
 
-    tree.write(wrapper_copy, encoding="utf-8", xml_declaration=True)
+    _atomic_write_xml_tree(tree, wrapper_copy)
+
+    if not _wrapper_bundle_exists(wrapper_copy):
+        raise FileNotFoundError(
+            "Desk-textured wrapper bundle is missing or incomplete after patching. "
+            f"wrapper={wrapper_copy}"
+        )
 
     return DeskTexturePatchResult(
         wrapper_xml=wrapper_copy,

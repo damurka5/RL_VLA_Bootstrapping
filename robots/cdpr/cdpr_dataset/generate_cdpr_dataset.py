@@ -7,7 +7,7 @@ from __future__ import annotations
 # - Simple non-overlap object placement near the workspace center
 # - Unique per-episode output directories (no overwrites)
 
-import os, sys, yaml, argparse, subprocess, shutil
+import os, sys, yaml, argparse, subprocess, shutil, time
 from pathlib import Path
 from datetime import datetime
 import math, random
@@ -99,6 +99,42 @@ def _resolve_include_path(current_xml: Path, file_attr: str) -> Path:
     return (current_xml.parent / include_path).resolve()
 
 
+def _atomic_temp_path(path: Path) -> Path:
+    path = Path(path)
+    return path.with_name(f".{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+
+
+def _atomic_write_xml_tree(tree: ET.ElementTree, path: Path) -> None:
+    path = Path(path).expanduser().resolve()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _atomic_temp_path(path)
+    try:
+        tree.write(tmp_path, encoding="utf-8", xml_declaration=True)
+        os.replace(tmp_path, path)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
+def _atomic_copy2(src: Path, dst: Path) -> None:
+    src = Path(src).expanduser().resolve()
+    dst = Path(dst).expanduser().resolve()
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = _atomic_temp_path(dst)
+    try:
+        shutil.copy2(src, tmp_path)
+        os.replace(tmp_path, dst)
+    finally:
+        try:
+            if tmp_path.exists():
+                tmp_path.unlink()
+        except OSError:
+            pass
+
+
 def _iter_local_wrapper_dependencies(wrapper_xml: Path) -> list[Path]:
     wrapper_path = wrapper_xml.resolve()
     seen = {wrapper_path}
@@ -141,6 +177,11 @@ def _validate_local_wrapper_bundle(wrapper_xml: Path) -> tuple[bool, str | None]
 
         if not current_xml.exists():
             return False, f"missing bundle file: {current_xml}"
+        try:
+            if current_xml.stat().st_size <= 0:
+                return False, f"empty bundle file: {current_xml}"
+        except OSError as exc:
+            return False, f"failed reading {current_xml}: {exc}"
 
         try:
             root = ET.parse(current_xml).getroot()
@@ -265,7 +306,7 @@ def _isolate_wrapper_bundle(wrapper_xml: Path) -> list[Path]:
         if not include_path.name.startswith(prefix):
             isolated_path = wrapper_path.parent / f"{prefix}{include_path.name}"
             if isolated_path != include_path:
-                shutil.copy2(include_path, isolated_path)
+                _atomic_copy2(include_path, isolated_path)
                 created.append(isolated_path)
 
         rel_include = isolated_path.relative_to(wrapper_path.parent).as_posix()
@@ -274,7 +315,7 @@ def _isolate_wrapper_bundle(wrapper_xml: Path) -> list[Path]:
             changed = True
 
     if changed:
-        tree.write(wrapper_path, encoding="utf-8", xml_declaration=True)
+        _atomic_write_xml_tree(tree, wrapper_path)
 
     return created
 

@@ -160,6 +160,44 @@ class WrapperBundleTests(unittest.TestCase):
 
             self.assertEqual(filtered, [valid.resolve()])
 
+    def test_build_textured_wrapper_variant_materializes_complete_bundle(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = root / "desk_helper.xml"
+            helper.write_text(
+                (
+                    "<mujoco><worldbody>"
+                    '<geom name="desk_surface" type="box" size="0.30 0.30 0.02"/>'
+                    "</worldbody></mujoco>"
+                ),
+                encoding="utf-8",
+            )
+            wrapper = root / "desk__plate-ycb_apple_wrapper.xml"
+            wrapper.write_text(
+                '<mujoco><include file="desk_helper.xml"/></mujoco>',
+                encoding="utf-8",
+            )
+            texture = root / "desk.png"
+            texture.write_bytes(b"texture-bytes")
+
+            with mock.patch.object(self.rl_env_mod, "WRAP_DIR", root):
+                result = self.rl_env_mod._build_textured_wrapper_variant(
+                    wrapper,
+                    texture,
+                    variant_tag="rltest",
+                    desk_geom_regex=r"desk",
+                    desk_texrepeat=(4, 5),
+                )
+
+                self.assertTrue(self.rl_env_mod._wrapper_bundle_exists(result.wrapper_xml))
+
+            self.assertTrue(result.wrapper_xml.exists())
+            self.assertTrue(all(path.exists() and path.stat().st_size > 0 for path in result.generated_xmls))
+            root_xml = ET.parse(result.wrapper_xml).getroot()
+            material = root_xml.find("./asset/material")
+            self.assertIsNotNone(material)
+            self.assertEqual(material.get("texrepeat"), "4 5")
+
     def test_build_wrapper_uses_scene_switcher_script_path(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
