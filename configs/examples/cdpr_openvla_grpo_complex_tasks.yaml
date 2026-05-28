@@ -15,6 +15,7 @@ remote:
     PYOPENGL_PLATFORM: egl
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     RLVLA_DDP_TIMEOUT_SECONDS: "86400"
+    RLVLA_DDP_ROLLOUT_SYNC_INTERVAL: "5"
     TOKENIZERS_PARALLELISM: "false"
   notes:
     - GRPO starts from the step_390_to_490 move-to-object checkpoint and uses a grab-first instruction curriculum before harder object relations.
@@ -302,6 +303,7 @@ training:
       resume_actor_stats: false
       # Complex CDPR rollouts and reverse-frontier validation can skew DDP ranks far past PyTorch's 10-minute default.
       ddp_timeout_seconds: 86400
+      ddp_rollout_sync_interval: 5
       grpo_group_size: 2
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true

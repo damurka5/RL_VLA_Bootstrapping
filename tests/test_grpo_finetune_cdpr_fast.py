@@ -262,6 +262,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
                 "--no-resume_actor_stats",
                 "--ddp_timeout_seconds",
                 "14400",
+                "--ddp_rollout_sync_interval",
+                "5",
                 "--lr_scheduler",
                 "cosine",
                 "--lr_warmup_updates",
@@ -279,6 +281,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(fast_args.tensorboard_metric_profile, "compact")
         self.assertFalse(fast_args.resume_actor_stats)
         self.assertEqual(fast_args.ddp_timeout_seconds, 14400)
+        self.assertEqual(fast_args.ddp_rollout_sync_interval, 5)
         self.assertEqual(fast_args.lr_scheduler, "cosine")
         self.assertEqual(fast_args.lr_warmup_updates, 5)
         self.assertAlmostEqual(fast_args.lr_min_factor, 0.25)
@@ -352,8 +355,31 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
         patched = _transform_external_grpo_source_for_ddp_sync(source)
 
-        self.assertIn('_rlvla_ddp_sync("pre_update", update=update)', patched)
+        self.assertIn('_rlvla_ddp_sync("pre_update", update=update, run_dir=run_dir)', patched)
         self.assertIn('_rlvla_ddp_sync("pre_train", update=update)', patched)
+
+    def test_ddp_sync_transform_adds_rollout_sync_and_update_marker(self):
+        source = (
+            "                if rollout_pbar is not None:\n"
+            "                    rollout_pbar.update(1)\n\n"
+            "            if rollout_pbar is not None:\n"
+            "                rollout_pbar.close()\n"
+            "            if is_main and update % args.save_every == 0:\n"
+            "                save_checkpoint(\n"
+            "                    run_dir=run_dir,\n"
+            "                    step=global_step,\n"
+            "                    vla=policy_core.vla,\n"
+            "                    action_head=policy_core.action_head,\n"
+            "                    log_std=policy_core.log_std,\n"
+            "                )\n\n"
+            "        if is_main:\n"
+            "            save_checkpoint(\n"
+        )
+
+        patched = _transform_external_grpo_source_for_ddp_sync(source)
+
+        self.assertIn("_rlvla_ddp_sync_rollout(update=update, rollout_step=rollout_step)", patched)
+        self.assertIn("_rlvla_ddp_mark_update_complete(update=update, run_dir=run_dir)", patched)
 
     def test_ddp_sync_transform_disables_ddp_buffer_broadcasts(self):
         source = (
@@ -371,7 +397,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
     def test_lr_scheduler_transform_applies_schedule_once_per_update_and_logs_lr(self):
         source = (
             "        for update in range(1, args.total_updates + 1):\n"
-            "            _rlvla_ddp_sync(\"pre_update\", update=update)\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
             "            policy.eval()\n"
             "                tb_writer.add_scalar(\"train/loss_total_mean\", avg_total_loss, global_step)\n"
         )

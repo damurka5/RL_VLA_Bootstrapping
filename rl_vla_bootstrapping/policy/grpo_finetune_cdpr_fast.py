@@ -48,6 +48,7 @@ class _FastWrapperArgs:
     tensorboard_metric_profile: str = "compact"
     resume_actor_stats: bool = True
     ddp_timeout_seconds: int = 0
+    ddp_rollout_sync_interval: int = 0
     lr_scheduler: str = "constant"
     lr_warmup_updates: int = 0
     lr_min_factor: float = 1.0
@@ -138,6 +139,10 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
         ddp_timeout_seconds = max(0, int(os.environ.get("RLVLA_DDP_TIMEOUT_SECONDS", "0")))
     except ValueError:
         ddp_timeout_seconds = 0
+    try:
+        ddp_rollout_sync_interval = max(0, int(os.environ.get("RLVLA_DDP_ROLLOUT_SYNC_INTERVAL", "0")))
+    except ValueError:
+        ddp_rollout_sync_interval = 0
     lchol_values = dict(_LCHOLWrapperArgs().__dict__)
 
     idx = 0
@@ -179,6 +184,15 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
                 raise SystemExit(f"{arg} expects an integer.")
             try:
                 ddp_timeout_seconds = max(0, int(argv[idx + 1]))
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects an integer.") from exc
+            idx += 2
+            continue
+        if arg in ("--ddp_rollout_sync_interval", "--ddp-rollout-sync-interval"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects an integer.")
+            try:
+                ddp_rollout_sync_interval = max(0, int(argv[idx + 1]))
             except ValueError as exc:
                 raise SystemExit(f"{arg} expects an integer.") from exc
             idx += 2
@@ -227,6 +241,19 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
                 raise SystemExit(f"{arg} expects an integer.") from exc
             idx += 1
             continue
+        if normalized_arg == "ddp_rollout_sync_interval":
+            raw_value = arg.split("=", 1)[1] if "=" in arg else None
+            if raw_value is None:
+                if idx + 1 >= len(argv):
+                    raise SystemExit(f"{arg} expects an integer.")
+                idx += 1
+                raw_value = argv[idx]
+            try:
+                ddp_rollout_sync_interval = max(0, int(raw_value))
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects an integer.") from exc
+            idx += 1
+            continue
         if normalized_arg in {"lchol_enabled", "no_lchol_enabled"}:
             if "=" in arg:
                 lchol_values["enabled"] = _parse_lchol_bool(arg.split("=", 1)[1])
@@ -263,6 +290,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
         tensorboard_metric_profile=tensorboard_metric_profile,
         resume_actor_stats=resume_actor_stats,
         ddp_timeout_seconds=ddp_timeout_seconds,
+        ddp_rollout_sync_interval=ddp_rollout_sync_interval,
         lr_scheduler=lr_scheduler,
         lr_warmup_updates=lr_warmup_updates,
         lr_min_factor=lr_min_factor,
@@ -546,8 +574,23 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
         transformed = transformed.replace(
             update_anchor,
             "        for update in range(1, args.total_updates + 1):\n"
-            "            _rlvla_ddp_sync(\"pre_update\", update=update)\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
             "            policy.eval()\n",
+            1,
+        )
+
+    rollout_step_anchor = (
+        "                if rollout_pbar is not None:\n"
+        "                    rollout_pbar.update(1)\n\n"
+        "            if rollout_pbar is not None:\n"
+    )
+    if rollout_step_anchor in transformed:
+        transformed = transformed.replace(
+            rollout_step_anchor,
+            "                if rollout_pbar is not None:\n"
+            "                    rollout_pbar.update(1)\n"
+            "                _rlvla_ddp_sync_rollout(update=update, rollout_step=rollout_step)\n\n"
+            "            if rollout_pbar is not None:\n",
             1,
         )
 
@@ -560,6 +603,21 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
             1,
         )
 
+    update_complete_anchor = (
+        "                )\n\n"
+        "        if is_main:\n"
+        "            save_checkpoint(\n"
+    )
+    if update_complete_anchor in transformed:
+        transformed = transformed.replace(
+            update_complete_anchor,
+            "                )\n\n"
+            "            _rlvla_ddp_mark_update_complete(update=update, run_dir=run_dir)\n\n"
+            "        if is_main:\n"
+            "            save_checkpoint(\n",
+            1,
+        )
+
     return transformed
 
 
@@ -568,7 +626,7 @@ def _transform_external_grpo_source_for_lr_scheduler(source: str) -> str:
     loop_anchors = (
         (
             "        for update in range(1, args.total_updates + 1):\n"
-            "            _rlvla_ddp_sync(\"pre_update\", update=update)\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
             "            policy.eval()\n"
         ),
         "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n",
@@ -802,6 +860,19 @@ def _wrap_process_group_init_timeout(dist_module, *, timeout: timedelta | None) 
     dist_module.init_process_group = _init_process_group_with_timeout
 
 
+def _patch_global_distributed_timeout(*, timeout_seconds: int) -> None:
+    if timeout_seconds <= 0:
+        return
+    try:
+        import torch.distributed as dist_module
+    except Exception:
+        return
+    _wrap_process_group_init_timeout(
+        dist_module,
+        timeout=timedelta(seconds=max(1, int(timeout_seconds))),
+    )
+
+
 def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
     ppo_module = getattr(module, "ppo", None)
     original_init = (
@@ -854,15 +925,67 @@ def _patch_distributed_timeout(module, *, timeout_seconds: int) -> None:
     ppo_module._init_distributed = _init_distributed_with_timeout
 
 
-def _patch_ddp_sync(module) -> None:
+def _patch_ddp_sync(module, *, rollout_sync_interval: int = 0) -> None:
     dist_module = getattr(module, "dist", None)
     if dist_module is None:
         return
+    rollout_interval = max(0, int(rollout_sync_interval))
 
-    def _rlvla_ddp_sync(label: str, *, update: int) -> None:
+    def _rank() -> int:
+        try:
+            return int(os.environ.get("RANK", "0"))
+        except ValueError:
+            return 0
+
+    def _world_size() -> int:
+        try:
+            return int(os.environ.get("WORLD_SIZE", "1"))
+        except ValueError:
+            return 1
+
+    def _update_ready_path(run_dir: Path | str, *, update: int, rank: int) -> Path:
+        return Path(run_dir) / ".rlvla_ddp" / f"update_{int(update):05d}_rank_{int(rank):05d}.ready"
+
+    def _wait_for_update_markers(run_dir: Path | str, *, update: int) -> None:
+        world_size = _world_size()
+        if update <= 0 or world_size <= 1:
+            return
+        import time
+
+        started = time.monotonic()
+        last_log = started
+        missing = [
+            _update_ready_path(run_dir, update=int(update), rank=rank)
+            for rank in range(world_size)
+        ]
+        while True:
+            remaining = [path for path in missing if not path.exists()]
+            if not remaining:
+                waited = time.monotonic() - started
+                if waited >= 30.0 and _rank() == 0:
+                    print(
+                        f"[rlvla-ddp] waited {waited:.1f}s for update {int(update)} filesystem markers",
+                        flush=True,
+                    )
+                return
+            now = time.monotonic()
+            if now - last_log >= 60.0 and _rank() == 0:
+                preview = ", ".join(path.name for path in remaining[:4])
+                extra = "" if len(remaining) <= 4 else f", ... +{len(remaining) - 4}"
+                print(
+                    f"[rlvla-ddp] waiting for update {int(update)} markers: {preview}{extra}",
+                    flush=True,
+                )
+                last_log = now
+            time.sleep(5.0)
+
+    def _rlvla_ddp_sync(label: str, *, update: int, run_dir=None) -> None:
         if not (dist_module.is_available() and dist_module.is_initialized()):
             return
         import time
+
+        if label == "pre_update" and run_dir is not None:
+            _wait_for_update_markers(run_dir, update=int(update) - 1)
 
         start = time.monotonic()
         dist_module.barrier()
@@ -873,7 +996,31 @@ def _patch_ddp_sync(module) -> None:
                 flush=True,
             )
 
+    def _rlvla_ddp_sync_rollout(*, update: int, rollout_step: int) -> None:
+        if rollout_interval <= 0:
+            return
+        step = int(rollout_step) + 1
+        if step % rollout_interval != 0:
+            return
+        _rlvla_ddp_sync(f"rollout_step_{step}", update=int(update))
+
+    def _rlvla_ddp_mark_update_complete(*, update: int, run_dir) -> None:
+        if _world_size() <= 1 or run_dir is None:
+            return
+        path = _update_ready_path(run_dir, update=int(update), rank=_rank())
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(".tmp")
+        tmp_path.write_text("ready\n", encoding="utf-8")
+        tmp_path.replace(path)
+
     module._rlvla_ddp_sync = _rlvla_ddp_sync
+    module._rlvla_ddp_sync_rollout = _rlvla_ddp_sync_rollout
+    module._rlvla_ddp_mark_update_complete = _rlvla_ddp_mark_update_complete
+    if rollout_interval > 0 and os.environ.get("RANK", "0") == "0":
+        print(
+            f"[rlvla-ddp] rollout sync interval set to every {rollout_interval} rollout steps",
+            flush=True,
+        )
 
 
 def _find_log_std_tensor(payload: Any) -> torch.Tensor | None:
@@ -1868,6 +2015,7 @@ def _enable_fast_runtime_flags() -> None:
 def main() -> None:
     external_arg, forwarded_argv, fast_args = _split_wrapper_argv(sys.argv[1:])
     external_script = _resolve_external_script(external_arg)
+    _patch_global_distributed_timeout(timeout_seconds=fast_args.ddp_timeout_seconds)
     module = _load_external_module(
         external_script,
         enable_lchol=bool(fast_args.lchol and fast_args.lchol.enabled),
@@ -1880,7 +2028,7 @@ def main() -> None:
     _patch_scene_wrapper_cache(module)
     _patch_desk_texture_prepare(module)
     _patch_distributed_timeout(module, timeout_seconds=fast_args.ddp_timeout_seconds)
-    _patch_ddp_sync(module)
+    _patch_ddp_sync(module, rollout_sync_interval=fast_args.ddp_rollout_sync_interval)
     _patch_resume_artifacts(module, forwarded_argv, fast_args)
     _patch_lr_scheduler(module, fast_args)
     _patch_lchol_runtime(module, fast_args.lchol)
