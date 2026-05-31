@@ -569,6 +569,24 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
             1,
         )
 
+    ddp_init_anchor = (
+        "        if \"static_graph\" in ddp_params:\n"
+        "            ddp_kwargs[\"static_graph\"] = bool(args.ddp_static_graph)\n"
+        "        policy = DDP(policy, **ddp_kwargs)\n"
+    )
+    if ddp_init_anchor in transformed:
+        transformed = transformed.replace(
+            ddp_init_anchor,
+            "        if \"static_graph\" in ddp_params:\n"
+            "            ddp_kwargs[\"static_graph\"] = bool(args.ddp_static_graph)\n"
+            "        if \"init_sync\" in ddp_params:\n"
+            "            ddp_kwargs[\"init_sync\"] = False\n"
+            "        print(f\"[rlvla-ddp] rank={rank} entering DDP policy wrap\", flush=True)\n"
+            "        policy = DDP(policy, **ddp_kwargs)\n"
+            "        print(f\"[rlvla-ddp] rank={rank} DDP policy ready\", flush=True)\n",
+            1,
+        )
+
     update_anchor = "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n"
     if update_anchor in transformed:
         transformed = transformed.replace(

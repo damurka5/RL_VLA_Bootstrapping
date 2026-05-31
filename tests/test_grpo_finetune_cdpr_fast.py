@@ -438,6 +438,21 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
         self.assertIn("broadcast_buffers=False", patched)
 
+    def test_ddp_sync_transform_skips_initial_full_model_sync_when_available(self):
+        source = (
+            "        ddp_params = inspect.signature(DDP.__init__).parameters\n"
+            "        if \"static_graph\" in ddp_params:\n"
+            "            ddp_kwargs[\"static_graph\"] = bool(args.ddp_static_graph)\n"
+            "        policy = DDP(policy, **ddp_kwargs)\n"
+        )
+
+        patched = _transform_external_grpo_source_for_ddp_sync(source)
+
+        self.assertIn('if "init_sync" in ddp_params:', patched)
+        self.assertIn('ddp_kwargs["init_sync"] = False', patched)
+        self.assertIn('rank={rank} entering DDP policy wrap', patched)
+        self.assertIn('rank={rank} DDP policy ready', patched)
+
     def test_lr_scheduler_transform_applies_schedule_once_per_update_and_logs_lr(self):
         source = (
             "        for update in range(1, args.total_updates + 1):\n"
