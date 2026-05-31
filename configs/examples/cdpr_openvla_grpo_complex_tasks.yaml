@@ -16,6 +16,7 @@ remote:
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     RLVLA_DDP_TIMEOUT_SECONDS: "86400"
     RLVLA_DDP_ROLLOUT_SYNC_INTERVAL: "5"
+    RLVLA_CDPR_OFFSCREEN_SAMPLES: "1"
     TOKENIZERS_PARALLELISM: "false"
   notes:
     - GRPO resumes from the complex-task checkpoint at `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260528_101203/rl/step_0072000`.

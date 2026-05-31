@@ -25,6 +25,7 @@ _SHARED_EGL_CONTEXT = None
 _SHARED_EGL_CONTEXT_PID = None
 _SHARED_EGL_CONTEXT_SIZE = (0, 0)
 _SHARED_EGL_CONTEXT_REGISTERED = False
+_OFFSCREEN_SAMPLES_FALLBACK = None
 
 
 def _env_flag(name, default=True):
@@ -418,8 +419,11 @@ class HeadlessCDPRSimulation:
                 int(self.model.vis.quality.offsamples),
                 minimum=0,
             )
+        elif _OFFSCREEN_SAMPLES_FALLBACK is not None:
+            self.model.vis.quality.offsamples = int(_OFFSCREEN_SAMPLES_FALLBACK)
 
     def _create_mjr_context(self):
+        global _OFFSCREEN_SAMPLES_FALLBACK
         font_scale = mj.mjtFontScale.mjFONTSCALE_150.value
         try:
             context = mj.MjrContext(self.model, font_scale)
@@ -429,6 +433,7 @@ class HeadlessCDPRSimulation:
             current_samples = int(getattr(self.model.vis.quality, "offsamples", 0))
             if current_samples <= 1:
                 raise
+            _OFFSCREEN_SAMPLES_FALLBACK = 1
             self.model.vis.quality.offsamples = 1
             print(
                 "[warn] MuJoCo offscreen framebuffer setup failed "

@@ -755,6 +755,162 @@ def _load_wrapper_object_checker():
     return None
 
 
+def _extract_cli_bool(argv: Sequence[str], flag: str, *, default: bool = False) -> bool:
+    names = {flag, flag.replace("_", "-")}
+    negative_names = {
+        "--no-" + name.lstrip("-")
+        for name in names
+    }
+    for idx in range(len(argv) - 1, -1, -1):
+        arg = str(argv[idx])
+        key, sep, value = arg.partition("=")
+        if key in negative_names:
+            return False
+        if key in names:
+            if sep:
+                return str(value).strip().lower() not in {"0", "false", "no", "off"}
+            if idx + 1 < len(argv):
+                next_arg = str(argv[idx + 1])
+                if not next_arg.startswith("--"):
+                    return next_arg.strip().lower() not in {"0", "false", "no", "off"}
+            return True
+    return bool(default)
+
+
+class _SceneCacheProgressReporter:
+    def __init__(self, *, expected_total: int, enabled: bool = True):
+        self.expected_total = max(0, int(expected_total))
+        self.enabled = bool(enabled)
+        self.count = 0
+        self._bar = None
+        self._started = False
+        self._closed = False
+        atexit.register(self.close)
+
+    def _is_main_process(self) -> bool:
+        try:
+            return int(os.environ.get("RANK", "0")) == 0
+        except ValueError:
+            return True
+
+    def _ensure_started(self) -> None:
+        if self._started or not self.enabled or not self._is_main_process():
+            return
+        self._started = True
+        try:
+            from tqdm.auto import tqdm
+
+            total = self.expected_total if self.expected_total > 0 else None
+            self._bar = tqdm(
+                total=total,
+                desc="scene-cache prebuild",
+                dynamic_ncols=True,
+                file=sys.__stderr__,
+                leave=True,
+            )
+        except Exception:
+            total = f"/{self.expected_total}" if self.expected_total > 0 else ""
+            print(f"[scene-cache] prebuild started: 0{total} wrapper builds", flush=True)
+
+    def set_expected_total(self, expected_total: int) -> None:
+        expected = max(0, int(expected_total))
+        if expected <= 0 or expected == self.expected_total:
+            return
+        self.expected_total = expected
+        if self._bar is not None:
+            self._bar.total = expected
+            self._bar.refresh()
+
+    def update(self, *, scene_name: str = "") -> None:
+        if self._closed or not self.enabled or not self._is_main_process():
+            return
+        self._ensure_started()
+        self.count += 1
+        if self._bar is not None:
+            if scene_name:
+                self._bar.set_postfix_str(str(scene_name))
+            self._bar.update(1)
+            return
+        if self.count == 1 or self.count % 10 == 0:
+            total = f"/{self.expected_total}" if self.expected_total > 0 else ""
+            suffix = f" scene={scene_name}" if scene_name else ""
+            print(f"[scene-cache] prebuild progress: {self.count}{total}{suffix}", flush=True)
+
+    def close(self, *, cached_total: int | None = None) -> None:
+        if self._closed or not self.enabled or not self._is_main_process():
+            self._closed = True
+            return
+        self._closed = True
+        cached_suffix = "" if cached_total is None else f"; cached_variants={int(cached_total)}"
+        if self._bar is not None:
+            if cached_total is not None:
+                self._bar.set_postfix_str(f"cached={int(cached_total)}")
+            self._bar.close()
+        elif self._started:
+            total = f"/{self.expected_total}" if self.expected_total > 0 else ""
+            print(f"[scene-cache] prebuild complete: {self.count}{total} wrapper builds{cached_suffix}", flush=True)
+
+
+def _patch_scene_cache_prebuild_progress(module, forwarded_argv: Sequence[str]) -> None:
+    if not _extract_cli_bool(forwarded_argv, "--prebuild_scene_cache", default=False):
+        return
+
+    scene_pool_size = _extract_cli_arg_value(forwarded_argv, "--scene_pool_size")
+    texture_pool_size = _extract_cli_arg_value(forwarded_argv, "--texture_pool_size")
+    try:
+        scene_count = max(1, int(scene_pool_size or 0))
+    except ValueError:
+        scene_count = 0
+    try:
+        texture_count = max(1, int(texture_pool_size or 1))
+    except ValueError:
+        texture_count = 1
+    reporter = _SceneCacheProgressReporter(expected_total=scene_count * texture_count)
+
+    patched_classes: set[type] = set()
+    for module_name in ("cdpr_dataset.rl_cdpr_env", "robots.cdpr.cdpr_dataset.rl_cdpr_env"):
+        try:
+            env_module = importlib.import_module(module_name)
+        except Exception:
+            continue
+        env_cls = getattr(env_module, "CDPRLanguageRLEnv", None)
+        if env_cls is None or env_cls in patched_classes:
+            continue
+        original_build_wrapper = getattr(env_cls, "_build_wrapper", None)
+        if not callable(original_build_wrapper) or getattr(original_build_wrapper, "_rlvla_progress_wrapped", False):
+            continue
+
+        def _build_wrapper_with_progress(self, scene, *args, _original=original_build_wrapper, **kwargs):
+            live_textures = len(getattr(self, "desk_texture_files", []) or [])
+            if live_textures > 0 and scene_count > 0:
+                reporter.set_expected_total(scene_count * min(texture_count, live_textures))
+            try:
+                return _original(self, scene, *args, **kwargs)
+            finally:
+                reporter.update(scene_name=str(getattr(scene, "name", "")))
+
+        _build_wrapper_with_progress._rlvla_progress_wrapped = True  # type: ignore[attr-defined]
+        env_cls._build_wrapper = _build_wrapper_with_progress
+        patched_classes.add(env_cls)
+
+    env_cls = getattr(module, "CDPRVisionLanguageEnv", None)
+    original_activate = getattr(env_cls, "_activate_scene_wrapper_cache", None)
+    if not callable(original_activate) or getattr(original_activate, "_rlvla_progress_wrapped", False):
+        return
+
+    def _activate_scene_wrapper_cache_with_progress(self, scene_wrapper_cache, texture_name_by_wrapper):
+        try:
+            return original_activate(self, scene_wrapper_cache, texture_name_by_wrapper)
+        finally:
+            cached_total = 0
+            if isinstance(scene_wrapper_cache, dict):
+                cached_total = sum(len(list(paths or [])) for paths in scene_wrapper_cache.values())
+            reporter.close(cached_total=cached_total)
+
+    _activate_scene_wrapper_cache_with_progress._rlvla_progress_wrapped = True  # type: ignore[attr-defined]
+    env_cls._activate_scene_wrapper_cache = _activate_scene_wrapper_cache_with_progress
+
+
 def _patch_scene_wrapper_cache(module) -> None:
     wrapper_bundle_exists = _load_wrapper_bundle_checker()
     if wrapper_bundle_exists is None:
@@ -2026,6 +2182,7 @@ def main() -> None:
     _enable_fast_runtime_flags()
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
+    _patch_scene_cache_prebuild_progress(module, forwarded_argv)
     _patch_desk_texture_prepare(module)
     _patch_distributed_timeout(module, timeout_seconds=fast_args.ddp_timeout_seconds)
     _patch_ddp_sync(module, rollout_sync_interval=fast_args.ddp_rollout_sync_interval)

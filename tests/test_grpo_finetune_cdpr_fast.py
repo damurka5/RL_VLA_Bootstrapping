@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 import tempfile
 import types
@@ -40,6 +41,7 @@ from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _lr_schedule_factor,
     _patch_distributed_timeout,
     _patch_desk_texture_prepare,
+    _patch_scene_cache_prebuild_progress,
     _patch_scene_wrapper_cache,
     _split_wrapper_argv,
     _tensorboard_tag_allowed,
@@ -249,6 +251,48 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
             self.assertEqual(out, right.resolve())
             self.assertEqual(env._scene_wrapper_cache["desk"], [right.resolve()])
+
+    def test_scene_cache_prebuild_progress_wraps_rl_wrapper_builds(self):
+        class FakeRLEnv:
+            calls: list[str] = []
+
+            def _build_wrapper(self, scene, ee_start=None):
+                del ee_start
+                self.calls.append(str(scene.name))
+                return Path("/tmp/fake_wrapper.xml")
+
+        fake_rl_module = types.ModuleType("cdpr_dataset.rl_cdpr_env")
+        fake_rl_module.CDPRLanguageRLEnv = FakeRLEnv
+
+        class FakeVisionEnv:
+            def _activate_scene_wrapper_cache(self, scene_wrapper_cache, texture_name_by_wrapper):
+                del scene_wrapper_cache, texture_name_by_wrapper
+                return {"activated": True}
+
+        module = types.SimpleNamespace(CDPRVisionLanguageEnv=FakeVisionEnv)
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "cdpr_dataset.rl_cdpr_env": fake_rl_module,
+                "robots.cdpr.cdpr_dataset.rl_cdpr_env": fake_rl_module,
+            },
+        ), mock.patch.dict(os.environ, {"RANK": "1"}):
+            _patch_scene_cache_prebuild_progress(
+                module,
+                ["--prebuild_scene_cache", "--scene_pool_size", "2", "--texture_pool_size", "3"],
+            )
+
+        env = FakeRLEnv()
+        scene = types.SimpleNamespace(name="desk")
+
+        with mock.patch.dict(os.environ, {"RANK": "1"}):
+            self.assertEqual(env._build_wrapper(scene), Path("/tmp/fake_wrapper.xml"))
+            self.assertEqual(FakeRLEnv.calls, ["desk"])
+            self.assertTrue(getattr(FakeRLEnv._build_wrapper, "_rlvla_progress_wrapped", False))
+            self.assertEqual(
+                module.CDPRVisionLanguageEnv()._activate_scene_wrapper_cache({"desk": [Path("/tmp/a.xml")]}, {}),
+                {"activated": True},
+            )
 
     def test_split_wrapper_argv_strips_wrapper_only_options(self):
         external_script, forwarded, fast_args = _split_wrapper_argv(
