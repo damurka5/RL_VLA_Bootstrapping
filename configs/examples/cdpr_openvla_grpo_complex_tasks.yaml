@@ -18,7 +18,7 @@ remote:
     RLVLA_DDP_ROLLOUT_SYNC_INTERVAL: "5"
     TOKENIZERS_PARALLELISM: "false"
   notes:
-    - GRPO starts from the step_390_to_490 move-to-object checkpoint and uses a grab-first instruction curriculum before harder object relations.
+    - GRPO resumes from the complex-task checkpoint at `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260528_101203/rl/step_0072000`.
     - Rollout TensorBoard scalars are emitted every 8 global environment steps, plus update summaries every optimizer update.
 
 assets:
@@ -297,10 +297,10 @@ training:
       nproc_per_node: 2
     args:
       external_grpo_script: vla-scripts/grpo_finetune_cdpr.py
-      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/step_390_to_490_movetoobj_20260420_153108/rl/step_0170000/vla_cdpr_adapter
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260528_101203/rl/step_0072000/vla_cdpr_adapter
       train_loaded_adapter: true
-      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/step_390_to_490_movetoobj_20260420_153108/rl/step_0170000/action_head_cdpr.pt
-      resume_actor_stats: false
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260528_101203/rl/step_0072000/action_head_cdpr.pt
+      resume_actor_stats: true
       # Complex CDPR rollouts and reverse-frontier validation can skew DDP ranks far past PyTorch's 10-minute default.
       ddp_timeout_seconds: 86400
       ddp_rollout_sync_interval: 5

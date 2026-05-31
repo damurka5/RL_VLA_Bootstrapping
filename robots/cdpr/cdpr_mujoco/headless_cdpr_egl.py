@@ -1,6 +1,7 @@
 import os
 import time
 import copy
+import atexit
 from datetime import datetime
 
 import mujoco as mj
@@ -18,6 +19,67 @@ try:
 except ImportError:
     EGL_AVAILABLE = False
     print("EGL not available, falling back to software rendering")
+
+
+_SHARED_EGL_CONTEXT = None
+_SHARED_EGL_CONTEXT_PID = None
+_SHARED_EGL_CONTEXT_SIZE = (0, 0)
+_SHARED_EGL_CONTEXT_REGISTERED = False
+
+
+def _env_flag(name, default=True):
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _env_int(name, default, minimum=None):
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        value = int(default)
+    else:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = int(default)
+    if minimum is not None:
+        value = max(int(minimum), value)
+    return value
+
+
+def _free_shared_egl_context():
+    global _SHARED_EGL_CONTEXT, _SHARED_EGL_CONTEXT_PID, _SHARED_EGL_CONTEXT_SIZE
+    context = _SHARED_EGL_CONTEXT
+    _SHARED_EGL_CONTEXT = None
+    _SHARED_EGL_CONTEXT_PID = None
+    _SHARED_EGL_CONTEXT_SIZE = (0, 0)
+    if context is not None:
+        try:
+            context.free()
+        except Exception:
+            pass
+
+
+def _get_shared_egl_context(width, height):
+    global _SHARED_EGL_CONTEXT, _SHARED_EGL_CONTEXT_PID, _SHARED_EGL_CONTEXT_SIZE, _SHARED_EGL_CONTEXT_REGISTERED
+    pid = os.getpid()
+    current_width, current_height = _SHARED_EGL_CONTEXT_SIZE
+    needs_context = (
+        _SHARED_EGL_CONTEXT is None
+        or _SHARED_EGL_CONTEXT_PID != pid
+        or int(width) > int(current_width)
+        or int(height) > int(current_height)
+    )
+    if needs_context:
+        _free_shared_egl_context()
+        _SHARED_EGL_CONTEXT = GLContext(max_width=int(width), max_height=int(height))
+        _SHARED_EGL_CONTEXT_PID = pid
+        _SHARED_EGL_CONTEXT_SIZE = (int(width), int(height))
+        if not _SHARED_EGL_CONTEXT_REGISTERED:
+            atexit.register(_free_shared_egl_context)
+            _SHARED_EGL_CONTEXT_REGISTERED = True
+    return _SHARED_EGL_CONTEXT
 
 
 def _mujoco_snapshot_spec() -> int:
@@ -151,8 +213,10 @@ class HeadlessCDPRSimulation:
         self.record_trajectory = bool(record_trajectory)
         self.model = None
         self.data = None
+        self.context = None
         self.gl_context = None
         self._glfw_window = None
+        self._owns_gl_context = False
 
         # CDPR frame anchor points (must match XML)
         self.frame_points = np.array([
@@ -190,6 +254,9 @@ class HeadlessCDPRSimulation:
         return np.asarray(frame).copy()
 
     def initialize(self):
+        if self.model is not None or self.data is not None or self.context is not None:
+            self.cleanup()
+
         self.model = mj.MjModel.from_xml_path(self.xml_path)
         self.data = mj.MjData(self.model)
         self.model.opt.timestep = self.controller.dt
@@ -339,6 +406,40 @@ class HeadlessCDPRSimulation:
         print("Headless CDPR Simulation initialized successfully!")
         print(f"Using {'EGL' if EGL_AVAILABLE else 'software'} rendering")
 
+    def _configure_offscreen_buffer(self):
+        self.offwidth = _env_int("RLVLA_CDPR_OFFSCREEN_WIDTH", 640, minimum=1)
+        self.offheight = _env_int("RLVLA_CDPR_OFFSCREEN_HEIGHT", 480, minimum=1)
+        if hasattr(self.model.vis, "global_"):
+            self.model.vis.global_.offwidth = int(self.offwidth)
+            self.model.vis.global_.offheight = int(self.offheight)
+        if "RLVLA_CDPR_OFFSCREEN_SAMPLES" in os.environ:
+            self.model.vis.quality.offsamples = _env_int(
+                "RLVLA_CDPR_OFFSCREEN_SAMPLES",
+                int(self.model.vis.quality.offsamples),
+                minimum=0,
+            )
+
+    def _create_mjr_context(self):
+        font_scale = mj.mjtFontScale.mjFONTSCALE_150.value
+        try:
+            context = mj.MjrContext(self.model, font_scale)
+            mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_OFFSCREEN, context)
+            return context
+        except Exception as exc:
+            current_samples = int(getattr(self.model.vis.quality, "offsamples", 0))
+            if current_samples <= 1:
+                raise
+            self.model.vis.quality.offsamples = 1
+            print(
+                "[warn] MuJoCo offscreen framebuffer setup failed "
+                f"with offsamples={current_samples}; retrying with offsamples=1. "
+                f"Original error: {exc}",
+                flush=True,
+            )
+            context = mj.MjrContext(self.model, font_scale)
+            mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_OFFSCREEN, context)
+            return context
+
     def _setup_offscreen_rendering(self):
         self.overview_cam = mj.MjvCamera()
         self.ee_cam = mj.MjvCamera()
@@ -356,12 +457,17 @@ class HeadlessCDPRSimulation:
         self.opt = mj.MjvOption()
         mj.mjv_defaultOption(self.opt)
 
-        self.offwidth, self.offheight = 640, 480
+        self._configure_offscreen_buffer()
         self.offviewport = mj.MjrRect(0, 0, self.offwidth, self.offheight)
 
         # --------- IMPORTANT: ensure an active GL context exists ----------
         if EGL_AVAILABLE:
-            self.gl_context = GLContext(max_width=self.offwidth, max_height=self.offheight)
+            if _env_flag("RLVLA_CDPR_SHARE_EGL_CONTEXT", default=True):
+                self.gl_context = _get_shared_egl_context(self.offwidth, self.offheight)
+                self._owns_gl_context = False
+            else:
+                self.gl_context = GLContext(max_width=self.offwidth, max_height=self.offheight)
+                self._owns_gl_context = True
             self.gl_context.make_current()
         else:
             # GLFW fallback for macOS / no EGL
@@ -375,17 +481,16 @@ class HeadlessCDPRSimulation:
                 raise RuntimeError("Failed to create GLFW window for GL context.")
             glfw.make_context_current(self._glfw_window)
             glfw.swap_interval(0)
+            self._owns_gl_context = True
         # ----------------------------------------------------------------
 
-        self.context = mj.MjrContext(self.model, mj.mjtFontScale.mjFONTSCALE_150.value)
-
-        # If OFFSCREEN fails on some drivers, you can flip this to WINDOW as fallback.
-        mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_OFFSCREEN, self.context)
+        self.context = self._create_mjr_context()
 
     def capture_frame(self, camera, camera_name):
         try:
             if EGL_AVAILABLE and self.gl_context is not None:
                 self.gl_context.make_current()
+            mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_OFFSCREEN, self.context)
             mj.mjv_updateScene(self.model, self.data, self.opt, None, camera,
                                mj.mjtCatBit.mjCAT_ALL.value, self.scene)
             mj.mjr_render(self.offviewport, self.scene, self.context)
@@ -1177,13 +1282,16 @@ class HeadlessCDPRSimulation:
                 glfw.terminate()
             except:
                 pass
+            self._glfw_window = None
 
         if self.gl_context:
             try:
-                self.gl_context.free()
+                if self._owns_gl_context:
+                    self.gl_context.free()
             except:
                 pass
             self.gl_context = None
+            self._owns_gl_context = False
         self.model = None
         self.data = None
         print("Simulation cleanup completed")
