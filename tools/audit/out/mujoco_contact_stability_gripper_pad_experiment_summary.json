@@ -1,0 +1,22 @@
+{
+  "cdpr_xml": "temporary pad/lip experiment against robots/cdpr/cdpr_mujoco/cdpr.xml; experiment was not retained",
+  "csv": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/mujoco_contact_stability_gripper_pad_experiment.csv",
+  "error": 0,
+  "fail": 6,
+  "objects": [
+    "stable_block",
+    "stable_can",
+    "stable_sphere",
+    "ycb_apple",
+    "plate",
+    "bowl",
+    "ycb_b_cups"
+  ],
+  "pass": 8,
+  "rows": 14,
+  "tests": [
+    "gripper_squeeze",
+    "lift"
+  ],
+  "warn": 0
+}

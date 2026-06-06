@@ -64,6 +64,38 @@ SCENES_DIR = LIBERO_ASSETS / "scenes"
 OBJECTS_DIR_MAIN  = LIBERO_ASSETS / "stable_hope_objects"      # sauces, milk, etc.
 OBJECTS_DIR_EXTRA = LIBERO_ASSETS / "stable_scanned_objects"   # bowls, plates, basket, ...
 OBJECTS_DIRS = [OBJECTS_DIR_MAIN, OBJECTS_DIR_EXTRA]
+STABLE_OBJECTS_DIR = REPO / "robots" / "cdpr" / "cdpr_mujoco" / "stable_objects"
+
+
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _find_stable_object_xml(object_name: str, normalized_name: str) -> Path | None:
+    candidates = [str(object_name), str(normalized_name)]
+    aliases = {
+        "apple": "ycb_apple",
+        "pear": "ycb_pear",
+        "peach": "ycb_peach",
+        "baseball": "ycb_baseball",
+        "ball": "stable_sphere",
+        "sphere": "stable_sphere",
+        "cube": "stable_block",
+        "block": "stable_block",
+        "can": "stable_can",
+        "cup": "ycb_b_cups",
+    }
+    for candidate in list(candidates):
+        if candidate in aliases:
+            candidates.append(aliases[candidate])
+    for candidate in dict.fromkeys(candidates):
+        path = STABLE_OBJECTS_DIR / f"{candidate}.xml"
+        if path.exists():
+            return path.resolve()
+    return None
 
 # --- EXTRA ASSETS (YCB) ---
 # Prefer env var, otherwise probe common layouts used across local and remote repos.
@@ -267,6 +299,12 @@ def find_object_xml(object_name: str) -> Path:
     if name.startswith("ycb_"):
         name = name[len("ycb_"):]
 
+    stable_first = _env_flag("RLVLA_CDPR_USE_STABLE_OBJECTS", default=False) or str(object_name).startswith("stable_")
+    if stable_first:
+        stable = _find_stable_object_xml(object_name, name)
+        if stable is not None:
+            return stable
+
     # 1) LIBERO roots (your current behavior)
     for root in OBJECTS_DIRS:
         d = root / name
@@ -302,11 +340,16 @@ def find_object_xml(object_name: str) -> Path:
         if matches:
             return matches[0]
 
+    stable = _find_stable_object_xml(object_name, name)
+    if stable is not None:
+        return stable
+
     raise FileNotFoundError(
         f"Object '{object_name}' not found.\n"
         f"Checked LIBERO roots: {', '.join(str(r) for r in OBJECTS_DIRS)}\n"
         f"Checked YCB root: {YCB_ROOT}\n"
-        f"Checked RoboTwin roots: {', '.join(str(r) for r in ROBOTWIN_ROOTS) if ROBOTWIN_ROOTS else '(none)'}"
+        f"Checked RoboTwin roots: {', '.join(str(r) for r in ROBOTWIN_ROOTS) if ROBOTWIN_ROOTS else '(none)'}\n"
+        f"Checked stable object pack: {STABLE_OBJECTS_DIR}"
     )
 
 

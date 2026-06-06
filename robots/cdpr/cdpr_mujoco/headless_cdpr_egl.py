@@ -8,6 +8,17 @@ import mujoco as mj
 import numpy as np
 
 try:
+    from .model_cache import cache_stats as compiled_model_cache_stats
+    from .model_cache import get_compiled_model
+except Exception:  # pragma: no cover - allows direct script execution fallback
+    try:
+        from cdpr_mujoco.model_cache import cache_stats as compiled_model_cache_stats
+        from cdpr_mujoco.model_cache import get_compiled_model
+    except Exception:  # pragma: no cover
+        compiled_model_cache_stats = None
+        get_compiled_model = None
+
+try:
     import imageio
 except ImportError:
     imageio = None
@@ -47,6 +58,18 @@ def _env_int(name, default, minimum=None):
     if minimum is not None:
         value = max(int(minimum), value)
     return value
+
+
+def _offscreen_config_from_env():
+    width = _env_int("RLVLA_CDPR_OFFSCREEN_WIDTH", 640, minimum=1)
+    height = _env_int("RLVLA_CDPR_OFFSCREEN_HEIGHT", 480, minimum=1)
+    if "RLVLA_CDPR_OFFSCREEN_SAMPLES" in os.environ:
+        samples = str(_env_int("RLVLA_CDPR_OFFSCREEN_SAMPLES", 1, minimum=0))
+    elif _OFFSCREEN_SAMPLES_FALLBACK is not None:
+        samples = str(int(_OFFSCREEN_SAMPLES_FALLBACK))
+    else:
+        samples = "xml_default"
+    return int(width), int(height), samples
 
 
 def _free_shared_egl_context():
@@ -208,10 +231,22 @@ class HeadlessCDPRController:
 
 
 class HeadlessCDPRSimulation:
-    def __init__(self, xml_path, output_dir="trajectory_videos", record_trajectory=True):
+    def __init__(
+        self,
+        xml_path,
+        output_dir="trajectory_videos",
+        record_trajectory=True,
+        use_model_cache=None,
+        model_cache_key=None,
+    ):
         self.xml_path = xml_path
         self.output_dir = output_dir
         self.record_trajectory = bool(record_trajectory)
+        if use_model_cache is None:
+            use_model_cache = _env_flag("RLVLA_CDPR_COMPILED_MODEL_CACHE", default=True)
+        self.use_model_cache = bool(use_model_cache)
+        self.model_cache_key = dict(model_cache_key or {})
+        self.model_cache_event = {}
         self.model = None
         self.data = None
         self.context = None
@@ -258,9 +293,46 @@ class HeadlessCDPRSimulation:
         if self.model is not None or self.data is not None or self.context is not None:
             self.cleanup()
 
-        self.model = mj.MjModel.from_xml_path(self.xml_path)
+        self.offwidth, self.offheight, self._offscreen_samples_key = _offscreen_config_from_env()
+        if get_compiled_model is not None:
+            self.model, cache_event = get_compiled_model(
+                self.xml_path,
+                enabled=self.use_model_cache,
+                timestep=float(self.controller.dt),
+                offscreen_width=int(self.offwidth),
+                offscreen_height=int(self.offheight),
+                offscreen_samples=str(self._offscreen_samples_key),
+                semantic_key=self.model_cache_key,
+            )
+            self.model_cache_event = cache_event.as_dict()
+        else:
+            compile_start = time.perf_counter()
+            self.model = mj.MjModel.from_xml_path(self.xml_path)
+            self.model.opt.timestep = self.controller.dt
+            self.model_cache_event = {
+                "enabled": False,
+                "hit": False,
+                "miss": False,
+                "key": "",
+                "key_short": "",
+                "compile_time_s": float(time.perf_counter() - compile_start),
+                "cache_size": 0,
+                "rss_mb": 0.0,
+                "reason": "model_cache_import_failed",
+            }
         self.data = mj.MjData(self.model)
         self.model.opt.timestep = self.controller.dt
+        if _env_flag("RLVLA_CDPR_MJMODEL_CACHE_LOG", default=False):
+            status = "hit" if self.model_cache_event.get("hit") else "miss"
+            if not self.model_cache_event.get("enabled"):
+                status = "disabled"
+            print(
+                "[mujoco-cache] "
+                f"{status} key={self.model_cache_event.get('key_short', '')} "
+                f"compile_s={float(self.model_cache_event.get('compile_time_s', 0.0)):.6f} "
+                f"cache_size={int(self.model_cache_event.get('cache_size', 0))}",
+                flush=True,
+            )
         
         self.jnt_yaw = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "ee_yaw")
         self.jnt_yaw_qadr = self.model.jnt_qposadr[self.jnt_yaw]  # index into qpos for yaw angle
@@ -408,8 +480,7 @@ class HeadlessCDPRSimulation:
         print(f"Using {'EGL' if EGL_AVAILABLE else 'software'} rendering")
 
     def _configure_offscreen_buffer(self):
-        self.offwidth = _env_int("RLVLA_CDPR_OFFSCREEN_WIDTH", 640, minimum=1)
-        self.offheight = _env_int("RLVLA_CDPR_OFFSCREEN_HEIGHT", 480, minimum=1)
+        self.offwidth, self.offheight, self._offscreen_samples_key = _offscreen_config_from_env()
         if hasattr(self.model.vis, "global_"):
             self.model.vis.global_.offwidth = int(self.offwidth)
             self.model.vis.global_.offheight = int(self.offheight)
@@ -850,6 +921,28 @@ class HeadlessCDPRSimulation:
         if self.record_trajectory:
             self.record_trajectory_step()
 
+    def reset_data_state(self):
+        """Reset only mjData/controller state while keeping the compiled MjModel."""
+        if self.model is None or self.data is None:
+            raise RuntimeError("Simulation is not initialized.")
+
+        mj.mj_resetData(self.model, self.data)
+        if self.model.nu > 0:
+            self.data.ctrl[:] = 0.0
+        if hasattr(self.data, "act") and self.data.act is not None:
+            self.data.act[:] = 0.0
+        mj.mj_forward(self.model, self.data)
+        self.controller = HeadlessCDPRController(self.frame_points)
+        self._sync_controller_geometry_from_state()
+        self._match_sliders_to_ee_lengths(max_iter=12, tol=1e-6)
+        self.target_pos = self.get_end_effector_position().copy()
+        self.controller.prev_lengths = self.get_cable_lengths().copy()
+        self.overview_frames = []
+        self.ee_camera_frames = []
+        self.frame_capture_timestamps = []
+        self.trajectory_data = []
+        mj.mj_forward(self.model, self.data)
+
     def capture_state(self):
         if self.model is None or self.data is None:
             raise RuntimeError("Simulation is not initialized.")
@@ -934,6 +1027,12 @@ class HeadlessCDPRSimulation:
             self.trajectory_data = copy.deepcopy(snapshot.get("trajectory_data") or [])
         else:
             self.trajectory_data = []
+
+    @staticmethod
+    def compiled_model_cache_stats():
+        if compiled_model_cache_stats is None:
+            return {"size": 0, "hits": 0, "misses": 0, "hit_rate": 0.0, "last_event": None}
+        return compiled_model_cache_stats()
 
     def run_trajectory(self, target_positions, trajectory_name="trajectory",
                        max_steps_per_target=600, capture_every_n=3):

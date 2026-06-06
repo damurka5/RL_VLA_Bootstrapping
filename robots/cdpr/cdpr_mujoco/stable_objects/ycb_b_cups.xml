@@ -1,0 +1,15 @@
+<mujoco model="ycb_b_cups">
+  <compiler autolimits="true"/>
+  <default>
+    <geom friction="0.9 0.01 0.001" condim="3" solref="0.008 1" solimp="0.90 0.95 0.001" margin="0.001"/>
+  </default>
+  <worldbody>
+    <body name="ycb_b_cups" pos="0 0 0.050">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.12" diaginertia="0.00012 0.00012 0.000074"/>
+      <geom name="ycb_b_cups_collision" type="cylinder" size="0.038 0.050" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="ycb_b_cups_visual" type="cylinder" size="0.037 0.049" contype="0" conaffinity="0" group="1" rgba="0.05 0.55 0.70 0.92"/>
+      <geom name="ycb_b_cups_handle_visual" type="capsule" fromto="0.038 0 -0.012 0.062 0 0.020" size="0.006" contype="0" conaffinity="0" group="1" rgba="0.05 0.55 0.70 0.92"/>
+    </body>
+  </worldbody>
+</mujoco>

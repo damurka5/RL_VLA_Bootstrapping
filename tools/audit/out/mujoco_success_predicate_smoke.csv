@@ -1,0 +1,6 @@
+case,instruction_type,success,info_json
+move_to_object,move_to_object,1,"{""move_to_object_validation_distance_threshold"": 0.03, ""move_to_object_validation_distance_xy"": 0.0014142137952148914, ""move_to_object_validation_distance_xyz"": 0.26000386476516724, ""move_to_object_validation_success"": 1.0, ""validation_success_mode"": 2.0}"
+push_left,push_left,1,"{""manipulation_validation_success"": 1.0, ""validation_success_mode"": 3.0}"
+move_left_of_object,move_left_of_object,1,"{""manipulation_validation_success"": 1.0, ""validation_success_mode"": 3.0}"
+move_between_objects,move_between_objects,1,"{""manipulation_validation_success"": 1.0, ""validation_success_mode"": 3.0}"
+put_into_plate,put_into_plate,1,"{""manipulation_validation_success"": 1.0, ""validation_success_mode"": 3.0}"

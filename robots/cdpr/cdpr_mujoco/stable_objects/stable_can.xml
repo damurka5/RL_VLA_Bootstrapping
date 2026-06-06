@@ -1,0 +1,14 @@
+<mujoco model="stable_can">
+  <compiler autolimits="true"/>
+  <default>
+    <geom friction="0.9 0.01 0.001" condim="3" solref="0.008 1" solimp="0.90 0.95 0.001" margin="0.001"/>
+  </default>
+  <worldbody>
+    <body name="stable_can" pos="0 0 0.045">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.10" diaginertia="0.000061 0.000061 0.000030"/>
+      <geom name="stable_can_collision" type="cylinder" size="0.032 0.045" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="stable_can_visual" type="cylinder" size="0.031 0.044" contype="0" conaffinity="0" group="1" rgba="0.10 0.38 0.80 1"/>
+    </body>
+  </worldbody>
+</mujoco>

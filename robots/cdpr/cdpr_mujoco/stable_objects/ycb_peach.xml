@@ -1,0 +1,14 @@
+<mujoco model="ycb_peach">
+  <compiler autolimits="true"/>
+  <default>
+    <geom friction="0.9 0.01 0.001" condim="3" solref="0.008 1" solimp="0.90 0.95 0.001" margin="0.001"/>
+  </default>
+  <worldbody>
+    <body name="ycb_peach" pos="0 0 0.034">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.09" diaginertia="0.000042 0.000042 0.000042"/>
+      <geom name="ycb_peach_collision" type="sphere" size="0.034" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="ycb_peach_visual" type="sphere" size="0.033" contype="0" conaffinity="0" group="1" rgba="0.95 0.47 0.28 1"/>
+    </body>
+  </worldbody>
+</mujoco>

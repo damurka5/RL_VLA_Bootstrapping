@@ -1,0 +1,14 @@
+<mujoco model="stable_sphere">
+  <compiler autolimits="true"/>
+  <default>
+    <geom friction="0.8 0.01 0.001" condim="3" solref="0.008 1" solimp="0.90 0.95 0.001" margin="0.001"/>
+  </default>
+  <worldbody>
+    <body name="stable_sphere" pos="0 0 0.035">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.09" diaginertia="0.000044 0.000044 0.000044"/>
+      <geom name="stable_sphere_collision" type="sphere" size="0.035" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="stable_sphere_visual" type="sphere" size="0.034" contype="0" conaffinity="0" group="1" rgba="0.95 0.83 0.22 1"/>
+    </body>
+  </worldbody>
+</mujoco>

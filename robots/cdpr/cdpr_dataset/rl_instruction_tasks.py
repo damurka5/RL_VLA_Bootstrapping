@@ -657,6 +657,24 @@ def compute_instruction_reward(
 def _read_env_body_position(env: Any | None, body_name: str | None) -> np.ndarray | None:
     if env is None or not body_name:
         return None
+    api_getter = getattr(env, "state_api", None)
+    api = None
+    if callable(api_getter):
+        try:
+            api = api_getter()
+        except Exception:
+            api = None
+    if api is None:
+        api = env
+    pose_getter = getattr(api, "get_body_pose", None)
+    if callable(pose_getter):
+        try:
+            pose = pose_getter(str(body_name))
+            pos = np.asarray(pose.get("position"), dtype=np.float32).reshape(-1)
+            if pos.size >= 3 and np.all(np.isfinite(pos[:3])):
+                return pos[:3].astype(np.float32)
+        except Exception:
+            pass
     getter = getattr(env, "_get_task_body_position", None)
     if not callable(getter):
         getter = getattr(env, "_get_body_position", None)

@@ -1,0 +1,15 @@
+<mujoco model="mug">
+  <compiler autolimits="true"/>
+  <default>
+    <geom friction="0.9 0.01 0.001" condim="3" solref="0.008 1" solimp="0.90 0.95 0.001" margin="0.001"/>
+  </default>
+  <worldbody>
+    <body name="mug" pos="0 0 0.052">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.14" diaginertia="0.00015 0.00015 0.000084"/>
+      <geom name="mug_collision" type="cylinder" size="0.040 0.052" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="mug_visual" type="cylinder" size="0.039 0.051" contype="0" conaffinity="0" group="1" rgba="0.80 0.80 0.76 0.94"/>
+      <geom name="mug_handle_visual" type="capsule" fromto="0.040 0 -0.014 0.068 0 0.022" size="0.007" contype="0" conaffinity="0" group="1" rgba="0.80 0.80 0.76 0.94"/>
+    </body>
+  </worldbody>
+</mujoco>

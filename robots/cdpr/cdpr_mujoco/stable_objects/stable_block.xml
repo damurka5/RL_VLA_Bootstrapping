@@ -1,0 +1,14 @@
+<mujoco model="stable_block">
+  <compiler autolimits="true"/>
+  <default>
+    <geom friction="1.0 0.01 0.001" condim="3" solref="0.008 1" solimp="0.90 0.95 0.001" margin="0.001"/>
+  </default>
+  <worldbody>
+    <body name="stable_block" pos="0 0 0.035">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.12" diaginertia="0.000098 0.000098 0.000098"/>
+      <geom name="stable_block_collision" type="box" size="0.035 0.035 0.035" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="stable_block_visual" type="box" size="0.034 0.034 0.034" contype="0" conaffinity="0" group="1" rgba="0.85 0.18 0.12 1"/>
+    </body>
+  </worldbody>
+</mujoco>

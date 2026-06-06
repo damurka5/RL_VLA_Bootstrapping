@@ -95,6 +95,7 @@ CDPR_EE_START_Z_ENV = "RLVLA_CDPR_EE_START_Z"
 CDPR_RANDOMIZE_EE_YAW_ENV = "RLVLA_CDPR_RANDOMIZE_EE_YAW"
 CDPR_EE_YAW_BOUNDS_ENV = "RLVLA_CDPR_EE_YAW_BOUNDS"
 CDPR_RECORD_TRAJECTORY_ENV = "RLVLA_CDPR_RECORD_TRAJECTORY"
+CDPR_COMPILED_MODEL_CACHE_ENV = "RLVLA_CDPR_COMPILED_MODEL_CACHE"
 CDPR_ACTION_STEP_GRIPPER_ENV = "RLVLA_CDPR_ACTION_STEP_GRIPPER"
 DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
@@ -1300,6 +1301,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         wrapper_cleanup: bool = True,
         use_wrapper_cache: bool = False,
         reuse_existing_wrapper_variants: bool = False,
+        use_compiled_model_cache: bool | None = None,
         wrapper_dir: Path | str | None = None,
         seed: Optional[int] = None,
     ) -> None:
@@ -1369,6 +1371,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             )
         if record_trajectory is None:
             record_trajectory = _load_bool_env(CDPR_RECORD_TRAJECTORY_ENV, default=False)
+        if use_compiled_model_cache is None:
+            use_compiled_model_cache = _load_bool_env(CDPR_COMPILED_MODEL_CACHE_ENV, default=True)
         self.lock_non_commanded_axes = bool(lock_non_commanded_axes)
         self.lock_non_commanded_axes_threshold = max(0.0, float(lock_non_commanded_axes_threshold))
         self.randomize_ee_start = bool(randomize_ee_start)
@@ -1385,6 +1389,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.wrapper_cleanup = bool(wrapper_cleanup)
         self.use_wrapper_cache = bool(use_wrapper_cache)
         self.reuse_existing_wrapper_variants = bool(reuse_existing_wrapper_variants)
+        self.use_compiled_model_cache = bool(use_compiled_model_cache)
         self.desk_geom_regex = str(desk_geom_regex)
         texrepeat_vals = tuple(desk_texrepeat)
         if len(texrepeat_vals) != 2:
@@ -1503,6 +1508,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._invalid_wrapper_paths: set[Path] = set()
         self._last_wrapper_reused_from_cache = False
         self._instruction_cycle: list[str] = []
+        self._last_reset_profile: dict[str, Any] = {}
+        self._last_model_cache_event: dict[str, Any] = {}
 
     def reset(
         self,
@@ -1513,6 +1520,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         curriculum_shell: int | None = None,
         curriculum_mode: str | None = None,
     ):
+        reset_start = time.perf_counter()
+        self._last_reset_profile = {}
+        self._last_model_cache_event = {}
         options = dict(options or {})
         if instruction is not None:
             options["instruction"] = str(instruction)
@@ -1651,6 +1661,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         obs = self._get_obs()
         info = self._base_info()
         info.update(self._curriculum_reset_info)
+        self._last_reset_profile["mujoco_reset_time_s"] = float(time.perf_counter() - reset_start)
+        info.update(self._last_reset_profile)
         info["success"] = False
         return obs, info
 
@@ -1706,20 +1718,25 @@ class CDPRLanguageRLEnv(_EnvBase):
             "caught_object_score": float(caught_score),
             "caught_object_is_target": bool(caught_is_target),
         }
+        reward_t0 = time.perf_counter()
         reward, success, reward_info = _normalize_reward_result(
             _call_with_supported_kwargs(self._reward_fn, **reward_kwargs)
         )
+        reward_compute_time_s = float(time.perf_counter() - reward_t0)
         success_kwargs = {
             **reward_kwargs,
             "reward": float(reward),
             "reward_info": reward_info,
             "current_success": bool(success),
         }
+        success_compute_time_s = 0.0
         if self._success_fn is not None:
+            success_t0 = time.perf_counter()
             success, success_info = _normalize_success_result(
                 _call_with_supported_kwargs(self._success_fn, **success_kwargs),
                 bool(success),
             )
+            success_compute_time_s = float(time.perf_counter() - success_t0)
             reward_info.update(success_info)
         if caught_body:
             self._last_caught_body = caught_body
@@ -1736,6 +1753,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         info.update(reward_info)
         info["success"] = bool(success)
         info["reward"] = float(reward)
+        info["reward_compute_time_s"] = float(reward_compute_time_s)
+        info["success_predicate_time_s"] = float(success_compute_time_s)
         info["step"] = int(self._step_count)
         info["terminated"] = bool(terminated)
         info["truncated"] = bool(truncated)
@@ -1780,6 +1799,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         ee_start: Sequence[float] | np.ndarray,
         force_rebuild: bool = False,
     ) -> None:
+        init_start = time.perf_counter()
         wrapper_xml: Path | None = None
         original_reuse_existing = bool(getattr(self, "reuse_existing_wrapper_variants", False))
         original_use_wrapper_cache = bool(getattr(self, "use_wrapper_cache", False))
@@ -1795,14 +1815,51 @@ class CDPRLanguageRLEnv(_EnvBase):
                     self.reuse_existing_wrapper_variants = False
 
                 try:
+                    wrapper_start = time.perf_counter()
                     wrapper_xml = self._build_episode_wrapper(scene=scene, ee_start=ee_start)
+                    wrapper_time = float(time.perf_counter() - wrapper_start)
                     self._current_wrapper_xml = wrapper_xml
                     self.sim = self._sim_cls(
                         xml_path=str(wrapper_xml),
                         output_dir=str(DEFAULT_VIDEO_DIR),
                         record_trajectory=self.record_trajectory,
+                        use_model_cache=bool(self.use_compiled_model_cache),
+                        model_cache_key=self._compiled_model_cache_key(scene=scene, wrapper_xml=wrapper_xml),
                     )
+                    sim_init_start = time.perf_counter()
                     self.sim.initialize()
+                    sim_init_time = float(time.perf_counter() - sim_init_start)
+                    self._last_model_cache_event = dict(getattr(self.sim, "model_cache_event", {}) or {})
+                    self._last_reset_profile.update(
+                        {
+                            "mujoco_wrapper_build_time_s": wrapper_time,
+                            "mujoco_sim_initialize_time_s": sim_init_time,
+                            "mujoco_model_compile_time_s": float(
+                                self._last_model_cache_event.get("compile_time_s", 0.0)
+                            ),
+                            "mujoco_model_cache_enabled": bool(
+                                self._last_model_cache_event.get("enabled", False)
+                            ),
+                            "mujoco_model_cache_hit": bool(
+                                self._last_model_cache_event.get("hit", False)
+                            ),
+                            "mujoco_model_cache_miss": bool(
+                                self._last_model_cache_event.get("miss", False)
+                            ),
+                            "mujoco_model_cache_key": str(
+                                self._last_model_cache_event.get("key_short", "")
+                            ),
+                            "mujoco_model_cache_size": int(
+                                self._last_model_cache_event.get("cache_size", 0)
+                            ),
+                            "mujoco_model_cache_rss_mb": float(
+                                self._last_model_cache_event.get("rss_mb", 0.0)
+                            ),
+                            "mujoco_wrapper_reused_from_cache": bool(
+                                getattr(self, "_last_wrapper_reused_from_cache", False)
+                            ),
+                        }
+                    )
                     break
                 except Exception:
                     if bool(getattr(self, "_last_wrapper_reused_from_cache", False)) and wrapper_xml is not None:
@@ -1849,11 +1906,36 @@ class CDPRLanguageRLEnv(_EnvBase):
                 except Exception:
                     # Continue if placement fails; wrapper-provided placement is still valid.
                     pass
+            self._last_reset_profile["mujoco_episode_scene_init_time_s"] = float(
+                time.perf_counter() - init_start
+            )
         finally:
             if force_rebuild and patched_build_wrapper is not None:
                 self._build_wrapper = patched_build_wrapper
             self.reuse_existing_wrapper_variants = original_reuse_existing
             self.use_wrapper_cache = original_use_wrapper_cache
+
+    def _compiled_model_cache_key(self, *, scene: SceneSpec, wrapper_xml: Path) -> dict[str, Any]:
+        robot_xml = HERE.parent / "cdpr_mujoco" / "cdpr.xml"
+        robot_version = ""
+        if robot_xml.exists():
+            try:
+                robot_version = _stable_file_signature(robot_xml)
+            except Exception:
+                robot_version = ""
+        wrapper_version = ""
+        if Path(wrapper_xml).exists():
+            try:
+                wrapper_version = _stable_file_signature(Path(wrapper_xml))
+            except Exception:
+                wrapper_version = ""
+        return {
+            "robot_xml_version": robot_version,
+            "scene_name": str(scene.name),
+            "sorted_object_set": tuple(sorted(str(name) for name in scene.objects)),
+            "texture_variant": str(getattr(self, "_desk_texture_name", "") or "none"),
+            "object_topology_version": wrapper_version,
+        }
 
     def _resolved_scene_spec(self, scene: SceneSpec) -> SceneSpec:
         resolved_objects = tuple(str(name) for name in scene.objects if str(name) in self._catalog_to_body)
@@ -2002,6 +2084,34 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.np_random.bit_generator.state = copy.deepcopy(snapshot["rng_state"])
         if self._instruction_spec is not None:
             setattr(self.sim, "language_instruction", self._instruction_spec.text)
+
+    def state_api(self):
+        try:
+            from cdpr_mujoco.sim_api import MujocoCDPRStateAPI
+        except Exception:
+            from robots.cdpr.cdpr_mujoco.sim_api import MujocoCDPRStateAPI
+        return MujocoCDPRStateAPI(self)
+
+    def get_body_pose(self, name: str) -> dict[str, np.ndarray]:
+        return self.state_api().get_body_pose(name)
+
+    def get_body_velocity(self, name: str) -> dict[str, np.ndarray]:
+        return self.state_api().get_body_velocity(name)
+
+    def get_ee_pose(self) -> dict[str, np.ndarray]:
+        return self.state_api().get_ee_pose()
+
+    def get_gripper_state(self) -> dict[str, float]:
+        return self.state_api().get_gripper_state()
+
+    def get_contact_summary(self, body_a: str, body_b: str) -> dict[str, Any]:
+        return self.state_api().get_contact_summary(body_a, body_b)
+
+    def set_object_pose(self, name: str, pose: dict[str, Sequence[float]]) -> None:
+        self.state_api().set_object_pose(name, pose)
+
+    def render(self, camera_names: Sequence[str]) -> dict[str, np.ndarray]:
+        return self.state_api().render(camera_names)
 
     def _reset_caught_object_start_state(self) -> None:
         self._caught_object_start_active = False

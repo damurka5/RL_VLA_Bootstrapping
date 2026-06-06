@@ -1,0 +1,16 @@
+{
+  "asset_inventory_rows": 126,
+  "contact_report_rows": 7,
+  "duplicate_texture_groups": 0,
+  "mujoco_model_cache_rows": 14,
+  "outputs": {
+    "asset_inventory": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/asset_inventory.csv",
+    "contact_stability_report": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/contact_stability_report.csv",
+    "duplicate_textures": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/duplicate_textures.csv",
+    "mujoco_model_cache_report": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/mujoco_model_cache_report.csv",
+    "rollout_profile": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/rollout_profile.csv"
+  },
+  "repo_root": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping",
+  "rollout_profile_status": "not_measured_static_placeholder",
+  "wrapper_main_xml_count": 14
+}

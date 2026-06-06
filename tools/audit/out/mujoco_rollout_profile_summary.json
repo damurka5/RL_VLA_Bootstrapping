@@ -1,0 +1,47 @@
+{
+  "cache_hits_observed": 99,
+  "cache_misses_observed": 1,
+  "cache_stats": {
+    "hit_rate": 0.9900990099009901,
+    "hits": 100,
+    "last_event": {
+      "cache_size": 1,
+      "compile_time_s": 0.0,
+      "enabled": true,
+      "hit": true,
+      "key": "e6d93d8c252b3c6c502eeb18dffcaa357e60764a6205924b538797057286b6d6",
+      "key_short": "e6d93d8c252b",
+      "miss": false,
+      "reason": "",
+      "rss_mb": 319.671875
+    },
+    "misses": 1,
+    "size": 1
+  },
+  "compile_time_s_mean": 0.0066882999999999995,
+  "compile_time_s_p95": 0.0,
+  "cpu_ram_mb": 319.671875,
+  "error": "",
+  "fallback_note": "CDPRLanguageRLEnv unavailable (CDPRLanguageRLEnv requires gym (tested with gym==0.26.2). Install it before creating this env.); profiled raw MuJoCo model/data path instead.",
+  "fps_with_render": 0.0,
+  "fps_without_render": 3700.2723452249097,
+  "gpu_vram_mb": null,
+  "image_preprocessing_time_s_mean": 0.0,
+  "outputs": {
+    "csv": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/mujoco_rollout_profile.csv",
+    "summary_json": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/audit/out/mujoco_rollout_profile_summary.json"
+  },
+  "physics_step_time_s_mean": 0.00027025037800000584,
+  "physics_step_time_s_p95": 0.00031639165000059145,
+  "profile_mode": "direct_mujoco_fallback",
+  "render_error": "render worker exited with 1; stdout=''; stderr='>\\nTraceback (most recent call last):\\n  File \"/Library/Frameworks/Python.framework/Versions/3.9/lib/python3.9/site-packages/mujoco/renderer.py\", line 335, in __del__\\n    self.close()\\n  File \"/Library/Frameworks/Python.framework/Versions/3.9/lib/python3.9/site-packages/mujoco/renderer.py\", line 323, in close\\n    if self._mjr_context:\\nAttributeError: \\'Renderer\\' object has no attribute \\'_mjr_context\\'\\n'; CGLError: invalid CoreGraphics connection",
+  "repo_root": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping",
+  "reset_time_s_mean": 0.010655079680000002,
+  "reset_time_s_p95": 0.004598200299999922,
+  "resets": 100,
+  "reward_success_predicate_time_s_mean": 0.00013744927199999955,
+  "steps_with_render": 0,
+  "steps_without_render": 1000,
+  "two_camera_render_readback_time_s_mean": 0.0,
+  "two_camera_render_readback_time_s_p95": 0.0
+}

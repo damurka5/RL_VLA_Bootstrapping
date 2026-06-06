@@ -1,0 +1,18 @@
+<mujoco model="bowl">
+  <compiler autolimits="true"/>
+  <default>
+    <geom friction="0.9 0.01 0.001" condim="3" solref="0.008 1" solimp="0.90 0.95 0.001" margin="0.001"/>
+  </default>
+  <worldbody>
+    <body name="bowl" pos="0 0 0.024">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.18" diaginertia="0.00045 0.00045 0.00082"/>
+      <geom name="bowl_base_collision" type="cylinder" size="0.070 0.014" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="bowl_wall_x_pos" type="box" size="0.007 0.062 0.024" pos="0.069 0 0.014" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="bowl_wall_x_neg" type="box" size="0.007 0.062 0.024" pos="-0.069 0 0.014" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="bowl_wall_y_pos" type="box" size="0.062 0.007 0.024" pos="0 0.069 0.014" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="bowl_wall_y_neg" type="box" size="0.062 0.007 0.024" pos="0 -0.069 0.014" rgba="0.25 0.25 0.25 0.25"/>
+      <geom name="bowl_visual" type="cylinder" size="0.078 0.028" contype="0" conaffinity="0" group="1" rgba="0.88 0.88 0.82 0.88"/>
+    </body>
+  </worldbody>
+</mujoco>
