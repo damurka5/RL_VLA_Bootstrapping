@@ -238,6 +238,9 @@ class HeadlessCDPRSimulation:
         record_trajectory=True,
         use_model_cache=None,
         model_cache_key=None,
+        timestep=None,
+        debug_render_collision_geoms=None,
+        render_enabled=True,
     ):
         self.xml_path = xml_path
         self.output_dir = output_dir
@@ -247,6 +250,11 @@ class HeadlessCDPRSimulation:
         self.use_model_cache = bool(use_model_cache)
         self.model_cache_key = dict(model_cache_key or {})
         self.model_cache_event = {}
+        self.requested_timestep = None if timestep is None else float(timestep)
+        if debug_render_collision_geoms is None:
+            debug_render_collision_geoms = _env_flag("RLVLA_CDPR_DEBUG_RENDER_COLLISION_GEOMS", default=False)
+        self.debug_render_collision_geoms = bool(debug_render_collision_geoms)
+        self.render_enabled = bool(render_enabled)
         self.model = None
         self.data = None
         self.context = None
@@ -263,6 +271,8 @@ class HeadlessCDPRSimulation:
         ], dtype=float)
 
         self.controller = HeadlessCDPRController(self.frame_points)
+        if self.requested_timestep is not None:
+            self.controller.dt = float(self.requested_timestep)
         self.target_pos = np.array([0, 0, 0.40], dtype=float)
         self.gripper_min = 0.0
         self.gripper_max = 1.0
@@ -468,7 +478,14 @@ class HeadlessCDPRSimulation:
             xquat = self.data.xquat[self.body_target]  # [w, x, y, z] in world
             print(f"[debug] object body '{self.body_target_name}' world xquat={xquat}")
             
-        self._setup_offscreen_rendering()
+        if self.render_enabled:
+            self._setup_offscreen_rendering()
+        else:
+            self.overview_cam = mj.MjvCamera()
+            self.ee_cam = mj.MjvCamera()
+            self.scene = None
+            self.opt = None
+            self.context = None
         mj.mj_forward(self.model, self.data)
         self._sync_controller_geometry_from_state()
         # Seed target to current EE pose (so your higher-level controller doesn’t pull elsewhere).
@@ -532,6 +549,8 @@ class HeadlessCDPRSimulation:
         self.scene = mj.MjvScene(self.model, maxgeom=10000)
         self.opt = mj.MjvOption()
         mj.mjv_defaultOption(self.opt)
+        if len(self.opt.geomgroup) > 3:
+            self.opt.geomgroup[3] = 1 if self.debug_render_collision_geoms else 0
 
         self._configure_offscreen_buffer()
         self.offviewport = mj.MjrRect(0, 0, self.offwidth, self.offheight)
@@ -563,6 +582,9 @@ class HeadlessCDPRSimulation:
         self.context = self._create_mjr_context()
 
     def capture_frame(self, camera, camera_name):
+        if not self.render_enabled or self.context is None or self.opt is None or self.scene is None:
+            width, height, _ = _offscreen_config_from_env()
+            return np.zeros((int(height), int(width), 3), dtype=np.uint8)
         try:
             if EGL_AVAILABLE and self.gl_context is not None:
                 self.gl_context.make_current()
@@ -933,6 +955,8 @@ class HeadlessCDPRSimulation:
             self.data.act[:] = 0.0
         mj.mj_forward(self.model, self.data)
         self.controller = HeadlessCDPRController(self.frame_points)
+        if self.requested_timestep is not None:
+            self.controller.dt = float(self.requested_timestep)
         self._sync_controller_geometry_from_state()
         self._match_sliders_to_ee_lengths(max_iter=12, tol=1e-6)
         self.target_pos = self.get_end_effector_position().copy()

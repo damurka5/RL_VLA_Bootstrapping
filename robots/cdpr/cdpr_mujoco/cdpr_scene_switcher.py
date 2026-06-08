@@ -18,6 +18,8 @@ Notes:
 - Scene names and object names correspond to directory names under LIBERO assets.
 """
 
+from __future__ import annotations
+
 import os, sys, argparse, tempfile, shutil, textwrap, time
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -66,12 +68,44 @@ OBJECTS_DIR_EXTRA = LIBERO_ASSETS / "stable_scanned_objects"   # bowls, plates, 
 OBJECTS_DIRS = [OBJECTS_DIR_MAIN, OBJECTS_DIR_EXTRA]
 STABLE_OBJECTS_DIR = REPO / "robots" / "cdpr" / "cdpr_mujoco" / "stable_objects"
 
+CONTACT_PRESETS = ("legacy", "stable_contact")
+STABLE_CONTACT_TIMESTEP = 0.002
+STABLE_CONTACT_OPTION_ATTRS = {
+    "timestep": f"{STABLE_CONTACT_TIMESTEP:.6g}",
+    "solver": "Newton",
+    "iterations": "100",
+    "tolerance": "1e-10",
+    "cone": "elliptic",
+    "noslip_iterations": "5",
+}
+GRIPPER_OBJECT_PAIR_ATTRS = {
+    "condim": "4",
+    "friction": "3.0 0.08 0.003",
+    "solref": "0.005 1",
+    "solimp": "0.95 0.99 0.001",
+    "margin": "0.001",
+}
+TABLE_OBJECT_PAIR_ATTRS = {
+    "condim": "3",
+    "friction": "0.9 0.01 0.001",
+    "solref": "0.008 1",
+    "solimp": "0.90 0.95 0.001",
+    "margin": "0.001",
+}
+
 
 def _env_flag(name: str, default: bool = False) -> bool:
     raw = os.environ.get(name)
     if raw is None:
         return bool(default)
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _normalize_contact_preset(value: Optional[str] = None) -> str:
+    raw = str(value or os.environ.get("RLVLA_CDPR_CONTACT_PRESET", "legacy")).strip() or "legacy"
+    if raw not in CONTACT_PRESETS:
+        raise ValueError(f"Unsupported contact_preset={raw!r}. Expected one of {CONTACT_PRESETS}.")
+    return raw
 
 
 def _find_stable_object_xml(object_name: str, normalized_name: str) -> Path | None:
@@ -369,6 +403,26 @@ def make_placed_object_xml(orig_object_xml: Path,
     tree = ET.parse(orig_object_xml)
     root = tree.getroot()
 
+    default_children = []
+    for default_elem in root.findall("default"):
+        for child in list(default_elem):
+            default_children.append(clone(child))
+
+    class_map: dict[str, str] = {}
+
+    def prefix_default_classes(elem):
+        if elem.tag == "default" and "class" in elem.attrib:
+            old = elem.get("class")
+            if old:
+                new = f"{prefix}_{old}"
+                class_map[old] = new
+                elem.set("class", new)
+        for child in list(elem):
+            prefix_default_classes(child)
+
+    for child in default_children:
+        prefix_default_classes(child)
+
     # --- collect <asset> and absolutize files
     asset_elems = []
     for a in root.findall("asset"):
@@ -451,6 +505,10 @@ def make_placed_object_xml(orig_object_xml: Path,
 
     # --- update references inside the body tree (geom.mesh/material/hfield/skin)
     def rewrite_body_refs(elem):
+        if "class" in elem.attrib:
+            cls = elem.get("class")
+            if cls in class_map:
+                elem.set("class", class_map[cls])
         if elem.tag == "geom":
             if "mesh" in elem.attrib:
                 m = elem.get("mesh")
@@ -475,8 +533,6 @@ def make_placed_object_xml(orig_object_xml: Path,
     # --- pose ---
     body_clone.set("pos", f"{pos[0]} {pos[1]} {pos[2]}")
     
-    print("orig orient attrs:", {k: body_clone.get(k) for k in ("quat","euler","axisangle","xyaxes","zaxis") if k in body_clone.attrib})
-
     # MuJoCo allows only ONE orientation specifier on <body>
     for k in ("quat", "euler", "axisangle", "xyaxes", "zaxis"):
         if k in body_clone.attrib:
@@ -517,6 +573,12 @@ def make_placed_object_xml(orig_object_xml: Path,
     default = ET.SubElement(mj, "default")
     geomdef = ET.SubElement(default, "geom")
     geomdef.set("density", "1200")
+    for child in default_children:
+        if child.tag == "geom" and "class" not in child.attrib:
+            for key, value in child.attrib.items():
+                geomdef.set(key, value)
+        else:
+            default.append(child)
 
     if asset_elems:
         new_asset = ET.SubElement(mj, "asset")
@@ -533,15 +595,152 @@ def make_placed_object_xml(orig_object_xml: Path,
         pass
     _atomic_write_xml_tree(ET.ElementTree(mj), out_xml)
 
-def build_wrapper_mjcf(scene_xml: Path, cdpr_xml: Path, placed_object_xmls: list[Path], out_xml: Path):
+def _xml_attrs(attrs: dict[str, str]) -> str:
+    return " ".join(f'{key}="{value}"' for key, value in attrs.items())
+
+
+def _stable_contact_option_block(contact_preset: str) -> str:
+    if contact_preset != "stable_contact":
+        return ""
+    return f"    <option {_xml_attrs(STABLE_CONTACT_OPTION_ATTRS)}/>"
+
+
+def _stable_contact_defaults_block(contact_preset: str) -> str:
+    if contact_preset != "stable_contact":
+        return ""
+    return """    <default>
+      <default class="table_collision">
+        <geom contype="4" conaffinity="1" group="0" condim="3"
+              friction="0.9 0.01 0.001" solref="0.008 1"
+              solimp="0.90 0.95 0.001" margin="0.001"/>
+      </default>
+    </default>"""
+
+
+def _geom_looks_like_support_table(geom: ET.Element) -> bool:
+    name = str(geom.get("name") or "").lower()
+    cls = str(geom.get("class") or "").lower()
+    if any(token in name or token in cls for token in ("table", "desk", "workbench", "counter", "surface")):
+        return True
+    size = geom.get("size")
+    if not size:
+        return False
+    try:
+        vals = [float(x) for x in str(size).replace(",", " ").split()]
+    except Exception:
+        return False
+    if len(vals) < 3:
+        return False
+    gtype = str(geom.get("type") or "box").lower()
+    sx, sy, sz = vals[0], vals[1], vals[2]
+    return gtype == "box" and sx >= 0.15 and sy >= 0.15 and sz <= 0.06
+
+
+def _collect_geom_names(xml_path: Path, predicate) -> list[str]:
+    try:
+        root = ET.parse(xml_path).getroot()
+    except Exception:
+        return []
+    names: list[str] = []
+    for geom in root.iter("geom"):
+        name = str(geom.get("name") or "").strip()
+        if name and predicate(name, geom):
+            names.append(name)
+    return names
+
+
+def _collect_table_geom_names(scene_xml: Path, extra_names: list[str] | tuple[str, ...] | None = None) -> list[str]:
+    names = list(extra_names or [])
+    names.extend(_collect_geom_names(scene_xml, lambda _name, geom: _geom_looks_like_support_table(geom)))
+    return list(dict.fromkeys(name for name in names if str(name).strip()))
+
+
+def _is_stable_contact_object_geom(name: str, geom: ET.Element) -> bool:
+    lname = str(name).lower()
+    if "collision" not in lname:
+        return False
+    if not any(token in lname for token in ("ycb_apple", "apple", "ycb_pear", "pear")):
+        return False
+    return str(geom.get("contype", "1")).strip() != "0"
+
+
+def _collect_stable_contact_object_geoms(placed_object_xmls: list[Path]) -> list[str]:
+    names: list[str] = []
+    for placed_xml in placed_object_xmls:
+        names.extend(_collect_geom_names(placed_xml, _is_stable_contact_object_geom))
+    return list(dict.fromkeys(names))
+
+
+def _geom_exists(xml_path: Path, geom_name: str) -> bool:
+    try:
+        root = ET.parse(xml_path).getroot()
+    except Exception:
+        return False
+    return any(geom.get("name") == geom_name for geom in root.iter("geom"))
+
+
+def _stable_contact_pairs_block(
+    *,
+    contact_preset: str,
+    cdpr_xml: Path,
+    scene_xml: Path,
+    placed_object_xmls: list[Path],
+    table_geom_names: list[str] | tuple[str, ...] | None,
+) -> str:
+    if contact_preset != "stable_contact":
+        return ""
+
+    object_geoms = _collect_stable_contact_object_geoms(placed_object_xmls)
+    if not object_geoms:
+        return ""
+
+    finger_pads = [
+        name for name in ("left_finger_pad", "right_finger_pad")
+        if _geom_exists(cdpr_xml, name)
+    ]
+    table_geoms = _collect_table_geom_names(scene_xml, table_geom_names)
+    lines = ["    <contact>"]
+    for pad in finger_pads:
+        for object_geom in object_geoms:
+            attrs = {"geom1": pad, "geom2": object_geom, **GRIPPER_OBJECT_PAIR_ATTRS}
+            lines.append(f"      <pair {_xml_attrs(attrs)}/>")
+    for table_geom in table_geoms:
+        for object_geom in object_geoms:
+            attrs = {"geom1": table_geom, "geom2": object_geom, **TABLE_OBJECT_PAIR_ATTRS}
+            lines.append(f"      <pair {_xml_attrs(attrs)}/>")
+    lines.append("    </contact>")
+    return os.linesep.join(lines) if len(lines) > 2 else ""
+
+
+def build_wrapper_mjcf(
+    scene_xml: Path,
+    cdpr_xml: Path,
+    placed_object_xmls: list[Path],
+    out_xml: Path,
+    *,
+    contact_preset: Optional[str] = None,
+    table_geom_names: Optional[list[str] | tuple[str, ...]] = None,
+):
     scene_xml = scene_xml.resolve()
     cdpr_xml  = cdpr_xml.resolve()
     scene_dir = scene_xml.parent.resolve()
+    contact_preset = _normalize_contact_preset(contact_preset)
     # includes for placed objects use absolute asset paths, so no meshdir needed
     includes_objects = os.linesep.join([f'<include file="{str(p.resolve())}"/>' for p in placed_object_xmls])
+    option_block = _stable_contact_option_block(contact_preset)
+    defaults_block = _stable_contact_defaults_block(contact_preset)
+    contact_block = _stable_contact_pairs_block(
+        contact_preset=contact_preset,
+        cdpr_xml=cdpr_xml,
+        scene_xml=scene_xml,
+        placed_object_xmls=placed_object_xmls,
+        table_geom_names=table_geom_names,
+    )
 
     content = f"""<mujoco>
     <compiler autolimits="true"/>
+{option_block}
+{defaults_block}
 
     <!-- Set mesh/texture dirs for the SCENE only -->
     <compiler meshdir="{str(scene_dir)}" texturedir="{str(scene_dir)}"/>
@@ -555,6 +754,7 @@ def build_wrapper_mjcf(scene_xml: Path, cdpr_xml: Path, placed_object_xmls: list
 
     <!-- Placed LIBERO objects (assets already absolute) -->
     {includes_objects}
+{contact_block}
     </mujoco>
     """
     out_xml.parent.mkdir(parents=True, exist_ok=True)  # ensure /.../wrappers/ exists
@@ -613,6 +813,18 @@ def main():
                 help="Don’t delete the temp working directory (for debugging).")
     ap.add_argument("--build_only", action="store_true",
                 help="Only build wrapper MJCF and exit (no demo, no videos).")
+    ap.add_argument(
+        "--contact_preset",
+        choices=CONTACT_PRESETS,
+        default=os.environ.get("RLVLA_CDPR_CONTACT_PRESET", "legacy"),
+        help="Contact/solver preset for generated wrappers.",
+    )
+    ap.add_argument(
+        "--debug_render_collision_geoms",
+        action="store_true",
+        default=_env_flag("RLVLA_CDPR_DEBUG_RENDER_COLLISION_GEOMS", default=False),
+        help="Render group-3 collision proxy geoms in HeadlessCDPRSimulation demos.",
+    )
     
     args = ap.parse_args()
 
@@ -674,7 +886,13 @@ def main():
             )
             placed_xmls.append(placed_path)
 
-        build_wrapper_mjcf(scene_for_include, cdpr_for_include, placed_xmls, wrapper_xml)
+        build_wrapper_mjcf(
+            scene_for_include,
+            cdpr_for_include,
+            placed_xmls,
+            wrapper_xml,
+            contact_preset=args.contact_preset,
+        )
         print(f"✅ Built wrapper: {wrapper_xml}")
         print(f"   Includes {len(placed_xmls)} object(s).")
 
@@ -682,8 +900,16 @@ def main():
             print("✅ Wrapper build completed (demo disabled).")
             return
 
+        if args.debug_render_collision_geoms:
+            os.environ["RLVLA_CDPR_DEBUG_RENDER_COLLISION_GEOMS"] = "1"
         from headless_cdpr_egl import HeadlessCDPRSimulation
-        sim = HeadlessCDPRSimulation(str(wrapper_xml), output_dir=args.outdir)
+        sim_timestep = STABLE_CONTACT_TIMESTEP if args.contact_preset == "stable_contact" else None
+        sim = HeadlessCDPRSimulation(
+            str(wrapper_xml),
+            output_dir=args.outdir,
+            timestep=sim_timestep,
+            debug_render_collision_geoms=bool(args.debug_render_collision_geoms),
+        )
         sim.initialize()
 
         if args.settle_time > 0:

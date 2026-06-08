@@ -74,11 +74,28 @@ def _wrapper_bundle_dir(scene: str, object_names: list[str]) -> Path:
     return WRAP_DIR / wrapper_name.removesuffix(".xml")
 
 
-def _scene_switcher_command(*, scene_name: str, scene_z: float, ee_start: np.ndarray, table_z: float, settle_time: float, wrapper_path: Path) -> list[str]:
+def _env_flag(name: str, default: bool = False) -> bool:
+    raw = os.environ.get(name)
+    if raw is None:
+        return bool(default)
+    return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _scene_switcher_command(
+    *,
+    scene_name: str,
+    scene_z: float,
+    ee_start: np.ndarray,
+    table_z: float,
+    settle_time: float,
+    wrapper_path: Path,
+    contact_preset: str = "legacy",
+    debug_render_collision_geoms: bool = False,
+) -> list[str]:
     if not SCENE_SWITCHER.exists():
         raise FileNotFoundError(f"Scene switcher script not found: {SCENE_SWITCHER}")
 
-    return [
+    cmd = [
         sys.executable,
         str(SCENE_SWITCHER),
         "--scene", scene_name,
@@ -89,7 +106,11 @@ def _scene_switcher_command(*, scene_name: str, scene_z: float, ee_start: np.nda
         "--wrapper_out", str(wrapper_path),
         "--object_on_table",
         "--object_dynamic",
+        "--contact_preset", str(contact_preset),
     ]
+    if debug_render_collision_geoms:
+        cmd.append("--debug_render_collision_geoms")
+    return cmd
 
 
 def _resolve_include_path(current_xml: Path, file_attr: str) -> Path:
@@ -399,7 +420,9 @@ def build_wrapper_if_needed(scene_name: str,
                             table_z=0.15,
                             settle_time=0.0,
                             wrapper_out: str | Path | None = None,
-                            use_cache: bool = True) -> Path:
+                            use_cache: bool = True,
+                            contact_preset: str | None = None,
+                            debug_render_collision_geoms: bool | None = None) -> Path:
     """
     Compose a wrapper XML into WRAP_DIR (or explicit wrapper_out) using the
     scene-switcher CLI.
@@ -409,10 +432,15 @@ def build_wrapper_if_needed(scene_name: str,
     wrapper_out path inside the dataset repo.
     """
     WRAP_DIR.mkdir(parents=True, exist_ok=True)
+    contact_preset = str(contact_preset or os.environ.get("RLVLA_CDPR_CONTACT_PRESET", "legacy"))
+    if debug_render_collision_geoms is None:
+        debug_render_collision_geoms = _env_flag("RLVLA_CDPR_DEBUG_RENDER_COLLISION_GEOMS", default=False)
     if wrapper_out is None:
         bundle_dir = _wrapper_bundle_dir(scene_name, object_names)
         bundle_dir.mkdir(parents=True, exist_ok=True)
         wrapper_path = bundle_dir / _wrapper_name(scene_name, object_names)
+        if contact_preset != "legacy":
+            wrapper_path = wrapper_path.with_name(f"{wrapper_path.stem}__{contact_preset}{wrapper_path.suffix}")
     else:
         wrapper_path = Path(wrapper_out).expanduser().resolve()
         wrapper_path.parent.mkdir(parents=True, exist_ok=True)
@@ -447,6 +475,8 @@ def build_wrapper_if_needed(scene_name: str,
         table_z=table_z,
         settle_time=settle_time,
         wrapper_path=wrapper_path,
+        contact_preset=contact_preset,
+        debug_render_collision_geoms=bool(debug_render_collision_geoms),
     )
     ROT_X_BY_OBJECT = {
         "ketchup":      math.radians(90),

@@ -3,6 +3,12 @@
   <default>
     <site type="sphere" rgba="1 0 0 1" size="0.005"/>
     <tendon rgba="0.4 0.4 0.4 0.35" width="0.001"/>
+    <default class="finger_pad_collision">
+      <geom contype="2" conaffinity="1" group="3" condim="4"
+            friction="3.0 0.08 0.003" solref="0.005 1"
+            solimp="0.95 0.99 0.001" margin="0.001"
+            rgba="0.20 0.80 1.00 0.35"/>
+    </default>
   </default>
   <visual>
     <headlight diffuse=".7 .7 .7"/>
@@ -131,24 +137,28 @@
           <body name="ee_platform" pos="0 0 0.08">
           <inertial pos="0 0 0" mass="0.35" diaginertia="0.003 0.003 0.003"/>
           <geom name="palm" type="box" size="0.03 0.03 0.015"
-                rgba="0.15 0.15 0.15 1" contype="1" conaffinity="1"/>
+                rgba="0.15 0.15 0.15 1" contype="0" conaffinity="0" group="1"/>
 
           <body name="finger_left_car" pos="0.02 0 0">
             <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.00015"/>
             <joint name="finger_l" type="slide" axis="1 0 0" limited="true" range="0 0.03" damping="3.0"/>
             <geom name="finger_l_link" type="box" size="0.012 0.01 0.055" pos="0 0 -0.055"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
+                  rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" group="1"/>
             <geom name="finger_l_tip" type="capsule" fromto="0 0 -0.11  0 0 -0.135" size="0.008"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
+                  rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="left_finger_pad" class="finger_pad_collision" type="box"
+                  size="0.005 0.014 0.035" pos="-0.004 0 -0.100"/>
           </body>
 
           <body name="finger_right_car" pos="-0.02 0 0">
             <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.00015"/>
             <joint name="finger_r" type="slide" axis="-1 0 0" limited="true" range="0 0.03" damping="3.0"/>
             <geom name="finger_r_link" type="box" size="0.012 0.01 0.055" pos="0 0 -0.055"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
+                  rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" group="1"/>
             <geom name="finger_r_tip" type="capsule" fromto="0 0 -0.11  0 0 -0.135" size="0.008"
-                  rgba="0.2 0.2 0.2 1" contype="1" conaffinity="1" friction="1.5 0.02 0.01"/>
+                  rgba="0.2 0.2 0.2 1" contype="0" conaffinity="0" group="1"/>
+            <geom name="right_finger_pad" class="finger_pad_collision" type="box"
+                  size="0.005 0.014 0.035" pos="0.004 0 -0.100"/>
           </body>
       </body>
         </body>
@@ -209,7 +219,7 @@
     <!-- Tool yaw and gripper -->
     <position name="act_ee_yaw" joint="ee_yaw" kp="30" ctrlrange="-180 180"/>
     <!-- Normalized gripper target: ctrl=0 is closed, ctrl=1 maps to 0.03 m finger travel. -->
-    <position name="act_gripper" joint="finger_l" kp="0.27" gear="33.3333333333" ctrlrange="0 1"/>
+    <position name="act_gripper" joint="finger_l" kp="2.0" gear="33.3333333333" ctrlrange="0 1"/>
   </actuator>
 
 
