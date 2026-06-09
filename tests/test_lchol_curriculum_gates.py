@@ -101,6 +101,8 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
         )
         self.assertFalse(runtime.dense_gate_active())
         self.assertEqual(runtime.current_task_metadata()["reward_mode"], "sparse_binary")
+        self.assertAlmostEqual(runtime.metrics()["dense_stage/mean_success"], 0.80, places=7)
+        self.assertAlmostEqual(runtime.metrics()["dense_stage/success_rate/catch_object"], 0.80, places=7)
         self.assertTrue(runtime.consume_grpo_stats_reset_request())
         self.assertFalse(runtime.consume_grpo_stats_reset_request())
 

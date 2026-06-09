@@ -1396,10 +1396,18 @@ _COMPACT_TENSORBOARD_PREFIXES: tuple[str, ...] = (
     "rollout_episode/subgoal_success_rate/",
     "lchol/replay/episodes/",
     "lchol/dense_gate/",
+    "lchol/dense_stage/",
     "lchol/curriculum/success_rate/",
     "lchol/curriculum/reverse_frontier/",
     "lchol/reverse_frontier/shell_success_rate/",
 )
+
+
+def _strip_tensorboard_stage_prefix(tag: str) -> str:
+    parts = str(tag).split("/", 2)
+    if len(parts) == 3 and parts[0] == "stage" and parts[1] in {"dense", "sparse"}:
+        return parts[2]
+    return str(tag)
 
 
 def _tensorboard_tag_allowed(tag: str, *, profile: str = "compact", kind: str = "scalar") -> bool:
@@ -1407,30 +1415,57 @@ def _tensorboard_tag_allowed(tag: str, *, profile: str = "compact", kind: str = 
         return True
     if str(kind) != "scalar":
         return False
-    tag = str(tag)
+    tag = _strip_tensorboard_stage_prefix(str(tag))
     return tag in _COMPACT_TENSORBOARD_SCALARS or any(
         tag.startswith(prefix) for prefix in _COMPACT_TENSORBOARD_PREFIXES
     )
 
 
+def _current_tensorboard_stage(module) -> str | None:
+    runtime = getattr(module, "_rlvla_lchol_runtime", None)
+    if runtime is None:
+        return None
+    dense_gate_active = getattr(runtime, "dense_gate_active", None)
+    if not callable(dense_gate_active):
+        return None
+    try:
+        return "dense" if bool(dense_gate_active()) else "sparse"
+    except Exception:
+        return None
+
+
+def _stage_tensorboard_tag(module, tag: str) -> str | None:
+    tag = str(tag)
+    if tag.startswith("stage/"):
+        return None
+    stage = _current_tensorboard_stage(module)
+    if not stage:
+        return None
+    return f"stage/{stage}/{tag}"
+
+
 def _patch_tensorboard_metric_filter(module, *, profile: str) -> None:
-    if str(profile).strip().lower() == "full":
-        return
     writer_cls = getattr(module, "SummaryWriter", None)
     if writer_cls is None:
         return
+    profile_name = str(profile).strip().lower()
 
     class _FilteredSummaryWriter:
         def __init__(self, *args, **kwargs):
             self._inner = writer_cls(*args, **kwargs)
 
         def add_scalar(self, tag, scalar_value, *args, **kwargs):
-            if _tensorboard_tag_allowed(str(tag), profile=profile, kind="scalar"):
-                return self._inner.add_scalar(tag, scalar_value, *args, **kwargs)
-            return None
+            tag_str = str(tag)
+            if not _tensorboard_tag_allowed(tag_str, profile=profile_name, kind="scalar"):
+                return None
+            result = self._inner.add_scalar(tag, scalar_value, *args, **kwargs)
+            stage_tag = _stage_tensorboard_tag(module, tag_str)
+            if stage_tag is not None and _tensorboard_tag_allowed(stage_tag, profile=profile_name, kind="scalar"):
+                self._inner.add_scalar(stage_tag, scalar_value, *args, **kwargs)
+            return result
 
         def add_histogram(self, tag, values, *args, **kwargs):
-            if _tensorboard_tag_allowed(str(tag), profile=profile, kind="histogram"):
+            if _tensorboard_tag_allowed(str(tag), profile=profile_name, kind="histogram"):
                 return self._inner.add_histogram(tag, values, *args, **kwargs)
             return None
 
@@ -1438,7 +1473,10 @@ def _patch_tensorboard_metric_filter(module, *, profile: str) -> None:
             return getattr(self._inner, name)
 
     module.SummaryWriter = _FilteredSummaryWriter
-    print("[rlvla-fast] TensorBoard metric profile: compact", flush=True)
+    if profile_name == "full":
+        print("[rlvla-fast] TensorBoard metric profile: full (stage mirrors enabled)", flush=True)
+    else:
+        print("[rlvla-fast] TensorBoard metric profile: compact (stage mirrors enabled)", flush=True)
 
 
 class _RolloutTensorboardLogger:

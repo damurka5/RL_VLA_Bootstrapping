@@ -54,6 +54,7 @@ from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _patch_lchol_runtime,
     _patch_scene_cache_prebuild_progress,
     _patch_scene_wrapper_cache,
+    _patch_tensorboard_metric_filter,
     _split_wrapper_argv,
     _tensorboard_tag_allowed,
     _transform_external_grpo_source_for_ddp_sync,
@@ -531,13 +532,58 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
     def test_compact_tensorboard_profile_keeps_high_signal_tags_only(self):
         self.assertTrue(_tensorboard_tag_allowed("train/learning_rate"))
+        self.assertTrue(_tensorboard_tag_allowed("lchol/dense_stage/mean_success"))
+        self.assertTrue(_tensorboard_tag_allowed("stage/dense/train/learning_rate"))
+        self.assertTrue(_tensorboard_tag_allowed("stage/dense/lchol/dense_stage/mean_success"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/instruction_success_rate/pick_up"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/replay/episodes_total"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/reverse_frontier/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/curriculum/reverse_frontier/put_into_plate/active_shell"))
         self.assertFalse(_tensorboard_tag_allowed("train/update_index"))
+        self.assertFalse(_tensorboard_tag_allowed("stage/dense/train/update_index"))
         self.assertFalse(_tensorboard_tag_allowed("validation/action_x_hist", kind="histogram"))
+
+    def test_tensorboard_writer_mirrors_scalars_by_lchol_stage(self):
+        class FakeSummaryWriter:
+            def __init__(self, *args, **kwargs):
+                del args, kwargs
+                self.scalars: list[tuple[str, float, int]] = []
+
+            def add_scalar(self, tag, scalar_value, global_step=None, *args, **kwargs):
+                del args, kwargs
+                self.scalars.append((str(tag), float(scalar_value), int(global_step or 0)))
+                return "scalar-result"
+
+            def add_histogram(self, tag, values, *args, **kwargs):
+                del tag, values, args, kwargs
+                return "hist-result"
+
+        class FakeRuntime:
+            dense = True
+
+            def dense_gate_active(self):
+                return bool(self.dense)
+
+        module = types.SimpleNamespace(SummaryWriter=FakeSummaryWriter, _rlvla_lchol_runtime=FakeRuntime())
+        _patch_tensorboard_metric_filter(module, profile="compact")
+
+        writer = module.SummaryWriter(log_dir="/tmp/tb")
+        self.assertEqual(writer.add_scalar("train/reward_env_mean", 2.0, 10), "scalar-result")
+        writer.add_scalar("train/update_index", 1.0, 10)
+        writer.add_scalar("lchol/dense_stage/mean_success", 0.75, 10)
+        module._rlvla_lchol_runtime.dense = False
+        writer.add_scalar("validation/success_rate", 0.25, 20)
+
+        tags = [tag for tag, _, _ in writer.scalars]
+        self.assertIn("train/reward_env_mean", tags)
+        self.assertIn("stage/dense/train/reward_env_mean", tags)
+        self.assertIn("lchol/dense_stage/mean_success", tags)
+        self.assertIn("stage/dense/lchol/dense_stage/mean_success", tags)
+        self.assertIn("validation/success_rate", tags)
+        self.assertIn("stage/sparse/validation/success_rate", tags)
+        self.assertNotIn("train/update_index", tags)
+        self.assertNotIn("stage/dense/train/update_index", tags)
 
     def test_infer_resume_artifacts_prefers_grpo_actor_stats(self):
         with tempfile.TemporaryDirectory() as tmp:
