@@ -12,7 +12,16 @@ _INSERTED_TORCH_STUB = False
 
 if "torch" not in sys.modules:
     torch_stub = types.ModuleType("torch")
+
+    class _NoGrad:
+        def __enter__(self):
+            return None
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
     torch_stub.Tensor = object
+    torch_stub.no_grad = lambda: _NoGrad()
     torch_stub.cuda = types.SimpleNamespace(is_available=lambda: False)
     torch_stub.backends = types.SimpleNamespace(
         cuda=types.SimpleNamespace(matmul=types.SimpleNamespace(allow_tf32=False)),
@@ -36,11 +45,13 @@ if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
     sys.modules["PIL.Image"] = image_stub
 
 from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
+    _LCHOLWrapperArgs,
     _RolloutTensorboardLogger,
     _infer_resume_artifacts,
     _lr_schedule_factor,
     _patch_distributed_timeout,
     _patch_desk_texture_prepare,
+    _patch_lchol_runtime,
     _patch_scene_cache_prebuild_progress,
     _patch_scene_wrapper_cache,
     _split_wrapper_argv,
@@ -402,6 +413,22 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertIn('_rlvla_ddp_sync("pre_update", update=update, run_dir=run_dir)', patched)
         self.assertIn('_rlvla_ddp_sync("pre_train", update=update)', patched)
 
+    def test_ddp_sync_transform_preserves_lchol_pre_update_hook(self):
+        source = (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n"
+        )
+
+        patched = _transform_external_grpo_source_for_ddp_sync(source)
+
+        self.assertIn('_rlvla_ddp_sync("pre_update", update=update, run_dir=run_dir)', patched)
+        self.assertIn("_rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)", patched)
+        self.assertLess(
+            patched.index('_rlvla_ddp_sync("pre_update"'),
+            patched.index("_rlvla_lchol_pre_update"),
+        )
+
     def test_ddp_sync_transform_adds_rollout_sync_and_update_marker(self):
         source = (
             "                if rollout_pbar is not None:\n"
@@ -466,6 +493,20 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertIn("_rlvla_apply_lr_schedule(optimizer, update=update, total_updates=args.total_updates)", patched)
         self.assertIn('tb_writer.add_scalar("train/learning_rate", _rlvla_current_lr(optimizer), global_step)', patched)
 
+    def test_lr_scheduler_transform_preserves_lchol_pre_update_hook(self):
+        source = (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n"
+            "                tb_writer.add_scalar(\"train/loss_total_mean\", avg_total_loss, global_step)\n"
+        )
+
+        patched = _transform_external_grpo_source_for_lr_scheduler(source)
+
+        self.assertIn("_rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)", patched)
+        self.assertIn("_rlvla_apply_lr_schedule(optimizer, update=update, total_updates=args.total_updates)", patched)
+
     def test_cosine_lr_schedule_uses_warmup_then_decays_to_min_factor(self):
         self.assertAlmostEqual(
             _lr_schedule_factor(
@@ -524,6 +565,67 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
             self.assertEqual(artifacts.checkpoint_dir, checkpoint_dir.resolve())
             self.assertEqual(artifacts.actor_stats_path, (checkpoint_dir / "ppo_actor_stats.pt").resolve())
+
+    def test_lchol_pre_update_resets_grpo_log_std_after_dense_gate(self):
+        class FakeVisionEnv:
+            def reset(self, options=None):
+                return options
+
+        def fake_validation(*args, **kwargs):
+            del args, kwargs
+            return {}
+
+        module = types.SimpleNamespace(
+            parse_args=lambda: types.SimpleNamespace(),
+            CDPRVisionLanguageEnv=FakeVisionEnv,
+            run_validation_rollouts=fake_validation,
+        )
+        _patch_lchol_runtime(module, _LCHOLWrapperArgs(enabled=True))
+
+        class FakeRuntime:
+            def __init__(self):
+                self.synced = False
+                self.pending = True
+
+            def sync_dense_gate_state(self, *, run_dir):
+                self.synced = str(run_dir)
+
+            def consume_grpo_stats_reset_request(self):
+                out = self.pending
+                self.pending = False
+                return out
+
+        class FakeLogStd:
+            device = "cpu"
+            dtype = "float32"
+            shape = (2,)
+
+            def __init__(self):
+                self.values = [9.0, 9.0]
+
+            def fill_(self, value):
+                self.values = [float(value), float(value)]
+
+        runtime = FakeRuntime()
+        policy = types.SimpleNamespace(log_std=FakeLogStd())
+        module._rlvla_lchol_runtime = runtime
+
+        module._rlvla_lchol_pre_update(
+            policy,
+            args=types.SimpleNamespace(init_log_std=-1.7),
+            update=4,
+            run_dir=Path("/tmp/run"),
+        )
+
+        self.assertEqual(runtime.synced, "/tmp/run")
+        self.assertEqual(policy.log_std.values, [-1.7, -1.7])
+        module._rlvla_lchol_pre_update(
+            policy,
+            args=types.SimpleNamespace(init_log_std=-0.3),
+            update=5,
+            run_dir=Path("/tmp/run"),
+        )
+        self.assertEqual(policy.log_std.values, [-1.7, -1.7])
 
 
 if __name__ == "__main__":

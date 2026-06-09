@@ -4,6 +4,7 @@ from __future__ import annotations
 import atexit
 import importlib
 import importlib.util
+import json
 import math
 import os
 import sys
@@ -437,6 +438,13 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
             "    )\n",
         ),
         (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            policy.eval()\n",
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n",
+        ),
+        (
             "            loss_total_values: List[float] = []\n",
             "            loss_total_values: List[float] = []\n"
             "            loss_lchol_bc_values: List[float] = []\n",
@@ -587,15 +595,32 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
             1,
         )
 
-    update_anchor = "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n"
-    if update_anchor in transformed:
-        transformed = transformed.replace(
-            update_anchor,
+    update_anchors = (
+        (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n",
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n",
+        ),
+        (
+            "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n",
             "        for update in range(1, args.total_updates + 1):\n"
             "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
             "            policy.eval()\n",
+        ),
+    )
+    for update_anchor, update_replacement in update_anchors:
+        if update_anchor not in transformed:
+            continue
+        transformed = transformed.replace(
+            update_anchor,
+            update_replacement,
             1,
         )
+        break
 
     rollout_step_anchor = (
         "                if rollout_pbar is not None:\n"
@@ -645,6 +670,17 @@ def _transform_external_grpo_source_for_lr_scheduler(source: str) -> str:
         (
             "        for update in range(1, args.total_updates + 1):\n"
             "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n"
+        ),
+        (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n"
+        ),
+        (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
             "            policy.eval()\n"
         ),
         "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n",
@@ -1223,6 +1259,10 @@ def _patch_resume_artifacts(module, forwarded_argv: Sequence[str], fast_args: _F
 
     def _policy_init_with_actor_resume(self, *args, **kwargs):
         original_policy_init(self, *args, **kwargs)
+        try:
+            self._rlvla_grpo_initial_log_std = self.log_std.detach().clone()
+        except Exception:
+            self._rlvla_grpo_initial_log_std = None
         state_raw = torch.load(artifacts.actor_stats_path, map_location="cpu")
         log_std = _find_log_std_tensor(state_raw)
         if log_std is None:
@@ -1355,6 +1395,7 @@ _COMPACT_TENSORBOARD_PREFIXES: tuple[str, ...] = (
     "rollout_episode/shell_success_rate/",
     "rollout_episode/subgoal_success_rate/",
     "lchol/replay/episodes/",
+    "lchol/dense_gate/",
     "lchol/curriculum/success_rate/",
     "lchol/curriculum/reverse_frontier/",
     "lchol/reverse_frontier/shell_success_rate/",
@@ -2065,8 +2106,48 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
             is_main=bool(is_main),
         )
 
+    def _policy_core(policy):
+        return getattr(policy, "module", policy)
+
+    def _reset_policy_grpo_stats(policy, args) -> bool:
+        core = _policy_core(policy)
+        log_std = getattr(core, "log_std", None)
+        if log_std is None:
+            return False
+        initial = getattr(core, "_rlvla_grpo_initial_log_std", None)
+        try:
+            with torch.no_grad():
+                if initial is not None and hasattr(initial, "to"):
+                    target = initial.to(device=log_std.device, dtype=log_std.dtype).reshape(log_std.shape)
+                    log_std.copy_(target)
+                else:
+                    raw_init = float(getattr(args, "init_log_std", -1.2))
+                    log_std.fill_(raw_init)
+        except Exception as exc:
+            print(f"[grpo_actor_stats] Failed to re-initialize at dense-to-sparse switch: {exc}", flush=True)
+            return False
+        return True
+
+    def _pre_update(policy, *, args, update: int, run_dir) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            return
+        sync_state = getattr(runtime, "sync_dense_gate_state", None)
+        if callable(sync_state):
+            sync_state(run_dir=run_dir)
+        consume_reset = getattr(runtime, "consume_grpo_stats_reset_request", None)
+        if not callable(consume_reset) or not bool(consume_reset()):
+            return
+        if _reset_policy_grpo_stats(policy, args):
+            print(
+                "[grpo_actor_stats] Re-initialized at dense-to-sparse stage switch "
+                f"update={int(update)} init_log_std={float(getattr(args, 'init_log_std', -1.2)):.4f}",
+                flush=True,
+            )
+
     module._rlvla_lchol_build_runtime = _build_runtime
     module._rlvla_lchol_set_runtime = _set_runtime
+    module._rlvla_lchol_pre_update = _pre_update
     module._rlvla_lchol_phase_score = _phase_score
     module._rlvla_lchol_capture_candidate = _capture_candidate
     module._rlvla_lchol_after_rollout = _after_rollout
@@ -2079,6 +2160,12 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
     def _reset_with_lchol_curriculum(self, options=None):
         runtime = _runtime()
         if runtime is not None:
+            current_metadata = getattr(runtime, "current_task_metadata", None)
+            if callable(current_metadata):
+                os.environ["RLVLA_TASK_METADATA_JSON"] = json.dumps(current_metadata(), sort_keys=True)
+            configure_env = getattr(runtime, "configure_env_for_current_stage", None)
+            if callable(configure_env):
+                configure_env(self)
             options = dict(options or {})
             if "instruction_type" not in options and "curriculum_shell" not in options:
                 sampled_options = runtime.sample_reset_options()
@@ -2103,6 +2190,60 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
 
     def _run_validation_rollouts_with_reverse_frontier(*args, **kwargs):
         runtime = _runtime()
+        dense_plan = runtime.dense_validation_plan() if runtime is not None else ()
+        if dense_plan:
+            base_next_reset_options = kwargs.get("next_reset_options")
+            if base_next_reset_options is None:
+                return original_run_validation_rollouts(*args, **kwargs)
+
+            run_dir = kwargs.get("run_dir")
+            update = kwargs.get("update")
+            requested_num_episodes = int(kwargs.get("num_episodes", 1))
+            validation_rollouts = int(runtime.dense_validation_episodes_per_instruction(requested_num_episodes))
+            summaries: list[dict[str, Any]] = []
+            dense_results: list[dict[str, Any]] = []
+            for instruction_id in dense_plan:
+                def _dense_next_reset_options(
+                    instruction_id=instruction_id,
+                    base_next_reset_options=base_next_reset_options,
+                ):
+                    options = dict(base_next_reset_options() if callable(base_next_reset_options) else {})
+                    options.update({"instruction_type": str(instruction_id), "lchol_dense_stage": True})
+                    return options
+
+                dense_kwargs = dict(kwargs)
+                dense_kwargs["num_episodes"] = validation_rollouts
+                dense_kwargs["next_reset_options"] = _dense_next_reset_options
+                summary = original_run_validation_rollouts(*args, **dense_kwargs)
+                summary = dict(summary) if isinstance(summary, dict) else {}
+                summary["instruction_id"] = str(instruction_id)
+                summaries.append(summary)
+                dense_results.append(
+                    {
+                        "instruction_id": str(instruction_id),
+                        "success_rate": float(summary.get("success_rate", 0.0)),
+                        "rollouts": int(summary.get("episodes", validation_rollouts)),
+                    }
+                )
+
+            runtime.record_dense_validation(dense_results, run_dir=run_dir, update=update)
+            mean_success = float(np.mean([item["success_rate"] for item in dense_results])) if dense_results else 0.0
+            mean_env_return = float(np.mean([float(item.get("mean_env_return", 0.0)) for item in summaries])) if summaries else 0.0
+            mean_shaped_return = (
+                float(np.mean([float(item.get("mean_shaped_return", 0.0)) for item in summaries]))
+                if summaries
+                else 0.0
+            )
+            return {
+                **(summaries[-1] if summaries else {}),
+                "episodes": int(sum(item["rollouts"] for item in dense_results)),
+                "mean_env_return": mean_env_return,
+                "mean_shaped_return": mean_shaped_return,
+                "success_rate": mean_success,
+                "dense_gate_results": dense_results,
+                "dense_gate_summaries": summaries,
+            }
+
         plan = runtime.reverse_validation_plan() if runtime is not None else []
         if not plan:
             return original_run_validation_rollouts(*args, **kwargs)

@@ -424,6 +424,164 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertEqual(info["validation_success_mode"], 2.0)
         self.assertEqual(info["move_to_object_validation_success"], 1.0)
 
+    def test_catch_object_dense_reward_prefers_finger_edges_on_object(self):
+        class _Env:
+            def __init__(self, inner_gap: float):
+                self.inner_gap = float(inner_gap)
+
+            def _finger_pair_geometry(self):
+                return {
+                    "center": np.array([0.0, 0.0, 0.16], dtype=np.float32),
+                    "axis": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                    "inner_gap": self.inner_gap,
+                }
+
+            def _body_width_along_axis(self, body_name, axis):
+                return 0.05
+
+            def _get_body_position(self, body_name):
+                return np.array([0.0, 0.0, 0.16], dtype=np.float32)
+
+        spec = InstructionSpec(
+            instruction_type="catch_object",
+            text="catch apple",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        target = np.array([0.0, 0.0, 0.16], dtype=np.float32)
+
+        reward_good, success_good, info_good = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.18], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(np.array([0.0, 0.0, 0.18], dtype=np.float32), target),
+            task_metadata={"gripper_edge_success_threshold": 0.005},
+            env=_Env(inner_gap=0.05),
+            target_body_name="apple_body",
+        )
+        reward_open, success_open, info_open = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.18], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(np.array([0.0, 0.0, 0.18], dtype=np.float32), target),
+            task_metadata={"gripper_edge_success_threshold": 0.005},
+            env=_Env(inner_gap=0.09),
+            target_body_name="apple_body",
+        )
+
+        self.assertTrue(success_good)
+        self.assertFalse(success_open)
+        self.assertGreater(reward_good, reward_open)
+        self.assertAlmostEqual(info_good["gripper_edge_distance_sum"], 0.0, places=6)
+        self.assertGreater(info_open["gripper_edge_distance_sum"], 0.0)
+
+    def test_release_object_dense_reward_prefers_clearance_from_edges(self):
+        class _Env:
+            def __init__(self, inner_gap: float):
+                self.inner_gap = float(inner_gap)
+
+            def _finger_pair_geometry(self):
+                return {
+                    "center": np.array([0.0, 0.0, 0.16], dtype=np.float32),
+                    "axis": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+                    "inner_gap": self.inner_gap,
+                }
+
+            def _body_width_along_axis(self, body_name, axis):
+                return 0.05
+
+            def _get_body_position(self, body_name):
+                return np.array([0.0, 0.0, 0.16], dtype=np.float32)
+
+        spec = InstructionSpec(
+            instruction_type="release_object",
+            text="release apple",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        target = np.array([0.0, 0.0, 0.16], dtype=np.float32)
+        metadata = {"release_success_edge_clearance": 0.035}
+
+        reward_open, success_open, info_open = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.18], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(np.array([0.0, 0.0, 0.18], dtype=np.float32), target),
+            task_metadata=metadata,
+            env=_Env(inner_gap=0.09),
+            target_body_name="apple_body",
+        )
+        reward_closed, success_closed, info_closed = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.0, 0.0, 0.18], dtype=np.float32),
+            obj_pos=target,
+            reward_state=init_reward_state(np.array([0.0, 0.0, 0.18], dtype=np.float32), target),
+            task_metadata=metadata,
+            env=_Env(inner_gap=0.05),
+            target_body_name="apple_body",
+        )
+
+        self.assertTrue(success_open)
+        self.assertFalse(success_closed)
+        self.assertGreater(reward_open, reward_closed)
+        self.assertAlmostEqual(info_open["gripper_edge_clearance_sum"], 0.04, places=6)
+        self.assertEqual(info_closed["gripper_edge_clearance_sum"], 0.0)
+
+    def test_rotate_counterclockwise_dense_reward_uses_signed_object_yaw(self):
+        def quat_z(yaw: float):
+            return np.array([np.cos(0.5 * yaw), 0.0, 0.0, np.sin(0.5 * yaw)], dtype=np.float32)
+
+        class _Env:
+            def __init__(self, yaw: float):
+                self.yaw = float(yaw)
+
+            def get_body_pose(self, name: str):
+                return {"position": np.zeros((3,), dtype=np.float32), "quat_wxyz": quat_z(self.yaw)}
+
+        spec = InstructionSpec(
+            instruction_type="rotate_counterclockwise",
+            text="rotate apple counterclockwise",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        state_good = init_reward_state(np.zeros((3,), dtype=np.float32), np.zeros((3,), dtype=np.float32))
+        state_good.initial_obj_yaw = 0.0
+        state_good.prev_obj_yaw = 0.0
+        state_wrong = init_reward_state(np.zeros((3,), dtype=np.float32), np.zeros((3,), dtype=np.float32))
+        state_wrong.initial_obj_yaw = 0.0
+        state_wrong.prev_obj_yaw = 0.0
+
+        reward_good, success_good, info_good = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.zeros((3,), dtype=np.float32),
+            obj_pos=np.zeros((3,), dtype=np.float32),
+            reward_state=state_good,
+            task_metadata={"rotate_success_angle": 0.15},
+            env=_Env(0.20),
+            target_body_name="apple_body",
+        )
+        reward_wrong, success_wrong, info_wrong = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.zeros((3,), dtype=np.float32),
+            obj_pos=np.zeros((3,), dtype=np.float32),
+            reward_state=state_wrong,
+            task_metadata={"rotate_success_angle": 0.15},
+            env=_Env(-0.10),
+            target_body_name="apple_body",
+        )
+
+        self.assertTrue(success_good)
+        self.assertFalse(success_wrong)
+        self.assertGreater(reward_good, reward_wrong)
+        self.assertGreater(info_good["rotate_total_signed_angle"], 0.0)
+        self.assertLess(info_wrong["rotate_total_signed_angle"], 0.0)
+
     def test_grab_object_sparse_reward_succeeds_when_target_is_caught(self):
         spec = InstructionSpec(
             instruction_type="grab_object",

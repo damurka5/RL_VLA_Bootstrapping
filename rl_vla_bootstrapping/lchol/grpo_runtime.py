@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
@@ -54,6 +56,55 @@ class LCHOLGRPORuntime:
         self.spec = spec
         self.available_options = tuple(str(option) for option in available_options if str(option))
         self.rng = np.random.default_rng(int(seed))
+        self.base_task_metadata = _load_task_metadata_from_env()
+        self.dense_instruction_types = _metadata_name_tuple(
+            self.base_task_metadata,
+            "dense_stage_instruction_types",
+            "dense_warmup_instruction_types",
+        )
+        self.sparse_instruction_types = (
+            _metadata_name_tuple(
+                self.base_task_metadata,
+                "sparse_stage_instruction_types",
+                "lchol_sparse_instruction_types",
+            )
+            or self.available_options
+        )
+        self.dense_success_threshold = float(
+            self.base_task_metadata.get(
+                "dense_to_sparse_success_threshold",
+                self.base_task_metadata.get("dense_stage_success_threshold", 0.0),
+            )
+            or 0.0
+        )
+        self.dense_min_success_samples = max(
+            1,
+            int(
+                self.base_task_metadata.get(
+                    "dense_to_sparse_min_success_samples",
+                    self.base_task_metadata.get("dense_stage_min_success_samples", 1),
+                )
+                or 1
+            ),
+        )
+        self.dense_validation_episodes = max(
+            0,
+            int(
+                self.base_task_metadata.get(
+                    "dense_stage_validation_episodes",
+                    self.base_task_metadata.get("dense_validation_episodes", 0),
+                )
+                or 0
+            ),
+        )
+        self.dense_gate_armed = not (
+            self.dense_instruction_types
+            and np.isfinite(self.dense_success_threshold)
+            and self.dense_success_threshold > 0.0
+        )
+        self.dense_gate_success: dict[str, float] = {}
+        self.dense_gate_rollouts: dict[str, int] = {}
+        self._grpo_stats_reset_pending = False
         per_option_capacity = max(1, int(config.hindsight_replay_capacity) // max(1, len(self.available_options)))
         self.replay = PerOptionReplayBuffer(per_option_capacity)
         self.curriculum = StrictSuccessCurriculum(
@@ -90,14 +141,98 @@ class LCHOLGRPORuntime:
         self._last_log_update = 0
         self.reverse_shell_validation: dict[tuple[str, int], ShellValidationResult] = {}
 
+    def dense_gate_active(self) -> bool:
+        return bool(not self.dense_gate_armed)
+
+    def dense_validation_plan(self) -> tuple[str, ...]:
+        return tuple(self.dense_instruction_types) if self.dense_gate_active() else ()
+
+    def dense_validation_episodes_per_instruction(self, fallback: int) -> int:
+        configured = int(self.dense_validation_episodes)
+        return max(1, configured if configured > 0 else int(fallback))
+
+    def current_task_metadata(self) -> dict[str, Any]:
+        metadata = dict(self.base_task_metadata)
+        if self.dense_gate_active():
+            metadata.update(dict(metadata.get("dense_stage_metadata") or {}))
+            metadata.setdefault("reward_mode", "dense")
+            return metadata
+        metadata.update(dict(metadata.get("sparse_stage_metadata") or {}))
+        return metadata
+
+    def configure_env_for_current_stage(self, env_wrapper: Any) -> None:
+        rl_env = getattr(env_wrapper, "env", env_wrapper)
+        if rl_env is None:
+            return
+        if not hasattr(rl_env, "_rlvla_lchol_base_instruction_types"):
+            try:
+                setattr(
+                    rl_env,
+                    "_rlvla_lchol_base_instruction_types",
+                    tuple(getattr(rl_env, "instruction_types", ()) or ()),
+                )
+            except Exception:
+                pass
+        try:
+            rl_env._task_metadata = self.current_task_metadata()
+        except Exception:
+            pass
+
+        try:
+            if self.dense_gate_active() and self.dense_instruction_types:
+                rl_env.instruction_types = tuple(self.dense_instruction_types)
+            elif self.sparse_instruction_types:
+                rl_env.instruction_types = tuple(self.sparse_instruction_types)
+        except Exception:
+            pass
+
+    def record_dense_validation(
+        self,
+        results: Sequence[Mapping[str, Any]],
+        *,
+        run_dir: Any | None = None,
+        update: int | None = None,
+    ) -> None:
+        for item in results:
+            instruction = str(item.get("instruction_id") or item.get("instruction_type") or "").strip()
+            if not instruction:
+                continue
+            self.dense_gate_success[instruction] = float(np.clip(float(item.get("success_rate", 0.0)), 0.0, 1.0))
+            self.dense_gate_rollouts[instruction] = int(item.get("rollouts", item.get("episodes", 0)) or 0)
+
+        if self.dense_gate_active() and self._dense_gate_passed():
+            self._open_dense_gate()
+            print(
+                "[lchol] dense-to-sparse gate opened "
+                f"mean_success={self.dense_gate_mean_success():.4f} "
+                f"threshold={self.dense_success_threshold:.4f}",
+                flush=True,
+            )
+
+        if run_dir is not None:
+            self._save_dense_gate_state(run_dir=run_dir, update=update)
+
+    def dense_gate_mean_success(self) -> float:
+        if not self.dense_instruction_types:
+            return 0.0
+        values = [float(self.dense_gate_success.get(instruction, 0.0)) for instruction in self.dense_instruction_types]
+        return float(np.mean(np.asarray(values, dtype=np.float64))) if values else 0.0
+
     def sample_instruction_type(self) -> str | None:
+        if self.dense_gate_active():
+            if not self.dense_instruction_types:
+                return None
+            return str(self.dense_instruction_types[int(self.rng.integers(0, len(self.dense_instruction_types)))])
         if self.reverse_scheduler is not None:
             return self.sample_reset_options().get("instruction_type")
         if self._curriculum_name() != "strict_staged":
             return None
-        return self.curriculum.sample_option(rng=self.rng, available_options=self.available_options)
+        return self.curriculum.sample_option(rng=self.rng, available_options=self.sparse_instruction_types)
 
     def sample_reset_options(self) -> dict[str, Any]:
+        if self.dense_gate_active():
+            sampled = self.sample_instruction_type()
+            return {"instruction_type": sampled, "lchol_dense_stage": True} if sampled else {}
         if self.reverse_scheduler is not None:
             sample = self.reverse_scheduler.sample(rng=self.rng)
             return {
@@ -110,6 +245,8 @@ class LCHOLGRPORuntime:
         return {"instruction_type": sampled} if sampled else {}
 
     def phase_score(self, info: Mapping[str, Any], *, fallback: float) -> float:
+        if self.dense_gate_active():
+            return float(fallback)
         if str(self.config.group_score).strip().lower() != "phase_shaped":
             return float(fallback)
         try:
@@ -131,6 +268,9 @@ class LCHOLGRPORuntime:
         update: int,
         global_step: int,
     ) -> None:
+        if self.dense_gate_active():
+            self.source_counts["pg"] += 1
+            return
         info = dict(step_info)
         info.setdefault("action", sampled_action)
         info.setdefault("image_primary", obs.get("image_primary"))
@@ -158,10 +298,12 @@ class LCHOLGRPORuntime:
             self.source_counts["hindsight_new"] += 1
 
     def sample_bc_records(self, batch_size: int) -> list[HindsightBCRecord]:
+        if self.dense_gate_active():
+            return []
         if self._curriculum_name() == "strict_staged":
-            allowed = self.curriculum.allowed_options(self.available_options)
+            allowed = self.curriculum.allowed_options(self.sparse_instruction_types)
         else:
-            allowed = self.available_options
+            allowed = self.sparse_instruction_types
         weights = self._option_sample_weights(allowed)
         records = self.replay.sample_balanced(
             batch_size=batch_size,
@@ -186,6 +328,9 @@ class LCHOLGRPORuntime:
         num_actions_chunk: int,
     ) -> Any:
         import torch
+
+        if self.dense_gate_active():
+            return torch.zeros((), dtype=torch.float32, device=device)
 
         coef = float(self.config.hindsight_bc_coef)
         if coef <= 0.0 or len(self.replay) <= 0:
@@ -220,6 +365,13 @@ class LCHOLGRPORuntime:
         out: dict[str, float] = {
             f"source/{key}": float(value) for key, value in self.source_counts.items()
         }
+        out["dense_gate/active"] = float(self.dense_gate_active())
+        out["dense_gate/armed"] = float(self.dense_gate_armed)
+        out["dense_gate/threshold"] = float(self.dense_success_threshold)
+        out["dense_gate/mean_success"] = float(self.dense_gate_mean_success())
+        for instruction in self.dense_instruction_types:
+            out[f"dense_gate/success_rate/{instruction}"] = float(self.dense_gate_success.get(instruction, 0.0))
+            out[f"dense_gate/rollouts/{instruction}"] = float(self.dense_gate_rollouts.get(instruction, 0))
         out["grpo/batch_count"] = float(self.grpo_batch_count)
         out["grpo/non_pg_count"] = float(self.grpo_non_pg_count)
         out["replay/total_records"] = float(len(self.replay))
@@ -255,6 +407,8 @@ class LCHOLGRPORuntime:
         print(
             "[lchol] "
             f"stage={self.curriculum.stage_index}:{self.curriculum.stage.name} "
+            f"dense_gate={'active' if self.dense_gate_active() else 'armed'} "
+            f"dense_mean={metrics.get('dense_gate/mean_success', 0.0):.4f} "
             f"phase_mean={metrics.get('phase_score/mean', 0.0):.4f} "
             f"hindsight_new={int(self.source_counts['hindsight_new'])} "
             f"hindsight_replay={int(self.source_counts['hindsight_replay'])} "
@@ -274,8 +428,47 @@ class LCHOLGRPORuntime:
 
     def after_rollout(self, *, update: int) -> None:
         del update
+        if self.dense_gate_active():
+            return
         if self.reverse_scheduler is not None:
             self.reverse_scheduler.record_train_update()
+
+    def sync_dense_gate_state(self, *, run_dir: Any | None) -> None:
+        if run_dir is None:
+            return
+        from pathlib import Path
+
+        state_path = Path(run_dir) / "lchol_dense_gate" / "state_latest.json"
+        if not state_path.is_file():
+            return
+        try:
+            payload = json.loads(state_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            return
+        if not isinstance(payload, Mapping):
+            return
+
+        success = payload.get("success")
+        if isinstance(success, Mapping):
+            self.dense_gate_success = {
+                str(key): float(np.clip(float(value), 0.0, 1.0))
+                for key, value in success.items()
+            }
+        rollouts = payload.get("rollouts")
+        if isinstance(rollouts, Mapping):
+            self.dense_gate_rollouts = {
+                str(key): int(value)
+                for key, value in rollouts.items()
+            }
+
+        remote_armed = bool(payload.get("armed", not bool(payload.get("active", True))))
+        if self.dense_gate_active() and remote_armed:
+            self._open_dense_gate()
+
+    def consume_grpo_stats_reset_request(self) -> bool:
+        pending = bool(self._grpo_stats_reset_pending)
+        self._grpo_stats_reset_pending = False
+        return pending
 
     def reverse_validation_options(self, instruction_id: str, shell_id: int) -> dict[str, Any]:
         return {
@@ -285,6 +478,8 @@ class LCHOLGRPORuntime:
         }
 
     def reverse_validation_plan(self) -> list[tuple[str, int]]:
+        if self.dense_gate_active():
+            return []
         if self.reverse_scheduler is None:
             return []
         return [
@@ -339,10 +534,16 @@ class LCHOLGRPORuntime:
         except ModuleNotFoundError:
             from cdpr_dataset.cdpr_reverse_shells import get_cdpr_reverse_shell_specs
 
-        specs = get_cdpr_reverse_shell_specs(self.available_options)
+        specs = get_cdpr_reverse_shell_specs(self.sparse_instruction_types)
         if not specs:
             raise ValueError("No CDPR reverse shell specs match the available LC-HOL options.")
         return specs
+
+    def _open_dense_gate(self) -> None:
+        if self.dense_gate_armed:
+            return
+        self.dense_gate_armed = True
+        self._grpo_stats_reset_pending = True
 
     @staticmethod
     def _metric_token(value: Any) -> str:
@@ -364,3 +565,71 @@ class LCHOLGRPORuntime:
             info.get("second_reference_object_catalog", ""),
             info.get("scene", ""),
         )
+
+    def _dense_gate_passed(self) -> bool:
+        if not self.dense_instruction_types:
+            return True
+        for instruction in self.dense_instruction_types:
+            if int(self.dense_gate_rollouts.get(instruction, 0)) < int(self.dense_min_success_samples):
+                return False
+        return bool(self.dense_gate_mean_success() > float(self.dense_success_threshold) + 1e-12)
+
+    def _save_dense_gate_state(self, *, run_dir: Any, update: int | None = None) -> None:
+        from pathlib import Path
+
+        state_dir = Path(run_dir) / "lchol_dense_gate"
+        state_dir.mkdir(parents=True, exist_ok=True)
+        payload = {
+            "armed": bool(self.dense_gate_armed),
+            "active": bool(self.dense_gate_active()),
+            "threshold": float(self.dense_success_threshold),
+            "min_success_samples": int(self.dense_min_success_samples),
+            "mean_success": float(self.dense_gate_mean_success()),
+            "instruction_types": list(self.dense_instruction_types),
+            "sparse_instruction_types": list(self.sparse_instruction_types),
+            "grpo_stats_reset_pending": bool(self._grpo_stats_reset_pending),
+            "success": dict(sorted(self.dense_gate_success.items())),
+            "rollouts": {key: int(value) for key, value in sorted(self.dense_gate_rollouts.items())},
+        }
+        if update is not None:
+            (state_dir / f"state_update_{int(update):05d}.json").write_text(
+                json.dumps(payload, indent=2, sort_keys=True),
+                encoding="utf-8",
+            )
+        (state_dir / "state_latest.json").write_text(
+            json.dumps(payload, indent=2, sort_keys=True),
+            encoding="utf-8",
+        )
+
+
+def _load_task_metadata_from_env() -> dict[str, Any]:
+    raw = os.environ.get("RLVLA_TASK_METADATA_JSON")
+    if not raw:
+        return {}
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return {}
+    return dict(data) if isinstance(data, Mapping) else {}
+
+
+def _metadata_name_tuple(metadata: Mapping[str, Any], *keys: str) -> tuple[str, ...]:
+    for key in keys:
+        raw = metadata.get(key)
+        if raw is None:
+            continue
+        if isinstance(raw, str):
+            raw = [raw]
+        if not isinstance(raw, Sequence):
+            continue
+        out: list[str] = []
+        seen: set[str] = set()
+        for item in raw:
+            name = str(item).strip()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            out.append(name)
+        if out:
+            return tuple(out)
+    return ()

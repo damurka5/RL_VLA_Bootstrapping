@@ -19,7 +19,7 @@ remote:
     RLVLA_CDPR_OFFSCREEN_SAMPLES: "1"
     TOKENIZERS_PARALLELISM: "false"
   notes:
-    - GRPO resumes from the complex-task checkpoint at `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260528_101203/rl/step_0072000`.
+    - GRPO resumes from `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_resume_380_to_480_move_to_object_xy_only_from_0170000_10_updates_20260419_100515/rl/step_0017000`, including `grpo_actor_stats.pt`.
     - Rollout TensorBoard scalars are emitted every 8 global environment steps, plus update summaries every optimizer update.
 
 assets:
@@ -107,6 +107,12 @@ task:
       put_in_front_of_object,
       put_behind_object,
       move_between_objects,
+      catch_object,
+      grip_object,
+      release_object,
+      free_object,
+      rotate_clockwise,
+      rotate_counterclockwise,
     ]
   target_objects:
     [
@@ -172,6 +178,59 @@ task:
     goal_height_above_table: 0.10
     lateral_goal_offset: 0.40
     vertical_goal_offset: 0.10
+
+    dense_to_sparse_success_threshold: 0.70
+    dense_to_sparse_min_success_samples: 2
+    dense_stage_instruction_types:
+      [
+        move_to_object,
+        catch_object,
+        grip_object,
+        release_object,
+        free_object,
+        rotate_clockwise,
+        rotate_counterclockwise,
+      ]
+    sparse_stage_instruction_types:
+      [
+        move_to_object,
+        grab_object,
+        pick_up,
+        push_left,
+        push_right,
+        push_forward,
+        push_backward,
+        put_into_plate,
+        move_left_of_object,
+        move_right_of_object,
+        move_in_front_of_object,
+        move_behind_object,
+        put_in_front_of_object,
+        put_behind_object,
+        move_between_objects,
+      ]
+    dense_stage_metadata:
+      reward_mode: dense
+      target_at_gripper_start_probability: 1.0
+      target_at_gripper_start_gripper_opening: 1.0
+      target_at_gripper_start_min_height_above_table: 0.08
+      force_caught_object_start_instruction_types:
+        [
+          release_object,
+          free_object,
+          rotate_clockwise,
+          rotate_counterclockwise,
+        ]
+      gripper_edge_reward_scale: 0.015
+      gripper_edge_success_threshold: 0.010
+      release_success_edge_clearance: 0.035
+      rotate_success_angle: 0.30
+      rotate_step_reward_scale: 0.08
+      rotate_progress_weight: 1.0
+      rotate_step_weight: 0.25
+      rotate_wrong_direction_penalty_weight: 0.35
+    sparse_stage_metadata:
+      reward_mode: sparse_binary
 
     reward_mode: sparse_binary
     sparse_success_reward: 1.0
@@ -298,9 +357,9 @@ training:
       nproc_per_node: 2
     args:
       external_grpo_script: vla-scripts/grpo_finetune_cdpr.py
-      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260528_101203/rl/step_0072000/vla_cdpr_adapter
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_resume_380_to_480_move_to_object_xy_only_from_0170000_10_updates_20260419_100515/rl/step_0017000/vla_cdpr_adapter
       train_loaded_adapter: true
-      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260528_101203/rl/step_0072000/action_head_cdpr.pt
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_resume_380_to_480_move_to_object_xy_only_from_0170000_10_updates_20260419_100515/rl/step_0017000/action_head_cdpr.pt
       resume_actor_stats: true
       # Complex CDPR rollouts and reverse-frontier validation can skew DDP ranks far past PyTorch's 10-minute default.
       ddp_timeout_seconds: 86400

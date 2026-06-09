@@ -46,7 +46,11 @@ from .rl_instruction_tasks import (
     CATCHABLE_TARGET_INSTRUCTION_TYPES,
     DEFAULT_CATCHABLE_OBJECTS,
     DEFAULT_CONTAINER_OBJECTS,
+    DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
+    DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
     INSTRUCTION_TYPES,
+    ROTATE_OBJECT_INSTRUCTION_TYPES,
+    _read_env_body_yaw,
     canonical_object_name,
     compute_instruction_reward,
     init_reward_state,
@@ -111,6 +115,13 @@ DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_in_front_of_object",
     "put_behind_object",
     "move_between_objects",
+)
+DEFAULT_FORCE_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
+    *DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
+    *ROTATE_OBJECT_INSTRUCTION_TYPES,
+)
+DEFAULT_TARGET_AT_GRIPPER_START_INSTRUCTION_TYPES: tuple[str, ...] = (
+    *DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
 )
 DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, 0.005)
 YCB_CAUGHT_OBJECT_MEASUREMENTS: dict[str, dict[str, float]] = {
@@ -229,8 +240,20 @@ def _infer_instruction_type_from_text(instruction: str) -> str | None:
         return "move_to_object"
     if text.startswith("grab "):
         return "grab_object"
+    if text.startswith("catch "):
+        return "catch_object"
+    if text.startswith("grip "):
+        return "grip_object"
+    if text.startswith("release "):
+        return "release_object"
+    if text.startswith("free "):
+        return "free_object"
     if text.startswith("pick up "):
         return "pick_up"
+    if text.startswith("rotate ") and text.endswith(" clockwise"):
+        return "rotate_clockwise"
+    if text.startswith("rotate ") and text.endswith(" counterclockwise"):
+        return "rotate_counterclockwise"
     if text.startswith("push ") and text.endswith(" left"):
         return "push_left"
     if text.startswith("push ") and text.endswith(" right"):
@@ -1596,7 +1619,15 @@ class CDPRLanguageRLEnv(_EnvBase):
         )
         setattr(self.sim, "language_instruction", self._instruction_spec.text)
 
+        episode_ee_yaw = self._sample_episode_ee_yaw(options=options)
+        if episode_ee_yaw is not None:
+            self._set_ee_yaw(float(episode_ee_yaw))
+
         self._reset_caught_object_start_state()
+        self._maybe_spawn_target_at_gripper(
+            instruction_type=self._instruction_spec.instruction_type,
+            options=options,
+        )
         self._maybe_spawn_target_caught_at_ee(
             instruction_type=self._instruction_spec.instruction_type,
             options=options,
@@ -1619,10 +1650,6 @@ class CDPRLanguageRLEnv(_EnvBase):
                 )
             )
 
-        episode_ee_yaw = self._sample_episode_ee_yaw(options=options)
-        if episode_ee_yaw is not None:
-            self._set_ee_yaw(float(episode_ee_yaw))
-
         ee0 = self._get_ee_position()
         self._goal_position = self._compute_instruction_goal(
             spec=self._instruction_spec,
@@ -1636,6 +1663,11 @@ class CDPRLanguageRLEnv(_EnvBase):
         )
         reward_target_pos = self._current_manipulated_object_position(default=self._goal_position)
         self._reward_state = init_reward_state(ee0, reward_target_pos)
+        if self._instruction_spec.instruction_type in ROTATE_OBJECT_INSTRUCTION_TYPES:
+            initial_yaw = _read_env_body_yaw(self, self._target_body_name)
+            if initial_yaw is not None:
+                self._reward_state.initial_obj_yaw = float(initial_yaw)
+                self._reward_state.prev_obj_yaw = float(initial_yaw)
         reward_initial = self._curriculum_reset_info.get("curriculum_reward_initial_obj_pos")
         if reward_initial is not None:
             reward_initial_arr = np.asarray(reward_initial, dtype=np.float32).reshape(-1)
@@ -2126,6 +2158,14 @@ class CDPRLanguageRLEnv(_EnvBase):
         configured = _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
         return configured or DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES
 
+    def _force_caught_object_start_instruction_types(self) -> tuple[str, ...]:
+        configured = _metadata_name_list(self._task_metadata, "force_caught_object_start_instruction_types")
+        return configured or DEFAULT_FORCE_CAUGHT_OBJECT_START_INSTRUCTION_TYPES
+
+    def _target_at_gripper_start_instruction_types(self) -> tuple[str, ...]:
+        configured = _metadata_name_list(self._task_metadata, "target_at_gripper_start_instruction_types")
+        return configured or DEFAULT_TARGET_AT_GRIPPER_START_INSTRUCTION_TYPES
+
     def _should_spawn_target_caught_at_ee(
         self,
         *,
@@ -2134,7 +2174,9 @@ class CDPRLanguageRLEnv(_EnvBase):
     ) -> bool:
         options = dict(options or {})
         instruction_type = str(instruction_type)
-        if instruction_type not in set(self._caught_object_start_instruction_types()):
+        caught_types = set(self._caught_object_start_instruction_types())
+        force_caught_types = set(self._force_caught_object_start_instruction_types())
+        if instruction_type not in caught_types and instruction_type not in force_caught_types:
             return False
         if not self._target_body_name:
             return False
@@ -2145,7 +2187,33 @@ class CDPRLanguageRLEnv(_EnvBase):
                 return forced.strip().lower() in {"1", "true", "yes", "on"}
             return bool(forced)
 
-        probability = _metadata_float(self._task_metadata, "caught_object_start_probability", 0.0)
+        default_probability = 1.0 if instruction_type in force_caught_types else 0.0
+        probability = _metadata_float(self._task_metadata, "caught_object_start_probability", default_probability)
+        probability = float(np.clip(probability, 0.0, 1.0))
+        if probability <= 0.0:
+            return False
+        return bool(float(self.np_random.random()) < probability)
+
+    def _should_spawn_target_at_gripper(
+        self,
+        *,
+        instruction_type: str,
+        options: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        options = dict(options or {})
+        instruction_type = str(instruction_type)
+        if instruction_type not in set(self._target_at_gripper_start_instruction_types()):
+            return False
+        if not self._target_body_name:
+            return False
+
+        forced = options.get("start_with_target_at_gripper", options.get("target_at_gripper_start"))
+        if forced is not None:
+            if isinstance(forced, str):
+                return forced.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(forced)
+
+        probability = _metadata_float(self._task_metadata, "target_at_gripper_start_probability", 1.0)
         probability = float(np.clip(probability, 0.0, 1.0))
         if probability <= 0.0:
             return False
@@ -2485,6 +2553,39 @@ class CDPRLanguageRLEnv(_EnvBase):
                 self.sim.run_simulation_step(capture_frame=False)
                 self._maintain_caught_object_start_pose()
             self._force_gripper_opening(gripper_opening)
+        return True
+
+    def _maybe_spawn_target_at_gripper(
+        self,
+        *,
+        instruction_type: str,
+        options: Optional[dict[str, Any]] = None,
+    ) -> bool:
+        if not self._should_spawn_target_at_gripper(instruction_type=instruction_type, options=options):
+            return False
+
+        opening = _metadata_float(self._task_metadata, "target_at_gripper_start_gripper_opening", 1.0)
+        self._force_gripper_opening(float(np.clip(opening, 0.0, 1.0)))
+
+        ee_pos = self._get_ee_position().astype(np.float32)
+        target_offset = self._caught_object_start_offset()
+        hold_center = self._caught_object_start_hold_center()
+        target_pos = (hold_center + target_offset) if hold_center is not None else (ee_pos + target_offset)
+
+        min_height = _metadata_float(
+            self._task_metadata,
+            "target_at_gripper_start_min_height_above_table",
+            _metadata_float(self._task_metadata, "caught_object_start_min_height_above_table", 0.08),
+        )
+        target_pos[2] = max(float(target_pos[2]), float(self._support_surface_z + max(0.0, min_height)))
+        target_pos = np.asarray(clamp_xyz(target_pos), dtype=np.float32)
+        if not self._set_body_position(self._target_body_name, target_pos):
+            return False
+
+        warm_steps = max(0, int(round(_metadata_float(self._task_metadata, "target_at_gripper_start_warm_steps", 0.0))))
+        if warm_steps > 0 and hasattr(self.sim, "run_simulation_step"):
+            for _ in range(warm_steps):
+                self.sim.run_simulation_step(capture_frame=False)
         return True
 
     def _caught_object_start_release_opening_threshold(self) -> float:

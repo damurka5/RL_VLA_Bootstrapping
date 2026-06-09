@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import json
+import tempfile
 import unittest
+from unittest import mock
+from pathlib import Path
 
 import numpy as np
 
 from rl_vla_bootstrapping.lchol.curriculum import StrictSuccessCurriculum
+from rl_vla_bootstrapping.lchol.grpo_runtime import LCHOLGRPOConfig, LCHOLGRPORuntime
 
 
 class LCHOLCurriculumGateTests(unittest.TestCase):
@@ -57,6 +62,113 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
         self.assertIn("move_behind_object", curriculum.allowed_options())
         self.assertIn("put_in_front_of_object", curriculum.allowed_options())
         self.assertIn("put_behind_object", curriculum.allowed_options())
+
+    def test_runtime_dense_gate_arms_sparse_stage_after_mean_success_threshold(self):
+        metadata = {
+            "dense_to_sparse_success_threshold": 0.70,
+            "dense_to_sparse_min_success_samples": 2,
+            "dense_stage_instruction_types": ["catch_object", "release_object"],
+            "dense_stage_metadata": {"reward_mode": "dense"},
+            "sparse_stage_metadata": {"reward_mode": "sparse_binary"},
+            "reward_mode": "sparse_binary",
+        }
+
+        with mock.patch.dict("os.environ", {"RLVLA_TASK_METADATA_JSON": json.dumps(metadata)}):
+            runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_to_object", "grab_object"),
+                seed=0,
+            )
+
+        self.assertTrue(runtime.dense_gate_active())
+        self.assertIn(runtime.sample_reset_options()["instruction_type"], {"catch_object", "release_object"})
+        self.assertEqual(runtime.current_task_metadata()["reward_mode"], "dense")
+
+        runtime.record_dense_validation(
+            [
+                {"instruction_id": "catch_object", "success_rate": 0.60, "rollouts": 2},
+                {"instruction_id": "release_object", "success_rate": 0.80, "rollouts": 2},
+            ]
+        )
+        self.assertTrue(runtime.dense_gate_active())
+
+        runtime.record_dense_validation(
+            [
+                {"instruction_id": "catch_object", "success_rate": 0.80, "rollouts": 2},
+                {"instruction_id": "release_object", "success_rate": 0.80, "rollouts": 2},
+            ]
+        )
+        self.assertFalse(runtime.dense_gate_active())
+        self.assertEqual(runtime.current_task_metadata()["reward_mode"], "sparse_binary")
+        self.assertTrue(runtime.consume_grpo_stats_reset_request())
+        self.assertFalse(runtime.consume_grpo_stats_reset_request())
+
+    def test_runtime_configures_env_instruction_set_for_dense_gate(self):
+        metadata = {
+            "dense_to_sparse_success_threshold": 0.70,
+            "dense_stage_instruction_types": ["catch_object"],
+            "sparse_stage_instruction_types": ["move_to_object"],
+            "dense_stage_metadata": {"reward_mode": "dense"},
+            "reward_mode": "sparse_binary",
+        }
+
+        with mock.patch.dict("os.environ", {"RLVLA_TASK_METADATA_JSON": json.dumps(metadata)}):
+            runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_to_object", "grab_object"),
+                seed=0,
+            )
+
+        env = type("Env", (), {"_task_metadata": {}, "instruction_types": ("move_to_object",)})()
+        runtime.configure_env_for_current_stage(env)
+        self.assertEqual(env.instruction_types, ("catch_object",))
+        self.assertEqual(env._task_metadata["reward_mode"], "dense")
+
+        runtime.record_dense_validation([{"instruction_id": "catch_object", "success_rate": 1.0, "rollouts": 1}])
+        runtime.configure_env_for_current_stage(env)
+        self.assertEqual(env.instruction_types, ("move_to_object",))
+        self.assertEqual(env._task_metadata["reward_mode"], "sparse_binary")
+
+    def test_runtime_syncs_dense_gate_state_and_requests_stat_reset(self):
+        metadata = {
+            "dense_to_sparse_success_threshold": 0.70,
+            "dense_stage_instruction_types": ["catch_object"],
+            "sparse_stage_instruction_types": ["move_to_object"],
+            "dense_stage_metadata": {"reward_mode": "dense"},
+            "reward_mode": "sparse_binary",
+        }
+
+        with mock.patch.dict("os.environ", {"RLVLA_TASK_METADATA_JSON": json.dumps(metadata)}):
+            writer_runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_to_object", "catch_object"),
+                seed=0,
+            )
+            reader_runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_to_object", "catch_object"),
+                seed=1,
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            run_dir = Path(tmp)
+            writer_runtime.record_dense_validation(
+                [{"instruction_id": "catch_object", "success_rate": 1.0, "rollouts": 1}],
+                run_dir=run_dir,
+                update=3,
+            )
+
+            self.assertTrue(reader_runtime.dense_gate_active())
+            reader_runtime.sync_dense_gate_state(run_dir=run_dir)
+
+        self.assertFalse(reader_runtime.dense_gate_active())
+        self.assertEqual(reader_runtime.dense_gate_success["catch_object"], 1.0)
+        self.assertEqual(reader_runtime.dense_gate_rollouts["catch_object"], 1)
+        self.assertTrue(reader_runtime.consume_grpo_stats_reset_request())
 
 
 if __name__ == "__main__":

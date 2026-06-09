@@ -29,6 +29,12 @@ INSTRUCTION_TYPES: tuple[str, ...] = (
     "push_right",
     "push_forward",
     "push_backward",
+    "catch_object",
+    "grip_object",
+    "release_object",
+    "free_object",
+    "rotate_clockwise",
+    "rotate_counterclockwise",
 )
 
 MOVE_DIRECTIONS: dict[str, np.ndarray] = {
@@ -54,6 +60,12 @@ MOVE_DIRECTIONS: dict[str, np.ndarray] = {
     "push_right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
     "push_forward": np.array([0.0, 1.0, 0.0], dtype=np.float32),
     "push_backward": np.array([0.0, -1.0, 0.0], dtype=np.float32),
+    "catch_object": np.zeros((3,), dtype=np.float32),
+    "grip_object": np.zeros((3,), dtype=np.float32),
+    "release_object": np.zeros((3,), dtype=np.float32),
+    "free_object": np.zeros((3,), dtype=np.float32),
+    "rotate_clockwise": np.zeros((3,), dtype=np.float32),
+    "rotate_counterclockwise": np.zeros((3,), dtype=np.float32),
 }
 
 _DIRECTIONAL_SUCCESS_AXES: dict[str, tuple[int, float]] = {
@@ -88,6 +100,12 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "push_right": "push object right",
     "push_forward": "push object forward",
     "push_backward": "push object backward",
+    "catch_object": "catch object",
+    "grip_object": "grip object",
+    "release_object": "release object",
+    "free_object": "free object",
+    "rotate_clockwise": "rotate object clockwise",
+    "rotate_counterclockwise": "rotate object counterclockwise",
 }
 
 INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
@@ -113,6 +131,12 @@ INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
     "push_right": "target object has moved right by the configured push displacement",
     "push_forward": "target object has moved forward by the configured push displacement",
     "push_backward": "target object has moved backward by the configured push displacement",
+    "catch_object": "sum of finger-to-object-edge distances is below the configured dense catch threshold",
+    "grip_object": "sum of finger-to-object-edge distances is below the configured dense catch threshold",
+    "release_object": "sum of finger-to-object-edge clearances is above the configured dense release threshold",
+    "free_object": "sum of finger-to-object-edge clearances is above the configured dense release threshold",
+    "rotate_clockwise": "target object yaw has changed clockwise by the configured target angle",
+    "rotate_counterclockwise": "target object yaw has changed counterclockwise by the configured target angle",
 }
 
 OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -131,6 +155,12 @@ OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = (
     "push_right",
     "push_forward",
     "push_backward",
+    "catch_object",
+    "grip_object",
+    "release_object",
+    "free_object",
+    "rotate_clockwise",
+    "rotate_counterclockwise",
 )
 
 REFERENCE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -160,6 +190,26 @@ MANIPULATION_SPARSE_INSTRUCTION_TYPES: tuple[str, ...] = (
     "push_backward",
 )
 
+DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "catch_object",
+    "grip_object",
+)
+
+DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "release_object",
+    "free_object",
+)
+
+DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES: tuple[str, ...] = (
+    *DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
+    *DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
+)
+
+ROTATE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "rotate_clockwise",
+    "rotate_counterclockwise",
+)
+
 CATCHABLE_TARGET_INSTRUCTION_TYPES: tuple[str, ...] = (
     "grab_object",
     "pick_up",
@@ -171,6 +221,12 @@ CATCHABLE_TARGET_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_in_front_of_object",
     "put_behind_object",
     "move_between_objects",
+    "catch_object",
+    "grip_object",
+    "release_object",
+    "free_object",
+    "rotate_clockwise",
+    "rotate_counterclockwise",
 )
 
 PLANAR_RELATION_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -232,6 +288,8 @@ class RewardState:
     prev_obj_pos: np.ndarray
     prev_distance: Optional[float] = None
     prev_camera_align: Optional[float] = None
+    initial_obj_yaw: Optional[float] = None
+    prev_obj_yaw: Optional[float] = None
     gripper_closed: bool = False
     grasped: bool = False
     step_count: int = 0
@@ -317,6 +375,18 @@ def sample_instruction(
         instruction_text = f"pick up {target_text}"
     elif selected_instruction_type == "grab_object":
         instruction_text = f"grab {target_text}"
+    elif selected_instruction_type == "catch_object":
+        instruction_text = f"catch {target_text}"
+    elif selected_instruction_type == "grip_object":
+        instruction_text = f"grip {target_text}"
+    elif selected_instruction_type == "release_object":
+        instruction_text = f"release {target_text}"
+    elif selected_instruction_type == "free_object":
+        instruction_text = f"free {target_text}"
+    elif selected_instruction_type == "rotate_clockwise":
+        instruction_text = f"rotate {target_text} clockwise"
+    elif selected_instruction_type == "rotate_counterclockwise":
+        instruction_text = f"rotate {target_text} counterclockwise"
     elif selected_instruction_type == "put_into_plate":
         plate_text = reference_text if reference_name else "plate"
         instruction_text = f"put {target_text} into {plate_text}"
@@ -499,6 +569,30 @@ def compute_instruction_reward(
             target_body_name=target_body_name,
             reference_body_name=reference_body_name,
             second_reference_body_name=second_reference_body_name,
+        )
+
+    if spec.instruction_type in DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES:
+        return _compute_dense_gripper_edge_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            task_metadata=task_metadata,
+            gripper_opening=gripper_opening,
+            env=env,
+            target_body_name=target_body_name,
+        )
+
+    if spec.instruction_type in ROTATE_OBJECT_INSTRUCTION_TYPES:
+        return _compute_dense_rotate_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=task_metadata,
+            env=env,
+            target_body_name=target_body_name,
         )
 
     if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
@@ -703,6 +797,346 @@ def _force_binary_sparse_metadata(task_metadata: Optional[dict[str, Any]]) -> di
     metadata = dict(task_metadata or {})
     metadata["action_saturation_penalty_weight"] = 0.0
     return metadata
+
+
+def _safe_quat_wxyz_to_yaw(quat_wxyz: Sequence[float] | np.ndarray) -> float | None:
+    quat = np.asarray(quat_wxyz, dtype=np.float64).reshape(-1)
+    if quat.size < 4 or not np.all(np.isfinite(quat[:4])):
+        return None
+    norm = float(np.linalg.norm(quat[:4]))
+    if norm < 1e-9:
+        return None
+    w, x, y, z = (quat[:4] / norm).tolist()
+    siny_cosp = 2.0 * (w * z + x * y)
+    cosy_cosp = 1.0 - 2.0 * (y * y + z * z)
+    return float(np.arctan2(siny_cosp, cosy_cosp))
+
+
+def _angle_delta(to_angle: float, from_angle: float) -> float:
+    return float((float(to_angle) - float(from_angle) + np.pi) % (2.0 * np.pi) - np.pi)
+
+
+def _read_env_body_yaw(env: Any | None, body_name: str | None) -> float | None:
+    if env is not None and body_name:
+        api_getter = getattr(env, "state_api", None)
+        api = None
+        if callable(api_getter):
+            try:
+                api = api_getter()
+            except Exception:
+                api = None
+        if api is None:
+            api = env
+        pose_getter = getattr(api, "get_body_pose", None)
+        if callable(pose_getter):
+            try:
+                pose = pose_getter(str(body_name))
+            except Exception:
+                pose = None
+            if isinstance(pose, dict):
+                for key in ("quat_wxyz", "quat"):
+                    if key in pose:
+                        yaw = _safe_quat_wxyz_to_yaw(pose[key])
+                        if yaw is not None:
+                            return yaw
+
+    if env is not None:
+        for attr_name in ("_read_current_yaw", "get_yaw"):
+            getter = getattr(env, attr_name, None)
+            if callable(getter):
+                try:
+                    yaw = float(getter())
+                except Exception:
+                    continue
+                if np.isfinite(yaw):
+                    return yaw
+        raw_yaw = getattr(env, "_yaw", None)
+        if raw_yaw is not None:
+            try:
+                yaw = float(raw_yaw)
+            except (TypeError, ValueError):
+                yaw = float("nan")
+            if np.isfinite(yaw):
+                return yaw
+    return None
+
+
+def _finger_edge_metrics(
+    *,
+    env: Any | None,
+    target_body_name: str | None,
+    goal_pos: np.ndarray,
+    gripper_opening: Optional[float],
+    task_metadata: Optional[dict[str, Any]],
+) -> dict[str, float]:
+    metadata = dict(task_metadata or {})
+    if env is not None and target_body_name:
+        geometry_getter = getattr(env, "_finger_pair_geometry", None)
+        width_getter = getattr(env, "_body_width_along_axis", None)
+        if callable(geometry_getter) and callable(width_getter):
+            try:
+                geometry = geometry_getter()
+            except Exception:
+                geometry = None
+            if isinstance(geometry, dict):
+                try:
+                    axis = np.asarray(geometry["axis"], dtype=np.float64).reshape(3)
+                    center = np.asarray(geometry["center"], dtype=np.float64).reshape(3)
+                    inner_gap = float(geometry["inner_gap"])
+                except Exception:
+                    axis = np.zeros((3,), dtype=np.float64)
+                    center = np.zeros((3,), dtype=np.float64)
+                    inner_gap = float("nan")
+                axis_norm = float(np.linalg.norm(axis))
+                if axis_norm > 1e-9 and np.isfinite(inner_gap):
+                    axis = axis / axis_norm
+                    try:
+                        width_raw = width_getter(str(target_body_name), axis.astype(np.float32))
+                    except Exception:
+                        width_raw = None
+                    try:
+                        object_width = float(width_raw)
+                    except (TypeError, ValueError):
+                        object_width = float("nan")
+                    target_pos = _read_env_body_position(env, target_body_name)
+                    if target_pos is None:
+                        target_pos = np.asarray(goal_pos, dtype=np.float32).reshape(-1)[:3]
+                    target_pos64 = np.asarray(target_pos, dtype=np.float64).reshape(3)
+                    if np.isfinite(object_width) and object_width > 0.0 and np.all(np.isfinite(target_pos64)):
+                        rel_center = float(np.dot(target_pos64 - center, axis))
+                        half_gap = 0.5 * max(inner_gap, 0.0)
+                        half_width = 0.5 * max(object_width, 0.0)
+                        positive_clearance = float(half_gap - (rel_center + half_width))
+                        negative_clearance = float((rel_center - half_width) + half_gap)
+                        edge_distance_sum = float(abs(positive_clearance) + abs(negative_clearance))
+                        clearance_sum = float(max(0.0, positive_clearance) + max(0.0, negative_clearance))
+                        return {
+                            "edge_distance_sum": edge_distance_sum,
+                            "clearance_sum": clearance_sum,
+                            "min_clearance": float(min(positive_clearance, negative_clearance)),
+                            "positive_clearance": positive_clearance,
+                            "negative_clearance": negative_clearance,
+                            "inner_gap": float(inner_gap),
+                            "object_width": float(object_width),
+                            "object_center_offset": rel_center,
+                            "geometry_available": 1.0,
+                        }
+
+    opening = float("nan") if gripper_opening is None else float(gripper_opening)
+    if not np.isfinite(opening):
+        opening = _metadata_float(metadata, "dense_gripper_fallback_opening", 1.0)
+    target_opening = _metadata_float(metadata, "dense_gripper_target_opening", 0.0)
+    clearance = max(0.0, float(opening) - float(target_opening))
+    return {
+        "edge_distance_sum": float(abs(float(opening) - float(target_opening))),
+        "clearance_sum": float(clearance),
+        "min_clearance": float(clearance),
+        "positive_clearance": float(0.5 * clearance),
+        "negative_clearance": float(0.5 * clearance),
+        "inner_gap": float(opening),
+        "object_width": float(target_opening),
+        "object_center_offset": 0.0,
+        "geometry_available": 0.0,
+    }
+
+
+def _compute_dense_gripper_edge_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    task_metadata: Optional[dict[str, Any]] = None,
+    gripper_opening: Optional[float] = None,
+    env: Any | None = None,
+    target_body_name: str | None = None,
+) -> tuple[float, bool, dict[str, float]]:
+    metadata = dict(task_metadata or {})
+    metrics = _finger_edge_metrics(
+        env=env,
+        target_body_name=target_body_name,
+        goal_pos=goal_pos,
+        gripper_opening=gripper_opening,
+        task_metadata=metadata,
+    )
+    geometry_available = bool(metrics.get("geometry_available", 0.0) >= 0.5)
+    scale_default = 0.015 if geometry_available else 0.10
+    reward_scale = max(_metadata_float(metadata, "gripper_edge_reward_scale", scale_default), 1e-6)
+    reward_weight = _metadata_float(metadata, "gripper_edge_reward_weight", 1.0)
+    exponent = max(_metadata_float(metadata, "gripper_edge_reward_exponent", 2.0), 1e-6)
+    success_bonus = _metadata_float(metadata, "gripper_edge_success_bonus", 0.0)
+
+    is_release = spec.instruction_type in DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES
+    if is_release:
+        target_clearance = max(
+            _metadata_float(
+                metadata,
+                "release_success_edge_clearance",
+                _metadata_float(metadata, "gripper_release_success_clearance", 0.035 if geometry_available else 0.50),
+            ),
+            1e-6,
+        )
+        clearance_sum = float(metrics["clearance_sum"])
+        remaining = float(max(0.0, target_clearance - clearance_sum))
+        shaped = float(reward_weight / (1.0 + np.power(remaining / reward_scale, exponent)))
+        success = bool(clearance_sum >= target_clearance)
+        dense_error = remaining
+        dense_progress = float(np.clip(clearance_sum / target_clearance, 0.0, 1.0))
+    else:
+        edge_distance_sum = float(metrics["edge_distance_sum"])
+        success_threshold = max(
+            _metadata_float(
+                metadata,
+                "gripper_edge_success_threshold",
+                _metadata_float(metadata, "catch_success_edge_distance", 0.010 if geometry_available else 0.08),
+            ),
+            0.0,
+        )
+        shaped = float(reward_weight / (1.0 + np.power(edge_distance_sum / reward_scale, exponent)))
+        success = bool(edge_distance_sum <= success_threshold)
+        dense_error = edge_distance_sum
+        dense_progress = float(1.0 / (1.0 + np.power(edge_distance_sum / reward_scale, exponent)))
+
+    reward = float(shaped + (success_bonus if success else 0.0))
+    reward_state.prev_ee_pos = np.asarray(ee_pos, dtype=np.float32).copy()
+    reward_state.prev_obj_pos = np.asarray(goal_pos, dtype=np.float32).copy()
+    reward_state.prev_distance = float(dense_error)
+    reward_state.prev_camera_align = None
+    reward_state.step_count += 1
+
+    info = {
+        "dense_gripper_reward_mode": 1.0,
+        "dense_gripper_success": float(success),
+        "gripper_edge_distance_sum": float(metrics["edge_distance_sum"]),
+        "gripper_edge_clearance_sum": float(metrics["clearance_sum"]),
+        "gripper_edge_min_clearance": float(metrics["min_clearance"]),
+        "gripper_edge_positive_clearance": float(metrics["positive_clearance"]),
+        "gripper_edge_negative_clearance": float(metrics["negative_clearance"]),
+        "gripper_inner_gap": float(metrics["inner_gap"]),
+        "gripper_object_width": float(metrics["object_width"]),
+        "gripper_object_center_offset": float(metrics["object_center_offset"]),
+        "gripper_edge_geometry_available": float(metrics["geometry_available"]),
+        "distance_to_goal": float(dense_error),
+        "distance_to_goal_xy": 0.0,
+        "distance_delta": 0.0,
+        "distance_reward": float(shaped),
+        "success_bonus": float(success_bonus if success else 0.0),
+        "gripper_edge_reward_scale": float(reward_scale),
+        "gripper_edge_reward_weight": float(reward_weight),
+        "gripper_edge_reward_exponent": float(exponent),
+        "gripper_opening": float("nan") if gripper_opening is None else float(gripper_opening),
+        "release_gripper_task": float(is_release),
+        "grip_gripper_task": float(not is_release),
+        "dense_gripper_progress": float(dense_progress),
+        "camera_alignment": 0.0,
+        "camera_alignment_delta": 0.0,
+        "camera_reward": 0.0,
+        "orientation_reward": 0.0,
+        "action_saturation_penalty": 0.0,
+        "action_saturation_rate": 0.0,
+        "action_saturation_max_abs": 0.0,
+    }
+    if is_release:
+        info["release_success_edge_clearance"] = float(target_clearance)
+        info["release_remaining_edge_clearance"] = float(dense_error)
+    else:
+        info["gripper_edge_success_threshold"] = float(success_threshold)
+    return reward, success, info
+
+
+def _compute_dense_rotate_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+    env: Any | None = None,
+    target_body_name: str | None = None,
+) -> tuple[float, bool, dict[str, float]]:
+    metadata = dict(task_metadata or {})
+    current_yaw = _read_env_body_yaw(env, target_body_name)
+    if current_yaw is None:
+        current_yaw = reward_state.prev_obj_yaw
+    if current_yaw is None:
+        current_yaw = reward_state.initial_obj_yaw
+    if current_yaw is None:
+        current_yaw = 0.0
+    current_yaw = float(current_yaw)
+
+    if reward_state.initial_obj_yaw is None:
+        reward_state.initial_obj_yaw = float(current_yaw)
+    if reward_state.prev_obj_yaw is None:
+        reward_state.prev_obj_yaw = float(reward_state.initial_obj_yaw)
+    prev_yaw = float(reward_state.prev_obj_yaw)
+
+    direction_sign = -1.0 if spec.instruction_type == "rotate_clockwise" else 1.0
+    total_signed_rotation = float(direction_sign * _angle_delta(current_yaw, float(reward_state.initial_obj_yaw)))
+    step_signed_rotation = float(direction_sign * _angle_delta(current_yaw, prev_yaw))
+
+    target_angle = max(
+        _metadata_float(metadata, "rotate_success_angle", _metadata_float(metadata, "rotate_target_angle", 0.30)),
+        1e-6,
+    )
+    step_scale = max(_metadata_float(metadata, "rotate_step_reward_scale", 0.08), 1e-6)
+    progress_weight = _metadata_float(metadata, "rotate_progress_weight", 1.0)
+    step_weight = _metadata_float(metadata, "rotate_step_weight", 0.25)
+    wrong_direction_penalty_weight = _metadata_float(metadata, "rotate_wrong_direction_penalty_weight", 0.35)
+    success_bonus = _metadata_float(metadata, "rotate_success_bonus", 0.0)
+
+    progress = float(np.clip(total_signed_rotation / target_angle, 0.0, 1.0))
+    correct_step = float(np.tanh(max(0.0, step_signed_rotation) / step_scale))
+    wrong_step = float(np.tanh(max(0.0, -step_signed_rotation) / step_scale))
+    success = bool(total_signed_rotation >= target_angle)
+    reward = float(
+        progress_weight * progress
+        + step_weight * correct_step
+        - wrong_direction_penalty_weight * wrong_step
+        + (success_bonus if success else 0.0)
+    )
+
+    action_yaw = 0.0
+    if action is not None:
+        action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+        if action_arr.size >= 4:
+            action_yaw = float(action_arr[3])
+
+    reward_state.prev_ee_pos = np.asarray(ee_pos, dtype=np.float32).copy()
+    reward_state.prev_obj_pos = np.asarray(goal_pos, dtype=np.float32).copy()
+    reward_state.prev_obj_yaw = float(current_yaw)
+    reward_state.prev_distance = float(max(0.0, target_angle - total_signed_rotation))
+    reward_state.prev_camera_align = None
+    reward_state.step_count += 1
+
+    info = {
+        "dense_rotate_reward_mode": 1.0,
+        "rotate_success": float(success),
+        "rotate_direction_sign": float(direction_sign),
+        "rotate_current_yaw": float(current_yaw),
+        "rotate_initial_yaw": float(reward_state.initial_obj_yaw),
+        "rotate_prev_yaw": float(prev_yaw),
+        "rotate_total_signed_angle": float(total_signed_rotation),
+        "rotate_step_signed_angle": float(step_signed_rotation),
+        "rotate_target_angle": float(target_angle),
+        "rotate_progress": float(progress),
+        "rotate_correct_step_score": float(correct_step),
+        "rotate_wrong_step_score": float(wrong_step),
+        "rotate_action_yaw": float(action_yaw),
+        "distance_to_goal": float(max(0.0, target_angle - total_signed_rotation)),
+        "distance_to_goal_xy": 0.0,
+        "distance_delta": float(step_signed_rotation),
+        "distance_reward": float(progress_weight * progress + step_weight * correct_step),
+        "success_bonus": float(success_bonus if success else 0.0),
+        "orientation_reward": float(reward),
+        "camera_alignment": 0.0,
+        "camera_alignment_delta": 0.0,
+        "camera_reward": 0.0,
+        "action_saturation_penalty": 0.0,
+        "action_saturation_rate": 0.0,
+        "action_saturation_max_abs": 0.0,
+    }
+    return reward, success, info
 
 
 def _compute_sparse_binary_reward(
@@ -1633,6 +2067,24 @@ def compute_instruction_validation_success(
     if ee_arr.size < 3 or start_arr.size < 3:
         return bool(current_success), {}
 
+    if spec.instruction_type in DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES:
+        dense_success = bool(current_success)
+        if isinstance(reward_info, dict) and "dense_gripper_success" in reward_info:
+            dense_success = bool(float(reward_info.get("dense_gripper_success", 0.0)) >= 0.5)
+        return dense_success, {
+            "validation_success_mode": 5.0,
+            "dense_gripper_validation_success": float(dense_success),
+        }
+
+    if spec.instruction_type in ROTATE_OBJECT_INSTRUCTION_TYPES:
+        rotate_success = bool(current_success)
+        if isinstance(reward_info, dict) and "rotate_success" in reward_info:
+            rotate_success = bool(float(reward_info.get("rotate_success", 0.0)) >= 0.5)
+        return rotate_success, {
+            "validation_success_mode": 6.0,
+            "rotate_validation_success": float(rotate_success),
+        }
+
     if spec.instruction_type == "pick_up" and _use_sparse_binary_reward(task_metadata):
         reward_state_copy = RewardState(
             initial_ee_pos=np.asarray(reward_state.initial_ee_pos, dtype=np.float32).copy(),
@@ -1641,6 +2093,8 @@ def compute_instruction_validation_success(
             prev_obj_pos=np.asarray(reward_state.prev_obj_pos, dtype=np.float32).copy(),
             prev_distance=reward_state.prev_distance,
             prev_camera_align=reward_state.prev_camera_align,
+            initial_obj_yaw=reward_state.initial_obj_yaw,
+            prev_obj_yaw=reward_state.prev_obj_yaw,
             gripper_closed=bool(reward_state.gripper_closed),
             grasped=bool(reward_state.grasped),
             step_count=int(reward_state.step_count),
@@ -1680,6 +2134,8 @@ def compute_instruction_validation_success(
                 prev_obj_pos=np.asarray(reward_state.prev_obj_pos, dtype=np.float32).copy(),
                 prev_distance=reward_state.prev_distance,
                 prev_camera_align=reward_state.prev_camera_align,
+                initial_obj_yaw=reward_state.initial_obj_yaw,
+                prev_obj_yaw=reward_state.prev_obj_yaw,
                 gripper_closed=bool(reward_state.gripper_closed),
                 grasped=bool(reward_state.grasped),
                 step_count=int(reward_state.step_count),

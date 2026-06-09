@@ -107,6 +107,27 @@ class InstructionTextTests(unittest.TestCase):
         self.assertEqual(spec.instruction_type, "push_forward")
         self.assertEqual(spec.text, "push apple forward")
 
+    def test_dense_gripper_and_rotate_instructions_use_object_text(self):
+        cases = {
+            "catch_object": "catch apple",
+            "grip_object": "grip apple",
+            "release_object": "release apple",
+            "free_object": "free apple",
+            "rotate_clockwise": "rotate apple clockwise",
+            "rotate_counterclockwise": "rotate apple counterclockwise",
+        }
+
+        for instruction_type, expected_text in cases.items():
+            with self.subTest(instruction_type=instruction_type):
+                spec = sample_instruction(
+                    target_object="ycb_apple",
+                    rng=np.random.default_rng(0),
+                    allowed_instruction_types=[instruction_type],
+                )
+
+                self.assertEqual(spec.instruction_type, instruction_type)
+                self.assertEqual(spec.text, expected_text)
+
     def test_move_top_instruction_uses_forward_text(self):
         spec = sample_instruction(
             target_object="ycb_apple",

@@ -79,6 +79,13 @@ class EnvInstructionSamplingTests(unittest.TestCase):
 
         self.assertEqual(_infer_instruction_type_from_text("put apple into plate"), "put_into_plate")
         self.assertEqual(_infer_instruction_type_from_text("push apple forward"), "push_forward")
+        self.assertEqual(_infer_instruction_type_from_text("catch apple"), "catch_object")
+        self.assertEqual(_infer_instruction_type_from_text("free apple"), "free_object")
+        self.assertEqual(_infer_instruction_type_from_text("rotate apple clockwise"), "rotate_clockwise")
+        self.assertEqual(
+            _infer_instruction_type_from_text("rotate apple counterclockwise"),
+            "rotate_counterclockwise",
+        )
         self.assertEqual(_infer_instruction_type_from_text("move apple in front of pear"), "move_in_front_of_object")
         self.assertEqual(
             _infer_instruction_object_options(
@@ -416,6 +423,25 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         env._target_body_name = "apple_body"
 
         self.assertFalse(env._should_spawn_target_caught_at_ee(instruction_type="grab_object"))
+
+    def test_release_and_rotate_force_caught_start_by_default(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {}
+        env.np_random = np.random.default_rng(0)
+        env._target_body_name = "apple_body"
+
+        self.assertTrue(env._should_spawn_target_caught_at_ee(instruction_type="release_object"))
+        self.assertTrue(env._should_spawn_target_caught_at_ee(instruction_type="rotate_clockwise"))
+
+    def test_catch_and_grip_spawn_target_at_gripper_by_default(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {}
+        env.np_random = np.random.default_rng(0)
+        env._target_body_name = "apple_body"
+
+        self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="catch_object"))
+        self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="grip_object"))
+        self.assertFalse(env._should_spawn_target_at_gripper(instruction_type="move_to_object"))
 
 
 if __name__ == "__main__":
