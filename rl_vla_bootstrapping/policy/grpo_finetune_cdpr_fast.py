@@ -48,6 +48,8 @@ class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
     tensorboard_metric_profile: str = "compact"
     resume_actor_stats: bool = True
+    first_stage_grpo_actor_stats_path: Path | None = None
+    second_stage_grpo_actor_stats_path: Path | None = None
     ddp_timeout_seconds: int = 0
     ddp_rollout_sync_interval: int = 0
     lr_scheduler: str = "constant"
@@ -133,6 +135,8 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     tensorboard_rollout_every_global_steps = 0
     tensorboard_metric_profile = "compact"
     resume_actor_stats = True
+    first_stage_grpo_actor_stats_path: Path | None = None
+    second_stage_grpo_actor_stats_path: Path | None = None
     lr_scheduler = "constant"
     lr_warmup_updates = 0
     lr_min_factor = 1.0
@@ -179,6 +183,34 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
         if arg in ("--no-resume_actor_stats", "--no-resume-actor-stats"):
             resume_actor_stats = False
             idx += 1
+            continue
+        if arg in (
+            "--first_stage_grpo_actor_stats_path",
+            "--first-stage-grpo-actor-stats-path",
+            "--stage1_grpo_actor_stats_path",
+            "--stage1-grpo-actor-stats-path",
+            "--dense_stage_grpo_actor_stats_path",
+            "--dense-stage-grpo-actor-stats-path",
+        ):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects a path.")
+            first_stage_grpo_actor_stats_path = Path(argv[idx + 1]).expanduser()
+            idx += 2
+            continue
+        if arg in (
+            "--second_stage_grpo_actor_stats_path",
+            "--second-stage-grpo-actor-stats-path",
+            "--stage2_grpo_actor_stats_path",
+            "--stage2-grpo-actor-stats-path",
+            "--sparse_stage_grpo_actor_stats_path",
+            "--sparse-stage-grpo-actor-stats-path",
+            "--lchol_stage_grpo_actor_stats_path",
+            "--lchol-stage-grpo-actor-stats-path",
+        ):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects a path.")
+            second_stage_grpo_actor_stats_path = Path(argv[idx + 1]).expanduser()
+            idx += 2
             continue
         if arg in ("--ddp_timeout_seconds", "--ddp-timeout-seconds"):
             if idx + 1 >= len(argv):
@@ -290,6 +322,8 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
         tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps,
         tensorboard_metric_profile=tensorboard_metric_profile,
         resume_actor_stats=resume_actor_stats,
+        first_stage_grpo_actor_stats_path=first_stage_grpo_actor_stats_path,
+        second_stage_grpo_actor_stats_path=second_stage_grpo_actor_stats_path,
         ddp_timeout_seconds=ddp_timeout_seconds,
         ddp_rollout_sync_interval=ddp_rollout_sync_interval,
         lr_scheduler=lr_scheduler,
@@ -332,13 +366,48 @@ def _candidate_checkpoint_dirs(raw_path: str | Path) -> list[Path]:
     return deduped
 
 
+def _resolve_grpo_actor_stats_path(raw_path: str | Path | None) -> Path | None:
+    if raw_path is None:
+        return None
+    base = Path(raw_path).expanduser().resolve()
+    candidates: list[Path] = []
+    if base.name == "grpo_actor_stats.pt":
+        candidates.append(base)
+    if base.is_file():
+        candidates.append(base)
+    for checkpoint_dir in _candidate_checkpoint_dirs(base):
+        candidates.append(checkpoint_dir / "grpo_actor_stats.pt")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if candidate.is_file():
+            return candidate.resolve()
+    return None
+
+
 def _infer_resume_artifacts(
     argv: Sequence[str],
     *,
     resume_actor_stats: bool = True,
+    actor_stats_path: str | Path | None = None,
+    require_actor_stats: bool = False,
 ) -> _ResumeArtifacts:
     if not resume_actor_stats:
         return _ResumeArtifacts()
+
+    if actor_stats_path is not None:
+        resolved_actor_stats_path = _resolve_grpo_actor_stats_path(actor_stats_path)
+        if resolved_actor_stats_path is None:
+            if require_actor_stats:
+                raise FileNotFoundError(f"Could not find GRPO actor stats at {actor_stats_path}")
+            return _ResumeArtifacts()
+        return _ResumeArtifacts(
+            checkpoint_dir=resolved_actor_stats_path.parent,
+            actor_stats_path=resolved_actor_stats_path,
+        )
 
     raw_values = [
         _extract_cli_arg_value(argv, "--action_head_path"),
@@ -349,16 +418,10 @@ def _infer_resume_artifacts(
             continue
         for checkpoint_dir in _candidate_checkpoint_dirs(raw_value):
             grpo_actor_stats_path = checkpoint_dir / "grpo_actor_stats.pt"
-            ppo_actor_stats_path = checkpoint_dir / "ppo_actor_stats.pt"
-            resolved_actor_stats_path = None
             if grpo_actor_stats_path.is_file():
-                resolved_actor_stats_path = grpo_actor_stats_path
-            elif ppo_actor_stats_path.is_file():
-                resolved_actor_stats_path = ppo_actor_stats_path
-            if resolved_actor_stats_path is not None:
                 return _ResumeArtifacts(
                     checkpoint_dir=checkpoint_dir,
-                    actor_stats_path=resolved_actor_stats_path,
+                    actor_stats_path=grpo_actor_stats_path.resolve(),
                 )
     return _ResumeArtifacts()
 
@@ -561,6 +624,13 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
 
 def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
     transformed = source
+    legacy_ppo_actor_stats_anchor = (
+        "    # Keep the familiar filename too so tooling can inspect log_std consistently.\n"
+        "    torch.save(actor_stats, ckpt_dir / \"ppo_actor_stats.pt\")\n"
+    )
+    if legacy_ppo_actor_stats_anchor in transformed:
+        transformed = transformed.replace(legacy_ppo_actor_stats_anchor, "", 1)
+
     init_anchor = "    rank, local_rank, world_size = ppo._init_distributed()\n"
     if init_anchor in transformed:
         transformed = transformed.replace(
@@ -1247,10 +1317,30 @@ def _find_log_std_tensor(payload: Any) -> torch.Tensor | None:
     return None
 
 
+def _copy_grpo_log_std_from_actor_stats(policy_core: Any, actor_stats_path: Path) -> None:
+    state_raw = torch.load(actor_stats_path, map_location="cpu")
+    log_std = _find_log_std_tensor(state_raw)
+    if log_std is None:
+        raise RuntimeError(f"Could not locate `log_std` tensor in {actor_stats_path}")
+    target_log_std = getattr(policy_core, "log_std")
+    flat_log_std = log_std.detach().reshape(-1)
+    if flat_log_std.numel() != target_log_std.numel():
+        raise RuntimeError(
+            "Resumed GRPO actor stats shape mismatch. "
+            f"checkpoint={tuple(flat_log_std.shape)}, target={tuple(target_log_std.shape)}"
+        )
+    device = getattr(policy_core, "device", getattr(target_log_std, "device", None))
+    target = flat_log_std.to(device=device, dtype=target_log_std.dtype).reshape(target_log_std.shape)
+    with torch.no_grad():
+        target_log_std.copy_(target)
+
+
 def _patch_resume_artifacts(module, forwarded_argv: Sequence[str], fast_args: _FastWrapperArgs) -> None:
     artifacts = _infer_resume_artifacts(
         forwarded_argv,
         resume_actor_stats=fast_args.resume_actor_stats,
+        actor_stats_path=fast_args.first_stage_grpo_actor_stats_path,
+        require_actor_stats=fast_args.first_stage_grpo_actor_stats_path is not None,
     )
     if artifacts.checkpoint_dir is None or artifacts.actor_stats_path is None:
         return
@@ -1263,20 +1353,8 @@ def _patch_resume_artifacts(module, forwarded_argv: Sequence[str], fast_args: _F
             self._rlvla_grpo_initial_log_std = self.log_std.detach().clone()
         except Exception:
             self._rlvla_grpo_initial_log_std = None
-        state_raw = torch.load(artifacts.actor_stats_path, map_location="cpu")
-        log_std = _find_log_std_tensor(state_raw)
-        if log_std is None:
-            raise RuntimeError(f"Could not locate `log_std` tensor in {artifacts.actor_stats_path}")
-        flat_log_std = log_std.detach().reshape(-1)
-        if flat_log_std.numel() != self.log_std.numel():
-            raise RuntimeError(
-                "Resumed GRPO actor stats shape mismatch. "
-                f"checkpoint={tuple(flat_log_std.shape)}, target={tuple(self.log_std.shape)}"
-            )
-        target = flat_log_std.to(device=self.device, dtype=self.log_std.dtype).reshape(self.log_std.shape)
-        with torch.no_grad():
-            self.log_std.copy_(target)
-        print(f"[grpo_actor_stats] Loaded from {artifacts.actor_stats_path}", flush=True)
+        _copy_grpo_log_std_from_actor_stats(self, artifacts.actor_stats_path)
+        print(f"[grpo_actor_stats] Loaded first-stage stats from {artifacts.actor_stats_path}", flush=True)
 
     module.OpenVLAGRPOPolicy.__init__ = _policy_init_with_actor_resume
     print(
@@ -1396,7 +1474,6 @@ _COMPACT_TENSORBOARD_PREFIXES: tuple[str, ...] = (
     "rollout_episode/subgoal_success_rate/",
     "lchol/replay/episodes/",
     "lchol/dense_gate/",
-    "lchol/dense_stage/",
     "lchol/curriculum/success_rate/",
     "lchol/curriculum/reverse_frontier/",
     "lchol/reverse_frontier/shell_success_rate/",
@@ -1415,7 +1492,14 @@ def _tensorboard_tag_allowed(tag: str, *, profile: str = "compact", kind: str = 
         return True
     if str(kind) != "scalar":
         return False
-    tag = _strip_tensorboard_stage_prefix(str(tag))
+    raw_tag = str(tag)
+    if raw_tag.startswith("stage/dense/"):
+        dense_tag = raw_tag[len("stage/dense/") :]
+        if dense_tag in {"active", "complete", "threshold", "mean_success"}:
+            return True
+        if dense_tag.startswith(("success_rate/", "rollouts/")):
+            return True
+    tag = _strip_tensorboard_stage_prefix(raw_tag)
     return tag in _COMPACT_TENSORBOARD_SCALARS or any(
         tag.startswith(prefix) for prefix in _COMPACT_TENSORBOARD_PREFIXES
     )
@@ -2003,8 +2087,16 @@ def _lchol_args_to_runtime_config(lchol_args: _LCHOLWrapperArgs):
     )
 
 
-def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
+def _patch_lchol_runtime(
+    module,
+    lchol_args: _LCHOLWrapperArgs | None,
+    *,
+    fast_args: _FastWrapperArgs | None = None,
+) -> None:
     lchol_args = lchol_args or _LCHOLWrapperArgs()
+    second_stage_grpo_actor_stats_path = (
+        fast_args.second_stage_grpo_actor_stats_path if fast_args is not None else None
+    )
     module._rlvla_lchol_runtime = None
 
     original_parse_args = module.parse_args
@@ -2166,6 +2258,23 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
             return False
         return True
 
+    def _load_or_reset_policy_grpo_stats(policy, args, *, update: int) -> bool:
+        core = _policy_core(policy)
+        if second_stage_grpo_actor_stats_path is not None:
+            resolved = _resolve_grpo_actor_stats_path(second_stage_grpo_actor_stats_path)
+            if resolved is None:
+                raise FileNotFoundError(
+                    f"Could not find second-stage GRPO actor stats at {second_stage_grpo_actor_stats_path}"
+                )
+            _copy_grpo_log_std_from_actor_stats(core, resolved)
+            print(
+                "[grpo_actor_stats] Loaded second-stage stats at dense-to-sparse switch "
+                f"update={int(update)} path={resolved}",
+                flush=True,
+            )
+            return True
+        return _reset_policy_grpo_stats(policy, args)
+
     def _pre_update(policy, *, args, update: int, run_dir) -> None:
         runtime = _runtime()
         if runtime is None:
@@ -2176,7 +2285,9 @@ def _patch_lchol_runtime(module, lchol_args: _LCHOLWrapperArgs | None) -> None:
         consume_reset = getattr(runtime, "consume_grpo_stats_reset_request", None)
         if not callable(consume_reset) or not bool(consume_reset()):
             return
-        if _reset_policy_grpo_stats(policy, args):
+        if _load_or_reset_policy_grpo_stats(policy, args, update=int(update)):
+            if second_stage_grpo_actor_stats_path is not None:
+                return
             print(
                 "[grpo_actor_stats] Re-initialized at dense-to-sparse stage switch "
                 f"update={int(update)} init_log_std={float(getattr(args, 'init_log_std', -1.2)):.4f}",
@@ -2385,7 +2496,7 @@ def main() -> None:
     _patch_ddp_sync(module, rollout_sync_interval=fast_args.ddp_rollout_sync_interval)
     _patch_resume_artifacts(module, forwarded_argv, fast_args)
     _patch_lr_scheduler(module, fast_args)
-    _patch_lchol_runtime(module, fast_args.lchol)
+    _patch_lchol_runtime(module, fast_args.lchol, fast_args=fast_args)
     _patch_tensorboard_metric_filter(module, profile=fast_args.tensorboard_metric_profile)
     _patch_rollout_tensorboard(
         module,

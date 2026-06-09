@@ -433,6 +433,19 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertTrue(env._should_spawn_target_caught_at_ee(instruction_type="release_object"))
         self.assertTrue(env._should_spawn_target_caught_at_ee(instruction_type="rotate_clockwise"))
 
+    def test_empty_configured_caught_start_lists_disable_default_forced_starts(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "caught_object_start_probability": 1.0,
+            "caught_object_start_instruction_types": [],
+            "force_caught_object_start_instruction_types": [],
+        }
+        env.np_random = np.random.default_rng(0)
+        env._target_body_name = "apple_body"
+
+        self.assertFalse(env._should_spawn_target_caught_at_ee(instruction_type="release_object"))
+        self.assertFalse(env._should_spawn_target_caught_at_ee(instruction_type="move_between_objects"))
+
     def test_catch_and_grip_spawn_target_at_gripper_by_default(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         env._task_metadata = {}
@@ -442,6 +455,17 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="catch_object"))
         self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="grip_object"))
         self.assertFalse(env._should_spawn_target_at_gripper(instruction_type="move_to_object"))
+
+    def test_empty_configured_target_at_gripper_list_disables_default_catch_start(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "target_at_gripper_start_probability": 1.0,
+            "target_at_gripper_start_instruction_types": [],
+        }
+        env.np_random = np.random.default_rng(0)
+        env._target_body_name = "apple_body"
+
+        self.assertFalse(env._should_spawn_target_at_gripper(instruction_type="catch_object"))
 
 
 if __name__ == "__main__":

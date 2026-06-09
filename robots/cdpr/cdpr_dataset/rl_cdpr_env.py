@@ -2155,14 +2155,20 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_gripper_opening = 0.0
 
     def _caught_object_start_instruction_types(self) -> tuple[str, ...]:
+        if "caught_object_start_instruction_types" in self._task_metadata:
+            return _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
         configured = _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
         return configured or DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES
 
     def _force_caught_object_start_instruction_types(self) -> tuple[str, ...]:
+        if "force_caught_object_start_instruction_types" in self._task_metadata:
+            return _metadata_name_list(self._task_metadata, "force_caught_object_start_instruction_types")
         configured = _metadata_name_list(self._task_metadata, "force_caught_object_start_instruction_types")
         return configured or DEFAULT_FORCE_CAUGHT_OBJECT_START_INSTRUCTION_TYPES
 
     def _target_at_gripper_start_instruction_types(self) -> tuple[str, ...]:
+        if "target_at_gripper_start_instruction_types" in self._task_metadata:
+            return _metadata_name_list(self._task_metadata, "target_at_gripper_start_instruction_types")
         configured = _metadata_name_list(self._task_metadata, "target_at_gripper_start_instruction_types")
         return configured or DEFAULT_TARGET_AT_GRIPPER_START_INSTRUCTION_TYPES
 

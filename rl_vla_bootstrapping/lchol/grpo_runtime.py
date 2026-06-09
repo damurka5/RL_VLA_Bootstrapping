@@ -425,7 +425,10 @@ class LCHOLGRPORuntime:
         )
         if tb_writer is not None:
             for key, value in metrics.items():
-                tb_writer.add_scalar(f"lchol/{key}", float(value), int(global_step))
+                if key.startswith("dense_stage/"):
+                    tb_writer.add_scalar(f"stage/dense/{key[len('dense_stage/'):]}", float(value), int(global_step))
+                else:
+                    tb_writer.add_scalar(f"lchol/{key}", float(value), int(global_step))
             tb_writer.flush()
         self.phase_scores.clear()
         self.source_counts["hindsight_replay"] = 0

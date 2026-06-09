@@ -44,7 +44,9 @@ if "PIL" not in sys.modules or "PIL.Image" not in sys.modules:
     sys.modules["PIL"] = pil_stub
     sys.modules["PIL.Image"] = image_stub
 
+import rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast as grpo_fast
 from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
+    _FastWrapperArgs,
     _LCHOLWrapperArgs,
     _RolloutTensorboardLogger,
     _infer_resume_artifacts,
@@ -316,6 +318,10 @@ class FastGRPOWrapperTests(unittest.TestCase):
                 "--tensorboard_metric_profile",
                 "compact",
                 "--no-resume_actor_stats",
+                "--first_stage_grpo_actor_stats_path",
+                "/tmp/stage1_grpo_actor_stats.pt",
+                "--stage2-grpo-actor-stats-path",
+                "/tmp/stage2_grpo_actor_stats.pt",
                 "--ddp_timeout_seconds",
                 "14400",
                 "--ddp_rollout_sync_interval",
@@ -336,6 +342,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(fast_args.tensorboard_rollout_every_global_steps, 100)
         self.assertEqual(fast_args.tensorboard_metric_profile, "compact")
         self.assertFalse(fast_args.resume_actor_stats)
+        self.assertEqual(fast_args.first_stage_grpo_actor_stats_path, Path("/tmp/stage1_grpo_actor_stats.pt"))
+        self.assertEqual(fast_args.second_stage_grpo_actor_stats_path, Path("/tmp/stage2_grpo_actor_stats.pt"))
         self.assertEqual(fast_args.ddp_timeout_seconds, 14400)
         self.assertEqual(fast_args.ddp_rollout_sync_interval, 5)
         self.assertEqual(fast_args.lr_scheduler, "cosine")
@@ -466,6 +474,19 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
         self.assertIn("broadcast_buffers=False", patched)
 
+    def test_ddp_sync_transform_removes_legacy_ppo_actor_stats_save(self):
+        source = (
+            "    actor_stats = {\"log_std\": log_std.detach().cpu()}\n"
+            "    torch.save(actor_stats, ckpt_dir / \"grpo_actor_stats.pt\")\n"
+            "    # Keep the familiar filename too so tooling can inspect log_std consistently.\n"
+            "    torch.save(actor_stats, ckpt_dir / \"ppo_actor_stats.pt\")\n"
+        )
+
+        patched = _transform_external_grpo_source_for_ddp_sync(source)
+
+        self.assertIn("grpo_actor_stats.pt", patched)
+        self.assertNotIn("ppo_actor_stats.pt", patched)
+
     def test_ddp_sync_transform_skips_initial_full_model_sync_when_available(self):
         source = (
             "        ddp_params = inspect.signature(DDP.__init__).parameters\n"
@@ -532,14 +553,15 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
     def test_compact_tensorboard_profile_keeps_high_signal_tags_only(self):
         self.assertTrue(_tensorboard_tag_allowed("train/learning_rate"))
-        self.assertTrue(_tensorboard_tag_allowed("lchol/dense_stage/mean_success"))
+        self.assertTrue(_tensorboard_tag_allowed("stage/dense/mean_success"))
+        self.assertTrue(_tensorboard_tag_allowed("stage/dense/success_rate/catch_object"))
         self.assertTrue(_tensorboard_tag_allowed("stage/dense/train/learning_rate"))
-        self.assertTrue(_tensorboard_tag_allowed("stage/dense/lchol/dense_stage/mean_success"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/instruction_success_rate/pick_up"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/replay/episodes_total"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/reverse_frontier/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/curriculum/reverse_frontier/put_into_plate/active_shell"))
+        self.assertFalse(_tensorboard_tag_allowed("lchol/dense_stage/mean_success"))
         self.assertFalse(_tensorboard_tag_allowed("train/update_index"))
         self.assertFalse(_tensorboard_tag_allowed("stage/dense/train/update_index"))
         self.assertFalse(_tensorboard_tag_allowed("validation/action_x_hist", kind="histogram"))
@@ -571,15 +593,14 @@ class FastGRPOWrapperTests(unittest.TestCase):
         writer = module.SummaryWriter(log_dir="/tmp/tb")
         self.assertEqual(writer.add_scalar("train/reward_env_mean", 2.0, 10), "scalar-result")
         writer.add_scalar("train/update_index", 1.0, 10)
-        writer.add_scalar("lchol/dense_stage/mean_success", 0.75, 10)
+        writer.add_scalar("stage/dense/mean_success", 0.75, 10)
         module._rlvla_lchol_runtime.dense = False
         writer.add_scalar("validation/success_rate", 0.25, 20)
 
         tags = [tag for tag, _, _ in writer.scalars]
         self.assertIn("train/reward_env_mean", tags)
         self.assertIn("stage/dense/train/reward_env_mean", tags)
-        self.assertIn("lchol/dense_stage/mean_success", tags)
-        self.assertIn("stage/dense/lchol/dense_stage/mean_success", tags)
+        self.assertIn("stage/dense/mean_success", tags)
         self.assertIn("validation/success_rate", tags)
         self.assertIn("stage/sparse/validation/success_rate", tags)
         self.assertNotIn("train/update_index", tags)
@@ -599,7 +620,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
             self.assertEqual(artifacts.checkpoint_dir, checkpoint_dir.resolve())
             self.assertEqual(artifacts.actor_stats_path, (checkpoint_dir / "grpo_actor_stats.pt").resolve())
 
-    def test_infer_resume_artifacts_falls_back_to_ppo_actor_stats(self):
+    def test_infer_resume_artifacts_ignores_legacy_ppo_actor_stats(self):
         with tempfile.TemporaryDirectory() as tmp:
             checkpoint_dir = Path(tmp) / "step_0122400"
             adapter_dir = checkpoint_dir / "vla_cdpr_adapter"
@@ -609,8 +630,24 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
             artifacts = _infer_resume_artifacts(["--adapter_path", str(adapter_dir)])
 
+            self.assertIsNone(artifacts.checkpoint_dir)
+            self.assertIsNone(artifacts.actor_stats_path)
+
+    def test_infer_resume_artifacts_uses_explicit_stage_grpo_actor_stats(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            checkpoint_dir = Path(tmp) / "step_0122400"
+            checkpoint_dir.mkdir(parents=True)
+            explicit_stats = checkpoint_dir / "grpo_actor_stats.pt"
+            explicit_stats.write_text("grpo", encoding="utf-8")
+
+            artifacts = _infer_resume_artifacts(
+                ["--adapter_path", "/unused/checkpoint"],
+                actor_stats_path=explicit_stats,
+                require_actor_stats=True,
+            )
+
             self.assertEqual(artifacts.checkpoint_dir, checkpoint_dir.resolve())
-            self.assertEqual(artifacts.actor_stats_path, (checkpoint_dir / "ppo_actor_stats.pt").resolve())
+            self.assertEqual(artifacts.actor_stats_path, explicit_stats.resolve())
 
     def test_lchol_pre_update_resets_grpo_log_std_after_dense_gate(self):
         class FakeVisionEnv:
@@ -672,6 +709,85 @@ class FastGRPOWrapperTests(unittest.TestCase):
             run_dir=Path("/tmp/run"),
         )
         self.assertEqual(policy.log_std.values, [-1.7, -1.7])
+
+    def test_lchol_pre_update_loads_second_stage_grpo_stats_after_dense_gate(self):
+        class FakeVisionEnv:
+            def reset(self, options=None):
+                return options
+
+        module = types.SimpleNamespace(
+            parse_args=lambda: types.SimpleNamespace(),
+            CDPRVisionLanguageEnv=FakeVisionEnv,
+            run_validation_rollouts=lambda *args, **kwargs: {},
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            stats_path = Path(tmp) / "grpo_actor_stats.pt"
+            stats_path.write_text("placeholder", encoding="utf-8")
+
+            _patch_lchol_runtime(
+                module,
+                _LCHOLWrapperArgs(enabled=True),
+                fast_args=_FastWrapperArgs(second_stage_grpo_actor_stats_path=stats_path),
+            )
+
+            class FakeRuntime:
+                def sync_dense_gate_state(self, *, run_dir):
+                    del run_dir
+
+                def consume_grpo_stats_reset_request(self):
+                    return True
+
+            class FakeTensor:
+                device = "cpu"
+                dtype = "float32"
+                shape = (2,)
+
+                def __init__(self, values):
+                    self.values = [float(value) for value in values]
+
+                def detach(self):
+                    return self
+
+                def reshape(self, *shape):
+                    del shape
+                    return self
+
+                def numel(self):
+                    return len(self.values)
+
+                def to(self, *args, **kwargs):
+                    del args, kwargs
+                    return self
+
+                def copy_(self, other):
+                    self.values = list(other.values)
+
+            class NoGrad:
+                def __enter__(self):
+                    return None
+
+                def __exit__(self, exc_type, exc, tb):
+                    del exc_type, exc, tb
+                    return False
+
+            fake_torch = types.SimpleNamespace(
+                Tensor=FakeTensor,
+                load=lambda path, map_location=None: {"log_std": FakeTensor([-0.4, -0.5])},
+                no_grad=lambda: NoGrad(),
+            )
+            policy = types.SimpleNamespace(log_std=FakeTensor([9.0, 9.0]))
+            module._rlvla_lchol_runtime = FakeRuntime()
+
+            with mock.patch.object(grpo_fast, "torch", fake_torch):
+                module._rlvla_lchol_pre_update(
+                    policy,
+                    args=types.SimpleNamespace(init_log_std=-1.7),
+                    update=4,
+                    run_dir=Path(tmp),
+                )
+
+            self.assertEqual(policy.log_std.values, [-0.4, -0.5])
 
 
 if __name__ == "__main__":

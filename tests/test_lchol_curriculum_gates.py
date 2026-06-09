@@ -172,6 +172,40 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
         self.assertEqual(reader_runtime.dense_gate_rollouts["catch_object"], 1)
         self.assertTrue(reader_runtime.consume_grpo_stats_reset_request())
 
+    def test_runtime_logs_dense_warmup_success_under_stage_namespace(self):
+        metadata = {
+            "dense_to_sparse_success_threshold": 0.70,
+            "dense_stage_instruction_types": ["catch_object"],
+            "dense_stage_metadata": {"reward_mode": "dense"},
+        }
+
+        with mock.patch.dict("os.environ", {"RLVLA_TASK_METADATA_JSON": json.dumps(metadata)}):
+            runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_to_object", "catch_object"),
+                seed=0,
+            )
+        runtime.record_dense_validation([{"instruction_id": "catch_object", "success_rate": 0.5, "rollouts": 1}])
+
+        class FakeWriter:
+            def __init__(self):
+                self.scalars: list[tuple[str, float, int]] = []
+
+            def add_scalar(self, tag, value, step):
+                self.scalars.append((str(tag), float(value), int(step)))
+
+            def flush(self):
+                pass
+
+        writer = FakeWriter()
+        runtime.log_update(update=1, global_step=10, tb_writer=writer, is_main=True)
+
+        tags = {tag for tag, _value, _step in writer.scalars}
+        self.assertIn("stage/dense/mean_success", tags)
+        self.assertIn("stage/dense/success_rate/catch_object", tags)
+        self.assertNotIn("lchol/dense_stage/mean_success", tags)
+
 
 if __name__ == "__main__":
     unittest.main()
