@@ -212,6 +212,31 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(module._prepare_desk_textures_dir("/tmp/src", Path("/tmp/run"), True, 0, 5), "prepared:0")
         self.assertEqual(calls, [("broadcast", 1), ("prepare", 0)])
 
+    def test_patch_desk_texture_prepare_wraps_nested_ppo_module(self):
+        calls: list[tuple[str, int]] = []
+
+        def original_prepare(src_dir, run_dir, is_main, rank, max_textures):
+            del src_dir, run_dir, is_main, max_textures
+            calls.append(("prepare", int(rank)))
+            return f"prepared:{rank}"
+
+        def broadcast_object(obj, rank):
+            del obj
+            calls.append(("broadcast", int(rank)))
+            return "broadcasted"
+
+        ppo_module = types.SimpleNamespace(
+            _prepare_desk_textures_dir=original_prepare,
+            _broadcast_object=broadcast_object,
+        )
+        module = types.SimpleNamespace(ppo=ppo_module)
+
+        _patch_desk_texture_prepare(module)
+
+        self.assertEqual(ppo_module._prepare_desk_textures_dir("/tmp/src", Path("/tmp/run"), False, 1, 5), "broadcasted")
+        self.assertEqual(ppo_module._prepare_desk_textures_dir("/tmp/src", Path("/tmp/run"), True, 0, 5), "prepared:0")
+        self.assertEqual(calls, [("broadcast", 1), ("prepare", 0)])
+
     def test_scene_wrapper_cache_filters_variants_by_requested_objects(self):
         with tempfile.TemporaryDirectory() as tmp:
             tmp_path = Path(tmp)

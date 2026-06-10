@@ -1275,8 +1275,10 @@ def _patch_scene_wrapper_cache(module) -> None:
 
 
 def _patch_desk_texture_prepare(module) -> None:
-    original_prepare = getattr(module, "_prepare_desk_textures_dir", None)
-    broadcast_object = getattr(module, "_broadcast_object", None)
+    ppo_module = getattr(module, "ppo", None)
+    owner = ppo_module if ppo_module is not None else module
+    original_prepare = getattr(owner, "_prepare_desk_textures_dir", None)
+    broadcast_object = getattr(owner, "_broadcast_object", None)
     if not callable(original_prepare) or not callable(broadcast_object):
         return
 
@@ -1286,7 +1288,9 @@ def _patch_desk_texture_prepare(module) -> None:
             return broadcast_object(None, rank_int)
         return original_prepare(src_dir, run_dir, is_main, rank_int, max_textures)
 
-    module._prepare_desk_textures_dir = _prepare_desk_textures_dir_single_writer
+    owner._prepare_desk_textures_dir = _prepare_desk_textures_dir_single_writer
+    if owner is not module and hasattr(module, "_prepare_desk_textures_dir"):
+        module._prepare_desk_textures_dir = _prepare_desk_textures_dir_single_writer
 
 
 def _wrap_process_group_init_timeout(dist_module, *, timeout: timedelta | None) -> None:
