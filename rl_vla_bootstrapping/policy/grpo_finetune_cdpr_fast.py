@@ -47,6 +47,7 @@ _CDPR_CURRICULUM_OPTIONS = (
 class _FastWrapperArgs:
     tensorboard_rollout_every_global_steps: int = 0
     tensorboard_metric_profile: str = "compact"
+    rollout_image_size: int = 0
     resume_actor_stats: bool = True
     first_stage_grpo_actor_stats_path: Path | None = None
     second_stage_grpo_actor_stats_path: Path | None = None
@@ -134,6 +135,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     external_script: Path | None = None
     tensorboard_rollout_every_global_steps = 0
     tensorboard_metric_profile = "compact"
+    rollout_image_size = 0
     resume_actor_stats = True
     first_stage_grpo_actor_stats_path: Path | None = None
     second_stage_grpo_actor_stats_path: Path | None = None
@@ -174,6 +176,15 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
             tensorboard_metric_profile = str(argv[idx + 1]).strip().lower()
             if tensorboard_metric_profile not in {"compact", "full"}:
                 raise SystemExit(f"{arg} expects `compact` or `full`, got {argv[idx + 1]!r}.")
+            idx += 2
+            continue
+        if arg in ("--rollout_image_size", "--rollout-image-size"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects an integer image edge length, or 0 to disable.")
+            try:
+                rollout_image_size = max(0, int(argv[idx + 1]))
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects an integer image edge length, or 0 to disable.") from exc
             idx += 2
             continue
         if arg in ("--resume_actor_stats", "--resume-actor-stats"):
@@ -321,6 +332,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     return external_script, forwarded, _FastWrapperArgs(
         tensorboard_rollout_every_global_steps=tensorboard_rollout_every_global_steps,
         tensorboard_metric_profile=tensorboard_metric_profile,
+        rollout_image_size=rollout_image_size,
         resume_actor_stats=resume_actor_stats,
         first_stage_grpo_actor_stats_path=first_stage_grpo_actor_stats_path,
         second_stage_grpo_actor_stats_path=second_stage_grpo_actor_stats_path,
@@ -622,6 +634,76 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
     return transformed
 
 
+def _indent_source_block(block: str, *, spaces: int = 4) -> str:
+    prefix = " " * int(spaces)
+    return "\n".join(prefix + line if line else line for line in block.splitlines())
+
+
+def _transform_external_grpo_source_for_memory_safety(source: str) -> str:
+    transformed = source
+    rollout_records_anchor = "            rollout_records: List[Dict[str, Any]] = []\n"
+    rollout_records_replacement = (
+        "            record_rollout_tap = bool(\n"
+        "                is_main\n"
+        "                and args.rollout_tap_every_updates > 0\n"
+        "                and (update % args.rollout_tap_every_updates == 0)\n"
+        "            )\n"
+        "            rollout_records: List[Dict[str, Any]] = []\n"
+    )
+    if rollout_records_anchor not in transformed:
+        raise RuntimeError(
+            "Could not apply GRPO memory-safety patch; missing rollout_records anchor."
+        )
+    transformed = transformed.replace(rollout_records_anchor, rollout_records_replacement, 1)
+
+    append_anchor = "                    rollout_records.append(\n"
+    next_line_anchor = "\n\n                    steps_since_reset[env_idx] = next_step_count\n"
+    append_start = transformed.find(append_anchor)
+    if append_start < 0:
+        raise RuntimeError(
+            "Could not apply GRPO memory-safety patch; missing rollout_records append anchor."
+        )
+    append_end = transformed.find(next_line_anchor, append_start)
+    if append_end < 0:
+        raise RuntimeError(
+            "Could not apply GRPO memory-safety patch; missing rollout_records append terminator."
+        )
+    append_block = transformed[append_start:append_end]
+    guarded_append_block = (
+        "                    if record_rollout_tap:\n"
+        f"{_indent_source_block(append_block, spaces=4)}"
+    )
+    transformed = transformed[:append_start] + guarded_append_block + transformed[append_end:]
+
+    post_rollout_anchor = (
+        "            advantages = np.asarray([transition.advantage for transition in transitions], dtype=np.float32)\n"
+    )
+    post_rollout_replacement = (
+        post_rollout_anchor +
+        "            _rlvla_log_memory(\"post_rollout\", update=update, is_main=is_main)\n"
+    )
+    if post_rollout_anchor not in transformed:
+        raise RuntimeError(
+            "Could not apply GRPO memory-safety patch; missing post-rollout memory anchor."
+        )
+    transformed = transformed.replace(post_rollout_anchor, post_rollout_replacement, 1)
+
+    post_train_anchor = (
+        "            if train_pbar is not None:\n"
+        "                train_pbar.close()\n\n"
+    )
+    post_train_replacement = (
+        post_train_anchor +
+        "            _rlvla_log_memory(\"post_train\", update=update, is_main=is_main)\n\n"
+    )
+    if post_train_anchor not in transformed:
+        raise RuntimeError(
+            "Could not apply GRPO memory-safety patch; missing post-train memory anchor."
+        )
+    transformed = transformed.replace(post_train_anchor, post_train_replacement, 1)
+    return transformed
+
+
 def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
     transformed = source
     legacy_ppo_actor_stats_anchor = (
@@ -800,6 +882,7 @@ def _load_external_module(
         source = script_path.read_text(encoding="utf-8")
         if enable_lchol:
             source = _transform_external_grpo_source_for_lchol(source)
+        source = _transform_external_grpo_source_for_memory_safety(source)
         if enable_ddp_sync:
             source = _transform_external_grpo_source_for_ddp_sync(source)
         if enable_lr_scheduler:
@@ -818,6 +901,91 @@ def _load_external_module(
 
 def _to_pil_rgb(image) -> Image.Image:
     return Image.fromarray(image.astype("uint8")).convert("RGB")
+
+
+def _pil_resample_filter():
+    resampling = getattr(Image, "Resampling", None)
+    if resampling is not None:
+        return resampling.BILINEAR
+    return getattr(Image, "BILINEAR", 2)
+
+
+def _resize_uint8_rgb(image: Any, *, image_size: int) -> np.ndarray:
+    arr = np.asarray(image)
+    if arr.ndim != 3 or arr.shape[-1] != 3:
+        return arr
+    if arr.dtype != np.uint8:
+        arr = np.clip(arr, 0, 255).astype(np.uint8)
+    target = int(image_size)
+    if target <= 0 or (int(arr.shape[0]) == target and int(arr.shape[1]) == target):
+        return arr
+    pil_image = Image.fromarray(arr).convert("RGB")
+    resized = pil_image.resize((target, target), resample=_pil_resample_filter())
+    return np.asarray(resized, dtype=np.uint8).copy()
+
+
+def _patch_rollout_image_resize(module, *, image_size: int) -> None:
+    target = max(0, int(image_size))
+    if target <= 0:
+        return
+    ppo_module = getattr(module, "ppo", None)
+    original_latest_image = getattr(ppo_module, "_latest_image_from_sim", None)
+    if not callable(original_latest_image):
+        return
+    if getattr(original_latest_image, "_rlvla_resize_wrapped", False):
+        return
+
+    def _latest_image_from_sim_resized(sim, fallback_hw=(224, 224), wrist: bool = False):
+        raw = original_latest_image(sim, fallback_hw=(target, target), wrist=wrist)
+        return _resize_uint8_rgb(raw, image_size=target)
+
+    _latest_image_from_sim_resized._rlvla_resize_wrapped = True  # type: ignore[attr-defined]
+    _latest_image_from_sim_resized._rlvla_original = original_latest_image  # type: ignore[attr-defined]
+    ppo_module._latest_image_from_sim = _latest_image_from_sim_resized
+    if hasattr(module, "_latest_image_from_sim"):
+        module._latest_image_from_sim = _latest_image_from_sim_resized
+    if os.environ.get("RANK", "0") == "0":
+        print(
+            f"[rlvla-fast] Rollout image resize enabled: {target}x{target}",
+            flush=True,
+        )
+
+
+def _current_process_rss_mib() -> float | None:
+    status_path = Path("/proc/self/status")
+    try:
+        with status_path.open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if line.startswith("VmRSS:"):
+                    parts = line.split()
+                    if len(parts) >= 2:
+                        return float(parts[1]) / 1024.0
+    except Exception:
+        pass
+    try:
+        import resource
+
+        raw = float(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss)
+    except Exception:
+        return None
+    if sys.platform == "darwin":
+        return raw / (1024.0 * 1024.0)
+    return raw / 1024.0
+
+
+def _patch_memory_logging(module) -> None:
+    def _log_memory(label: str, *, update: int, is_main: bool) -> None:
+        if not bool(is_main):
+            return
+        rss_mib = _current_process_rss_mib()
+        if rss_mib is None:
+            return
+        print(
+            f"[rlvla-memory] update={int(update):05d} label={label} rss_mib={rss_mib:.1f}",
+            flush=True,
+        )
+
+    module._rlvla_log_memory = _log_memory
 
 
 def _patch_prepare_inputs(module) -> None:
@@ -2488,6 +2656,8 @@ def main() -> None:
     )
 
     _enable_fast_runtime_flags()
+    _patch_rollout_image_resize(module, image_size=fast_args.rollout_image_size)
+    _patch_memory_logging(module)
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
     _patch_scene_cache_prebuild_progress(module, forwarded_argv)

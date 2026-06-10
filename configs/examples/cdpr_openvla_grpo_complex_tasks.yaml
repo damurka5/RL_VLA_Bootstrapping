@@ -421,6 +421,7 @@ training:
       validation_max_steps: 120
       tensorboard_metric_profile: compact
       tensorboard_rollout_every_global_steps: 8
+      rollout_image_size: 224
       tensorboard_every_updates: 1
       prebuild_scene_cache: true
       scene_pool_size: 64

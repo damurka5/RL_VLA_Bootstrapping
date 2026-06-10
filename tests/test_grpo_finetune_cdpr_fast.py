@@ -61,6 +61,7 @@ from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _tensorboard_tag_allowed,
     _transform_external_grpo_source_for_ddp_sync,
     _transform_external_grpo_source_for_lr_scheduler,
+    _transform_external_grpo_source_for_memory_safety,
 )
 
 if _INSERTED_TORCH_STUB:
@@ -317,6 +318,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
                 "100",
                 "--tensorboard_metric_profile",
                 "compact",
+                "--rollout_image_size",
+                "224",
                 "--no-resume_actor_stats",
                 "--first_stage_grpo_actor_stats_path",
                 "/tmp/stage1_grpo_actor_stats.pt",
@@ -341,6 +344,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(forwarded, ["--rollout_steps", "170"])
         self.assertEqual(fast_args.tensorboard_rollout_every_global_steps, 100)
         self.assertEqual(fast_args.tensorboard_metric_profile, "compact")
+        self.assertEqual(fast_args.rollout_image_size, 224)
         self.assertFalse(fast_args.resume_actor_stats)
         self.assertEqual(fast_args.first_stage_grpo_actor_stats_path, Path("/tmp/stage1_grpo_actor_stats.pt"))
         self.assertEqual(fast_args.second_stage_grpo_actor_stats_path, Path("/tmp/stage2_grpo_actor_stats.pt"))
@@ -528,6 +532,19 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
         self.assertIn("_rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)", patched)
         self.assertIn("_rlvla_apply_lr_schedule(optimizer, update=update, total_updates=args.total_updates)", patched)
+
+    def test_memory_safety_transform_guards_rollout_tap_records_and_logs_rss(self):
+        external = Path("/Users/damirnurtdinov/Desktop/My Courses/Диплом/openvla-oft/vla-scripts/grpo_finetune_cdpr.py")
+        if not external.exists():
+            self.skipTest("Local OpenVLA-OFT GRPO script is not available.")
+
+        patched = _transform_external_grpo_source_for_memory_safety(external.read_text(encoding="utf-8"))
+        compile(patched, str(external), "exec")
+
+        self.assertIn("record_rollout_tap = bool(", patched)
+        self.assertIn("if record_rollout_tap:", patched)
+        self.assertIn("_rlvla_log_memory(\"post_rollout\", update=update, is_main=is_main)", patched)
+        self.assertIn("_rlvla_log_memory(\"post_train\", update=update, is_main=is_main)", patched)
 
     def test_cosine_lr_schedule_uses_warmup_then_decays_to_min_factor(self):
         self.assertAlmostEqual(
