@@ -106,6 +106,43 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
         self.assertTrue(runtime.consume_grpo_stats_reset_request())
         self.assertFalse(runtime.consume_grpo_stats_reset_request())
 
+    def test_runtime_opens_dense_gate_at_dense_update_limit_then_stops_after_sparse_limit(self):
+        metadata = {
+            "dense_to_sparse_success_threshold": 0.70,
+            "dense_to_sparse_min_success_samples": 2,
+            "dense_stage_max_updates": 2,
+            "sparse_stage_max_updates": 3,
+            "dense_stage_instruction_types": ["catch_object"],
+            "sparse_stage_instruction_types": ["move_to_object"],
+            "dense_stage_metadata": {"reward_mode": "dense"},
+            "sparse_stage_metadata": {"reward_mode": "sparse_binary"},
+        }
+
+        with mock.patch.dict("os.environ", {"RLVLA_TASK_METADATA_JSON": json.dumps(metadata)}):
+            runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_to_object", "catch_object"),
+                seed=0,
+            )
+
+        for update in (1, 2):
+            runtime.before_update(update=update)
+            self.assertTrue(runtime.dense_gate_active())
+            runtime.after_update(update=update)
+
+        self.assertFalse(runtime.dense_gate_active())
+        self.assertTrue(runtime.consume_grpo_stats_reset_request())
+        self.assertFalse(runtime.should_stop_training())
+
+        for update in (3, 4, 5):
+            runtime.before_update(update=update)
+            runtime.after_update(update=update)
+
+        self.assertEqual(runtime.dense_updates_completed, 2)
+        self.assertEqual(runtime.sparse_updates_completed, 3)
+        self.assertTrue(runtime.should_stop_training())
+
     def test_runtime_configures_env_instruction_set_for_dense_gate(self):
         metadata = {
             "dense_to_sparse_success_threshold": 0.70,
@@ -186,7 +223,9 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
                 available_options=("move_to_object", "catch_object"),
                 seed=0,
             )
-        runtime.record_dense_validation([{"instruction_id": "catch_object", "success_rate": 0.5, "rollouts": 1}])
+        runtime.record_dense_validation(
+            [{"instruction_id": "catch_object", "success_rate": 0.5, "rollouts": 1, "mean_reward": 2.5}]
+        )
 
         class FakeWriter:
             def __init__(self):
@@ -203,7 +242,9 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
 
         tags = {tag for tag, _value, _step in writer.scalars}
         self.assertIn("stage/dense/mean_success", tags)
+        self.assertIn("stage/dense/mean_reward", tags)
         self.assertIn("stage/dense/success_rate/catch_object", tags)
+        self.assertIn("stage/dense/reward/catch_object", tags)
         self.assertNotIn("lchol/dense_stage/mean_success", tags)
 
 

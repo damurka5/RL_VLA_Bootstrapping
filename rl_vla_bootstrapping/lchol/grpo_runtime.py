@@ -97,6 +97,37 @@ class LCHOLGRPORuntime:
                 or 0
             ),
         )
+        self.dense_stage_max_updates = max(
+            0,
+            int(
+                self.base_task_metadata.get(
+                    "dense_stage_max_updates",
+                    self.base_task_metadata.get(
+                        "stage1_total_updates",
+                        self.base_task_metadata.get("stage1_updates", 0),
+                    ),
+                )
+                or 0
+            ),
+        )
+        self.sparse_stage_max_updates = max(
+            0,
+            int(
+                self.base_task_metadata.get(
+                    "sparse_stage_max_updates",
+                    self.base_task_metadata.get(
+                        "stage2_total_updates",
+                        self.base_task_metadata.get("stage2_updates", 0),
+                    ),
+                )
+                or 0
+            ),
+        )
+        self.dense_stage_open_on_max_updates = _metadata_bool(
+            self.base_task_metadata,
+            "dense_stage_open_on_max_updates",
+            True,
+        )
         self.dense_gate_armed = not (
             self.dense_instruction_types
             and np.isfinite(self.dense_success_threshold)
@@ -104,6 +135,11 @@ class LCHOLGRPORuntime:
         )
         self.dense_gate_success: dict[str, float] = {}
         self.dense_gate_rollouts: dict[str, int] = {}
+        self.dense_gate_rewards: dict[str, float] = {}
+        self.dense_updates_completed = 0
+        self.sparse_updates_completed = 0
+        self._stage_at_update_start = "sparse" if self.dense_gate_armed else "dense"
+        self._dense_gate_open_reason = "initially_armed" if self.dense_gate_armed else ""
         self._grpo_stats_reset_pending = False
         per_option_capacity = max(1, int(config.hindsight_replay_capacity) // max(1, len(self.available_options)))
         self.replay = PerOptionReplayBuffer(per_option_capacity)
@@ -199,9 +235,15 @@ class LCHOLGRPORuntime:
                 continue
             self.dense_gate_success[instruction] = float(np.clip(float(item.get("success_rate", 0.0)), 0.0, 1.0))
             self.dense_gate_rollouts[instruction] = int(item.get("rollouts", item.get("episodes", 0)) or 0)
+            reward_value = item.get("mean_reward", item.get("mean_env_return"))
+            if reward_value is not None:
+                try:
+                    self.dense_gate_rewards[instruction] = float(reward_value)
+                except (TypeError, ValueError):
+                    pass
 
         if self.dense_gate_active() and self._dense_gate_passed():
-            self._open_dense_gate()
+            self._open_dense_gate(reason="success_threshold")
             print(
                 "[lchol] dense-to-sparse gate opened "
                 f"mean_success={self.dense_gate_mean_success():.4f} "
@@ -217,6 +259,71 @@ class LCHOLGRPORuntime:
             return 0.0
         values = [float(self.dense_gate_success.get(instruction, 0.0)) for instruction in self.dense_instruction_types]
         return float(np.mean(np.asarray(values, dtype=np.float64))) if values else 0.0
+
+    def dense_gate_mean_reward(self) -> float:
+        if not self.dense_instruction_types:
+            return 0.0
+        values = [
+            float(self.dense_gate_rewards[instruction])
+            for instruction in self.dense_instruction_types
+            if instruction in self.dense_gate_rewards
+        ]
+        return float(np.mean(np.asarray(values, dtype=np.float64))) if values else 0.0
+
+    def before_update(self, *, update: int) -> None:
+        del update
+        if (
+            self.dense_gate_active()
+            and self.dense_stage_open_on_max_updates
+            and self.dense_stage_max_updates > 0
+            and self.dense_updates_completed >= self.dense_stage_max_updates
+        ):
+            self._open_dense_gate(reason="dense_stage_max_updates")
+            print(
+                "[lchol] dense-to-sparse gate opened by dense update limit "
+                f"dense_updates_completed={int(self.dense_updates_completed)} "
+                f"limit={int(self.dense_stage_max_updates)}",
+                flush=True,
+            )
+        self._stage_at_update_start = "dense" if self.dense_gate_active() else "sparse"
+
+    def after_update(
+        self,
+        *,
+        update: int,
+        global_step: int | None = None,
+        run_dir: Any | None = None,
+    ) -> None:
+        del global_step
+        stage = str(self._stage_at_update_start or ("dense" if self.dense_gate_active() else "sparse"))
+        if stage == "dense":
+            self.dense_updates_completed += 1
+        else:
+            self.sparse_updates_completed += 1
+
+        if (
+            self.dense_gate_active()
+            and self.dense_stage_open_on_max_updates
+            and self.dense_stage_max_updates > 0
+            and self.dense_updates_completed >= self.dense_stage_max_updates
+        ):
+            self._open_dense_gate(reason="dense_stage_max_updates")
+            print(
+                "[lchol] dense-to-sparse gate opened by dense update limit "
+                f"dense_updates_completed={int(self.dense_updates_completed)} "
+                f"limit={int(self.dense_stage_max_updates)}",
+                flush=True,
+            )
+
+        if run_dir is not None:
+            self._save_dense_gate_state(run_dir=run_dir, update=update)
+
+    def should_stop_training(self) -> bool:
+        return bool(
+            not self.dense_gate_active()
+            and self.sparse_stage_max_updates > 0
+            and self.sparse_updates_completed >= self.sparse_stage_max_updates
+        )
 
     def sample_instruction_type(self) -> str | None:
         if self.dense_gate_active():
@@ -369,15 +476,23 @@ class LCHOLGRPORuntime:
         out["dense_gate/armed"] = float(self.dense_gate_armed)
         out["dense_gate/threshold"] = float(self.dense_success_threshold)
         out["dense_gate/mean_success"] = float(self.dense_gate_mean_success())
+        out["dense_gate/mean_reward"] = float(self.dense_gate_mean_reward())
         out["dense_stage/active"] = float(self.dense_gate_active())
         out["dense_stage/complete"] = float(self.dense_gate_armed)
         out["dense_stage/threshold"] = float(self.dense_success_threshold)
         out["dense_stage/mean_success"] = float(self.dense_gate_mean_success())
+        out["dense_stage/mean_reward"] = float(self.dense_gate_mean_reward())
+        out["dense_stage/updates_completed"] = float(self.dense_updates_completed)
+        out["dense_stage/max_updates"] = float(self.dense_stage_max_updates)
+        out["sparse_stage/updates_completed"] = float(self.sparse_updates_completed)
+        out["sparse_stage/max_updates"] = float(self.sparse_stage_max_updates)
         for instruction in self.dense_instruction_types:
             out[f"dense_gate/success_rate/{instruction}"] = float(self.dense_gate_success.get(instruction, 0.0))
             out[f"dense_gate/rollouts/{instruction}"] = float(self.dense_gate_rollouts.get(instruction, 0))
+            out[f"dense_gate/reward/{instruction}"] = float(self.dense_gate_rewards.get(instruction, 0.0))
             out[f"dense_stage/success_rate/{instruction}"] = float(self.dense_gate_success.get(instruction, 0.0))
             out[f"dense_stage/rollouts/{instruction}"] = float(self.dense_gate_rollouts.get(instruction, 0))
+            out[f"dense_stage/reward/{instruction}"] = float(self.dense_gate_rewards.get(instruction, 0.0))
         out["grpo/batch_count"] = float(self.grpo_batch_count)
         out["grpo/non_pg_count"] = float(self.grpo_non_pg_count)
         out["replay/total_records"] = float(len(self.replay))
@@ -427,6 +542,8 @@ class LCHOLGRPORuntime:
             for key, value in metrics.items():
                 if key.startswith("dense_stage/"):
                     tb_writer.add_scalar(f"stage/dense/{key[len('dense_stage/'):]}", float(value), int(global_step))
+                elif key.startswith("sparse_stage/"):
+                    tb_writer.add_scalar(f"stage/sparse/{key[len('sparse_stage/'):]}", float(value), int(global_step))
                 else:
                     tb_writer.add_scalar(f"lchol/{key}", float(value), int(global_step))
             tb_writer.flush()
@@ -469,10 +586,33 @@ class LCHOLGRPORuntime:
                 str(key): int(value)
                 for key, value in rollouts.items()
             }
+        rewards = payload.get("rewards")
+        if isinstance(rewards, Mapping):
+            self.dense_gate_rewards = {
+                str(key): float(value)
+                for key, value in rewards.items()
+            }
+        try:
+            self.dense_updates_completed = max(
+                0,
+                int(payload.get("dense_updates_completed", self.dense_updates_completed)),
+            )
+        except (TypeError, ValueError):
+            pass
+        try:
+            self.sparse_updates_completed = max(
+                0,
+                int(payload.get("sparse_updates_completed", self.sparse_updates_completed)),
+            )
+        except (TypeError, ValueError):
+            pass
+        reason = payload.get("open_reason")
+        if reason:
+            self._dense_gate_open_reason = str(reason)
 
         remote_armed = bool(payload.get("armed", not bool(payload.get("active", True))))
         if self.dense_gate_active() and remote_armed:
-            self._open_dense_gate()
+            self._open_dense_gate(reason=str(reason or "synced_state"))
 
     def consume_grpo_stats_reset_request(self) -> bool:
         pending = bool(self._grpo_stats_reset_pending)
@@ -548,10 +688,11 @@ class LCHOLGRPORuntime:
             raise ValueError("No CDPR reverse shell specs match the available LC-HOL options.")
         return specs
 
-    def _open_dense_gate(self) -> None:
+    def _open_dense_gate(self, *, reason: str = "") -> None:
         if self.dense_gate_armed:
             return
         self.dense_gate_armed = True
+        self._dense_gate_open_reason = str(reason or "unspecified")
         self._grpo_stats_reset_pending = True
 
     @staticmethod
@@ -591,14 +732,21 @@ class LCHOLGRPORuntime:
         payload = {
             "armed": bool(self.dense_gate_armed),
             "active": bool(self.dense_gate_active()),
+            "open_reason": str(self._dense_gate_open_reason),
             "threshold": float(self.dense_success_threshold),
             "min_success_samples": int(self.dense_min_success_samples),
             "mean_success": float(self.dense_gate_mean_success()),
+            "mean_reward": float(self.dense_gate_mean_reward()),
+            "dense_stage_max_updates": int(self.dense_stage_max_updates),
+            "sparse_stage_max_updates": int(self.sparse_stage_max_updates),
+            "dense_updates_completed": int(self.dense_updates_completed),
+            "sparse_updates_completed": int(self.sparse_updates_completed),
             "instruction_types": list(self.dense_instruction_types),
             "sparse_instruction_types": list(self.sparse_instruction_types),
             "grpo_stats_reset_pending": bool(self._grpo_stats_reset_pending),
             "success": dict(sorted(self.dense_gate_success.items())),
             "rollouts": {key: int(value) for key, value in sorted(self.dense_gate_rollouts.items())},
+            "rewards": dict(sorted(self.dense_gate_rewards.items())),
         }
         if update is not None:
             (state_dir / f"state_update_{int(update):05d}.json").write_text(
@@ -642,3 +790,18 @@ def _metadata_name_tuple(metadata: Mapping[str, Any], *keys: str) -> tuple[str, 
         if out:
             return tuple(out)
     return ()
+
+
+def _metadata_bool(metadata: Mapping[str, Any], key: str, default: bool) -> bool:
+    raw = metadata.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    return bool(default)

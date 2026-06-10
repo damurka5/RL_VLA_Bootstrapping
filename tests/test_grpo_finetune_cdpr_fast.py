@@ -60,6 +60,7 @@ from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _split_wrapper_argv,
     _tensorboard_tag_allowed,
     _transform_external_grpo_source_for_ddp_sync,
+    _transform_external_grpo_source_for_lchol,
     _transform_external_grpo_source_for_lr_scheduler,
     _transform_external_grpo_source_for_memory_safety,
 )
@@ -131,10 +132,62 @@ class FastGRPOWrapperTests(unittest.TestCase):
             self.assertNotIn("rollout_step/window_size", tags)
             self.assertNotIn("rollout_step/reward_component_r_xyz_mean", tags)
             self.assertIn("rollout_episode/instruction_success_rate/pick_up", tags)
+            self.assertIn("rollout_episode/instruction_success_rate_mean", tags)
             self.assertIn("rollout_episode/shell_success_rate/pick_up/shell_02", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/move_to_object", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/grab_object", tags)
             self.assertIn("rollout_episode/subgoal_success_rate/pick_up", tags)
+
+    def test_rollout_tensorboard_logger_suppresses_shell_and_subgoal_tags_in_dense_stage(self):
+        class FakeSummaryWriter:
+            scalars: list[tuple[str, float, int]] = []
+
+            def __init__(self, log_dir: str, flush_secs: int = 10):
+                del log_dir, flush_secs
+
+            def add_scalar(self, tag: str, value: float, step: int):
+                self.scalars.append((tag, float(value), int(step)))
+
+            def flush(self):
+                pass
+
+            def close(self):
+                pass
+
+        with tempfile.TemporaryDirectory() as tmp:
+            FakeSummaryWriter.scalars.clear()
+            logger = _RolloutTensorboardLogger(
+                FakeSummaryWriter,
+                every_global_steps=1,
+                stage_fn=lambda: "dense",
+            )
+            logger.set_run_dir(Path(tmp))
+            logger.capture_reward(
+                env_reward=1.0,
+                shaped_reward=1.0,
+                closer_bonus=0.0,
+                farther_penalty=0.0,
+                distance_delta_raw=0.0,
+            )
+            logger.finalize_step(
+                {
+                    "success": True,
+                    "sparse_success": 1.0,
+                    "env_done": True,
+                    "env_instance_id": 0,
+                    "episode_index": 0,
+                    "instruction_type": "release_object",
+                    "curriculum_mode": "reverse_frontier",
+                    "curriculum_shell": 0,
+                },
+                {},
+            )
+
+            tags = {tag for tag, _, _ in FakeSummaryWriter.scalars}
+            self.assertIn("rollout_episode/instruction_success_rate/release_object", tags)
+            self.assertIn("rollout_episode/instruction_success_rate_mean", tags)
+            self.assertNotIn("rollout_episode/shell_success_rate/release_object/shell_00", tags)
+            self.assertFalse(any(tag.startswith("rollout_episode/subgoal_success_rate/") for tag in tags))
 
     def test_rollout_tensorboard_logger_records_partial_subgoal_successes_for_failed_attempt(self):
         class FakeSummaryWriter:
@@ -596,17 +649,32 @@ class FastGRPOWrapperTests(unittest.TestCase):
     def test_compact_tensorboard_profile_keeps_high_signal_tags_only(self):
         self.assertTrue(_tensorboard_tag_allowed("train/learning_rate"))
         self.assertTrue(_tensorboard_tag_allowed("stage/dense/mean_success"))
+        self.assertTrue(_tensorboard_tag_allowed("stage/dense/mean_reward"))
         self.assertTrue(_tensorboard_tag_allowed("stage/dense/success_rate/catch_object"))
+        self.assertTrue(_tensorboard_tag_allowed("stage/dense/reward/catch_object"))
         self.assertTrue(_tensorboard_tag_allowed("stage/dense/train/learning_rate"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/instruction_success_rate/pick_up"))
+        self.assertTrue(_tensorboard_tag_allowed("rollout_episode/instruction_success_rate_mean"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/replay/episodes_total"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/reverse_frontier/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/curriculum/reverse_frontier/put_into_plate/active_shell"))
+        self.assertFalse(_tensorboard_tag_allowed("lchol/dense_gate/mean_success"))
         self.assertFalse(_tensorboard_tag_allowed("lchol/dense_stage/mean_success"))
         self.assertFalse(_tensorboard_tag_allowed("train/update_index"))
         self.assertFalse(_tensorboard_tag_allowed("stage/dense/train/update_index"))
         self.assertFalse(_tensorboard_tag_allowed("validation/action_x_hist", kind="histogram"))
+
+    def test_lchol_transform_calls_after_update_before_stage_stop(self):
+        external = Path("/Users/damirnurtdinov/Desktop/My Courses/Диплом/openvla-oft/vla-scripts/grpo_finetune_cdpr.py")
+        if not external.exists():
+            self.skipTest("Local OpenVLA-OFT GRPO script is not available.")
+
+        patched = _transform_external_grpo_source_for_lchol(external.read_text(encoding="utf-8"))
+        compile(patched, str(external), "exec")
+
+        self.assertIn("_rlvla_lchol_after_update(", patched)
+        self.assertIn("_rlvla_lchol_should_stop_training(update=update)", patched)
 
     def test_tensorboard_writer_mirrors_scalars_by_lchol_stage(self):
         class FakeSummaryWriter:

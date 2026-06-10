@@ -180,6 +180,9 @@ task:
 
     dense_to_sparse_success_threshold: 0.70
     dense_to_sparse_min_success_samples: 2
+    dense_stage_max_updates: 40
+    sparse_stage_max_updates: 100
+    dense_stage_open_on_max_updates: true
     dense_stage_instruction_types:
       [
         move_to_object,
@@ -208,13 +211,25 @@ task:
       ]
     dense_stage_metadata:
       reward_mode: dense
-      # First stage uses ordinary randomized starts, not target-at-gripper,
-      # caught-object starts, or reverse-frontier reset sampling.
-      target_at_gripper_start_probability: 0.0
-      caught_object_start_probability: 0.0
-      target_at_gripper_start_instruction_types: []
-      caught_object_start_instruction_types: []
-      force_caught_object_start_instruction_types: []
+      distance_reward_scale: 0.40
+      distance_reward_weight: 1.0
+      distance_reward_exponent: 2.0
+      success_distance: 0.02
+      success_bonus: 0.0
+      move_to_object_xy_reward_scale: 0.10
+      move_to_object_distance_reward_weight: 1.0
+      move_to_object_xy_tolerance: 0.02
+      move_to_object_validation_distance_threshold: 0.02
+      move_to_object_z_penalty_weight: 0.0
+      action_saturation_threshold: 0.70
+      action_saturation_penalty_weight: 0.20
+      action_saturation_exponent: 1.0
+      action_saturation_include_gripper: true
+      target_at_gripper_start_probability: 1.0
+      caught_object_start_probability: 1.0
+      target_at_gripper_start_instruction_types: [catch_object, grip_object]
+      caught_object_start_instruction_types: [release_object, free_object]
+      force_caught_object_start_instruction_types: [release_object, free_object]
       gripper_edge_reward_scale: 0.015
       gripper_edge_success_threshold: 0.010
       release_success_edge_clearance: 0.035
@@ -382,7 +397,7 @@ training:
       lchol_reverse_sample_frontier_probability: 0.80
       lchol_reverse_sample_rehearsal_probability: 0.20
       num_parallel_envs: 10
-      total_updates: 120
+      total_updates: 140
       rollout_steps: 240
       ppo_epochs: 2
       minibatch_size: 12

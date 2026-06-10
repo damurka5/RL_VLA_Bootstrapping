@@ -623,6 +623,17 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
             "                is_main\n"
             "                and args.rollout_tap_every_updates > 0\n",
         ),
+        (
+            "            if is_main and update % args.save_every == 0:\n",
+            "            _rlvla_lchol_after_update(\n"
+            "                update=update,\n"
+            "                global_step=global_step,\n"
+            "                run_dir=run_dir if is_main else None,\n"
+            "            )\n"
+            "            if _rlvla_lchol_should_stop_training(update=update):\n"
+            "                break\n\n"
+            "            if is_main and update % args.save_every == 0:\n",
+        ),
     ]
     for old, new in replacements:
         if old not in transformed:
@@ -1633,6 +1644,7 @@ _COMPACT_TENSORBOARD_SCALARS: set[str] = {
     "rollout_step/relation_error_mean",
     "rollout_step/action_saturation_rate_mean",
     "rollout_step/lchol_group_score_mean",
+    "rollout_episode/instruction_success_rate_mean",
     "lchol/source/hindsight_new",
     "lchol/source/hindsight_replay",
     "lchol/replay/total_records",
@@ -1645,7 +1657,6 @@ _COMPACT_TENSORBOARD_PREFIXES: tuple[str, ...] = (
     "rollout_episode/shell_success_rate/",
     "rollout_episode/subgoal_success_rate/",
     "lchol/replay/episodes/",
-    "lchol/dense_gate/",
     "lchol/curriculum/success_rate/",
     "lchol/curriculum/reverse_frontier/",
     "lchol/reverse_frontier/shell_success_rate/",
@@ -1667,9 +1678,21 @@ def _tensorboard_tag_allowed(tag: str, *, profile: str = "compact", kind: str = 
     raw_tag = str(tag)
     if raw_tag.startswith("stage/dense/"):
         dense_tag = raw_tag[len("stage/dense/") :]
-        if dense_tag in {"active", "complete", "threshold", "mean_success"}:
+        if dense_tag in {
+            "active",
+            "complete",
+            "threshold",
+            "mean_success",
+            "mean_reward",
+            "updates_completed",
+            "max_updates",
+        }:
             return True
-        if dense_tag.startswith(("success_rate/", "rollouts/")):
+        if dense_tag.startswith(("success_rate/", "rollouts/", "reward/")):
+            return True
+    if raw_tag.startswith("stage/sparse/"):
+        sparse_tag = raw_tag[len("stage/sparse/") :]
+        if sparse_tag in {"updates_completed", "max_updates"}:
             return True
     tag = _strip_tensorboard_stage_prefix(raw_tag)
     return tag in _COMPACT_TENSORBOARD_SCALARS or any(
@@ -1736,9 +1759,10 @@ def _patch_tensorboard_metric_filter(module, *, profile: str) -> None:
 
 
 class _RolloutTensorboardLogger:
-    def __init__(self, summary_writer_cls, every_global_steps: int):
+    def __init__(self, summary_writer_cls, every_global_steps: int, stage_fn=None):
         self.summary_writer_cls = summary_writer_cls
         self.every_global_steps = max(0, int(every_global_steps))
+        self.stage_fn = stage_fn
         self.run_dir: Path | None = None
         self.writer = None
         self.global_step = 0
@@ -1896,6 +1920,8 @@ class _RolloutTensorboardLogger:
                 deque(maxlen=self.every_global_steps or 1),
             )
             window.append(float(success_value))
+        if self._current_stage() == "dense":
+            return
         shell_key = self._shell_success_key(info)
         if shell_key:
             window = self._shell_episode_windows.setdefault(
@@ -1913,14 +1939,25 @@ class _RolloutTensorboardLogger:
             window.append(1.0 if option in achieved else 0.0)
 
     def _write_episode_windows(self, writer) -> None:
+        instruction_means: list[float] = []
         for instruction, values in sorted(self._instruction_episode_windows.items()):
             if not values:
                 continue
+            mean_value = float(sum(values) / len(values))
+            instruction_means.append(mean_value)
             writer.add_scalar(
                 f"rollout_episode/instruction_success_rate/{instruction}",
-                float(sum(values) / len(values)),
+                mean_value,
                 self.global_step,
             )
+        if instruction_means:
+            writer.add_scalar(
+                "rollout_episode/instruction_success_rate_mean",
+                float(sum(instruction_means) / len(instruction_means)),
+                self.global_step,
+            )
+        if self._current_stage() == "dense":
+            return
         for shell_key, values in sorted(self._shell_episode_windows.items()):
             if not values:
                 continue
@@ -2163,6 +2200,14 @@ class _RolloutTensorboardLogger:
             return 0
         return max(len(values) for values in self._windows.values())
 
+    def _current_stage(self) -> str:
+        if not callable(self.stage_fn):
+            return ""
+        try:
+            return str(self.stage_fn() or "")
+        except Exception:
+            return ""
+
 
 def _patch_rollout_tensorboard(module, *, every_global_steps: int) -> None:
     if every_global_steps <= 0:
@@ -2171,6 +2216,7 @@ def _patch_rollout_tensorboard(module, *, every_global_steps: int) -> None:
     logger = _RolloutTensorboardLogger(
         summary_writer_cls=getattr(module, "SummaryWriter", None),
         every_global_steps=every_global_steps,
+        stage_fn=lambda: _current_tensorboard_stage(module),
     )
 
     original_make_run_dir = module.make_run_dir
@@ -2408,6 +2454,22 @@ def _patch_lchol_runtime(
             is_main=bool(is_main),
         )
 
+    def _after_update(*, update: int, global_step: int, run_dir) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            return
+        after_update = getattr(runtime, "after_update", None)
+        if callable(after_update):
+            after_update(update=int(update), global_step=int(global_step), run_dir=run_dir)
+
+    def _should_stop_training(*, update: int) -> bool:
+        del update
+        runtime = _runtime()
+        if runtime is None:
+            return False
+        should_stop = getattr(runtime, "should_stop_training", None)
+        return bool(should_stop()) if callable(should_stop) else False
+
     def _policy_core(policy):
         return getattr(policy, "module", policy)
 
@@ -2454,6 +2516,9 @@ def _patch_lchol_runtime(
         sync_state = getattr(runtime, "sync_dense_gate_state", None)
         if callable(sync_state):
             sync_state(run_dir=run_dir)
+        before_update = getattr(runtime, "before_update", None)
+        if callable(before_update):
+            before_update(update=int(update))
         consume_reset = getattr(runtime, "consume_grpo_stats_reset_request", None)
         if not callable(consume_reset) or not bool(consume_reset()):
             return
@@ -2472,6 +2537,8 @@ def _patch_lchol_runtime(
     module._rlvla_lchol_phase_score = _phase_score
     module._rlvla_lchol_capture_candidate = _capture_candidate
     module._rlvla_lchol_after_rollout = _after_rollout
+    module._rlvla_lchol_after_update = _after_update
+    module._rlvla_lchol_should_stop_training = _should_stop_training
     module._rlvla_lchol_bc_loss = _bc_loss
     module._rlvla_lchol_validate_grpo_transitions = _validate_grpo_transitions
     module._rlvla_lchol_log_update = _log_update
@@ -2544,6 +2611,7 @@ def _patch_lchol_runtime(
                         "instruction_id": str(instruction_id),
                         "success_rate": float(summary.get("success_rate", 0.0)),
                         "rollouts": int(summary.get("episodes", validation_rollouts)),
+                        "mean_reward": float(summary.get("mean_env_return", 0.0)),
                     }
                 )
 
