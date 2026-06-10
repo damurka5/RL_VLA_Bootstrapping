@@ -17,6 +17,8 @@ remote:
     RLVLA_DDP_TIMEOUT_SECONDS: "86400"
     RLVLA_DDP_ROLLOUT_SYNC_INTERVAL: "5"
     RLVLA_CDPR_OFFSCREEN_SAMPLES: "1"
+    RLVLA_CDPR_COMPILED_MODEL_CACHE: "false"
+    RLVLA_CDPR_COMPILED_MODEL_CACHE_MAX_SIZE: "8"
     TOKENIZERS_PARALLELISM: "false"
   notes:
     - Adapter/action-head weights resume from the complex-task GRPO checkpoint `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260531_171357/rl/step_0240000`.

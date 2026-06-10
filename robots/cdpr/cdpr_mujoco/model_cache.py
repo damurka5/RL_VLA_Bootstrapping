@@ -8,6 +8,7 @@ import os
 import resource
 import time
 import xml.etree.ElementTree as ET
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable
@@ -44,6 +45,8 @@ class CompiledModelCacheEvent:
     compile_time_s: float
     cache_size: int
     rss_mb: float
+    cache_max_size: int = 0
+    evictions: int = 0
     reason: str = ""
 
     def as_dict(self) -> dict[str, Any]:
@@ -55,14 +58,17 @@ class CompiledModelCacheEvent:
             "key_short": self.key_short,
             "compile_time_s": float(self.compile_time_s),
             "cache_size": int(self.cache_size),
+            "cache_max_size": int(self.cache_max_size),
+            "evictions": int(self.evictions),
             "rss_mb": float(self.rss_mb),
             "reason": str(self.reason),
         }
 
 
-_MODEL_CACHE: dict[CompiledModelCacheKey, mj.MjModel] = {}
+_MODEL_CACHE: OrderedDict[CompiledModelCacheKey, mj.MjModel] = OrderedDict()
 _CACHE_HITS = 0
 _CACHE_MISSES = 0
+_CACHE_EVICTIONS = 0
 _LAST_EVENT: CompiledModelCacheEvent | None = None
 
 
@@ -72,6 +78,27 @@ def _rss_mb() -> float:
     if usage > 1024 * 1024 * 8:
         return float(usage / (1024 * 1024))
     return float(usage / 1024)
+
+
+def _cache_max_size_from_env() -> int:
+    raw = os.environ.get("RLVLA_CDPR_COMPILED_MODEL_CACHE_MAX_SIZE")
+    if raw is None or str(raw).strip() == "":
+        return 32
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return 32
+    return max(0, int(value))
+
+
+def _evict_lru_models_if_needed(max_size: int) -> None:
+    global _CACHE_EVICTIONS
+    limit = max(0, int(max_size))
+    if limit <= 0:
+        return
+    while len(_MODEL_CACHE) > limit:
+        _MODEL_CACHE.popitem(last=False)
+        _CACHE_EVICTIONS += 1
 
 
 def _resolve_path(raw: str, base: Path) -> Path:
@@ -178,6 +205,7 @@ def get_compiled_model(
     """Return a compiled model and cache event for instrumentation."""
 
     global _CACHE_HITS, _CACHE_MISSES, _LAST_EVENT
+    cache_max_size = _cache_max_size_from_env()
     key = build_cache_key(
         xml_path,
         timestep=timestep,
@@ -189,6 +217,8 @@ def get_compiled_model(
 
     if enabled and key in _MODEL_CACHE:
         _CACHE_HITS += 1
+        model = _MODEL_CACHE.pop(key)
+        _MODEL_CACHE[key] = model
         event = CompiledModelCacheEvent(
             enabled=True,
             hit=True,
@@ -196,10 +226,12 @@ def get_compiled_model(
             key_short=key.short(),
             compile_time_s=0.0,
             cache_size=len(_MODEL_CACHE),
+            cache_max_size=cache_max_size,
+            evictions=_CACHE_EVICTIONS,
             rss_mb=_rss_mb(),
         )
         _LAST_EVENT = event
-        return _MODEL_CACHE[key], event
+        return model, event
 
     start = time.perf_counter()
     model = mj.MjModel.from_xml_path(str(Path(xml_path).expanduser().resolve()))
@@ -208,6 +240,7 @@ def get_compiled_model(
 
     if enabled:
         _MODEL_CACHE[key] = model
+        _evict_lru_models_if_needed(cache_max_size)
         _CACHE_MISSES += 1
     event = CompiledModelCacheEvent(
         enabled=bool(enabled),
@@ -216,6 +249,8 @@ def get_compiled_model(
         key_short=key.short(),
         compile_time_s=float(compile_time),
         cache_size=len(_MODEL_CACHE),
+        cache_max_size=cache_max_size,
+        evictions=_CACHE_EVICTIONS,
         rss_mb=_rss_mb(),
         reason="" if enabled else "disabled",
     )
@@ -228,14 +263,17 @@ def cache_stats() -> dict[str, Any]:
         "size": len(_MODEL_CACHE),
         "hits": int(_CACHE_HITS),
         "misses": int(_CACHE_MISSES),
+        "evictions": int(_CACHE_EVICTIONS),
+        "max_size": int(_cache_max_size_from_env()),
         "hit_rate": float(_CACHE_HITS / max(1, _CACHE_HITS + _CACHE_MISSES)),
         "last_event": None if _LAST_EVENT is None else _LAST_EVENT.as_dict(),
     }
 
 
 def clear_cache() -> None:
-    global _CACHE_HITS, _CACHE_MISSES, _LAST_EVENT
+    global _CACHE_HITS, _CACHE_MISSES, _CACHE_EVICTIONS, _LAST_EVENT
     _MODEL_CACHE.clear()
     _CACHE_HITS = 0
     _CACHE_MISSES = 0
+    _CACHE_EVICTIONS = 0
     _LAST_EVENT = None
