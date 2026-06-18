@@ -140,6 +140,39 @@ class WrapperBundleTests(unittest.TestCase):
             texture_path.unlink()
             self.assertFalse(self.rl_env_mod._wrapper_bundle_exists(wrapper))
 
+    def test_wrapper_bundle_exists_rejects_missing_generated_desk_material(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            helper = root / "desk_helper.xml"
+            helper.write_text(
+                (
+                    "<mujoco><worldbody>"
+                    '<geom name="desk_surface" type="box" size="0.30 0.30 0.02" '
+                    'material="deskmat_broken"/>'
+                    "</worldbody></mujoco>"
+                ),
+                encoding="utf-8",
+            )
+            wrapper = root / "desk_wrapper.xml"
+            wrapper.write_text(
+                '<mujoco><include file="desk_helper.xml"/></mujoco>',
+                encoding="utf-8",
+            )
+
+            self.assertFalse(self.rl_env_mod._wrapper_bundle_exists(wrapper))
+
+            wrapper.write_text(
+                (
+                    "<mujoco><asset>"
+                    '<material name="deskmat_broken" rgba="1 1 1 1"/>'
+                    "</asset>"
+                    '<include file="desk_helper.xml"/>'
+                    "</mujoco>"
+                ),
+                encoding="utf-8",
+            )
+            self.assertTrue(self.rl_env_mod._wrapper_bundle_exists(wrapper))
+
     def test_validated_texture_files_skips_corrupt_pngs(self):
         try:
             from PIL import Image
@@ -398,6 +431,31 @@ class WrapperBundleTests(unittest.TestCase):
                 candidates,
                 [cached.resolve(), textured.resolve()],
             )
+
+    def test_candidate_existing_wrapper_paths_skips_variant_with_missing_desk_material(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            valid = root / "desk__plate-ycb_apple_wrapper.xml"
+            invalid = root / "desk__plate-ycb_apple_wrapper__abc123__desktex_rl_1.xml"
+            valid.write_text(_wrapper_xml_with_bodies("p0_plate", "p1_ycb_apple"), encoding="utf-8")
+            invalid.write_text(
+                (
+                    "<mujoco><worldbody>"
+                    '<body name="p0_plate"/>'
+                    '<body name="p1_ycb_apple"/>'
+                    '<geom name="desk_surface" material="deskmat_missing"/>'
+                    "</worldbody></mujoco>"
+                ),
+                encoding="utf-8",
+            )
+
+            candidates = self.rl_env_mod._candidate_existing_wrapper_paths(
+                root,
+                scene_name="desk",
+                object_names=("ycb_apple", "plate"),
+            )
+
+            self.assertEqual(candidates, [valid.resolve()])
 
     def test_rl_env_build_wrapper_reuses_existing_cached_variants(self):
         scene = self.rl_env_mod.SceneSpec(name="desk", objects=("ycb_apple", "plate"))

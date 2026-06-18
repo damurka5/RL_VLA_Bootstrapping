@@ -727,6 +727,8 @@ def _wrapper_bundle_exists(wrapper_xml: Path) -> bool:
     wrap_root = WRAP_DIR.resolve()
     queue = [wrapper_xml]
     seen: set[Path] = set()
+    material_names: set[str] = set()
+    desk_material_references: set[str] = set()
 
     while queue:
         current = queue.pop()
@@ -747,6 +749,15 @@ def _wrapper_bundle_exists(wrapper_xml: Path) -> bool:
             return False
         root = tree.getroot()
 
+        for material in root.iter("material"):
+            name = str(material.get("name") or "").strip()
+            if name:
+                material_names.add(name)
+        for geom in root.iter("geom"):
+            material_name = str(geom.get("material") or "").strip()
+            if material_name.startswith("deskmat_"):
+                desk_material_references.add(material_name)
+
         for _, file_attr in _iter_includes(root):
             include_path = _resolve_include_path(current, file_attr)
             include_is_local = current.parent in include_path.parents or wrap_root in include_path.parents
@@ -765,7 +776,7 @@ def _wrapper_bundle_exists(wrapper_xml: Path) -> bool:
                 if asset_is_local and not asset_path.exists():
                     return False
 
-    return True
+    return desk_material_references.issubset(material_names)
 
 
 def _wrapper_body_name_aliases(object_name: str) -> tuple[str, ...]:

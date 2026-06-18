@@ -143,6 +143,30 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
         self.assertEqual(runtime.sparse_updates_completed, 3)
         self.assertTrue(runtime.should_stop_training())
 
+    def test_runtime_can_start_directly_in_sparse_stage(self):
+        metadata = {
+            "lchol_start_stage": "sparse",
+            "dense_to_sparse_success_threshold": 0.70,
+            "dense_stage_instruction_types": ["catch_object"],
+            "sparse_stage_instruction_types": ["move_to_object"],
+            "dense_stage_metadata": {"reward_mode": "dense"},
+            "sparse_stage_metadata": {"reward_mode": "sparse_binary"},
+        }
+
+        with mock.patch.dict("os.environ", {"RLVLA_TASK_METADATA_JSON": json.dumps(metadata)}):
+            runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_to_object", "catch_object"),
+                seed=0,
+            )
+
+        self.assertFalse(runtime.dense_gate_active())
+        self.assertEqual(runtime.current_task_metadata()["reward_mode"], "sparse_binary")
+        self.assertEqual(runtime.sample_reset_options()["instruction_type"], "move_to_object")
+        self.assertFalse(runtime.consume_grpo_stats_reset_request())
+        self.assertEqual(runtime.metrics()["sparse_stage/configured_start"], 1.0)
+
     def test_runtime_configures_env_instruction_set_for_dense_gate(self):
         metadata = {
             "dense_to_sparse_success_threshold": 0.70,

@@ -21,8 +21,8 @@ remote:
     RLVLA_CDPR_COMPILED_MODEL_CACHE_MAX_SIZE: "8"
     TOKENIZERS_PARALLELISM: "false"
   notes:
-    - Adapter/action-head weights resume from the complex-task GRPO checkpoint `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260531_171357/rl/step_0240000`.
-    - First-stage GRPO actor stats resume from the move-to checkpoint; second-stage actor stats reload from the complex-task checkpoint when the dense warmup gate opens.
+    - Adapter/action-head/actor-stat weights resume from `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000`.
+    - This continuation starts directly in the sparse/binary second stage and runs the remaining 50 sparse updates.
     - Rollout TensorBoard scalars are emitted every 8 global environment steps, plus update summaries every optimizer update.
 
 assets:
@@ -183,8 +183,9 @@ task:
     dense_to_sparse_success_threshold: 0.70
     dense_to_sparse_min_success_samples: 2
     dense_stage_max_updates: 40
-    sparse_stage_max_updates: 100
+    sparse_stage_max_updates: 50
     dense_stage_open_on_max_updates: true
+    lchol_start_stage: sparse
     dense_stage_instruction_types:
       [
         move_to_object,
@@ -363,12 +364,12 @@ training:
       nproc_per_node: 2
     args:
       external_grpo_script: vla-scripts/grpo_finetune_cdpr.py
-      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260531_171357/rl/step_0240000/vla_cdpr_adapter
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/vla_cdpr_adapter
       train_loaded_adapter: true
-      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260531_171357/rl/step_0240000/action_head_cdpr.pt
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/action_head_cdpr.pt
       resume_actor_stats: true
-      first_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_resume_380_to_480_move_to_object_xy_only_from_0170000_10_updates_20260419_100515/rl/step_0017000/grpo_actor_stats.pt
-      second_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260531_171357/rl/step_0240000/grpo_actor_stats.pt
+      first_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/grpo_actor_stats.pt
+      second_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/grpo_actor_stats.pt
       # Complex CDPR rollouts and reverse-frontier validation can skew DDP ranks far past PyTorch's 10-minute default.
       ddp_timeout_seconds: 86400
       ddp_rollout_sync_interval: 5
@@ -399,7 +400,7 @@ training:
       lchol_reverse_sample_frontier_probability: 0.80
       lchol_reverse_sample_rehearsal_probability: 0.20
       num_parallel_envs: 10
-      total_updates: 140
+      total_updates: 50
       rollout_steps: 240
       ppo_epochs: 2
       minibatch_size: 12

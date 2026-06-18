@@ -128,7 +128,23 @@ class LCHOLGRPORuntime:
             "dense_stage_open_on_max_updates",
             True,
         )
-        self.dense_gate_armed = not (
+        requested_start_stage = str(
+            self.base_task_metadata.get(
+                "lchol_start_stage",
+                self.base_task_metadata.get("start_stage", ""),
+            )
+            or ""
+        ).strip().lower()
+        self.start_sparse = requested_start_stage in {
+            "2",
+            "second",
+            "second_stage",
+            "sparse",
+            "sparse_stage",
+            "stage2",
+            "stage_2",
+        }
+        self.dense_gate_armed = self.start_sparse or not (
             self.dense_instruction_types
             and np.isfinite(self.dense_success_threshold)
             and self.dense_success_threshold > 0.0
@@ -139,7 +155,10 @@ class LCHOLGRPORuntime:
         self.dense_updates_completed = 0
         self.sparse_updates_completed = 0
         self._stage_at_update_start = "sparse" if self.dense_gate_armed else "dense"
-        self._dense_gate_open_reason = "initially_armed" if self.dense_gate_armed else ""
+        if self.start_sparse:
+            self._dense_gate_open_reason = "configured_sparse_start"
+        else:
+            self._dense_gate_open_reason = "initially_armed" if self.dense_gate_armed else ""
         self._grpo_stats_reset_pending = False
         per_option_capacity = max(1, int(config.hindsight_replay_capacity) // max(1, len(self.available_options)))
         self.replay = PerOptionReplayBuffer(per_option_capacity)
@@ -486,6 +505,7 @@ class LCHOLGRPORuntime:
         out["dense_stage/max_updates"] = float(self.dense_stage_max_updates)
         out["sparse_stage/updates_completed"] = float(self.sparse_updates_completed)
         out["sparse_stage/max_updates"] = float(self.sparse_stage_max_updates)
+        out["sparse_stage/configured_start"] = float(self.start_sparse)
         for instruction in self.dense_instruction_types:
             out[f"dense_gate/success_rate/{instruction}"] = float(self.dense_gate_success.get(instruction, 0.0))
             out[f"dense_gate/rollouts/{instruction}"] = float(self.dense_gate_rollouts.get(instruction, 0))
@@ -739,6 +759,7 @@ class LCHOLGRPORuntime:
             "mean_reward": float(self.dense_gate_mean_reward()),
             "dense_stage_max_updates": int(self.dense_stage_max_updates),
             "sparse_stage_max_updates": int(self.sparse_stage_max_updates),
+            "configured_sparse_start": bool(self.start_sparse),
             "dense_updates_completed": int(self.dense_updates_completed),
             "sparse_updates_completed": int(self.sparse_updates_completed),
             "instruction_types": list(self.dense_instruction_types),
