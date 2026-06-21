@@ -5,10 +5,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import numpy as np
+
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
+    _annotate_latest_validation_frame,
     _default_max_steps,
     _instruction_validation_task_metadata,
     _render_policy_prompt,
+    _move_to_object_threshold_sweep,
     _save_episode_video,
     _validation_buckets,
     _parse_instruction_types,
@@ -585,6 +589,56 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         )
 
         self.assertEqual(prompt, "leave apple between pear and baseball")
+
+    def test_video_action_overlay_changes_latest_frame(self):
+        sim = type("_Sim", (), {"overview_frames": [np.zeros((120, 320, 3), dtype=np.uint8)]})()
+        before = sim.overview_frames[-1].copy()
+
+        _annotate_latest_validation_frame(
+            sim=sim,
+            instruction="move to apple",
+            step=1,
+            policy_call=1,
+            chunk_action_index=0,
+            chunk_length=8,
+            new_policy_output=True,
+            action=np.array([0.1, -0.2, 0.3, 0.4, -0.5], dtype=np.float32),
+            scaled_action=np.array([0.0015, -0.003, 0.0045, 0.032, -0.025], dtype=np.float32),
+            info={
+                "ee_position": [0.0, 0.0, 0.4],
+                "ee_yaw": 0.2,
+                "gripper_opening": 0.7,
+                "gripper_target": 0.6,
+            },
+        )
+
+        self.assertFalse(np.array_equal(before, sim.overview_frames[-1]))
+
+    def test_move_to_object_threshold_sweep_uses_canonical_normal_scene_minimum_distance(self):
+        results = [
+            EpisodeResult(
+                episode_index=index,
+                seed=index,
+                instruction_type="move_to_object",
+                instruction_text="move to apple",
+                success=False,
+                terminated=False,
+                truncated=True,
+                steps=120,
+                reward_total=0.0,
+                scene="desk",
+                goal_position=[0.0, 0.0, 0.1],
+                ee_start=[0.0, 0.0, 0.4],
+                curriculum_shell=3,
+                curriculum_shell_count=4,
+                min_move_to_object_distance_xy=distance,
+            )
+            for index, distance in enumerate((0.02, 0.06, 0.12))
+        ]
+
+        rows = _move_to_object_threshold_sweep(results, thresholds=(0.05, 0.10, 0.15))
+
+        self.assertEqual([row["successes"] for row in rows], [1, 2, 3])
 
 
 if __name__ == "__main__":

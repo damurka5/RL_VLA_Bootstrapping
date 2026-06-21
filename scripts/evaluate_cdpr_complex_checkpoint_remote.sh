@@ -10,6 +10,7 @@ EPISODES_PER_CASE="${EPISODES_PER_CASE:-20}"
 MOVE_TO_OBJECT_EPISODES_PER_TARGET="${MOVE_TO_OBJECT_EPISODES_PER_TARGET:-20}"
 VIDEO_SEARCH_EXTRA_EPISODES="${VIDEO_SEARCH_EXTRA_EPISODES:-40}"
 ARBITRARY_INSTRUCTIONS_COUNT="${ARBITRARY_INSTRUCTIONS_COUNT:-8}"
+MAX_RESET_ATTEMPTS="${MAX_RESET_ATTEMPTS:-5}"
 REQUIRE_COMPLETE_VIDEO_COVERAGE="${REQUIRE_COMPLETE_VIDEO_COVERAGE:-true}"
 
 if [[ ! -d "$CHECKPOINT_DIR" ]]; then
@@ -46,8 +47,10 @@ cmd=(
   --max-scene-objects 4
   --stratify-move-to-object-targets
   --arbitrary-instructions-count "$ARBITRARY_INSTRUCTIONS_COUNT"
+  --max-reset-attempts "$MAX_RESET_ATTEMPTS"
   --record-success-videos
   --record-failure-videos
+  --video-action-overlay
   --no-record-all-success-videos
   --video-coverage instruction
   --video-search-extra-episodes "$VIDEO_SEARCH_EXTRA_EPISODES"

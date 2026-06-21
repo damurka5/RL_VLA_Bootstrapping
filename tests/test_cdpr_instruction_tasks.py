@@ -9,6 +9,7 @@ from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
     INSTRUCTION_TYPES,
     InstructionSpec,
     canonical_object_name,
+    compute_instruction_reward,
     compute_instruction_validation_success,
     init_reward_state,
     sample_instruction,
@@ -226,6 +227,74 @@ class InstructionTextTests(unittest.TestCase):
         self.assertGreater(info["move_to_object_validation_distance_xy"], 0.05)
         self.assertLess(info["move_to_object_validation_distance_xy"], 0.10)
         self.assertAlmostEqual(info["move_to_object_validation_distance_threshold"], 0.10, places=7)
+
+    def test_direct_gripper_open_and_close_instructions_have_dense_success(self):
+        for instruction_type, opening, action_value in (
+            ("open_gripper", 0.9, 1.0),
+            ("close_gripper", 0.1, -1.0),
+        ):
+            with self.subTest(instruction_type=instruction_type):
+                spec = sample_instruction(
+                    target_object=None,
+                    rng=np.random.default_rng(0),
+                    allowed_instruction_types=[instruction_type],
+                )
+                reward_state = init_reward_state(
+                    initial_ee_pos=np.zeros((3,), dtype=np.float32),
+                    initial_obj_pos=np.zeros((3,), dtype=np.float32),
+                )
+                reward, success, info = compute_instruction_reward(
+                    spec=spec,
+                    ee_pos=np.zeros((3,), dtype=np.float32),
+                    obj_pos=np.zeros((3,), dtype=np.float32),
+                    reward_state=reward_state,
+                    action=np.array([0.0, 0.0, 0.0, 0.0, action_value], dtype=np.float32),
+                    gripper_opening=opening,
+                    task_metadata={
+                        "direct_gripper_open_threshold": 0.8,
+                        "direct_gripper_closed_threshold": 0.2,
+                    },
+                )
+
+                self.assertTrue(success)
+                self.assertGreater(reward, 0.0)
+                self.assertEqual(info["direct_actuator_success"], 1.0)
+
+    def test_direct_gripper_yaw_instructions_track_end_effector_rotation(self):
+        class FakeEnv:
+            def __init__(self, yaw):
+                self.yaw = yaw
+
+            def _read_current_yaw(self):
+                return self.yaw
+
+        env = FakeEnv(0.0)
+        spec = sample_instruction(
+            target_object=None,
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["rotate_gripper_clockwise"],
+        )
+        reward_state = init_reward_state(
+            initial_ee_pos=np.zeros((3,), dtype=np.float32),
+            initial_obj_pos=np.zeros((3,), dtype=np.float32),
+        )
+        reward_state.initial_ee_yaw = 0.0
+        reward_state.prev_ee_yaw = 0.0
+        env.yaw = -0.6
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.zeros((3,), dtype=np.float32),
+            obj_pos=np.zeros((3,), dtype=np.float32),
+            reward_state=reward_state,
+            action=np.array([0.0, 0.0, 0.0, -1.0, 0.0], dtype=np.float32),
+            env=env,
+            task_metadata={"direct_yaw_success_angle": 0.5},
+        )
+
+        self.assertTrue(success)
+        self.assertGreater(reward, 0.0)
+        self.assertGreaterEqual(info["direct_yaw_total_signed_angle"], 0.5)
 
 
 if __name__ == "__main__":

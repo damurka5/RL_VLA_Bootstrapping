@@ -33,6 +33,10 @@ INSTRUCTION_TYPES: tuple[str, ...] = (
     "grip_object",
     "release_object",
     "free_object",
+    "open_gripper",
+    "close_gripper",
+    "rotate_gripper_clockwise",
+    "rotate_gripper_counterclockwise",
     "rotate_clockwise",
     "rotate_counterclockwise",
 )
@@ -64,6 +68,10 @@ MOVE_DIRECTIONS: dict[str, np.ndarray] = {
     "grip_object": np.zeros((3,), dtype=np.float32),
     "release_object": np.zeros((3,), dtype=np.float32),
     "free_object": np.zeros((3,), dtype=np.float32),
+    "open_gripper": np.zeros((3,), dtype=np.float32),
+    "close_gripper": np.zeros((3,), dtype=np.float32),
+    "rotate_gripper_clockwise": np.zeros((3,), dtype=np.float32),
+    "rotate_gripper_counterclockwise": np.zeros((3,), dtype=np.float32),
     "rotate_clockwise": np.zeros((3,), dtype=np.float32),
     "rotate_counterclockwise": np.zeros((3,), dtype=np.float32),
 }
@@ -104,6 +112,10 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "grip_object": "grip object",
     "release_object": "release object",
     "free_object": "free object",
+    "open_gripper": "open the gripper",
+    "close_gripper": "close the gripper",
+    "rotate_gripper_clockwise": "rotate the gripper clockwise",
+    "rotate_gripper_counterclockwise": "rotate the gripper counterclockwise",
     "rotate_clockwise": "rotate object clockwise",
     "rotate_counterclockwise": "rotate object counterclockwise",
 }
@@ -135,6 +147,10 @@ INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
     "grip_object": "sum of finger-to-object-edge distances is below the configured dense catch threshold",
     "release_object": "sum of finger-to-object-edge clearances is above the configured dense release threshold",
     "free_object": "sum of finger-to-object-edge clearances is above the configured dense release threshold",
+    "open_gripper": "normalized gripper opening reaches the configured open threshold",
+    "close_gripper": "normalized gripper opening reaches the configured closed threshold",
+    "rotate_gripper_clockwise": "end-effector yaw rotates clockwise by the configured angle",
+    "rotate_gripper_counterclockwise": "end-effector yaw rotates counterclockwise by the configured angle",
     "rotate_clockwise": "target object yaw has changed clockwise by the configured target angle",
     "rotate_counterclockwise": "target object yaw has changed counterclockwise by the configured target angle",
 }
@@ -203,6 +219,21 @@ DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES: tuple[str, ...] = (
 DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES: tuple[str, ...] = (
     *DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
     *DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
+)
+
+DIRECT_GRIPPER_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "open_gripper",
+    "close_gripper",
+)
+
+DIRECT_GRIPPER_YAW_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "rotate_gripper_clockwise",
+    "rotate_gripper_counterclockwise",
+)
+
+DIRECT_ACTUATOR_INSTRUCTION_TYPES: tuple[str, ...] = (
+    *DIRECT_GRIPPER_INSTRUCTION_TYPES,
+    *DIRECT_GRIPPER_YAW_INSTRUCTION_TYPES,
 )
 
 ROTATE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -290,6 +321,8 @@ class RewardState:
     prev_camera_align: Optional[float] = None
     initial_obj_yaw: Optional[float] = None
     prev_obj_yaw: Optional[float] = None
+    initial_ee_yaw: Optional[float] = None
+    prev_ee_yaw: Optional[float] = None
     gripper_closed: bool = False
     grasped: bool = False
     step_count: int = 0
@@ -551,6 +584,18 @@ def compute_instruction_reward(
     ee_pos = np.asarray(ee_pos, dtype=np.float32)
     goal_pos = np.asarray(obj_pos, dtype=np.float32)
     prev_goal_pos = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
+
+    if spec.instruction_type in DIRECT_ACTUATOR_INSTRUCTION_TYPES:
+        return _compute_direct_actuator_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=task_metadata,
+            gripper_opening=gripper_opening,
+            env=env,
+        )
 
     if _use_sparse_binary_reward(task_metadata):
         return _compute_sparse_binary_reward(
@@ -1137,6 +1182,122 @@ def _compute_dense_rotate_reward(
         "action_saturation_max_abs": 0.0,
     }
     return reward, success, info
+
+
+def _compute_direct_actuator_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+    gripper_opening: Optional[float] = None,
+    env: Any | None = None,
+) -> tuple[float, bool, dict[str, float]]:
+    metadata = dict(task_metadata or {})
+    action_arr = np.asarray(action if action is not None else np.zeros((5,)), dtype=np.float32).reshape(-1)
+    reward_state.prev_ee_pos = np.asarray(ee_pos, dtype=np.float32).copy()
+    reward_state.prev_obj_pos = np.asarray(goal_pos, dtype=np.float32).copy()
+    reward_state.prev_camera_align = None
+    reward_state.step_count += 1
+
+    if spec.instruction_type in DIRECT_GRIPPER_INSTRUCTION_TYPES:
+        opening = float(gripper_opening) if gripper_opening is not None else float("nan")
+        if not np.isfinite(opening):
+            opening = 0.0
+        is_open = spec.instruction_type == "open_gripper"
+        open_threshold = float(np.clip(_metadata_float(metadata, "direct_gripper_open_threshold", 0.80), 0.0, 1.0))
+        close_threshold = float(
+            np.clip(_metadata_float(metadata, "direct_gripper_closed_threshold", 0.20), 0.0, 1.0)
+        )
+        target = 1.0 if is_open else 0.0
+        tolerance = max(1e-6, (1.0 - open_threshold) if is_open else close_threshold)
+        error = float(abs(target - opening))
+        progress = float(np.clip(1.0 - error, 0.0, 1.0))
+        success = bool(opening >= open_threshold) if is_open else bool(opening <= close_threshold)
+        action_value = float(action_arr[4]) if action_arr.size >= 5 else 0.0
+        direction_sign = 1.0 if is_open else -1.0
+        correct_action = float(np.clip(direction_sign * action_value, 0.0, 1.0))
+        wrong_action = float(np.clip(-direction_sign * action_value, 0.0, 1.0))
+        reward = float(
+            _metadata_float(metadata, "direct_gripper_progress_weight", 1.0) * progress
+            + _metadata_float(metadata, "direct_gripper_action_weight", 0.10) * correct_action
+            - _metadata_float(metadata, "direct_gripper_wrong_action_penalty", 0.10) * wrong_action
+            + (_metadata_float(metadata, "direct_actuator_success_bonus", 0.0) if success else 0.0)
+        )
+        reward_state.prev_distance = error
+        reward_state.gripper_closed = bool(opening <= close_threshold)
+        return reward, success, {
+            "direct_actuator_reward_mode": 1.0,
+            "direct_actuator_success": float(success),
+            "direct_gripper_opening": float(opening),
+            "direct_gripper_target": float(target),
+            "direct_gripper_error": float(error),
+            "direct_gripper_tolerance": float(tolerance),
+            "direct_gripper_progress": float(progress),
+            "direct_gripper_action": float(action_value),
+            "distance_to_goal": float(error),
+            "distance_reward": float(progress),
+            "orientation_reward": 0.0,
+            "action_saturation_penalty": 0.0,
+            "action_saturation_rate": 0.0,
+            "action_saturation_max_abs": float(abs(action_value)),
+        }
+
+    current_yaw = _read_env_body_yaw(env, None)
+    if current_yaw is None:
+        current_yaw = reward_state.prev_ee_yaw
+    if current_yaw is None:
+        current_yaw = reward_state.initial_ee_yaw
+    if current_yaw is None:
+        current_yaw = 0.0
+    current_yaw = float(current_yaw)
+    if reward_state.initial_ee_yaw is None:
+        reward_state.initial_ee_yaw = current_yaw
+    if reward_state.prev_ee_yaw is None:
+        reward_state.prev_ee_yaw = float(reward_state.initial_ee_yaw)
+
+    direction_sign = -1.0 if spec.instruction_type == "rotate_gripper_clockwise" else 1.0
+    total_signed_rotation = float(
+        direction_sign * _angle_delta(current_yaw, float(reward_state.initial_ee_yaw))
+    )
+    step_signed_rotation = float(
+        direction_sign * _angle_delta(current_yaw, float(reward_state.prev_ee_yaw))
+    )
+    target_angle = max(_metadata_float(metadata, "direct_yaw_success_angle", 0.50), 1e-6)
+    progress = float(np.clip(total_signed_rotation / target_angle, 0.0, 1.0))
+    success = bool(total_signed_rotation >= target_angle)
+    action_value = float(action_arr[3]) if action_arr.size >= 4 else 0.0
+    correct_action = float(np.clip(direction_sign * action_value, 0.0, 1.0))
+    wrong_action = float(np.clip(-direction_sign * action_value, 0.0, 1.0))
+    reward = float(
+        _metadata_float(metadata, "direct_yaw_progress_weight", 1.0) * progress
+        + _metadata_float(metadata, "direct_yaw_step_weight", 0.20)
+        * np.tanh(max(0.0, step_signed_rotation) / max(target_angle * 0.25, 1e-6))
+        + _metadata_float(metadata, "direct_yaw_action_weight", 0.05) * correct_action
+        - _metadata_float(metadata, "direct_yaw_wrong_action_penalty", 0.15) * wrong_action
+        + (_metadata_float(metadata, "direct_actuator_success_bonus", 0.0) if success else 0.0)
+    )
+    reward_state.prev_ee_yaw = current_yaw
+    reward_state.prev_distance = float(max(0.0, target_angle - total_signed_rotation))
+    return reward, success, {
+        "direct_actuator_reward_mode": 2.0,
+        "direct_actuator_success": float(success),
+        "direct_yaw_current": float(current_yaw),
+        "direct_yaw_initial": float(reward_state.initial_ee_yaw),
+        "direct_yaw_total_signed_angle": float(total_signed_rotation),
+        "direct_yaw_step_signed_angle": float(step_signed_rotation),
+        "direct_yaw_target_angle": float(target_angle),
+        "direct_yaw_progress": float(progress),
+        "direct_yaw_action": float(action_value),
+        "distance_to_goal": float(max(0.0, target_angle - total_signed_rotation)),
+        "distance_reward": float(progress),
+        "orientation_reward": float(reward),
+        "action_saturation_penalty": 0.0,
+        "action_saturation_rate": 0.0,
+        "action_saturation_max_abs": float(abs(action_value)),
+    }
 
 
 def _compute_sparse_binary_reward(
@@ -2067,6 +2228,15 @@ def compute_instruction_validation_success(
     if ee_arr.size < 3 or start_arr.size < 3:
         return bool(current_success), {}
 
+    if spec.instruction_type in DIRECT_ACTUATOR_INSTRUCTION_TYPES:
+        direct_success = bool(current_success)
+        if isinstance(reward_info, dict) and "direct_actuator_success" in reward_info:
+            direct_success = bool(float(reward_info.get("direct_actuator_success", 0.0)) >= 0.5)
+        return direct_success, {
+            "validation_success_mode": 7.0,
+            "direct_actuator_validation_success": float(direct_success),
+        }
+
     if spec.instruction_type in DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES:
         dense_success = bool(current_success)
         if isinstance(reward_info, dict) and "dense_gripper_success" in reward_info:
@@ -2095,6 +2265,8 @@ def compute_instruction_validation_success(
             prev_camera_align=reward_state.prev_camera_align,
             initial_obj_yaw=reward_state.initial_obj_yaw,
             prev_obj_yaw=reward_state.prev_obj_yaw,
+            initial_ee_yaw=reward_state.initial_ee_yaw,
+            prev_ee_yaw=reward_state.prev_ee_yaw,
             gripper_closed=bool(reward_state.gripper_closed),
             grasped=bool(reward_state.grasped),
             step_count=int(reward_state.step_count),
@@ -2136,6 +2308,8 @@ def compute_instruction_validation_success(
                 prev_camera_align=reward_state.prev_camera_align,
                 initial_obj_yaw=reward_state.initial_obj_yaw,
                 prev_obj_yaw=reward_state.prev_obj_yaw,
+                initial_ee_yaw=reward_state.initial_ee_yaw,
+                prev_ee_yaw=reward_state.prev_ee_yaw,
                 gripper_closed=bool(reward_state.gripper_closed),
                 grasped=bool(reward_state.grasped),
                 step_count=int(reward_state.step_count),

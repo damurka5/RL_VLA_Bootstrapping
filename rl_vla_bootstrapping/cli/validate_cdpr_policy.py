@@ -16,6 +16,12 @@ from typing import Any, Iterator
 
 import numpy as np
 try:
+    from PIL import Image, ImageDraw, ImageFont
+except Exception:  # pragma: no cover - optional runtime dependency
+    Image = None
+    ImageDraw = None
+    ImageFont = None
+try:
     from tqdm.auto import tqdm
 except Exception:  # pragma: no cover - optional runtime dependency
     tqdm = None
@@ -87,6 +93,18 @@ class EpisodeResult:
     curriculum_shell: int | None = None
     curriculum_shell_count: int | None = None
     metric_episode: bool = True
+    policy_output_calls: int = 0
+    action_steps: int = 0
+    reset_attempts: int = 1
+    simulation_instability: bool = False
+    final_ee_position: tuple[float, ...] = ()
+    final_ee_yaw: float | None = None
+    final_gripper_opening: float | None = None
+    final_gripper_target: float | None = None
+    final_move_to_object_distance_xy: float | None = None
+    min_move_to_object_distance_xy: float | None = None
+    move_to_object_distance_threshold: float | None = None
+    action_trace_path: str | None = None
     video_path: str | None = None
     video_kind: str | None = None
 
@@ -407,6 +425,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Exit non-zero after saving the report if any recorded MP4 fails ffprobe validation.",
     )
     parser.add_argument(
+        "--max-reset-attempts",
+        type=int,
+        default=5,
+        help="Retry randomized episode reset this many times when MuJoCo produces an invalid state.",
+    )
+    parser.add_argument(
+        "--video-action-overlay",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Burn OpenVLA call/chunk/action telemetry into every recorded overview frame.",
+    )
+    parser.add_argument(
         "--require-complete-video-coverage",
         action=argparse.BooleanOptionalAction,
         default=False,
@@ -464,6 +494,10 @@ _INSTRUCTION_TYPE_ALIASES: dict[str, str] = {
     "release_object": "release_object",
     "free": "free_object",
     "free_object": "free_object",
+    "open_gripper": "open_gripper",
+    "close_gripper": "close_gripper",
+    "rotate_gripper_clockwise": "rotate_gripper_clockwise",
+    "rotate_gripper_counterclockwise": "rotate_gripper_counterclockwise",
     "rotate_clockwise": "rotate_clockwise",
     "clockwise": "rotate_clockwise",
     "rotate_counterclockwise": "rotate_counterclockwise",
@@ -569,9 +603,37 @@ _SYNONYM_PROMPT_TEMPLATES: dict[str, tuple[str, ...]] = {
         "stop holding {target}",
         "open the gripper to free {target}",
     ),
+    "open_gripper": (
+        "spread the gripper fingers",
+        "open the fingers fully",
+    ),
+    "close_gripper": (
+        "bring the gripper fingers together",
+        "close the fingers fully",
+    ),
+    "rotate_gripper_clockwise": (
+        "turn the end effector clockwise",
+        "yaw the gripper clockwise",
+    ),
+    "rotate_gripper_counterclockwise": (
+        "turn the end effector counterclockwise",
+        "yaw the gripper counterclockwise",
+    ),
 }
 
 _ARBITRARY_PROMPT_CHECKS: tuple[tuple[str, str, str], ...] = (
+    ("open_gripper", "spread_fingers", "spread the two gripper fingers as far apart as possible"),
+    ("close_gripper", "shut_fingers", "bring both gripper fingers fully together"),
+    (
+        "rotate_gripper_clockwise",
+        "turn_tool_cw",
+        "turn the tool clockwise without translating it",
+    ),
+    (
+        "rotate_gripper_counterclockwise",
+        "turn_tool_ccw",
+        "turn the tool counterclockwise without translating it",
+    ),
     ("move_to_object", "navigate_to_named_item", "navigate the end effector to the {target}"),
     ("grab_object", "secure_named_item", "carefully secure the {target} between the gripper fingers"),
     ("pick_up", "remove_from_surface", "remove the {target} from the table by lifting it"),
@@ -1249,6 +1311,108 @@ def _safe_filename_token(value: str | None) -> str:
     return token.strip("_")
 
 
+def _format_action_vector(values: Any) -> str:
+    arr = np.asarray(values, dtype=np.float32).reshape(-1)
+    return "[" + ", ".join(f"{float(value):+.3f}" for value in arr[:5]) + "]"
+
+
+def _annotate_latest_validation_frame(
+    *,
+    sim: Any,
+    instruction: str,
+    step: int,
+    policy_call: int,
+    chunk_action_index: int,
+    chunk_length: int,
+    new_policy_output: bool,
+    action: np.ndarray,
+    scaled_action: np.ndarray,
+    info: dict[str, Any],
+) -> None:
+    if Image is None or ImageDraw is None:
+        return
+    frames = getattr(sim, "overview_frames", None)
+    if not isinstance(frames, list) or not frames:
+        return
+    frame = np.asarray(frames[-1])
+    if frame.ndim != 3 or frame.shape[2] < 3:
+        return
+
+    image = Image.fromarray(frame[:, :, :3].astype(np.uint8), mode="RGB")
+    draw = ImageDraw.Draw(image, "RGBA")
+    font = ImageFont.load_default() if ImageFont is not None else None
+    ee = info.get("ee_position", ())
+    state_line = (
+        f"EE={_format_action_vector(list(ee)[:3])} "
+        f"yaw={float(info.get('ee_yaw', 0.0)):+.3f} "
+        f"grip={float(info.get('gripper_opening', 0.0)):.3f}"
+        f"->{float(info.get('gripper_target', 0.0)):.3f}"
+    )
+    source = "NEW OPENVLA OUTPUT" if new_policy_output else "cached OpenVLA chunk"
+    lines = [
+        f"{source} | call #{int(policy_call)} | action {int(chunk_action_index) + 1}/{int(chunk_length)}",
+        f"step {int(step)} | {instruction}",
+        f"normalized [x y z yaw grip] = {_format_action_vector(action)}",
+        f"applied    [m m m rad open] = {_format_action_vector(scaled_action)}",
+        state_line,
+    ]
+    line_height = 15
+    box_height = line_height * len(lines) + 10
+    draw.rectangle((0, 0, image.width, box_height), fill=(0, 0, 0, 190))
+    color = (100, 255, 120, 255) if new_policy_output else (255, 255, 255, 255)
+    for index, line in enumerate(lines):
+        draw.text((7, 5 + line_height * index), line, fill=color if index == 0 else (255, 255, 255, 255), font=font)
+    frames[-1] = np.asarray(image)
+
+
+def _scaled_action_vector(action: np.ndarray, config: Any, hold_steps: int | None) -> np.ndarray:
+    control = _control_spec_from_config(config, hold_steps)
+    arr = np.asarray(action, dtype=np.float32).reshape(5)
+    return np.asarray(
+        [
+            arr[0] * float(control.action_step_xyz),
+            arr[1] * float(control.action_step_xyz),
+            arr[2] * float(control.action_step_xyz),
+            arr[3] * float(control.action_step_yaw),
+            arr[4] * float(control.action_step_gripper),
+        ],
+        dtype=np.float32,
+    )
+
+
+def _write_action_trace_csv(output_path: Path, action_trace: list[dict[str, Any]]) -> None:
+    columns = [
+        "step",
+        "policy_call",
+        "new_policy_output",
+        "chunk_action_index",
+        "chunk_length",
+        "action_x",
+        "action_y",
+        "action_z",
+        "action_yaw",
+        "action_gripper",
+        "applied_dx",
+        "applied_dy",
+        "applied_dz",
+        "applied_dyaw",
+        "applied_dgripper",
+        "ee_x",
+        "ee_y",
+        "ee_z",
+        "ee_yaw",
+        "gripper_opening",
+        "gripper_target",
+        "success",
+        "simulation_state_valid",
+    ]
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        for row in action_trace:
+            writer.writerow({column: row.get(column, "") for column in columns})
+
+
 def _validation_episode_video_frames(sim: Any, episode_result: EpisodeResult) -> list[Any]:
     frames = list(getattr(sim, "overview_frames", []) or [])
     if len(frames) != 1:
@@ -1275,8 +1439,41 @@ def _probe_video_file(video_path: Path) -> dict[str, Any]:
 
     ffprobe = shutil.which("ffprobe")
     if not ffprobe:
-        result["error"] = "ffprobe is unavailable; the MP4 stream could not be validated."
-        return result
+        try:
+            import imageio.v2 as imageio
+
+            reader = imageio.get_reader(video_path.as_posix())
+            first_frame = np.asarray(reader.get_data(0))
+            metadata = dict(reader.get_meta_data() or {})
+            try:
+                frame_count = int(reader.count_frames())
+            except Exception:
+                frame_count = int(metadata.get("nframes") or 0)
+            reader.close()
+            fps = float(metadata.get("fps") or 0.0)
+            duration = float(metadata.get("duration") or 0.0)
+            if duration <= 0.0 and fps > 0.0 and frame_count > 0:
+                duration = float(frame_count / fps)
+            height = int(first_frame.shape[0]) if first_frame.ndim >= 2 else 0
+            width = int(first_frame.shape[1]) if first_frame.ndim >= 2 else 0
+            result.update(
+                {
+                    "probe_backend": "imageio",
+                    "codec_name": metadata.get("codec"),
+                    "width": width,
+                    "height": height,
+                    "avg_frame_rate": fps,
+                    "nb_frames": frame_count,
+                    "duration_sec": duration,
+                    "valid": bool(width > 0 and height > 0 and frame_count > 0 and duration > 0.0),
+                }
+            )
+            if not result["valid"]:
+                result["error"] = "imageio could not decode a positive-duration video stream."
+            return result
+        except Exception as exc:
+            result["error"] = f"Neither ffprobe nor imageio could validate the MP4: {exc}"
+            return result
 
     command = [
         ffprobe,
@@ -1353,6 +1550,7 @@ def _save_episode_video(
     instruction_type: str,
     episode_result: EpisodeResult,
     outcome: str,
+    action_trace: list[dict[str, Any]] | None = None,
 ) -> str | None:
     frames = _validation_episode_video_frames(sim, episode_result)
     if not frames or not hasattr(sim, "save_video"):
@@ -1382,12 +1580,17 @@ def _save_episode_video(
     sim.save_video(frames, str(output_path), fps=fps)
 
     summary_path = output_path.with_name(output_path.name.replace("_overview.mp4", "_summary.json"))
+    action_trace_path = output_path.with_name(output_path.name.replace("_overview.mp4", "_actions.csv"))
+    if action_trace:
+        _write_action_trace_csv(action_trace_path, action_trace)
     summary_data = asdict(episode_result)
     summary_data["video_kind"] = str(outcome)
     summary_data["video_path"] = output_path.as_posix()
     summary_data["video_frame_count"] = len(frames)
     summary_data["video_fps"] = fps
     summary_data["video_duration_sec"] = len(frames) / fps
+    summary_data["policy_output_calls"] = int(episode_result.policy_output_calls)
+    summary_data["action_trace_path"] = action_trace_path.as_posix() if action_trace else None
     summary_data["video_probe"] = _probe_video_file(output_path)
     summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
     return output_path.as_posix()
@@ -1597,8 +1800,20 @@ def _write_episode_results_csv(output_path: Path, episode_results: list[EpisodeR
         "steps",
         "reward_total",
         "metric_episode",
+        "policy_output_calls",
+        "action_steps",
+        "reset_attempts",
+        "simulation_instability",
+        "final_ee_position",
+        "final_ee_yaw",
+        "final_gripper_opening",
+        "final_gripper_target",
+        "final_move_to_object_distance_xy",
+        "min_move_to_object_distance_xy",
+        "move_to_object_distance_threshold",
         "video_kind",
         "video_path",
+        "action_trace_path",
     ]
     with output_path.open("w", encoding="utf-8", newline="") as handle:
         writer = csv.DictWriter(handle, fieldnames=columns)
@@ -1606,7 +1821,67 @@ def _write_episode_results_csv(output_path: Path, episode_results: list[EpisodeR
         for item in episode_results:
             row = asdict(item)
             row["scene_objects"] = "|".join(item.scene_objects)
+            row["final_ee_position"] = "|".join(str(value) for value in item.final_ee_position)
             writer.writerow({column: row.get(column, "") for column in columns})
+
+
+def _is_normal_scene_canonical_episode(item: EpisodeResult) -> bool:
+    is_normal_shell = (
+        item.curriculum_shell is None
+        or item.curriculum_shell_count is None
+        or int(item.curriculum_shell) >= int(item.curriculum_shell_count) - 1
+    )
+    return bool(
+        item.metric_episode
+        and item.prompt_kind == "canonical"
+        and item.prompt_variant == "canonical"
+        and is_normal_shell
+    )
+
+
+def _move_to_object_threshold_sweep(
+    episode_results: list[EpisodeResult],
+    thresholds: tuple[float, ...] = (0.025, 0.05, 0.10, 0.15),
+) -> list[dict[str, Any]]:
+    candidates = [
+        item
+        for item in episode_results
+        if item.instruction_type == "move_to_object"
+        and _is_normal_scene_canonical_episode(item)
+        and item.min_move_to_object_distance_xy is not None
+    ]
+    rows: list[dict[str, Any]] = []
+    for threshold in thresholds:
+        successes = sum(
+            float(item.min_move_to_object_distance_xy) <= float(threshold)
+            for item in candidates
+        )
+        rows.append(
+            {
+                "distance_threshold_m": float(threshold),
+                "successes": int(successes),
+                "episodes": int(len(candidates)),
+                "success_rate": float(successes / max(len(candidates), 1)),
+            }
+        )
+    return rows
+
+
+def _write_move_to_object_threshold_sweep(
+    output_path: Path,
+    rows: list[dict[str, Any]],
+) -> None:
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=("distance_threshold_m", "successes", "episodes", "success_rate"),
+        )
+        writer.writeheader()
+        for row in rows:
+            formatted = dict(row)
+            formatted["distance_threshold_m"] = f"{float(row['distance_threshold_m']):.6f}"
+            formatted["success_rate"] = f"{float(row['success_rate']):.6f}"
+            writer.writerow(formatted)
 
 
 def _write_video_audit(
@@ -1692,16 +1967,22 @@ def _write_validation_report(
     metric_results: list[EpisodeResult],
     all_results: list[EpisodeResult],
     instruction_rows: list[dict[str, Any]],
+    normal_canonical_rows: list[dict[str, Any]],
     shell_rows: list[dict[str, Any]],
     prompt_rows: list[dict[str, Any]],
     target_rows: list[dict[str, Any]],
     video_probes: list[dict[str, Any]],
     video_coverage: list[dict[str, Any]],
+    move_to_object_threshold_rows: list[dict[str, Any]],
 ) -> Path:
     successes = sum(1 for item in metric_results if item.success)
     arbitrary = [item for item in all_results if item.prompt_kind == "arbitrary"]
     invalid_videos = [item for item in video_probes if not bool(item.get("valid"))]
     incomplete_coverage = [item for item in video_coverage if not bool(item.get("complete"))]
+    total_policy_calls = sum(int(item.policy_output_calls) for item in all_results)
+    total_action_steps = sum(int(item.action_steps) for item in all_results)
+    reset_retries = sum(max(0, int(item.reset_attempts) - 1) for item in all_results)
+    instability_episodes = sum(bool(item.simulation_instability) for item in all_results)
     lines = [
         "# CDPR checkpoint validation report",
         "",
@@ -1709,6 +1990,10 @@ def _write_validation_report(
         f"- Metric episodes: `{len(metric_results)}`",
         f"- Overall successes: `{successes}`",
         f"- Overall success rate: `{successes / max(len(metric_results), 1):.4f}`",
+        f"- Exact OpenVLA output generations: `{total_policy_calls}`",
+        f"- Applied policy actions: `{total_action_steps}`",
+        f"- Reset retries after invalid simulation state: `{reset_retries}`",
+        f"- Episodes truncated for simulation instability: `{instability_episodes}`",
         f"- Recorded videos: `{len(video_probes)}`",
         f"- Invalid videos: `{len(invalid_videos)}`",
         f"- Incomplete success/failure video coverage entries: `{len(incomplete_coverage)}`",
@@ -1717,6 +2002,16 @@ def _write_validation_report(
         "",
         _markdown_table(
             instruction_rows,
+            ("instruction_type", "successes", "episodes", "success_rate", "mean_steps"),
+        ),
+        "",
+        "## Canonical normal-scene success rates",
+        "",
+        "These are the deployment-like scores: canonical wording on the final normal reset, "
+        "without easier reverse-curriculum shells.",
+        "",
+        _markdown_table(
+            normal_canonical_rows,
             ("instruction_type", "successes", "episodes", "success_rate", "mean_steps"),
         ),
         "",
@@ -1760,6 +2055,15 @@ def _write_validation_report(
             ),
         ),
         "",
+        "## Move-to-object tolerance sweep",
+        "",
+        "The same canonical normal-scene trajectories are rescored by their minimum XY distance.",
+        "",
+        _markdown_table(
+            move_to_object_threshold_rows,
+            ("distance_threshold_m", "successes", "episodes", "success_rate"),
+        ),
+        "",
         "## Arbitrary recorded prompt checks",
         "",
         _markdown_table(
@@ -1793,11 +2097,13 @@ def _write_validation_report(
         "- `validation_manifest.json`",
         "- `episode_results.csv`",
         "- `instruction_success_rates.csv`",
+        "- `normal_scene_canonical_success_rates.csv`",
         "- `instruction_shell_success_rates.csv`",
         "- `instruction_prompt_success_rates.csv`",
         "- `evaluation_case_success_rates.csv`",
         "- `target_object_success_rates.csv`",
         "- `instruction_text_success_rates.csv`",
+        "- `move_to_object_threshold_sweep.csv`",
         "- `video_coverage.csv`",
         "- `video_validation.csv` and `video_validation.json`",
         "- `videos/`",
@@ -1806,6 +2112,34 @@ def _write_validation_report(
     report_path = run_dir / "validation_report.md"
     report_path.write_text("\n".join(lines), encoding="utf-8")
     return report_path
+
+
+def _reset_validation_env_with_retries(
+    *,
+    env: CDPRLanguageRLEnv,
+    seed: int | None,
+    reset_options: dict[str, Any],
+    max_attempts: int,
+    quiet: bool,
+) -> tuple[Any, dict[str, Any], int]:
+    last_error: Exception | None = None
+    for attempt in range(1, max(1, int(max_attempts)) + 1):
+        retry_seed = None if seed is None else int(seed) + (attempt - 1) * 1_000_003
+        try:
+            with _silence_output(quiet):
+                obs, info = env.reset(seed=retry_seed, options=reset_options)
+            if not bool(info.get("simulation_state_valid", True)):
+                raise RuntimeError(
+                    f"invalid reset state: {info.get('simulation_state_reason', 'unknown')}"
+                )
+            return obs, dict(info), attempt
+        except Exception as exc:
+            last_error = exc
+            with _silence_output(quiet):
+                env.close()
+    raise RuntimeError(
+        f"CDPR validation reset failed after {max(1, int(max_attempts))} attempts: {last_error}"
+    ) from last_error
 
 
 def _run_instruction_validation(
@@ -1885,8 +2219,13 @@ def _run_instruction_validation(
                 bucket.force_video or needs_success_video or needs_failure_video
             )
             seed = _episode_seed(base_seed, instruction_index, episode_index)
-            with _silence_output(bool(args.progress_only)):
-                _obs, reset_info = env.reset(seed=seed, options=reset_options)
+            _obs, reset_info, reset_attempts = _reset_validation_env_with_retries(
+                env=env,
+                seed=seed,
+                reset_options=reset_options,
+                max_attempts=int(args.max_reset_attempts),
+                quiet=bool(args.progress_only),
+            )
             canonical_instruction = str(
                 reset_info.get("language_instruction", INSTRUCTION_TEXT[instruction_type])
             )
@@ -1903,8 +2242,13 @@ def _run_instruction_validation(
             terminated = False
             truncated = False
             final_info = dict(reset_info)
+            policy_output_calls = 0
+            action_steps = 0
+            action_trace: list[dict[str, Any]] = []
+            min_move_to_object_distance_xy = float("inf")
 
             while not (terminated or truncated):
+                new_policy_output = False
                 if chunk_index >= len(current_chunk):
                     with _silence_output(bool(args.progress_only)):
                         current_chunk = _predict_policy_chunk(
@@ -1914,8 +2258,11 @@ def _run_instruction_validation(
                             config=config,
                         )
                     chunk_index = 0
+                    policy_output_calls += 1
+                    new_policy_output = True
 
-                action = np.asarray(current_chunk[chunk_index], dtype=np.float32).reshape(5)
+                action_index = int(chunk_index)
+                action = np.asarray(current_chunk[action_index], dtype=np.float32).reshape(5)
                 chunk_index += 1
                 max_abs = float(np.max(np.abs(action)))
                 if max_abs > float(args.action_guard) and not args.progress_only:
@@ -1927,6 +2274,60 @@ def _run_instruction_validation(
                 with _silence_output(bool(args.progress_only)):
                     _obs, reward, terminated, truncated, final_info = env.step(action)
                 reward_total += float(reward)
+                action_steps += 1
+                distance_xy_raw = final_info.get("move_to_object_validation_distance_xy")
+                if distance_xy_raw is not None:
+                    try:
+                        min_move_to_object_distance_xy = min(
+                            min_move_to_object_distance_xy,
+                            float(distance_xy_raw),
+                        )
+                    except (TypeError, ValueError):
+                        pass
+
+                scaled_action = _scaled_action_vector(action, config, args.hold_steps)
+                ee_position = list(final_info.get("ee_position", ()))
+                trace_row = {
+                    "step": int(action_steps),
+                    "policy_call": int(policy_output_calls),
+                    "new_policy_output": bool(new_policy_output),
+                    "chunk_action_index": int(action_index),
+                    "chunk_length": int(len(current_chunk)),
+                    "action_x": float(action[0]),
+                    "action_y": float(action[1]),
+                    "action_z": float(action[2]),
+                    "action_yaw": float(action[3]),
+                    "action_gripper": float(action[4]),
+                    "applied_dx": float(scaled_action[0]),
+                    "applied_dy": float(scaled_action[1]),
+                    "applied_dz": float(scaled_action[2]),
+                    "applied_dyaw": float(scaled_action[3]),
+                    "applied_dgripper": float(scaled_action[4]),
+                    "ee_x": float(ee_position[0]) if len(ee_position) >= 1 else "",
+                    "ee_y": float(ee_position[1]) if len(ee_position) >= 2 else "",
+                    "ee_z": float(ee_position[2]) if len(ee_position) >= 3 else "",
+                    "ee_yaw": float(final_info.get("ee_yaw", 0.0)),
+                    "gripper_opening": float(final_info.get("gripper_opening", 0.0)),
+                    "gripper_target": float(final_info.get("gripper_target", 0.0)),
+                    "success": bool(final_info.get("success", False)),
+                    "simulation_state_valid": bool(
+                        final_info.get("simulation_state_valid", True)
+                    ),
+                }
+                action_trace.append(trace_row)
+                if env.capture_frames and bool(args.video_action_overlay):
+                    _annotate_latest_validation_frame(
+                        sim=env.sim,
+                        instruction=instruction,
+                        step=action_steps,
+                        policy_call=policy_output_calls,
+                        chunk_action_index=action_index,
+                        chunk_length=len(current_chunk),
+                        new_policy_output=new_policy_output,
+                        action=action,
+                        scaled_action=scaled_action,
+                        info=dict(final_info),
+                    )
 
             episode_result = EpisodeResult(
                 episode_index=int(episode_index),
@@ -1972,6 +2373,31 @@ def _run_instruction_validation(
                 curriculum_shell=bucket.curriculum_shell,
                 curriculum_shell_count=bucket.curriculum_shell_count,
                 metric_episode=bool(metric_episode),
+                policy_output_calls=int(policy_output_calls),
+                action_steps=int(action_steps),
+                reset_attempts=int(reset_attempts),
+                simulation_instability=bool(final_info.get("simulation_instability", False)),
+                final_ee_position=tuple(
+                    float(value) for value in final_info.get("ee_position", ())
+                ),
+                final_ee_yaw=float(final_info.get("ee_yaw", 0.0)),
+                final_gripper_opening=float(final_info.get("gripper_opening", 0.0)),
+                final_gripper_target=float(final_info.get("gripper_target", 0.0)),
+                final_move_to_object_distance_xy=(
+                    None
+                    if final_info.get("move_to_object_validation_distance_xy") is None
+                    else float(final_info["move_to_object_validation_distance_xy"])
+                ),
+                min_move_to_object_distance_xy=(
+                    None
+                    if not np.isfinite(min_move_to_object_distance_xy)
+                    else float(min_move_to_object_distance_xy)
+                ),
+                move_to_object_distance_threshold=(
+                    None
+                    if final_info.get("move_to_object_validation_distance_threshold") is None
+                    else float(final_info["move_to_object_validation_distance_threshold"])
+                ),
             )
             episode_results.append(episode_result)
             successes += int(episode_result.success)
@@ -1995,6 +2421,7 @@ def _run_instruction_validation(
                             instruction_type=instruction_type,
                             episode_result=episode_result,
                             outcome="success",
+                            action_trace=action_trace,
                         )
                     if saved_video_path and coverage_entry.get("success") is None:
                         coverage_entry["success"] = saved_video_path
@@ -2019,6 +2446,7 @@ def _run_instruction_validation(
                             instruction_type=instruction_type,
                             episode_result=episode_result,
                             outcome="failure",
+                            action_trace=action_trace,
                         )
                     if saved_video_path and coverage_entry.get("failure") is None:
                         coverage_entry["failure"] = saved_video_path
@@ -2033,10 +2461,12 @@ def _run_instruction_validation(
                 clear_sim_recording_buffers(env.sim)
 
             if saved_video_path:
+                trace_path = saved_video_path.replace("_overview.mp4", "_actions.csv")
                 episode_result = replace(
                     episode_result,
                     video_path=saved_video_path,
                     video_kind=saved_video_kind,
+                    action_trace_path=trace_path,
                 )
                 episode_results[-1] = episode_result
 
@@ -2131,6 +2561,8 @@ def main() -> int:
         raise ValueError("--synonyms-per-instruction cannot be negative.")
     if int(args.video_search_extra_episodes) < 0:
         raise ValueError("--video-search-extra-episodes cannot be negative.")
+    if int(args.max_reset_attempts) <= 0:
+        raise ValueError("--max-reset-attempts must be positive.")
 
     if not args.progress_only:
         print(f"Run directory: {run_dir}")
@@ -2154,6 +2586,8 @@ def main() -> int:
         print(f"Record failure videos: {bool(args.record_failure_videos)}")
         print(f"Video coverage level: {args.video_coverage}")
         print(f"Video search extra episodes: {int(args.video_search_extra_episodes)}")
+        print(f"Maximum reset attempts: {int(args.max_reset_attempts)}")
+        print(f"Video action overlay: {bool(args.video_action_overlay)}")
         print(f"Validation success distance: {float(args.success_distance):.3f} m")
         print(
             "Move-to-object validation XY threshold: "
@@ -2322,6 +2756,13 @@ def main() -> int:
         metric_episode_results,
         group_fields=("instruction_type",),
     )
+    normal_canonical_results = [
+        item for item in metric_episode_results if _is_normal_scene_canonical_episode(item)
+    ]
+    normal_canonical_rows = _aggregate_episode_results(
+        normal_canonical_results,
+        group_fields=("instruction_type",),
+    )
     shell_rows = _aggregate_episode_results(
         metric_episode_results,
         group_fields=("instruction_type", "curriculum_shell"),
@@ -2344,11 +2785,17 @@ def main() -> int:
         metric_episode_results,
         group_fields=("instruction_type", "target_object_catalog"),
     )
+    move_to_object_threshold_rows = _move_to_object_threshold_sweep(metric_episode_results)
 
     csv_path = run_dir / "instruction_success_rates.csv"
     _write_success_rate_csv(csv_path, instruction_summaries)
     text_csv_path = run_dir / "instruction_text_success_rates.csv"
     _write_instruction_text_csv(text_csv_path, instruction_text_summaries)
+    _write_grouped_success_rate_csv(
+        run_dir / "normal_scene_canonical_success_rates.csv",
+        normal_canonical_rows,
+        group_fields=("instruction_type",),
+    )
     _write_grouped_success_rate_csv(
         run_dir / "instruction_shell_success_rates.csv",
         shell_rows,
@@ -2376,6 +2823,10 @@ def main() -> int:
         group_fields=("instruction_type", "target_object_catalog"),
     )
     _write_episode_results_csv(run_dir / "episode_results.csv", all_episode_results)
+    _write_move_to_object_threshold_sweep(
+        run_dir / "move_to_object_threshold_sweep.csv",
+        move_to_object_threshold_rows,
+    )
 
     video_probes, video_coverage = _write_video_audit(
         run_dir=run_dir,
@@ -2389,11 +2840,13 @@ def main() -> int:
         metric_results=metric_episode_results,
         all_results=all_episode_results,
         instruction_rows=instruction_rows,
+        normal_canonical_rows=normal_canonical_rows,
         shell_rows=shell_rows,
         prompt_rows=prompt_rows,
         target_rows=target_rows,
         video_probes=video_probes,
         video_coverage=video_coverage,
+        move_to_object_threshold_rows=move_to_object_threshold_rows,
     )
 
     instruction_episodes = {
@@ -2430,6 +2883,8 @@ def main() -> int:
         "record_failure_videos": bool(args.record_failure_videos),
         "video_coverage_level": str(args.video_coverage),
         "video_search_extra_episodes": int(args.video_search_extra_episodes),
+        "max_reset_attempts": int(args.max_reset_attempts),
+        "video_action_overlay": bool(args.video_action_overlay),
         "success_distance": float(args.success_distance),
         "move_to_object_success_distance": float(args.move_to_object_success_distance),
         "directional_displacement_threshold": float(args.directional_displacement_threshold),
@@ -2459,7 +2914,19 @@ def main() -> int:
             for bucket in [*metric_buckets, *arbitrary_buckets]
         ],
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
+        "normal_scene_canonical_summaries": normal_canonical_rows,
         "instruction_text_summaries": [asdict(summary) for summary in instruction_text_summaries],
+        "move_to_object_threshold_sweep": move_to_object_threshold_rows,
+        "total_policy_output_calls": int(
+            sum(item.policy_output_calls for item in all_episode_results)
+        ),
+        "total_action_steps": int(sum(item.action_steps for item in all_episode_results)),
+        "total_reset_retries": int(
+            sum(max(0, item.reset_attempts - 1) for item in all_episode_results)
+        ),
+        "simulation_instability_episodes": int(
+            sum(bool(item.simulation_instability) for item in all_episode_results)
+        ),
         "video_registry": video_registry,
         "video_validation": video_probes,
         "video_coverage": video_coverage,

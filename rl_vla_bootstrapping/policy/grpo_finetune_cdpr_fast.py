@@ -51,6 +51,7 @@ class _FastWrapperArgs:
     resume_actor_stats: bool = True
     first_stage_grpo_actor_stats_path: Path | None = None
     second_stage_grpo_actor_stats_path: Path | None = None
+    sparse_stage_init_log_std: float | None = None
     ddp_timeout_seconds: int = 0
     ddp_rollout_sync_interval: int = 0
     lr_scheduler: str = "constant"
@@ -139,6 +140,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     resume_actor_stats = True
     first_stage_grpo_actor_stats_path: Path | None = None
     second_stage_grpo_actor_stats_path: Path | None = None
+    sparse_stage_init_log_std: float | None = None
     lr_scheduler = "constant"
     lr_warmup_updates = 0
     lr_min_factor = 1.0
@@ -206,6 +208,15 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
             if idx + 1 >= len(argv):
                 raise SystemExit(f"{arg} expects a path.")
             first_stage_grpo_actor_stats_path = Path(argv[idx + 1]).expanduser()
+            idx += 2
+            continue
+        if arg in ("--sparse_stage_init_log_std", "--sparse-stage-init-log-std"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects a float.")
+            try:
+                sparse_stage_init_log_std = float(argv[idx + 1])
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects a float.") from exc
             idx += 2
             continue
         if arg in (
@@ -336,6 +347,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
         resume_actor_stats=resume_actor_stats,
         first_stage_grpo_actor_stats_path=first_stage_grpo_actor_stats_path,
         second_stage_grpo_actor_stats_path=second_stage_grpo_actor_stats_path,
+        sparse_stage_init_log_std=sparse_stage_init_log_std,
         ddp_timeout_seconds=ddp_timeout_seconds,
         ddp_rollout_sync_interval=ddp_rollout_sync_interval,
         lr_scheduler=lr_scheduler,
@@ -516,7 +528,7 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
             "        for update in range(1, args.total_updates + 1):\n"
             "            policy.eval()\n",
             "        for update in range(1, args.total_updates + 1):\n"
-            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, optimizer=optimizer, args=args, update=update, run_dir=run_dir)\n"
             "            policy.eval()\n",
         ),
         (
@@ -761,6 +773,15 @@ def _transform_external_grpo_source_for_ddp_sync(source: str) -> str:
     update_anchors = (
         (
             "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_lchol_pre_update(policy, optimizer=optimizer, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n",
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, optimizer=optimizer, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n",
+        ),
+        (
+            "        for update in range(1, args.total_updates + 1):\n"
             "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
             "            policy.eval()\n",
             "        for update in range(1, args.total_updates + 1):\n"
@@ -833,6 +854,17 @@ def _transform_external_grpo_source_for_lr_scheduler(source: str) -> str:
         (
             "        for update in range(1, args.total_updates + 1):\n"
             "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, optimizer=optimizer, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n"
+        ),
+        (
+            "        for update in range(1, args.total_updates + 1):\n"
+            "            _rlvla_ddp_sync(\"pre_update\", update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            policy.eval()\n"
+        ),
+        (
+            "        for update in range(1, args.total_updates + 1):\n"
             "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
             "            policy.eval()\n"
         ),
@@ -843,7 +875,7 @@ def _transform_external_grpo_source_for_lr_scheduler(source: str) -> str:
         ),
         (
             "        for update in range(1, args.total_updates + 1):\n"
-            "            _rlvla_lchol_pre_update(policy, args=args, update=update, run_dir=run_dir)\n"
+            "            _rlvla_lchol_pre_update(policy, optimizer=optimizer, args=args, update=update, run_dir=run_dir)\n"
             "            policy.eval()\n"
         ),
         "        for update in range(1, args.total_updates + 1):\n            policy.eval()\n",
@@ -2315,6 +2347,9 @@ def _patch_lchol_runtime(
     second_stage_grpo_actor_stats_path = (
         fast_args.second_stage_grpo_actor_stats_path if fast_args is not None else None
     )
+    sparse_stage_init_log_std = (
+        fast_args.sparse_stage_init_log_std if fast_args is not None else None
+    )
     module._rlvla_lchol_runtime = None
 
     original_parse_args = module.parse_args
@@ -2473,26 +2508,47 @@ def _patch_lchol_runtime(
     def _policy_core(policy):
         return getattr(policy, "module", policy)
 
-    def _reset_policy_grpo_stats(policy, args) -> bool:
+    def _log_std_values(log_std) -> list[float]:
+        if log_std is None:
+            return []
+        values = getattr(log_std, "values", None)
+        if values is not None:
+            return [float(value) for value in values]
+        try:
+            tensor = log_std.detach().reshape(-1)
+            if hasattr(tensor, "cpu"):
+                tensor = tensor.cpu()
+            if hasattr(tensor, "tolist"):
+                return [float(value) for value in tensor.tolist()]
+        except Exception:
+            pass
+        return []
+
+    def _reset_policy_grpo_stats(policy, args) -> str | None:
         core = _policy_core(policy)
         log_std = getattr(core, "log_std", None)
         if log_std is None:
-            return False
+            return None
         initial = getattr(core, "_rlvla_grpo_initial_log_std", None)
         try:
             with torch.no_grad():
-                if initial is not None and hasattr(initial, "to"):
+                if sparse_stage_init_log_std is not None:
+                    log_std.fill_(float(sparse_stage_init_log_std))
+                    source = "sparse_stage_init_log_std"
+                elif initial is not None and hasattr(initial, "to"):
                     target = initial.to(device=log_std.device, dtype=log_std.dtype).reshape(log_std.shape)
                     log_std.copy_(target)
+                    source = "policy_initial_log_std"
                 else:
                     raw_init = float(getattr(args, "init_log_std", -1.2))
                     log_std.fill_(raw_init)
+                    source = "trainer_init_log_std"
         except Exception as exc:
             print(f"[grpo_actor_stats] Failed to re-initialize at dense-to-sparse switch: {exc}", flush=True)
-            return False
-        return True
+            return None
+        return source
 
-    def _load_or_reset_policy_grpo_stats(policy, args, *, update: int) -> bool:
+    def _load_or_reset_policy_grpo_stats(policy, args, *, update: int) -> str | None:
         core = _policy_core(policy)
         if second_stage_grpo_actor_stats_path is not None:
             resolved = _resolve_grpo_actor_stats_path(second_stage_grpo_actor_stats_path)
@@ -2506,10 +2562,10 @@ def _patch_lchol_runtime(
                 f"update={int(update)} path={resolved}",
                 flush=True,
             )
-            return True
+            return f"checkpoint:{resolved}"
         return _reset_policy_grpo_stats(policy, args)
 
-    def _pre_update(policy, *, args, update: int, run_dir) -> None:
+    def _pre_update(policy, *, optimizer=None, args, update: int, run_dir) -> None:
         runtime = _runtime()
         if runtime is None:
             return
@@ -2522,14 +2578,36 @@ def _patch_lchol_runtime(
         consume_reset = getattr(runtime, "consume_grpo_stats_reset_request", None)
         if not callable(consume_reset) or not bool(consume_reset()):
             return
-        if _load_or_reset_policy_grpo_stats(policy, args, update=int(update)):
-            if second_stage_grpo_actor_stats_path is not None:
-                return
-            print(
-                "[grpo_actor_stats] Re-initialized at dense-to-sparse stage switch "
-                f"update={int(update)} init_log_std={float(getattr(args, 'init_log_std', -1.2)):.4f}",
-                flush=True,
-            )
+        core = _policy_core(policy)
+        log_std = getattr(core, "log_std", None)
+        before = _log_std_values(log_std)
+        source = _load_or_reset_policy_grpo_stats(policy, args, update=int(update))
+        if source is None:
+            return
+        optimizer_state_cleared = False
+        if optimizer is not None and log_std is not None:
+            state = getattr(optimizer, "state", None)
+            if isinstance(state, dict) and log_std in state:
+                state.pop(log_std, None)
+                optimizer_state_cleared = True
+        after = _log_std_values(log_std)
+        event = {
+            "update": int(update),
+            "source": str(source),
+            "before_log_std": before,
+            "after_log_std": after,
+            "optimizer_state_cleared": bool(optimizer_state_cleared),
+        }
+        event_path = Path(run_dir) / "grpo_stage_transition.jsonl"
+        event_path.parent.mkdir(parents=True, exist_ok=True)
+        with event_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(event, sort_keys=True) + "\n")
+        print(
+            "[grpo_actor_stats] Sparse-stage exploration initialized "
+            f"update={int(update)} source={source} before={before} after={after} "
+            f"optimizer_state_cleared={optimizer_state_cleared}",
+            flush=True,
+        )
 
     module._rlvla_lchol_build_runtime = _build_runtime
     module._rlvla_lchol_set_runtime = _set_runtime

@@ -48,6 +48,7 @@ from .rl_instruction_tasks import (
     DEFAULT_CONTAINER_OBJECTS,
     DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
     DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
+    DIRECT_GRIPPER_YAW_INSTRUCTION_TYPES,
     INSTRUCTION_TYPES,
     ROTATE_OBJECT_INSTRUCTION_TYPES,
     _read_env_body_yaw,
@@ -248,12 +249,22 @@ def _infer_instruction_type_from_text(instruction: str) -> str | None:
         return "release_object"
     if text.startswith("free "):
         return "free_object"
+    if text in {"open gripper", "open the gripper", "open the fingers"}:
+        return "open_gripper"
+    if text in {"close gripper", "close the gripper", "close the fingers"}:
+        return "close_gripper"
+    if ("gripper" in text or "end effector" in text or "tool" in text) and text.endswith(
+        " counterclockwise"
+    ):
+        return "rotate_gripper_counterclockwise"
+    if ("gripper" in text or "end effector" in text or "tool" in text) and text.endswith(" clockwise"):
+        return "rotate_gripper_clockwise"
     if text.startswith("pick up "):
         return "pick_up"
-    if text.startswith("rotate ") and text.endswith(" clockwise"):
-        return "rotate_clockwise"
     if text.startswith("rotate ") and text.endswith(" counterclockwise"):
         return "rotate_counterclockwise"
+    if text.startswith("rotate ") and text.endswith(" clockwise"):
+        return "rotate_clockwise"
     if text.startswith("push ") and text.endswith(" left"):
         return "push_left"
     if text.startswith("push ") and text.endswith(" right"):
@@ -1660,6 +1671,18 @@ class CDPRLanguageRLEnv(_EnvBase):
                     rng=self.np_random,
                 )
             )
+            hold_current_pose = getattr(self.sim, "hold_current_pose", None)
+            if callable(hold_current_pose):
+                hold_current_pose(warm_steps=0)
+
+        self._initialize_direct_actuator_episode_state()
+        state_valid, state_reason = self._simulation_state_health()
+        if not state_valid:
+            raise RuntimeError(
+                "Invalid CDPR state after episode reset"
+                f" (instruction={self._instruction_spec.instruction_type}, "
+                f"shell={self._curriculum_shell}, reason={state_reason})."
+            )
 
         ee0 = self._get_ee_position()
         self._goal_position = self._compute_instruction_goal(
@@ -1674,6 +1697,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         )
         reward_target_pos = self._current_manipulated_object_position(default=self._goal_position)
         self._reward_state = init_reward_state(ee0, reward_target_pos)
+        initial_ee_yaw = self._read_current_yaw()
+        self._reward_state.initial_ee_yaw = float(initial_ee_yaw)
+        self._reward_state.prev_ee_yaw = float(initial_ee_yaw)
         if self._instruction_spec.instruction_type in ROTATE_OBJECT_INSTRUCTION_TYPES:
             initial_yaw = _read_env_body_yaw(self, self._target_body_name)
             if initial_yaw is not None:
@@ -1706,6 +1732,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         info.update(self._curriculum_reset_info)
         self._last_reset_profile["mujoco_reset_time_s"] = float(time.perf_counter() - reset_start)
         info.update(self._last_reset_profile)
+        info["simulation_state_valid"] = True
+        info["simulation_state_reason"] = ""
         info["success"] = False
         return obs, info
 
@@ -1721,6 +1749,32 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         action = np.clip(action, -1.0, 1.0)
         self._apply_action(action)
+
+        state_valid, state_reason = self._simulation_state_health()
+        if not state_valid:
+            self._step_count += 1
+            obs = {
+                key: np.nan_to_num(value, nan=0.0, posinf=0.0, neginf=0.0).astype(np.float32)
+                for key, value in self._get_obs().items()
+            }
+            info = self._base_info()
+            info.update(
+                {
+                    "success": False,
+                    "reward": float(
+                        _metadata_float(self._task_metadata, "simulation_instability_penalty", -1.0)
+                    ),
+                    "step": int(self._step_count),
+                    "terminated": False,
+                    "truncated": True,
+                    "env_done": True,
+                    "episode_timeout": False,
+                    "simulation_state_valid": False,
+                    "simulation_state_reason": str(state_reason),
+                    "simulation_instability": True,
+                }
+            )
+            return obs, float(info["reward"]), False, True, info
 
         ee = self._get_ee_position()
         goal_pos = self._current_target_reference_position()
@@ -1810,6 +1864,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         info["caught_object_is_target"] = bool(caught_is_target)
         info["last_caught_object_body"] = self._last_caught_body
         info["last_caught_object_catalog"] = self._last_caught_catalog
+        info["simulation_state_valid"] = True
+        info["simulation_state_reason"] = ""
+        info["simulation_instability"] = False
         return obs, float(reward), terminated, truncated, info
 
     def close(self):
@@ -2815,15 +2872,105 @@ class CDPRLanguageRLEnv(_EnvBase):
     def _sample_episode_ee_start(self, options: Optional[dict[str, Any]] = None) -> np.ndarray:
         requested = (options or {}).get("ee_start")
         if requested is not None:
-            return _coerce_ee_start(requested)
+            return self._clamp_ee_target(_coerce_ee_start(requested))
 
         ee_start = self._default_ee_start()
         if not self.randomize_ee_start:
-            return ee_start
+            return self._clamp_ee_target(ee_start)
 
         ee_start[0] = float(self.np_random.uniform(*self.ee_start_x_bounds))
         ee_start[1] = float(self.np_random.uniform(*self.ee_start_y_bounds))
-        return ee_start
+        return self._clamp_ee_target(ee_start)
+
+    def _ee_workspace_bounds(self) -> tuple[tuple[float, float], tuple[float, float]]:
+        metadata = getattr(self, "_task_metadata", {})
+        x_bounds = _metadata_float_pair(
+            metadata,
+            "ee_workspace_x_bounds",
+            getattr(self, "ee_start_x_bounds", DEFAULT_RANDOM_EE_START_X_BOUNDS),
+        )
+        y_bounds = _metadata_float_pair(
+            metadata,
+            "ee_workspace_y_bounds",
+            getattr(self, "ee_start_y_bounds", DEFAULT_RANDOM_EE_START_Y_BOUNDS),
+        )
+        return x_bounds, y_bounds
+
+    def _clamp_ee_target(self, xyz: Sequence[float] | np.ndarray) -> np.ndarray:
+        target = np.asarray(clamp_xyz(np.asarray(xyz, dtype=np.float32).reshape(3)), dtype=np.float32)
+        x_bounds, y_bounds = self._ee_workspace_bounds()
+        target[0] = float(np.clip(target[0], min(x_bounds), max(x_bounds)))
+        target[1] = float(np.clip(target[1], min(y_bounds), max(y_bounds)))
+        ee_min_z = float(getattr(self, "_ee_min_z", MIN_EE_START_Z))
+        if np.isfinite(ee_min_z):
+            target[2] = max(float(target[2]), ee_min_z)
+        return target
+
+    def _simulation_state_health(self) -> tuple[bool, str]:
+        if self.sim is None:
+            return False, "simulation_missing"
+        metadata = getattr(self, "_task_metadata", {})
+        data = getattr(self.sim, "data", None)
+        for name in ("qpos", "qvel", "qacc", "ctrl"):
+            values = getattr(data, name, None)
+            if values is None:
+                continue
+            arr = np.asarray(values, dtype=np.float64).reshape(-1)
+            if arr.size and not np.all(np.isfinite(arr)):
+                return False, f"nonfinite_{name}"
+
+        qvel_limit = max(1.0, _metadata_float(metadata, "simulation_qvel_limit", 50.0))
+        qacc_limit = max(1.0, _metadata_float(metadata, "simulation_qacc_limit", 1.0e5))
+        if data is not None and getattr(data, "qvel", None) is not None:
+            qvel = np.asarray(data.qvel, dtype=np.float64).reshape(-1)
+            if qvel.size and float(np.max(np.abs(qvel))) > qvel_limit:
+                return False, "excessive_qvel"
+        if data is not None and getattr(data, "qacc", None) is not None:
+            qacc = np.asarray(data.qacc, dtype=np.float64).reshape(-1)
+            if qacc.size and float(np.max(np.abs(qacc))) > qacc_limit:
+                return False, "excessive_qacc"
+
+        try:
+            ee = np.asarray(self._get_ee_position(), dtype=np.float64).reshape(3)
+        except Exception:
+            return False, "ee_position_unavailable"
+        if not np.all(np.isfinite(ee)):
+            return False, "nonfinite_ee_position"
+        x_bounds, y_bounds = self._ee_workspace_bounds()
+        margin = max(0.0, _metadata_float(metadata, "simulation_workspace_margin", 0.03))
+        if not (
+            min(x_bounds) - margin <= float(ee[0]) <= max(x_bounds) + margin
+            and min(y_bounds) - margin <= float(ee[1]) <= max(y_bounds) + margin
+        ):
+            return False, "ee_outside_workspace"
+
+        object_x_bounds = _metadata_float_pair(
+            metadata,
+            "object_state_x_bounds",
+            (-0.40, 0.40),
+        )
+        object_y_bounds = _metadata_float_pair(
+            metadata,
+            "object_state_y_bounds",
+            (-0.40, 0.40),
+        )
+        object_z_max = _metadata_float(metadata, "object_state_z_max", 0.80)
+        for body_name in getattr(self, "_object_body_names", ()):
+            try:
+                pos = np.asarray(self._get_body_position(body_name), dtype=np.float64).reshape(3)
+            except Exception:
+                continue
+            if not np.all(np.isfinite(pos)):
+                return False, f"nonfinite_object:{body_name}"
+            if not (
+                min(object_x_bounds) <= float(pos[0]) <= max(object_x_bounds)
+                and min(object_y_bounds) <= float(pos[1]) <= max(object_y_bounds)
+                and float(getattr(self, "_support_surface_z", 0.0)) - 0.10
+                <= float(pos[2])
+                <= float(object_z_max)
+            ):
+                return False, f"object_outside_workspace:{body_name}"
+        return True, ""
 
     def _sample_episode_ee_yaw(self, options: Optional[dict[str, Any]] = None) -> float | None:
         requested = (options or {}).get("ee_yaw")
@@ -2832,6 +2979,20 @@ class CDPRLanguageRLEnv(_EnvBase):
         if not bool(getattr(self, "randomize_ee_yaw", False)):
             return None
         return float(self.np_random.uniform(*getattr(self, "ee_yaw_bounds", DEFAULT_RANDOM_EE_YAW_BOUNDS)))
+
+    def _initialize_direct_actuator_episode_state(self) -> None:
+        instruction = getattr(getattr(self, "_instruction_spec", None), "instruction_type", "")
+        if instruction == "open_gripper":
+            self._force_gripper_opening(0.0)
+        elif instruction == "close_gripper":
+            self._force_gripper_opening(1.0)
+        elif instruction in DIRECT_GRIPPER_YAW_INSTRUCTION_TYPES:
+            start_angle = _metadata_float(
+                getattr(self, "_task_metadata", {}),
+                "direct_yaw_start_angle",
+                0.0,
+            )
+            self._set_ee_yaw(float(start_angle))
 
     def _allowed_instruction_candidates(self) -> tuple[str, ...]:
         if self.instruction_types:
@@ -3388,7 +3549,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             target[2] = max(float(target[2]), float(self._ee_spawn_z))
         if np.isfinite(self._ee_min_z):
             target[2] = max(float(target[2]), float(self._ee_min_z))
-        target = np.asarray(clamp_xyz(target), dtype=np.float32)
+        target = self._clamp_ee_target(target)
         self._set_ee_target(target)
 
         moved_with_goto = False
@@ -3907,10 +4068,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         else:
             target = ee + dxyz
 
-        target = clamp_xyz(target)
-        if np.isfinite(self._ee_min_z):
-            target[2] = max(float(target[2]), float(self._ee_min_z))
-        target = target.astype(np.float32)
+        target = self._clamp_ee_target(target)
         self._set_ee_target(target)
         self._locked_target_xyz = target.copy()
 
@@ -3963,6 +4121,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         return obs
 
     def _base_info(self) -> dict[str, Any]:
+        ee_position = self._get_ee_position()
         live_goal_position = self._current_target_reference_position()
         live_goal_direction = self._current_goal_motion_direction(goal_pos=live_goal_position)
         target_object_position = self._current_manipulated_object_position(default=live_goal_position)
@@ -4010,6 +4169,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             "second_reference_object_position": [float(x) for x in second_reference_object_position.tolist()],
             "language_instruction": self._instruction_spec.text,
             "instruction_type": self._instruction_spec.instruction_type,
+            "ee_position": [float(x) for x in ee_position.tolist()],
+            "ee_yaw": float(self._read_current_yaw()),
             "goal_position": [float(x) for x in live_goal_position.tolist()],
             "goal_motion_direction": [float(x) for x in live_goal_direction.tolist()],
             "goal_region": dict(self._goal_region),

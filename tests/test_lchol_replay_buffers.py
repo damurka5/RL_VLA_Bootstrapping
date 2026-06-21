@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import os
 import unittest
+from unittest import mock
 
 import numpy as np
 
@@ -85,6 +87,26 @@ class LCHOLReplayBufferTests(unittest.TestCase):
             metrics["reverse_frontier/shell_success_rate/put_into_plate/shell_02"],
             0.42,
         )
+
+    def test_sparse_start_requests_stage_specific_grpo_stats_initialization(self):
+        with mock.patch.dict(
+            os.environ,
+            {
+                "RLVLA_TASK_METADATA_JSON": (
+                    '{"lchol_start_stage":"sparse",'
+                    '"sparse_stage_instruction_types":["move_to_object"]}'
+                )
+            },
+        ):
+            runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=CDPRLCHOLSpec(),
+                available_options=("move_to_object",),
+                seed=0,
+            )
+
+        self.assertTrue(runtime.consume_grpo_stats_reset_request())
+        self.assertFalse(runtime.consume_grpo_stats_reset_request())
 
 
 if __name__ == "__main__":

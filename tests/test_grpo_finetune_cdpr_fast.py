@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import os
 import sys
 import tempfile
@@ -403,6 +404,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
                 "/tmp/stage1_grpo_actor_stats.pt",
                 "--stage2-grpo-actor-stats-path",
                 "/tmp/stage2_grpo_actor_stats.pt",
+                "--sparse-stage-init-log-std",
+                "-0.7",
                 "--ddp_timeout_seconds",
                 "14400",
                 "--ddp_rollout_sync_interval",
@@ -426,6 +429,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertFalse(fast_args.resume_actor_stats)
         self.assertEqual(fast_args.first_stage_grpo_actor_stats_path, Path("/tmp/stage1_grpo_actor_stats.pt"))
         self.assertEqual(fast_args.second_stage_grpo_actor_stats_path, Path("/tmp/stage2_grpo_actor_stats.pt"))
+        self.assertAlmostEqual(fast_args.sparse_stage_init_log_std, -0.7)
         self.assertEqual(fast_args.ddp_timeout_seconds, 14400)
         self.assertEqual(fast_args.ddp_rollout_sync_interval, 5)
         self.assertEqual(fast_args.lr_scheduler, "cosine")
@@ -801,22 +805,35 @@ class FastGRPOWrapperTests(unittest.TestCase):
 
         runtime = FakeRuntime()
         policy = types.SimpleNamespace(log_std=FakeLogStd())
+        optimizer = types.SimpleNamespace(state={policy.log_std: {"exp_avg": [1.0, 1.0]}})
         module._rlvla_lchol_runtime = runtime
 
-        module._rlvla_lchol_pre_update(
-            policy,
-            args=types.SimpleNamespace(init_log_std=-1.7),
-            update=4,
-            run_dir=Path("/tmp/run"),
-        )
+        with tempfile.TemporaryDirectory() as tmp:
+            module._rlvla_lchol_pre_update(
+                policy,
+                optimizer=optimizer,
+                args=types.SimpleNamespace(init_log_std=-1.7),
+                update=4,
+                run_dir=Path(tmp),
+            )
+            events = [
+                json.loads(line)
+                for line in (Path(tmp) / "grpo_stage_transition.jsonl")
+                .read_text(encoding="utf-8")
+                .splitlines()
+            ]
 
-        self.assertEqual(runtime.synced, "/tmp/run")
+        self.assertTrue(runtime.synced)
         self.assertEqual(policy.log_std.values, [-1.7, -1.7])
+        self.assertNotIn(policy.log_std, optimizer.state)
+        self.assertTrue(events[-1]["optimizer_state_cleared"])
+        self.assertEqual(events[-1]["after_log_std"], [-1.7, -1.7])
         module._rlvla_lchol_pre_update(
             policy,
+            optimizer=optimizer,
             args=types.SimpleNamespace(init_log_std=-0.3),
             update=5,
-            run_dir=Path("/tmp/run"),
+            run_dir=Path(tempfile.gettempdir()),
         )
         self.assertEqual(policy.log_std.values, [-1.7, -1.7])
 

@@ -71,6 +71,30 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertAlmostEqual(float(data.qvel[1]), 0.0, places=6)
         self.assertAlmostEqual(env._yaw, 0.42, places=6)
 
+    def test_direct_actuator_episodes_start_from_nontrivial_opposite_state(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {"direct_yaw_start_angle": 0.15}
+        gripper_calls: list[float] = []
+        yaw_calls: list[float] = []
+        env._force_gripper_opening = lambda value: gripper_calls.append(float(value))
+        env._set_ee_yaw = lambda value: yaw_calls.append(float(value))
+
+        for instruction_type in (
+            "open_gripper",
+            "close_gripper",
+            "rotate_gripper_clockwise",
+            "rotate_gripper_counterclockwise",
+        ):
+            env._instruction_spec = type(
+                "Instruction",
+                (),
+                {"instruction_type": instruction_type},
+            )()
+            env._initialize_direct_actuator_episode_state()
+
+        self.assertEqual(gripper_calls, [0.0, 1.0])
+        self.assertEqual(yaw_calls, [0.15, 0.15])
+
     def test_instruction_text_can_infer_type_and_object_bindings(self):
         from robots.cdpr.cdpr_dataset.rl_cdpr_env import (
             _infer_instruction_object_options,
@@ -85,6 +109,16 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertEqual(
             _infer_instruction_type_from_text("rotate apple counterclockwise"),
             "rotate_counterclockwise",
+        )
+        self.assertEqual(_infer_instruction_type_from_text("open the gripper"), "open_gripper")
+        self.assertEqual(_infer_instruction_type_from_text("close the gripper"), "close_gripper")
+        self.assertEqual(
+            _infer_instruction_type_from_text("rotate the gripper clockwise"),
+            "rotate_gripper_clockwise",
+        )
+        self.assertEqual(
+            _infer_instruction_type_from_text("rotate the gripper counterclockwise"),
+            "rotate_gripper_counterclockwise",
         )
         self.assertEqual(_infer_instruction_type_from_text("move apple in front of pear"), "move_in_front_of_object")
         self.assertEqual(

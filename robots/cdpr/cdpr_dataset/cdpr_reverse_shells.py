@@ -197,19 +197,19 @@ def _apply_grab_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> d
         return {}
     if shell_id == 0:
         xy_distance = _uniform_range(rng, (0.000, 0.010))
-        z_clearance = _uniform_range(rng, (0.020, 0.035))
+        z_clearance = _uniform_range(rng, (0.105, 0.120))
         gripper = 1.0
     elif shell_id == 1:
         xy_distance = _uniform_range(rng, (0.000, 0.015))
-        z_clearance = _uniform_range(rng, (0.010, 0.020))
+        z_clearance = _uniform_range(rng, (0.095, 0.110))
         gripper = 1.0
     elif shell_id == 2:
         xy_distance = _uniform_range(rng, (0.000, 0.020))
-        z_clearance = _uniform_range(rng, (0.050, 0.100))
+        z_clearance = _uniform_range(rng, (0.120, 0.160))
         gripper = 1.0
     else:
         xy_distance = _uniform_range(rng, (0.100, 0.200))
-        z_clearance = _uniform_range(rng, (0.050, 0.100))
+        z_clearance = _uniform_range(rng, (0.120, 0.160))
         gripper = 1.0
     direction = _unit_xy(rng)
     ee = np.asarray(target, dtype=np.float32).copy()
@@ -423,10 +423,15 @@ def _ee_task_height(env: Any, base: np.ndarray, *, clearance: float) -> float:
 
 
 def _move_ee(env: Any, xyz: np.ndarray) -> None:
-    target = np.asarray(clamp_xyz(np.asarray(xyz, dtype=np.float32).reshape(3)), dtype=np.float32)
-    ee_min = float(getattr(env, "_ee_min_z", float("-inf")))
-    if np.isfinite(ee_min):
-        target[2] = max(float(target[2]), ee_min)
+    target_raw = np.asarray(xyz, dtype=np.float32).reshape(3)
+    clamp_target = getattr(env, "_clamp_ee_target", None)
+    if callable(clamp_target):
+        target = np.asarray(clamp_target(target_raw), dtype=np.float32).reshape(3)
+    else:
+        target = np.asarray(clamp_xyz(target_raw), dtype=np.float32)
+        ee_min = float(getattr(env, "_ee_min_z", float("-inf")))
+        if np.isfinite(ee_min):
+            target[2] = max(float(target[2]), ee_min)
     if hasattr(env, "_set_ee_target"):
         env._set_ee_target(target)
     sim = getattr(env, "sim", None)
@@ -444,6 +449,12 @@ def _move_ee(env: Any, xyz: np.ndarray) -> None:
                 sim.run_simulation_step(capture_frame=False)
             except Exception:
                 break
+    hold_current_pose = getattr(sim, "hold_current_pose", None)
+    if callable(hold_current_pose):
+        try:
+            hold_current_pose(warm_steps=0)
+        except Exception:
+            pass
     if hasattr(env, "_locked_target_xyz"):
         env._locked_target_xyz = target.astype(np.float32)
     if hasattr(env, "_episode_ee_start"):
@@ -470,9 +481,9 @@ def _teleport_ee_free_joint(env: Any, target: np.ndarray) -> bool:
         sim.data.qpos[qadr : qadr + 3] = np.asarray(target, dtype=float).reshape(3)
         sim.data.qpos[qadr + 3 : qadr + 7] = current_quat / max(float(np.linalg.norm(current_quat)), 1e-9)
         if hasattr(sim.data, "qvel") and hasattr(sim.model, "jnt_dofadr"):
-            dadr = int(sim.model.jnt_dofadr[int(joint_id)])
-            if 0 <= dadr < len(sim.data.qvel):
-                sim.data.qvel[dadr : min(dadr + 6, len(sim.data.qvel))] = 0.0
+            sim.data.qvel[:] = 0.0
+        if hasattr(sim.data, "qacc_warmstart"):
+            sim.data.qacc_warmstart[:] = 0.0
         mj.mj_forward(sim.model, sim.data)
         if hasattr(sim, "set_target_position"):
             sim.set_target_position(np.asarray(target, dtype=float).reshape(3))
@@ -481,6 +492,9 @@ def _teleport_ee_free_joint(env: Any, target: np.ndarray) -> bool:
         sync = getattr(sim, "_sync_controller_geometry_from_state", None)
         if callable(sync):
             sync()
+        hold_current_pose = getattr(sim, "hold_current_pose", None)
+        if callable(hold_current_pose):
+            hold_current_pose(warm_steps=0)
         return True
     except Exception:
         return False
@@ -577,7 +591,7 @@ def _set_body(env: Any, body_name: str, xyz: np.ndarray) -> bool:
 def _set_target_held_at(env: Any, *, object_pos: np.ndarray) -> dict[str, Any]:
     target_body = str(getattr(env, "_target_body_name", ""))
     target_catalog = str(getattr(env, "_target_catalog_name", ""))
-    requested_object_pos = np.asarray(clamp_xyz(object_pos), dtype=np.float32)
+    requested_object_pos = _clamp_object_position(env, object_pos)
     measurement = _target_measurement(env, target_body)
     gripper_opening = _held_gripper_opening(env, target_body)
     _force_gripper(env, gripper_opening)
@@ -610,7 +624,7 @@ def _set_target_held_at(env: Any, *, object_pos: np.ndarray) -> dict[str, Any]:
                 hold_center = _hold_center(env)
 
     if hold_center is not None:
-        object_pos = np.asarray(clamp_xyz(hold_center + hold_offset), dtype=np.float32)
+        object_pos = _clamp_object_position(env, hold_center + hold_offset)
     else:
         object_pos = requested_object_pos
 
@@ -645,6 +659,22 @@ def _set_target_held_at(env: Any, *, object_pos: np.ndarray) -> dict[str, Any]:
             else float("nan")
         ),
     }
+
+
+def _clamp_object_position(env: Any, xyz: np.ndarray) -> np.ndarray:
+    target = np.asarray(clamp_xyz(np.asarray(xyz, dtype=np.float32).reshape(3)), dtype=np.float32)
+    metadata = getattr(env, "_task_metadata", {}) or {}
+    x_bounds = metadata.get("object_state_x_bounds", metadata.get("object_spawn_x_bounds", (-0.30, 0.30)))
+    y_bounds = metadata.get("object_state_y_bounds", metadata.get("object_spawn_y_bounds", (-0.30, 0.30)))
+    try:
+        target[0] = float(np.clip(target[0], min(float(x_bounds[0]), float(x_bounds[1])), max(float(x_bounds[0]), float(x_bounds[1]))))
+        target[1] = float(np.clip(target[1], min(float(y_bounds[0]), float(y_bounds[1])), max(float(y_bounds[0]), float(y_bounds[1]))))
+    except Exception:
+        target[0] = float(np.clip(target[0], -0.30, 0.30))
+        target[1] = float(np.clip(target[1], -0.30, 0.30))
+    support = float(getattr(env, "_support_surface_z", 0.0))
+    target[2] = max(float(target[2]), support + 0.01)
+    return target
 
 
 def _near_object_ee(

@@ -159,7 +159,9 @@ class LCHOLGRPORuntime:
             self._dense_gate_open_reason = "configured_sparse_start"
         else:
             self._dense_gate_open_reason = "initially_armed" if self.dense_gate_armed else ""
-        self._grpo_stats_reset_pending = False
+        # A sparse-only continuation still needs a stage-specific exploration
+        # distribution instead of silently keeping dense-stage actor statistics.
+        self._grpo_stats_reset_pending = bool(self.start_sparse)
         per_option_capacity = max(1, int(config.hindsight_replay_capacity) // max(1, len(self.available_options)))
         self.replay = PerOptionReplayBuffer(per_option_capacity)
         self.curriculum = StrictSuccessCurriculum(

@@ -21,8 +21,8 @@ remote:
     RLVLA_CDPR_COMPILED_MODEL_CACHE_MAX_SIZE: "8"
     TOKENIZERS_PARALLELISM: "false"
   notes:
-    - Adapter/action-head/actor-stat weights resume from `/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000`.
-    - This continuation starts directly in the sparse/binary second stage and runs the remaining 50 sparse updates.
+    - Adapter/action-head/actor-stat weights resume from the evaluated step `0048000`.
+    - The recovery run first calibrates direct gripper/yaw language primitives, then opens the sparse reverse-frontier stage.
     - Rollout TensorBoard scalars are emitted every 8 global environment steps, plus update summaries every optimizer update.
 
 assets:
@@ -110,10 +110,10 @@ task:
       put_in_front_of_object,
       put_behind_object,
       move_between_objects,
-      catch_object,
-      grip_object,
-      release_object,
-      free_object,
+      open_gripper,
+      close_gripper,
+      rotate_gripper_clockwise,
+      rotate_gripper_counterclockwise,
     ]
   target_objects:
     [
@@ -185,14 +185,14 @@ task:
     dense_stage_max_updates: 40
     sparse_stage_max_updates: 50
     dense_stage_open_on_max_updates: true
-    lchol_start_stage: sparse
+    lchol_start_stage: dense
     dense_stage_instruction_types:
       [
         move_to_object,
-        catch_object,
-        grip_object,
-        release_object,
-        free_object,
+        open_gripper,
+        close_gripper,
+        rotate_gripper_clockwise,
+        rotate_gripper_counterclockwise,
       ]
     sparse_stage_instruction_types:
       [
@@ -228,11 +228,17 @@ task:
       action_saturation_penalty_weight: 0.20
       action_saturation_exponent: 1.0
       action_saturation_include_gripper: true
-      target_at_gripper_start_probability: 1.0
-      caught_object_start_probability: 1.0
-      target_at_gripper_start_instruction_types: [catch_object, grip_object]
-      caught_object_start_instruction_types: [release_object, free_object]
-      force_caught_object_start_instruction_types: [release_object, free_object]
+      direct_gripper_open_threshold: 0.80
+      direct_gripper_closed_threshold: 0.20
+      direct_gripper_progress_weight: 1.0
+      direct_gripper_action_weight: 0.10
+      direct_gripper_wrong_action_penalty: 0.10
+      direct_yaw_success_angle: 0.50
+      direct_yaw_start_angle: 0.0
+      direct_yaw_progress_weight: 1.0
+      direct_yaw_step_weight: 0.20
+      direct_yaw_action_weight: 0.05
+      direct_yaw_wrong_action_penalty: 0.15
       gripper_edge_reward_scale: 0.015
       gripper_edge_success_threshold: 0.010
       release_success_edge_clearance: 0.035
@@ -295,8 +301,16 @@ task:
     move_to_object_validation_distance_threshold: 0.025
     action_saturation_threshold: 0.85
     action_saturation_penalty_weight: 0.0
-    object_spawn_x_bounds: [-0.30, 0.30]
-    object_spawn_y_bounds: [-0.30, 0.30]
+    ee_workspace_x_bounds: [-0.28, 0.28]
+    ee_workspace_y_bounds: [-0.28, 0.28]
+    object_state_x_bounds: [-0.34, 0.34]
+    object_state_y_bounds: [-0.34, 0.34]
+    simulation_workspace_margin: 0.02
+    simulation_qvel_limit: 50.0
+    simulation_qacc_limit: 100000.0
+    simulation_instability_penalty: -1.0
+    object_spawn_x_bounds: [-0.22, 0.22]
+    object_spawn_y_bounds: [-0.22, 0.22]
     object_spawn_center_xy: [0.0, 0.0]
     object_spawn_center_exclusion_radius: 0.14
     object_spawn_min_gap: 0.04
@@ -364,12 +378,12 @@ training:
       nproc_per_node: 2
     args:
       external_grpo_script: vla-scripts/grpo_finetune_cdpr.py
-      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/vla_cdpr_adapter
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260618_221123/rl/step_0048000/vla_cdpr_adapter
       train_loaded_adapter: true
-      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/action_head_cdpr.pt
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260618_221123/rl/step_0048000/action_head_cdpr.pt
       resume_actor_stats: true
-      first_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/grpo_actor_stats.pt
-      second_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/grpo_actor_stats.pt
+      first_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260618_221123/rl/step_0048000/grpo_actor_stats.pt
+      sparse_stage_init_log_std: -0.70
       # Complex CDPR rollouts and reverse-frontier validation can skew DDP ranks far past PyTorch's 10-minute default.
       ddp_timeout_seconds: 86400
       ddp_rollout_sync_interval: 5
@@ -400,7 +414,7 @@ training:
       lchol_reverse_sample_frontier_probability: 0.80
       lchol_reverse_sample_rehearsal_probability: 0.20
       num_parallel_envs: 10
-      total_updates: 50
+      total_updates: 90
       rollout_steps: 240
       ppo_epochs: 2
       minibatch_size: 12
@@ -425,8 +439,8 @@ training:
       lock_non_commanded_axes: false
       lock_non_commanded_axes_threshold: 0.05
       randomize_ee_start: true
-      ee_start_x_bounds: [-0.25, 0.25]
-      ee_start_y_bounds: [-0.25, 0.25]
+      ee_start_x_bounds: [-0.18, 0.18]
+      ee_start_y_bounds: [-0.18, 0.18]
       ee_start_z: 0.15
       randomize_ee_yaw: true
       ee_yaw_bounds: [-3.141592653589793, 3.141592653589793]

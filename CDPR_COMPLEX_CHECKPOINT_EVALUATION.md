@@ -32,20 +32,28 @@ The output directory contains:
 - `validation_report.md`
 - `validation_manifest.json`
 - `instruction_success_rates.csv`
+- `normal_scene_canonical_success_rates.csv`
 - `instruction_shell_success_rates.csv`
 - `instruction_prompt_success_rates.csv`
 - `evaluation_case_success_rates.csv`
 - `target_object_success_rates.csv`
 - `instruction_text_success_rates.csv`
+- `move_to_object_threshold_sweep.csv`
 - `episode_results.csv`
 - `video_coverage.csv`
 - `video_validation.csv` and `video_validation.json`
-- `videos/`
+- `videos/`, including an `*_actions.csv` trace beside every recorded MP4
 - `evaluation.log` with the exact shell-escaped command
 
-All MP4 files are checked with `ffprobe`. By default the launcher exits non-zero after saving all
-reports if a video is invalid or if any instruction still lacks either a successful or failed
-rollout video.
+Each recorded frame identifies whether the action is a newly generated OpenVLA output or a cached
+action from the current chunk. It also shows the exact normalized five-dimensional action, its
+scaled physical command, the policy-call count, chunk index, end-effector pose, yaw, and gripper
+state. `episode_results.csv` and the video summary JSON files record exact OpenVLA call counts.
+
+MP4 files are checked with `ffprobe` when available and with an `imageio` decode fallback otherwise.
+By default the launcher exits non-zero after saving all reports if a video is invalid or if any
+instruction still lacks either a successful or failed rollout video. Invalid reset states are
+randomized and retried up to five times by default.
 
 Useful overrides:
 
