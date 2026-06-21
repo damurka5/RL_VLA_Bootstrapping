@@ -427,7 +427,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-reset-attempts",
         type=int,
-        default=5,
+        default=10,
         help="Retry randomized episode reset this many times when MuJoCo produces an invalid state.",
     )
     parser.add_argument(
@@ -523,6 +523,30 @@ _INSTRUCTION_TYPE_ALIASES: dict[str, str] = {
 }
 
 _SYNONYM_PROMPT_TEMPLATES: dict[str, tuple[str, ...]] = {
+    "move_left": (
+        "move the end effector left",
+        "shift the gripper to the left",
+    ),
+    "move_right": (
+        "move the end effector right",
+        "shift the gripper to the right",
+    ),
+    "move_top": (
+        "move the end effector forward",
+        "shift the gripper away from the robot",
+    ),
+    "move_bottom": (
+        "move the end effector backward",
+        "shift the gripper toward the robot",
+    ),
+    "move_up": (
+        "raise the end effector",
+        "lift the gripper upward",
+    ),
+    "move_down": (
+        "lower the end effector",
+        "bring the gripper downward",
+    ),
     "move_to_object": (
         "go to {target}",
         "move the gripper toward {target}",
@@ -622,6 +646,12 @@ _SYNONYM_PROMPT_TEMPLATES: dict[str, tuple[str, ...]] = {
 }
 
 _ARBITRARY_PROMPT_CHECKS: tuple[tuple[str, str, str], ...] = (
+    ("move_left", "translate_x_negative", "translate the tool along the negative x direction"),
+    ("move_right", "translate_x_positive", "translate the tool along the positive x direction"),
+    ("move_top", "translate_y_positive", "translate the tool straight forward"),
+    ("move_bottom", "translate_y_negative", "translate the tool straight backward"),
+    ("move_up", "translate_z_positive", "raise the tool vertically without moving sideways"),
+    ("move_down", "translate_z_negative", "lower the tool vertically without moving sideways"),
     ("open_gripper", "spread_fingers", "spread the two gripper fingers as far apart as possible"),
     ("close_gripper", "shut_fingers", "bring both gripper fingers fully together"),
     (
@@ -897,6 +927,16 @@ def _instruction_validation_task_metadata(
     target_object: str | None = None,
 ) -> dict[str, Any]:
     metadata = _validation_task_metadata(config, args)
+    dense_instruction_types = {
+        str(item)
+        for item in metadata.get("dense_stage_instruction_types", ())
+    }
+    dense_stage_metadata = metadata.get("dense_stage_metadata")
+    if (
+        instruction_type in dense_instruction_types
+        and isinstance(dense_stage_metadata, dict)
+    ):
+        metadata.update(dense_stage_metadata)
     multi_object_scenes = bool(getattr(args, "multi_object_scenes", False))
     if multi_object_scenes:
         min_objects = max(2, int(getattr(args, "min_scene_objects", 3)))
@@ -2123,6 +2163,7 @@ def _reset_validation_env_with_retries(
     quiet: bool,
 ) -> tuple[Any, dict[str, Any], int]:
     last_error: Exception | None = None
+    errors: list[str] = []
     for attempt in range(1, max(1, int(max_attempts)) + 1):
         retry_seed = None if seed is None else int(seed) + (attempt - 1) * 1_000_003
         try:
@@ -2135,10 +2176,13 @@ def _reset_validation_env_with_retries(
             return obs, dict(info), attempt
         except Exception as exc:
             last_error = exc
+            errors.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")
             with _silence_output(quiet):
                 env.close()
+    error_summary = " | ".join(errors)
     raise RuntimeError(
-        f"CDPR validation reset failed after {max(1, int(max_attempts))} attempts: {last_error}"
+        f"CDPR validation reset failed after {max(1, int(max_attempts))} attempts. "
+        f"Failures: {error_summary or last_error}"
     ) from last_error
 
 

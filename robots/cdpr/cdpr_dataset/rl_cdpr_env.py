@@ -1676,7 +1676,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                 hold_current_pose(warm_steps=0)
 
         self._initialize_direct_actuator_episode_state()
-        state_valid, state_reason = self._simulation_state_health()
+        state_valid, state_reason = self._simulation_state_health(check_acceleration=False)
         if not state_valid:
             raise RuntimeError(
                 "Invalid CDPR state after episode reset"
@@ -2906,7 +2906,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             target[2] = max(float(target[2]), ee_min_z)
         return target
 
-    def _simulation_state_health(self) -> tuple[bool, str]:
+    def _simulation_state_health(self, *, check_acceleration: bool = True) -> tuple[bool, str]:
         if self.sim is None:
             return False, "simulation_missing"
         metadata = getattr(self, "_task_metadata", {})
@@ -2925,7 +2925,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             qvel = np.asarray(data.qvel, dtype=np.float64).reshape(-1)
             if qvel.size and float(np.max(np.abs(qvel))) > qvel_limit:
                 return False, "excessive_qvel"
-        if data is not None and getattr(data, "qacc", None) is not None:
+        if check_acceleration and data is not None and getattr(data, "qacc", None) is not None:
             qacc = np.asarray(data.qacc, dtype=np.float64).reshape(-1)
             if qacc.size and float(np.max(np.abs(qacc))) > qacc_limit:
                 return False, "excessive_qacc"

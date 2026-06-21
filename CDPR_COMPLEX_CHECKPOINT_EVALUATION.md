@@ -16,7 +16,7 @@ The launcher defaults to:
 It evaluates every instruction configured in
 `configs/examples/cdpr_openvla_grpo_complex_tasks.yaml`. Reverse-frontier tasks are evaluated on
 every shell. Canonical prompts are evaluated on every shell, two synonymous prompts are evaluated
-on each task's final normal-reset shell, and eight additional free-form prompts are recorded as
+on each task's final normal-reset shell, and ten additional free-form prompts are recorded as
 qualitative checks.
 
 Every validation scene uses three or four randomized objects. `move_to_object` remains stratified by
@@ -53,7 +53,8 @@ state. `episode_results.csv` and the video summary JSON files record exact OpenV
 MP4 files are checked with `ffprobe` when available and with an `imageio` decode fallback otherwise.
 By default the launcher exits non-zero after saving all reports if a video is invalid or if any
 instruction still lacks either a successful or failed rollout video. Invalid reset states are
-randomized and retried up to five times by default.
+randomized and retried up to ten times by default. If every attempt fails, the raised error lists
+the reason for each attempt; this is an environment/reset failure, not a policy failure.
 
 Useful overrides:
 

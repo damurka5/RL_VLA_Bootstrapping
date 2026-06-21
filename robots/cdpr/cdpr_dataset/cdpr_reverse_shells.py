@@ -178,7 +178,7 @@ def _apply_move_to_object_shell(env: Any, *, shell_id: int, rng: np.random.Gener
     target = _body_position(env, getattr(env, "_target_body_name", ""))
     if target is None:
         return {}
-    ranges = ((0.010, 0.020), (0.050, 0.100), (0.150, 0.250))
+    ranges = ((0.010, 0.020), (0.020, 0.050), (0.050, 0.100))
     distance = _uniform_range(rng, ranges[min(shell_id, len(ranges) - 1)])
     direction = _unit_xy(rng)
     ee = np.asarray(target, dtype=np.float32).copy()
@@ -200,16 +200,16 @@ def _apply_grab_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> d
         z_clearance = _uniform_range(rng, (0.105, 0.120))
         gripper = 1.0
     elif shell_id == 1:
-        xy_distance = _uniform_range(rng, (0.000, 0.015))
-        z_clearance = _uniform_range(rng, (0.095, 0.110))
+        xy_distance = _uniform_range(rng, (0.010, 0.025))
+        z_clearance = _uniform_range(rng, (0.110, 0.125))
         gripper = 1.0
     elif shell_id == 2:
-        xy_distance = _uniform_range(rng, (0.000, 0.020))
-        z_clearance = _uniform_range(rng, (0.120, 0.160))
+        xy_distance = _uniform_range(rng, (0.025, 0.050))
+        z_clearance = _uniform_range(rng, (0.120, 0.140))
         gripper = 1.0
     else:
-        xy_distance = _uniform_range(rng, (0.100, 0.200))
-        z_clearance = _uniform_range(rng, (0.120, 0.160))
+        xy_distance = _uniform_range(rng, (0.050, 0.100))
+        z_clearance = _uniform_range(rng, (0.130, 0.160))
         gripper = 1.0
     direction = _unit_xy(rng)
     ee = np.asarray(target, dtype=np.float32).copy()
@@ -231,8 +231,8 @@ def _apply_put_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> di
         return {}
 
     if shell_id <= 3:
-        lateral_ranges = ((0.000, 0.010), (0.000, 0.015), (0.050, 0.100), (0.150, 0.250))
-        height_ranges = ((0.010, 0.020), (0.050, 0.100), (0.050, 0.100), (0.080, 0.140))
+        lateral_ranges = ((0.000, 0.010), (0.015, 0.040), (0.040, 0.080), (0.080, 0.140))
+        height_ranges = ((0.010, 0.020), (0.020, 0.050), (0.040, 0.080), (0.060, 0.100))
         lateral = _uniform_range(rng, lateral_ranges[shell_id])
         height = _uniform_range(rng, height_ranges[shell_id])
         direction = _unit_xy(rng)
@@ -277,7 +277,7 @@ def _apply_push_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> d
     reward_initial = np.asarray(target, dtype=np.float32).copy()
     reward_initial[axis] -= sign * current_progress
 
-    behind_ranges = ((0.000, 0.005), (0.010, 0.020), (0.050, 0.100), (0.150, 0.200))
+    behind_ranges = ((0.000, 0.005), (0.005, 0.020), (0.020, 0.050), (0.050, 0.100))
     behind = _uniform_range(rng, behind_ranges[min(shell_id, len(behind_ranges) - 1)])
     ee = np.asarray(target, dtype=np.float32).copy()
     ee[axis] -= sign * (behind + 0.020)
@@ -304,7 +304,7 @@ def _apply_binary_relation_shell(env: Any, *, shell_id: int, rng: np.random.Gene
     desired[2] = max(float(target[2]), float(ref[2] + 0.035))
 
     if shell_id <= 2:
-        ranges = ((0.010, 0.020), (0.050, 0.100), (0.150, 0.250))
+        ranges = ((0.010, 0.020), (0.020, 0.050), (0.050, 0.100))
         distance = _uniform_range(rng, ranges[shell_id])
         object_pos = desired.copy()
         if shell_id == 0:
@@ -341,7 +341,7 @@ def _apply_between_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -
     midpoint[2] = max(float(target[2]), float(midpoint[2] + 0.035))
 
     if shell_id <= 2:
-        ranges = ((0.010, 0.020), (0.050, 0.100), (0.150, 0.250))
+        ranges = ((0.010, 0.020), (0.020, 0.050), (0.050, 0.100))
         distance = _uniform_range(rng, ranges[shell_id])
         direction = _unit_xy(rng)
         object_pos = midpoint.copy()

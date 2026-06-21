@@ -87,6 +87,20 @@ class LCHOLGRPORuntime:
                 or 1
             ),
         )
+        self.dense_min_instruction_success = float(
+            self.base_task_metadata.get("dense_to_sparse_min_instruction_success", 0.0)
+            or 0.0
+        )
+        self.dense_required_consecutive_passes = max(
+            1,
+            int(
+                self.base_task_metadata.get(
+                    "dense_to_sparse_required_consecutive_passes",
+                    1,
+                )
+                or 1
+            ),
+        )
         self.dense_validation_episodes = max(
             0,
             int(
@@ -152,6 +166,7 @@ class LCHOLGRPORuntime:
         self.dense_gate_success: dict[str, float] = {}
         self.dense_gate_rollouts: dict[str, int] = {}
         self.dense_gate_rewards: dict[str, float] = {}
+        self.dense_gate_consecutive_passes = 0
         self.dense_updates_completed = 0
         self.sparse_updates_completed = 0
         self._stage_at_update_start = "sparse" if self.dense_gate_armed else "dense"
@@ -263,14 +278,21 @@ class LCHOLGRPORuntime:
                 except (TypeError, ValueError):
                     pass
 
-        if self.dense_gate_active() and self._dense_gate_passed():
-            self._open_dense_gate(reason="success_threshold")
-            print(
-                "[lchol] dense-to-sparse gate opened "
-                f"mean_success={self.dense_gate_mean_success():.4f} "
-                f"threshold={self.dense_success_threshold:.4f}",
-                flush=True,
-            )
+        if self.dense_gate_active():
+            if self._dense_gate_snapshot_passed():
+                self.dense_gate_consecutive_passes += 1
+            else:
+                self.dense_gate_consecutive_passes = 0
+            if self._dense_gate_passed():
+                self._open_dense_gate(reason="success_threshold")
+                print(
+                    "[lchol] dense-to-sparse gate opened "
+                    f"mean_success={self.dense_gate_mean_success():.4f} "
+                    f"threshold={self.dense_success_threshold:.4f} "
+                    f"min_instruction_success={self.dense_min_instruction_success:.4f} "
+                    f"consecutive_passes={self.dense_gate_consecutive_passes}",
+                    flush=True,
+                )
 
         if run_dir is not None:
             self._save_dense_gate_state(run_dir=run_dir, update=update)
@@ -498,11 +520,17 @@ class LCHOLGRPORuntime:
         out["dense_gate/threshold"] = float(self.dense_success_threshold)
         out["dense_gate/mean_success"] = float(self.dense_gate_mean_success())
         out["dense_gate/mean_reward"] = float(self.dense_gate_mean_reward())
+        out["dense_gate/min_instruction_success"] = float(self.dense_min_instruction_success)
+        out["dense_gate/consecutive_passes"] = float(self.dense_gate_consecutive_passes)
+        out["dense_gate/required_consecutive_passes"] = float(self.dense_required_consecutive_passes)
         out["dense_stage/active"] = float(self.dense_gate_active())
         out["dense_stage/complete"] = float(self.dense_gate_armed)
         out["dense_stage/threshold"] = float(self.dense_success_threshold)
         out["dense_stage/mean_success"] = float(self.dense_gate_mean_success())
         out["dense_stage/mean_reward"] = float(self.dense_gate_mean_reward())
+        out["dense_stage/min_instruction_success"] = float(self.dense_min_instruction_success)
+        out["dense_stage/consecutive_passes"] = float(self.dense_gate_consecutive_passes)
+        out["dense_stage/required_consecutive_passes"] = float(self.dense_required_consecutive_passes)
         out["dense_stage/updates_completed"] = float(self.dense_updates_completed)
         out["dense_stage/max_updates"] = float(self.dense_stage_max_updates)
         out["sparse_stage/updates_completed"] = float(self.sparse_updates_completed)
@@ -628,6 +656,13 @@ class LCHOLGRPORuntime:
             )
         except (TypeError, ValueError):
             pass
+        try:
+            self.dense_gate_consecutive_passes = max(
+                0,
+                int(payload.get("consecutive_passes", self.dense_gate_consecutive_passes)),
+            )
+        except (TypeError, ValueError):
+            pass
         reason = payload.get("open_reason")
         if reason:
             self._dense_gate_open_reason = str(reason)
@@ -738,13 +773,29 @@ class LCHOLGRPORuntime:
             info.get("scene", ""),
         )
 
-    def _dense_gate_passed(self) -> bool:
+    def _dense_gate_snapshot_passed(self) -> bool:
         if not self.dense_instruction_types:
             return True
         for instruction in self.dense_instruction_types:
             if int(self.dense_gate_rollouts.get(instruction, 0)) < int(self.dense_min_success_samples):
                 return False
-        return bool(self.dense_gate_mean_success() > float(self.dense_success_threshold) + 1e-12)
+            if (
+                self.dense_min_instruction_success > 0.0
+                and float(self.dense_gate_success.get(instruction, 0.0))
+                + 1e-12
+                < float(self.dense_min_instruction_success)
+            ):
+                return False
+        return bool(
+            self.dense_gate_mean_success() + 1e-12
+            >= float(self.dense_success_threshold)
+        )
+
+    def _dense_gate_passed(self) -> bool:
+        return bool(
+            self._dense_gate_snapshot_passed()
+            and self.dense_gate_consecutive_passes >= self.dense_required_consecutive_passes
+        )
 
     def _save_dense_gate_state(self, *, run_dir: Any, update: int | None = None) -> None:
         from pathlib import Path
@@ -757,6 +808,9 @@ class LCHOLGRPORuntime:
             "open_reason": str(self._dense_gate_open_reason),
             "threshold": float(self.dense_success_threshold),
             "min_success_samples": int(self.dense_min_success_samples),
+            "min_instruction_success": float(self.dense_min_instruction_success),
+            "required_consecutive_passes": int(self.dense_required_consecutive_passes),
+            "consecutive_passes": int(self.dense_gate_consecutive_passes),
             "mean_success": float(self.dense_gate_mean_success()),
             "mean_reward": float(self.dense_gate_mean_reward()),
             "dense_stage_max_updates": int(self.dense_stage_max_updates),

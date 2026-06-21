@@ -21,8 +21,9 @@ remote:
     RLVLA_CDPR_COMPILED_MODEL_CACHE_MAX_SIZE: "8"
     TOKENIZERS_PARALLELISM: "false"
   notes:
-    - Adapter/action-head/actor-stat weights resume from the evaluated step `0048000`.
-    - The recovery run first calibrates direct gripper/yaw language primitives, then opens the sparse reverse-frontier stage.
+    - Adapter/action-head/actor-stat weights resume from the last dense-reward checkpoint `0216000`.
+    - The recovery run calibrates all five action-vector dimensions before sparse reverse-frontier training is allowed.
+    - Sparse training is success-gated; every primitive must exceed 70% for three consecutive validation rounds.
     - Rollout TensorBoard scalars are emitted every 8 global environment steps, plus update summaries every optimizer update.
 
 assets:
@@ -95,6 +96,12 @@ embodiment:
 task:
   instruction_types:
     [
+      move_left,
+      move_right,
+      move_top,
+      move_bottom,
+      move_up,
+      move_down,
       move_to_object,
       grab_object,
       pick_up,
@@ -181,13 +188,22 @@ task:
     vertical_goal_offset: 0.10
 
     dense_to_sparse_success_threshold: 0.70
-    dense_to_sparse_min_success_samples: 2
-    dense_stage_max_updates: 40
+    dense_to_sparse_min_instruction_success: 0.70
+    dense_to_sparse_min_success_samples: 10
+    dense_to_sparse_required_consecutive_passes: 3
+    dense_stage_validation_episodes: 10
+    dense_stage_max_updates: 150
     sparse_stage_max_updates: 50
-    dense_stage_open_on_max_updates: true
+    dense_stage_open_on_max_updates: false
     lchol_start_stage: dense
     dense_stage_instruction_types:
       [
+        move_left,
+        move_right,
+        move_top,
+        move_bottom,
+        move_up,
+        move_down,
         move_to_object,
         open_gripper,
         close_gripper,
@@ -228,6 +244,15 @@ task:
       action_saturation_penalty_weight: 0.20
       action_saturation_exponent: 1.0
       action_saturation_include_gripper: true
+      direct_translation_reward_enabled: true
+      direct_translation_success_displacement: 0.05
+      direct_translation_orthogonal_tolerance: 0.05
+      direct_translation_progress_weight: 1.0
+      direct_translation_step_weight: 0.20
+      direct_translation_action_weight: 0.05
+      direct_translation_wrong_action_penalty: 0.15
+      direct_translation_off_axis_action_penalty: 0.05
+      direct_translation_orthogonal_drift_penalty: 0.20
       direct_gripper_open_threshold: 0.80
       direct_gripper_closed_threshold: 0.20
       direct_gripper_progress_weight: 1.0
@@ -318,8 +343,8 @@ task:
     object_spawn_max_tries: 300
     reverse_curriculum:
       enabled: true
-      promotion_success: 0.50
-      demotion_success: 0.20
+      promotion_success: 0.70
+      demotion_success: 0.40
       validation_rollouts_per_shell: 50
       min_train_updates_before_validation: 3
       max_shell_jump: 1
@@ -378,11 +403,11 @@ training:
       nproc_per_node: 2
     args:
       external_grpo_script: vla-scripts/grpo_finetune_cdpr.py
-      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260618_221123/rl/step_0048000/vla_cdpr_adapter
+      adapter_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/vla_cdpr_adapter
       train_loaded_adapter: true
-      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260618_221123/rl/step_0048000/action_head_cdpr.pt
+      action_head_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/action_head_cdpr.pt
       resume_actor_stats: true
-      first_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260618_221123/rl/step_0048000/grpo_actor_stats.pt
+      first_stage_grpo_actor_stats_path: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260610_141107/rl/step_0216000/grpo_actor_stats.pt
       sparse_stage_init_log_std: -0.70
       # Complex CDPR rollouts and reverse-frontier validation can skew DDP ranks far past PyTorch's 10-minute default.
       ddp_timeout_seconds: 86400
@@ -405,8 +430,8 @@ training:
       lchol_strict_min_success_samples: 24
       lchol_weakest_mode_oversample_strength: 2.5
       lchol_newest_stage_weight: 1.4
-      lchol_reverse_promotion_success: 0.50
-      lchol_reverse_demotion_success: 0.20
+      lchol_reverse_promotion_success: 0.70
+      lchol_reverse_demotion_success: 0.40
       lchol_reverse_validation_rollouts_per_shell: 50
       lchol_reverse_min_train_updates_before_validation: 3
       lchol_reverse_max_shell_jump: 1
@@ -414,7 +439,7 @@ training:
       lchol_reverse_sample_frontier_probability: 0.80
       lchol_reverse_sample_rehearsal_probability: 0.20
       num_parallel_envs: 10
-      total_updates: 90
+      total_updates: 200
       rollout_steps: 240
       ppo_epochs: 2
       minibatch_size: 12
@@ -449,7 +474,7 @@ training:
       delta_farther_penalty_coef: 0.0
       save_every: 10
       validate_every_updates: 5
-      validation_episodes: 2
+      validation_episodes: 10
       validation_max_steps: 120
       tensorboard_metric_profile: compact
       tensorboard_rollout_every_global_steps: 8

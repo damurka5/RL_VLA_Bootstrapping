@@ -226,6 +226,15 @@ DIRECT_GRIPPER_INSTRUCTION_TYPES: tuple[str, ...] = (
     "close_gripper",
 )
 
+DIRECT_TRANSLATION_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "move_left",
+    "move_right",
+    "move_top",
+    "move_bottom",
+    "move_up",
+    "move_down",
+)
+
 DIRECT_GRIPPER_YAW_INSTRUCTION_TYPES: tuple[str, ...] = (
     "rotate_gripper_clockwise",
     "rotate_gripper_counterclockwise",
@@ -584,6 +593,19 @@ def compute_instruction_reward(
     ee_pos = np.asarray(ee_pos, dtype=np.float32)
     goal_pos = np.asarray(obj_pos, dtype=np.float32)
     prev_goal_pos = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
+
+    if (
+        spec.instruction_type in DIRECT_TRANSLATION_INSTRUCTION_TYPES
+        and _metadata_bool(task_metadata, "direct_translation_reward_enabled", False)
+    ):
+        return _compute_direct_translation_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=task_metadata,
+        )
 
     if spec.instruction_type in DIRECT_ACTUATOR_INSTRUCTION_TYPES:
         return _compute_direct_actuator_reward(
@@ -1182,6 +1204,90 @@ def _compute_dense_rotate_reward(
         "action_saturation_max_abs": 0.0,
     }
     return reward, success, info
+
+
+def _compute_direct_translation_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+) -> tuple[float, bool, dict[str, float]]:
+    metadata = dict(task_metadata or {})
+    axis_idx, axis_sign = _DIRECTIONAL_SUCCESS_AXES[spec.instruction_type]
+    current = np.asarray(ee_pos, dtype=np.float32).reshape(3)
+    initial = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(3)
+    previous = np.asarray(reward_state.prev_ee_pos, dtype=np.float32).reshape(3)
+    action_arr = np.asarray(action if action is not None else np.zeros((5,)), dtype=np.float32).reshape(-1)
+
+    target_displacement = max(
+        _metadata_float(metadata, "direct_translation_success_displacement", 0.08),
+        1e-6,
+    )
+    orthogonal_tolerance = max(
+        _metadata_float(metadata, "direct_translation_orthogonal_tolerance", 0.05),
+        0.0,
+    )
+    total_signed_displacement = float(axis_sign * (current[axis_idx] - initial[axis_idx]))
+    step_signed_displacement = float(axis_sign * (current[axis_idx] - previous[axis_idx]))
+    displacement = current - initial
+    orthogonal = np.delete(displacement, axis_idx)
+    orthogonal_drift = float(np.linalg.norm(orthogonal))
+    progress = float(np.clip(total_signed_displacement / target_displacement, 0.0, 1.0))
+
+    action_value = float(action_arr[axis_idx]) if action_arr.size > axis_idx else 0.0
+    correct_action = float(np.clip(axis_sign * action_value, 0.0, 1.0))
+    wrong_action = float(np.clip(-axis_sign * action_value, 0.0, 1.0))
+    translation_actions = action_arr[:3] if action_arr.size >= 3 else np.pad(action_arr, (0, 3 - action_arr.size))
+    off_axis_action = float(np.mean(np.abs(np.delete(translation_actions, axis_idx))))
+    normalized_orthogonal_drift = float(orthogonal_drift / target_displacement)
+    success = bool(
+        total_signed_displacement >= target_displacement
+        and orthogonal_drift <= orthogonal_tolerance
+    )
+    reward = float(
+        _metadata_float(metadata, "direct_translation_progress_weight", 1.0) * progress
+        + _metadata_float(metadata, "direct_translation_step_weight", 0.20)
+        * np.tanh(
+            max(0.0, step_signed_displacement)
+            / max(target_displacement * 0.25, 1e-6)
+        )
+        + _metadata_float(metadata, "direct_translation_action_weight", 0.05) * correct_action
+        - _metadata_float(metadata, "direct_translation_wrong_action_penalty", 0.15) * wrong_action
+        - _metadata_float(metadata, "direct_translation_off_axis_action_penalty", 0.05)
+        * off_axis_action
+        - _metadata_float(metadata, "direct_translation_orthogonal_drift_penalty", 0.20)
+        * normalized_orthogonal_drift
+        + (_metadata_float(metadata, "direct_control_success_bonus", 0.0) if success else 0.0)
+    )
+
+    reward_state.prev_ee_pos = current.copy()
+    reward_state.prev_obj_pos = np.asarray(goal_pos, dtype=np.float32).copy()
+    reward_state.prev_distance = float(max(0.0, target_displacement - total_signed_displacement))
+    reward_state.prev_camera_align = None
+    reward_state.step_count += 1
+    return reward, success, {
+        "direct_translation_reward_mode": 1.0,
+        "direct_translation_success": float(success),
+        "direct_translation_axis": float(axis_idx),
+        "direct_translation_sign": float(axis_sign),
+        "direct_translation_total_signed_displacement": total_signed_displacement,
+        "direct_translation_step_signed_displacement": step_signed_displacement,
+        "direct_translation_target_displacement": float(target_displacement),
+        "direct_translation_orthogonal_drift": orthogonal_drift,
+        "direct_translation_orthogonal_tolerance": float(orthogonal_tolerance),
+        "direct_translation_progress": progress,
+        "direct_translation_action": action_value,
+        "direct_translation_off_axis_action": off_axis_action,
+        "distance_to_goal": float(max(0.0, target_displacement - total_signed_displacement)),
+        "distance_reward": progress,
+        "orientation_reward": 0.0,
+        "action_saturation_penalty": 0.0,
+        "action_saturation_rate": 0.0,
+        "action_saturation_max_abs": float(np.max(np.abs(action_arr))) if action_arr.size else 0.0,
+    }
 
 
 def _compute_direct_actuator_reward(
@@ -2227,6 +2333,45 @@ def compute_instruction_validation_success(
     start_arr = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
     if ee_arr.size < 3 or start_arr.size < 3:
         return bool(current_success), {}
+
+    if (
+        spec.instruction_type in DIRECT_TRANSLATION_INSTRUCTION_TYPES
+        and _metadata_bool(task_metadata, "direct_translation_reward_enabled", False)
+    ):
+        axis_idx, axis_sign = _DIRECTIONAL_SUCCESS_AXES[spec.instruction_type]
+        threshold = max(
+            _metadata_float(
+                task_metadata,
+                "direct_translation_success_displacement",
+                _metadata_float(task_metadata, "directional_success_displacement_threshold", 0.05),
+            ),
+            1e-6,
+        )
+        orthogonal_tolerance = max(
+            _metadata_float(task_metadata, "direct_translation_orthogonal_tolerance", 0.05),
+            0.0,
+        )
+        raw_displacement = float(ee_arr[axis_idx] - start_arr[axis_idx])
+        signed_displacement = float(axis_sign * raw_displacement)
+        orthogonal_drift = float(np.linalg.norm(np.delete(ee_arr[:3] - start_arr[:3], axis_idx)))
+        direct_success = bool(
+            signed_displacement >= threshold
+            and orthogonal_drift <= orthogonal_tolerance
+        )
+        if isinstance(reward_info, dict) and "direct_translation_success" in reward_info:
+            direct_success = bool(float(reward_info.get("direct_translation_success", 0.0)) >= 0.5)
+        return direct_success, {
+            "validation_success_mode": 8.0,
+            "direct_translation_validation_success": float(direct_success),
+            "direct_translation_axis": float(axis_idx),
+            "direct_translation_sign": float(axis_sign),
+            "direct_translation_signed_displacement": signed_displacement,
+            "direct_translation_threshold": float(threshold),
+            "direct_translation_orthogonal_drift": orthogonal_drift,
+            "direct_translation_orthogonal_tolerance": float(orthogonal_tolerance),
+            "directional_success_raw_displacement": raw_displacement,
+            "directional_success_signed_displacement": signed_displacement,
+        }
 
     if spec.instruction_type in DIRECT_ACTUATOR_INSTRUCTION_TYPES:
         direct_success = bool(current_success)

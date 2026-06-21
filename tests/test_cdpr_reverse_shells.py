@@ -183,6 +183,29 @@ class CDPRReverseShellTests(unittest.TestCase):
         self.assertEqual(specs["move_in_front_of_object"], 5)
         self.assertEqual(specs["move_between_objects"], 5)
 
+    def test_move_to_object_shell_distances_progress_without_large_gap(self):
+        env = _FakeEnv()
+        env._instruction_spec = InstructionSpec(
+            instruction_type="move_to_object",
+            text="move to apple",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.0,
+            lift_target=0.0,
+        )
+        expected_bounds = ((0.010, 0.020), (0.020, 0.050), (0.050, 0.100))
+
+        for shell_id, (lower, upper) in enumerate(expected_bounds):
+            with self.subTest(shell_id=shell_id):
+                info = apply_cdpr_reverse_shell(
+                    env,
+                    shell_id=shell_id,
+                    rng=np.random.default_rng(100 + shell_id),
+                )
+                distance = float(info["curriculum_shell_distance_m"])
+                self.assertGreaterEqual(distance, lower)
+                self.assertLessEqual(distance, upper)
+
 
 if __name__ == "__main__":
     unittest.main()

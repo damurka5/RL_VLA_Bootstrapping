@@ -170,7 +170,7 @@ class InstructionTextTests(unittest.TestCase):
         self.assertEqual(spec.instruction_type, "move_right")
         self.assertEqual(spec.text, "move right")
 
-    def test_directional_validation_uses_workspace_center_for_horizontal_moves(self):
+    def test_directional_validation_uses_episode_start_for_direct_translation(self):
         spec = InstructionSpec(
             instruction_type="move_left",
             text="move left",
@@ -189,15 +189,16 @@ class InstructionTextTests(unittest.TestCase):
             ee_pos=np.array([-0.06, 0.02, 0.40], dtype=np.float32),
             reward_state=reward_state,
             task_metadata={
-                "goal_center_xy": [0.0, 0.0],
-                "directional_success_center_threshold": 0.05,
+                "direct_translation_reward_enabled": True,
+                "direct_translation_success_displacement": 0.08,
+                "direct_translation_orthogonal_tolerance": 0.05,
             },
             current_success=False,
         )
 
         self.assertTrue(success)
-        self.assertAlmostEqual(info["directional_success_signed_displacement"], 0.06, places=6)
-        self.assertEqual(info["directional_success_reference_is_workspace_center"], 1.0)
+        self.assertAlmostEqual(info["directional_success_signed_displacement"], 0.22, places=6)
+        self.assertAlmostEqual(info["direct_translation_orthogonal_drift"], 0.0, places=6)
 
     def test_move_to_object_validation_uses_xy_distance_threshold(self):
         spec = InstructionSpec(
@@ -259,6 +260,49 @@ class InstructionTextTests(unittest.TestCase):
                 self.assertTrue(success)
                 self.assertGreater(reward, 0.0)
                 self.assertEqual(info["direct_actuator_success"], 1.0)
+
+    def test_direct_translation_rewards_requested_axis_and_penalizes_wrong_action(self):
+        spec = sample_instruction(
+            target_object=None,
+            rng=np.random.default_rng(0),
+            allowed_instruction_types=["move_left"],
+        )
+        metadata = {
+            "direct_translation_reward_enabled": True,
+            "direct_translation_success_displacement": 0.08,
+            "direct_translation_orthogonal_tolerance": 0.05,
+        }
+
+        success_state = init_reward_state(
+            initial_ee_pos=np.array([0.10, 0.0, 0.40], dtype=np.float32),
+            initial_obj_pos=np.zeros((3,), dtype=np.float32),
+        )
+        success_reward, success, success_info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.01, 0.01, 0.40], dtype=np.float32),
+            obj_pos=np.zeros((3,), dtype=np.float32),
+            reward_state=success_state,
+            action=np.array([-1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            task_metadata=metadata,
+        )
+
+        wrong_state = init_reward_state(
+            initial_ee_pos=np.array([0.10, 0.0, 0.40], dtype=np.float32),
+            initial_obj_pos=np.zeros((3,), dtype=np.float32),
+        )
+        wrong_reward, wrong_success, _ = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.10, 0.0, 0.40], dtype=np.float32),
+            obj_pos=np.zeros((3,), dtype=np.float32),
+            reward_state=wrong_state,
+            action=np.array([1.0, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            task_metadata=metadata,
+        )
+
+        self.assertTrue(success)
+        self.assertFalse(wrong_success)
+        self.assertGreater(success_reward, wrong_reward)
+        self.assertEqual(success_info["direct_translation_success"], 1.0)
 
     def test_direct_gripper_yaw_instructions_track_end_effector_rotation(self):
         class FakeEnv:

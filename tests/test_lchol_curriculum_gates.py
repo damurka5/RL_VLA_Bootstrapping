@@ -87,7 +87,7 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
 
         runtime.record_dense_validation(
             [
-                {"instruction_id": "catch_object", "success_rate": 0.60, "rollouts": 2},
+                {"instruction_id": "catch_object", "success_rate": 0.59, "rollouts": 2},
                 {"instruction_id": "release_object", "success_rate": 0.80, "rollouts": 2},
             ]
         )
@@ -105,6 +105,46 @@ class LCHOLCurriculumGateTests(unittest.TestCase):
         self.assertAlmostEqual(runtime.metrics()["dense_stage/success_rate/catch_object"], 0.80, places=7)
         self.assertTrue(runtime.consume_grpo_stats_reset_request())
         self.assertFalse(runtime.consume_grpo_stats_reset_request())
+
+    def test_dense_gate_requires_every_instruction_and_consecutive_passes_when_configured(self):
+        metadata = {
+            "dense_to_sparse_success_threshold": 0.70,
+            "dense_to_sparse_min_instruction_success": 0.70,
+            "dense_to_sparse_min_success_samples": 20,
+            "dense_to_sparse_required_consecutive_passes": 2,
+            "dense_stage_instruction_types": ["move_left", "move_right"],
+            "sparse_stage_instruction_types": ["move_to_object"],
+            "dense_stage_metadata": {"reward_mode": "dense"},
+            "sparse_stage_metadata": {"reward_mode": "sparse_binary"},
+        }
+        with mock.patch.dict("os.environ", {"RLVLA_TASK_METADATA_JSON": json.dumps(metadata)}):
+            runtime = LCHOLGRPORuntime(
+                config=LCHOLGRPOConfig(enabled=True),
+                spec=object(),
+                available_options=("move_left", "move_right", "move_to_object"),
+                seed=0,
+            )
+
+        runtime.record_dense_validation(
+            [
+                {"instruction_id": "move_left", "success_rate": 0.95, "rollouts": 20},
+                {"instruction_id": "move_right", "success_rate": 0.50, "rollouts": 20},
+            ]
+        )
+        self.assertTrue(runtime.dense_gate_active())
+        self.assertEqual(runtime.dense_gate_consecutive_passes, 0)
+
+        passing = [
+            {"instruction_id": "move_left", "success_rate": 0.75, "rollouts": 20},
+            {"instruction_id": "move_right", "success_rate": 0.70, "rollouts": 20},
+        ]
+        runtime.record_dense_validation(passing)
+        self.assertTrue(runtime.dense_gate_active())
+        self.assertEqual(runtime.dense_gate_consecutive_passes, 1)
+
+        runtime.record_dense_validation(passing)
+        self.assertFalse(runtime.dense_gate_active())
+        self.assertEqual(runtime.dense_gate_consecutive_passes, 2)
 
     def test_runtime_opens_dense_gate_at_dense_update_limit_then_stops_after_sparse_limit(self):
         metadata = {

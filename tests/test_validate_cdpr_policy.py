@@ -13,6 +13,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _instruction_validation_task_metadata,
     _render_policy_prompt,
     _move_to_object_threshold_sweep,
+    _reset_validation_env_with_retries,
     _save_episode_video,
     _validation_buckets,
     _parse_instruction_types,
@@ -436,6 +437,47 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         self.assertTrue(all(bucket.episodes == 50 for bucket in buckets))
         self.assertTrue(all('"max_scene_objects": 1' in bucket.env_vars["RLVLA_TASK_METADATA_JSON"] for bucket in buckets))
 
+    def test_dense_primitive_validation_merges_dense_stage_reward_metadata(self):
+        config = type(
+            "_Config",
+            (),
+            {
+                "task": type(
+                    "_Task",
+                    (),
+                    {
+                        "metadata": {
+                            "dense_stage_instruction_types": ["move_left"],
+                            "dense_stage_metadata": {
+                                "reward_mode": "dense",
+                                "direct_translation_reward_enabled": True,
+                                "direct_translation_success_displacement": 0.08,
+                            },
+                        },
+                    },
+                )(),
+            },
+        )()
+        args = type(
+            "_Args",
+            (),
+            {
+                "success_distance": 0.05,
+                "directional_displacement_threshold": 0.05,
+                "multi_object_scenes": False,
+            },
+        )()
+
+        metadata = _instruction_validation_task_metadata(
+            config,
+            args,
+            instruction_type="move_left",
+        )
+
+        self.assertEqual(metadata["reward_mode"], "dense")
+        self.assertTrue(metadata["direct_translation_reward_enabled"])
+        self.assertAlmostEqual(metadata["direct_translation_success_displacement"], 0.08)
+
     def test_move_to_object_validation_scales_up_when_base_budget_is_larger(self):
         config = type(
             "_Config",
@@ -639,6 +681,33 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
         rows = _move_to_object_threshold_sweep(results, thresholds=(0.05, 0.10, 0.15))
 
         self.assertEqual([row["successes"] for row in rows], [1, 2, 3])
+
+    def test_reset_retry_error_lists_every_attempt_reason(self):
+        class FailingEnv:
+            def __init__(self):
+                self.calls = 0
+                self.close_calls = 0
+
+            def reset(self, seed=None, options=None):
+                del seed, options
+                self.calls += 1
+                raise RuntimeError(f"unstable_{self.calls}")
+
+            def close(self):
+                self.close_calls += 1
+
+        env = FailingEnv()
+        with self.assertRaisesRegex(RuntimeError, "attempt 1.*unstable_1.*attempt 2.*unstable_2"):
+            _reset_validation_env_with_retries(
+                env=env,
+                seed=0,
+                reset_options={"instruction_type": "move_left"},
+                max_attempts=2,
+                quiet=False,
+            )
+
+        self.assertEqual(env.calls, 2)
+        self.assertEqual(env.close_calls, 2)
 
 
 if __name__ == "__main__":

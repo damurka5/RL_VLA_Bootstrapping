@@ -69,9 +69,10 @@ Sparse entry now:
 - removes stale optimizer moments for `log_std`;
 - writes before/after/source evidence to `grpo_stage_transition.jsonl`.
 
-The recovery config resumes checkpoint 0048000, runs a dense actuator-calibration stage, then the
-sparse reverse-frontier stage. It no longer points first- and second-stage actor stats at the same
-file.
+The recovery config now resumes the last dense-reward checkpoint `step_0216000`, calibrates all five
+action-vector dimensions, and permits sparse reverse-frontier training only after every primitive
+passes the 70% gate for three consecutive validation rounds. Checkpoint 0048000 remains an A/B
+baseline rather than the default training initialization.
 
 ### 5. Reset and simulation stability
 
@@ -99,12 +100,13 @@ succeed trivially at reset.
 
 ## Verification
 
-- 101 focused evaluator/environment/GRPO/reward tests pass.
-- Full suite: 258/259 pass locally. The remaining test requires the external OpenVLA
+- Focused evaluator/environment/GRPO/reward tests pass.
+- Full suite: 264/265 pass locally. The remaining test requires the external OpenVLA
   `prismatic` package, which is not installed in the local lightweight Python environment.
 - Python compilation and `git diff --check` pass.
 - All 40 downloaded evaluation MP4 files pass local `ffprobe`.
-- Real MuJoCo normalized-action actuator check:
+- Real MuJoCo isolated normalized-action checks pass for ±X, ±Y, ±Z, both yaw directions, and
+  gripper opening/closing. Representative actuator measurements:
   - open gripper: 0.999999
   - close gripper: 0.000001
   - clockwise yaw delta: -1.0594 rad
