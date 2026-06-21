@@ -8,6 +8,7 @@ from pathlib import Path
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _default_max_steps,
     _instruction_validation_task_metadata,
+    _render_policy_prompt,
     _save_episode_video,
     _validation_buckets,
     _parse_instruction_types,
@@ -471,6 +472,119 @@ class ValidateCDPRPolicyTests(unittest.TestCase):
 
         self.assertEqual(len(buckets), 2)
         self.assertTrue(all(bucket.episodes == 65 for bucket in buckets))
+
+    def test_multi_object_move_to_object_metadata_keeps_randomized_distractors(self):
+        config = type(
+            "_Config",
+            (),
+            {
+                "task": type(
+                    "_Task",
+                    (),
+                    {
+                        "metadata": {
+                            "target_object_pool": ["ycb_apple", "ycb_pear"],
+                            "distractor_object_pool": ["ycb_pear", "ycb_baseball", "plate"],
+                            "min_scene_objects": 1,
+                            "max_scene_objects": 1,
+                        },
+                        "target_objects": ["ycb_apple", "ycb_pear"],
+                    },
+                )(),
+            },
+        )()
+        args = type(
+            "_Args",
+            (),
+            {
+                "success_distance": 0.05,
+                "directional_displacement_threshold": 0.05,
+                "move_to_object_success_distance": 0.025,
+                "multi_object_scenes": True,
+                "min_scene_objects": 3,
+                "max_scene_objects": 4,
+            },
+        )()
+
+        metadata = _instruction_validation_task_metadata(
+            config,
+            args,
+            instruction_type="move_to_object",
+            target_object="ycb_apple",
+        )
+
+        self.assertEqual(metadata["target_object_pool"], ["ycb_apple"])
+        self.assertEqual(metadata["distractor_object_pool"], ["ycb_pear", "ycb_baseball", "plate"])
+        self.assertEqual(metadata["min_scene_objects"], 3)
+        self.assertEqual(metadata["max_scene_objects"], 4)
+
+    def test_reverse_shell_buckets_apply_synonyms_only_to_normal_shell(self):
+        config = type(
+            "_Config",
+            (),
+            {
+                "project": type("_Project", (), {"env": {}})(),
+                "remote": type("_Remote", (), {"env_vars": {}})(),
+                "task": type(
+                    "_Task",
+                    (),
+                    {
+                        "metadata": {
+                            "target_object_pool": ["ycb_apple", "ycb_pear"],
+                            "distractor_object_pool": ["ycb_baseball", "plate"],
+                        },
+                        "target_objects": ["ycb_apple", "ycb_pear"],
+                        "reward": None,
+                        "success_predicate": None,
+                        "goal_region": {},
+                        "goal_relation": None,
+                        "dense_reward_terms": {},
+                    },
+                )(),
+                "training": type("_Training", (), {"rl": type("_RL", (), {"args": {}})()})(),
+            },
+        )()
+        args = type(
+            "_Args",
+            (),
+            {
+                "episodes_per_instruction": 7,
+                "move_to_object_episodes_per_target": 7,
+                "success_distance": 0.05,
+                "move_to_object_success_distance": 0.025,
+                "directional_displacement_threshold": 0.05,
+                "stratify_move_to_object_targets": False,
+                "multi_object_scenes": True,
+                "min_scene_objects": 3,
+                "max_scene_objects": 4,
+                "evaluate_reverse_shells": True,
+                "include_synonyms": True,
+                "synonyms_per_instruction": 2,
+                "synonym_shells": "normal",
+            },
+        )()
+
+        buckets = _validation_buckets(config, args, instruction_type="grab_object")
+
+        self.assertEqual(len(buckets), 7)
+        canonical = [bucket for bucket in buckets if bucket.prompt_kind == "canonical"]
+        synonyms = [bucket for bucket in buckets if bucket.prompt_kind == "synonym"]
+        self.assertEqual([bucket.curriculum_shell for bucket in canonical], [0, 1, 2, 3, 4])
+        self.assertEqual([bucket.curriculum_shell for bucket in synonyms], [4, 4])
+        self.assertTrue(all(bucket.episodes == 7 for bucket in buckets))
+
+    def test_render_policy_prompt_substitutes_all_object_bindings(self):
+        prompt = _render_policy_prompt(
+            prompt_template="leave {target} between {reference} and {second_reference}",
+            canonical_instruction="move apple between pear and baseball",
+            reset_info={
+                "target_object_catalog": "ycb_apple",
+                "reference_object_catalog": "ycb_pear",
+                "second_reference_object_catalog": "ycb_baseball",
+            },
+        )
+
+        self.assertEqual(prompt, "leave apple between pear and baseball")
 
 
 if __name__ == "__main__":

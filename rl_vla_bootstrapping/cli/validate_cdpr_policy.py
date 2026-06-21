@@ -5,6 +5,8 @@ import csv
 import json
 import math
 import os
+import shutil
+import subprocess
 import sys
 from contextlib import contextmanager, nullcontext, redirect_stderr, redirect_stdout
 from dataclasses import asdict, dataclass, replace
@@ -37,7 +39,11 @@ from rl_vla_bootstrapping.policy.openvla_oft import (
     _task_hook_env,
 )
 from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv
-from robots.cdpr.cdpr_dataset.rl_instruction_tasks import INSTRUCTION_TEXT, INSTRUCTION_TYPES
+from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
+    INSTRUCTION_TEXT,
+    INSTRUCTION_TYPES,
+    canonical_object_name,
+)
 from robots.cdpr.cdpr_dataset.synthetic_tasks import clear_sim_recording_buffers
 
 
@@ -72,6 +78,15 @@ class EpisodeResult:
     goal_position: list[float]
     ee_start: list[float]
     target_object_catalog: str | None = None
+    reference_object_catalog: str | None = None
+    second_reference_object_catalog: str | None = None
+    scene_objects: tuple[str, ...] = ()
+    canonical_instruction_text: str | None = None
+    prompt_kind: str = "canonical"
+    prompt_variant: str = "canonical"
+    curriculum_shell: int | None = None
+    curriculum_shell_count: int | None = None
+    metric_episode: bool = True
     video_path: str | None = None
     video_kind: str | None = None
 
@@ -109,6 +124,24 @@ class ValidationBucket:
     episodes: int
     env_vars: dict[str, str]
     log_label: str
+    prompt_kind: str = "canonical"
+    prompt_variant: str = "canonical"
+    prompt_template: str | None = None
+    curriculum_shell: int | None = None
+    curriculum_shell_count: int | None = None
+    force_video: bool = False
+
+    @property
+    def case_id(self) -> str:
+        parts = [
+            self.instruction_type,
+            f"shell_{self.curriculum_shell:02d}" if self.curriculum_shell is not None else "no_shell",
+            self.prompt_kind,
+            self.prompt_variant,
+        ]
+        if self.target_object:
+            parts.append(self.target_object)
+        return "__".join(_safe_filename_token(part) for part in parts if part)
 
 
 def _rl_args(config: Any) -> dict[str, Any]:
@@ -181,7 +214,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--episodes-per-instruction",
         type=int,
         default=100,
-        help="How many episodes to run for each instruction type.",
+        help=(
+            "How many metric episodes to run per evaluation case. A case is an instruction, "
+            "shell, prompt variant, and optional fixed target combination."
+        ),
     )
     parser.add_argument(
         "--max-steps",
@@ -289,6 +325,94 @@ def _build_parser() -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--stratify-move-to-object-targets",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Create a separate move-to-object case for every configured target object.",
+    )
+    parser.add_argument(
+        "--multi-object-scenes",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help=(
+            "Keep randomized distractors in validation scenes, including move-to-object cases. "
+            "Use this to test whether the policy distinguishes the named target."
+        ),
+    )
+    parser.add_argument(
+        "--min-scene-objects",
+        type=int,
+        default=3,
+        help="Minimum scene object count when --multi-object-scenes is enabled.",
+    )
+    parser.add_argument(
+        "--max-scene-objects",
+        type=int,
+        default=4,
+        help="Maximum scene object count when --multi-object-scenes is enabled.",
+    )
+    parser.add_argument(
+        "--evaluate-reverse-shells",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Evaluate every reverse-frontier curriculum shell for supported instruction types.",
+    )
+    parser.add_argument(
+        "--include-synonyms",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Evaluate natural-language synonym/paraphrase prompts in addition to canonical prompts.",
+    )
+    parser.add_argument(
+        "--synonyms-per-instruction",
+        type=int,
+        default=2,
+        help="Maximum synonym prompt variants per instruction type.",
+    )
+    parser.add_argument(
+        "--synonym-shells",
+        choices=("normal", "all"),
+        default="normal",
+        help="Evaluate synonyms only on the final normal-reset shell, or on every shell.",
+    )
+    parser.add_argument(
+        "--arbitrary-instructions-count",
+        type=int,
+        default=0,
+        help=(
+            "Add this many deterministic free-form prompt checks on normal randomized scenes. "
+            "Each arbitrary check runs one episode and is always recorded."
+        ),
+    )
+    parser.add_argument(
+        "--video-coverage",
+        choices=("instruction", "case"),
+        default="instruction",
+        help="Require success/failure video examples per instruction type or per exact evaluation case.",
+    )
+    parser.add_argument(
+        "--video-search-extra-episodes",
+        type=int,
+        default=0,
+        help=(
+            "After metric evaluation, run up to this many extra canonical normal-scene attempts "
+            "per instruction to fill missing success/failure video coverage. These attempts do not "
+            "change reported success rates."
+        ),
+    )
+    parser.add_argument(
+        "--strict-video-validation",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exit non-zero after saving the report if any recorded MP4 fails ffprobe validation.",
+    )
+    parser.add_argument(
+        "--require-complete-video-coverage",
+        action=argparse.BooleanOptionalAction,
+        default=False,
+        help="Exit non-zero after saving the report if any requested success/failure example is missing.",
+    )
+    parser.add_argument(
         "--reuse-existing-wrapper-variants",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -363,6 +487,163 @@ _INSTRUCTION_TYPE_ALIASES: dict[str, str] = {
     "between_objects": "move_between_objects",
     "move_between_objects": "move_between_objects",
 }
+
+_SYNONYM_PROMPT_TEMPLATES: dict[str, tuple[str, ...]] = {
+    "move_to_object": (
+        "go to {target}",
+        "move the gripper toward {target}",
+        "approach {target}",
+    ),
+    "grab_object": (
+        "grasp {target}",
+        "take hold of {target}",
+        "secure {target} with the gripper",
+    ),
+    "pick_up": (
+        "lift {target}",
+        "pick {target} up",
+        "raise {target} off the table",
+    ),
+    "push_left": (
+        "slide {target} to the left",
+        "move {target} left by pushing it",
+    ),
+    "push_right": (
+        "slide {target} to the right",
+        "move {target} right by pushing it",
+    ),
+    "push_forward": (
+        "slide {target} forward",
+        "move {target} away from the robot by pushing it",
+    ),
+    "push_backward": (
+        "slide {target} backward",
+        "move {target} toward the robot by pushing it",
+    ),
+    "put_into_plate": (
+        "place {target} inside {reference}",
+        "drop {target} into {reference}",
+        "put {target} in {reference}",
+    ),
+    "move_left_of_object": (
+        "place {target} left of {reference}",
+        "move {target} beside the left side of {reference}",
+    ),
+    "move_right_of_object": (
+        "place {target} right of {reference}",
+        "move {target} beside the right side of {reference}",
+    ),
+    "move_in_front_of_object": (
+        "place {target} in front of {reference}",
+        "move {target} to the front side of {reference}",
+    ),
+    "move_behind_object": (
+        "place {target} behind {reference}",
+        "move {target} to the back side of {reference}",
+    ),
+    "put_in_front_of_object": (
+        "set {target} in front of {reference}",
+        "position {target} on the front side of {reference}",
+    ),
+    "put_behind_object": (
+        "set {target} behind {reference}",
+        "position {target} on the back side of {reference}",
+    ),
+    "move_between_objects": (
+        "place {target} between {reference} and {second_reference}",
+        "position {target} in the middle of {reference} and {second_reference}",
+    ),
+    "catch_object": (
+        "close the gripper around {target}",
+        "capture {target} with the gripper",
+    ),
+    "grip_object": (
+        "hold {target} firmly",
+        "clamp the gripper onto {target}",
+    ),
+    "release_object": (
+        "let go of {target}",
+        "open the gripper and release {target}",
+    ),
+    "free_object": (
+        "stop holding {target}",
+        "open the gripper to free {target}",
+    ),
+}
+
+_ARBITRARY_PROMPT_CHECKS: tuple[tuple[str, str, str], ...] = (
+    ("move_to_object", "navigate_to_named_item", "navigate the end effector to the {target}"),
+    ("grab_object", "secure_named_item", "carefully secure the {target} between the gripper fingers"),
+    ("pick_up", "remove_from_surface", "remove the {target} from the table by lifting it"),
+    ("put_into_plate", "deposit_in_container", "deposit the {target} inside the {reference}"),
+    ("push_left", "nudge_west", "give the {target} a firm nudge toward the left side"),
+    ("push_forward", "nudge_away", "nudge the {target} farther away from the robot"),
+    (
+        "move_right_of_object",
+        "relative_right",
+        "reposition the {target} so it ends up on the right-hand side of the {reference}",
+    ),
+    (
+        "move_between_objects",
+        "relative_middle",
+        "leave the {target} midway between the {reference} and the {second_reference}",
+    ),
+    ("release_object", "unclamp_named_item", "unclamp the gripper so the {target} is no longer held"),
+    ("grip_object", "pinch_named_item", "pinch the {target} securely with both fingers"),
+)
+
+
+def _reverse_shell_counts(instruction_types: tuple[str, ...]) -> dict[str, int]:
+    from robots.cdpr.cdpr_dataset.cdpr_reverse_shells import get_cdpr_reverse_shell_specs
+
+    return {
+        str(spec.instruction_id): int(spec.shell_count)
+        for spec in get_cdpr_reverse_shell_specs(instruction_types)
+    }
+
+
+def _prompt_variant_specs(
+    instruction_type: str,
+    args: argparse.Namespace,
+    *,
+    curriculum_shell: int | None,
+    curriculum_shell_count: int | None,
+) -> list[tuple[str, str, str | None]]:
+    variants: list[tuple[str, str, str | None]] = [("canonical", "canonical", None)]
+    if not bool(getattr(args, "include_synonyms", False)):
+        return variants
+
+    is_normal_shell = (
+        curriculum_shell is None
+        or curriculum_shell_count is None
+        or int(curriculum_shell) >= int(curriculum_shell_count) - 1
+    )
+    if str(getattr(args, "synonym_shells", "normal")) == "normal" and not is_normal_shell:
+        return variants
+
+    limit = max(0, int(getattr(args, "synonyms_per_instruction", 0)))
+    for index, template in enumerate(_SYNONYM_PROMPT_TEMPLATES.get(instruction_type, ())[:limit], start=1):
+        variants.append(("synonym", f"synonym_{index:02d}", str(template)))
+    return variants
+
+
+def _render_policy_prompt(
+    *,
+    prompt_template: str | None,
+    canonical_instruction: str,
+    reset_info: dict[str, Any],
+) -> str:
+    if not prompt_template:
+        return str(canonical_instruction)
+
+    target = canonical_object_name(str(reset_info.get("target_object_catalog", "")))
+    reference = canonical_object_name(str(reset_info.get("reference_object_catalog", "")))
+    second_reference = canonical_object_name(str(reset_info.get("second_reference_object_catalog", "")))
+    return str(prompt_template).format(
+        target=target,
+        reference=reference,
+        second_reference=second_reference,
+    )
 
 
 def _parse_instruction_types(raw_values: list[str] | tuple[str, ...]) -> tuple[str, ...]:
@@ -554,6 +835,18 @@ def _instruction_validation_task_metadata(
     target_object: str | None = None,
 ) -> dict[str, Any]:
     metadata = _validation_task_metadata(config, args)
+    multi_object_scenes = bool(getattr(args, "multi_object_scenes", False))
+    if multi_object_scenes:
+        min_objects = max(2, int(getattr(args, "min_scene_objects", 3)))
+        max_objects = max(min_objects, int(getattr(args, "max_scene_objects", 4)))
+        metadata.pop("scene_object_pool", None)
+        metadata["min_scene_objects"] = min_objects
+        metadata["max_scene_objects"] = max_objects
+        distractors = _dedupe_object_names(metadata.get("distractor_object_pool"))
+        if not distractors:
+            distractors = _dedupe_object_names(_allowed_objects_from_config(config))
+        metadata["distractor_object_pool"] = distractors
+
     if instruction_type != "move_to_object":
         return metadata
 
@@ -568,9 +861,10 @@ def _instruction_validation_task_metadata(
     metadata["move_to_object_validation_distance_threshold"] = float(
         getattr(args, "move_to_object_success_distance", 0.10)
     )
-    metadata["distractor_object_pool"] = []
-    metadata["min_scene_objects"] = 1
-    metadata["max_scene_objects"] = 1
+    if not multi_object_scenes:
+        metadata["distractor_object_pool"] = []
+        metadata["min_scene_objects"] = 1
+        metadata["max_scene_objects"] = 1
     return metadata
 
 
@@ -631,49 +925,110 @@ def _validation_buckets(
     *,
     instruction_type: str,
 ) -> list[ValidationBucket]:
-    if instruction_type != "move_to_object":
-        return [
-            ValidationBucket(
-                instruction_type=instruction_type,
-                target_object=None,
-                episodes=max(1, int(args.episodes_per_instruction)),
-                env_vars=_validation_env_vars(config, args, instruction_type=instruction_type),
-                log_label=instruction_type,
-            )
-        ]
+    target_cases: list[tuple[str | None, int]] = [(None, max(1, int(args.episodes_per_instruction)))]
+    if instruction_type == "move_to_object" and bool(
+        getattr(args, "stratify_move_to_object_targets", True)
+    ):
+        targets, episodes_per_target = _move_to_object_validation_episodes_per_target(config, args)
+        if targets:
+            target_cases = [(target_object, episodes_per_target) for target_object in targets]
 
-    targets, episodes_per_target = _move_to_object_validation_episodes_per_target(config, args)
-    if not targets:
-        return [
-            ValidationBucket(
-                instruction_type=instruction_type,
-                target_object=None,
-                episodes=max(1, int(args.episodes_per_instruction)),
-                env_vars=_validation_env_vars(config, args, instruction_type=instruction_type),
-                log_label=instruction_type,
-            )
-        ]
+    shell_counts = (
+        _reverse_shell_counts((instruction_type,))
+        if bool(getattr(args, "evaluate_reverse_shells", False))
+        else {}
+    )
+    shell_count = shell_counts.get(instruction_type)
+    shell_ids: tuple[int | None, ...] = (
+        tuple(range(int(shell_count))) if shell_count is not None else (None,)
+    )
 
     buckets: list[ValidationBucket] = []
-    for target_object in targets:
+    for target_object, episodes in target_cases:
         metadata = _instruction_validation_task_metadata(
             config,
             args,
             instruction_type=instruction_type,
             target_object=target_object,
         )
+        env_vars = _validation_env_vars(
+            config,
+            args,
+            instruction_type=instruction_type,
+            task_metadata_override=metadata,
+        )
+        for shell_id in shell_ids:
+            for prompt_kind, prompt_variant, prompt_template in _prompt_variant_specs(
+                instruction_type,
+                args,
+                curriculum_shell=shell_id,
+                curriculum_shell_count=shell_count,
+            ):
+                label_parts = [instruction_type]
+                if target_object:
+                    label_parts.append(str(target_object))
+                if shell_id is not None:
+                    label_parts.append(f"shell={int(shell_id)}")
+                if prompt_kind != "canonical":
+                    label_parts.append(prompt_variant)
+                buckets.append(
+                    ValidationBucket(
+                        instruction_type=instruction_type,
+                        target_object=target_object,
+                        episodes=int(episodes),
+                        env_vars=env_vars,
+                        log_label=":".join(label_parts),
+                        prompt_kind=prompt_kind,
+                        prompt_variant=prompt_variant,
+                        prompt_template=prompt_template,
+                        curriculum_shell=shell_id,
+                        curriculum_shell_count=shell_count,
+                    )
+                )
+    return buckets
+
+
+def _arbitrary_validation_buckets(
+    config: Any,
+    args: argparse.Namespace,
+    *,
+    instruction_types: tuple[str, ...],
+) -> list[ValidationBucket]:
+    requested = max(0, min(int(getattr(args, "arbitrary_instructions_count", 0)), 10))
+    if requested <= 0:
+        return []
+
+    allowed = set(instruction_types)
+    shell_counts = _reverse_shell_counts(instruction_types)
+    candidates = [item for item in _ARBITRARY_PROMPT_CHECKS if item[0] in allowed]
+    selected = candidates[:requested]
+    buckets: list[ValidationBucket] = []
+    for instruction_type, prompt_variant, prompt_template in selected:
+        shell_count = shell_counts.get(instruction_type)
+        shell_id = None if shell_count is None else int(shell_count) - 1
+        metadata = _instruction_validation_task_metadata(
+            config,
+            args,
+            instruction_type=instruction_type,
+        )
         buckets.append(
             ValidationBucket(
                 instruction_type=instruction_type,
-                target_object=target_object,
-                episodes=episodes_per_target,
+                target_object=None,
+                episodes=1,
                 env_vars=_validation_env_vars(
                     config,
                     args,
                     instruction_type=instruction_type,
                     task_metadata_override=metadata,
                 ),
-                log_label=f"{instruction_type}:{target_object}",
+                log_label=f"arbitrary:{instruction_type}:{prompt_variant}",
+                prompt_kind="arbitrary",
+                prompt_variant=prompt_variant,
+                prompt_template=prompt_template,
+                curriculum_shell=shell_id,
+                curriculum_shell_count=shell_count,
+                force_video=True,
             )
         )
     return buckets
@@ -906,6 +1261,91 @@ def _validation_episode_video_frames(sim: Any, episode_result: EpisodeResult) ->
     return frames * target_frame_count
 
 
+def _probe_video_file(video_path: Path) -> dict[str, Any]:
+    result: dict[str, Any] = {
+        "video_path": video_path.as_posix(),
+        "exists": video_path.is_file(),
+        "size_bytes": int(video_path.stat().st_size) if video_path.is_file() else 0,
+        "probe_backend": "filesystem",
+        "valid": False,
+    }
+    if not video_path.is_file() or int(result["size_bytes"]) <= 0:
+        result["error"] = "Video file is missing or empty."
+        return result
+
+    ffprobe = shutil.which("ffprobe")
+    if not ffprobe:
+        result["error"] = "ffprobe is unavailable; the MP4 stream could not be validated."
+        return result
+
+    command = [
+        ffprobe,
+        "-v",
+        "error",
+        "-select_streams",
+        "v:0",
+        "-show_entries",
+        "stream=codec_name,width,height,avg_frame_rate,nb_frames,duration",
+        "-show_entries",
+        "format=duration,size",
+        "-of",
+        "json",
+        video_path.as_posix(),
+    ]
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=30,
+        )
+    except subprocess.TimeoutExpired:
+        result["probe_backend"] = "ffprobe"
+        result["error"] = "ffprobe timed out after 30 seconds."
+        return result
+    result["probe_backend"] = "ffprobe"
+    result["returncode"] = int(completed.returncode)
+    if completed.returncode != 0:
+        result["error"] = completed.stderr.strip() or "ffprobe rejected the video."
+        return result
+    try:
+        payload = json.loads(completed.stdout or "{}")
+    except json.JSONDecodeError as exc:
+        result["error"] = f"Could not parse ffprobe output: {exc}"
+        return result
+
+    streams = list(payload.get("streams") or [])
+    stream = dict(streams[0]) if streams else {}
+    video_format = dict(payload.get("format") or {})
+    try:
+        width = int(stream.get("width") or 0)
+    except (TypeError, ValueError):
+        width = 0
+    try:
+        height = int(stream.get("height") or 0)
+    except (TypeError, ValueError):
+        height = 0
+    try:
+        duration = float(stream.get("duration") or video_format.get("duration") or 0.0)
+    except (TypeError, ValueError):
+        duration = 0.0
+    result.update(
+        {
+            "codec_name": stream.get("codec_name"),
+            "width": width,
+            "height": height,
+            "avg_frame_rate": stream.get("avg_frame_rate"),
+            "nb_frames": stream.get("nb_frames"),
+            "duration_sec": duration,
+            "valid": bool(width > 0 and height > 0 and duration > 0.0),
+        }
+    )
+    if not result["valid"]:
+        result["error"] = "Video has no decodable positive-size stream with positive duration."
+    return result
+
+
 def _save_episode_video(
     *,
     sim: Any,
@@ -921,22 +1361,34 @@ def _save_episode_video(
     fps = _VALIDATION_VIDEO_FPS
     target_token = _safe_filename_token(episode_result.target_object_catalog)
     target_part = f"_{target_token}" if target_token else ""
+    shell_part = (
+        f"_shell_{int(episode_result.curriculum_shell):02d}"
+        if episode_result.curriculum_shell is not None
+        else ""
+    )
+    prompt_part = ""
+    if episode_result.prompt_kind != "canonical" or episode_result.prompt_variant != "canonical":
+        prompt_part = (
+            f"_{_safe_filename_token(episode_result.prompt_kind)}"
+            f"_{_safe_filename_token(episode_result.prompt_variant)}"
+        )
     output_path = (
         output_dir
-        / f"{instruction_type}{target_part}_{outcome}_episode_{episode_result.episode_index:03d}_overview.mp4"
+        / (
+            f"{instruction_type}{target_part}{shell_part}{prompt_part}_{outcome}"
+            f"_episode_{episode_result.episode_index:03d}_overview.mp4"
+        )
     )
     sim.save_video(frames, str(output_path), fps=fps)
 
-    summary_path = (
-        output_dir
-        / f"{instruction_type}{target_part}_{outcome}_episode_{episode_result.episode_index:03d}_summary.json"
-    )
+    summary_path = output_path.with_name(output_path.name.replace("_overview.mp4", "_summary.json"))
     summary_data = asdict(episode_result)
     summary_data["video_kind"] = str(outcome)
     summary_data["video_path"] = output_path.as_posix()
     summary_data["video_frame_count"] = len(frames)
     summary_data["video_fps"] = fps
     summary_data["video_duration_sec"] = len(frames) / fps
+    summary_data["video_probe"] = _probe_video_file(output_path)
     summary_path.write_text(json.dumps(summary_data, indent=2), encoding="utf-8")
     return output_path.as_posix()
 
@@ -1067,6 +1519,295 @@ def _write_instruction_text_csv(output_path: Path, summaries: list[InstructionTe
             )
 
 
+def _aggregate_episode_results(
+    episode_results: list[EpisodeResult],
+    *,
+    group_fields: tuple[str, ...],
+) -> list[dict[str, Any]]:
+    grouped: dict[tuple[Any, ...], list[EpisodeResult]] = {}
+    for item in episode_results:
+        if not item.metric_episode:
+            continue
+        key = tuple(getattr(item, field) for field in group_fields)
+        grouped.setdefault(key, []).append(item)
+
+    rows: list[dict[str, Any]] = []
+    for key in sorted(grouped, key=lambda value: tuple("" if item is None else str(item) for item in value)):
+        items = grouped[key]
+        successes = sum(1 for item in items if item.success)
+        rewards = np.asarray([item.reward_total for item in items], dtype=np.float32)
+        steps = np.asarray([item.steps for item in items], dtype=np.float32)
+        row = {field: value for field, value in zip(group_fields, key)}
+        row.update(
+            {
+                "successes": int(successes),
+                "episodes": int(len(items)),
+                "success_rate": float(successes / max(len(items), 1)),
+                "mean_reward": float(np.mean(rewards)) if rewards.size else 0.0,
+                "mean_steps": float(np.mean(steps)) if steps.size else 0.0,
+            }
+        )
+        rows.append(row)
+    return rows
+
+
+def _write_grouped_success_rate_csv(
+    output_path: Path,
+    rows: list[dict[str, Any]],
+    *,
+    group_fields: tuple[str, ...],
+) -> None:
+    columns = [
+        *group_fields,
+        "successes",
+        "episodes",
+        "success_rate",
+        "mean_reward",
+        "mean_steps",
+    ]
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        for row in rows:
+            formatted = dict(row)
+            for key in ("success_rate", "mean_reward", "mean_steps"):
+                formatted[key] = f"{float(row[key]):.6f}"
+            writer.writerow(formatted)
+
+
+def _write_episode_results_csv(output_path: Path, episode_results: list[EpisodeResult]) -> None:
+    columns = [
+        "episode_index",
+        "seed",
+        "instruction_type",
+        "prompt_kind",
+        "prompt_variant",
+        "instruction_text",
+        "canonical_instruction_text",
+        "curriculum_shell",
+        "curriculum_shell_count",
+        "target_object_catalog",
+        "reference_object_catalog",
+        "second_reference_object_catalog",
+        "scene",
+        "scene_objects",
+        "success",
+        "terminated",
+        "truncated",
+        "steps",
+        "reward_total",
+        "metric_episode",
+        "video_kind",
+        "video_path",
+    ]
+    with output_path.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        for item in episode_results:
+            row = asdict(item)
+            row["scene_objects"] = "|".join(item.scene_objects)
+            writer.writerow({column: row.get(column, "") for column in columns})
+
+
+def _write_video_audit(
+    *,
+    run_dir: Path,
+    videos_dir: Path,
+    expected_keys: list[str],
+    video_registry: dict[str, dict[str, str]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    probes = [_probe_video_file(path) for path in sorted(videos_dir.glob("*.mp4"))]
+    (run_dir / "video_validation.json").write_text(
+        json.dumps(probes, indent=2),
+        encoding="utf-8",
+    )
+    with (run_dir / "video_validation.csv").open("w", encoding="utf-8", newline="") as handle:
+        columns = [
+            "video_path",
+            "valid",
+            "size_bytes",
+            "probe_backend",
+            "codec_name",
+            "width",
+            "height",
+            "duration_sec",
+            "error",
+            "warning",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        for probe in probes:
+            writer.writerow({column: probe.get(column, "") for column in columns})
+
+    coverage: list[dict[str, Any]] = []
+    for key in expected_keys:
+        entry = video_registry.get(key, {})
+        coverage.append(
+            {
+                "coverage_key": key,
+                "success_video_path": entry.get("success", ""),
+                "failure_video_path": entry.get("failure", ""),
+                "has_success_video": bool(entry.get("success")),
+                "has_failure_video": bool(entry.get("failure")),
+                "complete": bool(entry.get("success") and entry.get("failure")),
+            }
+        )
+    with (run_dir / "video_coverage.csv").open("w", encoding="utf-8", newline="") as handle:
+        columns = [
+            "coverage_key",
+            "has_success_video",
+            "has_failure_video",
+            "complete",
+            "success_video_path",
+            "failure_video_path",
+        ]
+        writer = csv.DictWriter(handle, fieldnames=columns)
+        writer.writeheader()
+        writer.writerows(coverage)
+    return probes, coverage
+
+
+def _markdown_table(rows: list[dict[str, Any]], columns: tuple[str, ...], *, limit: int | None = None) -> str:
+    selected = rows if limit is None else rows[:limit]
+    if not selected:
+        return "_No rows._"
+    header = "| " + " | ".join(columns) + " |"
+    divider = "| " + " | ".join("---" for _ in columns) + " |"
+    body = []
+    for row in selected:
+        values: list[str] = []
+        for column in columns:
+            value = row.get(column, "")
+            if isinstance(value, float):
+                value = f"{value:.4f}"
+            values.append(str(value).replace("|", "\\|"))
+        body.append("| " + " | ".join(values) + " |")
+    return "\n".join([header, divider, *body])
+
+
+def _write_validation_report(
+    *,
+    run_dir: Path,
+    artifacts: ResolvedPolicyArtifacts,
+    metric_results: list[EpisodeResult],
+    all_results: list[EpisodeResult],
+    instruction_rows: list[dict[str, Any]],
+    shell_rows: list[dict[str, Any]],
+    prompt_rows: list[dict[str, Any]],
+    target_rows: list[dict[str, Any]],
+    video_probes: list[dict[str, Any]],
+    video_coverage: list[dict[str, Any]],
+) -> Path:
+    successes = sum(1 for item in metric_results if item.success)
+    arbitrary = [item for item in all_results if item.prompt_kind == "arbitrary"]
+    invalid_videos = [item for item in video_probes if not bool(item.get("valid"))]
+    incomplete_coverage = [item for item in video_coverage if not bool(item.get("complete"))]
+    lines = [
+        "# CDPR checkpoint validation report",
+        "",
+        f"- Checkpoint: `{artifacts.checkpoint_dir}`",
+        f"- Metric episodes: `{len(metric_results)}`",
+        f"- Overall successes: `{successes}`",
+        f"- Overall success rate: `{successes / max(len(metric_results), 1):.4f}`",
+        f"- Recorded videos: `{len(video_probes)}`",
+        f"- Invalid videos: `{len(invalid_videos)}`",
+        f"- Incomplete success/failure video coverage entries: `{len(incomplete_coverage)}`",
+        "",
+        "## Instruction success rates",
+        "",
+        _markdown_table(
+            instruction_rows,
+            ("instruction_type", "successes", "episodes", "success_rate", "mean_steps"),
+        ),
+        "",
+        "## Reverse-shell success rates",
+        "",
+        _markdown_table(
+            shell_rows,
+            (
+                "instruction_type",
+                "curriculum_shell",
+                "successes",
+                "episodes",
+                "success_rate",
+            ),
+        ),
+        "",
+        "## Prompt-variant success rates",
+        "",
+        _markdown_table(
+            prompt_rows,
+            (
+                "instruction_type",
+                "prompt_kind",
+                "prompt_variant",
+                "successes",
+                "episodes",
+                "success_rate",
+            ),
+        ),
+        "",
+        "## Target-object success rates",
+        "",
+        _markdown_table(
+            target_rows,
+            (
+                "instruction_type",
+                "target_object_catalog",
+                "successes",
+                "episodes",
+                "success_rate",
+            ),
+        ),
+        "",
+        "## Arbitrary recorded prompt checks",
+        "",
+        _markdown_table(
+            [
+                {
+                    "instruction_type": item.instruction_type,
+                    "instruction_text": item.instruction_text,
+                    "scene_objects": ", ".join(item.scene_objects),
+                    "success": item.success,
+                    "video_path": item.video_path or "",
+                }
+                for item in arbitrary
+            ],
+            ("instruction_type", "instruction_text", "scene_objects", "success", "video_path"),
+        ),
+        "",
+        "## Video coverage",
+        "",
+        _markdown_table(
+            video_coverage,
+            (
+                "coverage_key",
+                "has_success_video",
+                "has_failure_video",
+                "complete",
+            ),
+        ),
+        "",
+        "## Artifacts",
+        "",
+        "- `validation_manifest.json`",
+        "- `episode_results.csv`",
+        "- `instruction_success_rates.csv`",
+        "- `instruction_shell_success_rates.csv`",
+        "- `instruction_prompt_success_rates.csv`",
+        "- `evaluation_case_success_rates.csv`",
+        "- `target_object_success_rates.csv`",
+        "- `instruction_text_success_rates.csv`",
+        "- `video_coverage.csv`",
+        "- `video_validation.csv` and `video_validation.json`",
+        "- `videos/`",
+        "",
+    ]
+    report_path = run_dir / "validation_report.md"
+    report_path.write_text("\n".join(lines), encoding="utf-8")
+    return report_path
+
+
 def _run_instruction_validation(
     *,
     instruction_type: str,
@@ -1082,8 +1823,28 @@ def _run_instruction_validation(
     episodes_to_run: int,
     episode_index_offset: int = 0,
     log_label: str | None = None,
+    validation_bucket: ValidationBucket | None = None,
+    video_registry: dict[str, dict[str, str]] | None = None,
+    metric_episode: bool = True,
+    stop_when_video_coverage_complete: bool = False,
 ) -> tuple[InstructionSummary, list[EpisodeResult]]:
-    should_capture = bool(args.record_success_videos or args.record_failure_videos)
+    bucket = validation_bucket or ValidationBucket(
+        instruction_type=instruction_type,
+        target_object=None,
+        episodes=int(episodes_to_run),
+        env_vars={},
+        log_label=str(log_label or instruction_type),
+    )
+    coverage_key = (
+        instruction_type
+        if str(getattr(args, "video_coverage", "instruction")) == "instruction"
+        else bucket.case_id
+    )
+    registry = video_registry if video_registry is not None else {}
+    coverage_entry = registry.setdefault(coverage_key, {})
+    should_capture = bool(
+        args.record_success_videos or args.record_failure_videos or bucket.force_video
+    )
     env = _build_validation_env(
         config=config,
         instruction_type=instruction_type,
@@ -1095,24 +1856,46 @@ def _run_instruction_validation(
         wrapper_dir=wrapper_dir,
     )
 
-    reset_options = {"scene": args.scene} if args.scene else None
+    reset_options: dict[str, Any] = {"instruction_type": instruction_type}
+    if args.scene:
+        reset_options["scene"] = args.scene
+    if bucket.target_object:
+        reset_options["target_object"] = str(bucket.target_object)
+    if bucket.curriculum_shell is not None:
+        reset_options["curriculum_mode"] = "reverse_frontier"
+        reset_options["curriculum_shell"] = int(bucket.curriculum_shell)
     episode_results: list[EpisodeResult] = []
-    success_video_path: str | None = None
-    failure_video_path: str | None = None
+    success_video_path: str | None = coverage_entry.get("success")
+    failure_video_path: str | None = coverage_entry.get("failure")
     successes = 0
 
     try:
         effective_log_label = str(log_label or instruction_type)
         for episode_offset in range(int(episodes_to_run)):
             episode_index = int(episode_index_offset) + int(episode_offset)
+            needs_success_video = bool(
+                (args.record_success_videos or bucket.force_video)
+                and (args.record_all_success_videos or coverage_entry.get("success") is None)
+            )
+            needs_failure_video = bool(
+                (args.record_failure_videos or bucket.force_video)
+                and coverage_entry.get("failure") is None
+            )
             env.capture_frames = bool(
-                (args.record_success_videos and (args.record_all_success_videos or success_video_path is None))
-                or (args.record_failure_videos and failure_video_path is None)
+                bucket.force_video or needs_success_video or needs_failure_video
             )
             seed = _episode_seed(base_seed, instruction_index, episode_index)
             with _silence_output(bool(args.progress_only)):
                 _obs, reset_info = env.reset(seed=seed, options=reset_options)
-            instruction = str(reset_info.get("language_instruction", INSTRUCTION_TEXT[instruction_type]))
+            canonical_instruction = str(
+                reset_info.get("language_instruction", INSTRUCTION_TEXT[instruction_type])
+            )
+            instruction = _render_policy_prompt(
+                prompt_template=bucket.prompt_template,
+                canonical_instruction=canonical_instruction,
+                reset_info=dict(reset_info),
+            )
+            setattr(env.sim, "language_instruction", instruction)
 
             current_chunk = np.zeros((0, 5), dtype=np.float32)
             chunk_index = 0
@@ -1162,6 +1945,33 @@ def _run_instruction_validation(
                     final_info.get("target_object_catalog", reset_info.get("target_object_catalog", ""))
                 )
                 or None,
+                reference_object_catalog=str(
+                    final_info.get(
+                        "reference_object_catalog",
+                        reset_info.get("reference_object_catalog", ""),
+                    )
+                )
+                or None,
+                second_reference_object_catalog=str(
+                    final_info.get(
+                        "second_reference_object_catalog",
+                        reset_info.get("second_reference_object_catalog", ""),
+                    )
+                )
+                or None,
+                scene_objects=tuple(
+                    str(value)
+                    for value in final_info.get(
+                        "scene_objects",
+                        reset_info.get("scene_objects", ()),
+                    )
+                ),
+                canonical_instruction_text=canonical_instruction,
+                prompt_kind=str(bucket.prompt_kind),
+                prompt_variant=str(bucket.prompt_variant),
+                curriculum_shell=bucket.curriculum_shell,
+                curriculum_shell_count=bucket.curriculum_shell_count,
+                metric_episode=bool(metric_episode),
             )
             episode_results.append(episode_result)
             successes += int(episode_result.success)
@@ -1170,8 +1980,12 @@ def _run_instruction_validation(
             saved_video_kind: str | None = None
             if (
                 episode_result.success
-                and bool(args.record_success_videos)
-                and (bool(args.record_all_success_videos) or success_video_path is None)
+                and bool(args.record_success_videos or bucket.force_video)
+                and (
+                    bucket.force_video
+                    or bool(args.record_all_success_videos)
+                    or coverage_entry.get("success") is None
+                )
             ):
                 try:
                     with _silence_output(bool(args.progress_only)):
@@ -1182,7 +1996,9 @@ def _run_instruction_validation(
                             episode_result=episode_result,
                             outcome="success",
                         )
-                    if success_video_path is None:
+                    if saved_video_path and coverage_entry.get("success") is None:
+                        coverage_entry["success"] = saved_video_path
+                    if success_video_path is None and saved_video_path:
                         success_video_path = saved_video_path
                     saved_video_kind = "success" if saved_video_path else None
                 except Exception as exc:
@@ -1190,7 +2006,11 @@ def _run_instruction_validation(
                         print(f"[warn] Failed to save success video for {instruction_type}: {exc}")
                 finally:
                     clear_sim_recording_buffers(env.sim)
-            elif (not episode_result.success) and failure_video_path is None and bool(args.record_failure_videos):
+            elif (
+                (not episode_result.success)
+                and bool(args.record_failure_videos or bucket.force_video)
+                and (bucket.force_video or coverage_entry.get("failure") is None)
+            ):
                 try:
                     with _silence_output(bool(args.progress_only)):
                         saved_video_path = _save_episode_video(
@@ -1200,6 +2020,8 @@ def _run_instruction_validation(
                             episode_result=episode_result,
                             outcome="failure",
                         )
+                    if saved_video_path and coverage_entry.get("failure") is None:
+                        coverage_entry["failure"] = saved_video_path
                     failure_video_path = saved_video_path or failure_video_path
                     saved_video_kind = "failure" if saved_video_path else None
                 except Exception as exc:
@@ -1222,7 +2044,7 @@ def _run_instruction_validation(
                 progress.set_description_str(effective_log_label)
                 progress.set_postfix_str(f"success={successes}/{episode_offset + 1}")
                 progress.update(1)
-            elif (
+            elif not args.progress_only and (
                 episode_result.success
                 or episode_offset == 0
                 or (episode_offset + 1) % max(1, int(args.log_every_episode)) == 0
@@ -1233,6 +2055,13 @@ def _run_instruction_validation(
                     f"success={episode_result.success} steps={episode_result.steps} "
                     f"reward={episode_result.reward_total:.4f} scene={episode_result.scene}"
                 )
+
+            if (
+                stop_when_video_coverage_complete
+                and coverage_entry.get("success")
+                and coverage_entry.get("failure")
+            ):
+                break
 
         summary = _summarize_instruction_results(
             instruction_type=instruction_type,
@@ -1275,11 +2104,33 @@ def main() -> int:
         instruction_type: _validation_buckets(config, args, instruction_type=instruction_type)
         for instruction_type in instruction_types
     }
-    total_validation_episodes = sum(
-        bucket.episodes
+    metric_buckets = [
+        bucket
         for instruction_type in instruction_types
         for bucket in instruction_buckets[instruction_type]
+    ]
+    arbitrary_buckets = _arbitrary_validation_buckets(
+        config,
+        args,
+        instruction_types=instruction_types,
     )
+    total_metric_episodes = sum(bucket.episodes for bucket in metric_buckets)
+    total_validation_episodes = total_metric_episodes + sum(
+        bucket.episodes for bucket in arbitrary_buckets
+    )
+    expected_video_keys = (
+        list(instruction_types)
+        if str(args.video_coverage) == "instruction"
+        else [bucket.case_id for bucket in metric_buckets]
+    )
+    expected_video_keys = list(dict.fromkeys(expected_video_keys))
+
+    if int(args.min_scene_objects) <= 0 or int(args.max_scene_objects) < int(args.min_scene_objects):
+        raise ValueError("--min-scene-objects/--max-scene-objects define an invalid range.")
+    if int(args.synonyms_per_instruction) < 0:
+        raise ValueError("--synonyms-per-instruction cannot be negative.")
+    if int(args.video_search_extra_episodes) < 0:
+        raise ValueError("--video-search-extra-episodes cannot be negative.")
 
     if not args.progress_only:
         print(f"Run directory: {run_dir}")
@@ -1288,11 +2139,21 @@ def main() -> int:
         print(f"Action-head path: {artifacts.action_head_path}")
         print(f"Wrapper dir: {wrapper_dir}")
         print(f"Instruction types: {list(instruction_types)}")
-        print(f"Episodes per instruction: {int(args.episodes_per_instruction)}")
+        print(f"Metric evaluation cases: {len(metric_buckets)}")
+        print(f"Metric episodes: {total_metric_episodes}")
+        print(f"Arbitrary recorded checks: {len(arbitrary_buckets)}")
+        print(f"Episodes per case: {int(args.episodes_per_instruction)}")
         print(f"Episode max steps: {max_steps}")
+        print(f"Evaluate reverse shells: {bool(args.evaluate_reverse_shells)}")
+        print(f"Include synonyms: {bool(args.include_synonyms)}")
+        print(f"Multi-object scenes: {bool(args.multi_object_scenes)}")
+        if args.multi_object_scenes:
+            print(f"Scene object count: {int(args.min_scene_objects)}..{int(args.max_scene_objects)}")
         print(f"Record success videos: {bool(args.record_success_videos)}")
         print(f"Record all success videos: {bool(args.record_all_success_videos)}")
         print(f"Record failure videos: {bool(args.record_failure_videos)}")
+        print(f"Video coverage level: {args.video_coverage}")
+        print(f"Video search extra episodes: {int(args.video_search_extra_episodes)}")
         print(f"Validation success distance: {float(args.success_distance):.3f} m")
         print(
             "Move-to-object validation XY threshold: "
@@ -1303,14 +2164,6 @@ def main() -> int:
             f"{float(args.directional_displacement_threshold):.3f} m"
         )
         print(f"Move-to-object minimum episodes per target: {int(args.move_to_object_episodes_per_target)}")
-        if "move_to_object" in instruction_buckets:
-            move_to_object_buckets = instruction_buckets["move_to_object"]
-            print("Move-to-object validation scenes: single target object only")
-            print(f"Move-to-object target objects: {len(move_to_object_buckets)}")
-            print(
-                "Move-to-object effective total episodes: "
-                f"{sum(bucket.episodes for bucket in move_to_object_buckets)}"
-            )
         print(f"Reuse existing wrapper variants: {bool(args.reuse_existing_wrapper_variants)}")
         print(f"Seed mode: {'entropy' if base_seed is None else base_seed}")
 
@@ -1322,54 +2175,235 @@ def main() -> int:
             quiet=bool(args.progress_only),
         )
 
-    instruction_summaries: list[InstructionSummary] = []
-    flattened_episode_results: list[EpisodeResult] = []
-    instruction_episodes: dict[str, list[dict[str, Any]]] = {}
+    video_registry: dict[str, dict[str, str]] = {}
+    metric_episode_results: list[EpisodeResult] = []
+    arbitrary_episode_results: list[EpisodeResult] = []
+    video_search_episode_results: list[EpisodeResult] = []
+    instruction_offsets = {instruction_type: 0 for instruction_type in instruction_types}
+    instruction_indexes = {
+        instruction_type: index for index, instruction_type in enumerate(instruction_types)
+    }
+
     progress = _progress_bar(total=total_validation_episodes)
     try:
-        for instruction_index, instruction_type in enumerate(instruction_types):
-            instruction_episode_results: list[EpisodeResult] = []
-            success_video_path: str | None = None
-            failure_video_path: str | None = None
-            episode_index_offset = 0
-            for bucket in instruction_buckets[instruction_type]:
-                with _temporary_env_vars(bucket.env_vars):
-                    bucket_summary, episode_results = _run_instruction_validation(
+        for bucket in metric_buckets:
+            instruction_type = bucket.instruction_type
+            episode_index_offset = instruction_offsets[instruction_type]
+            with _temporary_env_vars(bucket.env_vars):
+                _bucket_summary, episode_results = _run_instruction_validation(
+                    instruction_type=instruction_type,
+                    instruction_index=instruction_indexes[instruction_type],
+                    config=config,
+                    runtime=runtime,
+                    args=args,
+                    videos_dir=videos_dir,
+                    max_steps=max_steps,
+                    base_seed=base_seed,
+                    progress=progress,
+                    wrapper_dir=wrapper_dir,
+                    episodes_to_run=int(bucket.episodes),
+                    episode_index_offset=int(episode_index_offset),
+                    log_label=bucket.log_label,
+                    validation_bucket=bucket,
+                    video_registry=video_registry,
+                    metric_episode=True,
+                )
+            metric_episode_results.extend(episode_results)
+            instruction_offsets[instruction_type] += int(bucket.episodes)
+
+        for bucket in arbitrary_buckets:
+            instruction_type = bucket.instruction_type
+            episode_index_offset = instruction_offsets[instruction_type]
+            with _temporary_env_vars(bucket.env_vars):
+                _bucket_summary, episode_results = _run_instruction_validation(
+                    instruction_type=instruction_type,
+                    instruction_index=instruction_indexes[instruction_type],
+                    config=config,
+                    runtime=runtime,
+                    args=args,
+                    videos_dir=videos_dir,
+                    max_steps=max_steps,
+                    base_seed=base_seed,
+                    progress=progress,
+                    wrapper_dir=wrapper_dir,
+                    episodes_to_run=1,
+                    episode_index_offset=int(episode_index_offset),
+                    log_label=bucket.log_label,
+                    validation_bucket=bucket,
+                    video_registry=video_registry,
+                    metric_episode=False,
+                )
+            arbitrary_episode_results.extend(episode_results)
+            instruction_offsets[instruction_type] += 1
+    finally:
+        progress.close()
+
+    if int(args.video_search_extra_episodes) > 0:
+        for instruction_type in instruction_types:
+            coverage_key = instruction_type
+            if str(args.video_coverage) == "case":
+                missing_case_buckets = [
+                    bucket
+                    for bucket in metric_buckets
+                    if bucket.instruction_type == instruction_type
+                    and not (
+                        video_registry.get(bucket.case_id, {}).get("success")
+                        and video_registry.get(bucket.case_id, {}).get("failure")
+                    )
+                ]
+                search_buckets = missing_case_buckets
+            else:
+                if (
+                    video_registry.get(coverage_key, {}).get("success")
+                    and video_registry.get(coverage_key, {}).get("failure")
+                ):
+                    continue
+                candidates = [
+                    bucket
+                    for bucket in instruction_buckets[instruction_type]
+                    if bucket.prompt_kind == "canonical"
+                    and (
+                        bucket.curriculum_shell is None
+                        or bucket.curriculum_shell_count is None
+                        or bucket.curriculum_shell >= bucket.curriculum_shell_count - 1
+                    )
+                ]
+                search_buckets = candidates[:1]
+
+            for search_bucket in search_buckets:
+                with _temporary_env_vars(search_bucket.env_vars):
+                    _summary, episode_results = _run_instruction_validation(
                         instruction_type=instruction_type,
-                        instruction_index=instruction_index,
+                        instruction_index=instruction_indexes[instruction_type],
                         config=config,
                         runtime=runtime,
                         args=args,
                         videos_dir=videos_dir,
                         max_steps=max_steps,
                         base_seed=base_seed,
-                        progress=progress,
+                        progress=None,
                         wrapper_dir=wrapper_dir,
-                        episodes_to_run=int(bucket.episodes),
-                        episode_index_offset=int(episode_index_offset),
-                        log_label=bucket.log_label,
+                        episodes_to_run=int(args.video_search_extra_episodes),
+                        episode_index_offset=10_000_000 + int(instruction_offsets[instruction_type]),
+                        log_label=f"video-search:{search_bucket.log_label}",
+                        validation_bucket=search_bucket,
+                        video_registry=video_registry,
+                        metric_episode=False,
+                        stop_when_video_coverage_complete=True,
                     )
-                instruction_episode_results.extend(episode_results)
-                episode_index_offset += int(bucket.episodes)
-                if success_video_path is None:
-                    success_video_path = bucket_summary.success_video_path
-                if failure_video_path is None:
-                    failure_video_path = bucket_summary.failure_video_path
-            summary = _summarize_instruction_results(
+                video_search_episode_results.extend(episode_results)
+                instruction_offsets[instruction_type] += len(episode_results)
+
+    all_episode_results = [
+        *metric_episode_results,
+        *arbitrary_episode_results,
+        *video_search_episode_results,
+    ]
+    instruction_summaries: list[InstructionSummary] = []
+    for instruction_type in instruction_types:
+        items = [
+            result
+            for result in metric_episode_results
+            if result.instruction_type == instruction_type
+        ]
+        registry_entry = video_registry.get(instruction_type, {})
+        instruction_summaries.append(
+            _summarize_instruction_results(
                 instruction_type=instruction_type,
-                episode_results=instruction_episode_results,
-                video_path=success_video_path or failure_video_path,
-                success_video_path=success_video_path,
-                failure_video_path=failure_video_path,
+                episode_results=items,
+                video_path=registry_entry.get("success") or registry_entry.get("failure"),
+                success_video_path=registry_entry.get("success"),
+                failure_video_path=registry_entry.get("failure"),
             )
-            instruction_summaries.append(summary)
-            flattened_episode_results.extend(instruction_episode_results)
-            instruction_episodes[instruction_type] = [asdict(result) for result in instruction_episode_results]
-    finally:
-        progress.close()
+        )
 
-    instruction_text_summaries = _summarize_instruction_text_results(flattened_episode_results)
+    instruction_text_summaries = _summarize_instruction_text_results(metric_episode_results)
+    instruction_rows = _aggregate_episode_results(
+        metric_episode_results,
+        group_fields=("instruction_type",),
+    )
+    shell_rows = _aggregate_episode_results(
+        metric_episode_results,
+        group_fields=("instruction_type", "curriculum_shell"),
+    )
+    prompt_rows = _aggregate_episode_results(
+        metric_episode_results,
+        group_fields=("instruction_type", "prompt_kind", "prompt_variant"),
+    )
+    case_rows = _aggregate_episode_results(
+        metric_episode_results,
+        group_fields=(
+            "instruction_type",
+            "curriculum_shell",
+            "prompt_kind",
+            "prompt_variant",
+            "target_object_catalog",
+        ),
+    )
+    target_rows = _aggregate_episode_results(
+        metric_episode_results,
+        group_fields=("instruction_type", "target_object_catalog"),
+    )
 
+    csv_path = run_dir / "instruction_success_rates.csv"
+    _write_success_rate_csv(csv_path, instruction_summaries)
+    text_csv_path = run_dir / "instruction_text_success_rates.csv"
+    _write_instruction_text_csv(text_csv_path, instruction_text_summaries)
+    _write_grouped_success_rate_csv(
+        run_dir / "instruction_shell_success_rates.csv",
+        shell_rows,
+        group_fields=("instruction_type", "curriculum_shell"),
+    )
+    _write_grouped_success_rate_csv(
+        run_dir / "instruction_prompt_success_rates.csv",
+        prompt_rows,
+        group_fields=("instruction_type", "prompt_kind", "prompt_variant"),
+    )
+    _write_grouped_success_rate_csv(
+        run_dir / "evaluation_case_success_rates.csv",
+        case_rows,
+        group_fields=(
+            "instruction_type",
+            "curriculum_shell",
+            "prompt_kind",
+            "prompt_variant",
+            "target_object_catalog",
+        ),
+    )
+    _write_grouped_success_rate_csv(
+        run_dir / "target_object_success_rates.csv",
+        target_rows,
+        group_fields=("instruction_type", "target_object_catalog"),
+    )
+    _write_episode_results_csv(run_dir / "episode_results.csv", all_episode_results)
+
+    video_probes, video_coverage = _write_video_audit(
+        run_dir=run_dir,
+        videos_dir=videos_dir,
+        expected_keys=expected_video_keys,
+        video_registry=video_registry,
+    )
+    report_path = _write_validation_report(
+        run_dir=run_dir,
+        artifacts=artifacts,
+        metric_results=metric_episode_results,
+        all_results=all_episode_results,
+        instruction_rows=instruction_rows,
+        shell_rows=shell_rows,
+        prompt_rows=prompt_rows,
+        target_rows=target_rows,
+        video_probes=video_probes,
+        video_coverage=video_coverage,
+    )
+
+    instruction_episodes = {
+        instruction_type: [
+            asdict(result)
+            for result in all_episode_results
+            if result.instruction_type == instruction_type
+        ]
+        for instruction_type in instruction_types
+    }
     manifest = {
         "run_dir": run_dir.as_posix(),
         "generated_at": datetime.now().isoformat(),
@@ -1380,8 +2414,10 @@ def main() -> int:
         "base_checkpoint": args.base_ckpt or config.policy.base_checkpoint,
         "scene": args.scene,
         "wrapper_dir": None if wrapper_dir is None else wrapper_dir.as_posix(),
-        "episodes_per_instruction": int(args.episodes_per_instruction),
-        "total_validation_episodes": int(total_validation_episodes),
+        "episodes_per_case": int(args.episodes_per_instruction),
+        "total_metric_episodes": int(len(metric_episode_results)),
+        "total_arbitrary_episodes": int(len(arbitrary_episode_results)),
+        "total_video_search_episodes": int(len(video_search_episode_results)),
         "max_steps": int(max_steps),
         "chunk_length": int(runtime["chunk_length"]),
         "replan_every": int(runtime["replan_every"] or runtime["chunk_length"]),
@@ -1392,28 +2428,61 @@ def main() -> int:
         "record_success_videos": bool(args.record_success_videos),
         "record_all_success_videos": bool(args.record_all_success_videos),
         "record_failure_videos": bool(args.record_failure_videos),
+        "video_coverage_level": str(args.video_coverage),
+        "video_search_extra_episodes": int(args.video_search_extra_episodes),
         "success_distance": float(args.success_distance),
         "move_to_object_success_distance": float(args.move_to_object_success_distance),
         "directional_displacement_threshold": float(args.directional_displacement_threshold),
         "move_to_object_episodes_per_target": int(args.move_to_object_episodes_per_target),
-        "move_to_object_single_target_scene": bool("move_to_object" in instruction_types),
+        "stratify_move_to_object_targets": bool(args.stratify_move_to_object_targets),
+        "multi_object_scenes": bool(args.multi_object_scenes),
+        "min_scene_objects": int(args.min_scene_objects),
+        "max_scene_objects": int(args.max_scene_objects),
+        "evaluate_reverse_shells": bool(args.evaluate_reverse_shells),
+        "include_synonyms": bool(args.include_synonyms),
+        "synonyms_per_instruction": int(args.synonyms_per_instruction),
+        "synonym_shells": str(args.synonym_shells),
+        "arbitrary_instructions_count": int(args.arbitrary_instructions_count),
         "reuse_existing_wrapper_variants": bool(args.reuse_existing_wrapper_variants),
+        "evaluation_cases": [
+            {
+                "case_id": bucket.case_id,
+                "instruction_type": bucket.instruction_type,
+                "target_object": bucket.target_object,
+                "episodes": bucket.episodes,
+                "prompt_kind": bucket.prompt_kind,
+                "prompt_variant": bucket.prompt_variant,
+                "prompt_template": bucket.prompt_template,
+                "curriculum_shell": bucket.curriculum_shell,
+                "curriculum_shell_count": bucket.curriculum_shell_count,
+            }
+            for bucket in [*metric_buckets, *arbitrary_buckets]
+        ],
         "instruction_summaries": [asdict(summary) for summary in instruction_summaries],
         "instruction_text_summaries": [asdict(summary) for summary in instruction_text_summaries],
+        "video_registry": video_registry,
+        "video_validation": video_probes,
+        "video_coverage": video_coverage,
+        "report_path": report_path.as_posix(),
         "episodes": instruction_episodes,
     }
 
     manifest_path = run_dir / "validation_manifest.json"
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
-    csv_path = run_dir / "instruction_success_rates.csv"
-    _write_success_rate_csv(csv_path, instruction_summaries)
-    text_csv_path = run_dir / "instruction_text_success_rates.csv"
-    _write_instruction_text_csv(text_csv_path, instruction_text_summaries)
 
+    invalid_videos = [probe for probe in video_probes if not bool(probe.get("valid"))]
+    incomplete_coverage = [item for item in video_coverage if not bool(item.get("complete"))]
     if not args.progress_only:
         print(f"Manifest saved: {manifest_path}")
-        print(f"CSV saved: {csv_path}")
+        print(f"Report saved: {report_path}")
+        print(f"Instruction CSV saved: {csv_path}")
         print(f"Instruction text CSV saved: {text_csv_path}")
+        print(f"Video validation failures: {len(invalid_videos)}")
+        print(f"Incomplete video coverage entries: {len(incomplete_coverage)}")
+    if bool(args.strict_video_validation) and invalid_videos:
+        return 3
+    if bool(args.require_complete_video_coverage) and incomplete_coverage:
+        return 4
     return 0
 
 
