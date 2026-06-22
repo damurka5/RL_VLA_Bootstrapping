@@ -167,6 +167,9 @@ def main() -> int:
                                 "success": True,
                                 "attempts": attempts,
                                 "reason": "",
+                                "retry_reasons": " | ".join(
+                                    str(item) for item in info.get("reset_retry_errors", ())
+                                ),
                                 "scene": info.get("scene", ""),
                                 "scene_objects": "|".join(
                                     str(item) for item in info.get("scene_objects", ())
@@ -183,6 +186,7 @@ def main() -> int:
                                 "success": False,
                                 "attempts": int(args.max_reset_attempts),
                                 "reason": str(exc),
+                                "retry_reasons": "",
                                 "scene": "",
                                 "scene_objects": "",
                             }

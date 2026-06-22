@@ -64,6 +64,110 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertGreater(reward_near, reward_far)
         self.assertGreater(info_far["distance_to_goal"], info_near["distance_to_goal"])
 
+    def test_direct_gripper_reward_penalizes_xyz_actions_without_success_bonus(self):
+        spec = InstructionSpec(
+            instruction_type="open_gripper",
+            text="open the gripper",
+            target_object="",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        metadata = {
+            "direct_gripper_open_threshold": 0.80,
+            "direct_gripper_progress_weight": 1.0,
+            "direct_gripper_action_weight": 0.10,
+            "direct_actuator_translation_action_penalty": 0.30,
+            "direct_actuator_success_bonus": 0.0,
+        }
+        position = np.array([0.0, 0.0, 0.40], dtype=np.float32)
+
+        reward_clean, success_clean, info_clean = compute_instruction_reward(
+            spec=spec,
+            ee_pos=position,
+            obj_pos=position,
+            reward_state=init_reward_state(position, position),
+            action=np.array([0.0, 0.0, 0.0, 0.0, 1.0], dtype=np.float32),
+            task_metadata=metadata,
+            gripper_opening=0.90,
+        )
+        reward_xyz, success_xyz, info_xyz = compute_instruction_reward(
+            spec=spec,
+            ee_pos=position,
+            obj_pos=position,
+            reward_state=init_reward_state(position, position),
+            action=np.array([1.0, -1.0, 1.0, 0.0, 1.0], dtype=np.float32),
+            task_metadata=metadata,
+            gripper_opening=0.90,
+        )
+
+        self.assertTrue(success_clean)
+        self.assertTrue(success_xyz)
+        self.assertAlmostEqual(reward_clean - reward_xyz, 0.30, places=6)
+        self.assertEqual(info_clean["direct_actuator_translation_penalty"], 0.0)
+        self.assertAlmostEqual(info_xyz["direct_actuator_translation_penalty"], 0.30, places=6)
+        self.assertLess(reward_clean, 1.01)
+
+    def test_direct_yaw_reward_detects_small_rotation_and_penalizes_xyz_actions(self):
+        class _YawEnv:
+            def __init__(self, yaw: float):
+                self.yaw = float(yaw)
+
+            def get_yaw(self):
+                return self.yaw
+
+        spec = InstructionSpec(
+            instruction_type="rotate_gripper_counterclockwise",
+            text="rotate the gripper counterclockwise",
+            target_object="",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        metadata = {
+            "direct_yaw_success_angle": 0.50,
+            "direct_yaw_progress_weight": 2.0,
+            "direct_yaw_step_weight": 1.0,
+            "direct_yaw_step_scale": 0.02,
+            "direct_yaw_action_weight": 0.20,
+            "direct_actuator_translation_action_penalty": 0.30,
+            "direct_actuator_success_bonus": 0.0,
+        }
+        position = np.zeros((3,), dtype=np.float32)
+
+        state_clean = init_reward_state(position, position)
+        state_clean.initial_ee_yaw = 0.0
+        state_clean.prev_ee_yaw = 0.0
+        reward_clean, success_clean, info_clean = compute_instruction_reward(
+            spec=spec,
+            ee_pos=position,
+            obj_pos=position,
+            reward_state=state_clean,
+            action=np.array([0.0, 0.0, 0.0, 0.25, 0.0], dtype=np.float32),
+            task_metadata=metadata,
+            env=_YawEnv(0.005),
+        )
+
+        state_xyz = init_reward_state(position, position)
+        state_xyz.initial_ee_yaw = 0.0
+        state_xyz.prev_ee_yaw = 0.0
+        reward_xyz, success_xyz, info_xyz = compute_instruction_reward(
+            spec=spec,
+            ee_pos=position,
+            obj_pos=position,
+            reward_state=state_xyz,
+            action=np.array([1.0, 1.0, 1.0, 0.25, 0.0], dtype=np.float32),
+            task_metadata=metadata,
+            env=_YawEnv(0.005),
+        )
+
+        self.assertFalse(success_clean)
+        self.assertFalse(success_xyz)
+        self.assertGreater(reward_clean, 0.20)
+        self.assertAlmostEqual(reward_clean - reward_xyz, 0.30, places=6)
+        self.assertAlmostEqual(info_clean["direct_yaw_step_scale"], 0.02, places=6)
+        self.assertAlmostEqual(info_xyz["direct_actuator_translation_penalty"], 0.30, places=6)
+
     def test_camera_alignment_no_longer_drives_reward_or_success(self):
         spec = self._spec("move_up")
         goal = np.array([0.0, 0.0, 0.23], dtype=np.float32)

@@ -253,17 +253,22 @@ task:
       direct_translation_wrong_action_penalty: 0.15
       direct_translation_off_axis_action_penalty: 0.05
       direct_translation_orthogonal_drift_penalty: 0.20
+      direct_control_success_bonus: 0.0
       direct_gripper_open_threshold: 0.80
       direct_gripper_closed_threshold: 0.20
       direct_gripper_progress_weight: 1.0
       direct_gripper_action_weight: 0.10
       direct_gripper_wrong_action_penalty: 0.10
+      direct_actuator_translation_action_penalty: 0.20
+      direct_actuator_success_bonus: 0.0
       direct_yaw_success_angle: 0.50
       direct_yaw_start_angle: 0.0
-      direct_yaw_progress_weight: 1.0
-      direct_yaw_step_weight: 0.20
-      direct_yaw_action_weight: 0.05
-      direct_yaw_wrong_action_penalty: 0.15
+      direct_yaw_progress_weight: 2.0
+      direct_yaw_step_weight: 1.0
+      direct_yaw_step_scale: 0.02
+      direct_yaw_wrong_step_penalty: 0.50
+      direct_yaw_action_weight: 0.20
+      direct_yaw_wrong_action_penalty: 0.30
       gripper_edge_reward_scale: 0.015
       gripper_edge_success_threshold: 0.010
       release_success_edge_clearance: 0.035
@@ -341,6 +346,17 @@ task:
     object_spawn_min_gap: 0.04
     object_spawn_min_ee_dist: 0.12
     object_spawn_max_tries: 300
+    # Restrained dark/neutral floor + renderer haze colors. These diversify the
+    # area outside the table without washing out the robot or YCB objects.
+    background_color_palette:
+      [
+        [0.16, 0.18, 0.21, 1.0],
+        [0.20, 0.18, 0.16, 1.0],
+        [0.17, 0.20, 0.18, 1.0],
+        [0.22, 0.22, 0.24, 1.0],
+        [0.14, 0.17, 0.20, 1.0],
+        [0.21, 0.19, 0.22, 1.0],
+      ]
     reverse_curriculum:
       enabled: true
       promotion_success: 0.70
@@ -446,7 +462,7 @@ training:
       microbatch_size: 12
       max_env_steps: 120
       gamma: 0.99
-      learning_rate: 1.5e-5
+      learning_rate: 5.0e-6
       lr_scheduler: cosine
       lr_warmup_updates: 5
       lr_min_factor: 0.25
@@ -464,8 +480,8 @@ training:
       lock_non_commanded_axes: false
       lock_non_commanded_axes_threshold: 0.05
       randomize_ee_start: true
-      ee_start_x_bounds: [-0.18, 0.18]
-      ee_start_y_bounds: [-0.18, 0.18]
+      ee_start_x_bounds: [-0.15, 0.15]
+      ee_start_y_bounds: [-0.15, 0.15]
       ee_start_z: 0.15
       randomize_ee_yaw: true
       ee_yaw_bounds: [-3.141592653589793, 3.141592653589793]
@@ -486,7 +502,9 @@ training:
       scene_sampling: round_robin
       scene_refresh_every_steps: -1
       wrapper_cleanup: false
-      use_wrapper_cache: true
+      # Build a fresh wrapper pool for each run so updated YCB assets cannot be
+      # shadowed by isolated wrapper bundles from an older asset checkout.
+      use_wrapper_cache: false
       capture_frames: true
       save_validation_frames: false
       rollout_tap_every_updates: -1

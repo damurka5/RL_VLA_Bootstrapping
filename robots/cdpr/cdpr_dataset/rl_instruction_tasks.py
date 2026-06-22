@@ -1303,6 +1303,16 @@ def _compute_direct_actuator_reward(
 ) -> tuple[float, bool, dict[str, float]]:
     metadata = dict(task_metadata or {})
     action_arr = np.asarray(action if action is not None else np.zeros((5,)), dtype=np.float32).reshape(-1)
+    translation_actions = (
+        action_arr[:3]
+        if action_arr.size >= 3
+        else np.pad(action_arr, (0, max(0, 3 - action_arr.size)))[:3]
+    )
+    translation_action = float(np.mean(np.abs(translation_actions)))
+    translation_penalty = float(
+        _metadata_float(metadata, "direct_actuator_translation_action_penalty", 0.0)
+        * translation_action
+    )
     reward_state.prev_ee_pos = np.asarray(ee_pos, dtype=np.float32).copy()
     reward_state.prev_obj_pos = np.asarray(goal_pos, dtype=np.float32).copy()
     reward_state.prev_camera_align = None
@@ -1330,6 +1340,7 @@ def _compute_direct_actuator_reward(
             _metadata_float(metadata, "direct_gripper_progress_weight", 1.0) * progress
             + _metadata_float(metadata, "direct_gripper_action_weight", 0.10) * correct_action
             - _metadata_float(metadata, "direct_gripper_wrong_action_penalty", 0.10) * wrong_action
+            - translation_penalty
             + (_metadata_float(metadata, "direct_actuator_success_bonus", 0.0) if success else 0.0)
         )
         reward_state.prev_distance = error
@@ -1343,12 +1354,14 @@ def _compute_direct_actuator_reward(
             "direct_gripper_tolerance": float(tolerance),
             "direct_gripper_progress": float(progress),
             "direct_gripper_action": float(action_value),
+            "direct_actuator_translation_action": float(translation_action),
+            "direct_actuator_translation_penalty": float(translation_penalty),
             "distance_to_goal": float(error),
             "distance_reward": float(progress),
             "orientation_reward": 0.0,
             "action_saturation_penalty": 0.0,
             "action_saturation_rate": 0.0,
-            "action_saturation_max_abs": float(abs(action_value)),
+            "action_saturation_max_abs": float(np.max(np.abs(action_arr))) if action_arr.size else 0.0,
         }
 
     current_yaw = _read_env_body_yaw(env, None)
@@ -1377,12 +1390,21 @@ def _compute_direct_actuator_reward(
     action_value = float(action_arr[3]) if action_arr.size >= 4 else 0.0
     correct_action = float(np.clip(direction_sign * action_value, 0.0, 1.0))
     wrong_action = float(np.clip(-direction_sign * action_value, 0.0, 1.0))
+    yaw_step_scale = max(
+        _metadata_float(metadata, "direct_yaw_step_scale", target_angle * 0.25),
+        1e-6,
+    )
+    positive_step_rotation = float(max(0.0, step_signed_rotation))
+    negative_step_rotation = float(max(0.0, -step_signed_rotation))
     reward = float(
         _metadata_float(metadata, "direct_yaw_progress_weight", 1.0) * progress
         + _metadata_float(metadata, "direct_yaw_step_weight", 0.20)
-        * np.tanh(max(0.0, step_signed_rotation) / max(target_angle * 0.25, 1e-6))
+        * np.tanh(positive_step_rotation / yaw_step_scale)
+        - _metadata_float(metadata, "direct_yaw_wrong_step_penalty", 0.0)
+        * np.tanh(negative_step_rotation / yaw_step_scale)
         + _metadata_float(metadata, "direct_yaw_action_weight", 0.05) * correct_action
         - _metadata_float(metadata, "direct_yaw_wrong_action_penalty", 0.15) * wrong_action
+        - translation_penalty
         + (_metadata_float(metadata, "direct_actuator_success_bonus", 0.0) if success else 0.0)
     )
     reward_state.prev_ee_yaw = current_yaw
@@ -1397,12 +1419,15 @@ def _compute_direct_actuator_reward(
         "direct_yaw_target_angle": float(target_angle),
         "direct_yaw_progress": float(progress),
         "direct_yaw_action": float(action_value),
+        "direct_yaw_step_scale": float(yaw_step_scale),
+        "direct_actuator_translation_action": float(translation_action),
+        "direct_actuator_translation_penalty": float(translation_penalty),
         "distance_to_goal": float(max(0.0, target_angle - total_signed_rotation)),
         "distance_reward": float(progress),
         "orientation_reward": float(reward),
         "action_saturation_penalty": 0.0,
         "action_saturation_rate": 0.0,
-        "action_saturation_max_abs": float(abs(action_value)),
+        "action_saturation_max_abs": float(np.max(np.abs(action_arr))) if action_arr.size else 0.0,
     }
 
 

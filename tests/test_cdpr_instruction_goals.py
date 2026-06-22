@@ -52,6 +52,29 @@ class InstructionGoalTests(unittest.TestCase):
         goal = env._compute_instruction_goal(spec=spec, initial_ee_pos=initial)
         np.testing.assert_allclose(goal, np.array([0.0, 0.0, 0.25], dtype=np.float32), atol=1e-7)
 
+    def test_direct_actuator_instruction_keeps_stationary_goal(self):
+        env = self._env()
+        env._target_body_name = ""
+        initial = np.array([0.12, -0.08, 0.40], dtype=np.float32)
+
+        for instruction_type in (
+            "open_gripper",
+            "close_gripper",
+            "rotate_gripper_clockwise",
+            "rotate_gripper_counterclockwise",
+        ):
+            with self.subTest(instruction_type=instruction_type):
+                spec = InstructionSpec(
+                    instruction_type=instruction_type,
+                    text=instruction_type.replace("_", " "),
+                    target_object="",
+                    direction=np.zeros((3,), dtype=np.float32),
+                    target_displacement=0.40,
+                    lift_target=0.10,
+                )
+                goal = env._compute_instruction_goal(spec=spec, initial_ee_pos=initial)
+                np.testing.assert_allclose(goal, initial, atol=1e-7)
+
     def test_pick_up_instruction_uses_live_target_object_position(self):
         env = self._env()
         env._target_body_name = "apple_body"

@@ -30,6 +30,13 @@ conda run --no-capture-output -n openvla-oft \
 The required result is `failures=0`. Any failure is an environment/reset defect, not a model
 failure. Inspect `reset_smoke_results.csv` before training.
 
+The June 22 reset report (`episodes=110 failures=40`) was not caused by OpenVLA or by cached scene
+positions. All 40 failures were the four direct-actuator cases. Their goal builder rejected
+open/close/yaw instructions, while unsuccessful attempts also exposed the existing
+`ee_outside_workspace` initialization retry. Direct-actuator instructions now keep a stationary
+XYZ goal, so they no longer consume every valid reset attempt with
+`Unsupported instruction type for goal generation`.
+
 Verify the simulator response for every action dimension:
 
 ```bash
@@ -100,12 +107,31 @@ action, off-axis action, and orthogonal drift. Success requires 5 cm requested d
 more than 5 cm orthogonal drift.
 
 For opening/closing, progress is normalized movement toward opening 1 or 0. A correct gripper action
-adds `0.10`; a wrong-direction action subtracts `0.10`. Success is opening at least `0.80` or at
-most `0.20`.
+adds `0.10`; a wrong-direction action subtracts `0.10`. Mean absolute XYZ command is penalized with
+weight `0.20`. Success is opening at least `0.80` or at most `0.20`.
 
 For yaw, progress is signed rotation divided by `0.50` rad. Positive incremental rotation and a
-correct yaw action are rewarded; wrong-direction yaw is penalized more strongly. Success requires
-at least `0.50` rad in the requested direction.
+correct yaw action are rewarded; wrong-direction yaw is penalized more strongly. Small physical
+rotation is amplified with a `0.02` rad step scale, and mean absolute XYZ command is penalized with
+weight `0.20`. Success requires at least `0.50` rad in the requested direction.
+
+All dense success bonuses are explicitly `0.0`; success terminates the episode but does not add a
+`+1` reward spike.
+
+### Recovery learning rate
+
+The recovery run loads adapter, action-head, and actor-stat weights from `step_0216000`, but creates
+a new optimizer and restarts the scheduler. Use `5e-6` with five warmup updates and cosine decay to
+`1.25e-6` (`lr_min_factor=0.25`). This is intentionally lower than the previous `1.5e-5` because
+the run is preserving a useful dense checkpoint while adding stronger yaw/gripper signals.
+
+### Scene freshness
+
+`use_wrapper_cache` is disabled for recovery, while `prebuild_scene_cache` remains enabled. This
+builds a fresh wrapper pool at the start of each run—so updated YCB assets cannot be shadowed by old
+isolated wrapper bundles—then reuses that fresh pool for rollout speed. Object poses are still
+randomized on every reset. Ten desk textures and a restrained six-color dark/neutral background
+palette provide visual variation without making the image overly bright.
 
 Sparse training cannot start until:
 

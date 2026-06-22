@@ -165,6 +165,14 @@ class DeskTexturePatchResult:
     matched_geoms: int
 
 
+@dataclass
+class BackgroundColorPatchResult:
+    wrapper_xml: Path
+    generated_xmls: list[Path]
+    color_rgba: tuple[float, float, float, float]
+    matched_geoms: int
+
+
 @dataclass(frozen=True)
 class WrapperBuilderHandle:
     build_wrapper_if_needed: Any
@@ -358,6 +366,30 @@ def _metadata_xy_pair(task_metadata: dict[str, Any], key: str, default: Sequence
     if not np.isfinite(x) or not np.isfinite(y):
         raise ValueError(f"Task metadata `{key}` must be finite, got {raw!r}")
     return x, y
+
+
+def _metadata_color_palette(
+    task_metadata: dict[str, Any],
+    key: str = "background_color_palette",
+) -> tuple[tuple[float, float, float, float], ...]:
+    raw = task_metadata.get(key)
+    if raw is None:
+        return ()
+    if isinstance(raw, (str, bytes)) or not isinstance(raw, Sequence):
+        raise ValueError(f"Task metadata `{key}` must be a list of RGB or RGBA colors.")
+
+    colors: list[tuple[float, float, float, float]] = []
+    for item in raw:
+        if isinstance(item, (str, bytes)) or not isinstance(item, Sequence):
+            raise ValueError(f"Each task metadata `{key}` entry must be an RGB or RGBA sequence.")
+        values = np.asarray(item, dtype=float).reshape(-1)
+        if values.size not in {3, 4} or not np.all(np.isfinite(values)):
+            raise ValueError(f"Each task metadata `{key}` entry must contain 3 or 4 finite floats.")
+        rgba = np.ones((4,), dtype=float)
+        rgba[: values.size] = values
+        rgba = np.clip(rgba, 0.0, 1.0)
+        colors.append(tuple(float(value) for value in rgba))
+    return tuple(colors)
 
 
 def _resolve_object_spawn_config(
@@ -877,8 +909,10 @@ def _candidate_existing_wrapper_paths(
     patterns = (
         f"{prefix}_wrapper.xml",
         f"{prefix}_wrapper__*__desktex_*.xml",
+        f"{prefix}_wrapper__*__bg_*.xml",
         f"{prefix}__rltmp_*.xml",
         f"{prefix}__rltmp_*__*__desktex_*.xml",
+        f"{prefix}__rltmp_*__*__bg_*.xml",
     )
 
     candidates: list[Path] = []
@@ -921,6 +955,15 @@ def _desk_texture_variant_tag(base_wrapper_xml: Path, chosen_texture: Path) -> s
         f"{Path(base_wrapper_xml).expanduser().resolve().as_posix()}::"
         f"{_stable_file_signature(chosen_texture)}"
     )
+    return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
+
+
+def _background_color_variant_tag(
+    base_wrapper_xml: Path,
+    color_rgba: Sequence[float],
+) -> str:
+    rgba = tuple(float(value) for value in color_rgba)
+    payload = f"{Path(base_wrapper_xml).expanduser().resolve().as_posix()}::{rgba}"
     return hashlib.sha1(payload.encode("utf-8")).hexdigest()[:12]
 
 
@@ -1106,6 +1149,101 @@ def _build_textured_wrapper_variant_locked(
         chosen_texture=chosen_texture,
         matched_geoms=matched_geoms,
     )
+
+
+def _patch_xml_tree_for_background_color(
+    source_xml: Path,
+    *,
+    variant_tag: str,
+    color_rgba: tuple[float, float, float, float],
+    output_dir: Path,
+    mapping: dict[Path, Path],
+    generated_xmls: list[Path],
+) -> int:
+    source_xml = source_xml.resolve()
+    if source_xml in mapping:
+        return 0
+
+    path_hash = hashlib.sha1(source_xml.as_posix().encode("utf-8")).hexdigest()[:10]
+    output_dir = Path(output_dir).expanduser().resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
+    patched_xml = output_dir / f"{source_xml.stem}__{path_hash}__bg_{variant_tag}{source_xml.suffix}"
+    mapping[source_xml] = patched_xml
+
+    tree = ET.parse(source_xml)
+    root = tree.getroot()
+    matched = 0
+    rgba_text = " ".join(f"{value:.4f}" for value in color_rgba)
+
+    for inc_elem, file_attr in list(_iter_includes(root)):
+        include_src = _resolve_include_path(source_xml, file_attr)
+        if not include_src.exists():
+            continue
+        matched += _patch_xml_tree_for_background_color(
+            include_src,
+            variant_tag=variant_tag,
+            color_rgba=color_rgba,
+            output_dir=output_dir,
+            mapping=mapping,
+            generated_xmls=generated_xmls,
+        )
+        include_dst = mapping.get(include_src.resolve(), include_src)
+        inc_elem.set("file", _relpath_or_abs(include_dst, patched_xml.parent))
+
+    for geom in root.iter("geom"):
+        name = str(geom.get("name") or "").strip().lower()
+        geom_type = str(geom.get("type") or "").strip().lower()
+        if name in {"floor", "ground", "background_floor"} or geom_type == "plane":
+            geom.set("rgba", rgba_text)
+            matched += 1
+
+    visual = root.find("visual")
+    if visual is not None:
+        rgba_node = visual.find("rgba")
+        if rgba_node is None:
+            rgba_node = ET.SubElement(visual, "rgba")
+        rgba_node.set("haze", rgba_text)
+        matched += 1
+
+    _atomic_write_xml_tree(tree, patched_xml)
+    generated_xmls.append(patched_xml)
+    return matched
+
+
+def _build_background_color_variant(
+    base_wrapper_xml: Path,
+    color_rgba: Sequence[float],
+) -> BackgroundColorPatchResult:
+    base_wrapper_xml = Path(base_wrapper_xml).expanduser().resolve()
+    normalized = np.asarray(color_rgba, dtype=float).reshape(-1)
+    if normalized.size != 4 or not np.all(np.isfinite(normalized)):
+        raise ValueError("Background color must contain exactly four finite RGBA values.")
+    color = tuple(float(value) for value in np.clip(normalized, 0.0, 1.0))
+    variant_tag = _background_color_variant_tag(base_wrapper_xml, color)
+    lock_path = base_wrapper_xml.parent / f".{base_wrapper_xml.stem}__bg_{variant_tag}.lock"
+    with _path_lock(lock_path):
+        mapping: dict[Path, Path] = {}
+        generated_xmls: list[Path] = []
+        matched = _patch_xml_tree_for_background_color(
+            base_wrapper_xml,
+            variant_tag=variant_tag,
+            color_rgba=color,
+            output_dir=base_wrapper_xml.parent,
+            mapping=mapping,
+            generated_xmls=generated_xmls,
+        )
+        wrapper_copy = mapping.get(base_wrapper_xml, base_wrapper_xml)
+        if not _wrapper_bundle_exists(wrapper_copy):
+            raise FileNotFoundError(
+                "Background-colored wrapper bundle is missing or incomplete after patching. "
+                f"wrapper={wrapper_copy}"
+            )
+        return BackgroundColorPatchResult(
+            wrapper_xml=wrapper_copy,
+            generated_xmls=generated_xmls,
+            color_rgba=color,
+            matched_geoms=matched,
+        )
 
 
 def _import_wrapper_builder():
@@ -1524,6 +1662,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._cleanup_paths: list[Path] = []
         self._cleanup_path_set: set[Path] = set()
         self._desk_texture_name = ""
+        self._background_color = ""
         self._current_wrapper_xml: Path | None = None
         self._inverse_catalog_to_body: dict[str, str] = {}
         self._prev_object_positions: dict[str, np.ndarray] = {}
@@ -1879,6 +2018,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._cleanup_generated_files()
         self._current_wrapper_xml = None
         self._desk_texture_name = ""
+        self._background_color = ""
         self._prev_object_positions = {}
         self._inverse_catalog_to_body = {}
         self._reference_catalog_name = ""
@@ -2034,6 +2174,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             "scene_name": str(scene.name),
             "sorted_object_set": tuple(sorted(str(name) for name in scene.objects)),
             "texture_variant": str(getattr(self, "_desk_texture_name", "") or "none"),
+            "background_color": str(getattr(self, "_background_color", "") or "none"),
             "object_topology_version": wrapper_version,
         }
 
@@ -2072,6 +2213,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             "object_body_names": list(self._object_body_names),
             "scene_catalog_objects": list(self._scene_catalog_objects),
             "desk_texture_name": str(self._desk_texture_name),
+            "background_color": str(getattr(self, "_background_color", "")),
             "current_wrapper_xml": (
                 str(self._current_wrapper_xml)
                 if self._current_wrapper_xml is not None
@@ -2142,6 +2284,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._object_body_names = [str(name) for name in snapshot["object_body_names"]]
         self._scene_catalog_objects = [str(name) for name in snapshot["scene_catalog_objects"]]
         self._desk_texture_name = str(snapshot["desk_texture_name"])
+        self._background_color = str(snapshot.get("background_color", ""))
         wrapper_xml = str(snapshot.get("current_wrapper_xml", "") or "").strip()
         self._current_wrapper_xml = Path(wrapper_xml) if wrapper_xml else None
         self._inverse_catalog_to_body = dict(snapshot["inverse_catalog_to_body"])
@@ -3373,6 +3516,15 @@ class CDPRLanguageRLEnv(_EnvBase):
                 goal = self._compute_relation_goal_position(spec=spec, target_pos=target_pos)
             else:
                 goal = target_pos
+        elif spec.instruction_type in {
+            "open_gripper",
+            "close_gripper",
+            *DIRECT_GRIPPER_YAW_INSTRUCTION_TYPES,
+        }:
+            # Direct actuator tasks do not have a translational waypoint. Keeping
+            # the goal at the reset pose avoids inventing a movement objective and
+            # lets the reward focus exclusively on gripper/yaw actuation.
+            goal = np.asarray(initial_ee_pos, dtype=np.float32).reshape(3).copy()
         else:
             center = self._goal_center()
             lateral_offset = float(self._task_metadata.get("lateral_goal_offset", spec.target_displacement))
@@ -3501,6 +3653,7 @@ class CDPRLanguageRLEnv(_EnvBase):
                 self._register_cleanup_path(path)
 
         self._desk_texture_name = ""
+        self._background_color = ""
         if self.desk_texture_files:
             tex_idx = int(self.np_random.integers(0, len(self.desk_texture_files)))
             chosen_texture = self.desk_texture_files[tex_idx]
@@ -3519,6 +3672,22 @@ class CDPRLanguageRLEnv(_EnvBase):
                 for path in patched.generated_xmls:
                     self._register_cleanup_path(path)
                 for path in patched.generated_files:
+                    self._register_cleanup_path(path)
+
+        background_palette = _metadata_color_palette(
+            dict(getattr(self, "_task_metadata", {}) or {})
+        )
+        if background_palette:
+            color_idx = int(self.np_random.integers(0, len(background_palette)))
+            chosen_color = background_palette[color_idx]
+            background_variant = _build_background_color_variant(
+                base_wrapper_xml=wrapper_xml,
+                color_rgba=chosen_color,
+            )
+            wrapper_xml = background_variant.wrapper_xml
+            self._background_color = ",".join(f"{value:.3f}" for value in chosen_color)
+            if self.wrapper_cleanup or unique_wrapper_bundle:
+                for path in background_variant.generated_xmls:
                     self._register_cleanup_path(path)
 
         return wrapper_xml
@@ -4180,6 +4349,7 @@ class CDPRLanguageRLEnv(_EnvBase):
             "gripper_opening": float(self._get_gripper_opening() or 0.0),
             "gripper_target": float(self._get_gripper_target()),
             "desk_texture": self._desk_texture_name,
+            "background_color": str(getattr(self, "_background_color", "")),
             "wrapper_xml": str(self._current_wrapper_xml) if self._current_wrapper_xml else "",
             "ee_start": [float(x) for x in self._episode_ee_start.tolist()],
             "support_surface_z": float(self._support_surface_z),

@@ -2173,7 +2173,9 @@ def _reset_validation_env_with_retries(
                 raise RuntimeError(
                     f"invalid reset state: {info.get('simulation_state_reason', 'unknown')}"
                 )
-            return obs, dict(info), attempt
+            reset_info = dict(info)
+            reset_info["reset_retry_errors"] = tuple(errors)
+            return obs, reset_info, attempt
         except Exception as exc:
             last_error = exc
             errors.append(f"attempt {attempt}: {type(exc).__name__}: {exc}")

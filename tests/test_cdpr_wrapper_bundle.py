@@ -389,6 +389,44 @@ class WrapperBundleTests(unittest.TestCase):
             np.testing.assert_allclose(sampled[:2], np.array([0.0, 0.0], dtype=np.float32), atol=1e-7)
             self.assertAlmostEqual(float(sampled[2]), 0.40, places=6)
 
+    def test_background_color_variant_patches_floor_and_haze(self):
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wrapper = root / "wrapper.xml"
+            robot = root / "robot.xml"
+            robot.write_text(
+                (
+                    "<mujoco>"
+                    "<visual><headlight diffuse='0.7 0.7 0.7'/></visual>"
+                    "<worldbody><geom name='floor' type='plane' size='5 5 0.1'/></worldbody>"
+                    "</mujoco>"
+                ),
+                encoding="utf-8",
+            )
+            wrapper.write_text(
+                "<mujoco><include file='robot.xml'/></mujoco>",
+                encoding="utf-8",
+            )
+
+            result = self.rl_env_mod._build_background_color_variant(
+                wrapper,
+                (0.16, 0.18, 0.21, 1.0),
+            )
+
+            self.assertTrue(result.wrapper_xml.exists())
+            patched_root = ET.parse(result.wrapper_xml).getroot()
+            include_file = patched_root.find("include").get("file")
+            include_path = (result.wrapper_xml.parent / include_file).resolve()
+            patched_robot = ET.parse(include_path).getroot()
+            self.assertEqual(
+                patched_robot.find("./worldbody/geom").get("rgba"),
+                "0.1600 0.1800 0.2100 1.0000",
+            )
+            self.assertEqual(
+                patched_robot.find("./visual/rgba").get("haze"),
+                "0.1600 0.1800 0.2100 1.0000",
+            )
+
     def test_candidate_existing_wrapper_paths_discovers_cached_variants(self):
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
