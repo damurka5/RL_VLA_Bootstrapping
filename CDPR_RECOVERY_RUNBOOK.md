@@ -56,6 +56,26 @@ conda run --no-capture-output -n openvla-oft \
   --max-reset-attempts 10
 ```
 
+Also exercise the training-specific prebuilt-wrapper path:
+
+```bash
+conda run --no-capture-output -n openvla-oft \
+  python3 scripts/smoke_test_cdpr_prebuilt_randomized_resets.py \
+  --episodes 40 \
+  --max-reset-attempts 10
+```
+
+Require `failures=0`, `reset_retries=0`, and `passed=True` from both smoke tests.
+
+Prebuilt wrappers are compatible with randomized EE starts only because reset now teleports the
+MuJoCo `ee_free` joint to the sampled start and recalibrates cable preload before validation. Do
+not remove that reset step: controller-only movement from the wrapper's baked pose caused repeated
+`ee_outside_workspace` failures in training even when the reset-only smoke test passed.
+
+Known reset failures quarantine the selected cached scene locally, force a fresh pose-matched
+wrapper on the next attempt, and use a deterministic workspace-center start for the final two
+attempts.
+
 ## Stage B: A/B checkpoint baseline
 
 Evaluate the dense checkpoint:

@@ -1741,7 +1741,15 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         episode_ee_start = self._sample_episode_ee_start(options=options)
         self._episode_ee_start = episode_ee_start.astype(np.float32)
-        self._initialize_episode_scene(scene=scene, ee_start=episode_ee_start)
+        force_fresh_wrapper = bool(
+            getattr(self, "_rlvla_force_fresh_wrapper_on_next_reset", False)
+        )
+        self._rlvla_force_fresh_wrapper_on_next_reset = False
+        self._initialize_episode_scene(
+            scene=scene,
+            ee_start=episode_ee_start,
+            force_rebuild=force_fresh_wrapper,
+        )
         if not self._resolved_scene_supports_instruction_type(scene, instruction_type):
             stale_wrapper = self._current_wrapper_xml
             if stale_wrapper is not None:
@@ -1817,10 +1825,24 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._initialize_direct_actuator_episode_state()
         state_valid, state_reason = self._simulation_state_health(check_acceleration=False)
         if not state_valid:
+            stale_wrapper = self._current_wrapper_xml
+            if stale_wrapper is not None:
+                self._invalid_wrapper_paths.add(Path(stale_wrapper).resolve())
+            try:
+                reset_ee = [
+                    float(value)
+                    for value in np.asarray(self._get_ee_position(), dtype=np.float64).reshape(3)
+                ]
+            except Exception:
+                reset_ee = []
             raise RuntimeError(
                 "Invalid CDPR state after episode reset"
                 f" (instruction={self._instruction_spec.instruction_type}, "
-                f"shell={self._curriculum_shell}, reason={state_reason})."
+                f"shell={self._curriculum_shell}, reason={state_reason}, "
+                f"requested_ee_start={episode_ee_start.tolist()}, "
+                f"actual_ee={reset_ee}, wrapper={stale_wrapper}, "
+                f"wrapper_reused={bool(getattr(self, '_last_wrapper_reused_from_cache', False))}, "
+                f"model_cache_hit={bool(self._last_model_cache_event.get('hit', False))})."
             )
 
         ee0 = self._get_ee_position()
@@ -3721,15 +3743,30 @@ class CDPRLanguageRLEnv(_EnvBase):
         target = self._clamp_ee_target(target)
         self._set_ee_target(target)
 
-        moved_with_goto = False
-        if hasattr(self.sim, "goto"):
-            try:
-                self.sim.goto(target, max_steps=120, tol=0.01)
-                moved_with_goto = True
-            except Exception:
-                moved_with_goto = False
+        # A CDPR wrapper contains a baked initial free-joint pose and cable
+        # preload. Reusing a prebuilt wrapper for a randomized episode start is
+        # safe only if we move the free joint directly and recalibrate preload;
+        # asking the controller to traverse from the baked pose can diverge
+        # outside the workspace before reset validation runs.
+        moved_to_target = False
+        try:
+            from .cdpr_reverse_shells import _teleport_ee_free_joint
 
-        if not moved_with_goto and hasattr(self.sim, "run_simulation_step"):
+            moved_to_target = bool(_teleport_ee_free_joint(self, target))
+            if moved_to_target:
+                actual = np.asarray(self._get_ee_position(), dtype=np.float32).reshape(3)
+                moved_to_target = bool(np.linalg.norm(actual - target) <= 0.01)
+        except Exception:
+            moved_to_target = False
+
+        if not moved_to_target and hasattr(self.sim, "goto"):
+            try:
+                result = self.sim.goto(target, max_steps=240, tol=0.01)
+                moved_to_target = bool(result[0] if isinstance(result, tuple) else result)
+            except Exception:
+                moved_to_target = False
+
+        if not moved_to_target and hasattr(self.sim, "run_simulation_step"):
             for _ in range(8):
                 self.sim.run_simulation_step(capture_frame=False)
 

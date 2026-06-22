@@ -14,7 +14,7 @@ from collections import deque
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 import torch
@@ -1315,6 +1315,11 @@ def _patch_scene_wrapper_cache(module) -> None:
         def _build_wrapper_checked(this, scene, ee_start=None):
             scene_name = str(getattr(scene, "name", ""))
             variants_local = list(self._scene_wrapper_cache.get(scene_name) or [])
+            disabled_scenes = set(
+                getattr(self, "_rlvla_disabled_scene_cache_names", set())
+            )
+            if scene_name in disabled_scenes:
+                variants_local = []
             if variants_local:
                 object_key = tuple(sorted(str(item) for item in (getattr(scene, "objects", ()) or ())))
                 lookup = getattr(self, "_rlvla_compatible_wrapper_cache", {})
@@ -1328,6 +1333,15 @@ def _patch_scene_wrapper_cache(module) -> None:
                     ]
                     lookup[lookup_key] = available_variants
                     self._rlvla_compatible_wrapper_cache = lookup
+                invalid_paths = {
+                    Path(path).resolve()
+                    for path in getattr(this, "_invalid_wrapper_paths", set())
+                }
+                available_variants = [
+                    Path(path).resolve()
+                    for path in available_variants
+                    if Path(path).resolve() not in invalid_paths
+                ]
                 if len(available_variants) != len(variants_local):
                     warned = getattr(self, "_rlvla_scene_cache_repair_warned", set())
                     warn_key = (scene_name, tuple(getattr(scene, "objects", ()) or ()))
@@ -1344,6 +1358,7 @@ def _patch_scene_wrapper_cache(module) -> None:
                     chosen = Path(available_variants[idx]).resolve()
                     texture_map = getattr(self, "_texture_name_by_wrapper", {})
                     this._desk_texture_name = str(texture_map.get(str(chosen), ""))
+                    this._last_wrapper_reused_from_cache = True
                     return chosen
             this._desk_texture_name = ""
             this._background_color = ""
@@ -1495,18 +1510,80 @@ def _patch_training_reset_retries(module, *, max_attempts: int) -> None:
         "simulation_state_valid",
     )
 
+    def _prepare_recovery(
+        self,
+        *,
+        options: Mapping[str, Any],
+        message: str,
+        attempt: int,
+        attempts: int,
+    ) -> dict[str, Any]:
+        retry_options = dict(options)
+        rl = getattr(self, "env", None)
+        if rl is None:
+            return retry_options
+
+        current_wrapper = getattr(rl, "_current_wrapper_xml", None)
+        if current_wrapper is not None:
+            invalid_paths = getattr(rl, "_invalid_wrapper_paths", None)
+            if not isinstance(invalid_paths, set):
+                invalid_paths = set()
+                rl._invalid_wrapper_paths = invalid_paths
+            invalid_paths.add(Path(current_wrapper).resolve())
+
+        scene_name = str(getattr(rl, "_scene_name", "") or "")
+        if "ee_outside_workspace" in message and scene_name:
+            disabled_scenes = set(
+                getattr(self, "_rlvla_disabled_scene_cache_names", set())
+            )
+            disabled_scenes.add(scene_name)
+            self._rlvla_disabled_scene_cache_names = disabled_scenes
+            self._rlvla_compatible_wrapper_cache = {}
+
+        rl._rlvla_force_fresh_wrapper_on_next_reset = True
+
+        # Preserve randomized starts for normal retries. Reserve the final two
+        # attempts for a deterministic workspace-center start so a pathological
+        # random draw cannot abort a long multi-GPU run.
+        if "ee_outside_workspace" in message and attempt >= max(1, attempts - 2):
+            default_ee_start = getattr(rl, "_default_ee_start", None)
+            if callable(default_ee_start):
+                safe_start = np.asarray(default_ee_start(), dtype=np.float32).reshape(3)
+            else:
+                safe_start = np.asarray((0.0, 0.0, 0.40), dtype=np.float32)
+            safe_start[0] = 0.0
+            safe_start[1] = 0.0
+            clamp_target = getattr(rl, "_clamp_ee_target", None)
+            if callable(clamp_target):
+                safe_start = np.asarray(clamp_target(safe_start), dtype=np.float32).reshape(3)
+            retry_options["ee_start"] = tuple(float(value) for value in safe_start)
+            print(
+                "[env-reset] escalating to a fresh wrapper with deterministic safe EE start "
+                f"after attempt {attempt}/{attempts}: {retry_options['ee_start']}",
+                flush=True,
+            )
+        return retry_options
+
     def _reset_with_retries(self, options=None):
         errors: list[str] = []
         attempts = max(1, int(max_attempts))
+        retry_options = dict(options or {})
         for attempt in range(1, attempts + 1):
             try:
-                return original_reset(self, options=options)
+                return original_reset(self, options=retry_options)
             except RuntimeError as exc:
                 message = str(exc)
                 if not any(marker in message for marker in retry_markers):
                     raise
                 errors.append(f"attempt {attempt}: {message}")
                 if attempt < attempts:
+                    retry_options = _prepare_recovery(
+                        self,
+                        options=retry_options,
+                        message=message,
+                        attempt=attempt,
+                        attempts=attempts,
+                    )
                     print(
                         f"[env-reset] retrying after attempt {attempt}/{attempts}: {message}",
                         flush=True,

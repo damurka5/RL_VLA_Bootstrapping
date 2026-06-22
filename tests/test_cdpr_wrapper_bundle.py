@@ -657,6 +657,53 @@ class WrapperBundleTests(unittest.TestCase):
         self.assertEqual(env.sim.hold_calls, [6])
         np.testing.assert_allclose(env._locked_target_xyz, np.array([0.17, -0.11, 0.40], dtype=np.float32), atol=1e-7)
 
+    def test_rl_env_move_episode_start_prefers_free_joint_teleport(self):
+        env = self.rl_env_mod.CDPRLanguageRLEnv.__new__(self.rl_env_mod.CDPRLanguageRLEnv)
+
+        class FakeSim:
+            def __init__(self):
+                self.position = np.array([0.0, 0.0, 0.40], dtype=np.float32)
+                self.target = None
+                self.goto_calls = []
+                self.hold_calls = []
+
+            def set_target_position(self, xyz):
+                self.target = np.asarray(xyz, dtype=np.float32).copy()
+
+            def get_end_effector_position(self):
+                return self.position.copy()
+
+            def goto(self, target, max_steps=120, tol=0.01):
+                self.goto_calls.append((target, max_steps, tol))
+                return True, 1
+
+            def hold_current_pose(self, warm_steps=0):
+                self.hold_calls.append(int(warm_steps))
+
+        env.sim = FakeSim()
+        env._episode_ee_start = np.array([0.14, -0.09, 0.40], dtype=np.float32)
+        env._ee_spawn_z = 0.236
+        env._ee_min_z = 0.12
+        env._locked_target_xyz = np.zeros((3,), dtype=np.float32)
+
+        def teleport(_env, target):
+            _env.sim.position = np.asarray(target, dtype=np.float32).copy()
+            return True
+
+        with mock.patch(
+            "robots.cdpr.cdpr_dataset.cdpr_reverse_shells._teleport_ee_free_joint",
+            side_effect=teleport,
+        ):
+            env._move_ee_to_episode_start()
+
+        self.assertEqual(env.sim.goto_calls, [])
+        np.testing.assert_allclose(
+            env.sim.position,
+            np.array([0.14, -0.09, 0.40], dtype=np.float32),
+            atol=1e-7,
+        )
+        np.testing.assert_allclose(env._locked_target_xyz, env.sim.position, atol=1e-7)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -450,6 +450,58 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(env.reset(options={"instruction_type": "open_gripper"}), {"ok": True})
         self.assertEqual(env.calls, 3)
 
+    def test_training_reset_quarantines_cached_scene_and_uses_safe_final_start(self):
+        class FakeRL:
+            def __init__(self):
+                self._current_wrapper_xml = Path("/tmp/bad-wrapper.xml")
+                self._invalid_wrapper_paths = set()
+                self._scene_name = "desk"
+                self._rlvla_force_fresh_wrapper_on_next_reset = False
+
+            @staticmethod
+            def _default_ee_start():
+                return np.asarray((0.12, -0.08, 0.40), dtype=np.float32)
+
+            @staticmethod
+            def _clamp_ee_target(value):
+                return np.asarray(value, dtype=np.float32)
+
+        class FakeVisionEnv:
+            def __init__(self):
+                self.env = FakeRL()
+                self.calls = 0
+                self.seen_options = []
+                self._rlvla_compatible_wrapper_cache = {"desk": ["bad"]}
+
+            def reset(self, options=None):
+                self.calls += 1
+                self.seen_options.append(dict(options or {}))
+                if self.calls < 4:
+                    raise RuntimeError(
+                        "Invalid CDPR state after episode reset "
+                        "(instruction=move_to_object, shell=None, reason=ee_outside_workspace)."
+                    )
+                return {"ok": True}
+
+        module = types.SimpleNamespace(CDPRVisionLanguageEnv=FakeVisionEnv)
+        _patch_training_reset_retries(module, max_attempts=4)
+        env = module.CDPRVisionLanguageEnv()
+
+        self.assertEqual(
+            env.reset(options={"instruction_type": "move_to_object"}),
+            {"ok": True},
+        )
+        self.assertEqual(env.calls, 4)
+        self.assertIn(Path("/tmp/bad-wrapper.xml").resolve(), env.env._invalid_wrapper_paths)
+        self.assertTrue(env.env._rlvla_force_fresh_wrapper_on_next_reset)
+        self.assertEqual(env._rlvla_disabled_scene_cache_names, {"desk"})
+        self.assertEqual(env._rlvla_compatible_wrapper_cache, {})
+        np.testing.assert_allclose(
+            env.seen_options[-1]["ee_start"],
+            (0.0, 0.0, 0.40),
+            atol=1e-7,
+        )
+
     def test_training_reset_does_not_retry_unrelated_runtime_error(self):
         class FakeVisionEnv:
             def __init__(self):
