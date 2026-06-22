@@ -133,6 +133,18 @@ isolated wrapper bundles—then reuses that fresh pool for rollout speed. Object
 randomized on every reset. Ten desk textures and a restrained six-color dark/neutral background
 palette provide visual variation without making the image overly bright.
 
+The OpenVLA-OFT prebuilder normally hardcodes `use_cache=True`. The fast GRPO wrapper overrides that
+path when `--no-use_wrapper_cache` is set: every prebuilt base wrapper must have a run-local
+`__rltmp_...` name, and startup prints:
+
+```text
+[env_cache] Built fresh run-local wrapper pool ...; old wrapper cache ignored.
+```
+
+Do not continue if startup instead prints `Using cached wrapper` during the scene-cache prebuild.
+Known MuJoCo reset transients are retried up to `max_train_reset_attempts=10`; unrelated runtime
+errors still fail immediately.
+
 Sparse training cannot start until:
 
 - every dense instruction has at least 10 validation episodes per round;

@@ -492,6 +492,7 @@ training:
       validate_every_updates: 5
       validation_episodes: 10
       validation_max_steps: 120
+      max_train_reset_attempts: 10
       tensorboard_metric_profile: compact
       tensorboard_rollout_every_global_steps: 8
       rollout_image_size: 224

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import atexit
+import hashlib
 import importlib
 import importlib.util
 import json
@@ -57,6 +58,7 @@ class _FastWrapperArgs:
     lr_scheduler: str = "constant"
     lr_warmup_updates: int = 0
     lr_min_factor: float = 1.0
+    max_train_reset_attempts: int = 10
     lchol: "_LCHOLWrapperArgs | None" = None
 
 
@@ -144,6 +146,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
     lr_scheduler = "constant"
     lr_warmup_updates = 0
     lr_min_factor = 1.0
+    max_train_reset_attempts = 10
     try:
         ddp_timeout_seconds = max(0, int(os.environ.get("RLVLA_DDP_TIMEOUT_SECONDS", "0")))
     except ValueError:
@@ -281,6 +284,15 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
             lr_min_factor = float(min(max(lr_min_factor, 0.0), 1.0))
             idx += 2
             continue
+        if arg in ("--max_train_reset_attempts", "--max-train-reset-attempts"):
+            if idx + 1 >= len(argv):
+                raise SystemExit(f"{arg} expects a positive integer.")
+            try:
+                max_train_reset_attempts = max(1, int(argv[idx + 1]))
+            except ValueError as exc:
+                raise SystemExit(f"{arg} expects a positive integer.") from exc
+            idx += 2
+            continue
 
         normalized_arg = _strip_lchol_prefix(arg.split("=", 1)[0])
         if normalized_arg == "ddp_timeout_seconds":
@@ -353,6 +365,7 @@ def _split_wrapper_argv(argv: Sequence[str]) -> tuple[Path | None, list[str], _F
         lr_scheduler=lr_scheduler,
         lr_warmup_updates=lr_warmup_updates,
         lr_min_factor=lr_min_factor,
+        max_train_reset_attempts=max_train_reset_attempts,
         lchol=_LCHOLWrapperArgs(**lchol_values),
     )
 
@@ -1258,8 +1271,7 @@ def _patch_scene_wrapper_cache(module) -> None:
     def _activate_scene_wrapper_cache_checked(self, scene_wrapper_cache, texture_name_by_wrapper):
         out = original_activate(self, scene_wrapper_cache, texture_name_by_wrapper)
         rl = self.env
-        cached_builder = getattr(rl, "_build_wrapper", None)
-        if cached_builder is None or not hasattr(rl, "_build_wrapper_original"):
+        if not hasattr(rl, "_build_wrapper_original"):
             return out
 
         def _variant_supports_scene(path: Path, scene) -> bool:
@@ -1283,38 +1295,207 @@ def _patch_scene_wrapper_cache(module) -> None:
             scene_name = str(getattr(scene, "name", ""))
             variants_local = list(self._scene_wrapper_cache.get(scene_name) or [])
             if variants_local:
-                available_variants = [
-                    Path(path).resolve()
-                    for path in variants_local
-                    if _variant_supports_scene(Path(path), scene)
-                ]
+                object_key = tuple(sorted(str(item) for item in (getattr(scene, "objects", ()) or ())))
+                lookup = getattr(self, "_rlvla_compatible_wrapper_cache", {})
+                lookup_key = (scene_name, object_key)
+                available_variants = lookup.get(lookup_key)
+                if available_variants is None:
+                    available_variants = [
+                        Path(path).resolve()
+                        for path in variants_local
+                        if _variant_supports_scene(Path(path), scene)
+                    ]
+                    lookup[lookup_key] = available_variants
+                    self._rlvla_compatible_wrapper_cache = lookup
                 if len(available_variants) != len(variants_local):
-                    self._scene_wrapper_cache[scene_name] = available_variants
                     warned = getattr(self, "_rlvla_scene_cache_repair_warned", set())
                     warn_key = (scene_name, tuple(getattr(scene, "objects", ()) or ()))
                     if warn_key not in warned:
                         print(
-                            f"[env_cache] Repaired unavailable cached wrappers for scene '{scene_name}' "
-                            f"({len(variants_local)} -> {len(available_variants)} variants).",
+                            f"[env_cache] Selected object-compatible wrappers for scene '{scene_name}' "
+                            f"({len(available_variants)}/{len(variants_local)} variants).",
                             flush=True,
                         )
                         warned.add(warn_key)
                         self._rlvla_scene_cache_repair_warned = warned
-                if not available_variants:
-                    this._desk_texture_name = ""
-                    return _call_original_builder(this, scene, ee_start=ee_start)
-            try:
-                if ee_start is not None:
-                    return cached_builder(scene, ee_start=ee_start)
-            except TypeError as exc:
-                if "ee_start" not in str(exc):
-                    raise
-            return cached_builder(scene)
+                if available_variants:
+                    idx = int(this.np_random.integers(0, len(available_variants)))
+                    chosen = Path(available_variants[idx]).resolve()
+                    texture_map = getattr(self, "_texture_name_by_wrapper", {})
+                    this._desk_texture_name = str(texture_map.get(str(chosen), ""))
+                    return chosen
+            this._desk_texture_name = ""
+            this._background_color = ""
+            return _call_original_builder(this, scene, ee_start=ee_start)
 
         rl._build_wrapper = module.types.MethodType(_build_wrapper_checked, rl)
         return out
 
     env_cls._activate_scene_wrapper_cache = _activate_scene_wrapper_cache_checked
+
+
+def _patch_fresh_scene_cache_prebuild(module, forwarded_argv: Sequence[str]) -> None:
+    if not _extract_cli_bool(forwarded_argv, "--prebuild_scene_cache", default=False):
+        return
+    if _extract_cli_bool(forwarded_argv, "--use_wrapper_cache", default=False):
+        return
+
+    env_cls = getattr(module, "CDPRVisionLanguageEnv", None)
+    original_enable = getattr(env_cls, "enable_prebuilt_scene_cache", None)
+    if not callable(original_enable):
+        return
+
+    def _enable_fresh_scene_cache(self, scene_pool_size: int, texture_pool_size: int, seed: int):
+        rl = self.env
+        rl_mod = self._rl_env_module
+        scenes_all = list(getattr(rl, "scenes", []) or [])
+        if not scenes_all:
+            return {"scenes": 0, "variants": 0, "textures": 0}
+
+        rng = np.random.default_rng(int(seed))
+        if int(scene_pool_size) > 0 and len(scenes_all) > int(scene_pool_size):
+            chosen_idx = np.sort(rng.choice(len(scenes_all), size=int(scene_pool_size), replace=False))
+            scenes = [scenes_all[int(idx)] for idx in chosen_idx]
+        else:
+            scenes = scenes_all
+
+        texture_files = list(getattr(rl, "desk_texture_files", []) or [])
+        if int(texture_pool_size) > 0 and len(texture_files) > int(texture_pool_size):
+            texture_idx = np.sort(rng.choice(len(texture_files), size=int(texture_pool_size), replace=False))
+            texture_files = [texture_files[int(idx)] for idx in texture_idx]
+
+        palette_getter = getattr(rl_mod, "_metadata_color_palette", None)
+        background_builder = getattr(rl_mod, "_build_background_color_variant", None)
+        background_palette = (
+            tuple(palette_getter(dict(getattr(rl, "_task_metadata", {}) or {})))
+            if callable(palette_getter)
+            else ()
+        )
+
+        cache: dict[str, list[Path]] = {}
+        texture_name_by_wrapper: dict[str, str] = {}
+        original_use_cache = bool(getattr(rl, "use_wrapper_cache", False))
+        original_reuse = bool(getattr(rl, "reuse_existing_wrapper_variants", False))
+        original_cleanup = bool(getattr(rl, "wrapper_cleanup", False))
+        original_textures = list(getattr(rl, "desk_texture_files", []) or [])
+        original_metadata = dict(getattr(rl, "_task_metadata", {}) or {})
+
+        try:
+            rl.use_wrapper_cache = False
+            rl.reuse_existing_wrapper_variants = False
+            rl.wrapper_cleanup = False
+            for scene_idx, scene in enumerate(scenes):
+                scene_name = str(getattr(scene, "name", ""))
+                scene_objects = tuple(str(item) for item in (getattr(scene, "objects", ()) or ()))
+                if not scene_name or not scene_objects:
+                    continue
+
+                ee_start = np.asarray(
+                    rl.defaults.get("ee_start", (0.0, 0.0, 0.40)),
+                    dtype=np.float32,
+                ).reshape(-1)
+                if ee_start.size < 3:
+                    ee_start = np.pad(ee_start, (0, 3 - ee_start.size))
+                ee_start[2] = max(float(ee_start[2]), 0.40)
+
+                # Build one run-local, untextured base wrapper. Texture and
+                # background variants are derived from it without consulting
+                # any pre-existing wrapper bundle.
+                rl.desk_texture_files = []
+                base_metadata = dict(original_metadata)
+                base_metadata.pop("background_color_palette", None)
+                rl._task_metadata = base_metadata
+                base_wrapper = Path(
+                    rl._build_wrapper(scene, ee_start=ee_start[:3])
+                ).resolve()
+
+                rl.desk_texture_files = list(original_textures)
+                rl._task_metadata = dict(original_metadata)
+                variant_count = max(1, len(texture_files))
+                variants: list[Path] = []
+                for variant_idx in range(variant_count):
+                    wrapper_path = base_wrapper
+                    texture_name = ""
+                    if texture_files:
+                        texture_path = Path(texture_files[variant_idx]).resolve()
+                        texture_hash = hashlib.sha1(
+                            texture_path.as_posix().encode("utf-8")
+                        ).hexdigest()[:8]
+                        tag = self._safe_cache_tag(
+                            f"fresh_s{scene_idx:03d}_t{variant_idx:03d}_{texture_hash}"
+                        )
+                        textured = rl_mod._build_textured_wrapper_variant(
+                            base_wrapper_xml=wrapper_path,
+                            chosen_texture=texture_path,
+                            variant_tag=tag,
+                            desk_geom_regex=rl.desk_geom_regex,
+                            desk_texrepeat=rl.desk_texrepeat,
+                        )
+                        wrapper_path = Path(textured.wrapper_xml).resolve()
+                        texture_name = texture_path.name
+                    if background_palette and callable(background_builder):
+                        color = background_palette[variant_idx % len(background_palette)]
+                        colored = background_builder(wrapper_path, color)
+                        wrapper_path = Path(colored.wrapper_xml).resolve()
+                    variants.append(wrapper_path)
+                    texture_name_by_wrapper[str(wrapper_path)] = texture_name
+
+                cache.setdefault(scene_name, []).extend(variants)
+        finally:
+            rl.use_wrapper_cache = original_use_cache
+            rl.reuse_existing_wrapper_variants = original_reuse
+            rl.wrapper_cleanup = original_cleanup
+            rl.desk_texture_files = original_textures
+            rl._task_metadata = original_metadata
+
+        if not cache:
+            return {"scenes": 0, "variants": 0, "textures": 0}
+        out = self._activate_scene_wrapper_cache(cache, texture_name_by_wrapper)
+        print(
+            "[env_cache] Built fresh run-local wrapper pool "
+            f"variants={sum(len(items) for items in cache.values())}; old wrapper cache ignored.",
+            flush=True,
+        )
+        return out
+
+    env_cls.enable_prebuilt_scene_cache = _enable_fresh_scene_cache
+
+
+def _patch_training_reset_retries(module, *, max_attempts: int) -> None:
+    env_cls = getattr(module, "CDPRVisionLanguageEnv", None)
+    original_reset = getattr(env_cls, "reset", None)
+    if not callable(original_reset):
+        return
+
+    retry_markers = (
+        "Invalid CDPR state after episode reset",
+        "invalid reset state",
+        "Failed to initialize wrapper",
+        "simulation_state_valid",
+    )
+
+    def _reset_with_retries(self, options=None):
+        errors: list[str] = []
+        attempts = max(1, int(max_attempts))
+        for attempt in range(1, attempts + 1):
+            try:
+                return original_reset(self, options=options)
+            except RuntimeError as exc:
+                message = str(exc)
+                if not any(marker in message for marker in retry_markers):
+                    raise
+                errors.append(f"attempt {attempt}: {message}")
+                if attempt < attempts:
+                    print(
+                        f"[env-reset] retrying after attempt {attempt}/{attempts}: {message}",
+                        flush=True,
+                    )
+        raise RuntimeError(
+            f"CDPR training reset failed after {attempts} attempts. "
+            + " | ".join(errors)
+        )
+
+    env_cls.reset = _reset_with_retries
 
 
 def _patch_desk_texture_prepare(module) -> None:
@@ -2811,11 +2992,16 @@ def main() -> None:
     _patch_prepare_inputs(module)
     _patch_scene_wrapper_cache(module)
     _patch_scene_cache_prebuild_progress(module, forwarded_argv)
+    _patch_fresh_scene_cache_prebuild(module, forwarded_argv)
     _patch_desk_texture_prepare(module)
     _patch_distributed_timeout(module, timeout_seconds=fast_args.ddp_timeout_seconds)
     _patch_ddp_sync(module, rollout_sync_interval=fast_args.ddp_rollout_sync_interval)
     _patch_resume_artifacts(module, forwarded_argv, fast_args)
     _patch_lr_scheduler(module, fast_args)
+    _patch_training_reset_retries(
+        module,
+        max_attempts=fast_args.max_train_reset_attempts,
+    )
     _patch_lchol_runtime(module, fast_args.lchol, fast_args=fast_args)
     _patch_tensorboard_metric_filter(module, profile=fast_args.tensorboard_metric_profile)
     _patch_rollout_tensorboard(

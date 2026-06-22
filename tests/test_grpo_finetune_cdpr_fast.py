@@ -9,6 +9,8 @@ import unittest
 from unittest import mock
 from pathlib import Path
 
+import numpy as np
+
 _INSERTED_TORCH_STUB = False
 
 if "torch" not in sys.modules:
@@ -54,10 +56,12 @@ from rl_vla_bootstrapping.policy.grpo_finetune_cdpr_fast import (
     _lr_schedule_factor,
     _patch_distributed_timeout,
     _patch_desk_texture_prepare,
+    _patch_fresh_scene_cache_prebuild,
     _patch_lchol_runtime,
     _patch_scene_cache_prebuild_progress,
     _patch_scene_wrapper_cache,
     _patch_tensorboard_metric_filter,
+    _patch_training_reset_retries,
     _split_wrapper_argv,
     _tensorboard_tag_allowed,
     _transform_external_grpo_source_for_ddp_sync,
@@ -312,6 +316,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
             class FakeRL:
                 def __init__(self):
                     self._desk_texture_name = ""
+                    self._background_color = ""
+                    self.np_random = np.random.default_rng(0)
 
                 def _build_wrapper(self, scene, ee_start=None):
                     del scene, ee_start
@@ -344,7 +350,123 @@ class FastGRPOWrapperTests(unittest.TestCase):
             out = env.env._build_wrapper(scene)
 
             self.assertEqual(out, right.resolve())
-            self.assertEqual(env._scene_wrapper_cache["desk"], [right.resolve()])
+            self.assertEqual(env._scene_wrapper_cache["desk"], [wrong.resolve(), right.resolve()])
+
+    def test_fresh_scene_cache_prebuild_ignores_existing_wrapper_cache(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            tmp_path = Path(tmp)
+
+            class FakeRL:
+                def __init__(self):
+                    self.scenes = [
+                        types.SimpleNamespace(name="desk", objects=("ycb_apple", "bowl")),
+                        types.SimpleNamespace(name="desk", objects=("ycb_pear", "plate")),
+                    ]
+                    self.defaults = {"ee_start": [0.0, 0.0, 0.40]}
+                    self.desk_texture_files = []
+                    self._task_metadata = {}
+                    self.use_wrapper_cache = True
+                    self.reuse_existing_wrapper_variants = True
+                    self.wrapper_cleanup = True
+                    self.calls: list[tuple[tuple[str, ...], bool, bool]] = []
+
+                def _build_wrapper(self, scene, ee_start=None):
+                    del ee_start
+                    objects = tuple(scene.objects)
+                    self.calls.append(
+                        (objects, bool(self.use_wrapper_cache), bool(self.reuse_existing_wrapper_variants))
+                    )
+                    path = tmp_path / ("-".join(objects) + ".xml")
+                    bodies = "".join(f"<body name='p{idx}_{name}'/>" for idx, name in enumerate(objects))
+                    path.write_text(f"<mujoco><worldbody>{bodies}</worldbody></mujoco>", encoding="utf-8")
+                    return path
+
+            class FakeVisionEnv:
+                _safe_cache_tag = staticmethod(lambda value: str(value))
+
+                def __init__(self):
+                    self.env = FakeRL()
+                    self._rl_env_module = types.SimpleNamespace()
+                    self._scene_wrapper_cache = {}
+                    self._texture_name_by_wrapper = {}
+
+                def enable_prebuilt_scene_cache(self, scene_pool_size, texture_pool_size, seed):
+                    del scene_pool_size, texture_pool_size, seed
+                    raise AssertionError("original stale-cache prebuilder should not run")
+
+                def _activate_scene_wrapper_cache(self, scene_wrapper_cache, texture_name_by_wrapper):
+                    self._scene_wrapper_cache = {
+                        str(key): [Path(path).resolve() for path in paths]
+                        for key, paths in scene_wrapper_cache.items()
+                    }
+                    self._texture_name_by_wrapper = dict(texture_name_by_wrapper)
+                    return {
+                        "scenes": len(scene_wrapper_cache),
+                        "variants": sum(len(paths) for paths in scene_wrapper_cache.values()),
+                        "textures": 0,
+                    }
+
+            module = types.SimpleNamespace(CDPRVisionLanguageEnv=FakeVisionEnv)
+            _patch_fresh_scene_cache_prebuild(
+                module,
+                ["--prebuild_scene_cache", "--no-use_wrapper_cache"],
+            )
+            env = module.CDPRVisionLanguageEnv()
+
+            info = env.enable_prebuilt_scene_cache(scene_pool_size=2, texture_pool_size=0, seed=3)
+
+            self.assertEqual(info["variants"], 2)
+            self.assertEqual(len(env._scene_wrapper_cache["desk"]), 2)
+            self.assertEqual(
+                env.env.calls,
+                [
+                    (("ycb_apple", "bowl"), False, False),
+                    (("ycb_pear", "plate"), False, False),
+                ],
+            )
+            self.assertTrue(env.env.use_wrapper_cache)
+            self.assertTrue(env.env.reuse_existing_wrapper_variants)
+            self.assertTrue(env.env.wrapper_cleanup)
+
+    def test_training_reset_retries_known_cdpr_reset_failure(self):
+        class FakeVisionEnv:
+            def __init__(self):
+                self.calls = 0
+
+            def reset(self, options=None):
+                del options
+                self.calls += 1
+                if self.calls < 3:
+                    raise RuntimeError(
+                        "Invalid CDPR state after episode reset "
+                        "(instruction=open_gripper, shell=None, reason=ee_outside_workspace)."
+                    )
+                return {"ok": True}
+
+        module = types.SimpleNamespace(CDPRVisionLanguageEnv=FakeVisionEnv)
+        _patch_training_reset_retries(module, max_attempts=3)
+        env = module.CDPRVisionLanguageEnv()
+
+        self.assertEqual(env.reset(options={"instruction_type": "open_gripper"}), {"ok": True})
+        self.assertEqual(env.calls, 3)
+
+    def test_training_reset_does_not_retry_unrelated_runtime_error(self):
+        class FakeVisionEnv:
+            def __init__(self):
+                self.calls = 0
+
+            def reset(self, options=None):
+                del options
+                self.calls += 1
+                raise RuntimeError("programming defect")
+
+        module = types.SimpleNamespace(CDPRVisionLanguageEnv=FakeVisionEnv)
+        _patch_training_reset_retries(module, max_attempts=10)
+        env = module.CDPRVisionLanguageEnv()
+
+        with self.assertRaisesRegex(RuntimeError, "programming defect"):
+            env.reset()
+        self.assertEqual(env.calls, 1)
 
     def test_scene_cache_prebuild_progress_wraps_rl_wrapper_builds(self):
         class FakeRLEnv:
@@ -416,6 +538,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
                 "5",
                 "--lr_min_factor",
                 "0.25",
+                "--max_train_reset_attempts",
+                "7",
                 "--rollout_steps",
                 "170",
             ]
@@ -435,6 +559,7 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertEqual(fast_args.lr_scheduler, "cosine")
         self.assertEqual(fast_args.lr_warmup_updates, 5)
         self.assertAlmostEqual(fast_args.lr_min_factor, 0.25)
+        self.assertEqual(fast_args.max_train_reset_attempts, 7)
 
     def test_patch_distributed_timeout_overrides_external_ppo_init(self):
         calls: list[tuple[str, float]] = []
