@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 from dataclasses import dataclass
+from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any, Mapping, Sequence
 
 import numpy as np
@@ -15,6 +18,49 @@ from rl_vla_bootstrapping.lchol.frontier_scheduler import (
     ShellValidationResult,
 )
 from rl_vla_bootstrapping.lchol.replay_buffers import PerOptionReplayBuffer
+
+
+_SPARSE_EPISODE_OUTCOME_FIELDS = (
+    "timestamp_utc",
+    "rank",
+    "update",
+    "global_step",
+    "episode_key",
+    "env_instance_id",
+    "episode_index",
+    "instruction_type",
+    "curriculum_shell",
+    "scene",
+    "target_object_catalog",
+    "binary_reward",
+    "success",
+    "failure",
+    "terminal_reason",
+    "observed_selected_steps",
+    "episode_return_env",
+    "episode_return_shaped",
+    "terminal_env_reward",
+    "terminal_shaped_reward",
+    "replay_records_added",
+    "replay_options",
+    "stored_in_replay",
+)
+
+_SPARSE_EPISODE_SUMMARY_FIELDS = (
+    "generated_at_utc",
+    "scope",
+    "instruction_type",
+    "curriculum_shell",
+    "episodes",
+    "reward_1_count",
+    "reward_0_count",
+    "reward_1_ratio",
+    "reward_0_ratio",
+    "episodes_with_replay_records",
+    "episodes_with_replay_ratio",
+    "replay_records_added",
+    "last_update",
+)
 
 
 @dataclass(frozen=True)
@@ -51,11 +97,13 @@ class LCHOLGRPORuntime:
         spec: Any,
         available_options: Sequence[str],
         seed: int,
+        rank: int = 0,
     ):
         self.config = config
         self.spec = spec
         self.available_options = tuple(str(option) for option in available_options if str(option))
         self.rng = np.random.default_rng(int(seed))
+        self.rank = int(rank)
         self.base_task_metadata = _load_task_metadata_from_env()
         self.dense_instruction_types = _metadata_name_tuple(
             self.base_task_metadata,
@@ -207,6 +255,14 @@ class LCHOLGRPORuntime:
         }
         self.replay_episode_keys: set[tuple[Any, ...]] = set()
         self.replay_episode_keys_by_option: dict[str, set[tuple[Any, ...]]] = {}
+        self._replay_episode_telemetry: dict[tuple[Any, ...], dict[str, Any]] = {}
+        self._selected_episode_telemetry: dict[tuple[Any, ...], dict[str, Any]] = {}
+        self._completed_sparse_episode_keys: set[tuple[Any, ...]] = set()
+        self._pending_sparse_episode_outcomes: list[dict[str, Any]] = []
+        self._sparse_outcome_counts = self._empty_outcome_counts()
+        self._sparse_outcome_update_counts = self._empty_outcome_counts()
+        self._sparse_outcome_by_instruction: dict[str, dict[str, int]] = {}
+        self._sparse_outcome_by_instruction_shell: dict[tuple[str, str], dict[str, int]] = {}
         self.phase_scores: list[float] = []
         self.grpo_non_pg_count = 0
         self.grpo_batch_count = 0
@@ -336,6 +392,7 @@ class LCHOLGRPORuntime:
         update: int,
         global_step: int | None = None,
         run_dir: Any | None = None,
+        is_main: bool = True,
     ) -> None:
         del global_step
         stage = str(self._stage_at_update_start or ("dense" if self.dense_gate_active() else "sparse"))
@@ -359,6 +416,8 @@ class LCHOLGRPORuntime:
             )
 
         if run_dir is not None:
+            self._flush_sparse_episode_outcomes(run_dir=run_dir)
+        if run_dir is not None and bool(is_main):
             self._save_dense_gate_state(run_dir=run_dir, update=update)
 
     def should_stop_training(self) -> bool:
@@ -445,7 +504,107 @@ class LCHOLGRPORuntime:
             episode_key = self._episode_key(info)
             self.replay_episode_keys.add(episode_key)
             self.replay_episode_keys_by_option.setdefault(str(record.option_name), set()).add(episode_key)
+            telemetry = self._replay_episode_telemetry.setdefault(
+                episode_key,
+                {"records_added": 0, "options": set()},
+            )
+            telemetry["records_added"] = int(telemetry["records_added"]) + 1
+            telemetry["options"].add(str(record.option_name))
             self.source_counts["hindsight_new"] += 1
+
+    def record_selected_step(
+        self,
+        *,
+        step_info: Mapping[str, Any],
+        env_reward: float,
+        shaped_reward: float,
+        done: bool,
+        env_done: bool,
+        forced_scene_refresh: bool,
+        forced_unstable_reset: bool,
+        update: int,
+        global_step: int,
+    ) -> None:
+        """Record the actual selected rollout branch, not every GRPO candidate."""
+        if self.dense_gate_active():
+            return
+        info = dict(step_info)
+        episode_key = self._episode_key(info)
+        if episode_key in self._completed_sparse_episode_keys:
+            return
+
+        selected = self._selected_episode_telemetry.setdefault(
+            episode_key,
+            {
+                "observed_selected_steps": 0,
+                "episode_return_env": 0.0,
+                "episode_return_shaped": 0.0,
+            },
+        )
+        selected["observed_selected_steps"] = int(selected["observed_selected_steps"]) + 1
+        selected["episode_return_env"] = float(selected["episode_return_env"]) + self._finite_float(env_reward)
+        selected["episode_return_shaped"] = float(selected["episode_return_shaped"]) + self._finite_float(
+            shaped_reward
+        )
+        if not bool(done):
+            return
+
+        binary_reward = self._binary_success(info)
+        replay = self._replay_episode_telemetry.pop(
+            episode_key,
+            {"records_added": 0, "options": set()},
+        )
+        instruction = str(
+            info.get("curriculum_instruction_id")
+            or info.get("instruction_type")
+            or "unknown"
+        )
+        shell = self._shell_token(info.get("curriculum_shell"))
+        records_added = max(0, int(replay.get("records_added", 0)))
+        options = sorted(str(option) for option in replay.get("options", set()) if str(option))
+        row = {
+            "timestamp_utc": self._utc_now(),
+            "rank": int(self.rank),
+            "update": int(update),
+            "global_step": int(global_step),
+            "episode_key": json.dumps(list(episode_key), ensure_ascii=False, default=str),
+            "env_instance_id": info.get("env_instance_id", ""),
+            "episode_index": info.get("episode_index", ""),
+            "instruction_type": instruction,
+            "curriculum_shell": shell,
+            "scene": info.get("scene", ""),
+            "target_object_catalog": info.get(
+                "target_object_catalog",
+                info.get("target_object_name", ""),
+            ),
+            "binary_reward": int(binary_reward),
+            "success": int(binary_reward),
+            "failure": int(1 - binary_reward),
+            "terminal_reason": self._terminal_reason(
+                info,
+                binary_reward=binary_reward,
+                env_done=bool(env_done),
+                forced_scene_refresh=bool(forced_scene_refresh),
+                forced_unstable_reset=bool(forced_unstable_reset),
+            ),
+            "observed_selected_steps": int(selected["observed_selected_steps"]),
+            "episode_return_env": float(selected["episode_return_env"]),
+            "episode_return_shaped": float(selected["episode_return_shaped"]),
+            "terminal_env_reward": self._finite_float(env_reward),
+            "terminal_shaped_reward": self._finite_float(shaped_reward),
+            "replay_records_added": records_added,
+            "replay_options": "|".join(options),
+            "stored_in_replay": int(records_added > 0),
+        }
+        self._pending_sparse_episode_outcomes.append(row)
+        self._record_sparse_outcome_counts(
+            binary_reward=binary_reward,
+            instruction=instruction,
+            shell=shell,
+            records_added=records_added,
+        )
+        self._selected_episode_telemetry.pop(episode_key, None)
+        self._completed_sparse_episode_keys.add(episode_key)
 
     def sample_bc_records(self, batch_size: int) -> list[HindsightBCRecord]:
         if self.dense_gate_active():
@@ -536,6 +695,7 @@ class LCHOLGRPORuntime:
         out["sparse_stage/updates_completed"] = float(self.sparse_updates_completed)
         out["sparse_stage/max_updates"] = float(self.sparse_stage_max_updates)
         out["sparse_stage/configured_start"] = float(self.start_sparse)
+        self._append_sparse_outcome_metrics(out)
         for instruction in self.dense_instruction_types:
             out[f"dense_gate/success_rate/{instruction}"] = float(self.dense_gate_success.get(instruction, 0.0))
             out[f"dense_gate/rollouts/{instruction}"] = float(self.dense_gate_rollouts.get(instruction, 0))
@@ -585,7 +745,11 @@ class LCHOLGRPORuntime:
             f"hindsight_replay={int(self.source_counts['hindsight_replay'])} "
             f"grpo_non_pg={int(self.grpo_non_pg_count)} "
             f"replay_total={len(self.replay)} "
-            f"replay_episodes={len(self.replay_episode_keys)}",
+            f"replay_episodes={len(self.replay_episode_keys)} "
+            f"sparse_reward_1_ratio="
+            f"{metrics.get('sparse_stage/buffer_episode_outcomes/rank_local/cumulative/reward_1_ratio', 0.0):.4f} "
+            f"sparse_episodes="
+            f"{int(metrics.get('sparse_stage/buffer_episode_outcomes/rank_local/cumulative/episodes_total', 0.0))}",
             flush=True,
         )
         if tb_writer is not None:
@@ -601,6 +765,7 @@ class LCHOLGRPORuntime:
         self.source_counts["hindsight_replay"] = 0
         self.grpo_non_pg_count = 0
         self.grpo_batch_count = 0
+        self._sparse_outcome_update_counts = self._empty_outcome_counts()
 
     def after_rollout(self, *, update: int) -> None:
         del update
@@ -608,6 +773,51 @@ class LCHOLGRPORuntime:
             return
         if self.reverse_scheduler is not None:
             self.reverse_scheduler.record_train_update()
+
+    def log_persisted_sparse_outcomes(
+        self,
+        *,
+        run_dir: Any,
+        tb_writer: Any,
+        global_step: int,
+    ) -> None:
+        if tb_writer is None:
+            return
+        summary_path = Path(run_dir) / "lchol_episode_stats" / "sparse_episode_outcome_summary.csv"
+        if not summary_path.is_file():
+            return
+        with summary_path.open(newline="", encoding="utf-8") as summary_fp:
+            rows = list(csv.DictReader(summary_fp))
+        for row in rows:
+            scope = str(row.get("scope") or "")
+            instruction = self._metric_token(row.get("instruction_type") or "unknown")
+            shell = self._metric_token(row.get("curriculum_shell") or "")
+            if scope == "all":
+                prefix = "stage/sparse/buffer_episode_outcomes/global/cumulative"
+            elif scope == "instruction":
+                prefix = f"stage/sparse/buffer_episode_outcomes/global/instruction/{instruction}"
+            elif scope == "instruction_shell" and shell:
+                prefix = (
+                    "stage/sparse/buffer_episode_outcomes/global/instruction_shell/"
+                    f"{instruction}/shell_{shell}"
+                )
+            else:
+                continue
+            for csv_key, metric_name in (
+                ("episodes", "episodes_total"),
+                ("reward_1_count", "reward_1_count"),
+                ("reward_0_count", "reward_0_count"),
+                ("reward_1_ratio", "reward_1_ratio"),
+                ("reward_0_ratio", "reward_0_ratio"),
+                ("episodes_with_replay_ratio", "episodes_with_replay_ratio"),
+                ("replay_records_added", "replay_records_added"),
+            ):
+                tb_writer.add_scalar(
+                    f"{prefix}/{metric_name}",
+                    self._finite_float(row.get(csv_key), 0.0),
+                    int(global_step),
+                )
+        tb_writer.flush()
 
     def sync_dense_gate_state(self, *, run_dir: Any | None) -> None:
         if run_dir is None:
@@ -757,6 +967,264 @@ class LCHOLGRPORuntime:
         token = str(value).strip().lower().replace(" ", "_")
         token = "".join(char if char.isalnum() or char in {"_", "-", "."} else "_" for char in token)
         return token.strip("_") or "unknown"
+
+    @staticmethod
+    def _empty_outcome_counts() -> dict[str, int]:
+        return {
+            "episodes": 0,
+            "reward_1": 0,
+            "reward_0": 0,
+            "with_replay": 0,
+            "replay_records": 0,
+        }
+
+    @staticmethod
+    def _finite_float(value: Any, fallback: float = 0.0) -> float:
+        try:
+            numeric = float(value)
+        except (TypeError, ValueError):
+            return float(fallback)
+        return float(numeric) if np.isfinite(numeric) else float(fallback)
+
+    @staticmethod
+    def _binary_success(info: Mapping[str, Any]) -> int:
+        for key in ("success", "sparse_success"):
+            if key not in info:
+                continue
+            raw = info.get(key)
+            try:
+                return int(float(raw) >= 0.5)
+            except (TypeError, ValueError):
+                return int(bool(raw))
+        return 0
+
+    @staticmethod
+    def _shell_token(value: Any) -> str:
+        if value is None or value == "":
+            return ""
+        try:
+            return str(max(0, int(value)))
+        except (TypeError, ValueError):
+            return str(value)
+
+    @staticmethod
+    def _utc_now() -> str:
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+    @staticmethod
+    def _terminal_reason(
+        info: Mapping[str, Any],
+        *,
+        binary_reward: int,
+        env_done: bool,
+        forced_scene_refresh: bool,
+        forced_unstable_reset: bool,
+    ) -> str:
+        if int(binary_reward) == 1:
+            return "success"
+        if forced_unstable_reset or bool(info.get("forced_unstable_reset")):
+            return "unstable_reset"
+        if forced_scene_refresh:
+            return "scene_refresh"
+        if bool(info.get("episode_timeout")) or bool(info.get("truncated")):
+            return "timeout"
+        if bool(info.get("terminated")):
+            return "terminated_failure"
+        if env_done or bool(info.get("env_done")):
+            return "env_done_failure"
+        return "rollout_reset"
+
+    def _record_sparse_outcome_counts(
+        self,
+        *,
+        binary_reward: int,
+        instruction: str,
+        shell: str,
+        records_added: int,
+    ) -> None:
+        for counts in (self._sparse_outcome_counts, self._sparse_outcome_update_counts):
+            self._increment_outcome_counts(
+                counts,
+                binary_reward=binary_reward,
+                records_added=records_added,
+            )
+        instruction_counts = self._sparse_outcome_by_instruction.setdefault(
+            str(instruction),
+            self._empty_outcome_counts(),
+        )
+        self._increment_outcome_counts(
+            instruction_counts,
+            binary_reward=binary_reward,
+            records_added=records_added,
+        )
+        if shell:
+            shell_counts = self._sparse_outcome_by_instruction_shell.setdefault(
+                (str(instruction), str(shell)),
+                self._empty_outcome_counts(),
+            )
+            self._increment_outcome_counts(
+                shell_counts,
+                binary_reward=binary_reward,
+                records_added=records_added,
+            )
+
+    @staticmethod
+    def _increment_outcome_counts(
+        counts: dict[str, int],
+        *,
+        binary_reward: int,
+        records_added: int,
+    ) -> None:
+        counts["episodes"] += 1
+        counts["reward_1" if int(binary_reward) == 1 else "reward_0"] += 1
+        counts["with_replay"] += int(int(records_added) > 0)
+        counts["replay_records"] += max(0, int(records_added))
+
+    @staticmethod
+    def _count_ratio(counts: Mapping[str, int], key: str) -> float:
+        episodes = max(0, int(counts.get("episodes", 0)))
+        return float(counts.get(key, 0)) / float(episodes) if episodes else 0.0
+
+    def _append_sparse_outcome_metrics(self, out: dict[str, float]) -> None:
+        for window, counts in (
+            ("cumulative", self._sparse_outcome_counts),
+            ("update", self._sparse_outcome_update_counts),
+        ):
+            prefix = f"sparse_stage/buffer_episode_outcomes/rank_local/{window}"
+            out[f"{prefix}/episodes_total"] = float(counts["episodes"])
+            out[f"{prefix}/reward_1_count"] = float(counts["reward_1"])
+            out[f"{prefix}/reward_0_count"] = float(counts["reward_0"])
+            out[f"{prefix}/reward_1_ratio"] = self._count_ratio(counts, "reward_1")
+            out[f"{prefix}/reward_0_ratio"] = self._count_ratio(counts, "reward_0")
+            out[f"{prefix}/episodes_with_replay_ratio"] = self._count_ratio(counts, "with_replay")
+            out[f"{prefix}/replay_records_added"] = float(counts["replay_records"])
+
+        for instruction, counts in sorted(self._sparse_outcome_by_instruction.items()):
+            instruction_tag = self._metric_token(instruction)
+            prefix = (
+                "sparse_stage/buffer_episode_outcomes/rank_local/instruction/"
+                f"{instruction_tag}"
+            )
+            out[f"{prefix}/episodes_total"] = float(counts["episodes"])
+            out[f"{prefix}/reward_1_ratio"] = self._count_ratio(counts, "reward_1")
+            out[f"{prefix}/reward_0_ratio"] = self._count_ratio(counts, "reward_0")
+            out[f"{prefix}/episodes_with_replay_ratio"] = self._count_ratio(counts, "with_replay")
+
+        for (instruction, shell), counts in sorted(self._sparse_outcome_by_instruction_shell.items()):
+            instruction_tag = self._metric_token(instruction)
+            shell_tag = self._metric_token(shell)
+            prefix = (
+                "sparse_stage/buffer_episode_outcomes/rank_local/instruction_shell/"
+                f"{instruction_tag}/shell_{shell_tag}"
+            )
+            out[f"{prefix}/episodes_total"] = float(counts["episodes"])
+            out[f"{prefix}/reward_1_ratio"] = self._count_ratio(counts, "reward_1")
+            out[f"{prefix}/reward_0_ratio"] = self._count_ratio(counts, "reward_0")
+
+    def _flush_sparse_episode_outcomes(self, *, run_dir: Any) -> None:
+        if not self._pending_sparse_episode_outcomes:
+            return
+        rows = list(self._pending_sparse_episode_outcomes)
+        stats_dir = Path(run_dir) / "lchol_episode_stats"
+        stats_dir.mkdir(parents=True, exist_ok=True)
+        outcomes_path = stats_dir / "sparse_episode_outcomes.csv"
+        summary_path = stats_dir / "sparse_episode_outcome_summary.csv"
+        lock_path = stats_dir / ".sparse_episode_outcomes.lock"
+
+        lock_fp = lock_path.open("a+", encoding="utf-8")
+        try:
+            self._lock_file(lock_fp)
+            write_header = not outcomes_path.is_file() or outcomes_path.stat().st_size == 0
+            with outcomes_path.open("a", newline="", encoding="utf-8") as outcomes_fp:
+                writer = csv.DictWriter(outcomes_fp, fieldnames=_SPARSE_EPISODE_OUTCOME_FIELDS)
+                if write_header:
+                    writer.writeheader()
+                writer.writerows(rows)
+                outcomes_fp.flush()
+                os.fsync(outcomes_fp.fileno())
+            summary_rows = self._summarize_sparse_episode_outcomes(outcomes_path)
+            tmp_path = summary_path.with_name(
+                f".{summary_path.name}.rank{int(self.rank):02d}.{os.getpid()}.tmp"
+            )
+            with tmp_path.open("w", newline="", encoding="utf-8") as summary_fp:
+                writer = csv.DictWriter(summary_fp, fieldnames=_SPARSE_EPISODE_SUMMARY_FIELDS)
+                writer.writeheader()
+                writer.writerows(summary_rows)
+                summary_fp.flush()
+                os.fsync(summary_fp.fileno())
+            os.replace(tmp_path, summary_path)
+        finally:
+            self._unlock_file(lock_fp)
+            lock_fp.close()
+        del self._pending_sparse_episode_outcomes[: len(rows)]
+
+    @classmethod
+    def _summarize_sparse_episode_outcomes(cls, outcomes_path: Path) -> list[dict[str, Any]]:
+        grouped: dict[tuple[str, str, str], dict[str, int]] = {}
+        with outcomes_path.open(newline="", encoding="utf-8") as outcomes_fp:
+            for row in csv.DictReader(outcomes_fp):
+                instruction = str(row.get("instruction_type") or "unknown")
+                shell = str(row.get("curriculum_shell") or "")
+                binary_reward = int(cls._finite_float(row.get("binary_reward"), 0.0) >= 0.5)
+                records_added = max(0, int(cls._finite_float(row.get("replay_records_added"), 0.0)))
+                update = max(0, int(cls._finite_float(row.get("update"), 0.0)))
+                keys = [("all", "", ""), ("instruction", instruction, "")]
+                if shell:
+                    keys.append(("instruction_shell", instruction, shell))
+                for key in keys:
+                    counts = grouped.setdefault(
+                        key,
+                        {
+                            **cls._empty_outcome_counts(),
+                            "last_update": 0,
+                        },
+                    )
+                    cls._increment_outcome_counts(
+                        counts,
+                        binary_reward=binary_reward,
+                        records_added=records_added,
+                    )
+                    counts["last_update"] = max(int(counts["last_update"]), update)
+
+        generated_at = cls._utc_now()
+        summary_rows: list[dict[str, Any]] = []
+        for (scope, instruction, shell), counts in sorted(grouped.items()):
+            summary_rows.append(
+                {
+                    "generated_at_utc": generated_at,
+                    "scope": scope,
+                    "instruction_type": instruction,
+                    "curriculum_shell": shell,
+                    "episodes": int(counts["episodes"]),
+                    "reward_1_count": int(counts["reward_1"]),
+                    "reward_0_count": int(counts["reward_0"]),
+                    "reward_1_ratio": cls._count_ratio(counts, "reward_1"),
+                    "reward_0_ratio": cls._count_ratio(counts, "reward_0"),
+                    "episodes_with_replay_records": int(counts["with_replay"]),
+                    "episodes_with_replay_ratio": cls._count_ratio(counts, "with_replay"),
+                    "replay_records_added": int(counts["replay_records"]),
+                    "last_update": int(counts["last_update"]),
+                }
+            )
+        return summary_rows
+
+    @staticmethod
+    def _lock_file(file_obj: Any) -> None:
+        try:
+            import fcntl
+
+            fcntl.flock(file_obj.fileno(), fcntl.LOCK_EX)
+        except (ImportError, OSError):
+            return
+
+    @staticmethod
+    def _unlock_file(file_obj: Any) -> None:
+        try:
+            import fcntl
+
+            fcntl.flock(file_obj.fileno(), fcntl.LOCK_UN)
+        except (ImportError, OSError):
+            return
 
     @staticmethod
     def _episode_key(info: Mapping[str, Any]) -> tuple[Any, ...]:

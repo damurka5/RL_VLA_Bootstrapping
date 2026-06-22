@@ -199,6 +199,21 @@ been smoothed:
 Keep promotion at 70% if the purpose is stable competence. A 50% shell-promotion threshold is
 appropriate only for exploration, not checkpoint acceptance.
 
+### Sparse-stage episode outcome telemetry
+
+LC-HOL writes the selected rollout episode outcome after every training update:
+
+- `lchol_episode_stats/sparse_episode_outcomes.csv` contains one row per completed sparse-stage
+  episode, including binary reward `0/1`, terminal reason, instruction, shell, episode returns,
+  replay-record count, replay options, and whether the episode contributed hindsight records.
+- `lchol_episode_stats/sparse_episode_outcome_summary.csv` contains refreshed global counts and
+  reward `0/1` ratios for the whole run, each instruction, and each instruction/shell pair.
+
+The CSV writer uses a process lock, so the files combine all DDP ranks. TensorBoard mirrors the
+global summary under `stage/sparse/buffer_episode_outcomes/global/*` after all ranks finish each
+update. Rank-local diagnostic metrics remain under
+`stage/sparse/buffer_episode_outcomes/rank_local/*`.
+
 ## Experiment records
 
 For each run, keep this tuple together:

@@ -578,6 +578,25 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
             "                        env.restore_state(base_state)\n",
         ),
         (
+            "                    selected_idx = _select_group_index(args, branch_rng)\n"
+            "                    selected = candidate_results[selected_idx]\n\n"
+            "                    for group_idx, candidate in enumerate(candidate_results):\n",
+            "                    selected_idx = _select_group_index(args, branch_rng)\n"
+            "                    selected = candidate_results[selected_idx]\n"
+            "                    _rlvla_lchol_record_selected_step(\n"
+            "                        step_info=selected.step_info,\n"
+            "                        env_reward=float(selected.env_reward),\n"
+            "                        shaped_reward=float(selected.reward),\n"
+            "                        done=bool(selected.done),\n"
+            "                        env_done=bool(selected.env_done),\n"
+            "                        forced_scene_refresh=bool(selected.forced_scene_refresh),\n"
+            "                        forced_unstable_reset=bool(selected.forced_unstable_reset),\n"
+            "                        update=update,\n"
+            "                        global_step=global_step + 1,\n"
+            "                    )\n\n"
+            "                    for group_idx, candidate in enumerate(candidate_results):\n",
+        ),
+        (
             "                            \"reward_shaped\": float(selected.reward),\n",
             "                            \"reward_shaped\": float(selected.reward),\n"
             "                            \"lchol_group_score\": float(selected.step_info.get(\"lchol_group_score\", selected.reward)),\n",
@@ -653,7 +672,9 @@ def _transform_external_grpo_source_for_lchol(source: str) -> str:
             "            _rlvla_lchol_after_update(\n"
             "                update=update,\n"
             "                global_step=global_step,\n"
-            "                run_dir=run_dir if is_main else None,\n"
+            "                run_dir=run_dir,\n"
+            "                is_main=is_main,\n"
+            "                tb_writer=tb_writer,\n"
             "            )\n"
             "            if _rlvla_lchol_should_stop_training(update=update):\n"
             "                break\n\n"
@@ -1907,6 +1928,8 @@ def _tensorboard_tag_allowed(tag: str, *, profile: str = "compact", kind: str = 
         sparse_tag = raw_tag[len("stage/sparse/") :]
         if sparse_tag in {"updates_completed", "max_updates"}:
             return True
+        if sparse_tag.startswith("buffer_episode_outcomes/"):
+            return True
     tag = _strip_tensorboard_stage_prefix(raw_tag)
     return tag in _COMPACT_TENSORBOARD_SCALARS or any(
         tag.startswith(prefix) for prefix in _COMPACT_TENSORBOARD_PREFIXES
@@ -2558,6 +2581,7 @@ def _patch_lchol_runtime(
             spec=CDPRLCHOLSpec(),
             available_options=getattr(args, "instruction_types", None) or CDPRLCHOLSpec.option_names,
             seed=int(seed),
+            rank=int(rank),
         )
         if is_main:
             print(
@@ -2612,6 +2636,35 @@ def _patch_lchol_runtime(
         after_rollout = getattr(runtime, "after_rollout", None)
         if callable(after_rollout):
             after_rollout(update=int(update))
+
+    def _record_selected_step(
+        *,
+        step_info: dict[str, Any],
+        env_reward: float,
+        shaped_reward: float,
+        done: bool,
+        env_done: bool,
+        forced_scene_refresh: bool,
+        forced_unstable_reset: bool,
+        update: int,
+        global_step: int,
+    ) -> None:
+        runtime = _runtime()
+        if runtime is None:
+            return
+        recorder = getattr(runtime, "record_selected_step", None)
+        if callable(recorder):
+            recorder(
+                step_info=step_info if isinstance(step_info, dict) else {},
+                env_reward=float(env_reward),
+                shaped_reward=float(shaped_reward),
+                done=bool(done),
+                env_done=bool(env_done),
+                forced_scene_refresh=bool(forced_scene_refresh),
+                forced_unstable_reset=bool(forced_unstable_reset),
+                update=int(update),
+                global_step=int(global_step),
+            )
 
     def _bc_loss(policy, ppo_module, device, args, *, num_actions_chunk: int):
         runtime = _runtime()
@@ -2670,13 +2723,28 @@ def _patch_lchol_runtime(
             is_main=bool(is_main),
         )
 
-    def _after_update(*, update: int, global_step: int, run_dir) -> None:
+    def _after_update(*, update: int, global_step: int, run_dir, is_main: bool, tb_writer) -> None:
         runtime = _runtime()
         if runtime is None:
             return
         after_update = getattr(runtime, "after_update", None)
         if callable(after_update):
-            after_update(update=int(update), global_step=int(global_step), run_dir=run_dir)
+            after_update(
+                update=int(update),
+                global_step=int(global_step),
+                run_dir=run_dir,
+                is_main=bool(is_main),
+            )
+        if module.dist.is_available() and module.dist.is_initialized():
+            module.dist.barrier()
+        if bool(is_main):
+            log_persisted = getattr(runtime, "log_persisted_sparse_outcomes", None)
+            if callable(log_persisted):
+                log_persisted(
+                    run_dir=run_dir,
+                    tb_writer=tb_writer,
+                    global_step=int(global_step),
+                )
 
     def _should_stop_training(*, update: int) -> bool:
         del update
@@ -2795,6 +2863,7 @@ def _patch_lchol_runtime(
     module._rlvla_lchol_pre_update = _pre_update
     module._rlvla_lchol_phase_score = _phase_score
     module._rlvla_lchol_capture_candidate = _capture_candidate
+    module._rlvla_lchol_record_selected_step = _record_selected_step
     module._rlvla_lchol_after_rollout = _after_rollout
     module._rlvla_lchol_after_update = _after_update
     module._rlvla_lchol_should_stop_training = _should_stop_training

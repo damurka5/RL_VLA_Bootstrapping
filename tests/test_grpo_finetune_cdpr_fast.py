@@ -786,6 +786,11 @@ class FastGRPOWrapperTests(unittest.TestCase):
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/instruction_success_rate_mean"))
         self.assertTrue(_tensorboard_tag_allowed("rollout_episode/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/replay/episodes_total"))
+        self.assertTrue(
+            _tensorboard_tag_allowed(
+                "stage/sparse/buffer_episode_outcomes/global/cumulative/reward_1_ratio"
+            )
+        )
         self.assertTrue(_tensorboard_tag_allowed("lchol/reverse_frontier/shell_success_rate/put_into_plate/shell_00"))
         self.assertTrue(_tensorboard_tag_allowed("lchol/curriculum/reverse_frontier/put_into_plate/active_shell"))
         self.assertFalse(_tensorboard_tag_allowed("lchol/dense_gate/mean_success"))
@@ -803,6 +808,8 @@ class FastGRPOWrapperTests(unittest.TestCase):
         compile(patched, str(external), "exec")
 
         self.assertIn("_rlvla_lchol_after_update(", patched)
+        self.assertIn("_rlvla_lchol_record_selected_step(", patched)
+        self.assertIn("run_dir=run_dir,", patched)
         self.assertIn("_rlvla_lchol_should_stop_training(update=update)", patched)
 
     def test_tensorboard_writer_mirrors_scalars_by_lchol_stage(self):
