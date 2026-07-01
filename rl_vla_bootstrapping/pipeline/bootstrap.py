@@ -15,6 +15,7 @@ from rl_vla_bootstrapping.policy.openvla_oft import (
     build_openvla_rl_plan,
     build_openvla_sft_plan,
 )
+from rl_vla_bootstrapping.policy.octo import build_octo_rl_plan
 from rl_vla_bootstrapping.simulation.preview import render_preview
 
 
@@ -103,6 +104,8 @@ class BootstrapPipeline:
         if "rl" in stages and self.config.training.rl.enabled:
             if self.config.policy.type == "openvla_oft":
                 plans.append(build_openvla_rl_plan(self.config, run_dir))
+            elif self.config.policy.type in {"octo", "octo_small", "octo_small_cdpr"}:
+                plans.append(build_octo_rl_plan(self.config, run_dir))
             else:
                 raise ValueError(f"Unsupported policy type for RL stage: {self.config.policy.type}")
 
