@@ -38,12 +38,25 @@ conda run --no-capture-output -n octo python -m pip install -r requirements.txt
 conda run --no-capture-output -n octo python -m pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 cd /root/repo/RL_VLA_Bootstrapping
+OCTO_REPO_PATH=/root/repo/octo conda run --no-capture-output -n octo python -c "import octo, importlib; print(octo, getattr(octo, '__file__', None), getattr(octo, '__path__', None)); import octo.model.octo_model as m; print(m.OctoModel)"
 conda run --no-capture-output -n octo python -m rl_vla_bootstrapping.cli.train \
   --config configs/examples/cdpr_octo_small_dense_simple.yaml \
   --stage rl
 ```
 
 The last command is a dry plan check. It should print the Octo RL command without downloading Octo weights.
+
+If the import check says `'octo' is not a package`, Python is seeing a wrong package or module named `octo`. Check and repair with:
+
+```bash
+conda run --no-capture-output -n octo python -c "import octo; print(getattr(octo, '__file__', None), getattr(octo, '__path__', None))"
+conda run --no-capture-output -n octo python -m pip show octo || true
+conda run --no-capture-output -n octo python -m pip uninstall -y octo || true
+cd /root/repo/octo
+conda run --no-capture-output -n octo python -m pip install -e .
+cd /root/repo/RL_VLA_Bootstrapping
+OCTO_REPO_PATH=/root/repo/octo conda run --no-capture-output -n octo python -c "import octo.model.octo_model as m; print(m.OctoModel)"
+```
 
 ## Start a 24-Hour Run
 

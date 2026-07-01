@@ -1,13 +1,17 @@
 from __future__ import annotations
 
 import importlib
+import os
+import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
 
 
 DEFAULT_OCTO_SMALL_CHECKPOINT = "hf://rail-berkeley/octo-small-1.5"
+DEFAULT_OCTO_REPO_PATH = "/root/repo/octo"
 CDPR_ACTION_KEYS: tuple[str, ...] = ("x", "y", "z", "yaw", "gripper")
 
 
@@ -288,13 +292,21 @@ class OctoRuntime:
         seed: int = 0,
         use_dataset_action_unnorm: bool = False,
     ) -> "OctoRuntime":
+        _prepare_octo_import_path()
         try:
             module = importlib.import_module("octo.model.octo_model")
             jax = importlib.import_module("jax")
         except ImportError as exc:
+            found = importlib.util.find_spec("octo")
+            origin = getattr(found, "origin", None) if found is not None else None
+            locations = list(getattr(found, "submodule_search_locations", []) or []) if found is not None else []
             raise RuntimeError(
-                "Octo/JAX dependencies are not installed. Install the Octo repo and JAX in the "
-                "remote `octo` environment before running Octo CDPR training or evaluation."
+                "Could not import Berkeley Octo/JAX runtime. Expected a checkout at "
+                f"`{os.environ.get('OCTO_REPO_PATH', DEFAULT_OCTO_REPO_PATH)}` containing "
+                "`octo/model/octo_model.py`, plus JAX installed in the active `octo` env. "
+                f"Python found octo origin={origin!r}, locations={locations!r}. "
+                "If this points to a non-Berkeley package, uninstall that package or set "
+                "OCTO_REPO_PATH=/root/repo/octo."
             ) from exc
         model = module.OctoModel.load_pretrained(str(checkpoint))
         return cls(
@@ -341,3 +353,19 @@ def load_octo_runtime(
         seed=int(seed),
         use_dataset_action_unnorm=bool(use_dataset_action_unnorm),
     )
+
+
+def _prepare_octo_import_path() -> None:
+    repo_path = Path(os.environ.get("OCTO_REPO_PATH", DEFAULT_OCTO_REPO_PATH)).expanduser()
+    expected = repo_path / "octo" / "model" / "octo_model.py"
+    if expected.is_file():
+        repo_str = repo_path.resolve().as_posix()
+        if repo_str not in sys.path:
+            sys.path.insert(0, repo_str)
+
+        loaded = sys.modules.get("octo")
+        if loaded is not None and not hasattr(loaded, "__path__"):
+            sys.modules.pop("octo", None)
+            for name in list(sys.modules):
+                if name.startswith("octo."):
+                    sys.modules.pop(name, None)

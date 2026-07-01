@@ -6,7 +6,10 @@ from typing import Any
 
 from rl_vla_bootstrapping.core.commands import StagePlan, append_cli_arg
 from rl_vla_bootstrapping.core.specs import ProjectConfig
-from rl_vla_bootstrapping.policy.octo_cdpr_adapter import DEFAULT_OCTO_SMALL_CHECKPOINT
+from rl_vla_bootstrapping.policy.octo_cdpr_adapter import (
+    DEFAULT_OCTO_REPO_PATH,
+    DEFAULT_OCTO_SMALL_CHECKPOINT,
+)
 from rl_vla_bootstrapping.policy.openvla_oft import (
     _allowed_objects_from_config,
     _extract_cdpr_env_overrides,
@@ -51,10 +54,12 @@ def _repo_root(config: ProjectConfig) -> Path:
 
 def _octo_env(config: ProjectConfig, *, extra_paths: list[Path] | None = None) -> dict[str, str]:
     env = _shared_env(config, extra_paths=extra_paths)
-    paths = [_repo_root(config)]
+    octo_repo = Path(os.environ.get("OCTO_REPO_PATH", DEFAULT_OCTO_REPO_PATH)).expanduser()
+    paths = [_repo_root(config), octo_repo]
     if env.get("PYTHONPATH"):
         paths.extend(Path(part) for part in env["PYTHONPATH"].split(os.pathsep) if part)
     env["PYTHONPATH"] = _join_pythonpath(paths)
+    env["OCTO_REPO_PATH"] = octo_repo.as_posix()
     return env
 
 
