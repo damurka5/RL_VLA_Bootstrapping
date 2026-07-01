@@ -360,11 +360,17 @@ def _prepare_octo_import_path() -> None:
     expected = repo_path / "octo" / "model" / "octo_model.py"
     if expected.is_file():
         repo_str = repo_path.resolve().as_posix()
-        if repo_str not in sys.path:
-            sys.path.insert(0, repo_str)
+        sys.path[:] = [entry for entry in sys.path if Path(entry or ".").expanduser().resolve().as_posix() != repo_str]
+        sys.path.insert(0, repo_str)
 
         loaded = sys.modules.get("octo")
-        if loaded is not None and not hasattr(loaded, "__path__"):
+        loaded_file = Path(str(getattr(loaded, "__file__", ""))).expanduser() if loaded is not None else None
+        loaded_from_repo = bool(
+            loaded_file
+            and loaded_file.as_posix() != "."
+            and loaded_file.resolve().as_posix().startswith(repo_str + os.sep)
+        )
+        if loaded is not None and (not hasattr(loaded, "__path__") or not loaded_from_repo):
             sys.modules.pop("octo", None)
             for name in list(sys.modules):
                 if name.startswith("octo."):

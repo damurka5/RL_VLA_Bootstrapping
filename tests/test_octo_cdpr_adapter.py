@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import importlib
 import json
+import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +17,7 @@ from rl_vla_bootstrapping.policy.octo_cdpr_adapter import (
     CDPRStateLayout,
     OctoActionAdapterSpec,
     OctoObservationSpec,
+    _prepare_octo_import_path,
     adapt_octo_actions_to_cdpr,
     flatten_cdpr_observation,
 )
@@ -148,11 +152,52 @@ class OctoCDPRAdapterTests(unittest.TestCase):
 
             self.assertEqual([plan.name for plan in plans], ["rl"])
             command = plans[0].command or []
+            self.assertIn("-m", command)
+            self.assertIn("rl_vla_bootstrapping.policy.octo_finetune_cdpr", command)
             self.assertIn("--base-checkpoint", command)
             self.assertIn("hf://rail-berkeley/octo-small-1.5", command)
             self.assertIn("--instruction-types", command)
             self.assertIn("move_to_object", command)
             self.assertIn("RLVLA_TASK_METADATA_JSON", plans[0].env)
+
+    def test_prepare_octo_import_path_prioritizes_repo_over_local_shadow(self):
+        old_path = list(sys.path)
+        old_env = os.environ.get("OCTO_REPO_PATH")
+        old_modules = {name: module for name, module in sys.modules.items() if name == "octo" or name.startswith("octo.")}
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "berkeley_octo"
+                shadow = root / "shadow"
+                _write(repo / "octo" / "__init__.py", "")
+                _write(repo / "octo" / "model" / "__init__.py", "")
+                _write(repo / "octo" / "model" / "octo_model.py", "class OctoModel: pass\n")
+                _write(shadow / "octo.py", "MARKER = 'shadow'\n")
+
+                for name in list(sys.modules):
+                    if name == "octo" or name.startswith("octo."):
+                        sys.modules.pop(name, None)
+                sys.path.insert(0, shadow.as_posix())
+                sys.path.append(repo.as_posix())
+                importlib.import_module("octo")
+                self.assertEqual(Path(sys.modules["octo"].__file__).resolve(), (shadow / "octo.py").resolve())
+
+                os.environ["OCTO_REPO_PATH"] = repo.as_posix()
+                _prepare_octo_import_path()
+                module = importlib.import_module("octo.model.octo_model")
+
+                self.assertEqual(Path(module.__file__).resolve(), (repo / "octo" / "model" / "octo_model.py").resolve())
+                self.assertEqual(sys.path[0], repo.resolve().as_posix())
+        finally:
+            sys.path[:] = old_path
+            if old_env is None:
+                os.environ.pop("OCTO_REPO_PATH", None)
+            else:
+                os.environ["OCTO_REPO_PATH"] = old_env
+            for name in list(sys.modules):
+                if name == "octo" or name.startswith("octo."):
+                    sys.modules.pop(name, None)
+            sys.modules.update(old_modules)
 
 
 if __name__ == "__main__":

@@ -26,6 +26,7 @@ def _build_stage_prefix(
     script_path: Path,
     launcher: str | None,
     launcher_args: dict[str, Any],
+    module_name: str | None = None,
 ) -> list[str]:
     if launcher:
         argv = [launcher]
@@ -33,6 +34,8 @@ def _build_stage_prefix(
             append_cli_arg(argv, key, value)
         argv.append(str(script_path))
         return argv
+    if module_name:
+        return [python_executable, "-m", module_name]
     return [python_executable, str(script_path)]
 
 
@@ -50,6 +53,13 @@ def _join_pythonpath(paths: list[Path]) -> str:
 
 def _repo_root(config: ProjectConfig) -> Path:
     return config.resolve_path("../..") or config.config_path.resolve().parents[2]
+
+
+def _module_name_for_script(script_path: Path) -> str | None:
+    parts = script_path.parts[-3:]
+    if parts == ("rl_vla_bootstrapping", "policy", "octo_finetune_cdpr.py"):
+        return "rl_vla_bootstrapping.policy.octo_finetune_cdpr"
+    return None
 
 
 def _octo_env(config: ProjectConfig, *, extra_paths: list[Path] | None = None) -> dict[str, str]:
@@ -74,6 +84,7 @@ def build_octo_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
         script_path=script_path,
         launcher=config.training.rl.launcher,
         launcher_args=config.training.rl.launcher_args,
+        module_name=_module_name_for_script(script_path),
     )
 
     injected: dict[str, Any] = dict(config.training.rl.args)
