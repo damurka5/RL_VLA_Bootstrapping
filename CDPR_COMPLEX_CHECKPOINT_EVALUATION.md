@@ -7,6 +7,43 @@ cd /root/repo/RL_VLA_Bootstrapping
 bash scripts/evaluate_cdpr_complex_checkpoint_remote.sh
 ```
 
+## Compare first-stage plateau checkpoints
+
+To compare the June 22 first-stage checkpoints directly on the remote server:
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+bash scripts/compare_cdpr_complex_checkpoints_remote.sh
+```
+
+The comparison launcher defaults to the dense/simple instruction gate:
+
+```text
+/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260622_142556/rl/step_0192000
+/root/repo/RL_VLA_Bootstrapping/runs/cdpr_openvla_grpo_complex_tasks_20260622_142556/rl/step_0336000
+```
+
+It writes each checkpoint's validation artifacts under
+`runs/cdpr_openvla_grpo_complex_tasks_20260622_142556/evaluation_comparisons/<timestamp>/evals/`,
+then writes:
+
+- `checkpoint_comparison_report.md`
+- `checkpoint_comparison_summary.csv`
+- `evaluation_status.tsv`
+
+Useful overrides:
+
+```bash
+EVALUATION_SCOPE=all \
+EPISODES_PER_CASE=30 \
+MOVE_TO_OBJECT_EPISODES_PER_TARGET=30 \
+bash scripts/compare_cdpr_complex_checkpoints_remote.sh
+```
+
+Use `EVALUATION_SCOPE=complex` to probe only sparse-stage manipulation tasks, or leave the default
+`EVALUATION_SCOPE=simple` when checking whether the dense stage is ready to promote. The comparison
+report uses the config's `70%` dense-stage gate as the sparse-readiness threshold.
+
 The launcher defaults to:
 
 ```text

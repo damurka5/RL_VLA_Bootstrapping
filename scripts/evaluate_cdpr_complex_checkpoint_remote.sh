@@ -12,6 +12,7 @@ VIDEO_SEARCH_EXTRA_EPISODES="${VIDEO_SEARCH_EXTRA_EPISODES:-40}"
 ARBITRARY_INSTRUCTIONS_COUNT="${ARBITRARY_INSTRUCTIONS_COUNT:-10}"
 MAX_RESET_ATTEMPTS="${MAX_RESET_ATTEMPTS:-10}"
 REQUIRE_COMPLETE_VIDEO_COVERAGE="${REQUIRE_COMPLETE_VIDEO_COVERAGE:-true}"
+STRICT_VIDEO_VALIDATION="${STRICT_VIDEO_VALIDATION:-true}"
 
 if [[ ! -d "$CHECKPOINT_DIR" ]]; then
   echo "Checkpoint directory does not exist: $CHECKPOINT_DIR" >&2
@@ -54,9 +55,14 @@ cmd=(
   --no-record-all-success-videos
   --video-coverage instruction
   --video-search-extra-episodes "$VIDEO_SEARCH_EXTRA_EPISODES"
-  --strict-video-validation
   --progress-only
 )
+
+if [[ "$STRICT_VIDEO_VALIDATION" == "true" ]]; then
+  cmd+=(--strict-video-validation)
+else
+  cmd+=(--no-strict-video-validation)
+fi
 
 if [[ "$REQUIRE_COMPLETE_VIDEO_COVERAGE" == "true" ]]; then
   cmd+=(--require-complete-video-coverage)
