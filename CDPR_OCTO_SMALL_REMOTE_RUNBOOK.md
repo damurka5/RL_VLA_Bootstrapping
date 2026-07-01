@@ -45,7 +45,7 @@ conda run --no-capture-output -n octo python -m pip install --force-reinstall --
   transformers==4.34.1 \
   tokenizers==0.14.1 \
   huggingface-hub==0.17.3
-conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-cache-dir "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-cache-dir "jax[cuda12_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
   numpy==1.24.3 \
   ml-dtypes==0.2.0 \
@@ -53,8 +53,7 @@ conda run --no-capture-output -n octo python -m pip install --force-reinstall --
 
 cd /root/repo/RL_VLA_Bootstrapping
 OCTO_REPO_PATH=/root/repo/octo conda run --no-capture-output -n octo python -c "import octo, importlib; print(octo, getattr(octo, '__file__', None), getattr(octo, '__path__', None)); import octo.model.octo_model as m; print(m.OctoModel)"
-OCTO_SITE_PACKAGES="$(conda run --no-capture-output -n octo python -c 'import site; print(site.getsitepackages()[0])')"
-export LD_LIBRARY_PATH="$OCTO_SITE_PACKAGES/nvidia/cudnn/lib:$OCTO_SITE_PACKAGES/nvidia/cublas/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_runtime/lib:$OCTO_SITE_PACKAGES/nvidia/cufft/lib:$OCTO_SITE_PACKAGES/nvidia/cusolver/lib:$OCTO_SITE_PACKAGES/nvidia/cusparse/lib:$OCTO_SITE_PACKAGES/nvidia/nccl/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_cupti/lib"
+export LD_LIBRARY_PATH="$(conda run --no-capture-output -n octo python -c 'import glob, site; print(":".join(sorted(glob.glob(site.getsitepackages()[0] + "/nvidia/*/lib"))))')"
 OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
   conda run --no-capture-output -n octo python -c "import numpy, jax; print('numpy', numpy.__version__); print(jax.default_backend()); print(jax.devices())"
 conda run --no-capture-output -n octo python -m rl_vla_bootstrapping.cli.train \
@@ -71,17 +70,20 @@ then re-pin Octo's NumPy stack:
 ```bash
 cd /root/repo/RL_VLA_Bootstrapping
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-cache-dir \
-  "jax[cuda11_pip]==0.4.20" \
+  "jax[cuda12_pip]==0.4.20" \
   -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
   numpy==1.24.3 \
   ml-dtypes==0.2.0 \
   scipy==1.11.4
-OCTO_SITE_PACKAGES="$(conda run --no-capture-output -n octo python -c 'import site; print(site.getsitepackages()[0])')"
-export LD_LIBRARY_PATH="$OCTO_SITE_PACKAGES/nvidia/cudnn/lib:$OCTO_SITE_PACKAGES/nvidia/cublas/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_runtime/lib:$OCTO_SITE_PACKAGES/nvidia/cufft/lib:$OCTO_SITE_PACKAGES/nvidia/cusolver/lib:$OCTO_SITE_PACKAGES/nvidia/cusparse/lib:$OCTO_SITE_PACKAGES/nvidia/nccl/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_cupti/lib"
+export LD_LIBRARY_PATH="$(conda run --no-capture-output -n octo python -c 'import glob, site; print(":".join(sorted(glob.glob(site.getsitepackages()[0] + "/nvidia/*/lib"))))')"
 OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
   conda run --no-capture-output -n octo python -c "import numpy, jax; print('numpy', numpy.__version__); print(jax.default_backend()); print(jax.devices())"
 ```
+
+If `nvidia-smi` reports only a CUDA 11 runtime/driver, replace `cuda12_pip` with
+`cuda11_pip` in the JAX install command above. Most A40 servers with recent drivers
+should use `cuda12_pip`.
 
 If the import check says `'octo' is not a package`, Python is seeing a wrong package or module named `octo`. Check and repair with:
 

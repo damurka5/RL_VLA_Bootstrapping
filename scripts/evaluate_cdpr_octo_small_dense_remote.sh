@@ -45,17 +45,9 @@ fi
 if [[ "${JAX_PREPEND_PIP_NVIDIA_LIBS:-1}" == "1" ]]; then
   octo_site_packages="$(conda run --no-capture-output -n "$ENV_NAME" python3 -c 'import site; print(site.getsitepackages()[0])')"
   nvidia_ld_dirs=()
-  for subdir in \
-    nvidia/cudnn/lib \
-    nvidia/cublas/lib \
-    nvidia/cuda_runtime/lib \
-    nvidia/cufft/lib \
-    nvidia/cusolver/lib \
-    nvidia/cusparse/lib \
-    nvidia/nccl/lib \
-    nvidia/cuda_cupti/lib; do
-    if [[ -d "$octo_site_packages/$subdir" ]]; then
-      nvidia_ld_dirs+=("$octo_site_packages/$subdir")
+  for lib_dir in "$octo_site_packages"/nvidia/*/lib; do
+    if [[ -d "$lib_dir" ]]; then
+      nvidia_ld_dirs+=("$lib_dir")
     fi
   done
   if [[ "${#nvidia_ld_dirs[@]}" -gt 0 ]]; then
