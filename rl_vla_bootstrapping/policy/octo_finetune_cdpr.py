@@ -548,11 +548,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         normalization=str(args.octo_action_normalization),
     )
 
+    startup_t0 = time.perf_counter()
     print(f"[octo-cdpr] Loading Octo checkpoint: {args.base_checkpoint}", flush=True)
+    load_t0 = time.perf_counter()
     runtime = load_octo_runtime(
         checkpoint=str(args.base_checkpoint),
         seed=int(args.seed),
         use_dataset_action_unnorm=bool(args.use_dataset_action_unnorm),
+    )
+    print(
+        f"[octo-cdpr] Loaded Octo checkpoint in {time.perf_counter() - load_t0:.1f}s; "
+        f"{runtime.device_summary()}",
+        flush=True,
     )
     obs_adapter = obs_adapter.with_example_observation(runtime.example_observation)
     if obs_adapter.example_observation is not None:
@@ -560,8 +567,14 @@ def main(argv: Sequence[str] | None = None) -> None:
 
     env = None
     try:
+        env_t0 = time.perf_counter()
+        print("[octo-cdpr] Building CDPR environment and wrapper...", flush=True)
         env = _build_env(args)
+        print(f"[octo-cdpr] Built CDPR environment in {time.perf_counter() - env_t0:.1f}s", flush=True)
+        reset_t0 = time.perf_counter()
+        print("[octo-cdpr] Resetting CDPR environment...", flush=True)
         obs, info = env.reset(seed=int(args.seed))
+        print(f"[octo-cdpr] Reset CDPR environment in {time.perf_counter() - reset_t0:.1f}s", flush=True)
         layout = CDPRStateLayout.from_observation(obs)
         device = torch.device(args.device)
         trainer = ResidualTrainer(
@@ -607,6 +620,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         episode_length = 0
         state = layout.flatten(obs)
         instruction = _safe_instruction(info)
+        print(
+            "[octo-cdpr] Sampling first Octo prior action chunk "
+            "(first JAX call can spend minutes compiling on CPU before GPU work starts)...",
+            flush=True,
+        )
+        prior_t0 = time.perf_counter()
         prior_chunk = _predict_prior_chunk(
             runtime=runtime,
             obs_adapter=obs_adapter,
@@ -615,6 +634,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             obs=obs,
             info=info,
             instruction=instruction,
+        )
+        print(
+            f"[octo-cdpr] First Octo prior chunk ready in {time.perf_counter() - prior_t0:.1f}s; "
+            f"startup total {time.perf_counter() - startup_t0:.1f}s",
+            flush=True,
         )
         action_chunk = trainer.select_chunk(state, prior_chunk)
         chunk_idx = 0

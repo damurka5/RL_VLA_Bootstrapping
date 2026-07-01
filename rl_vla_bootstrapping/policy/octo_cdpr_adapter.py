@@ -419,6 +419,17 @@ class OctoRuntime:
                 return observation
         return None
 
+    def device_summary(self) -> str:
+        try:
+            backend = str(self.jax.default_backend())
+        except Exception:
+            backend = "unknown"
+        try:
+            devices = ", ".join(str(device) for device in self.jax.devices())
+        except Exception:
+            devices = "unknown"
+        return f"backend={backend}; devices=[{devices}]"
+
     @classmethod
     def load(
         cls,
