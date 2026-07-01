@@ -38,7 +38,8 @@ conda run --no-capture-output -n octo python -m pip install -r requirements.txt
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
   protobuf==4.25.3 \
   tensorflow-metadata==1.15.0 \
-  tensorflow-datasets==4.9.2
+  tensorflow-datasets==4.9.2 \
+  scipy==1.11.4
 conda run --no-capture-output -n octo python -m pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 cd /root/repo/RL_VLA_Bootstrapping
@@ -61,7 +62,8 @@ conda run --no-capture-output -n octo python -m pip install -e .
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
   protobuf==4.25.3 \
   tensorflow-metadata==1.15.0 \
-  tensorflow-datasets==4.9.2
+  tensorflow-datasets==4.9.2 \
+  scipy==1.11.4
 cd /root/repo/RL_VLA_Bootstrapping
 OCTO_REPO_PATH=/root/repo/octo conda run --no-capture-output -n octo python -c "import octo.model.octo_model as m; print(m.OctoModel)"
 ```
