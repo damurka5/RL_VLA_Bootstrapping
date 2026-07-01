@@ -1,25 +1,6 @@
 name: octo
 channels:
-  - pytorch
-  - nvidia
   - conda-forge
 dependencies:
   - python=3.10
   - pip
-  - git
-  - ffmpeg
-  - pytorch
-  - pytorch-cuda=12.1
-  - numpy
-  - pillow
-  - pyyaml
-  - tqdm
-  - tensorboard
-  - pip:
-      - gym==0.26.2
-      - gym-notices==0.1.0
-      - mujoco==3.4.0
-      - opencv-python-headless
-      - imageio
-      - imageio-ffmpeg
-      - huggingface_hub

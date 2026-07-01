@@ -6,16 +6,33 @@ The setup follows the upstream Octo install pattern: create an `octo` Python 3.1
 
 ## One-Time Remote Setup
 
+If an older setup attempt is stuck at `Solving environment`, stop it with `Ctrl+C`. The Octo env file is intentionally minimal so conda only creates Python/pip; GPU frameworks are installed with pip to avoid a large conda SAT solve.
+
 ```bash
 cd /root/repo/RL_VLA_Bootstrapping
 git pull origin main
 
-conda env create -f environments/octo-remote.yaml || conda env update -n octo -f environments/octo-remote.yaml --prune
+conda env remove -n octo -y || true
+conda env create -f environments/octo-remote.yaml
+conda run --no-capture-output -n octo python -m pip install --upgrade pip setuptools wheel
+conda run --no-capture-output -n octo python -m pip install --index-url https://download.pytorch.org/whl/cu121 torch torchvision torchaudio
+conda run --no-capture-output -n octo python -m pip install \
+  gym==0.26.2 \
+  gym-notices==0.1.0 \
+  mujoco==3.4.0 \
+  opencv-python-headless \
+  imageio \
+  imageio-ffmpeg \
+  huggingface_hub \
+  numpy \
+  pillow \
+  pyyaml \
+  tqdm \
+  tensorboard
 
 cd /root/repo
 git clone https://github.com/octo-models/octo.git || true
 cd /root/repo/octo
-conda run --no-capture-output -n octo python -m pip install --upgrade pip
 conda run --no-capture-output -n octo python -m pip install -e .
 conda run --no-capture-output -n octo python -m pip install -r requirements.txt
 conda run --no-capture-output -n octo python -m pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
