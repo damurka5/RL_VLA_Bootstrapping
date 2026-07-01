@@ -35,6 +35,10 @@ git clone https://github.com/octo-models/octo.git || true
 cd /root/repo/octo
 conda run --no-capture-output -n octo python -m pip install -e .
 conda run --no-capture-output -n octo python -m pip install -r requirements.txt
+conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
+  protobuf==4.25.3 \
+  tensorflow-metadata==1.15.0 \
+  tensorflow-datasets==4.9.2
 conda run --no-capture-output -n octo python -m pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 cd /root/repo/RL_VLA_Bootstrapping
@@ -54,6 +58,10 @@ conda run --no-capture-output -n octo python -m pip show octo || true
 conda run --no-capture-output -n octo python -m pip uninstall -y octo || true
 cd /root/repo/octo
 conda run --no-capture-output -n octo python -m pip install -e .
+conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
+  protobuf==4.25.3 \
+  tensorflow-metadata==1.15.0 \
+  tensorflow-datasets==4.9.2
 cd /root/repo/RL_VLA_Bootstrapping
 OCTO_REPO_PATH=/root/repo/octo conda run --no-capture-output -n octo python -c "import octo.model.octo_model as m; print(m.OctoModel)"
 ```
