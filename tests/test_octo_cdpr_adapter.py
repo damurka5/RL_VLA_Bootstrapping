@@ -58,6 +58,41 @@ class OctoCDPRAdapterTests(unittest.TestCase):
         self.assertTrue(out["timestep_pad_mask"].all())
         self.assertTrue(out["pad_mask_dict"]["image_primary"].all())
 
+    def test_observation_adapter_matches_checkpoint_example_schema(self):
+        example_observation = {
+            "image_primary": np.zeros((1, 1, 256, 256, 3), dtype=np.uint8),
+            "image_wrist": np.zeros((1, 2, 128, 128, 3), dtype=np.uint8),
+            "timestep": np.zeros((1, 2), dtype=np.int32),
+            "task_completed": np.zeros((1, 2), dtype=bool),
+            "timestep_pad_mask": np.zeros((1, 2), dtype=bool),
+            "pad_mask_dict": {
+                "image_primary": np.zeros((1, 1), dtype=bool),
+                "image_wrist": np.zeros((1, 2), dtype=bool),
+                "timestep": np.zeros((1, 2), dtype=bool),
+            },
+        }
+        adapter = CDPROctoObservationAdapter(
+            OctoObservationSpec(image_size=8, history=1, include_proprio=True),
+            example_observation=example_observation,
+        )
+        out = adapter.from_images(
+            primary_image=np.zeros((64, 64, 3), dtype=np.uint8),
+            wrist_image=np.ones((64, 64, 3), dtype=np.uint8),
+            proprio=np.ones(5, dtype=np.float32),
+        )
+
+        self.assertEqual(set(out), set(example_observation))
+        self.assertNotIn("proprio", out)
+        for key, value in example_observation.items():
+            if key == "pad_mask_dict":
+                continue
+            self.assertEqual(out[key].shape, value.shape)
+        for key, value in example_observation["pad_mask_dict"].items():
+            self.assertEqual(out["pad_mask_dict"][key].shape, value.shape)
+            self.assertTrue(out["pad_mask_dict"][key].all())
+        self.assertEqual(out["image_wrist"].shape, (1, 2, 128, 128, 3))
+        self.assertTrue(out["timestep_pad_mask"].all())
+
     def test_action_adapter_maps_7d_octo_actions_to_5d_cdpr_chunks(self):
         raw = np.array(
             [

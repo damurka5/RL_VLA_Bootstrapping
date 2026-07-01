@@ -554,6 +554,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         seed=int(args.seed),
         use_dataset_action_unnorm=bool(args.use_dataset_action_unnorm),
     )
+    obs_adapter = obs_adapter.with_example_observation(runtime.example_observation)
+    if obs_adapter.example_observation is not None:
+        print(f"[octo-cdpr] Using Octo observation schema: {obs_adapter.expected_shape_summary()}", flush=True)
 
     env = None
     try:

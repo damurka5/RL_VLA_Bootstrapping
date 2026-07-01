@@ -92,7 +92,7 @@ class OctoCDPREvalRuntime:
                 include_wrist=bool(include_wrist),
                 include_proprio=bool(include_proprio),
             )
-        )
+        ).with_example_observation(self.octo.example_observation)
         self.action_spec = OctoActionAdapterSpec(
             action_dim=int(action_dim),
             chunk_size=int(chunk_size),

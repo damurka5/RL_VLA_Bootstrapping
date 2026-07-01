@@ -60,6 +60,71 @@ def _pad_mask(history: int, valid: bool = True) -> np.ndarray:
     return np.full((1, int(history)), bool(valid), dtype=bool)
 
 
+def _example_shape_dtype(value: Any) -> tuple[tuple[int, ...], np.dtype]:
+    arr = np.asarray(value)
+    return tuple(int(dim) for dim in arr.shape), arr.dtype
+
+
+def _zeros_like_example(value: Any) -> np.ndarray:
+    shape, dtype = _example_shape_dtype(value)
+    return np.zeros(shape, dtype=dtype)
+
+
+def _ones_like_mask(value: Any) -> np.ndarray:
+    shape, _dtype = _example_shape_dtype(value)
+    return np.ones(shape, dtype=bool)
+
+
+def _is_wrist_image_key(key: str) -> bool:
+    lowered = key.lower()
+    return any(marker in lowered for marker in ("wrist", "hand", "gripper", "ego"))
+
+
+def _image_batch_for_example(
+    *,
+    key: str,
+    example_value: Any,
+    primary_image: np.ndarray,
+    wrist_image: np.ndarray | None,
+) -> np.ndarray:
+    shape, dtype = _example_shape_dtype(example_value)
+    if len(shape) < 5:
+        return _zeros_like_example(example_value)
+
+    source = wrist_image if _is_wrist_image_key(key) and wrist_image is not None else primary_image
+    height, width, channels = int(shape[-3]), int(shape[-2]), int(shape[-1])
+    frame = _resize_uint8_rgb(source, (height, width))
+    if channels < frame.shape[-1]:
+        frame = frame[..., :channels]
+    elif channels > frame.shape[-1]:
+        pad = np.zeros((*frame.shape[:-1], channels - frame.shape[-1]), dtype=frame.dtype)
+        frame = np.concatenate([frame, pad], axis=-1)
+
+    batch_shape = shape[:-3]
+    arr = np.broadcast_to(frame, (*batch_shape, height, width, channels)).copy()
+    return arr.astype(dtype, copy=False)
+
+
+def _proprio_batch_for_example(example_value: Any, proprio: np.ndarray | None) -> np.ndarray:
+    out = _zeros_like_example(example_value)
+    if proprio is None or out.ndim == 0:
+        return out
+    prop = np.asarray(proprio, dtype=np.float32).reshape(-1)
+    width = min(int(out.shape[-1]), int(prop.size))
+    if width > 0:
+        out[..., :width] = prop[:width].astype(out.dtype, copy=False)
+    return out
+
+
+def _timestep_batch_for_example(example_value: Any) -> np.ndarray:
+    out = _zeros_like_example(example_value)
+    if out.ndim < 2:
+        return out
+    steps = np.arange(out.shape[1], dtype=out.dtype)
+    view_shape = (1, out.shape[1], *([1] * (out.ndim - 2)))
+    return np.broadcast_to(steps.reshape(view_shape), out.shape).copy()
+
+
 @dataclass(frozen=True)
 class CDPRStateLayout:
     state_dim: int
@@ -147,12 +212,66 @@ class OctoObservationSpec:
 
 
 class CDPROctoObservationAdapter:
-    def __init__(self, spec: OctoObservationSpec | None = None):
+    def __init__(self, spec: OctoObservationSpec | None = None, example_observation: dict[str, Any] | None = None):
         self.spec = spec or OctoObservationSpec()
+        self.example_observation = example_observation
 
     @property
     def history(self) -> int:
         return max(1, int(self.spec.history))
+
+    def with_example_observation(self, example_observation: dict[str, Any] | None) -> "CDPROctoObservationAdapter":
+        if not example_observation:
+            return self
+        return CDPROctoObservationAdapter(self.spec, example_observation=example_observation)
+
+    def expected_shape_summary(self) -> dict[str, tuple[int, ...]]:
+        if not self.example_observation:
+            return {}
+        flat: dict[str, tuple[int, ...]] = {}
+        for key, value in self.example_observation.items():
+            if isinstance(value, dict):
+                for child_key, child_value in value.items():
+                    flat[f"{key}/{child_key}"] = _example_shape_dtype(child_value)[0]
+            else:
+                flat[key] = _example_shape_dtype(value)[0]
+        return flat
+
+    def _from_images_for_example(
+        self,
+        *,
+        primary_image: np.ndarray,
+        wrist_image: np.ndarray | None,
+        proprio: np.ndarray | None,
+    ) -> dict[str, Any]:
+        example = dict(self.example_observation or {})
+        observation: dict[str, Any] = {}
+
+        for key, value in example.items():
+            if key == "pad_mask_dict":
+                continue
+            if key.startswith("image"):
+                observation[key] = _image_batch_for_example(
+                    key=key,
+                    example_value=value,
+                    primary_image=primary_image,
+                    wrist_image=wrist_image,
+                )
+            elif key == self.spec.proprio_key:
+                observation[key] = _proprio_batch_for_example(value, proprio)
+            elif key == "timestep":
+                observation[key] = _timestep_batch_for_example(value)
+            elif "pad_mask" in key:
+                observation[key] = _ones_like_mask(value)
+            else:
+                observation[key] = _zeros_like_example(value)
+
+        expected_pad_masks = example.get("pad_mask_dict", {})
+        if isinstance(expected_pad_masks, dict):
+            observation["pad_mask_dict"] = {
+                str(key): _ones_like_mask(value) for key, value in expected_pad_masks.items()
+            }
+        return observation
 
     def from_images(
         self,
@@ -161,6 +280,13 @@ class CDPROctoObservationAdapter:
         wrist_image: np.ndarray | None = None,
         proprio: np.ndarray | None = None,
     ) -> dict[str, Any]:
+        if self.example_observation is not None:
+            return self._from_images_for_example(
+                primary_image=primary_image,
+                wrist_image=wrist_image,
+                proprio=proprio,
+            )
+
         history = self.history
         primary = _resize_uint8_rgb(primary_image, int(self.spec.image_size))
         observation: dict[str, Any] = {
@@ -283,6 +409,15 @@ class OctoRuntime:
         self.checkpoint = str(checkpoint)
         self.rng = jax.random.PRNGKey(int(seed))
         self.use_dataset_action_unnorm = bool(use_dataset_action_unnorm)
+
+    @property
+    def example_observation(self) -> dict[str, Any] | None:
+        example_batch = getattr(self.model, "example_batch", None)
+        if isinstance(example_batch, dict):
+            observation = example_batch.get("observation")
+            if isinstance(observation, dict):
+                return observation
+        return None
 
     @classmethod
     def load(
