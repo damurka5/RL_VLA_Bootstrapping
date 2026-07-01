@@ -36,6 +36,8 @@ cd /root/repo/octo
 conda run --no-capture-output -n octo python -m pip install -e .
 conda run --no-capture-output -n octo python -m pip install -r requirements.txt
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
+  numpy==1.24.3 \
+  ml-dtypes==0.2.0 \
   protobuf==4.25.3 \
   tensorflow-metadata==1.15.0 \
   tensorflow-datasets==4.9.2 \
@@ -44,11 +46,17 @@ conda run --no-capture-output -n octo python -m pip install --force-reinstall --
   tokenizers==0.14.1 \
   huggingface-hub==0.17.3
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-cache-dir "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
+  numpy==1.24.3 \
+  ml-dtypes==0.2.0 \
+  scipy==1.11.4
 
 cd /root/repo/RL_VLA_Bootstrapping
 OCTO_REPO_PATH=/root/repo/octo conda run --no-capture-output -n octo python -c "import octo, importlib; print(octo, getattr(octo, '__file__', None), getattr(octo, '__path__', None)); import octo.model.octo_model as m; print(m.OctoModel)"
-env -u LD_LIBRARY_PATH OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
-  conda run --no-capture-output -n octo python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+OCTO_SITE_PACKAGES="$(conda run --no-capture-output -n octo python -c 'import site; print(site.getsitepackages()[0])')"
+export LD_LIBRARY_PATH="$OCTO_SITE_PACKAGES/nvidia/cudnn/lib:$OCTO_SITE_PACKAGES/nvidia/cublas/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_runtime/lib:$OCTO_SITE_PACKAGES/nvidia/cufft/lib:$OCTO_SITE_PACKAGES/nvidia/cusolver/lib:$OCTO_SITE_PACKAGES/nvidia/cusparse/lib:$OCTO_SITE_PACKAGES/nvidia/nccl/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_cupti/lib"
+OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
+  conda run --no-capture-output -n octo python -c "import numpy, jax; print('numpy', numpy.__version__); print(jax.default_backend()); print(jax.devices())"
 conda run --no-capture-output -n octo python -m rl_vla_bootstrapping.cli.train \
   --config configs/examples/cdpr_octo_small_dense_simple.yaml \
   --stage rl
@@ -57,16 +65,22 @@ conda run --no-capture-output -n octo python -m rl_vla_bootstrapping.cli.train \
 The last command is a dry plan check. It should print the Octo RL command without downloading Octo weights.
 
 The JAX check must print `gpu` and at least one GPU device. If it prints `cpu` or reports
-`Found cuDNN version 0`, clear `LD_LIBRARY_PATH` and reinstall the pinned JAX CUDA 11 wheel:
+`_ARRAY_API not found`, `Found cuDNN version 0`, or leaves `numpy 2.x`, reinstall JAX and
+then re-pin Octo's NumPy stack:
 
 ```bash
 cd /root/repo/RL_VLA_Bootstrapping
-unset LD_LIBRARY_PATH
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-cache-dir \
   "jax[cuda11_pip]==0.4.20" \
   -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
-env -u LD_LIBRARY_PATH OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
-  conda run --no-capture-output -n octo python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
+  numpy==1.24.3 \
+  ml-dtypes==0.2.0 \
+  scipy==1.11.4
+OCTO_SITE_PACKAGES="$(conda run --no-capture-output -n octo python -c 'import site; print(site.getsitepackages()[0])')"
+export LD_LIBRARY_PATH="$OCTO_SITE_PACKAGES/nvidia/cudnn/lib:$OCTO_SITE_PACKAGES/nvidia/cublas/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_runtime/lib:$OCTO_SITE_PACKAGES/nvidia/cufft/lib:$OCTO_SITE_PACKAGES/nvidia/cusolver/lib:$OCTO_SITE_PACKAGES/nvidia/cusparse/lib:$OCTO_SITE_PACKAGES/nvidia/nccl/lib:$OCTO_SITE_PACKAGES/nvidia/cuda_cupti/lib"
+OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
+  conda run --no-capture-output -n octo python -c "import numpy, jax; print('numpy', numpy.__version__); print(jax.default_backend()); print(jax.devices())"
 ```
 
 If the import check says `'octo' is not a package`, Python is seeing a wrong package or module named `octo`. Check and repair with:
@@ -78,6 +92,8 @@ conda run --no-capture-output -n octo python -m pip uninstall -y octo || true
 cd /root/repo/octo
 conda run --no-capture-output -n octo python -m pip install -e .
 conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-deps \
+  numpy==1.24.3 \
+  ml-dtypes==0.2.0 \
   protobuf==4.25.3 \
   tensorflow-metadata==1.15.0 \
   tensorflow-datasets==4.9.2 \

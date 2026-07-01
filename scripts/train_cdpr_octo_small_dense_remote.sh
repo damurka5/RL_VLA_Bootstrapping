@@ -23,7 +23,30 @@ export OCTO_REPO_PATH="${OCTO_REPO_PATH:-/root/repo/octo}"
 export PYTHONPATH="$OCTO_REPO_PATH${PYTHONPATH:+:$PYTHONPATH}"
 if [[ "${JAX_CLEAR_LD_LIBRARY_PATH:-1}" == "1" ]]; then
   export RLVLA_ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
-  unset LD_LIBRARY_PATH
+  LD_LIBRARY_PATH=""
+fi
+if [[ "${JAX_PREPEND_PIP_NVIDIA_LIBS:-1}" == "1" ]]; then
+  octo_site_packages="$(conda run --no-capture-output -n "$ENV_NAME" python3 -c 'import site; print(site.getsitepackages()[0])')"
+  nvidia_ld_dirs=()
+  for subdir in \
+    nvidia/cudnn/lib \
+    nvidia/cublas/lib \
+    nvidia/cuda_runtime/lib \
+    nvidia/cufft/lib \
+    nvidia/cusolver/lib \
+    nvidia/cusparse/lib \
+    nvidia/nccl/lib \
+    nvidia/cuda_cupti/lib; do
+    if [[ -d "$octo_site_packages/$subdir" ]]; then
+      nvidia_ld_dirs+=("$octo_site_packages/$subdir")
+    fi
+  done
+  if [[ "${#nvidia_ld_dirs[@]}" -gt 0 ]]; then
+    nvidia_ld_path="$(IFS=:; printf '%s' "${nvidia_ld_dirs[*]}")"
+    export LD_LIBRARY_PATH="$nvidia_ld_path${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+  elif [[ -z "${LD_LIBRARY_PATH:-}" ]]; then
+    unset LD_LIBRARY_PATH
+  fi
 fi
 if [[ -n "${RESUME_CHECKPOINT:-}" ]]; then
   export RLVLA_OCTO_RESUME_CHECKPOINT="$RESUME_CHECKPOINT"
