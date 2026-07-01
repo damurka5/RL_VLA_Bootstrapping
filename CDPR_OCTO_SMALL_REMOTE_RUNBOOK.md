@@ -43,16 +43,31 @@ conda run --no-capture-output -n octo python -m pip install --force-reinstall --
   transformers==4.34.1 \
   tokenizers==0.14.1 \
   huggingface-hub==0.17.3
-conda run --no-capture-output -n octo python -m pip install --upgrade "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-cache-dir "jax[cuda11_pip]==0.4.20" -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
 
 cd /root/repo/RL_VLA_Bootstrapping
 OCTO_REPO_PATH=/root/repo/octo conda run --no-capture-output -n octo python -c "import octo, importlib; print(octo, getattr(octo, '__file__', None), getattr(octo, '__path__', None)); import octo.model.octo_model as m; print(m.OctoModel)"
+env -u LD_LIBRARY_PATH OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
+  conda run --no-capture-output -n octo python -c "import jax; print(jax.default_backend()); print(jax.devices())"
 conda run --no-capture-output -n octo python -m rl_vla_bootstrapping.cli.train \
   --config configs/examples/cdpr_octo_small_dense_simple.yaml \
   --stage rl
 ```
 
 The last command is a dry plan check. It should print the Octo RL command without downloading Octo weights.
+
+The JAX check must print `gpu` and at least one GPU device. If it prints `cpu` or reports
+`Found cuDNN version 0`, clear `LD_LIBRARY_PATH` and reinstall the pinned JAX CUDA 11 wheel:
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+unset LD_LIBRARY_PATH
+conda run --no-capture-output -n octo python -m pip install --force-reinstall --no-cache-dir \
+  "jax[cuda11_pip]==0.4.20" \
+  -f https://storage.googleapis.com/jax-releases/jax_cuda_releases.html
+env -u LD_LIBRARY_PATH OCTO_REPO_PATH=/root/repo/octo PYTHONPATH=/root/repo/octo JAX_PLATFORMS=cuda \
+  conda run --no-capture-output -n octo python -c "import jax; print(jax.default_backend()); print(jax.devices())"
+```
 
 If the import check says `'octo' is not a package`, Python is seeing a wrong package or module named `octo`. Check and repair with:
 
