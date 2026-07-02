@@ -81,6 +81,12 @@ def _env_flag(name: str, default: bool = False) -> bool:
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
 
 
+def _wrapper_log_enabled() -> bool:
+    if _env_flag("RLVLA_CDPR_QUIET", default=False):
+        return False
+    return _env_flag("RLVLA_CDPR_WRAPPER_LOG", default=True)
+
+
 def _scene_switcher_command(
     *,
     scene_name: str,
@@ -449,14 +455,18 @@ def build_wrapper_if_needed(scene_name: str,
         bundle_valid, bundle_reason = _validate_local_wrapper_bundle(wrapper_path)
         missing_objects = _wrapper_missing_requested_objects(wrapper_path, object_names) if bundle_valid else []
         if bundle_valid and _wrapper_bundle_isolated(wrapper_path) and not missing_objects:
-            print(f"✅ Using cached wrapper: {wrapper_path}")
+            if _wrapper_log_enabled():
+                print(f"Using cached wrapper: {wrapper_path}")
             return wrapper_path
         if not bundle_valid:
-            print(f"♻️ Rebuilding corrupt cached wrapper ({bundle_reason}): {wrapper_path}")
+            if _wrapper_log_enabled():
+                print(f"Rebuilding corrupt cached wrapper ({bundle_reason}): {wrapper_path}")
         elif missing_objects:
-            print(f"♻️ Rebuilding cached wrapper missing requested object bodies {missing_objects}: {wrapper_path}")
+            if _wrapper_log_enabled():
+                print(f"Rebuilding cached wrapper missing requested object bodies {missing_objects}: {wrapper_path}")
         else:
-            print(f"♻️ Rebuilding cached wrapper with isolated includes: {wrapper_path}")
+            if _wrapper_log_enabled():
+                print(f"Rebuilding cached wrapper with isolated includes: {wrapper_path}")
 
     if wrapper_path.exists():
         try:
@@ -603,17 +613,24 @@ def build_wrapper_if_needed(scene_name: str,
     for attempt in range(2):
         wrapper_path.parent.mkdir(parents=True, exist_ok=True)
 
-        print(">>", " ".join(cmd))
-        proc = subprocess.run(cmd)  # NOTE: no check=True
+        log_enabled = _wrapper_log_enabled()
+        if log_enabled:
+            print(">>", " ".join(cmd))
+        proc = subprocess.run(
+            cmd,
+            stdout=None if log_enabled else subprocess.DEVNULL,
+            stderr=None if log_enabled else subprocess.DEVNULL,
+        )  # NOTE: no check=True
 
         if proc.returncode != 0:
             # On macOS, cdpr_scene_switcher may segfault after writing wrapper XML.
             # If the wrapper exists, we can safely continue.
             if wrapper_path.exists() and wrapper_path.stat().st_size > 0:
-                print(
-                    f"⚠️ cdpr_scene_switcher exited with code {proc.returncode}, "
-                    f"but wrapper was created. Continuing with: {wrapper_path}"
-                )
+                if log_enabled:
+                    print(
+                        f"cdpr_scene_switcher exited with code {proc.returncode}, "
+                        f"but wrapper was created. Continuing with: {wrapper_path}"
+                    )
             else:
                 raise RuntimeError(
                     f"cdpr_scene_switcher failed (code {proc.returncode}) and wrapper was not created."
@@ -623,9 +640,10 @@ def build_wrapper_if_needed(scene_name: str,
         bundle_valid, bundle_reason = _validate_local_wrapper_bundle(wrapper_path)
         missing_objects = _wrapper_missing_requested_objects(wrapper_path, object_names) if bundle_valid else []
         if bundle_valid and not missing_objects:
-            print(f"✅ Built wrapper: {wrapper_path}\n   Includes {len(object_names)} object(s).")
-            if created_bundle_files:
-                print(f"📦 Isolated wrapper bundle files: {len(created_bundle_files)}")
+            if log_enabled:
+                print(f"Built wrapper: {wrapper_path}\n   Includes {len(object_names)} object(s).")
+                if created_bundle_files:
+                    print(f"Isolated wrapper bundle files: {len(created_bundle_files)}")
             return wrapper_path
 
         last_bundle_reason = (
@@ -637,10 +655,11 @@ def build_wrapper_if_needed(scene_name: str,
             )
         )
         if attempt == 0:
-            print(
-                f"♻️ Rebuilding missing/incomplete wrapper bundle ({last_bundle_reason}): {wrapper_path}",
-                flush=True,
-            )
+            if log_enabled:
+                print(
+                    f"Rebuilding missing/incomplete wrapper bundle ({last_bundle_reason}): {wrapper_path}",
+                    flush=True,
+                )
             _remove_local_wrapper_bundle_files(wrapper_path)
 
     raise FileNotFoundError(

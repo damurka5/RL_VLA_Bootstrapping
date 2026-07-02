@@ -29,7 +29,8 @@ try:
     EGL_AVAILABLE = True
 except ImportError:
     EGL_AVAILABLE = False
-    print("EGL not available, falling back to software rendering")
+    if str(os.environ.get("RLVLA_CDPR_QUIET", "")).strip().lower() not in {"1", "true", "yes", "on"}:
+        print("EGL not available, falling back to software rendering")
 
 
 _SHARED_EGL_CONTEXT = None
@@ -44,6 +45,10 @@ def _env_flag(name, default=True):
     if raw is None:
         return bool(default)
     return str(raw).strip().lower() not in {"0", "false", "no", "off"}
+
+
+def _log_enabled():
+    return not _env_flag("RLVLA_CDPR_QUIET", default=False)
 
 
 def _env_int(name, default, minimum=None):
@@ -336,13 +341,14 @@ class HeadlessCDPRSimulation:
             status = "hit" if self.model_cache_event.get("hit") else "miss"
             if not self.model_cache_event.get("enabled"):
                 status = "disabled"
-            print(
-                "[mujoco-cache] "
-                f"{status} key={self.model_cache_event.get('key_short', '')} "
-                f"compile_s={float(self.model_cache_event.get('compile_time_s', 0.0)):.6f} "
-                f"cache_size={int(self.model_cache_event.get('cache_size', 0))}",
-                flush=True,
-            )
+            if _log_enabled():
+                print(
+                    "[mujoco-cache] "
+                    f"{status} key={self.model_cache_event.get('key_short', '')} "
+                    f"compile_s={float(self.model_cache_event.get('compile_time_s', 0.0)):.6f} "
+                    f"cache_size={int(self.model_cache_event.get('cache_size', 0))}",
+                    flush=True,
+                )
         
         self.jnt_yaw = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "ee_yaw")
         self.jnt_yaw_qadr = self.model.jnt_qposadr[self.jnt_yaw]  # index into qpos for yaw angle
@@ -476,7 +482,8 @@ class HeadlessCDPRSimulation:
         # DEBUG: check object orientation
         if self.body_target >= 0:
             xquat = self.data.xquat[self.body_target]  # [w, x, y, z] in world
-            print(f"[debug] object body '{self.body_target_name}' world xquat={xquat}")
+            if _log_enabled():
+                print(f"[debug] object body '{self.body_target_name}' world xquat={xquat}")
             
         if self.render_enabled:
             self._setup_offscreen_rendering()
@@ -493,8 +500,9 @@ class HeadlessCDPRSimulation:
         self._match_sliders_to_ee_lengths(max_iter=12, tol=1e-6)
         self.target_pos = self.get_end_effector_position().copy()
         self.controller.prev_lengths = self.get_cable_lengths().copy()
-        print("Headless CDPR Simulation initialized successfully!")
-        print(f"Using {'EGL' if EGL_AVAILABLE else 'software'} rendering")
+        if _log_enabled():
+            print("Headless CDPR Simulation initialized successfully!")
+            print(f"Using {'EGL' if EGL_AVAILABLE else 'software'} rendering")
 
     def _configure_offscreen_buffer(self):
         self.offwidth, self.offheight, self._offscreen_samples_key = _offscreen_config_from_env()
@@ -523,12 +531,13 @@ class HeadlessCDPRSimulation:
                 raise
             _OFFSCREEN_SAMPLES_FALLBACK = 1
             self.model.vis.quality.offsamples = 1
-            print(
-                "[warn] MuJoCo offscreen framebuffer setup failed "
-                f"with offsamples={current_samples}; retrying with offsamples=1. "
-                f"Original error: {exc}",
-                flush=True,
-            )
+            if _log_enabled():
+                print(
+                    "[warn] MuJoCo offscreen framebuffer setup failed "
+                    f"with offsamples={current_samples}; retrying with offsamples=1. "
+                    f"Original error: {exc}",
+                    flush=True,
+                )
             context = mj.MjrContext(self.model, font_scale)
             mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_OFFSCREEN, context)
             return context
@@ -597,7 +606,8 @@ class HeadlessCDPRSimulation:
             mj.mjr_readPixels(rgb, depth, self.offviewport, self.context)
             return np.flipud(rgb)
         except Exception as e:
-            print(f"Error capturing frame from {camera_name}: {e}")
+            if _log_enabled():
+                print(f"Error capturing frame from {camera_name}: {e}")
             return np.zeros((self.offheight, self.offwidth, 3), dtype=np.uint8)
 
     def get_cable_attach_position(self):
@@ -1422,7 +1432,8 @@ class HeadlessCDPRSimulation:
             self._owns_gl_context = False
         self.model = None
         self.data = None
-        print("Simulation cleanup completed")
+        if _log_enabled():
+            print("Simulation cleanup completed")
 
 
 def main():

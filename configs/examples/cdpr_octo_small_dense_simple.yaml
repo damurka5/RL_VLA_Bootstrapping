@@ -12,16 +12,21 @@ remote:
   env_vars:
     MUJOCO_GL: egl
     PYOPENGL_PLATFORM: egl
-    XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+    XLA_PYTHON_CLIENT_PREALLOCATE: "true"
+    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.90"
     TF_FORCE_GPU_ALLOW_GROWTH: "true"
     TOKENIZERS_PARALLELISM: "false"
     RLVLA_CDPR_OFFSCREEN_SAMPLES: "1"
-    RLVLA_CDPR_COMPILED_MODEL_CACHE: "false"
-    RLVLA_CDPR_COMPILED_MODEL_CACHE_MAX_SIZE: "8"
+    RLVLA_CDPR_COMPILED_MODEL_CACHE: "true"
+    RLVLA_CDPR_COMPILED_MODEL_CACHE_MAX_SIZE: "16"
+    RLVLA_CDPR_QUIET: "true"
+    RLVLA_CDPR_WRAPPER_LOG: "false"
   notes:
     - Octo-Small is loaded lazily from hf://rail-berkeley/octo-small-1.5.
     - The pretrained Octo model is frozen; only the small Torch residual/readout head and critics are trained.
     - Action chunks are continuous 5D CDPR commands normalized to [-1, 1].
+    - The remote launcher uses two torchrun ranks; each rank binds JAX and Torch to one visible GPU.
+    - XLA preallocation reserves most visible VRAM per rank. Lower XLA_PYTHON_CLIENT_MEM_FRACTION if Torch reports OOM.
 
 assets:
   bundles:
@@ -276,27 +281,31 @@ training:
     enabled: true
     algorithm: octo_residual_td3
     script_path: ../../rl_vla_bootstrapping/policy/octo_finetune_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
     args:
       max_train_steps: 250000
       max_env_steps: 64
       chunk_size: 4
-      replan_every: 1
+      replan_every: 4
       image_size: 256
       history: 1
       include_wrist: true
       include_proprio: true
       octo_action_normalization: tanh
       use_dataset_action_unnorm: false
-      hidden_dim: 256
+      hidden_dim: 1024
       residual_scale: 0.35
       actor_lr: 3.0e-4
       critic_lr: 3.0e-4
       gamma: 0.98
       tau: 0.01
-      replay_size: 50000
-      batch_size: 128
-      update_after: 512
-      updates_per_step: 1
+      replay_size: 200000
+      batch_size: 1024
+      update_after: 4096
+      updates_per_step: 2
       exploration_noise: 0.15
       min_exploration_noise: 0.03
       noise_decay_steps: 60000
@@ -316,6 +325,11 @@ training:
       save_every_steps: 5000
       log_every_steps: 100
       status_every_steps: 250
+      progress: true
+      progress_only: true
+      distributed: true
+      distributed_backend: nccl
+      bind_jax_to_local_rank: true
       wrapper_cleanup: false
       use_wrapper_cache: true
       reuse_existing_wrapper_variants: true

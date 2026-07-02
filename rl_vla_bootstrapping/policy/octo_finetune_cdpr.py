@@ -2,19 +2,24 @@
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
+import os
 import random
+import sys
 import time
-from dataclasses import asdict
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
 
 import numpy as np
+_TORCH_IMPORT_ERROR: Exception | None = None
 try:
     import torch
     import torch.nn.functional as F
     from torch import nn
-except Exception:  # pragma: no cover - optional local dependency
+except Exception as exc:  # pragma: no cover - optional local dependency
+    _TORCH_IMPORT_ERROR = exc
     torch = None
     F = None
     nn = None
@@ -23,6 +28,11 @@ try:
     from torch.utils.tensorboard import SummaryWriter
 except Exception:  # pragma: no cover - optional dependency
     SummaryWriter = None
+
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - optional dependency
+    tqdm = None
 
 from rl_vla_bootstrapping.policy.octo_cdpr_adapter import (
     CDPROctoObservationAdapter,
@@ -65,10 +75,158 @@ def _default_device() -> str:
 
 def _require_torch() -> None:
     if torch is None or nn is None or F is None:
+        detail = f" Original import error: {_TORCH_IMPORT_ERROR!r}" if _TORCH_IMPORT_ERROR is not None else ""
         raise RuntimeError(
             "Octo CDPR adapter training requires PyTorch. Install it in the remote `octo` "
-            "environment before executing the RL stage."
+            f"environment before executing the RL stage.{detail}"
         )
+
+
+@dataclass(frozen=True)
+class DistributedContext:
+    rank: int = 0
+    local_rank: int = 0
+    world_size: int = 1
+    enabled: bool = False
+    device: str = "cpu"
+
+    @property
+    def is_main(self) -> bool:
+        return int(self.rank) == 0
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
+def _configure_distributed(args: argparse.Namespace) -> DistributedContext:
+    _require_torch()
+    world_size = max(1, _env_int("WORLD_SIZE", 1))
+    rank = max(0, _env_int("RANK", 0))
+    local_rank = max(0, _env_int("LOCAL_RANK", 0))
+    enabled = bool(args.distributed and world_size > 1)
+
+    requested_device = str(args.device)
+    cuda_requested = requested_device.startswith("cuda")
+    device = requested_device
+    if torch.cuda.is_available() and cuda_requested:
+        if enabled:
+            local_rank = local_rank % max(1, torch.cuda.device_count())
+            torch.cuda.set_device(local_rank)
+            device = f"cuda:{local_rank}"
+            if bool(args.bind_jax_to_local_rank):
+                os.environ["JAX_VISIBLE_DEVICES"] = str(local_rank)
+        elif requested_device == "cuda":
+            device = "cuda:0"
+            torch.cuda.set_device(0)
+    args.device = device
+
+    if enabled:
+        import torch.distributed as dist
+
+        if not dist.is_initialized():
+            backend = str(args.distributed_backend)
+            if backend == "nccl" and not torch.cuda.is_available():
+                backend = "gloo"
+            dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+
+    return DistributedContext(
+        rank=rank,
+        local_rank=local_rank,
+        world_size=world_size,
+        enabled=enabled,
+        device=device,
+    )
+
+
+def _destroy_distributed(ctx: DistributedContext) -> None:
+    if not ctx.enabled:
+        return
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
+    except Exception:
+        pass
+
+
+def _rank_seed(seed: int, ctx: DistributedContext) -> int:
+    return int(seed) + int(ctx.rank) * 100_003
+
+
+def _set_quiet_env(args: argparse.Namespace, ctx: DistributedContext) -> None:
+    if bool(args.progress_only) or not ctx.is_main:
+        os.environ["RLVLA_CDPR_QUIET"] = "1"
+        os.environ["RLVLA_CDPR_WRAPPER_LOG"] = "0"
+
+
+@contextlib.contextmanager
+def _silence_output(enabled: bool):
+    if not enabled:
+        yield
+        return
+    with open(os.devnull, "w", encoding="utf-8") as devnull:
+        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+            yield
+
+
+def _log(ctx: DistributedContext, message: str, *, progress: Any | None = None) -> None:
+    if not ctx.is_main:
+        return
+    if progress is not None:
+        progress.write(message)
+    else:
+        print(message, flush=True)
+
+
+def _make_progress_bar(*, args: argparse.Namespace, ctx: DistributedContext, start_step: int) -> Any | None:
+    if not bool(args.progress) or not ctx.is_main:
+        return None
+    if tqdm is None:
+        if not bool(args.progress_only):
+            print("[octo-cdpr] tqdm is unavailable; falling back to status prints.", flush=True)
+        return None
+    total = max(0, int(args.max_train_steps) - int(start_step))
+    return tqdm(
+        total=total,
+        initial=0,
+        desc="octo-cdpr",
+        unit="step",
+        dynamic_ncols=True,
+        leave=True,
+        file=sys.__stderr__,
+    )
+
+
+def _progress_postfix(
+    progress: Any | None,
+    *,
+    episode: int,
+    episode_length: int,
+    episode_reward: float,
+    reward: float,
+    buffer_size: int,
+    instruction: str,
+    world_size: int,
+) -> None:
+    if progress is None:
+        return
+    progress.set_postfix(
+        ep=int(episode),
+        ep_len=int(episode_length),
+        ep_reward=f"{float(episode_reward):+.3f}",
+        reward=f"{float(reward):+.3f}",
+        buffer=int(buffer_size),
+        gpus=int(world_size),
+        instr=str(instruction)[:24],
+    )
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -84,6 +242,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--resume-checkpoint", default=None)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default=_default_device())
+    _bool_arg(parser, "distributed", default=True, help_text="Enable torch.distributed when launched by torchrun.")
+    parser.add_argument("--distributed-backend", default="nccl")
+    _bool_arg(
+        parser,
+        "bind_jax_to_local_rank",
+        default=True,
+        help_text="When distributed, set JAX_VISIBLE_DEVICES to the torchrun local rank before importing JAX.",
+    )
+    _bool_arg(parser, "progress", default=True, help_text="Show a tqdm training progress bar on rank 0.")
+    _bool_arg(
+        parser,
+        "progress_only",
+        default=False,
+        help_text="Suppress CDPR wrapper/simulator chatter and leave only the progress bar plus critical trainer logs.",
+    )
 
     parser.add_argument("--catalog-path", default=None)
     parser.add_argument("--cdpr-dataset-root", default=None)
@@ -176,7 +349,7 @@ def _write_json(path: Path, payload: dict[str, Any]) -> None:
     path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
 
 
-def _build_env(args: argparse.Namespace):
+def _build_env(args: argparse.Namespace, *, seed: int):
     from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv
 
     return CDPRLanguageRLEnv(
@@ -207,7 +380,7 @@ def _build_env(args: argparse.Namespace):
         wrapper_cleanup=args.wrapper_cleanup,
         use_wrapper_cache=args.use_wrapper_cache,
         reuse_existing_wrapper_variants=args.reuse_existing_wrapper_variants,
-        seed=args.seed,
+        seed=int(seed),
     )
 
 
@@ -344,6 +517,7 @@ class ResidualTrainer:
         chunk_size: int,
         run_dir: Path,
         device: torch.device,
+        distributed: DistributedContext | None = None,
     ) -> None:
         self.args = args
         self.state_dim = int(state_dim)
@@ -351,14 +525,34 @@ class ResidualTrainer:
         self.chunk_size = int(chunk_size)
         self.run_dir = run_dir
         self.device = device
+        self.distributed = distributed or DistributedContext(device=str(device))
 
-        self.actor = ResidualChunkActor(
+        actor = ResidualChunkActor(
             state_dim=state_dim,
             chunk_size=chunk_size,
             action_dim=action_dim,
             hidden_dim=int(args.hidden_dim),
             residual_scale=float(args.residual_scale),
         ).to(device)
+
+        critic1 = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
+        critic2 = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
+
+        if self.distributed.enabled:
+            from torch.nn.parallel import DistributedDataParallel as DDP
+
+            ddp_kwargs: dict[str, Any] = {}
+            if device.type == "cuda":
+                ddp_kwargs["device_ids"] = [int(device.index or 0)]
+                ddp_kwargs["output_device"] = int(device.index or 0)
+            actor = DDP(actor, **ddp_kwargs)
+            critic1 = DDP(critic1, **ddp_kwargs)
+            critic2 = DDP(critic2, **ddp_kwargs)
+
+        self.actor = actor
+        self.critic1 = critic1
+        self.critic2 = critic2
+
         self.actor_target = ResidualChunkActor(
             state_dim=state_dim,
             chunk_size=chunk_size,
@@ -366,14 +560,12 @@ class ResidualTrainer:
             hidden_dim=int(args.hidden_dim),
             residual_scale=float(args.residual_scale),
         ).to(device)
-        self.actor_target.load_state_dict(self.actor.state_dict())
+        self.actor_target.load_state_dict(self._unwrap(self.actor).state_dict())
 
-        self.critic1 = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
-        self.critic2 = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
         self.critic1_target = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
         self.critic2_target = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
-        self.critic1_target.load_state_dict(self.critic1.state_dict())
-        self.critic2_target.load_state_dict(self.critic2.state_dict())
+        self.critic1_target.load_state_dict(self._unwrap(self.critic1).state_dict())
+        self.critic2_target.load_state_dict(self._unwrap(self.critic2).state_dict())
 
         self.actor_optim = torch.optim.AdamW(self.actor.parameters(), lr=float(args.actor_lr))
         self.critic_optim = torch.optim.AdamW(
@@ -381,6 +573,16 @@ class ResidualTrainer:
             lr=float(args.critic_lr),
         )
         self.gradient_step = 0
+
+    @staticmethod
+    def _unwrap(module: nn.Module) -> nn.Module:
+        return module.module if hasattr(module, "module") else module
+
+    @staticmethod
+    def _set_requires_grad(module: nn.Module, enabled: bool) -> None:
+        base = ResidualTrainer._unwrap(module)
+        for param in base.parameters():
+            param.requires_grad_(bool(enabled))
 
     def select_chunk(self, state: np.ndarray, prior_chunk: np.ndarray) -> np.ndarray:
         state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
@@ -409,13 +611,19 @@ class ResidualTrainer:
         critic_loss.backward()
         self.critic_optim.step()
 
-        pred_action = self.actor.action_at(batch["state"], batch["prior"], batch["action_index"])
-        actor_loss = -self.critic1(batch["state"], pred_action).mean()
-        if float(self.args.action_l2) > 0.0:
-            actor_loss = actor_loss + float(self.args.action_l2) * pred_action.pow(2).mean()
-        self.actor_optim.zero_grad(set_to_none=True)
-        actor_loss.backward()
-        self.actor_optim.step()
+        self._set_requires_grad(self.critic1, False)
+        try:
+            pred_chunk = self.actor(batch["state"], batch["prior"])
+            idx = batch["action_index"].reshape(-1).long().clamp(0, self.chunk_size - 1)
+            pred_action = pred_chunk[torch.arange(pred_chunk.shape[0], device=pred_chunk.device), idx]
+            actor_loss = -self._unwrap(self.critic1)(batch["state"], pred_action).mean()
+            if float(self.args.action_l2) > 0.0:
+                actor_loss = actor_loss + float(self.args.action_l2) * pred_action.pow(2).mean()
+            self.actor_optim.zero_grad(set_to_none=True)
+            actor_loss.backward()
+            self.actor_optim.step()
+        finally:
+            self._set_requires_grad(self.critic1, True)
 
         self._soft_update(self.actor, self.actor_target)
         self._soft_update(self.critic1, self.critic1_target)
@@ -435,10 +643,10 @@ class ResidualTrainer:
 
     def load(self, checkpoint_path: Path) -> int:
         payload = torch.load(checkpoint_path, map_location=self.device)
-        self.actor.load_state_dict(payload["actor"])
+        self._unwrap(self.actor).load_state_dict(payload["actor"])
         self.actor_target.load_state_dict(payload.get("actor_target", payload["actor"]))
-        self.critic1.load_state_dict(payload["critic1"])
-        self.critic2.load_state_dict(payload["critic2"])
+        self._unwrap(self.critic1).load_state_dict(payload["critic1"])
+        self._unwrap(self.critic2).load_state_dict(payload["critic2"])
         self.critic1_target.load_state_dict(payload.get("critic1_target", payload["critic1"]))
         self.critic2_target.load_state_dict(payload.get("critic2_target", payload["critic2"]))
         self.actor_optim.load_state_dict(payload["actor_optim"])
@@ -457,10 +665,10 @@ class ResidualTrainer:
             "chunk_size": int(self.chunk_size),
             "residual_scale": float(args.residual_scale),
             "hidden_dim": int(args.hidden_dim),
-            "actor": self.actor.state_dict(),
+            "actor": self._unwrap(self.actor).state_dict(),
             "actor_target": self.actor_target.state_dict(),
-            "critic1": self.critic1.state_dict(),
-            "critic2": self.critic2.state_dict(),
+            "critic1": self._unwrap(self.critic1).state_dict(),
+            "critic2": self._unwrap(self.critic2).state_dict(),
             "critic1_target": self.critic1_target.state_dict(),
             "critic2_target": self.critic2_target.state_dict(),
             "actor_optim": self.actor_optim.state_dict(),
@@ -527,11 +735,19 @@ def _safe_instruction(info: dict[str, Any]) -> str:
 
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
+    dist_ctx = _configure_distributed(args)
+    _set_quiet_env(args, dist_ctx)
     _set_seed(int(args.seed))
+    rollout_seed = _rank_seed(int(args.seed), dist_ctx)
 
     run_dir = _make_run_dir(args.run_root_dir, args.run_id)
-    _write_json(run_dir / "config.json", vars(args))
-    writer = SummaryWriter(log_dir=str(run_dir / "tensorboard")) if SummaryWriter is not None else None
+    if dist_ctx.is_main:
+        _write_json(run_dir / "config.json", vars(args))
+    writer = (
+        SummaryWriter(log_dir=str(run_dir / "tensorboard"))
+        if dist_ctx.is_main and SummaryWriter is not None
+        else None
+    )
 
     obs_adapter = CDPROctoObservationAdapter(
         OctoObservationSpec(
@@ -549,32 +765,40 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
 
     startup_t0 = time.perf_counter()
-    print(f"[octo-cdpr] Loading Octo checkpoint: {args.base_checkpoint}", flush=True)
-    load_t0 = time.perf_counter()
-    runtime = load_octo_runtime(
-        checkpoint=str(args.base_checkpoint),
-        seed=int(args.seed),
-        use_dataset_action_unnorm=bool(args.use_dataset_action_unnorm),
+    _log(
+        dist_ctx,
+        f"[octo-cdpr] Loading Octo checkpoint: {args.base_checkpoint} "
+        f"(rank={dist_ctx.rank}, world_size={dist_ctx.world_size}, device={dist_ctx.device})",
     )
-    print(
+    load_t0 = time.perf_counter()
+    with _silence_output(not dist_ctx.is_main):
+        runtime = load_octo_runtime(
+            checkpoint=str(args.base_checkpoint),
+            seed=int(rollout_seed),
+            use_dataset_action_unnorm=bool(args.use_dataset_action_unnorm),
+        )
+    _log(
+        dist_ctx,
         f"[octo-cdpr] Loaded Octo checkpoint in {time.perf_counter() - load_t0:.1f}s; "
-        f"{runtime.device_summary()}",
-        flush=True,
+        f"{runtime.device_summary()}; distributed_world_size={dist_ctx.world_size}",
     )
     obs_adapter = obs_adapter.with_example_observation(runtime.example_observation)
-    if obs_adapter.example_observation is not None:
-        print(f"[octo-cdpr] Using Octo observation schema: {obs_adapter.expected_shape_summary()}", flush=True)
+    if obs_adapter.example_observation is not None and dist_ctx.is_main and not bool(args.progress_only):
+        _log(dist_ctx, f"[octo-cdpr] Using Octo observation schema: {obs_adapter.expected_shape_summary()}")
 
     env = None
+    progress = None
     try:
         env_t0 = time.perf_counter()
-        print("[octo-cdpr] Building CDPR environment and wrapper...", flush=True)
-        env = _build_env(args)
-        print(f"[octo-cdpr] Built CDPR environment in {time.perf_counter() - env_t0:.1f}s", flush=True)
+        _log(dist_ctx, "[octo-cdpr] Building CDPR environment...")
+        with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+            env = _build_env(args, seed=rollout_seed)
+        _log(dist_ctx, f"[octo-cdpr] Built CDPR environment in {time.perf_counter() - env_t0:.1f}s")
         reset_t0 = time.perf_counter()
-        print("[octo-cdpr] Resetting CDPR environment...", flush=True)
-        obs, info = env.reset(seed=int(args.seed))
-        print(f"[octo-cdpr] Reset CDPR environment in {time.perf_counter() - reset_t0:.1f}s", flush=True)
+        _log(dist_ctx, "[octo-cdpr] Resetting CDPR environment...")
+        with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+            obs, info = env.reset(seed=int(rollout_seed))
+        _log(dist_ctx, f"[octo-cdpr] Reset CDPR environment in {time.perf_counter() - reset_t0:.1f}s")
         layout = CDPRStateLayout.from_observation(obs)
         device = torch.device(args.device)
         trainer = ResidualTrainer(
@@ -584,12 +808,17 @@ def main(argv: Sequence[str] | None = None) -> None:
             chunk_size=int(args.chunk_size),
             run_dir=run_dir,
             device=device,
+            distributed=dist_ctx,
         )
         start_step = 0
         if args.resume_checkpoint:
             resume_path = _resolve_checkpoint(args.resume_checkpoint)
             start_step = trainer.load(resume_path)
-            print(f"[octo-cdpr] Resumed adapter checkpoint {resume_path} at step {start_step}", flush=True)
+            _log(dist_ctx, f"[octo-cdpr] Resumed adapter checkpoint {resume_path} at step {start_step}")
+
+        random.seed(int(rollout_seed))
+        np.random.seed(int(rollout_seed))
+        torch.manual_seed(int(rollout_seed))
 
         buffer = ReplayBuffer(
             capacity=int(args.replay_size),
@@ -607,12 +836,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             "chunk_size": int(args.chunk_size),
             "trainable_surface": "torch_residual_chunk_head_and_q_critics",
             "frozen_octo": True,
+            "distributed_world_size": int(dist_ctx.world_size),
+            "rank_device": str(dist_ctx.device),
             "success_threshold_to_beat_openvla": {
                 "overall_simple_success_rate": 0.167,
                 "move_to_object_success_rate": 0.09,
             },
         }
-        _write_json(run_dir / "octo_manifest.json", manifest)
+        if dist_ctx.is_main:
+            _write_json(run_dir / "octo_manifest.json", manifest)
 
         global_step = int(start_step)
         episode = 0
@@ -620,42 +852,45 @@ def main(argv: Sequence[str] | None = None) -> None:
         episode_length = 0
         state = layout.flatten(obs)
         instruction = _safe_instruction(info)
-        print(
+        _log(
+            dist_ctx,
             "[octo-cdpr] Sampling first Octo prior action chunk "
             "(first JAX call can spend minutes compiling on CPU before GPU work starts)...",
-            flush=True,
         )
         prior_t0 = time.perf_counter()
-        prior_chunk = _predict_prior_chunk(
-            runtime=runtime,
-            obs_adapter=obs_adapter,
-            action_spec=action_spec,
-            env=env,
-            obs=obs,
-            info=info,
-            instruction=instruction,
-        )
-        print(
+        with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+            prior_chunk = _predict_prior_chunk(
+                runtime=runtime,
+                obs_adapter=obs_adapter,
+                action_spec=action_spec,
+                env=env,
+                obs=obs,
+                info=info,
+                instruction=instruction,
+            )
+        _log(
+            dist_ctx,
             f"[octo-cdpr] First Octo prior chunk ready in {time.perf_counter() - prior_t0:.1f}s; "
             f"startup total {time.perf_counter() - startup_t0:.1f}s",
-            flush=True,
         )
         action_chunk = trainer.select_chunk(state, prior_chunk)
         chunk_idx = 0
         replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
         last_metrics: dict[str, float] = {}
+        progress = _make_progress_bar(args=args, ctx=dist_ctx, start_step=start_step)
 
         while global_step < int(args.max_train_steps):
             if chunk_idx >= replan_every:
-                prior_chunk = _predict_prior_chunk(
-                    runtime=runtime,
-                    obs_adapter=obs_adapter,
-                    action_spec=action_spec,
-                    env=env,
-                    obs=obs,
-                    info=info,
-                    instruction=instruction,
-                )
+                with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+                    prior_chunk = _predict_prior_chunk(
+                        runtime=runtime,
+                        obs_adapter=obs_adapter,
+                        action_spec=action_spec,
+                        env=env,
+                        obs=obs,
+                        info=info,
+                        instruction=instruction,
+                    )
                 action_chunk = trainer.select_chunk(state, prior_chunk)
                 chunk_idx = 0
 
@@ -666,7 +901,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 action = action + np.random.normal(0.0, noise_std, size=action.shape).astype(np.float32)
             action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
 
-            next_obs, reward, terminated, truncated, next_info = env.step(action)
+            with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+                next_obs, reward, terminated, truncated, next_info = env.step(action)
             next_state = layout.flatten(next_obs)
             done = bool(terminated or truncated)
             next_instruction = _safe_instruction(next_info)
@@ -697,7 +933,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     last_metrics = trainer.update(batch)
                     _log_scalars(writer, {f"train/{k}": v for k, v in last_metrics.items()}, trainer.gradient_step)
 
-            if global_step % max(1, int(args.log_every_steps)) == 0:
+            if dist_ctx.is_main and global_step % max(1, int(args.log_every_steps)) == 0:
                 row = {
                     "global_step": int(global_step),
                     "episode": int(episode),
@@ -723,51 +959,67 @@ def main(argv: Sequence[str] | None = None) -> None:
                     global_step,
                 )
 
-            if global_step % max(1, int(args.status_every_steps)) == 0:
-                print(
+            if progress is not None:
+                progress.update(1)
+                if global_step % max(1, int(args.status_every_steps)) == 0 or done:
+                    _progress_postfix(
+                        progress,
+                        episode=episode,
+                        episode_length=episode_length,
+                        episode_reward=episode_reward,
+                        reward=float(reward),
+                        buffer_size=buffer.size,
+                        instruction=instruction,
+                        world_size=dist_ctx.world_size,
+                    )
+            elif dist_ctx.is_main and global_step % max(1, int(args.status_every_steps)) == 0:
+                _log(
+                    dist_ctx,
                     f"[octo-cdpr] step={global_step:07d} episode={episode:05d} "
                     f"ep_len={episode_length:03d} reward_running={episode_reward:+.3f} "
                     f"last_reward={float(reward):+.3f} buffer={buffer.size} instruction={instruction}",
-                    flush=True,
                 )
 
-            if global_step % max(1, int(args.save_every_steps)) == 0:
+            if dist_ctx.is_main and global_step % max(1, int(args.save_every_steps)) == 0:
                 checkpoint = trainer.save(global_step=global_step, args=args, latest=False)
-                print(f"[octo-cdpr] Saved checkpoint: {checkpoint}", flush=True)
+                _log(dist_ctx, f"[octo-cdpr] Saved checkpoint: {checkpoint}", progress=progress)
 
             if done:
-                with metrics_path.open("a", encoding="utf-8") as handle:
-                    handle.write(
-                        json.dumps(
-                            {
-                                "global_step": int(global_step),
-                                "episode": int(episode),
-                                "episode_length": int(episode_length),
-                                "episode_reward": float(episode_reward),
-                                "success": bool(next_info.get("success", False)),
-                                "terminated": bool(terminated),
-                                "truncated": bool(truncated),
-                                "instruction": str(instruction),
-                            },
-                            sort_keys=True,
+                if dist_ctx.is_main:
+                    with metrics_path.open("a", encoding="utf-8") as handle:
+                        handle.write(
+                            json.dumps(
+                                {
+                                    "global_step": int(global_step),
+                                    "episode": int(episode),
+                                    "episode_length": int(episode_length),
+                                    "episode_reward": float(episode_reward),
+                                    "success": bool(next_info.get("success", False)),
+                                    "terminated": bool(terminated),
+                                    "truncated": bool(truncated),
+                                    "instruction": str(instruction),
+                                },
+                                sort_keys=True,
+                            )
+                            + "\n"
                         )
-                        + "\n"
-                    )
                 episode += 1
                 episode_reward = 0.0
                 episode_length = 0
-                obs, info = env.reset()
+                with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+                    obs, info = env.reset()
                 state = layout.flatten(obs)
                 instruction = _safe_instruction(info)
-                prior_chunk = _predict_prior_chunk(
-                    runtime=runtime,
-                    obs_adapter=obs_adapter,
-                    action_spec=action_spec,
-                    env=env,
-                    obs=obs,
-                    info=info,
-                    instruction=instruction,
-                )
+                with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+                    prior_chunk = _predict_prior_chunk(
+                        runtime=runtime,
+                        obs_adapter=obs_adapter,
+                        action_spec=action_spec,
+                        env=env,
+                        obs=obs,
+                        info=info,
+                        instruction=instruction,
+                    )
                 action_chunk = trainer.select_chunk(state, prior_chunk)
                 chunk_idx = 0
                 continue
@@ -778,16 +1030,21 @@ def main(argv: Sequence[str] | None = None) -> None:
             instruction = next_instruction
             chunk_idx += 1
 
-        latest = trainer.save(global_step=global_step, args=args, latest=True)
-        print(f"[octo-cdpr] Final latest checkpoint: {latest}", flush=True)
+        if dist_ctx.is_main:
+            latest = trainer.save(global_step=global_step, args=args, latest=True)
+            _log(dist_ctx, f"[octo-cdpr] Final latest checkpoint: {latest}", progress=progress)
     finally:
+        if progress is not None:
+            progress.close()
         if writer is not None:
             writer.close()
         if env is not None:
             try:
-                env.close()
+                with _silence_output(bool(getattr(args, "progress_only", False)) or not dist_ctx.is_main):
+                    env.close()
             except Exception:
                 pass
+        _destroy_distributed(dist_ctx)
 
 
 if __name__ == "__main__":

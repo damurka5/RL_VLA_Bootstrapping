@@ -750,7 +750,7 @@ def _validated_texture_files(tex_dir: Path) -> list[Path]:
                 invalid_paths.append(path)
         _TEXTURE_VALIDATION_CACHE[tex_dir] = (signature, valid_paths, invalid_paths)
 
-    if invalid_paths and tex_dir not in _TEXTURE_VALIDATION_WARNED:
+    if invalid_paths and tex_dir not in _TEXTURE_VALIDATION_WARNED and _cdpr_log_enabled():
         sample = ", ".join(path.name for path in invalid_paths[:3])
         suffix = "" if len(invalid_paths) <= 3 else ", ..."
         print(
@@ -1279,6 +1279,12 @@ def _load_bool_env(name: str, default: bool = False) -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     raise ValueError(f"Environment variable {name} is not a valid boolean: {raw!r}")
+
+
+def _cdpr_log_enabled() -> bool:
+    if _load_bool_env("RLVLA_CDPR_QUIET", default=False):
+        return False
+    return _load_bool_env("RLVLA_CDPR_WRAPPER_LOG", default=True)
 
 
 def _load_float_env(name: str, default: float) -> float:
@@ -3644,7 +3650,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                 chosen_idx = int(self.np_random.integers(0, len(existing_candidates)))
                 chosen_wrapper = existing_candidates[chosen_idx].resolve()
                 self._last_wrapper_reused_from_cache = True
-                print(f"[env] Reusing cached wrapper variant: {chosen_wrapper}", flush=True)
+                if _cdpr_log_enabled():
+                    print(f"[env] Reusing cached wrapper variant: {chosen_wrapper}", flush=True)
                 self._desk_texture_name = ""
                 return chosen_wrapper
 
