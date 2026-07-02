@@ -14,6 +14,9 @@ RECORD_ALL_SUCCESS_VIDEOS="${RECORD_ALL_SUCCESS_VIDEOS:-0}"
 VIDEO_COVERAGE="${VIDEO_COVERAGE:-instruction}"
 STRICT_VIDEO_VALIDATION="${STRICT_VIDEO_VALIDATION:-1}"
 REQUIRE_COMPLETE_VIDEO_COVERAGE="${REQUIRE_COMPLETE_VIDEO_COVERAGE:-0}"
+LOG_EVERY_EPISODE="${LOG_EVERY_EPISODE:-10}"
+PROGRESS="${PROGRESS:-1}"
+PROGRESS_ONLY="${PROGRESS_ONLY:-1}"
 
 if [[ -z "${CHECKPOINT_DIR:-}" ]]; then
   latest_file="$(find "$REPO_ROOT/runs" -path '*/cdpr_smolvla_dense_2gpu_*/rl/latest.pt' -print | sort | tail -n 1 || true)"
@@ -70,8 +73,19 @@ cmd=(
   --stratify-move-to-object-targets
   --max-reset-attempts "$MAX_RESET_ATTEMPTS"
   --video-coverage "$VIDEO_COVERAGE"
-  --progress-only
+  --log-every-episode "$LOG_EVERY_EPISODE"
 )
+
+if [[ "$PROGRESS_ONLY" == "1" ]]; then
+  cmd+=(--progress-only)
+else
+  cmd+=(--no-progress-only)
+fi
+if [[ "$PROGRESS" == "1" ]]; then
+  cmd+=(--progress)
+else
+  cmd+=(--no-progress)
+fi
 
 if [[ "$RECORD_SUCCESS_VIDEOS" == "1" ]]; then
   cmd+=(--record-success-videos)

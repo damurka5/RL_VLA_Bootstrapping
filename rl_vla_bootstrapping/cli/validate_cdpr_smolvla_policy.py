@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import time
 from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
@@ -16,6 +17,11 @@ try:
 except Exception as exc:  # pragma: no cover - optional local dependency
     _TORCH_IMPORT_ERROR = exc
     torch = None
+
+try:  # pragma: no cover - cosmetic optional dependency
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - optional local dependency
+    tqdm = None
 
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     EpisodeResult,
@@ -83,6 +89,12 @@ class SmolVLACDPREvalRuntime:
         device: Any,
     ) -> None:
         _require_torch()
+        load_t0 = time.perf_counter()
+        print(
+            f"[smolvla-eval] Loading SmolVLA base checkpoint: {base_checkpoint} "
+            f"(device={device}, mixed_precision={mixed_precision})",
+            flush=True,
+        )
         self.smolvla = load_smolvla_runtime(
             checkpoint=base_checkpoint,
             device=str(device),
@@ -96,11 +108,23 @@ class SmolVLACDPREvalRuntime:
             action_indices=action_indices,
             action_normalization=str(action_normalization),
         )
+        print(
+            f"[smolvla-eval] Loaded SmolVLA base in {time.perf_counter() - load_t0:.1f}s; "
+            f"{self.smolvla.device_summary()}",
+            flush=True,
+        )
         self.checkpoint_path = checkpoint_path
         self.device = device
         self.actor: ResidualChunkActor | None = None
-        self.payload = torch.load(checkpoint_path, map_location=device)
+        ckpt_t0 = time.perf_counter()
+        print(f"[smolvla-eval] Loading residual adapter checkpoint on CPU: {checkpoint_path}", flush=True)
+        self.payload = torch.load(checkpoint_path, map_location="cpu")
         self.actor_state_dim = _checkpoint_state_dim(self.payload)
+        print(
+            f"[smolvla-eval] Loaded residual adapter in {time.perf_counter() - ckpt_t0:.1f}s; "
+            f"actor_state_dim={self.actor_state_dim}",
+            flush=True,
+        )
 
     def ensure_actor(self, state_dim: int) -> None:
         if self.actor is not None:
@@ -117,10 +141,16 @@ class SmolVLACDPREvalRuntime:
             hidden_dim=hidden_dim,
             residual_scale=residual_scale,
         ).to(self.device)
+        print(
+            f"[smolvla-eval] Materializing residual actor on {self.device} "
+            f"(state_dim={actor_state_dim}, chunk_size={chunk_size}, action_dim={action_dim})",
+            flush=True,
+        )
         actor.load_state_dict(self.payload["actor"])
         actor.eval()
         self.actor = actor
         self.actor_state_dim = actor_state_dim
+        print("[smolvla-eval] Residual actor ready.", flush=True)
 
     def predict_chunk(
         self,
@@ -211,6 +241,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--video-coverage", choices=("instruction", "case"), default="instruction")
     parser.add_argument("--strict-video-validation", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--require-complete-video-coverage", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--progress-only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-wrist", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-aux-camera", action=argparse.BooleanOptionalAction, default=True)
@@ -392,6 +423,13 @@ def _video_coverage_key(args: argparse.Namespace, bucket: Any) -> str:
     return str(bucket.case_id)
 
 
+def _progress_message(progress: Any | None, message: str) -> None:
+    if progress is not None and hasattr(progress, "write"):
+        progress.write(message)
+    else:
+        print(message, flush=True)
+
+
 def _run_bucket(
     *,
     config: Any,
@@ -404,9 +442,12 @@ def _run_bucket(
     wrapper_dir: Path | None,
     videos_dir: Path,
     video_registry: dict[str, dict[str, str]],
+    progress: Any | None = None,
+    progress_state: dict[str, int] | None = None,
 ) -> list[EpisodeResult]:
     coverage_key = _video_coverage_key(args, bucket)
     coverage_entry = video_registry.setdefault(coverage_key, {})
+    progress_state = progress_state if progress_state is not None else {"completed": 0, "successes": 0}
     should_capture = bool(
         args.record_success_videos
         or args.record_failure_videos
@@ -587,12 +628,22 @@ def _run_bucket(
                         action_trace_path=saved_video_path.replace("_overview.mp4", "_actions.csv"),
                     )
                 results.append(result)
-                if not args.progress_only and (episode_index + 1) % max(1, int(args.log_every_episode)) == 0:
+                progress_state["completed"] = int(progress_state.get("completed", 0)) + 1
+                progress_state["successes"] = int(progress_state.get("successes", 0)) + int(result.success)
+                if progress is not None:
+                    progress.set_postfix(
+                        instruction=str(bucket.instruction_type),
+                        success=f"{sum(item.success for item in results)}/{len(results)}",
+                        overall=f"{progress_state['successes']}/{progress_state['completed']}",
+                        refresh=False,
+                    )
+                    progress.update(1)
+                if (episode_index + 1) % max(1, int(args.log_every_episode)) == 0:
                     successes = sum(item.success for item in results)
-                    print(
+                    _progress_message(
+                        progress,
                         f"[smolvla-eval] {bucket.log_label} {episode_index + 1}/{bucket.episodes} "
                         f"success={successes}/{len(results)}",
-                        flush=True,
                     )
         finally:
             env.close()
@@ -707,26 +758,56 @@ def main() -> int:
     _configure_checkpoint_compatible_object_slots(args, runtime.payload)
 
     instruction_types = _resolve_instruction_types(config, args)
+    instruction_plan = [
+        (instruction_index, instruction_type, _validation_buckets(config, args, instruction_type=instruction_type))
+        for instruction_index, instruction_type in enumerate(instruction_types)
+    ]
+    planned_episodes = sum(int(bucket.episodes) for _idx, _instruction_type, buckets in instruction_plan for bucket in buckets)
+    print(
+        f"[smolvla-eval] Starting validation: {planned_episodes} episode(s), "
+        f"{len(instruction_plan)} instruction type(s), progress={bool(args.progress)}, "
+        f"progress_only={bool(args.progress_only)}, "
+        f"log_every_episode={int(args.log_every_episode)}",
+        flush=True,
+    )
+    progress = None
+    if bool(args.progress):
+        if tqdm is None:
+            print("[smolvla-eval] tqdm is not installed; falling back to periodic text progress.", flush=True)
+        else:
+            progress = tqdm(
+                total=int(planned_episodes),
+                desc="SmolVLA eval",
+                unit="ep",
+                dynamic_ncols=True,
+                leave=True,
+            )
+    progress_state = {"completed": 0, "successes": 0}
     all_results: list[EpisodeResult] = []
     video_registry: dict[str, dict[str, str]] = {}
     expected_video_keys: list[str] = []
-    for instruction_index, instruction_type in enumerate(instruction_types):
-        buckets = _validation_buckets(config, args, instruction_type=instruction_type)
-        for bucket in buckets:
-            expected_video_keys.append(_video_coverage_key(args, bucket))
-            results = _run_bucket(
-                config=config,
-                runtime=runtime,
-                args=args,
-                bucket=bucket,
-                instruction_index=instruction_index,
-                base_seed=None if int(args.seed) < 0 else int(args.seed),
-                max_steps=max_steps,
-                wrapper_dir=wrapper_dir,
-                videos_dir=videos_dir,
-                video_registry=video_registry,
-            )
-            all_results.extend(results)
+    try:
+        for instruction_index, instruction_type, buckets in instruction_plan:
+            for bucket in buckets:
+                expected_video_keys.append(_video_coverage_key(args, bucket))
+                results = _run_bucket(
+                    config=config,
+                    runtime=runtime,
+                    args=args,
+                    bucket=bucket,
+                    instruction_index=instruction_index,
+                    base_seed=None if int(args.seed) < 0 else int(args.seed),
+                    max_steps=max_steps,
+                    wrapper_dir=wrapper_dir,
+                    videos_dir=videos_dir,
+                    video_registry=video_registry,
+                    progress=progress,
+                    progress_state=progress_state,
+                )
+                all_results.extend(results)
+    finally:
+        if progress is not None:
+            progress.close()
     expected_video_keys = list(dict.fromkeys(expected_video_keys))
 
     metric_results = [item for item in all_results if item.metric_episode]
