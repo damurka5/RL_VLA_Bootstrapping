@@ -8,6 +8,7 @@ import os
 import random
 import sys
 import time
+from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Sequence
@@ -327,6 +328,36 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--save-every-steps", type=int, default=5000)
     parser.add_argument("--log-every-steps", type=int, default=100)
     parser.add_argument("--status-every-steps", type=int, default=250)
+    parser.add_argument(
+        "--metrics-window-episodes",
+        type=int,
+        default=100,
+        help="Number of completed episodes used for rolling reward/success TensorBoard metrics.",
+    )
+    parser.add_argument(
+        "--dense-stage-one-instruction-types",
+        nargs="+",
+        default=None,
+        help="Optional first-stage dense curriculum instruction types.",
+    )
+    parser.add_argument(
+        "--dense-stage-two-instruction-types",
+        nargs="+",
+        default=None,
+        help="Optional second-stage dense curriculum instruction types.",
+    )
+    parser.add_argument(
+        "--dense-stage-switch-success-rate",
+        type=float,
+        default=0.50,
+        help="Rolling mean success rate required to switch from dense stage 1 to stage 2.",
+    )
+    parser.add_argument(
+        "--dense-stage-min-episodes",
+        type=int,
+        default=0,
+        help="Minimum completed stage-1 episodes before the success-rate switch can fire.",
+    )
     return parser.parse_args(argv)
 
 
@@ -729,6 +760,178 @@ def _log_scalars(writer: Any, metrics: dict[str, float], step: int) -> None:
     writer.flush()
 
 
+def _episode_metric_snapshot(
+    *,
+    rewards: deque[float],
+    successes: deque[float],
+    episode_count: int,
+    success_count: int,
+) -> dict[str, float | int | None]:
+    window_count = len(rewards)
+    reward_mean = float(sum(rewards) / window_count) if window_count else None
+    success_rate = float(sum(successes) / window_count) if window_count else None
+    lifetime_success_rate = float(success_count / episode_count) if episode_count else None
+    return {
+        "episode_window_count": int(window_count),
+        "episode_count": int(episode_count),
+        "episode_success_count": int(success_count),
+        "episode_reward_mean": reward_mean,
+        "success_rate": success_rate,
+        "success_rate_lifetime": lifetime_success_rate,
+    }
+
+
+def _episode_metric_scalars(snapshot: dict[str, float | int | None]) -> dict[str, float]:
+    scalars: dict[str, float] = {
+        "rollout/episode_window_count": float(snapshot["episode_window_count"] or 0),
+        "rollout/episode_count": float(snapshot["episode_count"] or 0),
+    }
+    reward_mean = snapshot.get("episode_reward_mean")
+    if reward_mean is not None:
+        scalars["rollout/episode_reward_mean"] = float(reward_mean)
+        scalars["rollout_step/reward_env_mean"] = float(reward_mean)
+    success_rate = snapshot.get("success_rate")
+    if success_rate is not None:
+        scalars["rollout/success_rate"] = float(success_rate)
+        scalars["rollout_step/success_rate_mean"] = float(success_rate)
+        scalars["rollout_step/episode_success_rate_mean"] = float(success_rate)
+    lifetime_success_rate = snapshot.get("success_rate_lifetime")
+    if lifetime_success_rate is not None:
+        scalars["rollout/success_rate_lifetime"] = float(lifetime_success_rate)
+    return scalars
+
+
+def _dedupe_instruction_names(raw: Sequence[str] | None) -> tuple[str, ...]:
+    if not raw:
+        return ()
+    out: list[str] = []
+    seen: set[str] = set()
+    for item in raw:
+        name = str(item).strip()
+        if not name or name in seen:
+            continue
+        seen.add(name)
+        out.append(name)
+    return tuple(out)
+
+
+def _dense_curriculum_enabled(args: argparse.Namespace) -> bool:
+    return bool(
+        _dedupe_instruction_names(getattr(args, "dense_stage_one_instruction_types", None))
+        and _dedupe_instruction_names(getattr(args, "dense_stage_two_instruction_types", None))
+    )
+
+
+def _dense_stage_instruction_types(args: argparse.Namespace, stage_index: int) -> tuple[str, ...]:
+    if int(stage_index) <= 1:
+        return _dedupe_instruction_names(getattr(args, "dense_stage_one_instruction_types", None))
+    return _dedupe_instruction_names(getattr(args, "dense_stage_two_instruction_types", None))
+
+
+def _apply_dense_stage_to_envs(
+    envs: Sequence[Any],
+    args: argparse.Namespace,
+    stage_index: int,
+) -> tuple[str, ...]:
+    instruction_types = _dense_stage_instruction_types(args, stage_index)
+    if not instruction_types:
+        return ()
+    for env in envs:
+        setattr(env, "instruction_types", tuple(instruction_types))
+    return instruction_types
+
+
+def _dense_stage_snapshot(
+    *,
+    args: argparse.Namespace,
+    stage_index: int,
+    stage_instruction_types: Sequence[str],
+    successes: deque[float],
+    episode_count: int,
+    success_count: int,
+) -> dict[str, Any]:
+    enabled = _dense_curriculum_enabled(args)
+    window_count = len(successes)
+    success_rate = float(sum(successes) / window_count) if window_count else None
+    lifetime_success_rate = float(success_count / episode_count) if episode_count else None
+    return {
+        "dense_stage_enabled": bool(enabled),
+        "dense_stage_index": int(stage_index) if enabled else 0,
+        "dense_stage_name": f"stage_{int(stage_index)}" if enabled else "disabled",
+        "dense_stage_instruction_types": list(stage_instruction_types) if enabled else [],
+        "dense_stage_episode_window_count": int(window_count),
+        "dense_stage_episode_count": int(episode_count),
+        "dense_stage_success_count": int(success_count),
+        "dense_stage_success_rate": success_rate,
+        "dense_stage_success_rate_lifetime": lifetime_success_rate,
+        "dense_stage_switch_success_rate": float(getattr(args, "dense_stage_switch_success_rate", 0.50)),
+        "dense_stage_min_episodes": int(getattr(args, "dense_stage_min_episodes", 0)),
+    }
+
+
+def _dense_stage_metric_scalars(snapshot: dict[str, Any]) -> dict[str, float]:
+    if not bool(snapshot.get("dense_stage_enabled", False)):
+        return {}
+    scalars: dict[str, float] = {
+        "stage/dense/index": float(snapshot.get("dense_stage_index", 0)),
+        "stage/dense/episode_window_count": float(snapshot.get("dense_stage_episode_window_count", 0)),
+        "stage/dense/episode_count": float(snapshot.get("dense_stage_episode_count", 0)),
+        "stage/dense/switch_success_rate": float(snapshot.get("dense_stage_switch_success_rate", 0.0)),
+        "stage/dense/min_episodes": float(snapshot.get("dense_stage_min_episodes", 0)),
+    }
+    success_rate = snapshot.get("dense_stage_success_rate")
+    if success_rate is not None:
+        scalars["stage/dense/success_rate"] = float(success_rate)
+    lifetime_success_rate = snapshot.get("dense_stage_success_rate_lifetime")
+    if lifetime_success_rate is not None:
+        scalars["stage/dense/success_rate_lifetime"] = float(lifetime_success_rate)
+    return scalars
+
+
+def _distributed_completed_successes(
+    *,
+    ctx: DistributedContext,
+    device: torch.device,
+    done: bool,
+    success: bool,
+) -> list[float]:
+    local = [1.0 if done else 0.0, 1.0 if success else 0.0]
+    if (
+        ctx.enabled
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    ):
+        tensor = torch.as_tensor(local, dtype=torch.float32, device=device)
+        gathered = [torch.zeros_like(tensor) for _ in range(int(ctx.world_size))]
+        torch.distributed.all_gather(gathered, tensor)
+        if not ctx.is_main:
+            return []
+        successes: list[float] = []
+        for item in gathered:
+            values = item.detach().cpu().tolist()
+            if float(values[0]) >= 0.5:
+                successes.append(1.0 if float(values[1]) >= 0.5 else 0.0)
+        return successes
+    return [1.0 if success else 0.0] if done else []
+
+
+def _broadcast_dense_stage(
+    *,
+    ctx: DistributedContext,
+    device: torch.device,
+    stage_index: int,
+) -> int:
+    if not (
+        ctx.enabled
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    ):
+        return int(stage_index)
+    tensor = torch.as_tensor([int(stage_index)], dtype=torch.int64, device=device)
+    torch.distributed.broadcast(tensor, src=0)
+    return int(tensor.item())
+
+
 def _safe_instruction(info: dict[str, Any]) -> str:
     return str(info.get("language_instruction") or info.get("instruction_type") or "move left")
 
@@ -747,6 +950,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         SummaryWriter(log_dir=str(run_dir / "tensorboard"))
         if dist_ctx.is_main and SummaryWriter is not None
         else None
+    )
+    metrics_window = max(1, int(args.metrics_window_episodes))
+    dense_curriculum_active = _dense_curriculum_enabled(args)
+    dense_stage_index = 1 if dense_curriculum_active else 0
+    dense_stage_successes: deque[float] = deque(maxlen=metrics_window)
+    dense_stage_episode_count = 0
+    dense_stage_success_count = 0
+    dense_stage_instruction_types = (
+        _dense_stage_instruction_types(args, dense_stage_index) if dense_curriculum_active else ()
     )
 
     obs_adapter = CDPROctoObservationAdapter(
@@ -793,6 +1005,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         _log(dist_ctx, "[octo-cdpr] Building CDPR environment...")
         with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
             env = _build_env(args, seed=rollout_seed)
+        if dense_curriculum_active:
+            dense_stage_instruction_types = _apply_dense_stage_to_envs(
+                [env],
+                args,
+                dense_stage_index,
+            )
+            _log(
+                dist_ctx,
+                "[octo-cdpr] Dense curriculum stage 1 active: "
+                f"{', '.join(dense_stage_instruction_types)}",
+            )
         _log(dist_ctx, f"[octo-cdpr] Built CDPR environment in {time.perf_counter() - env_t0:.1f}s")
         reset_t0 = time.perf_counter()
         _log(dist_ctx, "[octo-cdpr] Resetting CDPR environment...")
@@ -842,6 +1065,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "overall_simple_success_rate": 0.167,
                 "move_to_object_success_rate": 0.09,
             },
+            "dense_success_curriculum": {
+                "enabled": bool(dense_curriculum_active),
+                "stage_one_instruction_types": list(
+                    _dense_stage_instruction_types(args, 1)
+                ),
+                "stage_two_instruction_types": list(
+                    _dense_stage_instruction_types(args, 2)
+                ),
+                "switch_success_rate": float(args.dense_stage_switch_success_rate),
+                "min_stage_one_episodes": int(args.dense_stage_min_episodes),
+                "metric_window_episodes": int(metrics_window),
+            },
         }
         if dist_ctx.is_main:
             _write_json(run_dir / "octo_manifest.json", manifest)
@@ -850,6 +1085,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         episode = 0
         episode_reward = 0.0
         episode_length = 0
+        completed_episode_rewards: deque[float] = deque(maxlen=metrics_window)
+        completed_episode_successes: deque[float] = deque(maxlen=metrics_window)
+        completed_episode_count = 0
+        completed_episode_success_count = 0
         state = layout.flatten(obs)
         instruction = _safe_instruction(info)
         _log(
@@ -926,6 +1165,55 @@ def main(argv: Sequence[str] | None = None) -> None:
             global_step += 1
             episode_length += 1
             episode_reward += float(reward)
+            episode_success = bool(next_info.get("success", False)) if done else False
+            dense_stage_switched = False
+            if dense_curriculum_active:
+                completed_successes = _distributed_completed_successes(
+                    ctx=dist_ctx,
+                    device=device,
+                    done=done,
+                    success=episode_success,
+                )
+                proposed_stage_index = int(dense_stage_index)
+                if dist_ctx.is_main:
+                    for success_value in completed_successes:
+                        dense_stage_successes.append(float(success_value))
+                        dense_stage_episode_count += 1
+                        dense_stage_success_count += int(float(success_value) >= 0.5)
+                    if int(dense_stage_index) == 1:
+                        required_episodes = max(1, int(args.dense_stage_min_episodes))
+                        stage_success_rate = (
+                            float(sum(dense_stage_successes) / len(dense_stage_successes))
+                            if dense_stage_successes
+                            else 0.0
+                        )
+                        if (
+                            len(dense_stage_successes) >= required_episodes
+                            and stage_success_rate >= float(args.dense_stage_switch_success_rate)
+                        ):
+                            proposed_stage_index = 2
+                            dense_stage_successes.clear()
+                            dense_stage_episode_count = 0
+                            dense_stage_success_count = 0
+                previous_stage_index = int(dense_stage_index)
+                dense_stage_index = _broadcast_dense_stage(
+                    ctx=dist_ctx,
+                    device=device,
+                    stage_index=proposed_stage_index,
+                )
+                if int(dense_stage_index) != previous_stage_index:
+                    dense_stage_switched = True
+                    dense_stage_instruction_types = _apply_dense_stage_to_envs(
+                        [env],
+                        args,
+                        dense_stage_index,
+                    )
+                    _log(
+                        dist_ctx,
+                        "[octo-cdpr] Dense curriculum switched to stage "
+                        f"{dense_stage_index}: {', '.join(dense_stage_instruction_types)}",
+                        progress=progress,
+                    )
 
             if buffer.size >= int(args.update_after):
                 for _ in range(int(args.updates_per_step)):
@@ -934,6 +1222,20 @@ def main(argv: Sequence[str] | None = None) -> None:
                     _log_scalars(writer, {f"train/{k}": v for k, v in last_metrics.items()}, trainer.gradient_step)
 
             if dist_ctx.is_main and global_step % max(1, int(args.log_every_steps)) == 0:
+                episode_metrics = _episode_metric_snapshot(
+                    rewards=completed_episode_rewards,
+                    successes=completed_episode_successes,
+                    episode_count=completed_episode_count,
+                    success_count=completed_episode_success_count,
+                )
+                dense_stage_metrics = _dense_stage_snapshot(
+                    args=args,
+                    stage_index=dense_stage_index,
+                    stage_instruction_types=dense_stage_instruction_types,
+                    successes=dense_stage_successes,
+                    episode_count=dense_stage_episode_count,
+                    success_count=dense_stage_success_count,
+                )
                 row = {
                     "global_step": int(global_step),
                     "episode": int(episode),
@@ -944,20 +1246,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "buffer_size": int(buffer.size),
                     "instruction": str(instruction),
                     "noise_std": float(noise_std),
+                    **episode_metrics,
+                    **dense_stage_metrics,
                     **last_metrics,
                 }
                 with metrics_path.open("a", encoding="utf-8") as handle:
                     handle.write(json.dumps(row, sort_keys=True) + "\n")
-                _log_scalars(
-                    writer,
-                    {
-                        "rollout/reward": float(reward),
-                        "rollout/episode_reward_running": float(episode_reward),
-                        "rollout/noise_std": float(noise_std),
-                        "rollout/buffer_size": float(buffer.size),
-                    },
-                    global_step,
-                )
+                rollout_scalars = {
+                    "rollout/reward": float(reward),
+                    "rollout/episode_reward_running": float(episode_reward),
+                    "rollout/noise_std": float(noise_std),
+                    "rollout/buffer_size": float(buffer.size),
+                }
+                rollout_scalars.update(_episode_metric_scalars(episode_metrics))
+                rollout_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
+                _log_scalars(writer, rollout_scalars, global_step)
 
             if progress is not None:
                 progress.update(1)
@@ -985,6 +1288,24 @@ def main(argv: Sequence[str] | None = None) -> None:
                 _log(dist_ctx, f"[octo-cdpr] Saved checkpoint: {checkpoint}", progress=progress)
 
             if done:
+                completed_episode_rewards.append(float(episode_reward))
+                completed_episode_successes.append(1.0 if episode_success else 0.0)
+                completed_episode_count += 1
+                completed_episode_success_count += 1 if episode_success else 0
+                episode_metrics = _episode_metric_snapshot(
+                    rewards=completed_episode_rewards,
+                    successes=completed_episode_successes,
+                    episode_count=completed_episode_count,
+                    success_count=completed_episode_success_count,
+                )
+                dense_stage_metrics = _dense_stage_snapshot(
+                    args=args,
+                    stage_index=dense_stage_index,
+                    stage_instruction_types=dense_stage_instruction_types,
+                    successes=dense_stage_successes,
+                    episode_count=dense_stage_episode_count,
+                    success_count=dense_stage_success_count,
+                )
                 if dist_ctx.is_main:
                     with metrics_path.open("a", encoding="utf-8") as handle:
                         handle.write(
@@ -994,15 +1315,25 @@ def main(argv: Sequence[str] | None = None) -> None:
                                     "episode": int(episode),
                                     "episode_length": int(episode_length),
                                     "episode_reward": float(episode_reward),
-                                    "success": bool(next_info.get("success", False)),
+                                    "success": episode_success,
                                     "terminated": bool(terminated),
                                     "truncated": bool(truncated),
                                     "instruction": str(instruction),
+                                    "dense_stage_switched": bool(dense_stage_switched),
+                                    **episode_metrics,
+                                    **dense_stage_metrics,
                                 },
                                 sort_keys=True,
                             )
                             + "\n"
                         )
+                    done_scalars = {
+                        "rollout/episode_reward": float(episode_reward),
+                        "rollout/success": 1.0 if episode_success else 0.0,
+                    }
+                    done_scalars.update(_episode_metric_scalars(episode_metrics))
+                    done_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
+                    _log_scalars(writer, done_scalars, global_step)
                 episode += 1
                 episode_reward = 0.0
                 episode_length = 0

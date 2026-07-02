@@ -1392,7 +1392,7 @@ def _annotate_latest_validation_frame(
         f"grip={float(info.get('gripper_opening', 0.0)):.3f}"
         f"->{float(info.get('gripper_target', 0.0)):.3f}"
     )
-    source = "NEW OPENVLA OUTPUT" if new_policy_output else "cached OpenVLA chunk"
+    source = "NEW VLA OUTPUT" if new_policy_output else "cached VLA chunk"
     lines = [
         f"{source} | call #{int(policy_call)} | action {int(chunk_action_index) + 1}/{int(chunk_length)}",
         f"step {int(step)} | {instruction}",

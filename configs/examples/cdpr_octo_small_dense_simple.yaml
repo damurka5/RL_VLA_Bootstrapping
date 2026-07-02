@@ -102,8 +102,6 @@ task:
       move_right,
       move_top,
       move_bottom,
-      move_up,
-      move_down,
       move_to_object,
       open_gripper,
       close_gripper,
@@ -210,7 +208,7 @@ task:
     direct_gripper_wrong_action_penalty: 0.10
     direct_actuator_translation_action_penalty: 0.20
     direct_actuator_success_bonus: 0.0
-    direct_yaw_success_angle: 0.50
+    direct_yaw_success_angle: 1.5707963267948966
     direct_yaw_start_angle: 0.0
     direct_yaw_progress_weight: 2.0
     direct_yaw_step_weight: 1.0
@@ -238,6 +236,15 @@ task:
     object_spawn_min_gap: 0.04
     object_spawn_min_ee_dist: 0.12
     object_spawn_max_tries: 300
+    background_color_palette:
+      [
+        [0.16, 0.18, 0.21, 1.0],
+        [0.20, 0.18, 0.16, 1.0],
+        [0.17, 0.20, 0.18, 1.0],
+        [0.22, 0.22, 0.24, 1.0],
+        [0.14, 0.17, 0.20, 1.0],
+        [0.21, 0.19, 0.22, 1.0],
+      ]
 
 simulation:
   entrypoint:
@@ -287,7 +294,7 @@ training:
       standalone: true
       nproc_per_node: 2
     args:
-      max_train_steps: 250000
+      max_train_steps: 1000000
       max_env_steps: 64
       chunk_size: 4
       replan_every: 4
@@ -323,9 +330,24 @@ training:
       ee_start_z: 0.40
       randomize_ee_yaw: true
       ee_yaw_bounds: [-3.141592653589793, 3.141592653589793]
-      save_every_steps: 5000
+      save_every_steps: 100000
       log_every_steps: 100
       status_every_steps: 250
+      metrics_window_episodes: 100
+      dense_stage_one_instruction_types:
+        [
+          move_left,
+          move_right,
+          move_top,
+          move_bottom,
+          open_gripper,
+          close_gripper,
+          rotate_gripper_clockwise,
+          rotate_gripper_counterclockwise,
+        ]
+      dense_stage_two_instruction_types: [move_to_object]
+      dense_stage_switch_success_rate: 0.50
+      dense_stage_min_episodes: 80
       progress: true
       progress_only: true
       distributed: true

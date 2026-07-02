@@ -20,6 +20,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     EpisodeResult,
     InstructionSummary,
     _aggregate_episode_results,
+    _annotate_latest_validation_frame,
     _build_validation_env,
     _default_max_steps,
     _episode_seed,
@@ -33,6 +34,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _reset_validation_env_with_retries,
     _resolve_wrapper_dir,
     _save_episode_video,
+    _scaled_action_vector,
     _summarize_instruction_results,
     _summarize_instruction_text_results,
     _temporary_env_vars,
@@ -198,6 +200,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--record-failure-videos", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--record-all-success-videos", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--video-coverage", choices=("instruction", "case"), default="instruction")
+    parser.add_argument("--video-action-overlay", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--strict-video-validation", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--require-complete-video-coverage", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--progress-only", action=argparse.BooleanOptionalAction, default=True)
@@ -485,6 +488,7 @@ def _run_bucket(
                     obs, reward, terminated, truncated, final_info = env.step(action)
                     reward_total += float(reward)
                     action_steps += 1
+                    scaled_action = _scaled_action_vector(action, config, args.hold_steps)
                     ee_pos = final_info.get("ee_position", ())
                     ee_xyz = np.asarray(ee_pos, dtype=np.float32).reshape(-1)[:3] if ee_pos is not None else np.zeros((0,))
                     action_trace.append(
@@ -499,6 +503,11 @@ def _run_bucket(
                             "action_z": float(action[2]),
                             "action_yaw": float(action[3]),
                             "action_gripper": float(action[4]),
+                            "applied_dx": float(scaled_action[0]),
+                            "applied_dy": float(scaled_action[1]),
+                            "applied_dz": float(scaled_action[2]),
+                            "applied_dyaw": float(scaled_action[3]),
+                            "applied_dgripper": float(scaled_action[4]),
                             "ee_x": float(ee_xyz[0]) if ee_xyz.size >= 1 else "",
                             "ee_y": float(ee_xyz[1]) if ee_xyz.size >= 2 else "",
                             "ee_z": float(ee_xyz[2]) if ee_xyz.size >= 3 else "",
@@ -509,6 +518,19 @@ def _run_bucket(
                             "simulation_state_valid": int(bool(final_info.get("simulation_state_valid", True))),
                         }
                     )
+                    if env.capture_frames and bool(args.video_action_overlay):
+                        _annotate_latest_validation_frame(
+                            sim=env.sim,
+                            instruction=instruction,
+                            step=action_steps,
+                            policy_call=policy_output_calls,
+                            chunk_action_index=int(chunk_index - 1),
+                            chunk_length=int(len(current_chunk)),
+                            new_policy_output=bool(chunk_index == 1),
+                            action=action,
+                            scaled_action=scaled_action,
+                            info=dict(final_info),
+                        )
                     distance_xy_raw = final_info.get("move_to_object_validation_distance_xy")
                     if distance_xy_raw is not None:
                         try:

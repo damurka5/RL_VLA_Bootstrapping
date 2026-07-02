@@ -8,6 +8,7 @@ EVAL_OUTPUT_ROOT="${EVAL_OUTPUT_ROOT:-$REPO_ROOT/runs/cdpr_octo_small_dense_eval
 EPISODES_PER_INSTRUCTION="${EPISODES_PER_INSTRUCTION:-20}"
 MOVE_TO_OBJECT_EPISODES_PER_TARGET="${MOVE_TO_OBJECT_EPISODES_PER_TARGET:-20}"
 MAX_RESET_ATTEMPTS="${MAX_RESET_ATTEMPTS:-10}"
+VIDEO_ACTION_OVERLAY="${VIDEO_ACTION_OVERLAY:-1}"
 
 if [[ -z "${CHECKPOINT_DIR:-}" ]]; then
   latest_file="$(find "$REPO_ROOT/runs" -path '*/rl/latest.pt' -print | sort | tail -n 1 || true)"
@@ -40,12 +41,14 @@ export OCTO_REPO_PATH="${OCTO_REPO_PATH:-/root/repo/octo}"
 export PYTHONPATH="$OCTO_REPO_PATH${PYTHONPATH:+:$PYTHONPATH}"
 if [[ "${JAX_CLEAR_LD_LIBRARY_PATH:-1}" == "1" ]]; then
   export RLVLA_ORIGINAL_LD_LIBRARY_PATH="${LD_LIBRARY_PATH:-}"
-  LD_LIBRARY_PATH=""
+  unset LD_LIBRARY_PATH
 fi
-if [[ "${JAX_PREPEND_PIP_NVIDIA_LIBS:-1}" == "1" ]]; then
+if [[ "${JAX_PREPEND_PIP_NVIDIA_LIBS:-0}" == "1" ]]; then
   octo_site_packages="$(conda run --no-capture-output -n "$ENV_NAME" python3 -c 'import site; print(site.getsitepackages()[0])')"
   nvidia_ld_dirs=()
-  for lib_dir in "$octo_site_packages"/nvidia/*/lib; do
+  for lib_dir in \
+    "$octo_site_packages"/nvidia/cudnn/lib \
+    "$octo_site_packages"/nvidia/*/lib; do
     if [[ -d "$lib_dir" ]]; then
       nvidia_ld_dirs+=("$lib_dir")
     fi
@@ -67,7 +70,7 @@ cmd=(
   --checkpoint-dir "$CHECKPOINT_DIR"
   --run-dir "$run_dir"
   --instruction-types
-  move_left move_right move_top move_bottom move_up move_down
+  move_left move_right move_top move_bottom
   move_to_object
   open_gripper close_gripper
   rotate_gripper_clockwise rotate_gripper_counterclockwise
@@ -82,6 +85,11 @@ cmd=(
   --max-reset-attempts "$MAX_RESET_ATTEMPTS"
   --progress-only
 )
+if [[ "$VIDEO_ACTION_OVERLAY" == "1" ]]; then
+  cmd+=(--video-action-overlay)
+else
+  cmd+=(--no-video-action-overlay)
+fi
 cmd+=("$@")
 
 {

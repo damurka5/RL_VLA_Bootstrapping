@@ -14,6 +14,7 @@ RECORD_ALL_SUCCESS_VIDEOS="${RECORD_ALL_SUCCESS_VIDEOS:-0}"
 VIDEO_COVERAGE="${VIDEO_COVERAGE:-instruction}"
 STRICT_VIDEO_VALIDATION="${STRICT_VIDEO_VALIDATION:-1}"
 REQUIRE_COMPLETE_VIDEO_COVERAGE="${REQUIRE_COMPLETE_VIDEO_COVERAGE:-0}"
+VIDEO_ACTION_OVERLAY="${VIDEO_ACTION_OVERLAY:-1}"
 LOG_EVERY_EPISODE="${LOG_EVERY_EPISODE:-10}"
 PROGRESS="${PROGRESS:-1}"
 PROGRESS_ONLY="${PROGRESS_ONLY:-1}"
@@ -59,7 +60,7 @@ cmd=(
   --checkpoint-dir "$CHECKPOINT_DIR"
   --run-dir "$run_dir"
   --instruction-types
-  move_left move_right move_top move_bottom move_up move_down
+  move_left move_right move_top move_bottom
   move_to_object
   open_gripper close_gripper
   rotate_gripper_clockwise rotate_gripper_counterclockwise
@@ -111,6 +112,11 @@ if [[ "$REQUIRE_COMPLETE_VIDEO_COVERAGE" == "1" ]]; then
   cmd+=(--require-complete-video-coverage)
 else
   cmd+=(--no-require-complete-video-coverage)
+fi
+if [[ "$VIDEO_ACTION_OVERLAY" == "1" ]]; then
+  cmd+=(--video-action-overlay)
+else
+  cmd+=(--no-video-action-overlay)
 fi
 cmd+=("$@")
 
