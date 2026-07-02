@@ -133,12 +133,12 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertIn("--mixed-precision", plan.command)
         self.assertIn("bf16", plan.command)
         self.assertIn("--num-envs-per-rank", plan.command)
-        self.assertIn("8", plan.command)
+        self.assertIn("4", plan.command)
         self.assertIn("--hidden-dim", plan.command)
-        self.assertIn("12288", plan.command)
+        self.assertIn("1024", plan.command)
         self.assertIn("--batch-size", plan.command)
-        self.assertIn("8192", plan.command)
-        self.assertIn("--materialize-optimizer-state", plan.command)
+        self.assertIn("1024", plan.command)
+        self.assertNotIn("--materialize-optimizer-state", plan.command)
         self.assertIn("RLVLA_TASK_METADATA_JSON", plan.env)
 
     def test_new_remote_scripts_pass_bash_syntax(self):
