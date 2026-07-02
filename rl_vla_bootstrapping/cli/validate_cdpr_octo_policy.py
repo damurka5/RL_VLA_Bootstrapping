@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -32,6 +32,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _render_policy_prompt,
     _reset_validation_env_with_retries,
     _resolve_wrapper_dir,
+    _save_episode_video,
     _summarize_instruction_results,
     _summarize_instruction_text_results,
     _temporary_env_vars,
@@ -41,6 +42,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _write_instruction_text_csv,
     _write_move_to_object_threshold_sweep,
     _write_success_rate_csv,
+    _write_video_audit,
 )
 from rl_vla_bootstrapping.core.commands import ensure_directory
 from rl_vla_bootstrapping.core.config import load_project_config
@@ -55,6 +57,7 @@ from rl_vla_bootstrapping.policy.octo_cdpr_adapter import (
 )
 from rl_vla_bootstrapping.policy.octo_finetune_cdpr import ResidualChunkActor
 from robots.cdpr.cdpr_dataset.rl_instruction_tasks import INSTRUCTION_TEXT, INSTRUCTION_TYPES
+from robots.cdpr.cdpr_dataset.synthetic_tasks import clear_sim_recording_buffers
 
 
 @dataclass(frozen=True)
@@ -191,6 +194,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--evaluate-reverse-shells", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--arbitrary-instructions-count", type=int, default=0)
     parser.add_argument("--reuse-existing-wrapper-variants", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--record-success-videos", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--record-failure-videos", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--record-all-success-videos", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--video-coverage", choices=("instruction", "case"), default="instruction")
+    parser.add_argument("--strict-video-validation", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--require-complete-video-coverage", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--progress-only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-wrist", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-proprio", action=argparse.BooleanOptionalAction, default=True)
@@ -363,6 +372,12 @@ def _episode_result_from_final(
     )
 
 
+def _video_coverage_key(args: argparse.Namespace, bucket: Any) -> str:
+    if str(getattr(args, "video_coverage", "instruction")) == "instruction":
+        return str(bucket.instruction_type)
+    return str(bucket.case_id)
+
+
 def _run_bucket(
     *,
     config: Any,
@@ -373,12 +388,22 @@ def _run_bucket(
     base_seed: int | None,
     max_steps: int,
     wrapper_dir: Path | None,
+    videos_dir: Path,
+    video_registry: dict[str, dict[str, str]],
 ) -> list[EpisodeResult]:
+    coverage_key = _video_coverage_key(args, bucket)
+    coverage_entry = video_registry.setdefault(coverage_key, {})
+    should_capture = bool(
+        args.record_success_videos
+        or args.record_failure_videos
+        or args.record_all_success_videos
+        or bucket.force_video
+    )
     with _temporary_env_vars(bucket.env_vars):
         env = _build_validation_env(
             config=config,
             instruction_type=bucket.instruction_type,
-            capture_frames=False,
+            capture_frames=should_capture,
             max_steps=max_steps,
             hold_steps=args.hold_steps,
             seed=base_seed,
@@ -397,6 +422,17 @@ def _run_bucket(
         results: list[EpisodeResult] = []
         try:
             for episode_index in range(int(bucket.episodes)):
+                needs_success_video = bool(
+                    (args.record_success_videos or bucket.force_video)
+                    and (args.record_all_success_videos or coverage_entry.get("success") is None)
+                )
+                needs_failure_video = bool(
+                    (args.record_failure_videos or bucket.force_video)
+                    and coverage_entry.get("failure") is None
+                )
+                env.capture_frames = bool(
+                    bucket.force_video or needs_success_video or needs_failure_video
+                )
                 seed = _episode_seed(base_seed, instruction_index, episode_index)
                 obs, reset_info, reset_attempts = _reset_validation_env_with_retries(
                     env=env,
@@ -422,6 +458,7 @@ def _run_bucket(
                 final_info = dict(reset_info)
                 policy_output_calls = 0
                 action_steps = 0
+                action_trace: list[dict[str, Any]] = []
                 min_move_to_object_distance_xy = float("inf")
                 replan_every = max(1, min(int(args.replan_every), int(runtime.action_spec.chunk_size)))
 
@@ -448,6 +485,30 @@ def _run_bucket(
                     obs, reward, terminated, truncated, final_info = env.step(action)
                     reward_total += float(reward)
                     action_steps += 1
+                    ee_pos = final_info.get("ee_position", ())
+                    ee_xyz = np.asarray(ee_pos, dtype=np.float32).reshape(-1)[:3] if ee_pos is not None else np.zeros((0,))
+                    action_trace.append(
+                        {
+                            "step": int(action_steps),
+                            "policy_call": int(policy_output_calls),
+                            "new_policy_output": int(chunk_index == 1),
+                            "chunk_action_index": int(chunk_index - 1),
+                            "chunk_length": int(len(current_chunk)),
+                            "action_x": float(action[0]),
+                            "action_y": float(action[1]),
+                            "action_z": float(action[2]),
+                            "action_yaw": float(action[3]),
+                            "action_gripper": float(action[4]),
+                            "ee_x": float(ee_xyz[0]) if ee_xyz.size >= 1 else "",
+                            "ee_y": float(ee_xyz[1]) if ee_xyz.size >= 2 else "",
+                            "ee_z": float(ee_xyz[2]) if ee_xyz.size >= 3 else "",
+                            "ee_yaw": final_info.get("ee_yaw", ""),
+                            "gripper_opening": final_info.get("gripper_opening", ""),
+                            "gripper_target": final_info.get("gripper_target", ""),
+                            "success": int(bool(final_info.get("success", False))),
+                            "simulation_state_valid": int(bool(final_info.get("simulation_state_valid", True))),
+                        }
+                    )
                     distance_xy_raw = final_info.get("move_to_object_validation_distance_xy")
                     if distance_xy_raw is not None:
                         try:
@@ -471,6 +532,42 @@ def _run_bucket(
                     reset_attempts=reset_attempts,
                     min_move_to_object_distance_xy=min_move_to_object_distance_xy,
                 )
+                saved_video_path: str | None = None
+                saved_video_kind: str | None = None
+                try:
+                    if result.success and needs_success_video:
+                        saved_video_path = _save_episode_video(
+                            sim=env.sim,
+                            output_dir=videos_dir,
+                            instruction_type=str(bucket.instruction_type),
+                            episode_result=result,
+                            outcome="success",
+                            action_trace=action_trace,
+                        )
+                        if saved_video_path and coverage_entry.get("success") is None:
+                            coverage_entry["success"] = saved_video_path
+                        saved_video_kind = "success" if saved_video_path else None
+                    elif (not result.success) and needs_failure_video:
+                        saved_video_path = _save_episode_video(
+                            sim=env.sim,
+                            output_dir=videos_dir,
+                            instruction_type=str(bucket.instruction_type),
+                            episode_result=result,
+                            outcome="failure",
+                            action_trace=action_trace,
+                        )
+                        if saved_video_path and coverage_entry.get("failure") is None:
+                            coverage_entry["failure"] = saved_video_path
+                        saved_video_kind = "failure" if saved_video_path else None
+                finally:
+                    clear_sim_recording_buffers(env.sim)
+                if saved_video_path:
+                    result = replace(
+                        result,
+                        video_path=saved_video_path,
+                        video_kind=saved_video_kind,
+                        action_trace_path=saved_video_path.replace("_overview.mp4", "_actions.csv"),
+                    )
                 results.append(result)
                 if not args.progress_only and (episode_index + 1) % max(1, int(args.log_every_episode)) == 0:
                     successes = sum(item.success for item in results)
@@ -535,6 +632,9 @@ def _write_octo_report(
         "- `target_object_success_rates.csv`",
         "- `instruction_text_success_rates.csv`",
         "- `move_to_object_threshold_sweep.csv`",
+        "- `video_coverage.csv`",
+        "- `video_validation.csv` and `video_validation.json`",
+        "- `videos/`",
         "",
     ]
     path = run_dir / "validation_report.md"
@@ -569,6 +669,7 @@ def main() -> int:
     )
     max_steps = _default_max_steps(config, args)
     wrapper_dir = _resolve_wrapper_dir(config, args)
+    videos_dir = ensure_directory(run_dir / "videos")
     chunk_size = int(args.chunk_size or config.policy.action_codec.chunk_size)
     runtime = OctoCDPREvalRuntime(
         base_checkpoint=artifacts.base_checkpoint,
@@ -589,9 +690,12 @@ def main() -> int:
 
     instruction_types = _resolve_instruction_types(config, args)
     all_results: list[EpisodeResult] = []
+    video_registry: dict[str, dict[str, str]] = {}
+    expected_video_keys: list[str] = []
     for instruction_index, instruction_type in enumerate(instruction_types):
         buckets = _validation_buckets(config, args, instruction_type=instruction_type)
         for bucket in buckets:
+            expected_video_keys.append(_video_coverage_key(args, bucket))
             results = _run_bucket(
                 config=config,
                 runtime=runtime,
@@ -601,18 +705,25 @@ def main() -> int:
                 base_seed=None if int(args.seed) < 0 else int(args.seed),
                 max_steps=max_steps,
                 wrapper_dir=wrapper_dir,
+                videos_dir=videos_dir,
+                video_registry=video_registry,
             )
             all_results.extend(results)
+    expected_video_keys = list(dict.fromkeys(expected_video_keys))
 
     metric_results = [item for item in all_results if item.metric_episode]
     instruction_summaries: list[InstructionSummary] = []
     for instruction_type in instruction_types:
         items = [item for item in metric_results if item.instruction_type == instruction_type]
+        success_video_path = next((item.video_path for item in items if item.video_kind == "success"), None)
+        failure_video_path = next((item.video_path for item in items if item.video_kind == "failure"), None)
         instruction_summaries.append(
             _summarize_instruction_results(
                 instruction_type=instruction_type,
                 episode_results=items,
-                video_path=None,
+                video_path=success_video_path or failure_video_path,
+                success_video_path=success_video_path,
+                failure_video_path=failure_video_path,
             )
         )
     instruction_rows = _aggregate_episode_results(metric_results, group_fields=("instruction_type",))
@@ -648,7 +759,16 @@ def main() -> int:
     )
     _write_instruction_text_csv(run_dir / "instruction_text_success_rates.csv", text_summaries)
     _write_move_to_object_threshold_sweep(run_dir / "move_to_object_threshold_sweep.csv", move_to_object_threshold_rows)
-    _write_empty_video_files(run_dir)
+    if bool(args.record_success_videos or args.record_failure_videos or args.record_all_success_videos):
+        video_probes, video_coverage = _write_video_audit(
+            run_dir=run_dir,
+            videos_dir=videos_dir,
+            expected_keys=expected_video_keys,
+            video_registry=video_registry,
+        )
+    else:
+        _write_empty_video_files(run_dir)
+        video_probes, video_coverage = [], []
     report_path = _write_octo_report(
         run_dir=run_dir,
         artifacts=artifacts,
@@ -670,11 +790,25 @@ def main() -> int:
         "successes": sum(item.success for item in metric_results),
         "success_rate": sum(item.success for item in metric_results) / max(len(metric_results), 1),
         "task_metadata": _instruction_validation_task_metadata(config, args),
+        "record_success_videos": bool(args.record_success_videos),
+        "record_failure_videos": bool(args.record_failure_videos),
+        "record_all_success_videos": bool(args.record_all_success_videos),
+        "video_coverage_level": str(args.video_coverage),
+        "recorded_videos": int(len(video_probes)),
+        "video_registry": video_registry,
+        "video_validation": video_probes,
+        "video_coverage": video_coverage,
     }
     (run_dir / "validation_manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, default=str),
         encoding="utf-8",
     )
+    invalid_videos = [probe for probe in video_probes if not bool(probe.get("valid"))]
+    incomplete_coverage = [item for item in video_coverage if not bool(item.get("complete"))]
+    if bool(args.strict_video_validation) and invalid_videos:
+        raise RuntimeError(f"Octo video validation failed for {len(invalid_videos)} MP4 file(s).")
+    if bool(args.require_complete_video_coverage) and incomplete_coverage:
+        raise RuntimeError(f"Octo video coverage is incomplete for {len(incomplete_coverage)} key(s).")
     print(f"Octo validation output: {run_dir}")
     print(f"Report: {report_path}")
     return 0
