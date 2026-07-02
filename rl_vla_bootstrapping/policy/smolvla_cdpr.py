@@ -63,6 +63,15 @@ def _normalize_instruction(text: str) -> str:
     return stripped if stripped.endswith("\n") else stripped + "\n"
 
 
+def _resolve_torch_device(device: str | Any) -> Any:
+    if torch is None:
+        raise RuntimeError("SmolVLA runtime requires PyTorch.")
+    torch_device = torch.device(device)
+    if torch_device.type == "cuda" and torch_device.index is None and torch.cuda.is_available():
+        torch_device = torch.device(f"cuda:{int(torch.cuda.current_device())}")
+    return torch_device
+
+
 def cdpr_state_from_observation(
     obs: dict[str, np.ndarray],
     info: dict[str, Any] | None = None,
@@ -359,7 +368,7 @@ class SmolVLARuntime:
                 '`pip install "lerobot[smolvla]"` before running SmolVLA CDPR.'
             ) from exc
 
-        torch_device = torch.device(device)
+        torch_device = _resolve_torch_device(device)
         if torch_device.type == "cuda":
             torch.cuda.set_device(torch_device)
         dtype = _torch_dtype_from_name(mixed_precision, device=torch_device)

@@ -13,6 +13,7 @@ from rl_vla_bootstrapping.policy.smolvla_cdpr import (
     SmolVLAActionAdapterSpec,
     SmolVLAObservationSpec,
     SmolVLARuntime,
+    _resolve_torch_device,
     adapt_cdpr_observations_to_smolvla_batch,
     adapt_smolvla_actions_to_cdpr,
     cdpr_state_from_observation,
@@ -88,6 +89,20 @@ class SmolVLACDPRTests(unittest.TestCase):
         np.testing.assert_allclose(chunk[1], [0.6, 0.7, 0.8, 0.9, -1.0])
         np.testing.assert_allclose(chunk[2], chunk[1])
         np.testing.assert_allclose(chunk[3], chunk[1])
+
+    @unittest.skipIf(torch is None, "torch is not installed")
+    def test_plain_cuda_device_resolves_to_current_index(self):
+        original_is_available = torch.cuda.is_available
+        original_current_device = torch.cuda.current_device
+        try:
+            torch.cuda.is_available = lambda: True
+            torch.cuda.current_device = lambda: 1
+            device = _resolve_torch_device("cuda")
+        finally:
+            torch.cuda.is_available = original_is_available
+            torch.cuda.current_device = original_current_device
+
+        self.assertEqual(str(device), "cuda:1")
 
     @unittest.skipIf(torch is None, "torch is not installed")
     def test_tokenizer_attention_mask_is_bool_for_lerobot_attention(self):
