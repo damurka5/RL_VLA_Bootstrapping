@@ -3,9 +3,15 @@ from __future__ import annotations
 import subprocess
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 
+from rl_vla_bootstrapping.cli.validate_cdpr_smolvla_policy import (
+    _checkpoint_state_dim,
+    _configure_checkpoint_compatible_object_slots,
+    _max_objects_from_state_dim,
+)
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
 from rl_vla_bootstrapping.policy.smolvla_cdpr import (
@@ -103,6 +109,21 @@ class SmolVLACDPRTests(unittest.TestCase):
             torch.cuda.current_device = original_current_device
 
         self.assertEqual(str(device), "cuda:1")
+
+    def test_validation_infers_checkpoint_object_slots_from_actor_shape(self):
+        payload = {
+            "chunk_size": 8,
+            "action_dim": 5,
+            "actor": {"net.net.0.weight": np.zeros((1024, 97), dtype=np.float32)},
+        }
+        args = SimpleNamespace(max_objects=None)
+
+        self.assertEqual(_checkpoint_state_dim(payload), 57)
+        self.assertEqual(_max_objects_from_state_dim(57), 4)
+
+        _configure_checkpoint_compatible_object_slots(args, payload)
+
+        self.assertEqual(args.max_objects, 4)
 
     @unittest.skipIf(torch is None, "torch is not installed")
     def test_tokenizer_attention_mask_is_bool_for_lerobot_attention(self):

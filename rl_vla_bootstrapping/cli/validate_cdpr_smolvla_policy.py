@@ -53,7 +53,7 @@ from rl_vla_bootstrapping.policy.smolvla_cdpr import (
     DEFAULT_SMOLVLA_CHECKPOINT,
     load_smolvla_runtime,
 )
-from robots.cdpr.cdpr_dataset.rl_instruction_tasks import INSTRUCTION_TEXT
+from robots.cdpr.cdpr_dataset.rl_instruction_tasks import INSTRUCTION_TEXT, INSTRUCTION_TYPES
 from robots.cdpr.cdpr_dataset.synthetic_tasks import clear_sim_recording_buffers
 
 
@@ -100,6 +100,7 @@ class SmolVLACDPREvalRuntime:
         self.device = device
         self.actor: ResidualChunkActor | None = None
         self.payload = torch.load(checkpoint_path, map_location=device)
+        self.actor_state_dim = _checkpoint_state_dim(self.payload)
 
     def ensure_actor(self, state_dim: int) -> None:
         if self.actor is not None:
@@ -108,8 +109,9 @@ class SmolVLACDPREvalRuntime:
         action_dim = int(self.payload.get("action_dim", self.smolvla.action_spec.action_dim))
         hidden_dim = int(self.payload.get("hidden_dim", 512))
         residual_scale = float(self.payload.get("residual_scale", 0.35))
+        actor_state_dim = int(self.actor_state_dim or state_dim)
         actor = ResidualChunkActor(
-            state_dim=int(state_dim),
+            state_dim=actor_state_dim,
             chunk_size=chunk_size,
             action_dim=action_dim,
             hidden_dim=hidden_dim,
@@ -118,6 +120,7 @@ class SmolVLACDPREvalRuntime:
         actor.load_state_dict(self.payload["actor"])
         actor.eval()
         self.actor = actor
+        self.actor_state_dim = actor_state_dim
 
     def predict_chunk(
         self,
@@ -138,6 +141,18 @@ class SmolVLACDPREvalRuntime:
         self.ensure_actor(layout.state_dim)
         assert self.actor is not None
         state = layout.flatten(obs)
+        if self.actor_state_dim is not None and int(state.shape[0]) != int(self.actor_state_dim):
+            expected_max_objects = _max_objects_from_state_dim(int(self.actor_state_dim))
+            hint = (
+                f" Set --max-objects {expected_max_objects} or leave --max-objects unset."
+                if expected_max_objects is not None
+                else ""
+            )
+            raise RuntimeError(
+                "SmolVLA checkpoint/env state dimension mismatch: "
+                f"checkpoint expects state_dim={int(self.actor_state_dim)}, "
+                f"but validation env produced state_dim={int(state.shape[0])}.{hint}"
+            )
         state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         prior_t = torch.as_tensor(prior, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
@@ -178,6 +193,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--multi-object-scenes", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--min-scene-objects", type=int, default=3)
     parser.add_argument("--max-scene-objects", type=int, default=4)
+    parser.add_argument(
+        "--max-objects",
+        type=int,
+        default=None,
+        help="Maximum object slots in the CDPR observation. Defaults to the checkpoint-compatible value.",
+    )
     parser.add_argument("--include-synonyms", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--synonyms-per-instruction", type=int, default=2)
     parser.add_argument("--synonym-shells", choices=("normal", "all"), default="normal")
@@ -209,6 +230,54 @@ def _require_torch() -> None:
             "SmolVLA CDPR validation requires PyTorch to load the residual adapter checkpoint. "
             f"Install it in the remote `smolvla` environment before running evaluation.{detail}"
         )
+
+
+def _checkpoint_state_dim(payload: dict[str, Any]) -> int | None:
+    raw_state_dim = payload.get("state_dim")
+    if raw_state_dim is not None:
+        try:
+            return int(raw_state_dim)
+        except (TypeError, ValueError):
+            pass
+
+    actor = payload.get("actor")
+    if not isinstance(actor, dict):
+        return None
+    first_weight = actor.get("net.net.0.weight")
+    if first_weight is None or not hasattr(first_weight, "shape"):
+        return None
+    try:
+        input_dim = int(first_weight.shape[1])
+        chunk_size = int(payload.get("chunk_size", 8))
+        action_dim = int(payload.get("action_dim", 5))
+    except (IndexError, TypeError, ValueError):
+        return None
+    state_dim = input_dim - chunk_size * action_dim
+    return state_dim if state_dim > 0 else None
+
+
+def _max_objects_from_state_dim(state_dim: int) -> int | None:
+    fixed_dim = 3 + 3 + len(INSTRUCTION_TYPES) + 3
+    variable_dim = int(state_dim) - fixed_dim
+    if variable_dim < 0 or variable_dim % 4 != 0:
+        return None
+    max_objects = variable_dim // 4
+    return max_objects if max_objects > 0 else None
+
+
+def _configure_checkpoint_compatible_object_slots(
+    args: argparse.Namespace,
+    payload: dict[str, Any],
+) -> None:
+    if args.max_objects is not None:
+        args.max_objects = max(1, int(args.max_objects))
+        return
+    state_dim = _checkpoint_state_dim(payload)
+    if state_dim is None:
+        return
+    max_objects = _max_objects_from_state_dim(state_dim)
+    if max_objects is not None:
+        args.max_objects = max_objects
 
 
 def _resolve_checkpoint(raw_path: str | Path) -> Path:
@@ -635,6 +704,7 @@ def main() -> int:
         mixed_precision=str(args.mixed_precision),
         device=torch.device(args.device),
     )
+    _configure_checkpoint_compatible_object_slots(args, runtime.payload)
 
     instruction_types = _resolve_instruction_types(config, args)
     all_results: list[EpisodeResult] = []
