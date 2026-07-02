@@ -287,7 +287,7 @@ training:
     args:
       max_train_steps: 250000
       max_env_steps: 64
-      num_envs_per_rank: 2
+      num_envs_per_rank: 4
       chunk_size: 8
       replan_every: 4
       image_size: 256
@@ -296,16 +296,16 @@ training:
       include_aux_camera: true
       mixed_precision: bf16
       smolvla_action_normalization: tanh
-      hidden_dim: 512
+      hidden_dim: 1024
       residual_scale: 0.35
       actor_lr: 3.0e-4
       critic_lr: 3.0e-4
       gamma: 0.98
       tau: 0.01
-      replay_size: 100000
-      batch_size: 256
-      update_after: 1024
-      updates_per_step: 1
+      replay_size: 200000
+      batch_size: 1024
+      update_after: 2048
+      updates_per_step: 2
       exploration_noise: 0.15
       min_exploration_noise: 0.03
       noise_decay_steps: 60000
@@ -323,8 +323,9 @@ training:
       randomize_ee_yaw: true
       ee_yaw_bounds: [-3.141592653589793, 3.141592653589793]
       save_every_steps: 5000
-      log_every_steps: 100
-      status_every_steps: 250
+      log_every_steps: 250
+      status_every_steps: 500
+      progress_refresh_seconds: 10.0
       progress: true
       progress_only: true
       distributed: true

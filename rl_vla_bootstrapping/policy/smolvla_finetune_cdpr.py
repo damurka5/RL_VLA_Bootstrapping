@@ -204,6 +204,9 @@ def _make_progress_bar(*, args: argparse.Namespace, ctx: DistributedContext, sta
         desc="smolvla-cdpr",
         unit="env-step",
         dynamic_ncols=True,
+        mininterval=float(args.progress_refresh_seconds),
+        maxinterval=max(float(args.progress_refresh_seconds) * 2.0, 10.0),
+        miniters=max(1, int(args.status_every_steps)),
         leave=True,
         file=sys.__stderr__,
     )
@@ -250,6 +253,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--distributed-backend", default="nccl")
     parser.add_argument("--mixed-precision", choices=("auto", "bf16", "fp16", "fp32"), default="bf16")
     _bool_arg(parser, "progress", default=True, help_text="Show a tqdm training progress bar on rank 0.")
+    parser.add_argument("--progress-refresh-seconds", type=float, default=10.0)
     _bool_arg(
         parser,
         "progress_only",
@@ -545,24 +549,34 @@ def main(argv: Sequence[str] | None = None) -> None:
         f"mixed_precision={args.mixed_precision})",
     )
     load_t0 = time.perf_counter()
-    runtime = load_smolvla_runtime(
-        checkpoint=str(args.base_checkpoint),
-        device=str(dist_ctx.device),
-        mixed_precision=str(args.mixed_precision),
-        image_size=int(args.image_size),
-        state_dim=int(args.state_dim),
-        image_feature_keys=None if args.image_feature_keys is None else tuple(args.image_feature_keys),
-        include_wrist=bool(args.include_wrist),
-        include_aux_camera=bool(args.include_aux_camera),
-        chunk_size=int(args.chunk_size),
-        action_dim=int(args.action_dim),
-        action_indices=None if args.smolvla_action_indices is None else tuple(int(v) for v in args.smolvla_action_indices),
-        action_normalization=str(args.smolvla_action_normalization),
-    )
+    with _silence_output(not dist_ctx.is_main):
+        runtime = load_smolvla_runtime(
+            checkpoint=str(args.base_checkpoint),
+            device=str(dist_ctx.device),
+            mixed_precision=str(args.mixed_precision),
+            image_size=int(args.image_size),
+            state_dim=int(args.state_dim),
+            image_feature_keys=None if args.image_feature_keys is None else tuple(args.image_feature_keys),
+            include_wrist=bool(args.include_wrist),
+            include_aux_camera=bool(args.include_aux_camera),
+            chunk_size=int(args.chunk_size),
+            action_dim=int(args.action_dim),
+            action_indices=None
+            if args.smolvla_action_indices is None
+            else tuple(int(v) for v in args.smolvla_action_indices),
+            action_normalization=str(args.smolvla_action_normalization),
+        )
     _log(
         dist_ctx,
         f"[smolvla-cdpr] Loaded SmolVLA in {time.perf_counter() - load_t0:.1f}s; "
         f"{runtime.device_summary()}; distributed_world_size={dist_ctx.world_size}",
+    )
+    _log(
+        dist_ctx,
+        "[smolvla-cdpr] Camera inputs: "
+        f"{runtime.obs_spec.image_feature_keys[0]}=overview, "
+        f"{runtime.obs_spec.image_feature_keys[1] if len(runtime.obs_spec.image_feature_keys) > 1 else 'camera2'}=wrist, "
+        f"{runtime.obs_spec.image_feature_keys[2] if len(runtime.obs_spec.image_feature_keys) > 2 else 'camera3'}=wrist/aux fallback",
     )
 
     slots: list[EnvSlot] = []
@@ -623,6 +637,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             "action_keys": ["x", "y", "z", "yaw", "gripper"],
             "chunk_size": int(args.chunk_size),
             "native_smolvla_chunk_size": int(getattr(getattr(runtime.policy, "config", None), "chunk_size", 50)),
+            "image_feature_keys": list(runtime.obs_spec.image_feature_keys),
+            "camera_mapping": {
+                "camera1": "CDPR overview camera",
+                "camera2": "CDPR wrist/end-effector camera",
+                "camera3": "aux image when provided, otherwise CDPR wrist/end-effector camera duplicate",
+            },
             "trainable_surface": "torch_residual_chunk_head_and_q_critics",
             "frozen_smolvla": True,
             "online_dense_rl": True,
