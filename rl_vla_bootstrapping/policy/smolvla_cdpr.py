@@ -429,7 +429,11 @@ class SmolVLARuntime:
             return_tensors="pt",
         )
         input_ids = tokens["input_ids"].to(self.device, non_blocking=True)
-        attention_mask = tokens["attention_mask"].to(self.device, non_blocking=True)
+        attention_mask = tokens["attention_mask"].to(
+            self.device,
+            dtype=torch.bool,
+            non_blocking=True,
+        )
         self._token_cache[normalized] = (input_ids, attention_mask)
         return input_ids, attention_mask
 

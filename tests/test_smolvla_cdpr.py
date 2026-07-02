@@ -12,9 +12,11 @@ from rl_vla_bootstrapping.policy.smolvla_cdpr import (
     DEFAULT_SMOLVLA_CHECKPOINT,
     SmolVLAActionAdapterSpec,
     SmolVLAObservationSpec,
+    SmolVLARuntime,
     adapt_cdpr_observations_to_smolvla_batch,
     adapt_smolvla_actions_to_cdpr,
     cdpr_state_from_observation,
+    torch,
 )
 
 
@@ -86,6 +88,34 @@ class SmolVLACDPRTests(unittest.TestCase):
         np.testing.assert_allclose(chunk[1], [0.6, 0.7, 0.8, 0.9, -1.0])
         np.testing.assert_allclose(chunk[2], chunk[1])
         np.testing.assert_allclose(chunk[3], chunk[1])
+
+    @unittest.skipIf(torch is None, "torch is not installed")
+    def test_tokenizer_attention_mask_is_bool_for_lerobot_attention(self):
+        class _Tokenizer:
+            def __call__(self, texts, **kwargs):
+                return {
+                    "input_ids": torch.ones((len(texts), 4), dtype=torch.long),
+                    "attention_mask": torch.ones((len(texts), 4), dtype=torch.long),
+                }
+
+        class _Policy:
+            class config:
+                tokenizer_max_length = 4
+
+        runtime = SmolVLARuntime(
+            policy=_Policy(),
+            checkpoint="unit",
+            device=torch.device("cpu"),
+            dtype=torch.float32,
+            obs_spec=SmolVLAObservationSpec(),
+            action_spec=SmolVLAActionAdapterSpec(),
+            tokenizer=_Tokenizer(),
+        )
+
+        input_ids, attention_mask = runtime._tokenize(["move left"])
+
+        self.assertEqual(input_ids.dtype, torch.long)
+        self.assertEqual(attention_mask.dtype, torch.bool)
 
     def test_smolvla_config_loads_and_builds_torchrun_plan(self):
         config_path = ROOT / "configs" / "examples" / "cdpr_smolvla_dense_2gpu.yaml"
