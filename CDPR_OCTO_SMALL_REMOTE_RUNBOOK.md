@@ -185,7 +185,7 @@ bash scripts/train_cdpr_octo_small_dense_remote.sh
 ```
 
 By default this launcher uses `CUDA_VISIBLE_DEVICES=0,1`, two torchrun ranks,
-`XLA_PYTHON_CLIENT_PREALLOCATE=true`, and `XLA_PYTHON_CLIENT_MEM_FRACTION=0.90`.
+`XLA_PYTHON_CLIENT_PREALLOCATE=true`, and `XLA_PYTHON_CLIENT_MEM_FRACTION=0.70`.
 Each rank sets `JAX_VISIBLE_DEVICES` to its local rank before importing JAX, so the
 frozen Octo runtime and Torch residual head are bound to one GPU per process.
 
@@ -197,12 +197,17 @@ pressure. The compiled MuJoCo model cache is enabled with
 
 This high VRAM allocation is mostly JAX preallocation. It proves the process owns the
 GPU memory, but it is not the same as full Octo model fine-tuning. The current training
-surface still freezes Octo and trains the Torch residual/readout head plus critics. If
-Torch reports OOM, retry with a lower fraction, for example:
+surface still freezes Octo and trains the Torch residual/readout head plus critics.
+Leave headroom for Torch DDP, NCCL, and EGL; if NCCL reports CUDA OOM during
+`_verify_params_across_processes`, JAX preallocated too much memory before DDP could
+allocate its communication buffers. Retry with a lower fraction:
 
 ```bash
-XLA_PYTHON_CLIENT_MEM_FRACTION=0.80 bash scripts/train_cdpr_octo_small_dense_remote.sh
+XLA_PYTHON_CLIENT_MEM_FRACTION=0.60 bash scripts/train_cdpr_octo_small_dense_remote.sh
 ```
+
+Once the run is stable, you can test a higher value such as `0.75`, but avoid `0.90`
+with DDP unless NCCL and Torch have already been initialized with enough free memory.
 
 Training output is progress-bar first. `RLVLA_CDPR_QUIET=1` and
 `RLVLA_CDPR_WRAPPER_LOG=0` suppress cached-wrapper and simulator reset chatter.
