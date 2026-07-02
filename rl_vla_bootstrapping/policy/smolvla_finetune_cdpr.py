@@ -319,6 +319,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--batch-size", type=int, default=256)
     parser.add_argument("--update-after", type=int, default=1024)
     parser.add_argument("--updates-per-step", type=int, default=1)
+    _bool_arg(
+        parser,
+        "materialize_optimizer_state",
+        default=False,
+        help_text="Allocate AdamW optimizer state immediately so high-memory GPU profiles are visible before the first update.",
+    )
     parser.add_argument("--exploration-noise", type=float, default=0.15)
     parser.add_argument("--noise-decay-steps", type=int, default=60000)
     parser.add_argument("--min-exploration-noise", type=float, default=0.03)
@@ -384,6 +390,19 @@ def _build_env(args: argparse.Namespace, *, seed: int):
 
 
 class SmolVLAResidualTrainer(ResidualTrainer):
+    def materialize_optimizer_state(self) -> None:
+        for optimizer in (self.actor_optim, self.critic_optim):
+            for group in optimizer.param_groups:
+                for param in group["params"]:
+                    if not param.requires_grad:
+                        continue
+                    state = optimizer.state[param]
+                    if state:
+                        continue
+                    state["step"] = torch.zeros((), dtype=torch.float32)
+                    state["exp_avg"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+                    state["exp_avg_sq"] = torch.zeros_like(param, memory_format=torch.preserve_format)
+
     def save(self, *, global_step: int, args: argparse.Namespace, latest: bool = False) -> Path:
         payload = {
             "policy_type": "smolvla_cdpr",
@@ -617,6 +636,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             resume_path = _resolve_checkpoint(args.resume_checkpoint)
             start_step = trainer.load(resume_path)
             _log(dist_ctx, f"[smolvla-cdpr] Resumed adapter checkpoint {resume_path} at step {start_step}")
+        elif bool(args.materialize_optimizer_state):
+            trainer.materialize_optimizer_state()
+            _log(
+                dist_ctx,
+                f"[smolvla-cdpr] Materialized AdamW optimizer state on {device}; "
+                f"gpu_metrics={_gpu_metrics(device)}",
+            )
 
         random.seed(int(rollout_seed))
         np.random.seed(int(rollout_seed))
@@ -645,6 +671,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             },
             "trainable_surface": "torch_residual_chunk_head_and_q_critics",
             "frozen_smolvla": True,
+            "materialized_optimizer_state": bool(args.materialize_optimizer_state),
             "online_dense_rl": True,
             "num_envs_per_rank": int(env_count),
             "distributed_world_size": int(dist_ctx.world_size),
