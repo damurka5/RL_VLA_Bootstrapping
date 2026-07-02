@@ -193,6 +193,9 @@ def _log(ctx: DistributedContext, message: str, *, progress: Any | None = None) 
 def _make_progress_bar(*, args: argparse.Namespace, ctx: DistributedContext, start_step: int) -> Any | None:
     if not bool(args.progress) or not ctx.is_main:
         return None
+    if not sys.__stderr__.isatty():
+        # Remote launchers pipe through tee; tqdm carriage-return redraws become noisy log text there.
+        return None
     if tqdm is None:
         if not bool(args.progress_only):
             print("[smolvla-cdpr] tqdm is unavailable; falling back to status prints.", flush=True)
