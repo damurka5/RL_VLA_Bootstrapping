@@ -8,6 +8,12 @@ EVAL_OUTPUT_ROOT="${EVAL_OUTPUT_ROOT:-$REPO_ROOT/runs/cdpr_smolvla_dense_evaluat
 EPISODES_PER_INSTRUCTION="${EPISODES_PER_INSTRUCTION:-20}"
 MOVE_TO_OBJECT_EPISODES_PER_TARGET="${MOVE_TO_OBJECT_EPISODES_PER_TARGET:-20}"
 MAX_RESET_ATTEMPTS="${MAX_RESET_ATTEMPTS:-10}"
+RECORD_SUCCESS_VIDEOS="${RECORD_SUCCESS_VIDEOS:-1}"
+RECORD_FAILURE_VIDEOS="${RECORD_FAILURE_VIDEOS:-1}"
+RECORD_ALL_SUCCESS_VIDEOS="${RECORD_ALL_SUCCESS_VIDEOS:-0}"
+VIDEO_COVERAGE="${VIDEO_COVERAGE:-instruction}"
+STRICT_VIDEO_VALIDATION="${STRICT_VIDEO_VALIDATION:-1}"
+REQUIRE_COMPLETE_VIDEO_COVERAGE="${REQUIRE_COMPLETE_VIDEO_COVERAGE:-0}"
 
 if [[ -z "${CHECKPOINT_DIR:-}" ]]; then
   latest_file="$(find "$REPO_ROOT/runs" -path '*/cdpr_smolvla_dense_2gpu_*/rl/latest.pt' -print | sort | tail -n 1 || true)"
@@ -63,13 +69,41 @@ cmd=(
   --max-scene-objects 4
   --stratify-move-to-object-targets
   --max-reset-attempts "$MAX_RESET_ATTEMPTS"
+  --video-coverage "$VIDEO_COVERAGE"
   --progress-only
 )
+
+if [[ "$RECORD_SUCCESS_VIDEOS" == "1" ]]; then
+  cmd+=(--record-success-videos)
+else
+  cmd+=(--no-record-success-videos)
+fi
+if [[ "$RECORD_FAILURE_VIDEOS" == "1" ]]; then
+  cmd+=(--record-failure-videos)
+else
+  cmd+=(--no-record-failure-videos)
+fi
+if [[ "$RECORD_ALL_SUCCESS_VIDEOS" == "1" ]]; then
+  cmd+=(--record-all-success-videos)
+else
+  cmd+=(--no-record-all-success-videos)
+fi
+if [[ "$STRICT_VIDEO_VALIDATION" == "1" ]]; then
+  cmd+=(--strict-video-validation)
+else
+  cmd+=(--no-strict-video-validation)
+fi
+if [[ "$REQUIRE_COMPLETE_VIDEO_COVERAGE" == "1" ]]; then
+  cmd+=(--require-complete-video-coverage)
+else
+  cmd+=(--no-require-complete-video-coverage)
+fi
 cmd+=("$@")
 
 {
   printf 'SmolVLA primitive evaluation output: %s\n' "$run_dir"
   printf 'Checkpoint: %s\n' "$CHECKPOINT_DIR"
+  printf 'Video output: %s\n' "$run_dir/videos"
   printf 'Baseline to beat: overall simple success > 16.7%%, move_to_object > 9%%\n'
   if command -v nvidia-smi >/dev/null 2>&1; then
     nvidia-smi --query-gpu=index,name,memory.total,driver_version --format=csv

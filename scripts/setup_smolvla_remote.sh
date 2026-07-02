@@ -60,6 +60,7 @@ conda run --no-capture-output -n "$ENV_NAME" python -m pip install \
   gym \
   gymnasium \
   huggingface_hub \
+  "imageio[ffmpeg]" \
   kornia \
   mujoco \
   opencv-python-headless \
