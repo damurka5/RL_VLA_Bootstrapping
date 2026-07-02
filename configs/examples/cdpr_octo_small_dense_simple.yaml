@@ -12,8 +12,8 @@ remote:
   env_vars:
     MUJOCO_GL: egl
     PYOPENGL_PLATFORM: egl
-    XLA_PYTHON_CLIENT_PREALLOCATE: "true"
-    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.70"
+    XLA_PYTHON_CLIENT_PREALLOCATE: "false"
+    XLA_PYTHON_CLIENT_MEM_FRACTION: "0.45"
     PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
     TF_FORCE_GPU_ALLOW_GROWTH: "true"
     TOKENIZERS_PARALLELISM: "false"
@@ -27,7 +27,7 @@ remote:
     - The pretrained Octo model is frozen; only the small Torch residual/readout head and critics are trained.
     - Action chunks are continuous 5D CDPR commands normalized to [-1, 1].
     - The remote launcher uses two torchrun ranks; each rank binds JAX and Torch to one visible GPU.
-    - XLA preallocation uses 70% of each visible GPU by default, leaving headroom for Torch DDP, NCCL, and EGL.
+    - XLA preallocation is disabled by default so Torch DDP, NCCL, and EGL can keep enough VRAM headroom.
 
 assets:
   bundles:
@@ -297,15 +297,15 @@ training:
       include_proprio: true
       octo_action_normalization: tanh
       use_dataset_action_unnorm: false
-      hidden_dim: 1024
+      hidden_dim: 512
       residual_scale: 0.35
       actor_lr: 3.0e-4
       critic_lr: 3.0e-4
       gamma: 0.98
       tau: 0.01
-      replay_size: 200000
-      batch_size: 512
-      update_after: 2048
+      replay_size: 100000
+      batch_size: 256
+      update_after: 1024
       updates_per_step: 1
       exploration_noise: 0.15
       min_exploration_noise: 0.03
