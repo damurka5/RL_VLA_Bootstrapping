@@ -34,6 +34,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     _resolve_wrapper_dir,
     _summarize_instruction_results,
     _summarize_instruction_text_results,
+    _temporary_env_vars,
     _validation_buckets,
     _write_episode_results_csv,
     _write_grouped_success_rate_csv,
@@ -373,112 +374,113 @@ def _run_bucket(
     max_steps: int,
     wrapper_dir: Path | None,
 ) -> list[EpisodeResult]:
-    env = _build_validation_env(
-        config=config,
-        instruction_type=bucket.instruction_type,
-        capture_frames=False,
-        max_steps=max_steps,
-        hold_steps=args.hold_steps,
-        seed=base_seed,
-        args=args,
-        wrapper_dir=wrapper_dir,
-    )
-    reset_options: dict[str, Any] = {"instruction_type": bucket.instruction_type}
-    if args.scene:
-        reset_options["scene"] = args.scene
-    if bucket.target_object:
-        reset_options["target_object"] = str(bucket.target_object)
-    if bucket.curriculum_shell is not None:
-        reset_options["curriculum_mode"] = "reverse_frontier"
-        reset_options["curriculum_shell"] = int(bucket.curriculum_shell)
+    with _temporary_env_vars(bucket.env_vars):
+        env = _build_validation_env(
+            config=config,
+            instruction_type=bucket.instruction_type,
+            capture_frames=False,
+            max_steps=max_steps,
+            hold_steps=args.hold_steps,
+            seed=base_seed,
+            args=args,
+            wrapper_dir=wrapper_dir,
+        )
+        reset_options: dict[str, Any] = {"instruction_type": bucket.instruction_type}
+        if args.scene:
+            reset_options["scene"] = args.scene
+        if bucket.target_object:
+            reset_options["target_object"] = str(bucket.target_object)
+        if bucket.curriculum_shell is not None:
+            reset_options["curriculum_mode"] = "reverse_frontier"
+            reset_options["curriculum_shell"] = int(bucket.curriculum_shell)
 
-    results: list[EpisodeResult] = []
-    try:
-        for episode_index in range(int(bucket.episodes)):
-            seed = _episode_seed(base_seed, instruction_index, episode_index)
-            obs, reset_info, reset_attempts = _reset_validation_env_with_retries(
-                env=env,
-                seed=seed,
-                reset_options=reset_options,
-                max_attempts=int(args.max_reset_attempts),
-                quiet=bool(args.progress_only),
-            )
-            layout = CDPRStateLayout.from_observation(obs)
-            canonical_instruction = str(reset_info.get("language_instruction", INSTRUCTION_TEXT[bucket.instruction_type]))
-            instruction = _render_policy_prompt(
-                prompt_template=bucket.prompt_template,
-                canonical_instruction=canonical_instruction,
-                reset_info=dict(reset_info),
-            )
-            setattr(env.sim, "language_instruction", instruction)
+        results: list[EpisodeResult] = []
+        try:
+            for episode_index in range(int(bucket.episodes)):
+                seed = _episode_seed(base_seed, instruction_index, episode_index)
+                obs, reset_info, reset_attempts = _reset_validation_env_with_retries(
+                    env=env,
+                    seed=seed,
+                    reset_options=reset_options,
+                    max_attempts=int(args.max_reset_attempts),
+                    quiet=bool(args.progress_only),
+                )
+                layout = CDPRStateLayout.from_observation(obs)
+                canonical_instruction = str(reset_info.get("language_instruction", INSTRUCTION_TEXT[bucket.instruction_type]))
+                instruction = _render_policy_prompt(
+                    prompt_template=bucket.prompt_template,
+                    canonical_instruction=canonical_instruction,
+                    reset_info=dict(reset_info),
+                )
+                setattr(env.sim, "language_instruction", instruction)
 
-            current_chunk = np.zeros((0, 5), dtype=np.float32)
-            chunk_index = 0
-            reward_total = 0.0
-            terminated = False
-            truncated = False
-            final_info = dict(reset_info)
-            policy_output_calls = 0
-            action_steps = 0
-            min_move_to_object_distance_xy = float("inf")
-            replan_every = max(1, min(int(args.replan_every), int(runtime.action_spec.chunk_size)))
+                current_chunk = np.zeros((0, 5), dtype=np.float32)
+                chunk_index = 0
+                reward_total = 0.0
+                terminated = False
+                truncated = False
+                final_info = dict(reset_info)
+                policy_output_calls = 0
+                action_steps = 0
+                min_move_to_object_distance_xy = float("inf")
+                replan_every = max(1, min(int(args.replan_every), int(runtime.action_spec.chunk_size)))
 
-            while not (terminated or truncated):
-                if chunk_index >= len(current_chunk) or chunk_index >= replan_every:
-                    current_chunk = runtime.predict_chunk(
-                        env=env,
-                        obs=obs,
-                        info=final_info,
-                        layout=layout,
-                        instruction=instruction,
-                    )
-                    chunk_index = 0
-                    policy_output_calls += 1
-                action = np.asarray(current_chunk[chunk_index], dtype=np.float32).reshape(5)
-                chunk_index += 1
-                if float(np.max(np.abs(action))) > float(args.action_guard) and not args.progress_only:
+                while not (terminated or truncated):
+                    if chunk_index >= len(current_chunk) or chunk_index >= replan_every:
+                        current_chunk = runtime.predict_chunk(
+                            env=env,
+                            obs=obs,
+                            info=final_info,
+                            layout=layout,
+                            instruction=instruction,
+                        )
+                        chunk_index = 0
+                        policy_output_calls += 1
+                    action = np.asarray(current_chunk[chunk_index], dtype=np.float32).reshape(5)
+                    chunk_index += 1
+                    if float(np.max(np.abs(action))) > float(args.action_guard) and not args.progress_only:
+                        print(
+                            f"[warn] [{bucket.log_label}] episode={episode_index:03d} "
+                            f"action max abs exceeded guard; clipping.",
+                            flush=True,
+                        )
+                    action = np.clip(action, -1.0, 1.0)
+                    obs, reward, terminated, truncated, final_info = env.step(action)
+                    reward_total += float(reward)
+                    action_steps += 1
+                    distance_xy_raw = final_info.get("move_to_object_validation_distance_xy")
+                    if distance_xy_raw is not None:
+                        try:
+                            min_move_to_object_distance_xy = min(min_move_to_object_distance_xy, float(distance_xy_raw))
+                        except (TypeError, ValueError):
+                            pass
+
+                result = _episode_result_from_final(
+                    episode_index=episode_index,
+                    seed=seed,
+                    bucket=bucket,
+                    instruction=instruction,
+                    canonical_instruction=canonical_instruction,
+                    reset_info=reset_info,
+                    final_info=final_info,
+                    reward_total=reward_total,
+                    terminated=terminated,
+                    truncated=truncated,
+                    policy_output_calls=policy_output_calls,
+                    action_steps=action_steps,
+                    reset_attempts=reset_attempts,
+                    min_move_to_object_distance_xy=min_move_to_object_distance_xy,
+                )
+                results.append(result)
+                if not args.progress_only and (episode_index + 1) % max(1, int(args.log_every_episode)) == 0:
+                    successes = sum(item.success for item in results)
                     print(
-                        f"[warn] [{bucket.log_label}] episode={episode_index:03d} "
-                        f"action max abs exceeded guard; clipping.",
+                        f"[octo-eval] {bucket.log_label} {episode_index + 1}/{bucket.episodes} "
+                        f"success={successes}/{len(results)}",
                         flush=True,
                     )
-                action = np.clip(action, -1.0, 1.0)
-                obs, reward, terminated, truncated, final_info = env.step(action)
-                reward_total += float(reward)
-                action_steps += 1
-                distance_xy_raw = final_info.get("move_to_object_validation_distance_xy")
-                if distance_xy_raw is not None:
-                    try:
-                        min_move_to_object_distance_xy = min(min_move_to_object_distance_xy, float(distance_xy_raw))
-                    except (TypeError, ValueError):
-                        pass
-
-            result = _episode_result_from_final(
-                episode_index=episode_index,
-                seed=seed,
-                bucket=bucket,
-                instruction=instruction,
-                canonical_instruction=canonical_instruction,
-                reset_info=reset_info,
-                final_info=final_info,
-                reward_total=reward_total,
-                terminated=terminated,
-                truncated=truncated,
-                policy_output_calls=policy_output_calls,
-                action_steps=action_steps,
-                reset_attempts=reset_attempts,
-                min_move_to_object_distance_xy=min_move_to_object_distance_xy,
-            )
-            results.append(result)
-            if not args.progress_only and (episode_index + 1) % max(1, int(args.log_every_episode)) == 0:
-                successes = sum(item.success for item in results)
-                print(
-                    f"[octo-eval] {bucket.log_label} {episode_index + 1}/{bucket.episodes} "
-                    f"success={successes}/{len(results)}",
-                    flush=True,
-                )
-    finally:
-        env.close()
+        finally:
+            env.close()
     return results
 
 
