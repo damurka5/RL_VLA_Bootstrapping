@@ -1200,8 +1200,9 @@ def _build_validation_env(
     control_spec = _control_spec_from_config(config, hold_steps)
     desk_textures_dir, _ = _resolve_desk_textures_dir(config)
     metadata = dict(getattr(config.task, "metadata", {}) or {})
+    max_objects = getattr(args, "max_objects", None)
 
-    return CDPRLanguageRLEnv(
+    env_kwargs = dict(
         catalog_path=config.resolve_path(config.simulation.catalog_path),
         max_steps=int(max_steps),
         action_step_xyz=float(control_spec.action_step_xyz),
@@ -1229,6 +1230,9 @@ def _build_validation_env(
         wrapper_dir=wrapper_dir,
         seed=seed,
     )
+    if max_objects is not None:
+        env_kwargs["max_objects"] = max(1, int(max_objects))
+    return CDPRLanguageRLEnv(**env_kwargs)
 
 
 def _gripper_range(sim: Any, config: Any) -> tuple[float, float]:

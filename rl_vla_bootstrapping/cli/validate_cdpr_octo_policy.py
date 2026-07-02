@@ -9,9 +9,11 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+_TORCH_IMPORT_ERROR: Exception | None = None
 try:
     import torch
-except Exception:  # pragma: no cover - optional local dependency
+except Exception as exc:  # pragma: no cover - optional local dependency
+    _TORCH_IMPORT_ERROR = exc
     torch = None
 
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
@@ -51,7 +53,7 @@ from rl_vla_bootstrapping.policy.octo_cdpr_adapter import (
     load_octo_runtime,
 )
 from rl_vla_bootstrapping.policy.octo_finetune_cdpr import ResidualChunkActor
-from robots.cdpr.cdpr_dataset.rl_instruction_tasks import INSTRUCTION_TEXT
+from robots.cdpr.cdpr_dataset.rl_instruction_tasks import INSTRUCTION_TEXT, INSTRUCTION_TYPES
 
 
 @dataclass(frozen=True)
@@ -176,6 +178,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--multi-object-scenes", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--min-scene-objects", type=int, default=3)
     parser.add_argument("--max-scene-objects", type=int, default=4)
+    parser.add_argument(
+        "--max-objects",
+        type=int,
+        default=None,
+        help="Maximum object slots in the CDPR observation. Defaults to the checkpoint-compatible value.",
+    )
     parser.add_argument("--include-synonyms", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--synonyms-per-instruction", type=int, default=2)
     parser.add_argument("--synonym-shells", choices=("normal", "all"), default="normal")
@@ -197,10 +205,59 @@ def _default_device() -> str:
 
 def _require_torch() -> None:
     if torch is None:
+        detail = f" Original import error: {_TORCH_IMPORT_ERROR!r}" if _TORCH_IMPORT_ERROR is not None else ""
         raise RuntimeError(
             "Octo CDPR validation requires PyTorch to load the residual adapter checkpoint. "
-            "Install it in the remote `octo` environment before running evaluation."
+            f"Install it in the remote `octo` environment before running evaluation.{detail}"
         )
+
+
+def _checkpoint_state_dim(payload: dict[str, Any]) -> int | None:
+    raw_state_dim = payload.get("state_dim")
+    if raw_state_dim is not None:
+        try:
+            return int(raw_state_dim)
+        except (TypeError, ValueError):
+            pass
+
+    actor = payload.get("actor")
+    if not isinstance(actor, dict):
+        return None
+    first_weight = actor.get("net.net.0.weight")
+    if first_weight is None or not hasattr(first_weight, "shape"):
+        return None
+    try:
+        input_dim = int(first_weight.shape[1])
+        chunk_size = int(payload.get("chunk_size", 4))
+        action_dim = int(payload.get("action_dim", 5))
+    except (IndexError, TypeError, ValueError):
+        return None
+    state_dim = input_dim - chunk_size * action_dim
+    return state_dim if state_dim > 0 else None
+
+
+def _max_objects_from_state_dim(state_dim: int) -> int | None:
+    fixed_dim = 3 + 3 + len(INSTRUCTION_TYPES) + 3
+    variable_dim = int(state_dim) - fixed_dim
+    if variable_dim < 0 or variable_dim % 4 != 0:
+        return None
+    max_objects = variable_dim // 4
+    return max_objects if max_objects > 0 else None
+
+
+def _configure_checkpoint_compatible_object_slots(
+    args: argparse.Namespace,
+    payload: dict[str, Any],
+) -> None:
+    if args.max_objects is not None:
+        args.max_objects = max(1, int(args.max_objects))
+        return
+    state_dim = _checkpoint_state_dim(payload)
+    if state_dim is None:
+        return
+    max_objects = _max_objects_from_state_dim(state_dim)
+    if max_objects is not None:
+        args.max_objects = max_objects
 
 
 def _resolve_checkpoint(raw_path: str | Path) -> Path:
@@ -526,6 +583,7 @@ def main() -> int:
         use_dataset_action_unnorm=bool(args.use_dataset_action_unnorm),
         device=torch.device(args.device),
     )
+    _configure_checkpoint_compatible_object_slots(args, runtime.payload)
 
     instruction_types = _resolve_instruction_types(config, args)
     all_results: list[EpisodeResult] = []
