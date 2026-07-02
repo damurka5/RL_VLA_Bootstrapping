@@ -1,0 +1,835 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import contextlib
+import json
+import os
+import random
+import sys
+import time
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Sequence
+
+import numpy as np
+
+_TORCH_IMPORT_ERROR: Exception | None = None
+try:
+    import torch
+    from torch import nn
+except Exception as exc:  # pragma: no cover - optional local dependency
+    _TORCH_IMPORT_ERROR = exc
+    torch = None
+    nn = None
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except Exception:  # pragma: no cover - optional dependency
+    SummaryWriter = None
+
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - optional dependency
+    tqdm = None
+
+from rl_vla_bootstrapping.policy.octo_cdpr_adapter import CDPRStateLayout
+from rl_vla_bootstrapping.policy.octo_finetune_cdpr import ReplayBuffer, ResidualTrainer
+from rl_vla_bootstrapping.policy.smolvla_cdpr import (
+    DEFAULT_SMOLVLA_CHECKPOINT,
+    SmolVLAActionAdapterSpec,
+    load_smolvla_runtime,
+)
+
+
+def _bool_arg(
+    parser: argparse.ArgumentParser,
+    name: str,
+    *,
+    default: bool,
+    help_text: str,
+) -> None:
+    parser.add_argument(
+        f"--{name.replace('_', '-')}",
+        dest=name,
+        action=argparse.BooleanOptionalAction,
+        default=default,
+        help=help_text,
+    )
+
+
+def _default_device() -> str:
+    if torch is not None and torch.cuda.is_available():
+        return "cuda"
+    return "cpu"
+
+
+def _require_torch() -> None:
+    if torch is None or nn is None:
+        detail = f" Original import error: {_TORCH_IMPORT_ERROR!r}" if _TORCH_IMPORT_ERROR is not None else ""
+        raise RuntimeError(
+            "SmolVLA CDPR adapter training requires PyTorch. Install it in the remote "
+            f"`smolvla` environment before executing the RL stage.{detail}"
+        )
+
+
+@dataclass(frozen=True)
+class DistributedContext:
+    rank: int = 0
+    local_rank: int = 0
+    world_size: int = 1
+    enabled: bool = False
+    device: str = "cpu"
+
+    @property
+    def is_main(self) -> bool:
+        return int(self.rank) == 0
+
+
+@dataclass
+class EnvSlot:
+    env: Any
+    obs: dict[str, np.ndarray]
+    info: dict[str, Any]
+    state: np.ndarray
+    instruction: str
+    prior_chunk: np.ndarray | None = None
+    action_chunk: np.ndarray | None = None
+    chunk_idx: int = 0
+    episode: int = 0
+    episode_reward: float = 0.0
+    episode_length: int = 0
+
+
+def _env_int(name: str, default: int) -> int:
+    raw = os.environ.get(name)
+    if raw is None or str(raw).strip() == "":
+        return int(default)
+    try:
+        return int(raw)
+    except ValueError:
+        return int(default)
+
+
+def _configure_distributed(args: argparse.Namespace) -> DistributedContext:
+    _require_torch()
+    world_size = max(1, _env_int("WORLD_SIZE", 1))
+    rank = max(0, _env_int("RANK", 0))
+    local_rank = max(0, _env_int("LOCAL_RANK", 0))
+    enabled = bool(args.distributed and world_size > 1)
+
+    requested_device = str(args.device)
+    cuda_requested = requested_device.startswith("cuda")
+    device = requested_device
+    if torch.cuda.is_available() and cuda_requested:
+        if enabled:
+            local_rank = local_rank % max(1, torch.cuda.device_count())
+            torch.cuda.set_device(local_rank)
+            device = f"cuda:{local_rank}"
+        elif requested_device == "cuda":
+            device = "cuda:0"
+            torch.cuda.set_device(0)
+    args.device = device
+
+    if enabled:
+        import torch.distributed as dist
+
+        if not dist.is_initialized():
+            backend = str(args.distributed_backend)
+            if backend == "nccl" and not torch.cuda.is_available():
+                backend = "gloo"
+            dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+
+    return DistributedContext(
+        rank=rank,
+        local_rank=local_rank,
+        world_size=world_size,
+        enabled=enabled,
+        device=device,
+    )
+
+
+def _destroy_distributed(ctx: DistributedContext) -> None:
+    if not ctx.enabled:
+        return
+    try:
+        import torch.distributed as dist
+
+        if dist.is_available() and dist.is_initialized():
+            dist.destroy_process_group()
+    except Exception:
+        pass
+
+
+def _rank_seed(seed: int, ctx: DistributedContext) -> int:
+    return int(seed) + int(ctx.rank) * 100_003
+
+
+def _set_quiet_env(args: argparse.Namespace, ctx: DistributedContext) -> None:
+    if bool(args.progress_only) or not ctx.is_main:
+        os.environ["RLVLA_CDPR_QUIET"] = "1"
+        os.environ["RLVLA_CDPR_WRAPPER_LOG"] = "0"
+
+
+@contextlib.contextmanager
+def _silence_output(enabled: bool):
+    if not enabled:
+        yield
+        return
+    with open(os.devnull, "w", encoding="utf-8") as devnull:
+        with contextlib.redirect_stdout(devnull), contextlib.redirect_stderr(devnull):
+            yield
+
+
+def _log(ctx: DistributedContext, message: str, *, progress: Any | None = None) -> None:
+    if not ctx.is_main:
+        return
+    if progress is not None:
+        progress.write(message)
+    else:
+        print(message, flush=True)
+
+
+def _make_progress_bar(*, args: argparse.Namespace, ctx: DistributedContext, start_step: int) -> Any | None:
+    if not bool(args.progress) or not ctx.is_main:
+        return None
+    if tqdm is None:
+        if not bool(args.progress_only):
+            print("[smolvla-cdpr] tqdm is unavailable; falling back to status prints.", flush=True)
+        return None
+    total = max(0, int(args.max_train_steps) - int(start_step))
+    return tqdm(
+        total=total,
+        initial=0,
+        desc="smolvla-cdpr",
+        unit="env-step",
+        dynamic_ncols=True,
+        leave=True,
+        file=sys.__stderr__,
+    )
+
+
+def _progress_postfix(
+    progress: Any | None,
+    *,
+    episode: int,
+    episode_length: int,
+    episode_reward: float,
+    reward: float,
+    buffer_size: int,
+    instruction: str,
+    world_size: int,
+    num_envs: int,
+) -> None:
+    if progress is None:
+        return
+    progress.set_postfix(
+        ep=int(episode),
+        ep_len=int(episode_length),
+        ep_reward=f"{float(episode_reward):+.3f}",
+        reward=f"{float(reward):+.3f}",
+        buffer=int(buffer_size),
+        gpus=int(world_size),
+        envs=int(num_envs),
+        instr=str(instruction)[:24],
+    )
+
+
+def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Train a lightweight CDPR residual/readout adapter around frozen pretrained SmolVLA."
+    )
+    parser.add_argument("--config", default=None, help="Optional project config path for manifest provenance.")
+    parser.add_argument("--base-checkpoint", default=DEFAULT_SMOLVLA_CHECKPOINT)
+    parser.add_argument("--run-root-dir", default="runs")
+    parser.add_argument("--run-id", default="smolvla_cdpr_rl")
+    parser.add_argument("--resume-checkpoint", default=None)
+    parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--device", default=_default_device())
+    _bool_arg(parser, "distributed", default=True, help_text="Enable torch.distributed under torchrun.")
+    parser.add_argument("--distributed-backend", default="nccl")
+    parser.add_argument("--mixed-precision", choices=("auto", "bf16", "fp16", "fp32"), default="bf16")
+    _bool_arg(parser, "progress", default=True, help_text="Show a tqdm training progress bar on rank 0.")
+    _bool_arg(
+        parser,
+        "progress_only",
+        default=False,
+        help_text="Suppress CDPR wrapper/simulator chatter and leave only progress plus trainer logs.",
+    )
+
+    parser.add_argument("--catalog-path", default=None)
+    parser.add_argument("--cdpr-dataset-root", default=None)
+    parser.add_argument("--cdpr-mujoco-root", default=None)
+    parser.add_argument("--desk-textures-dir", default=None)
+    parser.add_argument("--desk-geom-regex", default=r"(table|desk|workbench|counter|surface)")
+    parser.add_argument("--desk-texrepeat", nargs=2, type=int, default=(20, 20))
+    parser.add_argument("--allowed-objects", nargs="+", default=None)
+    parser.add_argument("--instruction-types", nargs="+", default=None)
+    parser.add_argument("--max-objects", type=int, default=4)
+    parser.add_argument("--num-envs-per-rank", type=int, default=2)
+
+    parser.add_argument("--max-env-steps", type=int, default=64)
+    parser.add_argument("--max-train-steps", type=int, default=250000)
+    parser.add_argument("--action-step-xyz", type=float, default=0.015)
+    parser.add_argument("--action-step-yaw", type=float, default=0.08)
+    parser.add_argument("--action-step-gripper", type=float, default=0.05)
+    parser.add_argument("--hold-steps", type=int, default=6)
+    parser.add_argument("--move-distance", type=float, default=0.40)
+    parser.add_argument("--lift-distance", type=float, default=0.10)
+    _bool_arg(parser, "lock_non_commanded_axes", default=True, help_text="Forwarded to the CDPR env.")
+    parser.add_argument("--lock-non-commanded-axes-threshold", type=float, default=0.05)
+    _bool_arg(parser, "randomize_ee_start", default=True, help_text="Forwarded to the CDPR env.")
+    parser.add_argument("--ee-start-x-bounds", nargs=2, type=float, default=(-0.20, 0.20))
+    parser.add_argument("--ee-start-y-bounds", nargs=2, type=float, default=(-0.20, 0.20))
+    parser.add_argument("--ee-start-z", type=float, default=None)
+    _bool_arg(parser, "randomize_ee_yaw", default=True, help_text="Forwarded to the CDPR env.")
+    parser.add_argument("--ee-yaw-bounds", nargs=2, type=float, default=(-3.141592653589793, 3.141592653589793))
+    _bool_arg(parser, "capture_frames", default=False, help_text="Forwarded to the CDPR env.")
+    _bool_arg(parser, "wrapper_cleanup", default=False, help_text="Forwarded to the CDPR env.")
+    _bool_arg(parser, "use_wrapper_cache", default=True, help_text="Forwarded to the CDPR env.")
+    _bool_arg(
+        parser,
+        "reuse_existing_wrapper_variants",
+        default=True,
+        help_text="Prefer existing compatible wrapper variants.",
+    )
+
+    parser.add_argument("--image-size", type=int, default=256)
+    parser.add_argument("--state-dim", type=int, default=6)
+    parser.add_argument("--image-feature-keys", nargs="+", default=None)
+    _bool_arg(parser, "include_wrist", default=True, help_text="Include the CDPR wrist camera.")
+    _bool_arg(parser, "include_aux_camera", default=True, help_text="Fill SmolVLA's third camera input.")
+    parser.add_argument("--chunk-size", type=int, default=8)
+    parser.add_argument("--replan-every", type=int, default=4)
+    parser.add_argument("--action-dim", type=int, default=5)
+    parser.add_argument("--smolvla-action-indices", nargs=5, type=int, default=None)
+    parser.add_argument("--smolvla-action-normalization", choices=("tanh", "clip", "none"), default="tanh")
+
+    parser.add_argument("--hidden-dim", type=int, default=512)
+    parser.add_argument("--residual-scale", type=float, default=0.35)
+    parser.add_argument("--actor-lr", type=float, default=3.0e-4)
+    parser.add_argument("--critic-lr", type=float, default=3.0e-4)
+    parser.add_argument("--gamma", type=float, default=0.98)
+    parser.add_argument("--tau", type=float, default=0.01)
+    parser.add_argument("--replay-size", type=int, default=100000)
+    parser.add_argument("--batch-size", type=int, default=256)
+    parser.add_argument("--update-after", type=int, default=1024)
+    parser.add_argument("--updates-per-step", type=int, default=1)
+    parser.add_argument("--exploration-noise", type=float, default=0.15)
+    parser.add_argument("--noise-decay-steps", type=int, default=60000)
+    parser.add_argument("--min-exploration-noise", type=float, default=0.03)
+    parser.add_argument("--action-l2", type=float, default=1.0e-3)
+    parser.add_argument("--save-every-steps", type=int, default=5000)
+    parser.add_argument("--log-every-steps", type=int, default=100)
+    parser.add_argument("--status-every-steps", type=int, default=250)
+    return parser.parse_args(argv)
+
+
+def _set_seed(seed: int) -> None:
+    random.seed(int(seed))
+    np.random.seed(int(seed))
+    _require_torch()
+    torch.manual_seed(int(seed))
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(int(seed))
+
+
+def _make_run_dir(root: str | Path, run_id: str) -> Path:
+    path = Path(root).expanduser().resolve() / str(run_id)
+    path.mkdir(parents=True, exist_ok=True)
+    return path
+
+
+def _write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.write_text(json.dumps(payload, indent=2, sort_keys=True, default=str), encoding="utf-8")
+
+
+def _build_env(args: argparse.Namespace, *, seed: int):
+    from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv
+
+    return CDPRLanguageRLEnv(
+        catalog_path=args.catalog_path,
+        max_steps=args.max_env_steps,
+        max_objects=args.max_objects,
+        action_step_xyz=args.action_step_xyz,
+        action_step_yaw=args.action_step_yaw,
+        action_step_gripper=args.action_step_gripper,
+        hold_steps=args.hold_steps,
+        lock_non_commanded_axes=args.lock_non_commanded_axes,
+        lock_non_commanded_axes_threshold=args.lock_non_commanded_axes_threshold,
+        randomize_ee_start=args.randomize_ee_start,
+        ee_start_x_bounds=args.ee_start_x_bounds,
+        ee_start_y_bounds=args.ee_start_y_bounds,
+        ee_start_z=args.ee_start_z,
+        randomize_ee_yaw=args.randomize_ee_yaw,
+        ee_yaw_bounds=args.ee_yaw_bounds,
+        move_distance=args.move_distance,
+        lift_distance=args.lift_distance,
+        capture_frames=args.capture_frames,
+        record_trajectory=args.capture_frames,
+        instruction_types=args.instruction_types,
+        allowed_objects=args.allowed_objects,
+        desk_textures_dir=args.desk_textures_dir,
+        desk_geom_regex=args.desk_geom_regex,
+        desk_texrepeat=args.desk_texrepeat,
+        wrapper_cleanup=args.wrapper_cleanup,
+        use_wrapper_cache=args.use_wrapper_cache,
+        reuse_existing_wrapper_variants=args.reuse_existing_wrapper_variants,
+        seed=int(seed),
+    )
+
+
+class SmolVLAResidualTrainer(ResidualTrainer):
+    def save(self, *, global_step: int, args: argparse.Namespace, latest: bool = False) -> Path:
+        payload = {
+            "policy_type": "smolvla_cdpr",
+            "base_checkpoint": str(args.base_checkpoint),
+            "global_step": int(global_step),
+            "gradient_step": int(self.gradient_step),
+            "state_dim": int(self.state_dim),
+            "action_dim": int(self.action_dim),
+            "chunk_size": int(self.chunk_size),
+            "residual_scale": float(args.residual_scale),
+            "hidden_dim": int(args.hidden_dim),
+            "actor": self._unwrap(self.actor).state_dict(),
+            "actor_target": self.actor_target.state_dict(),
+            "critic1": self._unwrap(self.critic1).state_dict(),
+            "critic2": self._unwrap(self.critic2).state_dict(),
+            "critic1_target": self.critic1_target.state_dict(),
+            "critic2_target": self.critic2_target.state_dict(),
+            "actor_optim": self.actor_optim.state_dict(),
+            "critic_optim": self.critic_optim.state_dict(),
+            "args": vars(args),
+        }
+        if latest:
+            output_path = self.run_dir / "latest.pt"
+        else:
+            step_dir = self.run_dir / f"step_{int(global_step):07d}"
+            step_dir.mkdir(parents=True, exist_ok=True)
+            output_path = step_dir / "smolvla_cdpr_adapter.pt"
+        torch.save(payload, output_path)
+        if not latest:
+            torch.save(payload, self.run_dir / "latest.pt")
+        return output_path
+
+
+def _resolve_checkpoint(raw: str | Path) -> Path:
+    path = Path(raw).expanduser().resolve()
+    if path.is_file():
+        return path
+    for name in ("smolvla_cdpr_adapter.pt", "latest.pt"):
+        candidate = path / name
+        if candidate.is_file():
+            return candidate
+    raise FileNotFoundError(f"Could not find a SmolVLA CDPR checkpoint in {path}")
+
+
+def _safe_instruction(info: dict[str, Any]) -> str:
+    return str(info.get("language_instruction") or info.get("instruction_type") or "move left")
+
+
+def _exploration_noise(args: argparse.Namespace, global_step: int) -> float:
+    start = float(args.exploration_noise)
+    end = float(args.min_exploration_noise)
+    decay_steps = max(1, int(args.noise_decay_steps))
+    alpha = min(1.0, max(0.0, float(global_step) / decay_steps))
+    return float(start + alpha * (end - start))
+
+
+def _log_scalars(writer: Any, metrics: dict[str, float], step: int) -> None:
+    if writer is None:
+        return
+    for key, value in metrics.items():
+        writer.add_scalar(key, float(value), int(step))
+    writer.flush()
+
+
+def _gpu_metrics(device: torch.device) -> dict[str, float]:
+    if device.type != "cuda":
+        return {}
+    idx = int(device.index or torch.cuda.current_device())
+    return {
+        "gpu_allocated_gb": float(torch.cuda.memory_allocated(idx) / (1024**3)),
+        "gpu_reserved_gb": float(torch.cuda.memory_reserved(idx) / (1024**3)),
+        "gpu_max_allocated_gb": float(torch.cuda.max_memory_allocated(idx) / (1024**3)),
+    }
+
+
+def _select_chunks(
+    trainer: SmolVLAResidualTrainer,
+    *,
+    states: Sequence[np.ndarray],
+    priors: np.ndarray,
+    device: torch.device,
+) -> np.ndarray:
+    state_t = torch.as_tensor(np.stack(states, axis=0), dtype=torch.float32, device=device)
+    prior_t = torch.as_tensor(priors, dtype=torch.float32, device=device)
+    with torch.no_grad():
+        chunks = trainer.actor(state_t, prior_t).detach().to(dtype=torch.float32).cpu().numpy()
+    return np.clip(chunks, -1.0, 1.0).astype(np.float32, copy=False)
+
+
+def _refresh_policy_chunks(
+    *,
+    runtime: Any,
+    trainer: SmolVLAResidualTrainer,
+    slots: list[EnvSlot],
+    indices: Sequence[int],
+    device: torch.device,
+    progress_only: bool,
+) -> None:
+    if not indices:
+        return
+    selected = [slots[idx] for idx in indices]
+    with _silence_output(bool(progress_only)):
+        priors = runtime.sample_cdpr_chunks_from_envs(
+            envs=[slot.env for slot in selected],
+            observations=[slot.obs for slot in selected],
+            infos=[slot.info for slot in selected],
+            instructions=[slot.instruction for slot in selected],
+        )
+    chunks = _select_chunks(
+        trainer,
+        states=[slot.state for slot in selected],
+        priors=priors,
+        device=device,
+    )
+    for local_idx, slot_idx in enumerate(indices):
+        slots[slot_idx].prior_chunk = priors[local_idx]
+        slots[slot_idx].action_chunk = chunks[local_idx]
+        slots[slot_idx].chunk_idx = 0
+
+
+def _reset_slot(
+    *,
+    slot: EnvSlot,
+    layout: CDPRStateLayout,
+    seed: int | None = None,
+    progress_only: bool,
+) -> None:
+    with _silence_output(bool(progress_only)):
+        obs, info = slot.env.reset(seed=seed)
+    slot.obs = obs
+    slot.info = dict(info)
+    slot.state = layout.flatten(obs)
+    slot.instruction = _safe_instruction(slot.info)
+    slot.prior_chunk = None
+    slot.action_chunk = None
+    slot.chunk_idx = 0
+    slot.episode_reward = 0.0
+    slot.episode_length = 0
+
+
+def main(argv: Sequence[str] | None = None) -> None:
+    args = parse_args(argv)
+    _require_torch()
+    dist_ctx = _configure_distributed(args)
+    _set_quiet_env(args, dist_ctx)
+    _set_seed(int(args.seed))
+    rollout_seed = _rank_seed(int(args.seed), dist_ctx)
+
+    run_dir = _make_run_dir(args.run_root_dir, args.run_id)
+    if dist_ctx.is_main:
+        _write_json(run_dir / "config.json", vars(args))
+    writer = (
+        SummaryWriter(log_dir=str(run_dir / "tensorboard"))
+        if dist_ctx.is_main and SummaryWriter is not None
+        else None
+    )
+
+    startup_t0 = time.perf_counter()
+    _log(
+        dist_ctx,
+        f"[smolvla-cdpr] Loading SmolVLA checkpoint: {args.base_checkpoint} "
+        f"(rank={dist_ctx.rank}, world_size={dist_ctx.world_size}, device={dist_ctx.device}, "
+        f"mixed_precision={args.mixed_precision})",
+    )
+    load_t0 = time.perf_counter()
+    runtime = load_smolvla_runtime(
+        checkpoint=str(args.base_checkpoint),
+        device=str(dist_ctx.device),
+        mixed_precision=str(args.mixed_precision),
+        image_size=int(args.image_size),
+        state_dim=int(args.state_dim),
+        image_feature_keys=None if args.image_feature_keys is None else tuple(args.image_feature_keys),
+        include_wrist=bool(args.include_wrist),
+        include_aux_camera=bool(args.include_aux_camera),
+        chunk_size=int(args.chunk_size),
+        action_dim=int(args.action_dim),
+        action_indices=None if args.smolvla_action_indices is None else tuple(int(v) for v in args.smolvla_action_indices),
+        action_normalization=str(args.smolvla_action_normalization),
+    )
+    _log(
+        dist_ctx,
+        f"[smolvla-cdpr] Loaded SmolVLA in {time.perf_counter() - load_t0:.1f}s; "
+        f"{runtime.device_summary()}; distributed_world_size={dist_ctx.world_size}",
+    )
+
+    slots: list[EnvSlot] = []
+    progress = None
+    try:
+        env_count = max(1, int(args.num_envs_per_rank))
+        _log(dist_ctx, f"[smolvla-cdpr] Building {env_count} CDPR env(s) on rank {dist_ctx.rank}...")
+        env_t0 = time.perf_counter()
+        for env_idx in range(env_count):
+            seed = int(rollout_seed) + env_idx * 997
+            with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+                env = _build_env(args, seed=seed)
+                obs, info = env.reset(seed=seed)
+            layout = CDPRStateLayout.from_observation(obs) if env_idx == 0 else layout
+            slots.append(
+                EnvSlot(
+                    env=env,
+                    obs=obs,
+                    info=dict(info),
+                    state=layout.flatten(obs),
+                    instruction=_safe_instruction(dict(info)),
+                )
+            )
+        _log(dist_ctx, f"[smolvla-cdpr] Built env batch in {time.perf_counter() - env_t0:.1f}s")
+
+        device = torch.device(args.device)
+        trainer = SmolVLAResidualTrainer(
+            args=args,
+            state_dim=layout.state_dim,
+            action_dim=int(args.action_dim),
+            chunk_size=int(args.chunk_size),
+            run_dir=run_dir,
+            device=device,
+            distributed=dist_ctx,
+        )
+        start_step = 0
+        if args.resume_checkpoint:
+            resume_path = _resolve_checkpoint(args.resume_checkpoint)
+            start_step = trainer.load(resume_path)
+            _log(dist_ctx, f"[smolvla-cdpr] Resumed adapter checkpoint {resume_path} at step {start_step}")
+
+        random.seed(int(rollout_seed))
+        np.random.seed(int(rollout_seed))
+        torch.manual_seed(int(rollout_seed))
+
+        buffer = ReplayBuffer(
+            capacity=int(args.replay_size),
+            state_dim=layout.state_dim,
+            chunk_size=int(args.chunk_size),
+            action_dim=int(args.action_dim),
+        )
+        metrics_path = run_dir / "metrics.jsonl"
+        manifest = {
+            "policy_type": "smolvla_cdpr",
+            "base_checkpoint": str(args.base_checkpoint),
+            "run_dir": run_dir.as_posix(),
+            "config": str(args.config or ""),
+            "action_keys": ["x", "y", "z", "yaw", "gripper"],
+            "chunk_size": int(args.chunk_size),
+            "native_smolvla_chunk_size": int(getattr(getattr(runtime.policy, "config", None), "chunk_size", 50)),
+            "trainable_surface": "torch_residual_chunk_head_and_q_critics",
+            "frozen_smolvla": True,
+            "online_dense_rl": True,
+            "num_envs_per_rank": int(env_count),
+            "distributed_world_size": int(dist_ctx.world_size),
+            "rank_device": str(dist_ctx.device),
+            "success_threshold_to_beat_openvla": {
+                "overall_simple_success_rate": 0.167,
+                "move_to_object_success_rate": 0.09,
+            },
+            "unavoidable_cpu_work": [
+                "MuJoCo simulation stepping and camera readback",
+                "short language tokenization cache misses",
+            ],
+        }
+        if dist_ctx.is_main:
+            _write_json(run_dir / "smolvla_manifest.json", manifest)
+
+        global_step = int(start_step)
+        last_metrics: dict[str, float] = {}
+        replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
+
+        _log(
+            dist_ctx,
+            "[smolvla-cdpr] Sampling first batched SmolVLA prior action chunks...",
+        )
+        prior_t0 = time.perf_counter()
+        _refresh_policy_chunks(
+            runtime=runtime,
+            trainer=trainer,
+            slots=slots,
+            indices=list(range(len(slots))),
+            device=device,
+            progress_only=bool(args.progress_only) or not dist_ctx.is_main,
+        )
+        _log(
+            dist_ctx,
+            f"[smolvla-cdpr] First prior batch ready in {time.perf_counter() - prior_t0:.1f}s; "
+            f"startup total {time.perf_counter() - startup_t0:.1f}s",
+        )
+        progress = _make_progress_bar(args=args, ctx=dist_ctx, start_step=start_step)
+
+        while global_step < int(args.max_train_steps):
+            need_replan = [
+                idx
+                for idx, slot in enumerate(slots)
+                if slot.prior_chunk is None or slot.action_chunk is None or slot.chunk_idx >= replan_every
+            ]
+            _refresh_policy_chunks(
+                runtime=runtime,
+                trainer=trainer,
+                slots=slots,
+                indices=need_replan,
+                device=device,
+                progress_only=bool(args.progress_only) or not dist_ctx.is_main,
+            )
+
+            for slot_idx, slot in enumerate(slots):
+                if global_step >= int(args.max_train_steps):
+                    break
+                assert slot.prior_chunk is not None
+                assert slot.action_chunk is not None
+
+                action_index = int(slot.chunk_idx)
+                action = np.asarray(slot.action_chunk[action_index], dtype=np.float32).reshape(int(args.action_dim))
+                noise_std = _exploration_noise(args, global_step)
+                if noise_std > 0.0:
+                    action = action + np.random.normal(0.0, noise_std, size=action.shape).astype(np.float32)
+                action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
+
+                with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+                    next_obs, reward, terminated, truncated, next_info = slot.env.step(action)
+                next_state = layout.flatten(next_obs)
+                done = bool(terminated or truncated)
+                next_idx = min(action_index + 1, int(args.chunk_size) - 1)
+
+                buffer.add(
+                    state=slot.state,
+                    prior=slot.prior_chunk,
+                    action_index=action_index,
+                    action=action,
+                    reward=float(reward),
+                    next_state=next_state,
+                    next_prior=slot.prior_chunk,
+                    next_action_index=next_idx,
+                    done=done,
+                )
+
+                global_step += 1
+                slot.episode_length += 1
+                slot.episode_reward += float(reward)
+
+                if buffer.size >= int(args.update_after):
+                    for _ in range(int(args.updates_per_step)):
+                        batch = buffer.sample(int(args.batch_size), device=device)
+                        last_metrics = trainer.update(batch)
+                        _log_scalars(writer, {f"train/{k}": v for k, v in last_metrics.items()}, trainer.gradient_step)
+
+                if dist_ctx.is_main and global_step % max(1, int(args.log_every_steps)) == 0:
+                    row = {
+                        "global_step": int(global_step),
+                        "rank": int(dist_ctx.rank),
+                        "slot": int(slot_idx),
+                        "episode": int(slot.episode),
+                        "episode_length": int(slot.episode_length),
+                        "episode_reward_running": float(slot.episode_reward),
+                        "reward": float(reward),
+                        "done": bool(done),
+                        "buffer_size": int(buffer.size),
+                        "instruction": str(slot.instruction),
+                        "noise_std": float(noise_std),
+                        **last_metrics,
+                        **_gpu_metrics(device),
+                    }
+                    with metrics_path.open("a", encoding="utf-8") as handle:
+                        handle.write(json.dumps(row, sort_keys=True) + "\n")
+                    _log_scalars(
+                        writer,
+                        {
+                            "rollout/reward": float(reward),
+                            "rollout/episode_reward_running": float(slot.episode_reward),
+                            "rollout/noise_std": float(noise_std),
+                            "rollout/buffer_size": float(buffer.size),
+                            **{f"gpu/{k}": v for k, v in _gpu_metrics(device).items()},
+                        },
+                        global_step,
+                    )
+
+                if progress is not None:
+                    progress.update(1)
+                    if global_step % max(1, int(args.status_every_steps)) == 0 or done:
+                        _progress_postfix(
+                            progress,
+                            episode=slot.episode,
+                            episode_length=slot.episode_length,
+                            episode_reward=slot.episode_reward,
+                            reward=float(reward),
+                            buffer_size=buffer.size,
+                            instruction=slot.instruction,
+                            world_size=dist_ctx.world_size,
+                            num_envs=len(slots),
+                        )
+                elif dist_ctx.is_main and global_step % max(1, int(args.status_every_steps)) == 0:
+                    _log(
+                        dist_ctx,
+                        f"[smolvla-cdpr] step={global_step:07d} slot={slot_idx} "
+                        f"episode={slot.episode:05d} ep_len={slot.episode_length:03d} "
+                        f"reward_running={slot.episode_reward:+.3f} last_reward={float(reward):+.3f} "
+                        f"buffer={buffer.size} instruction={slot.instruction}",
+                    )
+
+                if dist_ctx.is_main and global_step % max(1, int(args.save_every_steps)) == 0:
+                    checkpoint = trainer.save(global_step=global_step, args=args, latest=False)
+                    _log(dist_ctx, f"[smolvla-cdpr] Saved checkpoint: {checkpoint}", progress=progress)
+
+                if done:
+                    if dist_ctx.is_main:
+                        with metrics_path.open("a", encoding="utf-8") as handle:
+                            handle.write(
+                                json.dumps(
+                                    {
+                                        "global_step": int(global_step),
+                                        "rank": int(dist_ctx.rank),
+                                        "slot": int(slot_idx),
+                                        "episode": int(slot.episode),
+                                        "episode_length": int(slot.episode_length),
+                                        "episode_reward": float(slot.episode_reward),
+                                        "success": bool(next_info.get("success", False)),
+                                        "terminated": bool(terminated),
+                                        "truncated": bool(truncated),
+                                        "instruction": str(slot.instruction),
+                                    },
+                                    sort_keys=True,
+                                )
+                                + "\n"
+                            )
+                    slot.episode += 1
+                    _reset_slot(
+                        slot=slot,
+                        layout=layout,
+                        seed=None,
+                        progress_only=bool(args.progress_only) or not dist_ctx.is_main,
+                    )
+                    continue
+
+                slot.obs = next_obs
+                slot.info = dict(next_info)
+                slot.state = next_state
+                slot.instruction = _safe_instruction(slot.info)
+                slot.chunk_idx += 1
+
+        if dist_ctx.is_main:
+            latest = trainer.save(global_step=global_step, args=args, latest=True)
+            _log(dist_ctx, f"[smolvla-cdpr] Final latest checkpoint: {latest}", progress=progress)
+    finally:
+        if progress is not None:
+            progress.close()
+        if writer is not None:
+            writer.close()
+        for slot in slots:
+            try:
+                with _silence_output(bool(getattr(args, "progress_only", False)) or not dist_ctx.is_main):
+                    slot.env.close()
+            except Exception:
+                pass
+        _destroy_distributed(dist_ctx)
+
+
+if __name__ == "__main__":
+    main()
