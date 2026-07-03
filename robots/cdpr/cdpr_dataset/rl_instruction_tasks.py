@@ -1230,36 +1230,36 @@ def _compute_direct_translation_reward(
         _metadata_float(metadata, "direct_translation_orthogonal_tolerance", 0.05),
         0.0,
     )
+    step_scale = max(
+        _metadata_float(metadata, "direct_translation_step_scale", target_displacement * 0.25),
+        1e-6,
+    )
     total_signed_displacement = float(axis_sign * (current[axis_idx] - initial[axis_idx]))
     step_signed_displacement = float(axis_sign * (current[axis_idx] - previous[axis_idx]))
     displacement = current - initial
     orthogonal = np.delete(displacement, axis_idx)
     orthogonal_drift = float(np.linalg.norm(orthogonal))
     progress = float(np.clip(total_signed_displacement / target_displacement, 0.0, 1.0))
+    positive_step = float(max(0.0, step_signed_displacement))
+    negative_step = float(max(0.0, -step_signed_displacement))
+    positive_step_progress = float(np.clip(positive_step / target_displacement, 0.0, 1.0))
 
     action_value = float(action_arr[axis_idx]) if action_arr.size > axis_idx else 0.0
     correct_action = float(np.clip(axis_sign * action_value, 0.0, 1.0))
     wrong_action = float(np.clip(-axis_sign * action_value, 0.0, 1.0))
     translation_actions = action_arr[:3] if action_arr.size >= 3 else np.pad(action_arr, (0, 3 - action_arr.size))
     off_axis_action = float(np.mean(np.abs(np.delete(translation_actions, axis_idx))))
-    normalized_orthogonal_drift = float(orthogonal_drift / target_displacement)
-    success = bool(
-        total_signed_displacement >= target_displacement
-        and orthogonal_drift <= orthogonal_tolerance
-    )
+    success = bool(total_signed_displacement >= target_displacement)
     reward = float(
-        _metadata_float(metadata, "direct_translation_progress_weight", 1.0) * progress
+        _metadata_float(metadata, "direct_translation_progress_weight", 1.0) * positive_step_progress
         + _metadata_float(metadata, "direct_translation_step_weight", 0.20)
-        * np.tanh(
-            max(0.0, step_signed_displacement)
-            / max(target_displacement * 0.25, 1e-6)
-        )
+        * np.tanh(positive_step / step_scale)
+        - _metadata_float(metadata, "direct_translation_wrong_step_penalty", 0.20)
+        * np.tanh(negative_step / step_scale)
         + _metadata_float(metadata, "direct_translation_action_weight", 0.05) * correct_action
         - _metadata_float(metadata, "direct_translation_wrong_action_penalty", 0.15) * wrong_action
         - _metadata_float(metadata, "direct_translation_off_axis_action_penalty", 0.05)
         * off_axis_action
-        - _metadata_float(metadata, "direct_translation_orthogonal_drift_penalty", 0.20)
-        * normalized_orthogonal_drift
         + (_metadata_float(metadata, "direct_control_success_bonus", 0.0) if success else 0.0)
     )
 
@@ -1275,14 +1275,19 @@ def _compute_direct_translation_reward(
         "direct_translation_sign": float(axis_sign),
         "direct_translation_total_signed_displacement": total_signed_displacement,
         "direct_translation_step_signed_displacement": step_signed_displacement,
+        "direct_translation_positive_step": positive_step,
+        "direct_translation_negative_step": negative_step,
+        "direct_translation_step_scale": float(step_scale),
         "direct_translation_target_displacement": float(target_displacement),
         "direct_translation_orthogonal_drift": orthogonal_drift,
         "direct_translation_orthogonal_tolerance": float(orthogonal_tolerance),
+        "direct_translation_orthogonal_check_enabled": 0.0,
         "direct_translation_progress": progress,
+        "direct_translation_step_progress": positive_step_progress,
         "direct_translation_action": action_value,
         "direct_translation_off_axis_action": off_axis_action,
         "distance_to_goal": float(max(0.0, target_displacement - total_signed_displacement)),
-        "distance_reward": progress,
+        "distance_reward": positive_step_progress,
         "orientation_reward": 0.0,
         "action_saturation_penalty": 0.0,
         "action_saturation_rate": 0.0,
@@ -2386,10 +2391,7 @@ def compute_instruction_validation_success(
         raw_displacement = float(ee_arr[axis_idx] - start_arr[axis_idx])
         signed_displacement = float(axis_sign * raw_displacement)
         orthogonal_drift = float(np.linalg.norm(np.delete(ee_arr[:3] - start_arr[:3], axis_idx)))
-        direct_success = bool(
-            signed_displacement >= threshold
-            and orthogonal_drift <= orthogonal_tolerance
-        )
+        direct_success = bool(signed_displacement >= threshold)
         if isinstance(reward_info, dict) and "direct_translation_success" in reward_info:
             direct_success = bool(float(reward_info.get("direct_translation_success", 0.0)) >= 0.5)
         return direct_success, {
@@ -2401,6 +2403,7 @@ def compute_instruction_validation_success(
             "direct_translation_threshold": float(threshold),
             "direct_translation_orthogonal_drift": orthogonal_drift,
             "direct_translation_orthogonal_tolerance": float(orthogonal_tolerance),
+            "direct_translation_orthogonal_check_enabled": 0.0,
             "directional_success_raw_displacement": raw_displacement,
             "directional_success_signed_displacement": signed_displacement,
         }

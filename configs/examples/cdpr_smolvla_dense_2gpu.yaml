@@ -195,10 +195,12 @@ task:
     direct_translation_orthogonal_tolerance: 0.05
     direct_translation_progress_weight: 1.0
     direct_translation_step_weight: 0.20
-    direct_translation_action_weight: 0.05
+    direct_translation_step_scale: 0.0125
+    direct_translation_wrong_step_penalty: 0.20
+    direct_translation_action_weight: 0.0
     direct_translation_wrong_action_penalty: 0.15
     direct_translation_off_axis_action_penalty: 0.05
-    direct_translation_orthogonal_drift_penalty: 0.20
+    direct_translation_orthogonal_drift_penalty: 0.0
     direct_control_success_bonus: 1.0
     direct_gripper_open_threshold: 0.80
     direct_gripper_closed_threshold: 0.20

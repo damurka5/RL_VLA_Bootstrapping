@@ -16,6 +16,11 @@ except Exception as exc:  # pragma: no cover - optional local dependency
     _TORCH_IMPORT_ERROR = exc
     torch = None
 
+try:  # pragma: no cover - cosmetic optional dependency
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - optional local dependency
+    tqdm = None
+
 from rl_vla_bootstrapping.cli.validate_cdpr_policy import (
     EpisodeResult,
     InstructionSummary,
@@ -203,6 +208,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--video-action-overlay", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--strict-video-validation", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--require-complete-video-coverage", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument(
+        "--eval-output-root",
+        default=None,
+        help="Root directory for generated validation runs when --run-dir is not provided.",
+    )
+    parser.add_argument("--progress", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--progress-only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-wrist", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-proprio", action=argparse.BooleanOptionalAction, default=True)
@@ -298,6 +309,34 @@ def _resolve_artifacts(args: argparse.Namespace, config: Any) -> ResolvedOctoArt
     )
 
 
+def _default_eval_output_root(config: Any) -> Path:
+    output_root = config.resolve_path(config.project.output_root) or Path("runs").resolve()
+    return output_root / "cdpr_octo_small_dense_evaluations"
+
+
+def _checkpoint_output_labels(artifacts: ResolvedOctoArtifacts) -> tuple[str, str]:
+    checkpoint_dir = artifacts.checkpoint_dir or artifacts.checkpoint_path.parent
+    checkpoint_name = checkpoint_dir.name if checkpoint_dir.name else artifacts.checkpoint_path.stem
+    parent = checkpoint_dir.parent
+    run_name = parent.parent.name if parent.name == "rl" else parent.name
+    return run_name or "checkpoint", checkpoint_name or artifacts.checkpoint_path.stem
+
+
+def _resolve_run_dir(args: argparse.Namespace, config: Any, artifacts: ResolvedOctoArtifacts) -> Path:
+    if args.run_dir:
+        return ensure_directory(Path(args.run_dir).expanduser().resolve())
+    eval_output_root = (
+        Path(args.eval_output_root).expanduser().resolve()
+        if args.eval_output_root
+        else _default_eval_output_root(config)
+    )
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    if str(getattr(args, "run_name", "")) and str(args.run_name) != "cdpr_octo_policy_validation":
+        return ensure_directory(eval_output_root / f"{args.run_name}_{timestamp}")
+    run_name, checkpoint_name = _checkpoint_output_labels(artifacts)
+    return ensure_directory(eval_output_root / f"{run_name}_{checkpoint_name}_{timestamp}")
+
+
 def _resolve_instruction_types(config: Any, args: argparse.Namespace) -> tuple[str, ...]:
     raw_values = getattr(args, "instruction_types", None)
     if raw_values:
@@ -381,6 +420,13 @@ def _video_coverage_key(args: argparse.Namespace, bucket: Any) -> str:
     return str(bucket.case_id)
 
 
+def _progress_message(progress: Any | None, message: str) -> None:
+    if progress is not None and hasattr(progress, "write"):
+        progress.write(message)
+    else:
+        print(message, flush=True)
+
+
 def _run_bucket(
     *,
     config: Any,
@@ -393,9 +439,12 @@ def _run_bucket(
     wrapper_dir: Path | None,
     videos_dir: Path,
     video_registry: dict[str, dict[str, str]],
+    progress: Any | None = None,
+    progress_state: dict[str, int] | None = None,
 ) -> list[EpisodeResult]:
     coverage_key = _video_coverage_key(args, bucket)
     coverage_entry = video_registry.setdefault(coverage_key, {})
+    progress_state = progress_state if progress_state is not None else {"completed": 0, "successes": 0}
     should_capture = bool(
         args.record_success_videos
         or args.record_failure_videos
@@ -591,12 +640,22 @@ def _run_bucket(
                         action_trace_path=saved_video_path.replace("_overview.mp4", "_actions.csv"),
                     )
                 results.append(result)
-                if not args.progress_only and (episode_index + 1) % max(1, int(args.log_every_episode)) == 0:
+                progress_state["completed"] = int(progress_state.get("completed", 0)) + 1
+                progress_state["successes"] = int(progress_state.get("successes", 0)) + int(result.success)
+                if progress is not None:
+                    progress.set_postfix(
+                        instruction=str(bucket.instruction_type),
+                        success=f"{sum(item.success for item in results)}/{len(results)}",
+                        overall=f"{progress_state['successes']}/{progress_state['completed']}",
+                        refresh=False,
+                    )
+                    progress.update(1)
+                if (episode_index + 1) % max(1, int(args.log_every_episode)) == 0:
                     successes = sum(item.success for item in results)
-                    print(
+                    _progress_message(
+                        progress,
                         f"[octo-eval] {bucket.log_label} {episode_index + 1}/{bucket.episodes} "
                         f"success={successes}/{len(results)}",
-                        flush=True,
                     )
         finally:
             env.close()
@@ -681,14 +740,7 @@ def main() -> int:
     _prepend_runtime_python_paths(config)
     artifacts = _resolve_artifacts(args, config)
 
-    run_dir = (
-        ensure_directory(Path(args.run_dir).expanduser().resolve())
-        if args.run_dir
-        else ensure_directory(
-            (config.resolve_path(config.project.output_root) or Path("runs"))
-            / f"{args.run_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
-        )
-    )
+    run_dir = _resolve_run_dir(args, config, artifacts)
     max_steps = _default_max_steps(config, args)
     wrapper_dir = _resolve_wrapper_dir(config, args)
     videos_dir = ensure_directory(run_dir / "videos")
@@ -711,26 +763,58 @@ def main() -> int:
     _configure_checkpoint_compatible_object_slots(args, runtime.payload)
 
     instruction_types = _resolve_instruction_types(config, args)
+    instruction_plan = [
+        (instruction_index, instruction_type, _validation_buckets(config, args, instruction_type=instruction_type))
+        for instruction_index, instruction_type in enumerate(instruction_types)
+    ]
+    planned_episodes = sum(
+        int(bucket.episodes) for _idx, _instruction_type, buckets in instruction_plan for bucket in buckets
+    )
+    print(
+        f"[octo-eval] Starting validation: {planned_episodes} episode(s), "
+        f"{len(instruction_plan)} instruction type(s), progress={bool(args.progress)}, "
+        f"progress_only={bool(args.progress_only)}, "
+        f"log_every_episode={int(args.log_every_episode)}",
+        flush=True,
+    )
+    progress = None
+    if bool(args.progress):
+        if tqdm is None:
+            print("[octo-eval] tqdm is not installed; falling back to periodic text progress.", flush=True)
+        else:
+            progress = tqdm(
+                total=int(planned_episodes),
+                desc="Octo eval",
+                unit="ep",
+                dynamic_ncols=True,
+                leave=True,
+            )
+    progress_state = {"completed": 0, "successes": 0}
     all_results: list[EpisodeResult] = []
     video_registry: dict[str, dict[str, str]] = {}
     expected_video_keys: list[str] = []
-    for instruction_index, instruction_type in enumerate(instruction_types):
-        buckets = _validation_buckets(config, args, instruction_type=instruction_type)
-        for bucket in buckets:
-            expected_video_keys.append(_video_coverage_key(args, bucket))
-            results = _run_bucket(
-                config=config,
-                runtime=runtime,
-                args=args,
-                bucket=bucket,
-                instruction_index=instruction_index,
-                base_seed=None if int(args.seed) < 0 else int(args.seed),
-                max_steps=max_steps,
-                wrapper_dir=wrapper_dir,
-                videos_dir=videos_dir,
-                video_registry=video_registry,
-            )
-            all_results.extend(results)
+    try:
+        for instruction_index, _instruction_type, buckets in instruction_plan:
+            for bucket in buckets:
+                expected_video_keys.append(_video_coverage_key(args, bucket))
+                results = _run_bucket(
+                    config=config,
+                    runtime=runtime,
+                    args=args,
+                    bucket=bucket,
+                    instruction_index=instruction_index,
+                    base_seed=None if int(args.seed) < 0 else int(args.seed),
+                    max_steps=max_steps,
+                    wrapper_dir=wrapper_dir,
+                    videos_dir=videos_dir,
+                    video_registry=video_registry,
+                    progress=progress,
+                    progress_state=progress_state,
+                )
+                all_results.extend(results)
+    finally:
+        if progress is not None:
+            progress.close()
     expected_video_keys = list(dict.fromkeys(expected_video_keys))
 
     metric_results = [item for item in all_results if item.metric_episode]

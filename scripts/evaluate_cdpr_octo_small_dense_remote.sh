@@ -9,6 +9,9 @@ EPISODES_PER_INSTRUCTION="${EPISODES_PER_INSTRUCTION:-20}"
 MOVE_TO_OBJECT_EPISODES_PER_TARGET="${MOVE_TO_OBJECT_EPISODES_PER_TARGET:-20}"
 MAX_RESET_ATTEMPTS="${MAX_RESET_ATTEMPTS:-10}"
 VIDEO_ACTION_OVERLAY="${VIDEO_ACTION_OVERLAY:-1}"
+LOG_EVERY_EPISODE="${LOG_EVERY_EPISODE:-10}"
+PROGRESS="${PROGRESS:-1}"
+PROGRESS_ONLY="${PROGRESS_ONLY:-1}"
 
 if [[ -z "${CHECKPOINT_DIR:-}" ]]; then
   latest_file="$(find "$REPO_ROOT/runs" -path '*/rl/latest.pt' -print | sort | tail -n 1 || true)"
@@ -26,7 +29,12 @@ fi
 
 timestamp="$(date +%Y%m%d_%H%M%S)"
 checkpoint_name="$(basename "$CHECKPOINT_DIR")"
-run_parent="$(basename "$(dirname "$CHECKPOINT_DIR")")"
+checkpoint_parent="$(basename "$(dirname "$CHECKPOINT_DIR")")"
+if [[ "$checkpoint_parent" == "rl" ]]; then
+  run_parent="$(basename "$(dirname "$(dirname "$CHECKPOINT_DIR")")")"
+else
+  run_parent="$checkpoint_parent"
+fi
 run_dir="${RUN_DIR:-$EVAL_OUTPUT_ROOT/${run_parent}_${checkpoint_name}_${timestamp}}"
 mkdir -p "$run_dir"
 
@@ -83,8 +91,18 @@ cmd=(
   --max-scene-objects 4
   --stratify-move-to-object-targets
   --max-reset-attempts "$MAX_RESET_ATTEMPTS"
-  --progress-only
+  --log-every-episode "$LOG_EVERY_EPISODE"
 )
+if [[ "$PROGRESS_ONLY" == "1" ]]; then
+  cmd+=(--progress-only)
+else
+  cmd+=(--no-progress-only)
+fi
+if [[ "$PROGRESS" == "1" ]]; then
+  cmd+=(--progress)
+else
+  cmd+=(--no-progress)
+fi
 if [[ "$VIDEO_ACTION_OVERLAY" == "1" ]]; then
   cmd+=(--video-action-overlay)
 else
