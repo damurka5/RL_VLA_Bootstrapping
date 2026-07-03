@@ -358,6 +358,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=0,
         help="Minimum completed stage-1 episodes before the success-rate switch can fire.",
     )
+    parser.add_argument(
+        "--dense-stage-gate-metric",
+        choices=("rollout", "validation"),
+        default="rollout",
+        help="Metric used to promote dense stage 1 to stage 2.",
+    )
+    parser.add_argument(
+        "--validation-every-steps",
+        type=int,
+        default=0,
+        help="Run a distinct held-out validation rollout every N env steps. Disabled when <= 0.",
+    )
+    parser.add_argument(
+        "--validation-episodes-per-instruction",
+        type=int,
+        default=0,
+        help="Held-out validation episodes per active instruction. Disabled when <= 0.",
+    )
+    parser.add_argument(
+        "--validation-seed",
+        type=int,
+        default=1000000,
+        help="Base seed for deterministic held-out validation episodes.",
+    )
     return parser.parse_args(argv)
 
 
@@ -932,6 +956,233 @@ def _broadcast_dense_stage(
     return int(tensor.item())
 
 
+def _distributed_barrier(ctx: DistributedContext) -> None:
+    if (
+        ctx.enabled
+        and torch.distributed.is_available()
+        and torch.distributed.is_initialized()
+    ):
+        torch.distributed.barrier()
+
+
+def _validation_enabled(args: argparse.Namespace) -> bool:
+    return int(getattr(args, "validation_every_steps", 0)) > 0 and int(
+        getattr(args, "validation_episodes_per_instruction", 0)
+    ) > 0
+
+
+def _validation_due(args: argparse.Namespace, *, global_step: int, last_validation_step: int) -> bool:
+    if not _validation_enabled(args) or int(global_step) <= 0:
+        return False
+    every = max(1, int(args.validation_every_steps))
+    return int(global_step) // every > int(last_validation_step) // every
+
+
+def _validation_instruction_types(
+    args: argparse.Namespace,
+    *,
+    dense_curriculum_active: bool,
+    dense_stage_index: int,
+) -> tuple[str, ...]:
+    if dense_curriculum_active:
+        return _dense_stage_instruction_types(args, dense_stage_index)
+    configured = _dedupe_instruction_names(getattr(args, "instruction_types", None))
+    return configured
+
+
+def _select_validation_chunk(
+    actor: nn.Module,
+    *,
+    device: torch.device,
+    state: np.ndarray,
+    prior_chunk: np.ndarray,
+) -> np.ndarray:
+    state_t = torch.as_tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+    prior_t = torch.as_tensor(prior_chunk, dtype=torch.float32, device=device).unsqueeze(0)
+    with torch.no_grad():
+        action_chunk = actor(state_t, prior_t)[0].detach().cpu().numpy()
+    return np.clip(action_chunk, -1.0, 1.0).astype(np.float32, copy=False)
+
+
+def _summarize_validation_results(
+    *,
+    global_step: int,
+    stage_index: int,
+    instruction_types: Sequence[str],
+    results: list[dict[str, Any]],
+) -> dict[str, Any]:
+    episode_count = len(results)
+    success_count = sum(1 for item in results if bool(item.get("success", False)))
+    reward_values = [float(item.get("episode_reward", 0.0)) for item in results]
+    instruction_results: dict[str, dict[str, Any]] = {}
+    for instruction_type in instruction_types:
+        subset = [item for item in results if str(item.get("instruction_type")) == str(instruction_type)]
+        subset_successes = sum(1 for item in subset if bool(item.get("success", False)))
+        subset_rewards = [float(item.get("episode_reward", 0.0)) for item in subset]
+        instruction_results[str(instruction_type)] = {
+            "episodes": int(len(subset)),
+            "successes": int(subset_successes),
+            "success_rate": float(subset_successes / len(subset)) if subset else None,
+            "episode_reward_mean": float(sum(subset_rewards) / len(subset_rewards)) if subset_rewards else None,
+        }
+    return {
+        "event": "validation",
+        "global_step": int(global_step),
+        "validation_stage_index": int(stage_index),
+        "validation_instruction_types": list(instruction_types),
+        "validation_episode_count": int(episode_count),
+        "validation_success_count": int(success_count),
+        "validation_success_rate": float(success_count / episode_count) if episode_count else None,
+        "validation_episode_reward_mean": float(sum(reward_values) / len(reward_values)) if reward_values else None,
+        "validation_instruction_results": instruction_results,
+    }
+
+
+def _validation_summary_scalars(summary: dict[str, Any]) -> dict[str, float]:
+    scalars: dict[str, float] = {
+        "validation/episode_count": float(summary.get("validation_episode_count") or 0),
+        "validation/success_count": float(summary.get("validation_success_count") or 0),
+        "validation/stage_index": float(summary.get("validation_stage_index") or 0),
+    }
+    success_rate = summary.get("validation_success_rate")
+    if success_rate is not None:
+        scalars["validation/success_rate"] = float(success_rate)
+    reward_mean = summary.get("validation_episode_reward_mean")
+    if reward_mean is not None:
+        scalars["validation/episode_reward_mean"] = float(reward_mean)
+    instruction_results = summary.get("validation_instruction_results")
+    if isinstance(instruction_results, dict):
+        for instruction_type, item in instruction_results.items():
+            if not isinstance(item, dict):
+                continue
+            instr_success_rate = item.get("success_rate")
+            if instr_success_rate is not None:
+                scalars[f"validation/instruction_success_rate/{instruction_type}"] = float(instr_success_rate)
+            instr_reward_mean = item.get("episode_reward_mean")
+            if instr_reward_mean is not None:
+                scalars[f"validation/instruction_episode_reward_mean/{instruction_type}"] = float(instr_reward_mean)
+    return scalars
+
+
+def _write_validation_summary(
+    *,
+    metrics_path: Path,
+    writer: Any,
+    summary: dict[str, Any],
+) -> None:
+    with metrics_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(summary, sort_keys=True) + "\n")
+    _log_scalars(writer, _validation_summary_scalars(summary), int(summary["global_step"]))
+
+
+def _run_octo_distinct_validation(
+    *,
+    validation_env: Any,
+    runtime: Any,
+    obs_adapter: CDPROctoObservationAdapter,
+    action_spec: OctoActionAdapterSpec,
+    trainer: ResidualTrainer,
+    layout: CDPRStateLayout,
+    args: argparse.Namespace,
+    global_step: int,
+    stage_index: int,
+    instruction_types: Sequence[str],
+) -> dict[str, Any]:
+    episode_count = max(1, int(args.validation_episodes_per_instruction))
+    replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
+    actor = trainer._unwrap(trainer.actor)
+    was_training = bool(actor.training)
+    previous_instruction_types = getattr(validation_env, "instruction_types", None)
+    results: list[dict[str, Any]] = []
+    actor.eval()
+    try:
+        for instruction_index, instruction_type in enumerate(instruction_types):
+            validation_env.instruction_types = (str(instruction_type),)
+            for episode_index in range(episode_count):
+                seed = (
+                    int(args.validation_seed)
+                    + int(global_step) * 17
+                    + int(instruction_index) * 1009
+                    + int(episode_index)
+                )
+                with _silence_output(True):
+                    obs, info = validation_env.reset(seed=seed)
+                state = layout.flatten(obs)
+                instruction = _safe_instruction(info)
+                with _silence_output(True):
+                    prior_chunk = _predict_prior_chunk(
+                        runtime=runtime,
+                        obs_adapter=obs_adapter,
+                        action_spec=action_spec,
+                        env=validation_env,
+                        obs=obs,
+                        info=info,
+                        instruction=instruction,
+                    )
+                action_chunk = _select_validation_chunk(
+                    actor,
+                    device=trainer.device,
+                    state=state,
+                    prior_chunk=prior_chunk,
+                )
+                chunk_idx = 0
+                episode_reward = 0.0
+                episode_length = 0
+                terminated = False
+                truncated = False
+                final_info = dict(info)
+                while not (terminated or truncated):
+                    if chunk_idx >= replan_every:
+                        instruction = _safe_instruction(final_info)
+                        with _silence_output(True):
+                            prior_chunk = _predict_prior_chunk(
+                                runtime=runtime,
+                                obs_adapter=obs_adapter,
+                                action_spec=action_spec,
+                                env=validation_env,
+                                obs=obs,
+                                info=final_info,
+                                instruction=instruction,
+                            )
+                        action_chunk = _select_validation_chunk(
+                            actor,
+                            device=trainer.device,
+                            state=state,
+                            prior_chunk=prior_chunk,
+                        )
+                        chunk_idx = 0
+                    action = np.asarray(action_chunk[chunk_idx], dtype=np.float32).reshape(int(args.action_dim))
+                    action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
+                    with _silence_output(True):
+                        obs, reward, terminated, truncated, final_info = validation_env.step(action)
+                    state = layout.flatten(obs)
+                    episode_reward += float(reward)
+                    episode_length += 1
+                    chunk_idx += 1
+                results.append(
+                    {
+                        "instruction_type": str(instruction_type),
+                        "episode_index": int(episode_index),
+                        "seed": int(seed),
+                        "success": bool(final_info.get("success", False)),
+                        "episode_reward": float(episode_reward),
+                        "episode_length": int(episode_length),
+                        "terminated": bool(terminated),
+                        "truncated": bool(truncated),
+                    }
+                )
+    finally:
+        actor.train(was_training)
+        validation_env.instruction_types = previous_instruction_types
+
+    return _summarize_validation_results(
+        global_step=global_step,
+        stage_index=stage_index,
+        instruction_types=instruction_types,
+        results=results,
+    )
+
+
 def _safe_instruction(info: dict[str, Any]) -> str:
     return str(info.get("language_instruction") or info.get("instruction_type") or "move left")
 
@@ -999,6 +1250,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         _log(dist_ctx, f"[octo-cdpr] Using Octo observation schema: {obs_adapter.expected_shape_summary()}")
 
     env = None
+    validation_env = None
     progress = None
     try:
         env_t0 = time.perf_counter()
@@ -1023,6 +1275,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             obs, info = env.reset(seed=int(rollout_seed))
         _log(dist_ctx, f"[octo-cdpr] Reset CDPR environment in {time.perf_counter() - reset_t0:.1f}s")
         layout = CDPRStateLayout.from_observation(obs)
+        if dist_ctx.is_main and _validation_enabled(args):
+            _log(
+                dist_ctx,
+                "[octo-cdpr] Building held-out validation environment "
+                f"(every {int(args.validation_every_steps)} steps, "
+                f"{int(args.validation_episodes_per_instruction)} episode(s)/instruction)...",
+            )
+            with _silence_output(bool(args.progress_only)):
+                validation_env = _build_env(args, seed=int(args.validation_seed))
         device = torch.device(args.device)
         trainer = ResidualTrainer(
             args=args,
@@ -1076,6 +1337,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "switch_success_rate": float(args.dense_stage_switch_success_rate),
                 "min_stage_one_episodes": int(args.dense_stage_min_episodes),
                 "metric_window_episodes": int(metrics_window),
+                "gate_metric": str(args.dense_stage_gate_metric),
+            },
+            "heldout_validation": {
+                "enabled": bool(_validation_enabled(args)),
+                "every_steps": int(args.validation_every_steps),
+                "episodes_per_instruction": int(args.validation_episodes_per_instruction),
+                "seed": int(args.validation_seed),
             },
         }
         if dist_ctx.is_main:
@@ -1085,6 +1353,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         episode = 0
         episode_reward = 0.0
         episode_length = 0
+        episode_stage_index = int(dense_stage_index)
         completed_episode_rewards: deque[float] = deque(maxlen=metrics_window)
         completed_episode_successes: deque[float] = deque(maxlen=metrics_window)
         completed_episode_count = 0
@@ -1117,6 +1386,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
         last_metrics: dict[str, float] = {}
         progress = _make_progress_bar(args=args, ctx=dist_ctx, start_step=start_step)
+        last_validation_step = int(start_step)
 
         while global_step < int(args.max_train_steps):
             if chunk_idx >= replan_every:
@@ -1168,10 +1438,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             episode_success = bool(next_info.get("success", False)) if done else False
             dense_stage_switched = False
             if dense_curriculum_active:
+                count_for_dense_stage = done and int(episode_stage_index) == int(dense_stage_index)
                 completed_successes = _distributed_completed_successes(
                     ctx=dist_ctx,
                     device=device,
-                    done=done,
+                    done=count_for_dense_stage,
                     success=episode_success,
                 )
                 proposed_stage_index = int(dense_stage_index)
@@ -1180,7 +1451,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         dense_stage_successes.append(float(success_value))
                         dense_stage_episode_count += 1
                         dense_stage_success_count += int(float(success_value) >= 0.5)
-                    if int(dense_stage_index) == 1:
+                    if int(dense_stage_index) == 1 and str(args.dense_stage_gate_metric) == "rollout":
                         required_episodes = max(1, int(args.dense_stage_min_episodes))
                         stage_success_rate = (
                             float(sum(dense_stage_successes) / len(dense_stage_successes))
@@ -1203,6 +1474,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 )
                 if int(dense_stage_index) != previous_stage_index:
                     dense_stage_switched = True
+                    dense_stage_successes.clear()
+                    dense_stage_episode_count = 0
+                    dense_stage_success_count = 0
                     dense_stage_instruction_types = _apply_dense_stage_to_envs(
                         [env],
                         args,
@@ -1237,6 +1511,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     success_count=dense_stage_success_count,
                 )
                 row = {
+                    "event": "rollout_step",
                     "global_step": int(global_step),
                     "episode": int(episode),
                     "episode_length": int(episode_length),
@@ -1245,6 +1520,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "done": bool(done),
                     "buffer_size": int(buffer.size),
                     "instruction": str(instruction),
+                    "episode_dense_stage_index": int(episode_stage_index),
                     "noise_std": float(noise_std),
                     **episode_metrics,
                     **dense_stage_metrics,
@@ -1287,6 +1563,73 @@ def main(argv: Sequence[str] | None = None) -> None:
                 checkpoint = trainer.save(global_step=global_step, args=args, latest=False)
                 _log(dist_ctx, f"[octo-cdpr] Saved checkpoint: {checkpoint}", progress=progress)
 
+            if _validation_due(args, global_step=global_step, last_validation_step=last_validation_step):
+                proposed_stage_index = int(dense_stage_index)
+                if dist_ctx.is_main:
+                    validation_instruction_types = _validation_instruction_types(
+                        args,
+                        dense_curriculum_active=dense_curriculum_active,
+                        dense_stage_index=dense_stage_index,
+                    )
+                    if validation_env is not None and validation_instruction_types:
+                        validation_summary = _run_octo_distinct_validation(
+                            validation_env=validation_env,
+                            runtime=runtime,
+                            obs_adapter=obs_adapter,
+                            action_spec=action_spec,
+                            trainer=trainer,
+                            layout=layout,
+                            args=args,
+                            global_step=global_step,
+                            stage_index=dense_stage_index,
+                            instruction_types=validation_instruction_types,
+                        )
+                        _write_validation_summary(
+                            metrics_path=metrics_path,
+                            writer=writer,
+                            summary=validation_summary,
+                        )
+                        _log(
+                            dist_ctx,
+                            "[octo-cdpr] Held-out validation "
+                            f"step={global_step:07d} stage={dense_stage_index} "
+                            f"episodes={validation_summary['validation_episode_count']} "
+                            f"success_rate={float(validation_summary['validation_success_rate'] or 0.0):.3f}",
+                            progress=progress,
+                        )
+                        if (
+                            dense_curriculum_active
+                            and str(args.dense_stage_gate_metric) == "validation"
+                            and int(dense_stage_index) == 1
+                            and validation_summary.get("validation_success_rate") is not None
+                            and float(validation_summary["validation_success_rate"])
+                            >= float(args.dense_stage_switch_success_rate)
+                        ):
+                            proposed_stage_index = 2
+                previous_stage_index = int(dense_stage_index)
+                dense_stage_index = _broadcast_dense_stage(
+                    ctx=dist_ctx,
+                    device=device,
+                    stage_index=proposed_stage_index,
+                )
+                if int(dense_stage_index) != previous_stage_index:
+                    dense_stage_switched = True
+                    dense_stage_successes.clear()
+                    dense_stage_episode_count = 0
+                    dense_stage_success_count = 0
+                    dense_stage_instruction_types = _apply_dense_stage_to_envs(
+                        [env],
+                        args,
+                        dense_stage_index,
+                    )
+                    _log(
+                        dist_ctx,
+                        "[octo-cdpr] Dense curriculum validation gate switched to stage "
+                        f"{dense_stage_index}: {', '.join(dense_stage_instruction_types)}",
+                        progress=progress,
+                    )
+                last_validation_step = int(global_step)
+
             if done:
                 completed_episode_rewards.append(float(episode_reward))
                 completed_episode_successes.append(1.0 if episode_success else 0.0)
@@ -1311,6 +1654,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         handle.write(
                             json.dumps(
                                 {
+                                    "event": "episode_end",
                                     "global_step": int(global_step),
                                     "episode": int(episode),
                                     "episode_length": int(episode_length),
@@ -1319,6 +1663,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                                     "terminated": bool(terminated),
                                     "truncated": bool(truncated),
                                     "instruction": str(instruction),
+                                    "episode_dense_stage_index": int(episode_stage_index),
                                     "dense_stage_switched": bool(dense_stage_switched),
                                     **episode_metrics,
                                     **dense_stage_metrics,
@@ -1337,6 +1682,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 episode += 1
                 episode_reward = 0.0
                 episode_length = 0
+                episode_stage_index = int(dense_stage_index)
                 with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
                     obs, info = env.reset()
                 state = layout.flatten(obs)
@@ -1369,6 +1715,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             progress.close()
         if writer is not None:
             writer.close()
+        if validation_env is not None:
+            try:
+                with _silence_output(bool(getattr(args, "progress_only", False))):
+                    validation_env.close()
+            except Exception:
+                pass
         if env is not None:
             try:
                 with _silence_output(bool(getattr(args, "progress_only", False)) or not dist_ctx.is_main):

@@ -2033,6 +2033,11 @@ def _compute_move_to_object_reward(
         "action_saturation_include_gripper",
         True,
     )
+    success_bonus = _metadata_float(
+        task_metadata,
+        "move_to_object_success_bonus",
+        _metadata_float(task_metadata, "success_bonus", 0.0),
+    )
 
     normalized_xy_distance = float(xy_distance / xy_reward_scale)
     distance_reward = float(
@@ -2060,7 +2065,8 @@ def _compute_move_to_object_reward(
     action_saturation_penalty = float(action_saturation_penalty_weight * action_saturation_penalty_raw)
 
     success = bool(above_target and z_in_window)
-    reward = float(distance_reward - z_penalty - action_saturation_penalty)
+    success_reward = float(success_bonus if success else 0.0)
+    reward = float(distance_reward + success_reward - z_penalty - action_saturation_penalty)
 
     reward_state.prev_ee_pos = ee_pos.copy()
     reward_state.prev_obj_pos = obj_pos.copy()
@@ -2103,7 +2109,8 @@ def _compute_move_to_object_reward(
         "distance_ee_to_object_prev_xyz": prev_xyz_distance,
         "distance_ee_to_object_prev_xy": prev_xy_distance,
         "orientation_reward": 0.0,
-        "success_bonus": 0.0,
+        "success_bonus": success_reward,
+        "move_to_object_success_bonus": success_reward,
         "move_to_object_progress_reward": 0.0,
         "move_to_object_progress_clip": 0.0,
         "move_to_object_proximity_reward": distance_reward,

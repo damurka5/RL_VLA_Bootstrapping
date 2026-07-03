@@ -190,6 +190,7 @@ task:
     move_to_object_distance_reward_weight: 1.0
     move_to_object_xy_tolerance: 0.025
     move_to_object_validation_distance_threshold: 0.025
+    move_to_object_success_bonus: 1.0
     move_to_object_z_penalty_weight: 0.0
     direct_translation_reward_enabled: true
     direct_translation_success_displacement: 0.05
@@ -200,14 +201,14 @@ task:
     direct_translation_wrong_action_penalty: 0.15
     direct_translation_off_axis_action_penalty: 0.05
     direct_translation_orthogonal_drift_penalty: 0.20
-    direct_control_success_bonus: 0.0
+    direct_control_success_bonus: 1.0
     direct_gripper_open_threshold: 0.80
     direct_gripper_closed_threshold: 0.20
     direct_gripper_progress_weight: 1.0
     direct_gripper_action_weight: 0.10
     direct_gripper_wrong_action_penalty: 0.10
     direct_actuator_translation_action_penalty: 0.20
-    direct_actuator_success_bonus: 0.0
+    direct_actuator_success_bonus: 1.0
     direct_yaw_success_angle: 1.5707963267948966
     direct_yaw_start_angle: 0.0
     direct_yaw_progress_weight: 2.0
@@ -348,6 +349,10 @@ training:
       dense_stage_two_instruction_types: [move_to_object]
       dense_stage_switch_success_rate: 0.50
       dense_stage_min_episodes: 80
+      dense_stage_gate_metric: validation
+      validation_every_steps: 50000
+      validation_episodes_per_instruction: 5
+      validation_seed: 1000000
       progress: true
       progress_only: true
       distributed: true

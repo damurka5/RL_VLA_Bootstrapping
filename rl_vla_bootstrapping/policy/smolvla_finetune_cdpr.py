@@ -45,6 +45,11 @@ from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
     _dense_stage_metric_scalars,
     _dense_stage_snapshot,
     _distributed_completed_successes,
+    _summarize_validation_results,
+    _validation_due,
+    _validation_enabled,
+    _validation_instruction_types,
+    _write_validation_summary,
 )
 from rl_vla_bootstrapping.policy.smolvla_cdpr import (
     DEFAULT_SMOLVLA_CHECKPOINT,
@@ -377,6 +382,30 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=0,
         help="Minimum completed stage-1 episodes before the success-rate switch can fire.",
     )
+    parser.add_argument(
+        "--dense-stage-gate-metric",
+        choices=("rollout", "validation"),
+        default="rollout",
+        help="Metric used to promote dense stage 1 to stage 2.",
+    )
+    parser.add_argument(
+        "--validation-every-steps",
+        type=int,
+        default=0,
+        help="Run a distinct held-out validation rollout every N env steps. Disabled when <= 0.",
+    )
+    parser.add_argument(
+        "--validation-episodes-per-instruction",
+        type=int,
+        default=0,
+        help="Held-out validation episodes per active instruction. Disabled when <= 0.",
+    )
+    parser.add_argument(
+        "--validation-seed",
+        type=int,
+        default=1000000,
+        help="Base seed for deterministic held-out validation episodes.",
+    )
     return parser.parse_args(argv)
 
 
@@ -632,6 +661,122 @@ def _reset_slot(
         slot.stage_index = int(stage_index)
 
 
+def _select_smolvla_validation_chunk(
+    actor: nn.Module,
+    *,
+    device: torch.device,
+    state: np.ndarray,
+    prior_chunk: np.ndarray,
+) -> np.ndarray:
+    state_t = torch.as_tensor(state, dtype=torch.float32, device=device).unsqueeze(0)
+    prior_t = torch.as_tensor(prior_chunk, dtype=torch.float32, device=device).unsqueeze(0)
+    with torch.no_grad():
+        action_chunk = actor(state_t, prior_t)[0].detach().to(dtype=torch.float32).cpu().numpy()
+    return np.clip(action_chunk, -1.0, 1.0).astype(np.float32, copy=False)
+
+
+def _run_smolvla_distinct_validation(
+    *,
+    validation_env: Any,
+    runtime: Any,
+    trainer: SmolVLAResidualTrainer,
+    layout: CDPRStateLayout,
+    args: argparse.Namespace,
+    global_step: int,
+    stage_index: int,
+    instruction_types: Sequence[str],
+) -> dict[str, Any]:
+    episode_count = max(1, int(args.validation_episodes_per_instruction))
+    replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
+    actor = trainer._unwrap(trainer.actor)
+    was_training = bool(actor.training)
+    previous_instruction_types = getattr(validation_env, "instruction_types", None)
+    results: list[dict[str, Any]] = []
+    actor.eval()
+    try:
+        for instruction_index, instruction_type in enumerate(instruction_types):
+            validation_env.instruction_types = (str(instruction_type),)
+            for episode_index in range(episode_count):
+                seed = (
+                    int(args.validation_seed)
+                    + int(global_step) * 17
+                    + int(instruction_index) * 1009
+                    + int(episode_index)
+                )
+                with _silence_output(True):
+                    obs, info = validation_env.reset(seed=seed)
+                state = layout.flatten(obs)
+                instruction = _safe_instruction(info)
+                with _silence_output(True):
+                    priors = runtime.sample_cdpr_chunks_from_envs(
+                        envs=[validation_env],
+                        observations=[obs],
+                        infos=[dict(info)],
+                        instructions=[instruction],
+                    )
+                prior_chunk = np.asarray(priors[0], dtype=np.float32)
+                action_chunk = _select_smolvla_validation_chunk(
+                    actor,
+                    device=trainer.device,
+                    state=state,
+                    prior_chunk=prior_chunk,
+                )
+                chunk_idx = 0
+                episode_reward = 0.0
+                episode_length = 0
+                terminated = False
+                truncated = False
+                final_info = dict(info)
+                while not (terminated or truncated):
+                    if chunk_idx >= replan_every:
+                        instruction = _safe_instruction(final_info)
+                        with _silence_output(True):
+                            priors = runtime.sample_cdpr_chunks_from_envs(
+                                envs=[validation_env],
+                                observations=[obs],
+                                infos=[dict(final_info)],
+                                instructions=[instruction],
+                            )
+                        prior_chunk = np.asarray(priors[0], dtype=np.float32)
+                        action_chunk = _select_smolvla_validation_chunk(
+                            actor,
+                            device=trainer.device,
+                            state=state,
+                            prior_chunk=prior_chunk,
+                        )
+                        chunk_idx = 0
+                    action = np.asarray(action_chunk[chunk_idx], dtype=np.float32).reshape(int(args.action_dim))
+                    action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
+                    with _silence_output(True):
+                        obs, reward, terminated, truncated, final_info = validation_env.step(action)
+                    state = layout.flatten(obs)
+                    episode_reward += float(reward)
+                    episode_length += 1
+                    chunk_idx += 1
+                results.append(
+                    {
+                        "instruction_type": str(instruction_type),
+                        "episode_index": int(episode_index),
+                        "seed": int(seed),
+                        "success": bool(final_info.get("success", False)),
+                        "episode_reward": float(episode_reward),
+                        "episode_length": int(episode_length),
+                        "terminated": bool(terminated),
+                        "truncated": bool(truncated),
+                    }
+                )
+    finally:
+        actor.train(was_training)
+        validation_env.instruction_types = previous_instruction_types
+
+    return _summarize_validation_results(
+        global_step=global_step,
+        stage_index=stage_index,
+        instruction_types=instruction_types,
+        results=results,
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     _require_torch()
@@ -697,6 +842,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     )
 
     slots: list[EnvSlot] = []
+    validation_env = None
     progress = None
     try:
         env_count = max(1, int(args.num_envs_per_rank))
@@ -731,6 +877,15 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"{', '.join(dense_stage_instruction_types)}",
             )
         _log(dist_ctx, f"[smolvla-cdpr] Built env batch in {time.perf_counter() - env_t0:.1f}s")
+        if dist_ctx.is_main and _validation_enabled(args):
+            _log(
+                dist_ctx,
+                "[smolvla-cdpr] Building held-out validation environment "
+                f"(every {int(args.validation_every_steps)} steps, "
+                f"{int(args.validation_episodes_per_instruction)} episode(s)/instruction)...",
+            )
+            with _silence_output(bool(args.progress_only)):
+                validation_env = _build_env(args, seed=int(args.validation_seed))
 
         device = torch.device(args.device)
         trainer = SmolVLAResidualTrainer(
@@ -802,6 +957,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "switch_success_rate": float(args.dense_stage_switch_success_rate),
                 "min_stage_one_episodes": int(args.dense_stage_min_episodes),
                 "metric_window_episodes": int(metrics_window),
+                "gate_metric": str(args.dense_stage_gate_metric),
+            },
+            "heldout_validation": {
+                "enabled": bool(_validation_enabled(args)),
+                "every_steps": int(args.validation_every_steps),
+                "episodes_per_instruction": int(args.validation_episodes_per_instruction),
+                "seed": int(args.validation_seed),
             },
             "unavoidable_cpu_work": [
                 "MuJoCo simulation stepping and camera readback",
@@ -838,6 +1000,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"startup total {time.perf_counter() - startup_t0:.1f}s",
         )
         progress = _make_progress_bar(args=args, ctx=dist_ctx, start_step=start_step)
+        last_validation_step = int(start_step)
 
         while global_step < int(args.max_train_steps):
             need_replan = [
@@ -904,7 +1067,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                             dense_stage_successes.append(float(success_value))
                             dense_stage_episode_count += 1
                             dense_stage_success_count += int(float(success_value) >= 0.5)
-                        if int(dense_stage_index) == 1:
+                        if int(dense_stage_index) == 1 and str(args.dense_stage_gate_metric) == "rollout":
                             required_episodes = max(1, int(args.dense_stage_min_episodes))
                             stage_success_rate = (
                                 float(sum(dense_stage_successes) / len(dense_stage_successes))
@@ -927,6 +1090,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                     )
                     if int(dense_stage_index) != previous_stage_index:
                         dense_stage_switched = True
+                        dense_stage_successes.clear()
+                        dense_stage_episode_count = 0
+                        dense_stage_success_count = 0
                         dense_stage_instruction_types = _apply_dense_stage_to_envs(
                             [item.env for item in slots],
                             args,
@@ -961,6 +1127,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         success_count=dense_stage_success_count,
                     )
                     row = {
+                        "event": "rollout_step",
                         "global_step": int(global_step),
                         "rank": int(dist_ctx.rank),
                         "slot": int(slot_idx),
@@ -1018,6 +1185,71 @@ def main(argv: Sequence[str] | None = None) -> None:
                     checkpoint = trainer.save(global_step=global_step, args=args, latest=False)
                     _log(dist_ctx, f"[smolvla-cdpr] Saved checkpoint: {checkpoint}", progress=progress)
 
+                if _validation_due(args, global_step=global_step, last_validation_step=last_validation_step):
+                    proposed_stage_index = int(dense_stage_index)
+                    if dist_ctx.is_main:
+                        validation_instruction_types = _validation_instruction_types(
+                            args,
+                            dense_curriculum_active=dense_curriculum_active,
+                            dense_stage_index=dense_stage_index,
+                        )
+                        if validation_env is not None and validation_instruction_types:
+                            validation_summary = _run_smolvla_distinct_validation(
+                                validation_env=validation_env,
+                                runtime=runtime,
+                                trainer=trainer,
+                                layout=layout,
+                                args=args,
+                                global_step=global_step,
+                                stage_index=dense_stage_index,
+                                instruction_types=validation_instruction_types,
+                            )
+                            _write_validation_summary(
+                                metrics_path=metrics_path,
+                                writer=writer,
+                                summary=validation_summary,
+                            )
+                            _log(
+                                dist_ctx,
+                                "[smolvla-cdpr] Held-out validation "
+                                f"step={global_step:07d} stage={dense_stage_index} "
+                                f"episodes={validation_summary['validation_episode_count']} "
+                                f"success_rate={float(validation_summary['validation_success_rate'] or 0.0):.3f}",
+                                progress=progress,
+                            )
+                            if (
+                                dense_curriculum_active
+                                and str(args.dense_stage_gate_metric) == "validation"
+                                and int(dense_stage_index) == 1
+                                and validation_summary.get("validation_success_rate") is not None
+                                and float(validation_summary["validation_success_rate"])
+                                >= float(args.dense_stage_switch_success_rate)
+                            ):
+                                proposed_stage_index = 2
+                    previous_stage_index = int(dense_stage_index)
+                    dense_stage_index = _broadcast_dense_stage(
+                        ctx=dist_ctx,
+                        device=device,
+                        stage_index=proposed_stage_index,
+                    )
+                    if int(dense_stage_index) != previous_stage_index:
+                        dense_stage_switched = True
+                        dense_stage_successes.clear()
+                        dense_stage_episode_count = 0
+                        dense_stage_success_count = 0
+                        dense_stage_instruction_types = _apply_dense_stage_to_envs(
+                            [item.env for item in slots],
+                            args,
+                            dense_stage_index,
+                        )
+                        _log(
+                            dist_ctx,
+                            "[smolvla-cdpr] Dense curriculum validation gate switched to stage "
+                            f"{dense_stage_index}: {', '.join(dense_stage_instruction_types)}",
+                            progress=progress,
+                        )
+                    last_validation_step = int(global_step)
+
                 if done:
                     completed_episode_rewards.append(float(slot.episode_reward))
                     completed_episode_successes.append(1.0 if episode_success else 0.0)
@@ -1042,6 +1274,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                             handle.write(
                                 json.dumps(
                                     {
+                                        "event": "episode_end",
                                         "global_step": int(global_step),
                                         "rank": int(dist_ctx.rank),
                                         "slot": int(slot_idx),
@@ -1092,6 +1325,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             progress.close()
         if writer is not None:
             writer.close()
+        if validation_env is not None:
+            try:
+                with _silence_output(bool(getattr(args, "progress_only", False))):
+                    validation_env.close()
+            except Exception:
+                pass
         for slot in slots:
             try:
                 with _silence_output(bool(getattr(args, "progress_only", False)) or not dist_ctx.is_main):
