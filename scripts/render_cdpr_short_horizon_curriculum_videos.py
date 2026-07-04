@@ -2,267 +2,245 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import os
 import shutil
 import subprocess
 import sys
-import xml.etree.ElementTree as ET
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
+from typing import Any, Iterator
 
 import mujoco as mj
 import numpy as np
+import yaml
 from PIL import Image, ImageDraw
 
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+CDPR_ROOT = ROOT / "robots" / "cdpr"
+if str(CDPR_ROOT) not in sys.path:
+    sys.path.insert(0, str(CDPR_ROOT))
 
-DEFAULT_XML = ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr.xml"
+DEFAULT_CONFIG = ROOT / "configs" / "examples" / "cdpr_octo_small_dense_simple.yaml"
 DEFAULT_OUTPUT = ROOT / "runs" / "cdpr_short_horizon_curriculum_videos"
-CUBE_HALF_SIZE = 0.024
-HELD_OFFSET = np.array([0.0, 0.0, -0.035], dtype=float)
-PLATE_CENTER = np.array([0.16, 0.08, 0.016], dtype=float)
-TABLE_Z = -0.025
-EE_START = np.array([0.0, 0.0, 0.40], dtype=float)
+DEFAULT_CASES = (
+    "move_to_object",
+    "catch_object",
+    "grip_object",
+    "pick_up",
+    "release_object",
+    "put_into_plate",
+)
 
 
-class DirectCDPRDemo:
-    """Tiny MuJoCo renderer/controller for near-success curriculum videos."""
-
-    def __init__(self, xml_path: Path, *, width: int, height: int) -> None:
-        self.model = mj.MjModel.from_xml_path(str(xml_path))
-        self.data = mj.MjData(self.model)
-        self.width = int(width)
-        self.height = int(height)
-        self.renderer: mj.Renderer | None = None
-        self.overview_cam = mj.MjvCamera()
-        self.overview_cam.type = mj.mjtCamera.mjCAMERA_FREE
-        self.overview_cam.lookat[:] = np.array([0.0, 0.0, 0.20], dtype=float)
-        self.overview_cam.distance = 1.35
-        self.overview_cam.azimuth = 90.0
-        self.overview_cam.elevation = -32.0
-
-        self.body_ee = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_BODY, "ee_base")
-        if self.body_ee == -1:
-            raise RuntimeError("Could not find ee_base body.")
-        self.jnt_ee_free = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "ee_free")
-        if self.jnt_ee_free == -1:
-            raise RuntimeError("Could not find ee_free joint.")
-        self.jnt_finger_l = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "finger_l")
-        self.jnt_finger_r = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_JOINT, "finger_r")
-        if self.jnt_finger_l == -1:
-            raise RuntimeError("Could not find finger_l joint.")
-        self.jnt_finger_l_qadr = int(self.model.jnt_qposadr[self.jnt_finger_l])
-        q_lo, q_hi = self.model.jnt_range[self.jnt_finger_l]
-        self.gripper_joint_min = float(min(q_lo, q_hi))
-        self.gripper_joint_max = float(max(q_lo, q_hi))
-        if self.gripper_joint_max <= self.gripper_joint_min:
-            self.gripper_joint_min = 0.0
-            self.gripper_joint_max = 0.03
-        self.act_gripper = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_ACTUATOR, "act_gripper")
-
-    def initialize(self) -> None:
-        self.renderer = mj.Renderer(self.model, height=self.height, width=self.width)
-        mj.mj_resetData(self.model, self.data)
-        self.set_target_position(EE_START)
-        self.set_gripper(0.75)
-        mj.mj_forward(self.model, self.data)
-
-    def cleanup(self) -> None:
-        if self.renderer is not None:
-            self.renderer.close()
-            self.renderer = None
-
-    def get_end_effector_position(self) -> np.ndarray:
-        return np.asarray(self.data.xpos[self.body_ee], dtype=float).copy()
-
-    def set_target_position(self, target_pos: np.ndarray) -> bool:
-        qadr = int(self.model.jnt_qposadr[self.jnt_ee_free])
-        dadr = int(self.model.jnt_dofadr[self.jnt_ee_free])
-        self.data.qpos[qadr : qadr + 3] = np.asarray(target_pos, dtype=float).reshape(3)
-        self.data.qpos[qadr + 3 : qadr + 7] = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
-        self.data.qvel[dadr : dadr + 6] = 0.0
-        mj.mj_forward(self.model, self.data)
-        return True
-
-    def set_gripper(self, opening_01: float) -> None:
-        opening = float(np.clip(opening_01, 0.0, 1.0))
-        joint_pos = self.gripper_joint_min + opening * (self.gripper_joint_max - self.gripper_joint_min)
-        for joint_id in (self.jnt_finger_l, self.jnt_finger_r):
-            if int(joint_id) == -1:
-                continue
-            qadr = int(self.model.jnt_qposadr[int(joint_id)])
-            dadr = int(self.model.jnt_dofadr[int(joint_id)])
-            self.data.qpos[qadr] = joint_pos
-            self.data.qvel[dadr] = 0.0
-        if self.act_gripper != -1:
-            self.data.ctrl[self.act_gripper] = opening
-        mj.mj_forward(self.model, self.data)
-
-    def get_gripper_opening(self) -> float:
-        span = max(self.gripper_joint_max - self.gripper_joint_min, 1e-9)
-        return float(np.clip((self.data.qpos[self.jnt_finger_l_qadr] - self.gripper_joint_min) / span, 0.0, 1.0))
-
-    def run_simulation_step(self, *, capture_frame: bool = False) -> None:
-        del capture_frame
-        mj.mj_forward(self.model, self.data)
-
-    def capture_frame(self, camera: mj.MjvCamera, camera_name: str) -> np.ndarray:
-        del camera_name
-        if self.renderer is None:
-            raise RuntimeError("Renderer is not initialized.")
-        self.renderer.update_scene(self.data, camera=camera)
-        return np.asarray(self.renderer.render(), dtype=np.uint8).copy()
+@dataclass(frozen=True)
+class CaseSpec:
+    instruction_type: str
+    filename: str
+    start_options: dict[str, Any]
+    start_label: str
+    finish_label: str
 
 
-def _build_demo_xml(xml_path: Path, output_dir: Path) -> Path:
-    output_dir.mkdir(parents=True, exist_ok=True)
-    tree = ET.parse(xml_path)
-    root = tree.getroot()
-    worldbody = root.find("worldbody")
-    if worldbody is None:
-        raise RuntimeError(f"No <worldbody> found in {xml_path}")
-
-    if worldbody.find("./body[@name='curriculum_table']") is None:
-        table = ET.SubElement(worldbody, "body", {"name": "curriculum_table", "pos": f"0 0 {TABLE_Z:.4f}"})
-        ET.SubElement(
-            table,
-            "geom",
-            {
-                "name": "curriculum_table_top",
-                "type": "box",
-                "size": "0.50 0.38 0.025",
-                "rgba": "0.72 0.72 0.68 1",
-                "contype": "1",
-                "conaffinity": "1",
-            },
-        )
-
-    if worldbody.find("./body[@name='curriculum_plate']") is None:
-        plate = ET.SubElement(
-            worldbody,
-            "body",
-            {
-                "name": "curriculum_plate",
-                "pos": f"{PLATE_CENTER[0]:.4f} {PLATE_CENTER[1]:.4f} {PLATE_CENTER[2]:.4f}",
-            },
-        )
-        ET.SubElement(
-            plate,
-            "geom",
-            {
-                "name": "curriculum_plate_geom",
-                "type": "cylinder",
-                "size": "0.085 0.006",
-                "rgba": "0.05 0.32 0.85 0.85",
-                "contype": "0",
-                "conaffinity": "0",
-            },
-        )
-
-    if worldbody.find("./body[@name='target_object']") is None:
-        cube = ET.SubElement(
-            worldbody,
-            "body",
-            {"name": "target_object", "pos": f"0 0 {CUBE_HALF_SIZE:.4f}"},
-        )
-        ET.SubElement(cube, "freejoint", {"name": "target_object_free"})
-        ET.SubElement(
-            cube,
-            "geom",
-            {
-                "name": "target_box",
-                "type": "box",
-                "size": f"{CUBE_HALF_SIZE:.4f} {CUBE_HALF_SIZE:.4f} {CUBE_HALF_SIZE:.4f}",
-                "rgba": "0.88 0.18 0.08 1",
-                "mass": "0.03",
-                "friction": "1.6 0.02 0.01",
-                "contype": "1",
-                "conaffinity": "1",
-            },
-        )
-
-    out_path = output_dir / "cdpr_short_horizon_curriculum_demo.xml"
-    tree.write(out_path, encoding="utf-8", xml_declaration=False)
-    return out_path
+CASE_SPECS: dict[str, CaseSpec] = {
+    "move_to_object": CaseSpec(
+        instruction_type="move_to_object",
+        filename="training_scene_move_to_object.mp4",
+        start_options={},
+        start_label="START: sampled training scene",
+        finish_label="SUCCESS: end effector above target object",
+    ),
+    "catch_object": CaseSpec(
+        instruction_type="catch_object",
+        filename="training_scene_catch_object.mp4",
+        start_options={"start_with_target_at_gripper": True},
+        start_label="START: target placed between open fingers",
+        finish_label="SUCCESS: fingers closed around target",
+    ),
+    "grip_object": CaseSpec(
+        instruction_type="grip_object",
+        filename="training_scene_grip_object.mp4",
+        start_options={"start_with_target_at_gripper": True},
+        start_label="START: target placed between open fingers",
+        finish_label="SUCCESS: target gripped",
+    ),
+    "pick_up": CaseSpec(
+        instruction_type="pick_up",
+        filename="training_scene_pick_up.mp4",
+        start_options={"start_with_caught_object": True},
+        start_label="START: target already caught by gripper",
+        finish_label="SUCCESS: caught target lifted",
+    ),
+    "release_object": CaseSpec(
+        instruction_type="release_object",
+        filename="training_scene_release_object.mp4",
+        start_options={"start_with_caught_object": True},
+        start_label="START: target already held",
+        finish_label="SUCCESS: gripper opened and target released",
+    ),
+    "put_into_plate": CaseSpec(
+        instruction_type="put_into_plate",
+        filename="training_scene_put_into_plate.mp4",
+        start_options={"start_with_caught_object": True},
+        start_label="START: target held near sampled container",
+        finish_label="SUCCESS: target released into container",
+    ),
+}
 
 
-def _set_free_body_pose(sim, position: np.ndarray) -> None:
-    joint_id = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_JOINT, "target_object_free")
-    if joint_id == -1:
-        raise RuntimeError("Could not find target_object_free joint.")
-    qadr = int(sim.model.jnt_qposadr[joint_id])
-    dadr = int(sim.model.jnt_dofadr[joint_id])
-    sim.data.qpos[qadr : qadr + 3] = np.asarray(position, dtype=float).reshape(3)
-    sim.data.qpos[qadr + 3 : qadr + 7] = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
-    sim.data.qvel[dadr : dadr + 6] = 0.0
-    mj.mj_forward(sim.model, sim.data)
+@contextmanager
+def _task_metadata_env(metadata: dict[str, Any]) -> Iterator[None]:
+    old_value = os.environ.get("RLVLA_TASK_METADATA_JSON")
+    os.environ["RLVLA_TASK_METADATA_JSON"] = json.dumps(metadata)
+    try:
+        yield
+    finally:
+        if old_value is None:
+            os.environ.pop("RLVLA_TASK_METADATA_JSON", None)
+        else:
+            os.environ["RLVLA_TASK_METADATA_JSON"] = old_value
 
 
-def _object_position(sim) -> np.ndarray:
-    body_id = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_BODY, "target_object")
-    return np.asarray(sim.data.xpos[body_id], dtype=float).copy()
+@contextmanager
+def _maybe_silence(enabled: bool) -> Iterator[None]:
+    if not enabled:
+        yield
+        return
+    with open(os.devnull, "w", encoding="utf-8") as sink:
+        with redirect_stdout(sink), redirect_stderr(sink):
+            yield
 
 
-def _force_gripper_opening(sim, opening_01: float) -> None:
-    target = float(np.clip(opening_01, 0.0, 1.0))
-    sim.set_gripper(target)
-    joint_min = float(getattr(sim, "gripper_joint_min", 0.0))
-    joint_max = float(getattr(sim, "gripper_joint_max", 0.03))
-    joint_pos = joint_min + target * max(joint_max - joint_min, 0.0)
-    for joint_name in ("finger_l", "finger_r"):
-        joint_id = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_JOINT, joint_name)
-        if joint_id == -1:
-            continue
-        qadr = int(sim.model.jnt_qposadr[joint_id])
-        dofadr = int(sim.model.jnt_dofadr[joint_id])
-        sim.data.qpos[qadr] = float(joint_pos)
-        sim.data.qvel[dofadr] = 0.0
-    mj.mj_forward(sim.model, sim.data)
+def _resolve_path(config_path: Path, raw: Any | None) -> Path | None:
+    if raw is None:
+        return None
+    path = Path(str(raw))
+    if not path.is_absolute():
+        path = (config_path.parent / path).resolve()
+    return path
 
 
-def _geom_half_extent_along_axis(sim, geom_id: int, axis: np.ndarray) -> float:
-    axis = np.asarray(axis, dtype=float).reshape(3)
-    axis /= max(float(np.linalg.norm(axis)), 1e-9)
-    geom_id = int(geom_id)
-    geom_type = int(sim.model.geom_type[geom_id])
-    size = np.asarray(sim.model.geom_size[geom_id], dtype=float)
-    if geom_type == int(mj.mjtGeom.mjGEOM_BOX):
-        half_local = np.array([size[0], size[1], size[2]], dtype=float)
-    elif geom_type == int(mj.mjtGeom.mjGEOM_CAPSULE):
-        half_local = np.array([size[0], size[0], size[1] + size[0]], dtype=float)
-    else:
-        radius = float(sim.model.geom_rbound[geom_id])
-        half_local = np.array([radius, radius, radius], dtype=float)
-    xmat = np.asarray(sim.data.geom_xmat[geom_id], dtype=float).reshape(3, 3)
-    return float(np.sum(np.abs(xmat.T @ axis) * half_local))
+def _load_config(config_path: Path) -> dict[str, Any]:
+    with config_path.open("r", encoding="utf-8") as handle:
+        data = yaml.safe_load(handle)
+    if not isinstance(data, dict):
+        raise ValueError(f"Config {config_path} did not parse to a mapping.")
+    return data
 
 
-def _held_gripper_opening(sim, *, clearance: float = 0.001) -> float:
-    _force_gripper_opening(sim, 0.0)
-    left_gid = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_GEOM, "finger_l_tip")
-    right_gid = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_GEOM, "finger_r_tip")
-    left = np.asarray(sim.data.geom_xpos[left_gid], dtype=float)
-    right = np.asarray(sim.data.geom_xpos[right_gid], dtype=float)
-    axis = left - right
-    distance = float(np.linalg.norm(axis))
-    axis /= max(distance, 1e-9)
-    closed_gap = max(
-        0.0,
-        distance
-        - _geom_half_extent_along_axis(sim, left_gid, axis)
-        - _geom_half_extent_along_axis(sim, right_gid, axis),
+def _dedupe(values: Any) -> tuple[str, ...]:
+    out: list[str] = []
+    seen: set[str] = set()
+    if values is None:
+        return ()
+    for item in values:
+        name = str(item).strip()
+        if name and name not in seen:
+            out.append(name)
+            seen.add(name)
+    return tuple(out)
+
+
+def _build_env(
+    *,
+    config_path: Path,
+    config: dict[str, Any],
+    metadata: dict[str, Any],
+    instruction_types: tuple[str, ...],
+    seed: int,
+    quiet: bool,
+):
+    from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv
+
+    task = dict(config.get("task") or {})
+    simulation = dict(config.get("simulation") or {})
+    randomization = dict(simulation.get("randomization") or {})
+    training_args = dict(((config.get("training") or {}).get("rl") or {}).get("args") or {})
+
+    catalog_path = (
+        _resolve_path(config_path, simulation.get("catalog_path"))
+        or _resolve_path(config_path, task.get("catalog_path"))
+        or ROOT / "robots" / "cdpr" / "cdpr_dataset" / "datasets" / "cdpr_scene_catalog.yaml"
     )
-    desired_gap = 2.0 * CUBE_HALF_SIZE + 2.0 * float(clearance)
-    joint_span = max(float(sim.gripper_joint_max - sim.gripper_joint_min), 1e-6)
-    return float(np.clip((desired_gap - closed_gap) / (2.0 * joint_span), 0.0, 1.0))
+    desk_textures_dir = _resolve_path(config_path, simulation.get("desk_textures_dir"))
+    if desk_textures_dir is not None and not desk_textures_dir.exists():
+        desk_textures_dir = _resolve_path(config_path, simulation.get("desk_textures_fallback_dir"))
+    if desk_textures_dir is not None and not desk_textures_dir.exists():
+        desk_textures_dir = None
+    scene_objects = _dedupe(metadata.get("scene_object_pool"))
+    target_objects = _dedupe(metadata.get("target_object_pool"))
+    allowed_objects = scene_objects or target_objects or None
+
+    with _task_metadata_env(metadata), _maybe_silence(quiet):
+        return CDPRLanguageRLEnv(
+            catalog_path=catalog_path,
+            max_steps=int(training_args.get("max_env_steps", 64)),
+            max_objects=int(training_args.get("max_objects", randomization.get("max_objects", 3))),
+            action_step_xyz=float(training_args.get("action_step_xyz", 0.015)),
+            action_step_yaw=float(training_args.get("action_step_yaw", 0.08)),
+            action_step_gripper=float(training_args.get("action_step_gripper", 0.05)),
+            hold_steps=int(training_args.get("hold_steps", 0)),
+            lock_non_commanded_axes=bool(training_args.get("lock_non_commanded_axes", False)),
+            lock_non_commanded_axes_threshold=float(
+                training_args.get("lock_non_commanded_axes_threshold", 0.05)
+            ),
+            randomize_ee_start=bool(training_args.get("randomize_ee_start", True)),
+            ee_start_x_bounds=training_args.get("ee_start_x_bounds"),
+            ee_start_y_bounds=training_args.get("ee_start_y_bounds"),
+            ee_start_z=training_args.get("ee_start_z"),
+            randomize_ee_yaw=bool(training_args.get("randomize_ee_yaw", True)),
+            ee_yaw_bounds=training_args.get("ee_yaw_bounds"),
+            move_distance=float(training_args.get("move_distance", 0.40)),
+            lift_distance=float(training_args.get("lift_distance", 0.10)),
+            capture_frames=False,
+            record_trajectory=False,
+            instruction_types=instruction_types,
+            allowed_objects=allowed_objects,
+            desk_textures_dir=desk_textures_dir,
+            desk_geom_regex=str(simulation.get("desk_geom_regex", ".*desk.*|.*table.*")),
+            desk_texrepeat=tuple(simulation.get("desk_texrepeat", (20, 20))),
+            wrapper_cleanup=bool(training_args.get("wrapper_cleanup", False)),
+            use_wrapper_cache=bool(training_args.get("use_wrapper_cache", True)),
+            reuse_existing_wrapper_variants=bool(training_args.get("reuse_existing_wrapper_variants", True)),
+            seed=int(seed),
+        )
 
 
-def _held_object_position(sim) -> np.ndarray:
-    ee_pos = np.asarray(sim.get_end_effector_position(), dtype=float)
-    return ee_pos + HELD_OFFSET
+def _camera_for_env(env: Any) -> mj.MjvCamera:
+    positions: list[np.ndarray] = []
+    try:
+        positions.append(np.asarray(env._get_ee_position(), dtype=float).reshape(3))
+    except Exception:
+        pass
+    for body_name in getattr(env, "_object_body_names", ()):
+        try:
+            positions.append(np.asarray(env._get_body_position(str(body_name)), dtype=float).reshape(3))
+        except Exception:
+            continue
+
+    if positions:
+        arr = np.asarray(positions, dtype=float)
+        lookat = np.mean(arr, axis=0)
+        spread = np.max(np.linalg.norm(arr[:, :2] - lookat[:2], axis=1)) if arr.shape[0] > 1 else 0.4
+    else:
+        lookat = np.array([0.0, 0.0, 0.20], dtype=float)
+        spread = 0.4
+    support_z = float(getattr(env, "_support_surface_z", lookat[2]))
+    lookat[2] = max(support_z + 0.05, min(float(lookat[2]), support_z + 0.35))
+
+    camera = mj.MjvCamera()
+    camera.type = mj.mjtCamera.mjCAMERA_FREE
+    camera.lookat[:] = lookat
+    camera.distance = float(np.clip(1.10 + 1.8 * spread, 1.15, 1.85))
+    camera.azimuth = 90.0
+    camera.elevation = -34.0
+    return camera
 
 
 def _annotate(frame: np.ndarray, lines: list[str]) -> np.ndarray:
@@ -277,7 +255,37 @@ def _annotate(frame: np.ndarray, lines: list[str]) -> np.ndarray:
     return np.asarray(image)
 
 
-def _write_video(frames: list[np.ndarray], output_path: Path, *, fps: float, keep_frames: bool) -> dict[str, object]:
+def _capture(
+    *,
+    env: Any,
+    renderer: mj.Renderer,
+    camera: mj.MjvCamera,
+    frames: list[np.ndarray],
+    title: str,
+    phase: str,
+    outcome: str,
+) -> None:
+    mj.mj_forward(env.sim.model, env.sim.data)
+    renderer.update_scene(env.sim.data, camera=camera)
+    frame = np.asarray(renderer.render(), dtype=np.uint8).copy()
+    ee = np.asarray(env._get_ee_position(), dtype=float).reshape(3)
+    obj = np.asarray(env._current_manipulated_object_position(default=env._goal_position), dtype=float).reshape(3)
+    gripper = float(env._get_gripper_opening())
+    frames.append(
+        _annotate(
+            frame,
+            [
+                title,
+                phase,
+                outcome,
+                f"ee=({ee[0]:+.2f},{ee[1]:+.2f},{ee[2]:.2f}) obj=({obj[0]:+.2f},{obj[1]:+.2f},{obj[2]:.2f})",
+                f"gripper={gripper:.2f}",
+            ],
+        )
+    )
+
+
+def _write_video(frames: list[np.ndarray], output_path: Path, *, fps: float, keep_frames: bool) -> dict[str, Any]:
     if not frames:
         raise RuntimeError("No frames were captured.")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,181 +321,511 @@ def _write_video(frames: list[np.ndarray], output_path: Path, *, fps: float, kee
     return {"video": output_path.as_posix(), "frames": len(frames)}
 
 
-def _capture(sim, frames: list[np.ndarray], *, title: str, phase: str, success: str) -> None:
-    obj = _object_position(sim)
-    ee = np.asarray(sim.get_end_effector_position(), dtype=float)
-    frame = sim.capture_frame(sim.overview_cam, "overview")
-    frames.append(
-        _annotate(
-            frame,
-            [
-                title,
-                phase,
-                success,
-                f"ee=({ee[0]:+.2f},{ee[1]:+.2f},{ee[2]:.2f}) obj=({obj[0]:+.2f},{obj[1]:+.2f},{obj[2]:.2f})",
-                f"gripper={sim.get_gripper_opening():.2f}",
-            ],
-        )
-    )
+def _set_ee_position(env: Any, position: np.ndarray) -> None:
+    joint_id = mj.mj_name2id(env.sim.model, mj.mjtObj.mjOBJ_JOINT, "ee_free")
+    if joint_id == -1:
+        raise RuntimeError("Could not find ee_free joint.")
+    qadr = int(env.sim.model.jnt_qposadr[joint_id])
+    dadr = int(env.sim.model.jnt_dofadr[joint_id])
+    quat = np.asarray(env.sim.data.qpos[qadr + 3 : qadr + 7], dtype=float).copy()
+    if float(np.linalg.norm(quat)) < 1e-9:
+        quat = np.array([1.0, 0.0, 0.0, 0.0], dtype=float)
+    env.sim.data.qpos[qadr : qadr + 3] = np.asarray(position, dtype=float).reshape(3)
+    env.sim.data.qpos[qadr + 3 : qadr + 7] = quat / max(float(np.linalg.norm(quat)), 1e-9)
+    env.sim.data.qvel[dadr : dadr + 6] = 0.0
+    mj.mj_forward(env.sim.model, env.sim.data)
+    env._locked_target_xyz = np.asarray(position, dtype=np.float32).reshape(3).copy()
 
 
-def _drive_ee(sim, target: np.ndarray, *, frames: list[np.ndarray], title: str, phase: str, steps: int, attached: bool, gripper: float, success: str) -> None:
-    start = np.asarray(sim.get_end_effector_position(), dtype=float)
+def _set_body_position(env: Any, body_name: str, position: np.ndarray) -> None:
+    if not env._set_body_position(str(body_name), np.asarray(position, dtype=np.float32).reshape(3)):
+        raise RuntimeError(f"Could not set body position for {body_name!r}.")
+
+
+def _set_gripper(env: Any, opening_01: float) -> None:
+    env._force_gripper_opening(float(np.clip(opening_01, 0.0, 1.0)))
+    mj.mj_forward(env.sim.model, env.sim.data)
+
+
+def _target_position(env: Any) -> np.ndarray:
+    return np.asarray(env._current_manipulated_object_position(default=env._goal_position), dtype=np.float32).reshape(3)
+
+
+def _reference_position(env: Any) -> np.ndarray:
+    return np.asarray(env._reference_object_position(default=env._goal_position), dtype=np.float32).reshape(3)
+
+
+def _hold_offset(env: Any) -> np.ndarray:
+    try:
+        return (_target_position(env) - np.asarray(env._get_ee_position(), dtype=np.float32).reshape(3)).astype(np.float32)
+    except Exception:
+        return np.array([0.0, 0.0, -0.035], dtype=np.float32)
+
+
+def _held_opening(env: Any) -> float:
+    opening = float(getattr(env, "_caught_object_start_gripper_opening", 0.0))
+    if not np.isfinite(opening) or opening <= 0.0:
+        opening = float(env._get_gripper_opening())
+    return float(np.clip(opening, 0.0, 1.0))
+
+
+def _target_fit_opening(env: Any) -> float:
+    getter = getattr(env, "_caught_object_start_gripper_opening_for_body", None)
+    if callable(getter) and getattr(env, "_target_body_name", ""):
+        try:
+            return float(np.clip(getter(env._target_body_name), 0.0, 1.0))
+        except Exception:
+            pass
+    return _held_opening(env)
+
+
+def _target_at_hold_center(env: Any) -> np.ndarray:
+    target = _target_position(env)
+    hold_getter = getattr(env, "_caught_object_start_hold_center", None)
+    if not callable(hold_getter):
+        return target
+    try:
+        hold_center = hold_getter()
+    except Exception:
+        hold_center = None
+    if hold_center is None:
+        return target
+    current_hold = np.asarray(hold_center, dtype=np.float32).reshape(3)
+    return current_hold + (target - current_hold)
+
+
+def _released_object_position(env: Any) -> np.ndarray:
+    target = _target_position(env)
+    geometry_getter = getattr(env, "_finger_pair_geometry", None)
+    width_getter = getattr(env, "_body_width_along_axis", None)
+    if callable(geometry_getter) and callable(width_getter) and getattr(env, "_target_body_name", ""):
+        try:
+            geometry = geometry_getter()
+            axis = np.asarray(geometry["axis"], dtype=np.float32).reshape(3)
+            center = np.asarray(geometry["center"], dtype=np.float32).reshape(3)
+            inner_gap = float(geometry["inner_gap"])
+            width = float(width_getter(env._target_body_name, axis))
+            if np.all(np.isfinite(axis)) and float(np.linalg.norm(axis)) > 1e-9 and np.isfinite(width):
+                axis = axis / max(float(np.linalg.norm(axis)), 1e-9)
+                target = center + axis * (0.5 * max(inner_gap, 0.0) + 0.5 * max(width, 0.0) + 0.06)
+        except Exception:
+            pass
+    support_z = float(getattr(env, "_support_surface_z", target[2]))
+    target = np.asarray(target, dtype=np.float32).reshape(3)
+    target[2] = support_z + 0.025
+    return target
+
+
+def _drive(
+    *,
+    env: Any,
+    renderer: mj.Renderer,
+    camera: mj.MjvCamera,
+    frames: list[np.ndarray],
+    target_ee: np.ndarray,
+    held_offset: np.ndarray | None,
+    gripper: float,
+    title: str,
+    phase: str,
+    outcome: str,
+    steps: int,
+) -> None:
+    start_ee = np.asarray(env._get_ee_position(), dtype=np.float32).reshape(3)
     for index in range(max(1, int(steps))):
         alpha = float(index + 1) / float(max(1, int(steps)))
-        pos = (1.0 - alpha) * start + alpha * np.asarray(target, dtype=float)
-        _force_gripper_opening(sim, gripper)
-        sim.set_target_position(pos)
-        sim.run_simulation_step(capture_frame=False)
-        if attached:
-            _set_free_body_pose(sim, _held_object_position(sim))
-        _capture(sim, frames, title=title, phase=phase, success=success)
+        ee_pos = (1.0 - alpha) * start_ee + alpha * np.asarray(target_ee, dtype=np.float32).reshape(3)
+        _set_ee_position(env, ee_pos)
+        _set_gripper(env, gripper)
+        if held_offset is not None and getattr(env, "_target_body_name", ""):
+            _set_body_position(env, env._target_body_name, ee_pos + held_offset)
+        _capture(env=env, renderer=renderer, camera=camera, frames=frames, title=title, phase=phase, outcome=outcome)
 
 
-def _render_case(*, xml_path: Path, run_dir: Path, filename: str, title: str, case: str, fps: float, keep_frames: bool) -> dict[str, object]:
-    sim = DirectCDPRDemo(xml_path, width=640, height=480)
+def _success_move_to_object(env: Any, metadata: dict[str, Any]) -> None:
+    obj = _target_position(env)
+    z_low = float(metadata.get("move_to_object_z_window_low", 0.10))
+    z_high = float(metadata.get("move_to_object_z_window_high", 0.20))
+    if z_low > z_high:
+        z_low, z_high = z_high, z_low
+    final_ee = np.array([obj[0], obj[1], 0.5 * (z_low + z_high)], dtype=np.float32)
+    _set_ee_position(env, final_ee)
+
+
+def _success_catch_or_grip(env: Any) -> None:
+    _set_gripper(env, _target_fit_opening(env))
+    if getattr(env, "_target_body_name", ""):
+        _set_body_position(env, env._target_body_name, _target_at_hold_center(env))
+
+
+def _success_pick_up(env: Any, metadata: dict[str, Any], held_offset: np.ndarray) -> None:
+    lift = max(float(metadata.get("pick_lift_success_height", 0.05)) + 0.03, 0.07)
+    final_ee = np.asarray(env._get_ee_position(), dtype=np.float32).reshape(3) + np.array([0.0, 0.0, lift], dtype=np.float32)
+    _set_ee_position(env, final_ee)
+    _set_gripper(env, _held_opening(env))
+    _set_body_position(env, env._target_body_name, final_ee + held_offset)
+
+
+def _success_release(env: Any) -> None:
+    target = _released_object_position(env)
+    if getattr(env, "_target_body_name", ""):
+        _set_body_position(env, env._target_body_name, target)
+    _set_gripper(env, 1.0)
+    env._caught_object_start_active = False
+
+
+def _success_put_into_plate(env: Any) -> np.ndarray:
+    reference = _reference_position(env)
+    final_obj = reference.copy()
+    support_z = float(getattr(env, "_support_surface_z", final_obj[2]))
+    final_obj[2] = max(float(final_obj[2]), support_z + 0.025)
+    if getattr(env, "_target_body_name", ""):
+        _set_body_position(env, env._target_body_name, final_obj)
+    _set_gripper(env, 1.0)
+    env._caught_object_start_active = False
+    final_ee = final_obj + np.array([0.0, 0.0, 0.16], dtype=np.float32)
+    _set_ee_position(env, final_ee)
+    return final_obj
+
+
+def _evaluate_final_state(env: Any) -> dict[str, Any]:
+    from robots.cdpr.cdpr_dataset.rl_cdpr_env import (
+        _call_with_supported_kwargs,
+        _normalize_reward_result,
+        _normalize_success_result,
+    )
+
+    state = copy.deepcopy(env._reward_state)
+    ee = np.asarray(env._get_ee_position(), dtype=np.float32).reshape(3)
+    goal_pos = env._current_target_reference_position()
+    gripper_opening = env._get_gripper_opening()
+    caught_body, caught_catalog, caught_score, caught_is_target = env._detect_caught_object(ee)
+    reward_kwargs = {
+        "spec": env._instruction_spec,
+        "ee_pos": ee,
+        "obj_pos": goal_pos,
+        "goal_pos": goal_pos,
+        "reward_state": state,
+        "action": np.zeros((5,), dtype=np.float32),
+        "camera_alignment": env._get_ee_camera_alignment(
+            target_pos=goal_pos,
+            direction=env._current_goal_motion_direction(ee_pos=ee, goal_pos=goal_pos),
+        ),
+        "goal_direction": env._current_goal_motion_direction(ee_pos=ee, goal_pos=goal_pos),
+        "goal_region": env._goal_region,
+        "goal_relation": env._goal_relation,
+        "dense_reward_terms": env._dense_reward_terms,
+        "task_metadata": env._task_metadata,
+        "env": env,
+        "sim": env.sim,
+        "scene_name": env._scene_name,
+        "target_catalog_name": env._target_catalog_name,
+        "target_body_name": env._target_body_name,
+        "reference_catalog_name": env._reference_catalog_name,
+        "reference_body_name": env._reference_body_name,
+        "second_reference_catalog_name": env._second_reference_catalog_name,
+        "second_reference_body_name": env._second_reference_body_name,
+        "gripper_opening": gripper_opening,
+        "support_surface_z": env._support_surface_z,
+        "caught_object_body": caught_body,
+        "caught_object_catalog": caught_catalog,
+        "caught_object_score": float(caught_score),
+        "caught_object_is_target": bool(caught_is_target),
+    }
+    reward, success, reward_info = _normalize_reward_result(
+        _call_with_supported_kwargs(env._reward_fn, **reward_kwargs)
+    )
+    if env._success_fn is not None:
+        success, success_info = _normalize_success_result(
+            _call_with_supported_kwargs(
+                env._success_fn,
+                **reward_kwargs,
+                reward=float(reward),
+                reward_info=reward_info,
+                current_success=bool(success),
+            ),
+            bool(success),
+        )
+        reward_info.update(success_info)
+    return {
+        "reward": float(reward),
+        "success": bool(success),
+        "caught_object_body": str(caught_body),
+        "caught_object_catalog": str(caught_catalog),
+        "caught_object_score": float(caught_score),
+        "caught_object_is_target": bool(caught_is_target),
+        "reward_info_subset": {
+            str(key): float(value)
+            for key, value in reward_info.items()
+            if isinstance(value, (int, float, np.floating, np.integer))
+            and key
+            in {
+                "dense_gripper_success",
+                "sparse_success",
+                "pick_up_validation_success",
+                "manipulation_validation_success",
+                "move_to_object_validation_success",
+                "reward_raw_before_output_normalization",
+                "reward_output_value",
+            }
+        },
+    }
+
+
+def _render_case(
+    *,
+    config_path: Path,
+    config: dict[str, Any],
+    metadata: dict[str, Any],
+    run_dir: Path,
+    case: CaseSpec,
+    seed: int,
+    fps: float,
+    width: int,
+    height: int,
+    keep_frames: bool,
+    quiet_env: bool,
+) -> dict[str, Any]:
+    instruction_types = _dedupe(config.get("task", {}).get("instruction_types")) or DEFAULT_CASES
+    env = _build_env(
+        config_path=config_path,
+        config=config,
+        metadata=metadata,
+        instruction_types=instruction_types,
+        seed=seed,
+        quiet=quiet_env,
+    )
     frames: list[np.ndarray] = []
+    renderer: mj.Renderer | None = None
     try:
-        sim.initialize()
-        held_opening = _held_gripper_opening(sim)
-        open_near_object = min(1.0, max(held_opening + 0.20, 0.75))
-        sim.set_target_position(EE_START)
-        for _ in range(10):
-            sim.run_simulation_step(capture_frame=False)
+        reset_options = {"instruction_type": case.instruction_type, **case.start_options}
+        with _task_metadata_env(metadata), _maybe_silence(quiet_env):
+            _, info = env.reset(seed=seed, options=reset_options)
 
-        if case == "catch":
-            _force_gripper_opening(sim, open_near_object)
-            _set_free_body_pose(sim, _held_object_position(sim))
-            for _ in range(16):
-                sim.run_simulation_step(capture_frame=False)
-                _capture(
-                    sim,
-                    frames,
-                    title=title,
-                    phase="START: object already centered between open fingers",
-                    success="Expected action: close gripper",
-                )
-            for step in range(24):
-                value = open_near_object + (held_opening - open_near_object) * ((step + 1) / 24.0)
-                _force_gripper_opening(sim, value)
-                sim.run_simulation_step(capture_frame=False)
-                _set_free_body_pose(sim, _held_object_position(sim))
-                _capture(sim, frames, title=title, phase="closing around object", success="SUCCESS: object gripped")
+        renderer = mj.Renderer(env.sim.model, height=int(height), width=int(width))
+        camera = _camera_for_env(env)
+        title = f"{case.instruction_type}: {info.get('language_instruction', '')}"
+        target_name = str(info.get("target_object_catalog") or "")
+        reference_name = str(info.get("reference_object_catalog") or "")
+        held_offset = _hold_offset(env)
+        held_opening = _held_opening(env)
+        open_opening = 1.0
 
-        elif case == "pick_up":
-            _force_gripper_opening(sim, held_opening)
-            _set_free_body_pose(sim, _held_object_position(sim))
-            _capture(sim, frames, title=title, phase="START: object already caught", success="Expected action: lift upward")
-            _drive_ee(
-                sim,
-                np.array([0.0, 0.0, 0.55], dtype=float),
+        for _ in range(14):
+            _capture(
+                env=env,
+                renderer=renderer,
+                camera=camera,
                 frames=frames,
                 title=title,
-                phase="lifting held object",
-                steps=42,
-                attached=True,
-                gripper=held_opening,
-                success="SUCCESS: object lifted above start height",
+                phase=case.start_label,
+                outcome=f"scene={info.get('scene', '')} target={target_name} ref={reference_name}",
             )
 
-        elif case == "release":
-            _force_gripper_opening(sim, held_opening)
-            _set_free_body_pose(sim, _held_object_position(sim))
-            for _ in range(12):
-                sim.run_simulation_step(capture_frame=False)
-                _set_free_body_pose(sim, _held_object_position(sim))
-                _capture(sim, frames, title=title, phase="START: object held in gripper", success="Expected action: open fingers")
-            drop_pos = _held_object_position(sim).copy()
-            drop_pos[2] = max(CUBE_HALF_SIZE, TABLE_Z + 0.025 + CUBE_HALF_SIZE)
+        if case.instruction_type == "move_to_object":
+            obj = _target_position(env)
+            z_low = float(metadata.get("move_to_object_z_window_low", 0.10))
+            z_high = float(metadata.get("move_to_object_z_window_high", 0.20))
+            if z_low > z_high:
+                z_low, z_high = z_high, z_low
+            final_ee = np.array([obj[0], obj[1], 0.5 * (z_low + z_high)], dtype=np.float32)
+            _drive(
+                env=env,
+                renderer=renderer,
+                camera=camera,
+                frames=frames,
+                target_ee=final_ee,
+                held_offset=None,
+                gripper=float(env._get_gripper_opening()),
+                title=title,
+                phase="moving end effector to object",
+                outcome=case.finish_label,
+                steps=36,
+            )
+            _success_move_to_object(env, metadata)
+
+        elif case.instruction_type in {"catch_object", "grip_object"}:
+            fit_opening = _target_fit_opening(env)
             for step in range(30):
-                value = held_opening + (1.0 - held_opening) * ((step + 1) / 30.0)
-                _force_gripper_opening(sim, value)
-                _set_free_body_pose(sim, drop_pos)
-                sim.run_simulation_step(capture_frame=False)
-                _capture(sim, frames, title=title, phase="opening fingers and dropping object", success="SUCCESS: object released")
+                alpha = float(step + 1) / 30.0
+                _set_gripper(env, (1.0 - alpha) * open_opening + alpha * fit_opening)
+                _capture(
+                    env=env,
+                    renderer=renderer,
+                    camera=camera,
+                    frames=frames,
+                    title=title,
+                    phase="closing gripper on target",
+                    outcome=case.finish_label,
+                )
+            _success_catch_or_grip(env)
 
-        elif case == "put_into_plate":
-            _force_gripper_opening(sim, held_opening)
-            _set_free_body_pose(sim, _held_object_position(sim))
-            _capture(sim, frames, title=title, phase="START: object held near the plate", success="Expected action: carry, lower, release")
-            _drive_ee(
-                sim,
-                np.array([PLATE_CENTER[0], PLATE_CENTER[1], 0.44], dtype=float),
-                frames=frames,
-                title=title,
-                phase="carry above plate",
-                steps=42,
-                attached=True,
-                gripper=held_opening,
-                success="approaching container",
+        elif case.instruction_type == "pick_up":
+            lift = max(float(metadata.get("pick_lift_success_height", 0.05)) + 0.03, 0.07)
+            final_ee = np.asarray(env._get_ee_position(), dtype=np.float32).reshape(3) + np.array(
+                [0.0, 0.0, lift],
+                dtype=np.float32,
             )
-            _drive_ee(
-                sim,
-                np.array([PLATE_CENTER[0], PLATE_CENTER[1], 0.20], dtype=float),
+            _drive(
+                env=env,
+                renderer=renderer,
+                camera=camera,
                 frames=frames,
-                title=title,
-                phase="lower into plate",
-                steps=28,
-                attached=True,
+                target_ee=final_ee,
+                held_offset=held_offset,
                 gripper=held_opening,
-                success="ready to release",
+                title=title,
+                phase="lifting already-held target",
+                outcome=case.finish_label,
+                steps=40,
             )
-            final_pos = np.array([PLATE_CENTER[0], PLATE_CENTER[1], PLATE_CENTER[2] + CUBE_HALF_SIZE], dtype=float)
-            for step in range(24):
-                value = held_opening + (1.0 - held_opening) * ((step + 1) / 24.0)
-                _force_gripper_opening(sim, value)
-                _set_free_body_pose(sim, final_pos)
-                sim.run_simulation_step(capture_frame=False)
-                _capture(sim, frames, title=title, phase="release in plate", success="SUCCESS: object inside plate")
+            _success_pick_up(env, metadata, held_offset)
+
+        elif case.instruction_type == "release_object":
+            target = _released_object_position(env)
+            for step in range(30):
+                alpha = float(step + 1) / 30.0
+                _set_gripper(env, (1.0 - alpha) * held_opening + alpha)
+                _set_body_position(env, env._target_body_name, target)
+                _capture(
+                    env=env,
+                    renderer=renderer,
+                    camera=camera,
+                    frames=frames,
+                    title=title,
+                    phase="opening gripper and leaving target on table",
+                    outcome=case.finish_label,
+                )
+            _success_release(env)
+
+        elif case.instruction_type == "put_into_plate":
+            reference = _reference_position(env)
+            above = reference + np.array([0.0, 0.0, 0.22], dtype=np.float32)
+            lower = reference + np.array([0.0, 0.0, 0.12], dtype=np.float32)
+            _drive(
+                env=env,
+                renderer=renderer,
+                camera=camera,
+                frames=frames,
+                target_ee=above,
+                held_offset=held_offset,
+                gripper=held_opening,
+                title=title,
+                phase="carrying target over sampled container",
+                outcome="approaching container",
+                steps=34,
+            )
+            _drive(
+                env=env,
+                renderer=renderer,
+                camera=camera,
+                frames=frames,
+                target_ee=lower,
+                held_offset=held_offset,
+                gripper=held_opening,
+                title=title,
+                phase="lowering target into container",
+                outcome="ready to release",
+                steps=24,
+            )
+            final_obj = _success_put_into_plate(env)
+            for _ in range(18):
+                _set_body_position(env, env._target_body_name, final_obj)
+                _capture(
+                    env=env,
+                    renderer=renderer,
+                    camera=camera,
+                    frames=frames,
+                    title=title,
+                    phase="target released in sampled container",
+                    outcome=case.finish_label,
+                )
         else:
-            raise ValueError(f"Unknown case: {case}")
+            raise ValueError(f"Unsupported case: {case.instruction_type}")
 
-        info = _write_video(frames, run_dir / filename, fps=fps, keep_frames=keep_frames)
-        info.update(
+        for _ in range(10):
+            _capture(
+                env=env,
+                renderer=renderer,
+                camera=camera,
+                frames=frames,
+                title=title,
+                phase="FINAL CHECK",
+                outcome=case.finish_label,
+            )
+
+        evaluation = _evaluate_final_state(env)
+        video_info = _write_video(frames, run_dir / case.filename, fps=fps, keep_frames=keep_frames)
+        video_info.update(
             {
-                "case": case,
-                "title": title,
-                "held_gripper_opening": float(held_opening),
-                "final_object_position": [float(x) for x in _object_position(sim)],
+                "case": case.instruction_type,
+                "seed": int(seed),
+                "scene": str(info.get("scene", "")),
+                "scene_objects": list(info.get("scene_objects", [])),
+                "target_object_catalog": target_name,
+                "target_object_body": str(info.get("target_object_body", "")),
+                "reference_object_catalog": reference_name,
+                "reference_object_body": str(info.get("reference_object_body", "")),
+                "language_instruction": str(info.get("language_instruction", "")),
+                "reset_options": reset_options,
+                "caught_object_start": bool(info.get("caught_object_start", False)),
+                "final_evaluation": evaluation,
             }
         )
-        return info
+        return video_info
     finally:
-        sim.cleanup()
+        if renderer is not None:
+            renderer.close()
+        env.close()
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Render CDPR short-horizon curriculum expectation videos.")
-    parser.add_argument("--xml-path", type=Path, default=DEFAULT_XML)
+    parser = argparse.ArgumentParser(
+        description="Render short-horizon CDPR videos from real training-config MuJoCo scenes."
+    )
+    parser.add_argument("--config", type=Path, default=DEFAULT_CONFIG)
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
+    parser.add_argument("--cases", nargs="+", default=list(DEFAULT_CASES), choices=tuple(CASE_SPECS))
+    parser.add_argument("--seed", type=int, default=20260704)
     parser.add_argument("--fps", type=float, default=20.0)
+    parser.add_argument("--width", type=int, default=640)
+    parser.add_argument("--height", type=int, default=480)
     parser.add_argument("--keep-frames", action="store_true")
+    parser.add_argument("--verbose-env", action="store_true")
     args = parser.parse_args()
+
+    config_path = args.config.resolve()
+    config = _load_config(config_path)
+    metadata = dict((config.get("task") or {}).get("metadata") or {})
+    if not metadata:
+        raise ValueError(f"Config {config_path} has no task.metadata block.")
 
     run_dir = args.output_dir / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
-    xml_path = _build_demo_xml(args.xml_path, run_dir)
-    cases = [
-        ("near_success_catch_object.mp4", "near-success catch object", "catch"),
-        ("near_success_pick_up.mp4", "near-success pick up object", "pick_up"),
-        ("near_success_release_object.mp4", "near-success release/drop object", "release"),
-        ("near_success_put_into_plate.mp4", "near-success put object into plate", "put_into_plate"),
-    ]
+    cases = [CASE_SPECS[str(name)] for name in args.cases]
     videos = [
         _render_case(
-            xml_path=xml_path,
+            config_path=config_path,
+            config=config,
+            metadata=metadata,
             run_dir=run_dir,
-            filename=filename,
-            title=title,
             case=case,
+            seed=int(args.seed) + 997 * index,
             fps=float(args.fps),
+            width=int(args.width),
+            height=int(args.height),
             keep_frames=bool(args.keep_frames),
+            quiet_env=not bool(args.verbose_env),
         )
-        for filename, title, case in cases
+        for index, case in enumerate(cases)
     ]
-    manifest = {"xml": xml_path.as_posix(), "videos": videos}
+    manifest = {
+        "config": config_path.as_posix(),
+        "task_metadata_source": "task.metadata",
+        "training_scene_renderer": True,
+        "videos": videos,
+    }
     manifest_path = run_dir / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
+    manifest_path.write_text(json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8")
     print(manifest_path)
     return 0
 

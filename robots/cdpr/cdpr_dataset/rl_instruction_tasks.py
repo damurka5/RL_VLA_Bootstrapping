@@ -1651,9 +1651,12 @@ def _compute_sparse_pick_up_reward(
         gripper_closed = bool(reward_state.gripper_closed)
     else:
         gripper_closed = bool(float(gripper_opening) <= closed_threshold)
+    caught_target_detected = bool(caught_object_is_target)
+    if caught_target_detected:
+        gripper_closed = True
     if not gripper_closed:
         reward_state.grasped = False
-    if bool(caught_object_is_target) and gripper_closed:
+    if caught_target_detected and gripper_closed:
         reward_state.grasped = True
 
     initial_obj_z = float(np.asarray(reward_state.initial_obj_pos, dtype=np.float32).reshape(-1)[2])
@@ -1717,6 +1720,7 @@ def _compute_sparse_pick_up_reward(
         "orientation_reward": 0.0,
         "success_bonus": float(_metadata_float(metadata, "sparse_success_reward", 1.0) if success else 0.0),
         "gripper_closed": float(gripper_closed),
+        "gripper_closed_from_caught_target": float(caught_target_detected),
         "grasped": float(reward_state.grasped),
         "pick_target_lift": float(target_lift),
         "pick_target_lift_normalized": normalized_lift,
@@ -2336,6 +2340,10 @@ def _compute_pick_up_reward(
                 1.0,
             )
         )
+    caught_target_detected = bool(caught_object_is_target)
+    if caught_target_detected:
+        gripper_is_closed = True
+        open_fraction = 0.0
     reward_state.gripper_closed = gripper_is_closed
     if not gripper_is_closed:
         reward_state.grasped = False
@@ -2352,7 +2360,7 @@ def _compute_pick_up_reward(
 
     contact_score = float(np.exp(-np.power(distance / max(xy_reward_scale, 1e-6), 2.0)))
     effective_caught_score = float(max(float(caught_object_score), contact_score))
-    target_caught = bool(caught_object_is_target and gripper_is_closed)
+    target_caught = bool(caught_target_detected and gripper_is_closed)
     if target_caught:
         reward_state.grasped = True
     grasped_flag = bool(reward_state.grasped)
@@ -2437,6 +2445,7 @@ def _compute_pick_up_reward(
         "orientation_reward": 0.0,
         "success_bonus": success_reward,
         "gripper_closed": float(gripper_is_closed),
+        "gripper_closed_from_caught_target": float(caught_target_detected),
         "grasped": float(grasped_flag),
         "pick_hover_height": float(hover_height),
         "pick_hover_z_error": hover_z_error,
