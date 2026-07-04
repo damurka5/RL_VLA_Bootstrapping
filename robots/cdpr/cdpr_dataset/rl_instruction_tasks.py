@@ -540,6 +540,36 @@ def _use_sparse_binary_reward(task_metadata: dict[str, Any] | None) -> bool:
         return False
 
 
+def _normalize_reward_output(
+    result: tuple[float, bool, dict[str, float]],
+    task_metadata: dict[str, Any] | None,
+) -> tuple[float, bool, dict[str, float]]:
+    if not _metadata_bool(task_metadata, "reward_output_normalization_enabled", False):
+        return result
+    reward, success, info = result
+    metadata = dict(task_metadata or {})
+    raw_reward = float(reward)
+    mode = str(metadata.get("reward_output_normalization", "clip")).strip().lower()
+    scale = max(_metadata_float(metadata, "reward_output_scale", 1.0), 1e-6)
+    reward_min = _metadata_float(metadata, "reward_output_min", -1.0)
+    reward_max = _metadata_float(metadata, "reward_output_max", 1.0)
+    if reward_min > reward_max:
+        reward_min, reward_max = reward_max, reward_min
+    if mode == "tanh":
+        normalized = float(np.tanh(raw_reward / scale))
+        normalized = float(np.clip(normalized, reward_min, reward_max))
+    else:
+        normalized = float(np.clip(raw_reward / scale, reward_min, reward_max))
+    normalized_info = dict(info)
+    normalized_info["reward_raw_before_output_normalization"] = raw_reward
+    normalized_info["reward_output_normalization_enabled"] = 1.0
+    normalized_info["reward_output_scale"] = float(scale)
+    normalized_info["reward_output_min"] = float(reward_min)
+    normalized_info["reward_output_max"] = float(reward_max)
+    normalized_info["reward_output_value"] = float(normalized)
+    return normalized, success, normalized_info
+
+
 def _action_saturation_stats(
     action: np.ndarray | None,
     *,
@@ -598,110 +628,134 @@ def compute_instruction_reward(
         spec.instruction_type in DIRECT_TRANSLATION_INSTRUCTION_TYPES
         and _metadata_bool(task_metadata, "direct_translation_reward_enabled", False)
     ):
-        return _compute_direct_translation_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            goal_pos=goal_pos,
-            reward_state=reward_state,
-            action=action,
-            task_metadata=task_metadata,
+        return _normalize_reward_output(
+            _compute_direct_translation_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                goal_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+            ),
+            task_metadata,
         )
 
     if spec.instruction_type in DIRECT_ACTUATOR_INSTRUCTION_TYPES:
-        return _compute_direct_actuator_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            goal_pos=goal_pos,
-            reward_state=reward_state,
-            action=action,
-            task_metadata=task_metadata,
-            gripper_opening=gripper_opening,
-            env=env,
+        return _normalize_reward_output(
+            _compute_direct_actuator_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                goal_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+                gripper_opening=gripper_opening,
+                env=env,
+            ),
+            task_metadata,
         )
 
     if _use_sparse_binary_reward(task_metadata):
-        return _compute_sparse_binary_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            goal_pos=goal_pos,
-            reward_state=reward_state,
-            action=action,
-            task_metadata=task_metadata,
-            gripper_opening=gripper_opening,
-            support_surface_z=support_surface_z,
-            caught_object_is_target=caught_object_is_target,
-            caught_object_score=caught_object_score,
-            caught_object_catalog=caught_object_catalog,
-            env=env,
-            target_body_name=target_body_name,
-            reference_body_name=reference_body_name,
-            second_reference_body_name=second_reference_body_name,
+        return _normalize_reward_output(
+            _compute_sparse_binary_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                goal_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+                gripper_opening=gripper_opening,
+                support_surface_z=support_surface_z,
+                caught_object_is_target=caught_object_is_target,
+                caught_object_score=caught_object_score,
+                caught_object_catalog=caught_object_catalog,
+                env=env,
+                target_body_name=target_body_name,
+                reference_body_name=reference_body_name,
+                second_reference_body_name=second_reference_body_name,
+            ),
+            task_metadata,
         )
 
     if spec.instruction_type in DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES:
-        return _compute_dense_gripper_edge_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            goal_pos=goal_pos,
-            reward_state=reward_state,
-            task_metadata=task_metadata,
-            gripper_opening=gripper_opening,
-            env=env,
-            target_body_name=target_body_name,
+        return _normalize_reward_output(
+            _compute_dense_gripper_edge_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                goal_pos=goal_pos,
+                reward_state=reward_state,
+                task_metadata=task_metadata,
+                gripper_opening=gripper_opening,
+                env=env,
+                target_body_name=target_body_name,
+            ),
+            task_metadata,
         )
 
     if spec.instruction_type in ROTATE_OBJECT_INSTRUCTION_TYPES:
-        return _compute_dense_rotate_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            goal_pos=goal_pos,
-            reward_state=reward_state,
-            action=action,
-            task_metadata=task_metadata,
-            env=env,
-            target_body_name=target_body_name,
+        return _normalize_reward_output(
+            _compute_dense_rotate_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                goal_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+                env=env,
+                target_body_name=target_body_name,
+            ),
+            task_metadata,
         )
 
     if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
-        return _compute_sparse_manipulation_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            goal_pos=goal_pos,
-            reward_state=reward_state,
-            action=action,
-            task_metadata=task_metadata,
-            gripper_opening=gripper_opening,
-            support_surface_z=support_surface_z,
-            caught_object_is_target=caught_object_is_target,
-            caught_object_score=caught_object_score,
-            caught_object_catalog=caught_object_catalog,
-            env=env,
-            target_body_name=target_body_name,
-            reference_body_name=reference_body_name,
-            second_reference_body_name=second_reference_body_name,
+        return _normalize_reward_output(
+            _compute_sparse_manipulation_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                goal_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+                gripper_opening=gripper_opening,
+                support_surface_z=support_surface_z,
+                caught_object_is_target=caught_object_is_target,
+                caught_object_score=caught_object_score,
+                caught_object_catalog=caught_object_catalog,
+                env=env,
+                target_body_name=target_body_name,
+                reference_body_name=reference_body_name,
+                second_reference_body_name=second_reference_body_name,
+            ),
+            task_metadata,
         )
     if spec.instruction_type == "pick_up":
-        return _compute_pick_up_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            obj_pos=goal_pos,
-            reward_state=reward_state,
-            action=action,
-            task_metadata=task_metadata,
-            gripper_opening=gripper_opening,
-            support_surface_z=support_surface_z,
-            caught_object_is_target=caught_object_is_target,
-            caught_object_score=caught_object_score,
-            caught_object_catalog=caught_object_catalog,
+        return _normalize_reward_output(
+            _compute_pick_up_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                obj_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+                gripper_opening=gripper_opening,
+                support_surface_z=support_surface_z,
+                caught_object_is_target=caught_object_is_target,
+                caught_object_score=caught_object_score,
+                caught_object_catalog=caught_object_catalog,
+            ),
+            task_metadata,
         )
     if spec.instruction_type == "move_to_object":
-        return _compute_move_to_object_reward(
-            spec=spec,
-            ee_pos=ee_pos,
-            obj_pos=goal_pos,
-            reward_state=reward_state,
-            action=action,
-            task_metadata=task_metadata,
+        return _normalize_reward_output(
+            _compute_move_to_object_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                obj_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+            ),
+            task_metadata,
         )
 
     distance_vec = goal_pos - ee_pos
@@ -812,7 +866,7 @@ def compute_instruction_reward(
         "orientation_reward": camera_reward,
         "success_bonus": success_reward,
     }
-    return reward, success, info
+    return _normalize_reward_output((reward, success, info), task_metadata)
 
 
 def _read_env_body_position(env: Any | None, body_name: str | None) -> np.ndarray | None:
@@ -1753,6 +1807,10 @@ def _compute_sparse_manipulation_reward(
     relation_left_right_offset = 0.0
     relation_front_behind_offset = 0.0
     push_success_displacement = 0.0
+    put_container_z_error = float("inf")
+    put_container_z_tolerance = 0.0
+    put_release_ok = True
+    put_release_fraction = 1.0
 
     if spec.instruction_type == "grab_object":
         mode = 3.0
@@ -1807,8 +1865,16 @@ def _compute_sparse_manipulation_reward(
         relation_grasp_required = _metadata_bool(task_metadata, "put_require_target_grasp", False)
         xy_error = float(np.linalg.norm(target_pos[:2] - plate_pos[:2]))
         z_error = float(abs(float(target_pos[2]) - float(plate_pos[2])))
+        put_container_z_error = z_error
+        put_container_z_tolerance = float(plate_z_tolerance)
         relation_error = xy_error
         release_ok = bool((not require_release) or (np.isfinite(gripper_value) and gripper_value >= release_threshold))
+        put_release_ok = release_ok
+        put_release_fraction = (
+            1.0
+            if not require_release
+            else float(np.clip((gripper_value if np.isfinite(gripper_value) else 0.0) / max(release_threshold, 1e-6), 0.0, 1.0))
+        )
         relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
         relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
         success = bool(
@@ -1932,7 +1998,47 @@ def _compute_sparse_manipulation_reward(
         else:
             success = False
 
-    reward = _sparse_reward_value(success=success, task_metadata=task_metadata) - action_saturation_penalty
+    if _metadata_bool(task_metadata, "manipulation_dense_reward_enabled", False):
+        dense_scale = max(_metadata_float(task_metadata, "manipulation_dense_error_scale", 0.08), 1e-6)
+        dense_weight = _metadata_float(task_metadata, "manipulation_dense_error_weight", 1.0)
+        dense_motion_weight = _metadata_float(task_metadata, "manipulation_dense_motion_weight", 0.25)
+        dense_grasp_weight = _metadata_float(task_metadata, "manipulation_dense_grasp_weight", 0.20)
+        dense_release_weight = _metadata_float(task_metadata, "manipulation_dense_release_weight", 0.20)
+        dense_success_bonus = _metadata_float(
+            task_metadata,
+            "manipulation_dense_success_bonus",
+            _metadata_float(task_metadata, "sparse_success_reward", 1.0),
+        )
+        if spec.instruction_type == "put_into_plate":
+            z_excess = max(0.0, float(put_container_z_error) - float(put_container_z_tolerance))
+            dense_error = float(relation_error + z_excess)
+        elif np.isfinite(relation_error):
+            dense_error = float(relation_error)
+        else:
+            dense_error = float(ee_xy_distance)
+        relation_progress = float(1.0 / (1.0 + np.power(max(0.0, dense_error) / dense_scale, 2.0)))
+        motion_reference = max(
+            relation_motion_required,
+            _metadata_float(task_metadata, "manipulation_dense_motion_scale", 0.04),
+            1e-6,
+        )
+        motion_progress = float(np.clip(target_motion_xy / motion_reference, 0.0, 1.0))
+        grasp_progress = float(1.0 if (reward_state.grasped or relation_grasp_ok) else 0.0)
+        release_progress = float(1.0 if put_release_ok else put_release_fraction)
+        reward = float(
+            dense_weight * relation_progress
+            + dense_motion_weight * motion_progress
+            + dense_grasp_weight * grasp_progress
+            + (dense_release_weight * release_progress if spec.instruction_type == "put_into_plate" else 0.0)
+            + (dense_success_bonus if success else 0.0)
+            - action_saturation_penalty
+        )
+    else:
+        dense_error = float(relation_error) if np.isfinite(relation_error) else float(ee_xy_distance)
+        relation_progress = 0.0
+        motion_progress = 0.0
+        release_progress = 1.0 if put_release_ok else put_release_fraction
+        reward = _sparse_reward_value(success=success, task_metadata=task_metadata) - action_saturation_penalty
     reward_state.prev_ee_pos = ee_pos.copy()
     reward_state.prev_obj_pos = target_pos.copy()
     reward_state.prev_distance = relation_error if np.isfinite(relation_error) else ee_distance
@@ -1963,6 +2069,16 @@ def _compute_sparse_manipulation_reward(
         "relation_left_right_offset": float(relation_left_right_offset),
         "relation_front_behind_offset": float(relation_front_behind_offset),
         "push_success_displacement": float(push_success_displacement),
+        "manipulation_dense_reward_enabled": float(
+            _metadata_bool(task_metadata, "manipulation_dense_reward_enabled", False)
+        ),
+        "manipulation_dense_error": float(dense_error),
+        "manipulation_dense_relation_progress": float(relation_progress),
+        "manipulation_dense_motion_progress": float(motion_progress),
+        "manipulation_dense_release_progress": float(release_progress),
+        "put_container_z_error": float(put_container_z_error) if np.isfinite(put_container_z_error) else -1.0,
+        "put_container_z_tolerance": float(put_container_z_tolerance),
+        "put_release_ok": float(put_release_ok),
         "relation_motion_required": float(relation_motion_required),
         "relation_motion_ok": float(relation_motion_ok),
         "relation_grasp_required": float(relation_grasp_required),

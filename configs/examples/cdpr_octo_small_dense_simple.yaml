@@ -103,6 +103,11 @@ task:
       move_top,
       move_bottom,
       move_to_object,
+      catch_object,
+      grip_object,
+      release_object,
+      pick_up,
+      put_into_plate,
       open_gripper,
       close_gripper,
       rotate_gripper_clockwise,
@@ -213,15 +218,61 @@ task:
     direct_actuator_success_bonus: 1.0
     direct_yaw_success_angle: 1.5707963267948966
     direct_yaw_start_angle: 0.0
-    direct_yaw_progress_weight: 2.0
-    direct_yaw_step_weight: 1.0
+    direct_yaw_progress_weight: 0.80
+    direct_yaw_step_weight: 0.20
     direct_yaw_step_scale: 0.02
-    direct_yaw_wrong_step_penalty: 0.50
-    direct_yaw_action_weight: 0.20
+    direct_yaw_wrong_step_penalty: 0.20
+    direct_yaw_action_weight: 0.10
     direct_yaw_wrong_action_penalty: 0.30
     gripper_edge_reward_scale: 0.015
+    gripper_edge_reward_weight: 1.0
     gripper_edge_success_threshold: 0.010
+    gripper_edge_success_bonus: 1.0
     release_success_edge_clearance: 0.035
+    pick_lift_success_height: 0.05
+    pick_grasp_xy_threshold: 0.04
+    pick_gripper_closed_opening_threshold: 0.010
+    pick_gripper_opening_reference: 0.028
+    pick_approach_weight: 0.35
+    pick_open_weight: 0.15
+    pick_descend_weight: 0.20
+    pick_grasp_weight: 0.40
+    pick_lift_weight: 0.65
+    pick_caught_target_bonus: 0.25
+    manipulation_dense_reward_enabled: true
+    manipulation_dense_error_scale: 0.08
+    manipulation_dense_error_weight: 0.60
+    manipulation_dense_motion_weight: 0.15
+    manipulation_dense_grasp_weight: 0.10
+    manipulation_dense_release_weight: 0.15
+    manipulation_dense_success_bonus: 1.0
+    sparse_success_reward: 1.0
+    sparse_failure_reward: 0.0
+    reward_output_normalization_enabled: true
+    reward_output_normalization: clip
+    reward_output_scale: 2.0
+    reward_output_min: -1.0
+    reward_output_max: 1.0
+    target_at_gripper_start_instruction_types: [catch_object, grip_object]
+    target_at_gripper_start_probability: 1.0
+    target_at_gripper_start_gripper_opening: 1.0
+    caught_object_start_instruction_types: [pick_up, put_into_plate]
+    force_caught_object_start_instruction_types: [release_object]
+    caught_object_start_probability: 1.0
+    caught_object_start_object_offset: [0.0, 0.0, 0.005]
+    caught_object_start_xy_jitter: 0.010
+    caught_object_start_z_jitter: 0.004
+    caught_object_start_fit_gripper: true
+    caught_object_start_pin_object: false
+    caught_object_start_gripper_clearance: 0.0
+    caught_object_start_grip_compression: 0.001
+    caught_object_start_min_height_above_table: 0.08
+    caught_object_start_release_opening_threshold: 0.010
+    caught_object_start_release_opening_margin: 0.04
+    put_container_xy_tolerance: 0.08
+    put_container_z_tolerance: 0.10
+    put_require_release: true
+    put_require_target_grasp: false
     action_saturation_threshold: 0.85
     action_saturation_penalty_weight: 0.0
     ee_workspace_x_bounds: [-0.28, 0.28]
@@ -348,13 +399,27 @@ training:
           rotate_gripper_clockwise,
           rotate_gripper_counterclockwise,
         ]
-      dense_stage_two_instruction_types: [move_to_object]
-      dense_stage_switch_success_rate: 0.50
+      dense_stage_two_instruction_types:
+        [move_to_object, catch_object, grip_object, release_object, pick_up, put_into_plate]
+      dense_stage_switch_success_rate: 0.80
       dense_stage_min_episodes: 80
       dense_stage_gate_metric: validation
+      dense_stage_gate_aggregation: worst
       validation_every_steps: 50000
-      validation_episodes_per_instruction: 5
+      validation_episodes_per_instruction: 10
       validation_seed: 1000000
+      mixed_curriculum_enabled: true
+      mixed_curriculum_adaptive: true
+      mixed_curriculum_success_target: 0.80
+      mixed_curriculum_history_episodes: 120
+      mixed_curriculum_min_gap_weight: 0.05
+      mixed_curriculum_min_prob: 0.03
+      mixed_curriculum_max_prob: 0.35
+      mixed_curriculum_rehearsal_min_prob: 0.30
+      mixed_curriculum_move_to_object_min_prob: 0.25
+      mixed_curriculum_manipulation_min_prob: 0.25
+      near_success_instruction_types:
+        [catch_object, grip_object, release_object, pick_up, put_into_plate]
       progress: true
       progress_only: true
       distributed: true

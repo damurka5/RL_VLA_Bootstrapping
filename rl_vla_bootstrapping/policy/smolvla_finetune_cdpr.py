@@ -36,18 +36,23 @@ except Exception:  # pragma: no cover - optional dependency
 
 from rl_vla_bootstrapping.policy.octo_cdpr_adapter import CDPRStateLayout
 from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
+    AdaptiveInstructionSampler,
     ReplayBuffer,
     ResidualTrainer,
     _apply_dense_stage_to_envs,
     _broadcast_dense_stage,
     _dense_curriculum_enabled,
+    _dedupe_instruction_names,
     _dense_stage_instruction_types,
     _dense_stage_metric_scalars,
     _dense_stage_snapshot,
     _distributed_completed_successes,
+    _info_instruction_type,
+    _mixed_curriculum_enabled,
     _summarize_validation_results,
     _validation_due,
     _validation_enabled,
+    _validation_gate_success_rate,
     _validation_instruction_types,
     _write_validation_summary,
 )
@@ -389,6 +394,38 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Metric used to promote dense stage 1 to stage 2.",
     )
     parser.add_argument(
+        "--dense-stage-gate-aggregation",
+        choices=("mean", "worst"),
+        default="mean",
+        help="Aggregate used for validation-gated promotion. `worst` uses the lowest per-instruction success rate.",
+    )
+    _bool_arg(
+        parser,
+        "mixed_curriculum_enabled",
+        default=False,
+        help_text="After stage promotion, sample a mixed stage with rehearsal, object navigation, and near-success manipulation.",
+    )
+    _bool_arg(
+        parser,
+        "mixed_curriculum_adaptive",
+        default=True,
+        help_text="Oversample instructions whose recent episode success is below the configured target.",
+    )
+    parser.add_argument("--mixed-curriculum-success-target", type=float, default=0.80)
+    parser.add_argument("--mixed-curriculum-history-episodes", type=int, default=100)
+    parser.add_argument("--mixed-curriculum-min-gap-weight", type=float, default=0.05)
+    parser.add_argument("--mixed-curriculum-min-prob", type=float, default=0.03)
+    parser.add_argument("--mixed-curriculum-max-prob", type=float, default=0.35)
+    parser.add_argument("--mixed-curriculum-rehearsal-min-prob", type=float, default=0.30)
+    parser.add_argument("--mixed-curriculum-move-to-object-min-prob", type=float, default=0.25)
+    parser.add_argument("--mixed-curriculum-manipulation-min-prob", type=float, default=0.25)
+    parser.add_argument(
+        "--near-success-instruction-types",
+        nargs="+",
+        default=None,
+        help="Instruction types that should be reset near success during the mixed stage.",
+    )
+    parser.add_argument(
         "--validation-every-steps",
         type=int,
         default=0,
@@ -643,11 +680,12 @@ def _reset_slot(
     slot: EnvSlot,
     layout: CDPRStateLayout,
     seed: int | None = None,
+    reset_options: dict[str, Any] | None = None,
     progress_only: bool,
     stage_index: int | None = None,
 ) -> None:
     with _silence_output(bool(progress_only)):
-        obs, info = slot.env.reset(seed=seed)
+        obs, info = slot.env.reset(seed=seed, options=dict(reset_options or {}))
     slot.obs = obs
     slot.info = dict(info)
     slot.state = layout.flatten(obs)
@@ -802,6 +840,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     dense_stage_instruction_types = (
         _dense_stage_instruction_types(args, dense_stage_index) if dense_curriculum_active else ()
     )
+    mixed_sampler = AdaptiveInstructionSampler(args, seed=int(rollout_seed))
 
     startup_t0 = time.perf_counter()
     _log(
@@ -858,7 +897,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                         args,
                         dense_stage_index,
                     )
-                obs, info = env.reset(seed=seed)
+                obs, info = env.reset(
+                    seed=seed,
+                    options=mixed_sampler.reset_options(dense_stage_index),
+                )
             layout = CDPRStateLayout.from_observation(obs) if env_idx == 0 else layout
             slots.append(
                 EnvSlot(
@@ -958,6 +1000,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "min_stage_one_episodes": int(args.dense_stage_min_episodes),
                 "metric_window_episodes": int(metrics_window),
                 "gate_metric": str(args.dense_stage_gate_metric),
+                "gate_aggregation": str(args.dense_stage_gate_aggregation),
+                "mixed_curriculum": {
+                    "enabled": bool(_mixed_curriculum_enabled(args)),
+                    "adaptive": bool(args.mixed_curriculum_adaptive),
+                    "success_target": float(args.mixed_curriculum_success_target),
+                    "rehearsal_min_prob": float(args.mixed_curriculum_rehearsal_min_prob),
+                    "move_to_object_min_prob": float(args.mixed_curriculum_move_to_object_min_prob),
+                    "manipulation_min_prob": float(args.mixed_curriculum_manipulation_min_prob),
+                    "near_success_instruction_types": list(
+                        _dedupe_instruction_names(args.near_success_instruction_types)
+                    ),
+                },
             },
             "heldout_validation": {
                 "enabled": bool(_validation_enabled(args)),
@@ -1126,6 +1180,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         episode_count=dense_stage_episode_count,
                         success_count=dense_stage_success_count,
                     )
+                    mixed_curriculum_metrics = mixed_sampler.snapshot()
                     row = {
                         "event": "rollout_step",
                         "global_step": int(global_step),
@@ -1142,6 +1197,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         "noise_std": float(noise_std),
                         **episode_metrics,
                         **dense_stage_metrics,
+                        **mixed_curriculum_metrics,
                         **last_metrics,
                         **_gpu_metrics(device),
                     }
@@ -1214,15 +1270,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 "[smolvla-cdpr] Held-out validation "
                                 f"step={global_step:07d} stage={dense_stage_index} "
                                 f"episodes={validation_summary['validation_episode_count']} "
-                                f"success_rate={float(validation_summary['validation_success_rate'] or 0.0):.3f}",
+                                f"success_rate={float(validation_summary['validation_success_rate'] or 0.0):.3f} "
+                                f"gate={float(_validation_gate_success_rate(validation_summary, args) or 0.0):.3f}",
                                 progress=progress,
                             )
+                            gate_success_rate = _validation_gate_success_rate(validation_summary, args)
                             if (
                                 dense_curriculum_active
                                 and str(args.dense_stage_gate_metric) == "validation"
                                 and int(dense_stage_index) == 1
-                                and validation_summary.get("validation_success_rate") is not None
-                                and float(validation_summary["validation_success_rate"])
+                                and gate_success_rate is not None
+                                and float(gate_success_rate)
                                 >= float(args.dense_stage_switch_success_rate)
                             ):
                                 proposed_stage_index = 2
@@ -1270,6 +1328,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         success_count=dense_stage_success_count,
                     )
                     if dist_ctx.is_main:
+                        mixed_curriculum_metrics = mixed_sampler.snapshot()
                         with metrics_path.open("a", encoding="utf-8") as handle:
                             handle.write(
                                 json.dumps(
@@ -1289,6 +1348,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                                         "dense_stage_switched": bool(dense_stage_switched),
                                         **episode_metrics,
                                         **dense_stage_metrics,
+                                        **mixed_curriculum_metrics,
                                     },
                                     sort_keys=True,
                                 )
@@ -1302,10 +1362,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                         done_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
                         _log_scalars(writer, done_scalars, global_step)
                     slot.episode += 1
+                    mixed_sampler.record(_info_instruction_type(next_info, slot.instruction), episode_success)
                     _reset_slot(
                         slot=slot,
                         layout=layout,
                         seed=None,
+                        reset_options=mixed_sampler.reset_options(dense_stage_index),
                         progress_only=bool(args.progress_only) or not dist_ctx.is_main,
                         stage_index=dense_stage_index,
                     )

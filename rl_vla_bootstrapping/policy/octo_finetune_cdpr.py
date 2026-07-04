@@ -96,6 +96,176 @@ class DistributedContext:
         return int(self.rank) == 0
 
 
+_MOVE_TO_OBJECT_INSTRUCTIONS = frozenset({"move_to_object"})
+_NEAR_GRIPPER_START_INSTRUCTIONS = frozenset({"catch_object", "grip_object", "grab_object"})
+_CAUGHT_OBJECT_START_INSTRUCTIONS = frozenset(
+    {
+        "release_object",
+        "free_object",
+        "pick_up",
+        "put_into_plate",
+        "move_left_of_object",
+        "move_right_of_object",
+        "move_in_front_of_object",
+        "move_behind_object",
+        "put_in_front_of_object",
+        "put_behind_object",
+        "move_between_objects",
+    }
+)
+
+
+class AdaptiveInstructionSampler:
+    def __init__(self, args: argparse.Namespace, *, seed: int) -> None:
+        self.args = args
+        self.rng = np.random.default_rng(int(seed))
+        self.history_size = max(1, int(getattr(args, "mixed_curriculum_history_episodes", 100)))
+        self.history: dict[str, deque[float]] = {}
+        self.last_probabilities: dict[str, float] = {}
+
+    def record(self, instruction_type: str | None, success: bool) -> None:
+        name = str(instruction_type or "").strip()
+        if not name:
+            return
+        if name not in self.history:
+            self.history[name] = deque(maxlen=self.history_size)
+        self.history[name].append(1.0 if bool(success) else 0.0)
+
+    def reset_options(self, stage_index: int) -> dict[str, Any]:
+        if not _mixed_curriculum_enabled(self.args) or int(stage_index) < 2:
+            self.last_probabilities = {}
+            return {}
+
+        candidates = list(_active_dense_stage_instruction_types(self.args, stage_index))
+        if not candidates:
+            self.last_probabilities = {}
+            return {}
+
+        probabilities = self._probabilities(candidates)
+        selected = str(candidates[int(self.rng.choice(len(candidates), p=probabilities))])
+        self.last_probabilities = {
+            str(name): float(probabilities[index])
+            for index, name in enumerate(candidates)
+        }
+        options: dict[str, Any] = {"instruction_type": selected}
+        if selected in set(_dedupe_instruction_names(getattr(self.args, "near_success_instruction_types", None))):
+            if selected in _NEAR_GRIPPER_START_INSTRUCTIONS:
+                options["start_with_target_at_gripper"] = True
+            if selected in _CAUGHT_OBJECT_START_INSTRUCTIONS:
+                options["start_with_caught_object"] = True
+        return options
+
+    def snapshot(self) -> dict[str, Any]:
+        rates: dict[str, float | None] = {}
+        counts: dict[str, int] = {}
+        for name, values in self.history.items():
+            counts[name] = int(len(values))
+            rates[name] = float(sum(values) / len(values)) if values else None
+        return {
+            "mixed_curriculum_enabled": bool(_mixed_curriculum_enabled(self.args)),
+            "mixed_curriculum_last_probabilities": dict(self.last_probabilities),
+            "mixed_curriculum_success_rates": rates,
+            "mixed_curriculum_episode_counts": counts,
+        }
+
+    def _probabilities(self, candidates: list[str]) -> np.ndarray:
+        if not bool(getattr(self.args, "mixed_curriculum_adaptive", True)):
+            probs = np.ones((len(candidates),), dtype=np.float64)
+        else:
+            target = float(np.clip(getattr(self.args, "mixed_curriculum_success_target", 0.80), 0.0, 1.0))
+            min_gap = max(1e-3, float(getattr(self.args, "mixed_curriculum_min_gap_weight", 0.05)))
+            probs = np.zeros((len(candidates),), dtype=np.float64)
+            for index, name in enumerate(candidates):
+                history = self.history.get(str(name))
+                if history:
+                    success_rate = float(sum(history) / len(history))
+                    uncertainty = 1.0 / np.sqrt(float(len(history)) + 1.0)
+                    probs[index] = max(min_gap, target - success_rate) + 0.10 * uncertainty
+                else:
+                    probs[index] = max(min_gap, target)
+
+        probs = self._normalize(probs)
+        stage_one = set(_dense_stage_instruction_types(self.args, 1))
+        manipulation = set(candidates) - stage_one - _MOVE_TO_OBJECT_INSTRUCTIONS
+        floors = [
+            (stage_one, float(getattr(self.args, "mixed_curriculum_rehearsal_min_prob", 0.0))),
+            (_MOVE_TO_OBJECT_INSTRUCTIONS, float(getattr(self.args, "mixed_curriculum_move_to_object_min_prob", 0.0))),
+            (manipulation, float(getattr(self.args, "mixed_curriculum_manipulation_min_prob", 0.0))),
+        ]
+        floor_sum = sum(max(0.0, floor) for _, floor in floors)
+        scale = 1.0 / floor_sum if floor_sum > 0.95 else 1.0
+        for members, floor in floors:
+            probs = self._apply_group_floor(candidates, probs, members, max(0.0, floor) * scale)
+        probs = self._apply_min_max_bounds(probs)
+        return self._normalize(probs)
+
+    @staticmethod
+    def _normalize(values: np.ndarray) -> np.ndarray:
+        arr = np.asarray(values, dtype=np.float64)
+        total = float(np.sum(arr))
+        if arr.size == 0:
+            return arr
+        if total <= 1e-12 or not np.isfinite(total):
+            return np.full((arr.size,), 1.0 / float(arr.size), dtype=np.float64)
+        return arr / total
+
+    def _apply_group_floor(
+        self,
+        candidates: list[str],
+        probs: np.ndarray,
+        members: set[str] | frozenset[str],
+        floor: float,
+    ) -> np.ndarray:
+        floor = float(np.clip(floor, 0.0, 0.95))
+        if floor <= 0.0:
+            return probs
+        mask = np.asarray([name in members for name in candidates], dtype=bool)
+        if not bool(np.any(mask)):
+            return probs
+        current = float(np.sum(probs[mask]))
+        if current >= floor:
+            return probs
+        out = probs.copy()
+        other = ~mask
+        other_total = float(np.sum(out[other]))
+        if current <= 1e-12:
+            out[mask] = floor / float(np.sum(mask))
+        else:
+            out[mask] *= floor / current
+        if other_total > 1e-12:
+            out[other] *= max(0.0, 1.0 - floor) / other_total
+        return self._normalize(out)
+
+    def _apply_min_max_bounds(self, probs: np.ndarray) -> np.ndarray:
+        count = int(probs.size)
+        if count <= 1:
+            return self._normalize(probs)
+        min_prob = max(0.0, float(getattr(self.args, "mixed_curriculum_min_prob", 0.0)))
+        max_prob = max(0.0, float(getattr(self.args, "mixed_curriculum_max_prob", 1.0)))
+        effective_min = min(min_prob, 0.95 / float(count))
+        effective_max = max(max_prob, 1.0 / float(count))
+        out = self._normalize(probs)
+        for _ in range(4):
+            low = out < effective_min
+            if bool(np.any(low)):
+                missing = float(np.sum(effective_min - out[low]))
+                out[low] = effective_min
+                high = ~low
+                high_total = float(np.sum(out[high]))
+                if high_total > 1e-12:
+                    out[high] *= max(0.0, 1.0 - float(np.sum(out[low]))) / high_total
+            over = out > effective_max
+            if bool(np.any(over)):
+                excess = float(np.sum(out[over] - effective_max))
+                out[over] = effective_max
+                under = ~over
+                under_total = float(np.sum(out[under]))
+                if under_total > 1e-12:
+                    out[under] += excess * out[under] / under_total
+            out = self._normalize(out)
+        return out
+
+
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
     if raw is None or str(raw).strip() == "":
@@ -363,6 +533,38 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         choices=("rollout", "validation"),
         default="rollout",
         help="Metric used to promote dense stage 1 to stage 2.",
+    )
+    parser.add_argument(
+        "--dense-stage-gate-aggregation",
+        choices=("mean", "worst"),
+        default="mean",
+        help="Aggregate used for validation-gated promotion. `worst` uses the lowest per-instruction success rate.",
+    )
+    _bool_arg(
+        parser,
+        "mixed_curriculum_enabled",
+        default=False,
+        help_text="After stage promotion, sample a mixed stage with rehearsal, object navigation, and near-success manipulation.",
+    )
+    _bool_arg(
+        parser,
+        "mixed_curriculum_adaptive",
+        default=True,
+        help_text="Oversample instructions whose recent episode success is below the configured target.",
+    )
+    parser.add_argument("--mixed-curriculum-success-target", type=float, default=0.80)
+    parser.add_argument("--mixed-curriculum-history-episodes", type=int, default=100)
+    parser.add_argument("--mixed-curriculum-min-gap-weight", type=float, default=0.05)
+    parser.add_argument("--mixed-curriculum-min-prob", type=float, default=0.03)
+    parser.add_argument("--mixed-curriculum-max-prob", type=float, default=0.35)
+    parser.add_argument("--mixed-curriculum-rehearsal-min-prob", type=float, default=0.30)
+    parser.add_argument("--mixed-curriculum-move-to-object-min-prob", type=float, default=0.25)
+    parser.add_argument("--mixed-curriculum-manipulation-min-prob", type=float, default=0.25)
+    parser.add_argument(
+        "--near-success-instruction-types",
+        nargs="+",
+        default=None,
+        help="Instruction types that should be reset near success during the mixed stage.",
     )
     parser.add_argument(
         "--validation-every-steps",
@@ -846,10 +1048,25 @@ def _dense_curriculum_enabled(args: argparse.Namespace) -> bool:
     )
 
 
+def _mixed_curriculum_enabled(args: argparse.Namespace) -> bool:
+    return bool(getattr(args, "mixed_curriculum_enabled", False) and _dense_curriculum_enabled(args))
+
+
 def _dense_stage_instruction_types(args: argparse.Namespace, stage_index: int) -> tuple[str, ...]:
     if int(stage_index) <= 1:
         return _dedupe_instruction_names(getattr(args, "dense_stage_one_instruction_types", None))
     return _dedupe_instruction_names(getattr(args, "dense_stage_two_instruction_types", None))
+
+
+def _active_dense_stage_instruction_types(args: argparse.Namespace, stage_index: int) -> tuple[str, ...]:
+    if int(stage_index) <= 1 or not _mixed_curriculum_enabled(args):
+        return _dense_stage_instruction_types(args, stage_index)
+    return _dedupe_instruction_names(
+        [
+            *_dense_stage_instruction_types(args, 1),
+            *_dense_stage_instruction_types(args, 2),
+        ]
+    )
 
 
 def _apply_dense_stage_to_envs(
@@ -857,7 +1074,7 @@ def _apply_dense_stage_to_envs(
     args: argparse.Namespace,
     stage_index: int,
 ) -> tuple[str, ...]:
-    instruction_types = _dense_stage_instruction_types(args, stage_index)
+    instruction_types = _active_dense_stage_instruction_types(args, stage_index)
     if not instruction_types:
         return ()
     for env in envs:
@@ -985,9 +1202,41 @@ def _validation_instruction_types(
     dense_stage_index: int,
 ) -> tuple[str, ...]:
     if dense_curriculum_active:
-        return _dense_stage_instruction_types(args, dense_stage_index)
+        return _active_dense_stage_instruction_types(args, dense_stage_index)
     configured = _dedupe_instruction_names(getattr(args, "instruction_types", None))
     return configured
+
+
+def _validation_gate_success_rate(summary: dict[str, Any], args: argparse.Namespace) -> float | None:
+    if str(getattr(args, "dense_stage_gate_aggregation", "mean")) != "worst":
+        raw = summary.get("validation_success_rate")
+        return None if raw is None else float(raw)
+    instruction_results = summary.get("validation_instruction_results")
+    if not isinstance(instruction_results, dict):
+        raw = summary.get("validation_success_rate")
+        return None if raw is None else float(raw)
+    rates: list[float] = []
+    for item in instruction_results.values():
+        if not isinstance(item, dict):
+            continue
+        if int(item.get("episodes") or 0) <= 0:
+            continue
+        rate = item.get("success_rate")
+        if rate is not None:
+            rates.append(float(rate))
+    if not rates:
+        return None
+    return float(min(rates))
+
+
+def _info_instruction_type(info: dict[str, Any], fallback_instruction: str | None = None) -> str:
+    raw = info.get("instruction_type")
+    if raw:
+        return str(raw)
+    from robots.cdpr.cdpr_dataset.rl_cdpr_env import _infer_instruction_type_from_text
+
+    inferred = _infer_instruction_type_from_text(str(fallback_instruction or info.get("language_instruction") or ""))
+    return str(inferred or "")
 
 
 def _select_validation_chunk(
@@ -1211,6 +1460,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     dense_stage_instruction_types = (
         _dense_stage_instruction_types(args, dense_stage_index) if dense_curriculum_active else ()
     )
+    mixed_sampler = AdaptiveInstructionSampler(args, seed=int(rollout_seed))
 
     obs_adapter = CDPROctoObservationAdapter(
         OctoObservationSpec(
@@ -1272,7 +1522,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         reset_t0 = time.perf_counter()
         _log(dist_ctx, "[octo-cdpr] Resetting CDPR environment...")
         with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
-            obs, info = env.reset(seed=int(rollout_seed))
+            obs, info = env.reset(
+                seed=int(rollout_seed),
+                options=mixed_sampler.reset_options(dense_stage_index),
+            )
         _log(dist_ctx, f"[octo-cdpr] Reset CDPR environment in {time.perf_counter() - reset_t0:.1f}s")
         layout = CDPRStateLayout.from_observation(obs)
         if dist_ctx.is_main and _validation_enabled(args):
@@ -1338,6 +1591,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "min_stage_one_episodes": int(args.dense_stage_min_episodes),
                 "metric_window_episodes": int(metrics_window),
                 "gate_metric": str(args.dense_stage_gate_metric),
+                "gate_aggregation": str(args.dense_stage_gate_aggregation),
+                "mixed_curriculum": {
+                    "enabled": bool(_mixed_curriculum_enabled(args)),
+                    "adaptive": bool(args.mixed_curriculum_adaptive),
+                    "success_target": float(args.mixed_curriculum_success_target),
+                    "rehearsal_min_prob": float(args.mixed_curriculum_rehearsal_min_prob),
+                    "move_to_object_min_prob": float(args.mixed_curriculum_move_to_object_min_prob),
+                    "manipulation_min_prob": float(args.mixed_curriculum_manipulation_min_prob),
+                    "near_success_instruction_types": list(
+                        _dedupe_instruction_names(args.near_success_instruction_types)
+                    ),
+                },
             },
             "heldout_validation": {
                 "enabled": bool(_validation_enabled(args)),
@@ -1510,6 +1775,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     episode_count=dense_stage_episode_count,
                     success_count=dense_stage_success_count,
                 )
+                mixed_curriculum_metrics = mixed_sampler.snapshot()
                 row = {
                     "event": "rollout_step",
                     "global_step": int(global_step),
@@ -1524,6 +1790,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "noise_std": float(noise_std),
                     **episode_metrics,
                     **dense_stage_metrics,
+                    **mixed_curriculum_metrics,
                     **last_metrics,
                 }
                 with metrics_path.open("a", encoding="utf-8") as handle:
@@ -1594,15 +1861,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                             "[octo-cdpr] Held-out validation "
                             f"step={global_step:07d} stage={dense_stage_index} "
                             f"episodes={validation_summary['validation_episode_count']} "
-                            f"success_rate={float(validation_summary['validation_success_rate'] or 0.0):.3f}",
+                            f"success_rate={float(validation_summary['validation_success_rate'] or 0.0):.3f} "
+                            f"gate={float(_validation_gate_success_rate(validation_summary, args) or 0.0):.3f}",
                             progress=progress,
                         )
+                        gate_success_rate = _validation_gate_success_rate(validation_summary, args)
                         if (
                             dense_curriculum_active
                             and str(args.dense_stage_gate_metric) == "validation"
                             and int(dense_stage_index) == 1
-                            and validation_summary.get("validation_success_rate") is not None
-                            and float(validation_summary["validation_success_rate"])
+                            and gate_success_rate is not None
+                            and float(gate_success_rate)
                             >= float(args.dense_stage_switch_success_rate)
                         ):
                             proposed_stage_index = 2
@@ -1650,6 +1919,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     success_count=dense_stage_success_count,
                 )
                 if dist_ctx.is_main:
+                    mixed_curriculum_metrics = mixed_sampler.snapshot()
                     with metrics_path.open("a", encoding="utf-8") as handle:
                         handle.write(
                             json.dumps(
@@ -1667,6 +1937,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                                     "dense_stage_switched": bool(dense_stage_switched),
                                     **episode_metrics,
                                     **dense_stage_metrics,
+                                    **mixed_curriculum_metrics,
                                 },
                                 sort_keys=True,
                             )
@@ -1682,9 +1953,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 episode += 1
                 episode_reward = 0.0
                 episode_length = 0
+                mixed_sampler.record(_info_instruction_type(next_info, instruction), episode_success)
                 episode_stage_index = int(dense_stage_index)
                 with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
-                    obs, info = env.reset()
+                    obs, info = env.reset(options=mixed_sampler.reset_options(dense_stage_index))
                 state = layout.flatten(obs)
                 instruction = _safe_instruction(info)
                 with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
