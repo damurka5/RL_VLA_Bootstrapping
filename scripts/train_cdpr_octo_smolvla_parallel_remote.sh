@@ -13,12 +13,14 @@ OCTO_CONFIG_PATH="${OCTO_CONFIG_PATH:-$REPO_ROOT/configs/examples/cdpr_octo_smal
 OCTO_ENV_NAME="${OCTO_ENV_NAME:-octo}"
 OCTO_WALLTIME="${OCTO_WALLTIME:-${WALLTIME:-24h}}"
 OCTO_NPROC_PER_NODE="${OCTO_NPROC_PER_NODE:-1}"
+OCTO_RESUME_CHECKPOINT="${OCTO_RESUME_CHECKPOINT:-}"
 
 SMOLVLA_RUN_NAME="${SMOLVLA_RUN_NAME:-cdpr_smolvla_dense_parallel_${timestamp}}"
 SMOLVLA_CONFIG_PATH="${SMOLVLA_CONFIG_PATH:-$REPO_ROOT/configs/examples/cdpr_smolvla_dense_2gpu.yaml}"
 SMOLVLA_ENV_NAME="${SMOLVLA_ENV_NAME:-smolvla}"
 SMOLVLA_WALLTIME="${SMOLVLA_WALLTIME:-${WALLTIME:-24h}}"
 SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-1}"
+SMOLVLA_RESUME_CHECKPOINT="${SMOLVLA_RESUME_CHECKPOINT:-}"
 
 cd "$REPO_ROOT"
 
@@ -41,6 +43,7 @@ if [[ "$RUN_OCTO" == "1" ]]; then
       WALLTIME="$OCTO_WALLTIME" \
       CUDA_VISIBLE_DEVICES="$OCTO_GPU" \
       RLVLA_OCTO_NPROC_PER_NODE="$OCTO_NPROC_PER_NODE" \
+      RESUME_CHECKPOINT="$OCTO_RESUME_CHECKPOINT" \
       bash "$REPO_ROOT/scripts/train_cdpr_octo_small_dense_remote.sh" "$@"
   ) &
   pids+=("$!")
@@ -56,6 +59,7 @@ if [[ "$RUN_SMOLVLA" == "1" ]]; then
       WALLTIME="$SMOLVLA_WALLTIME" \
       CUDA_VISIBLE_DEVICES="$SMOLVLA_GPU" \
       RLVLA_SMOLVLA_NPROC_PER_NODE="$SMOLVLA_NPROC_PER_NODE" \
+      RESUME_CHECKPOINT="$SMOLVLA_RESUME_CHECKPOINT" \
       bash "$REPO_ROOT/scripts/train_cdpr_smolvla_dense_2gpu_remote.sh" "$@"
   ) &
   pids+=("$!")
