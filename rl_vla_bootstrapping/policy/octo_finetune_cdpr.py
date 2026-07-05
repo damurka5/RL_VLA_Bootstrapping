@@ -1582,6 +1582,32 @@ def _save_training_validation_video(
     return summary
 
 
+def _validation_video_episode_slots(
+    *,
+    instruction_count: int,
+    episode_count: int,
+    video_limit: int,
+    global_step: int,
+    validation_every_steps: int,
+) -> set[tuple[int, int]]:
+    if int(instruction_count) <= 0 or int(episode_count) <= 0 or int(video_limit) <= 0:
+        return set()
+
+    total_slots = int(instruction_count) * int(episode_count)
+    target_count = min(int(video_limit), total_slots)
+    validation_period = max(1, int(validation_every_steps))
+    start_instruction = (int(global_step) // validation_period) % int(instruction_count)
+
+    slots: set[tuple[int, int]] = set()
+    for episode_index in range(int(episode_count)):
+        for instruction_offset in range(int(instruction_count)):
+            instruction_index = (start_instruction + instruction_offset) % int(instruction_count)
+            slots.add((instruction_index, episode_index))
+            if len(slots) >= target_count:
+                return slots
+    return slots
+
+
 def _select_validation_chunk(
     actor: nn.Module,
     *,
@@ -1712,6 +1738,13 @@ def _run_octo_distinct_validation(
     results: list[dict[str, Any]] = []
     saved_videos: list[dict[str, Any]] = []
     video_limit = max(0, int(getattr(args, "validation_video_count", 0)))
+    video_slots = _validation_video_episode_slots(
+        instruction_count=len(instruction_types),
+        episode_count=episode_count,
+        video_limit=video_limit,
+        global_step=global_step,
+        validation_every_steps=int(getattr(args, "validation_every_steps", 1)),
+    )
     actor.eval()
     try:
         for instruction_index, instruction_type in enumerate(instruction_types):
@@ -1725,7 +1758,7 @@ def _run_octo_distinct_validation(
                 )
                 with _silence_output(True):
                     obs, info = validation_env.reset(seed=seed)
-                should_record_video = len(saved_videos) < video_limit
+                should_record_video = (int(instruction_index), int(episode_index)) in video_slots
                 recording_state = _begin_validation_recording(validation_env, should_record_video)
                 video_summary: dict[str, Any] | None = None
                 try:

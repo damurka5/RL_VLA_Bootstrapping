@@ -60,6 +60,7 @@ from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
     _validation_enabled,
     _validation_gate_success_rate,
     _validation_instruction_types,
+    _validation_video_episode_slots,
     _write_validation_summary,
 )
 from rl_vla_bootstrapping.policy.smolvla_cdpr import (
@@ -763,6 +764,13 @@ def _run_smolvla_distinct_validation(
     results: list[dict[str, Any]] = []
     saved_videos: list[dict[str, Any]] = []
     video_limit = max(0, int(getattr(args, "validation_video_count", 0)))
+    video_slots = _validation_video_episode_slots(
+        instruction_count=len(instruction_types),
+        episode_count=episode_count,
+        video_limit=video_limit,
+        global_step=global_step,
+        validation_every_steps=int(getattr(args, "validation_every_steps", 1)),
+    )
     actor.eval()
     try:
         for instruction_index, instruction_type in enumerate(instruction_types):
@@ -776,7 +784,7 @@ def _run_smolvla_distinct_validation(
                 )
                 with _silence_output(True):
                     obs, info = validation_env.reset(seed=seed)
-                should_record_video = len(saved_videos) < video_limit
+                should_record_video = (int(instruction_index), int(episode_index)) in video_slots
                 recording_state = _begin_validation_recording(validation_env, should_record_video)
                 video_summary: dict[str, Any] | None = None
                 try:
