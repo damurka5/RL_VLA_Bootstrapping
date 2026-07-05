@@ -40,6 +40,7 @@ from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
     ReplayBuffer,
     ResidualTrainer,
     _apply_dense_stage_to_envs,
+    _begin_validation_recording,
     _broadcast_dense_stage,
     _dense_curriculum_enabled,
     _dedupe_instruction_names,
@@ -47,8 +48,13 @@ from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
     _dense_stage_metric_scalars,
     _dense_stage_snapshot,
     _distributed_completed_successes,
+    _finish_validation_recording,
+    _format_step_progress,
     _info_instruction_type,
+    _log_mixed_curriculum_scalars,
     _mixed_curriculum_enabled,
+    _residual_trainer_parameter_summary,
+    _save_training_validation_video,
     _summarize_validation_results,
     _validation_due,
     _validation_enabled,
@@ -443,6 +449,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=1000000,
         help="Base seed for deterministic held-out validation episodes.",
     )
+    parser.add_argument(
+        "--validation-video-count",
+        type=int,
+        default=3,
+        help="Number of overview MP4 validation episodes to save per held-out validation run.",
+    )
+    parser.add_argument("--validation-video-fps", type=float, default=10.0)
     return parser.parse_args(argv)
 
 
@@ -589,6 +602,24 @@ def _gpu_metrics(device: torch.device) -> dict[str, float]:
     }
 
 
+def _torch_pretrained_parameter_summary(policy: Any) -> dict[str, Any]:
+    parameters = getattr(policy, "parameters", None)
+    if not callable(parameters):
+        return {"parameter_count_available": False}
+    total = 0
+    trainable = 0
+    for param in parameters():
+        count = int(param.numel())
+        total += count
+        if bool(param.requires_grad):
+            trainable += count
+    return {
+        "parameter_count_available": True,
+        "parameter_count": int(total),
+        "trainable_parameter_count": int(trainable),
+    }
+
+
 def _episode_metric_snapshot(
     *,
     rewards: deque[float],
@@ -730,6 +761,8 @@ def _run_smolvla_distinct_validation(
     was_training = bool(actor.training)
     previous_instruction_types = getattr(validation_env, "instruction_types", None)
     results: list[dict[str, Any]] = []
+    saved_videos: list[dict[str, Any]] = []
+    video_limit = max(0, int(getattr(args, "validation_video_count", 0)))
     actor.eval()
     try:
         for instruction_index, instruction_type in enumerate(instruction_types):
@@ -743,56 +776,59 @@ def _run_smolvla_distinct_validation(
                 )
                 with _silence_output(True):
                     obs, info = validation_env.reset(seed=seed)
-                state = layout.flatten(obs)
-                instruction = _safe_instruction(info)
-                with _silence_output(True):
-                    priors = runtime.sample_cdpr_chunks_from_envs(
-                        envs=[validation_env],
-                        observations=[obs],
-                        infos=[dict(info)],
-                        instructions=[instruction],
-                    )
-                prior_chunk = np.asarray(priors[0], dtype=np.float32)
-                action_chunk = _select_smolvla_validation_chunk(
-                    actor,
-                    device=trainer.device,
-                    state=state,
-                    prior_chunk=prior_chunk,
-                )
-                chunk_idx = 0
-                episode_reward = 0.0
-                episode_length = 0
-                terminated = False
-                truncated = False
-                final_info = dict(info)
-                while not (terminated or truncated):
-                    if chunk_idx >= replan_every:
-                        instruction = _safe_instruction(final_info)
-                        with _silence_output(True):
-                            priors = runtime.sample_cdpr_chunks_from_envs(
-                                envs=[validation_env],
-                                observations=[obs],
-                                infos=[dict(final_info)],
-                                instructions=[instruction],
-                            )
-                        prior_chunk = np.asarray(priors[0], dtype=np.float32)
-                        action_chunk = _select_smolvla_validation_chunk(
-                            actor,
-                            device=trainer.device,
-                            state=state,
-                            prior_chunk=prior_chunk,
-                        )
-                        chunk_idx = 0
-                    action = np.asarray(action_chunk[chunk_idx], dtype=np.float32).reshape(int(args.action_dim))
-                    action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
-                    with _silence_output(True):
-                        obs, reward, terminated, truncated, final_info = validation_env.step(action)
+                should_record_video = len(saved_videos) < video_limit
+                recording_state = _begin_validation_recording(validation_env, should_record_video)
+                video_summary: dict[str, Any] | None = None
+                try:
                     state = layout.flatten(obs)
-                    episode_reward += float(reward)
-                    episode_length += 1
-                    chunk_idx += 1
-                results.append(
-                    {
+                    instruction = _safe_instruction(info)
+                    with _silence_output(True):
+                        priors = runtime.sample_cdpr_chunks_from_envs(
+                            envs=[validation_env],
+                            observations=[obs],
+                            infos=[dict(info)],
+                            instructions=[instruction],
+                        )
+                    prior_chunk = np.asarray(priors[0], dtype=np.float32)
+                    action_chunk = _select_smolvla_validation_chunk(
+                        actor,
+                        device=trainer.device,
+                        state=state,
+                        prior_chunk=prior_chunk,
+                    )
+                    chunk_idx = 0
+                    episode_reward = 0.0
+                    episode_length = 0
+                    terminated = False
+                    truncated = False
+                    final_info = dict(info)
+                    while not (terminated or truncated):
+                        if chunk_idx >= replan_every:
+                            instruction = _safe_instruction(final_info)
+                            with _silence_output(True):
+                                priors = runtime.sample_cdpr_chunks_from_envs(
+                                    envs=[validation_env],
+                                    observations=[obs],
+                                    infos=[dict(final_info)],
+                                    instructions=[instruction],
+                                )
+                            prior_chunk = np.asarray(priors[0], dtype=np.float32)
+                            action_chunk = _select_smolvla_validation_chunk(
+                                actor,
+                                device=trainer.device,
+                                state=state,
+                                prior_chunk=prior_chunk,
+                            )
+                            chunk_idx = 0
+                        action = np.asarray(action_chunk[chunk_idx], dtype=np.float32).reshape(int(args.action_dim))
+                        action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
+                        with _silence_output(True):
+                            obs, reward, terminated, truncated, final_info = validation_env.step(action)
+                        state = layout.flatten(obs)
+                        episode_reward += float(reward)
+                        episode_length += 1
+                        chunk_idx += 1
+                    result = {
                         "instruction_type": str(instruction_type),
                         "episode_index": int(episode_index),
                         "seed": int(seed),
@@ -802,7 +838,24 @@ def _run_smolvla_distinct_validation(
                         "terminated": bool(terminated),
                         "truncated": bool(truncated),
                     }
-                )
+                    if should_record_video:
+                        video_summary = _save_training_validation_video(
+                            run_dir=trainer.run_dir,
+                            sim=validation_env.sim,
+                            global_step=global_step,
+                            instruction_type=str(instruction_type),
+                            episode_index=episode_index,
+                            seed=seed,
+                            success=bool(result["success"]),
+                            episode_reward=float(episode_reward),
+                            episode_length=int(episode_length),
+                            fps=float(getattr(args, "validation_video_fps", 10.0)),
+                        )
+                        if video_summary is not None:
+                            saved_videos.append(video_summary)
+                    results.append(result)
+                finally:
+                    _finish_validation_recording(validation_env, recording_state)
     finally:
         actor.train(was_training)
         validation_env.instruction_types = previous_instruction_types
@@ -812,6 +865,7 @@ def _run_smolvla_distinct_validation(
         stage_index=stage_index,
         instruction_types=instruction_types,
         results=results,
+        videos=saved_videos,
     )
 
 
@@ -971,6 +1025,17 @@ def main(argv: Sequence[str] | None = None) -> None:
             "action_keys": ["x", "y", "z", "yaw", "gripper"],
             "chunk_size": int(args.chunk_size),
             "native_smolvla_chunk_size": int(getattr(getattr(runtime.policy, "config", None), "chunk_size", 50)),
+            "prior_action_adapter": {
+                "source": "SmolVLA action chunk",
+                "target": "CDPR normalized 5D [x, y, z, yaw, gripper]",
+                "default_source_indices_for_6plus_d": [0, 1, 2, 3, "last"],
+                "configured_source_indices": (
+                    list(args.smolvla_action_indices)
+                    if args.smolvla_action_indices is not None
+                    else [0, 1, 2, 3, "last"]
+                ),
+                "normalization": str(args.smolvla_action_normalization),
+            },
             "image_feature_keys": list(runtime.obs_spec.image_feature_keys),
             "camera_mapping": {
                 "camera1": "CDPR overview camera",
@@ -979,6 +1044,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             },
             "trainable_surface": "torch_residual_chunk_head_and_q_critics",
             "frozen_smolvla": True,
+            "parameter_training": _residual_trainer_parameter_summary(
+                trainer,
+                pretrained_prior_name="SmolVLA",
+                base_checkpoint=str(args.base_checkpoint),
+                pretrained_prior_parameters=_torch_pretrained_parameter_summary(runtime.policy),
+            ),
             "materialized_optimizer_state": bool(args.materialize_optimizer_state),
             "online_dense_rl": True,
             "num_envs_per_rank": int(env_count),
@@ -1018,6 +1089,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "every_steps": int(args.validation_every_steps),
                 "episodes_per_instruction": int(args.validation_episodes_per_instruction),
                 "seed": int(args.validation_seed),
+                "video_count": int(args.validation_video_count),
+                "video_fps": float(args.validation_video_fps),
             },
             "unavoidable_cpu_work": [
                 "MuJoCo simulation stepping and camera readback",
@@ -1054,6 +1127,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             f"startup total {time.perf_counter() - startup_t0:.1f}s",
         )
         progress = _make_progress_bar(args=args, ctx=dist_ctx, start_step=start_step)
+        status_start_t = time.perf_counter()
         last_validation_step = int(start_step)
 
         while global_step < int(args.max_train_steps):
@@ -1213,6 +1287,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     rollout_scalars.update(_episode_metric_scalars(episode_metrics))
                     rollout_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
                     _log_scalars(writer, rollout_scalars, global_step)
+                    _log_mixed_curriculum_scalars(writer, mixed_curriculum_metrics, global_step)
 
                 if progress is not None:
                     progress.update(1)
@@ -1235,6 +1310,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                         f"episode={slot.episode:05d} ep_len={slot.episode_length:03d} "
                         f"reward_running={slot.episode_reward:+.3f} last_reward={float(reward):+.3f} "
                         f"buffer={buffer.size} instruction={slot.instruction}",
+                    )
+                    _log(
+                        dist_ctx,
+                        "[smolvla-cdpr] "
+                        + _format_step_progress(
+                            global_step=global_step,
+                            max_train_steps=int(args.max_train_steps),
+                            start_step=int(start_step),
+                            elapsed_seconds=time.perf_counter() - status_start_t,
+                        ),
                     )
 
                 if dist_ctx.is_main and global_step % max(1, int(args.save_every_steps)) == 0:
@@ -1361,6 +1446,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         done_scalars.update(_episode_metric_scalars(episode_metrics))
                         done_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
                         _log_scalars(writer, done_scalars, global_step)
+                        _log_mixed_curriculum_scalars(writer, mixed_curriculum_metrics, global_step)
                     slot.episode += 1
                     mixed_sampler.record(_info_instruction_type(next_info, slot.instruction), episode_success)
                     _reset_slot(

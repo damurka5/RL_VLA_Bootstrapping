@@ -407,6 +407,8 @@ training:
       validation_every_steps: 50000
       validation_episodes_per_instruction: 10
       validation_seed: 1000000
+      validation_video_count: 3
+      validation_video_fps: 10.0
       mixed_curriculum_enabled: true
       mixed_curriculum_adaptive: true
       mixed_curriculum_success_target: 0.80

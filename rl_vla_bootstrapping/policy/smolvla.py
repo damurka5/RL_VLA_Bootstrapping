@@ -80,11 +80,15 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
         raise ValueError("SmolVLA RL stage needs `training.rl.script_path` or `policy.rl_script`.")
 
     stage_dir = run_dir / "rl"
+    launcher_args = dict(config.training.rl.launcher_args)
+    nproc_override = os.environ.get("RLVLA_SMOLVLA_NPROC_PER_NODE", "").strip()
+    if nproc_override:
+        launcher_args["nproc_per_node"] = int(nproc_override)
     argv = _build_stage_prefix(
         python_executable=config.project.python_executable,
         script_path=script_path,
         launcher=config.training.rl.launcher,
-        launcher_args=config.training.rl.launcher_args,
+        launcher_args=launcher_args,
         module_name=_module_name_for_script(script_path),
     )
 

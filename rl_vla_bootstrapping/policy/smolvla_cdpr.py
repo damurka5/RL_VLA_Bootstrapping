@@ -375,6 +375,10 @@ class SmolVLARuntime:
         policy_cls = module.SmolVLAPolicy
         policy = policy_cls.from_pretrained(str(checkpoint)).to(torch_device)
         policy.eval()
+        parameters = getattr(policy, "parameters", None)
+        if callable(parameters):
+            for param in parameters():
+                param.requires_grad_(False)
         if hasattr(policy, "reset"):
             policy.reset()
 

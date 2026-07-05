@@ -121,6 +121,8 @@ class AdaptiveInstructionSampler:
         self.rng = np.random.default_rng(int(seed))
         self.history_size = max(1, int(getattr(args, "mixed_curriculum_history_episodes", 100)))
         self.history: dict[str, deque[float]] = {}
+        self.recent_instructions: deque[str] = deque(maxlen=self.history_size)
+        self.total_episode_counts: dict[str, int] = {}
         self.last_probabilities: dict[str, float] = {}
 
     def record(self, instruction_type: str | None, success: bool) -> None:
@@ -130,6 +132,8 @@ class AdaptiveInstructionSampler:
         if name not in self.history:
             self.history[name] = deque(maxlen=self.history_size)
         self.history[name].append(1.0 if bool(success) else 0.0)
+        self.recent_instructions.append(name)
+        self.total_episode_counts[name] = int(self.total_episode_counts.get(name, 0)) + 1
 
     def reset_options(self, stage_index: int) -> dict[str, Any]:
         if not _mixed_curriculum_enabled(self.args) or int(stage_index) < 2:
@@ -161,11 +165,21 @@ class AdaptiveInstructionSampler:
         for name, values in self.history.items():
             counts[name] = int(len(values))
             rates[name] = float(sum(values) / len(values)) if values else None
+        recent_counts: dict[str, int] = {}
+        for name in self.recent_instructions:
+            recent_counts[name] = int(recent_counts.get(name, 0)) + 1
+        recent_total = max(1, sum(recent_counts.values()))
+        recent_fractions = {
+            name: float(count / recent_total)
+            for name, count in sorted(recent_counts.items())
+        }
         return {
             "mixed_curriculum_enabled": bool(_mixed_curriculum_enabled(self.args)),
             "mixed_curriculum_last_probabilities": dict(self.last_probabilities),
             "mixed_curriculum_success_rates": rates,
             "mixed_curriculum_episode_counts": counts,
+            "mixed_curriculum_recent_episode_fractions": recent_fractions,
+            "mixed_curriculum_total_episode_counts": dict(sorted(self.total_episode_counts.items())),
         }
 
     def _probabilities(self, candidates: list[str]) -> np.ndarray:
@@ -357,8 +371,45 @@ def _log(ctx: DistributedContext, message: str, *, progress: Any | None = None) 
         print(message, flush=True)
 
 
+def _format_duration(seconds: float | None) -> str:
+    if seconds is None or not np.isfinite(float(seconds)) or float(seconds) < 0.0:
+        return "unknown"
+    total = int(round(float(seconds)))
+    hours, rem = divmod(total, 3600)
+    minutes, secs = divmod(rem, 60)
+    if hours:
+        return f"{hours:d}h{minutes:02d}m{secs:02d}s"
+    if minutes:
+        return f"{minutes:d}m{secs:02d}s"
+    return f"{secs:d}s"
+
+
+def _format_step_progress(
+    *,
+    global_step: int,
+    max_train_steps: int,
+    start_step: int,
+    elapsed_seconds: float,
+) -> str:
+    total = max(1, int(max_train_steps))
+    current = max(0, int(global_step))
+    completed_since_start = max(0, current - int(start_step))
+    elapsed = max(1e-9, float(elapsed_seconds))
+    rate = float(completed_since_start) / elapsed
+    remaining = max(0, total - current)
+    eta = None if rate <= 1e-9 else float(remaining) / rate
+    pct = 100.0 * min(1.0, float(current) / float(total))
+    return (
+        f"progress={current}/{total} ({pct:.1f}%) "
+        f"rate={rate:.2f} step/s eta={_format_duration(eta)}"
+    )
+
+
 def _make_progress_bar(*, args: argparse.Namespace, ctx: DistributedContext, start_step: int) -> Any | None:
     if not bool(args.progress) or not ctx.is_main:
+        return None
+    if not sys.__stderr__.isatty():
+        # Remote launchers pipe through tee; tqdm carriage-return redraws become noisy log text there.
         return None
     if tqdm is None:
         if not bool(args.progress_only):
@@ -371,6 +422,9 @@ def _make_progress_bar(*, args: argparse.Namespace, ctx: DistributedContext, sta
         desc="octo-cdpr",
         unit="step",
         dynamic_ncols=True,
+        mininterval=float(args.progress_refresh_seconds),
+        maxinterval=max(float(args.progress_refresh_seconds) * 2.0, 10.0),
+        miniters=max(1, int(args.status_every_steps)),
         leave=True,
         file=sys.__stderr__,
     )
@@ -422,6 +476,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help_text="When distributed, set JAX_VISIBLE_DEVICES to the torchrun local rank before importing JAX.",
     )
     _bool_arg(parser, "progress", default=True, help_text="Show a tqdm training progress bar on rank 0.")
+    parser.add_argument("--progress-refresh-seconds", type=float, default=10.0)
     _bool_arg(
         parser,
         "progress_only",
@@ -584,6 +639,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=1000000,
         help="Base seed for deterministic held-out validation episodes.",
     )
+    parser.add_argument(
+        "--validation-video-count",
+        type=int,
+        default=3,
+        help="Number of overview MP4 validation episodes to save per held-out validation run.",
+    )
+    parser.add_argument("--validation-video-fps", type=float, default=10.0)
     return parser.parse_args(argv)
 
 
@@ -818,11 +880,14 @@ class ResidualTrainer:
             residual_scale=float(args.residual_scale),
         ).to(device)
         self.actor_target.load_state_dict(self._unwrap(self.actor).state_dict())
+        self._set_requires_grad(self.actor_target, False)
 
         self.critic1_target = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
         self.critic2_target = QNetwork(state_dim=state_dim, action_dim=action_dim, hidden_dim=int(args.hidden_dim)).to(device)
         self.critic1_target.load_state_dict(self._unwrap(self.critic1).state_dict())
         self.critic2_target.load_state_dict(self._unwrap(self.critic2).state_dict())
+        self._set_requires_grad(self.critic1_target, False)
+        self._set_requires_grad(self.critic2_target, False)
 
         self.actor_optim = torch.optim.AdamW(self.actor.parameters(), lr=float(args.actor_lr))
         self.critic_optim = torch.optim.AdamW(
@@ -944,6 +1009,95 @@ class ResidualTrainer:
         return output_path
 
 
+def _module_parameter_summary(module: nn.Module) -> dict[str, int]:
+    base = ResidualTrainer._unwrap(module)
+    total = 0
+    trainable = 0
+    for param in base.parameters():
+        count = int(param.numel())
+        total += count
+        if bool(param.requires_grad):
+            trainable += count
+    return {"total": int(total), "trainable": int(trainable)}
+
+
+def _optimizer_parameter_count(*optimizers: Any) -> int:
+    seen: set[int] = set()
+    total = 0
+    for optimizer in optimizers:
+        for group in getattr(optimizer, "param_groups", []):
+            for param in group.get("params", []):
+                ident = id(param)
+                if ident in seen:
+                    continue
+                seen.add(ident)
+                total += int(param.numel())
+    return int(total)
+
+
+def _residual_trainer_parameter_summary(
+    trainer: ResidualTrainer,
+    *,
+    pretrained_prior_name: str,
+    base_checkpoint: str,
+    pretrained_prior_parameters: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    online_modules = {
+        "residual_actor": _module_parameter_summary(trainer.actor),
+        "critic1": _module_parameter_summary(trainer.critic1),
+        "critic2": _module_parameter_summary(trainer.critic2),
+    }
+    target_modules = {
+        "actor_target": _module_parameter_summary(trainer.actor_target),
+        "critic1_target": _module_parameter_summary(trainer.critic1_target),
+        "critic2_target": _module_parameter_summary(trainer.critic2_target),
+    }
+    return {
+        "optimized_surface": "residual_actor_plus_online_q_critics",
+        "optimized_parameter_count": _optimizer_parameter_count(
+            trainer.actor_optim,
+            trainer.critic_optim,
+        ),
+        "online_modules": online_modules,
+        "target_modules": target_modules,
+        "target_update": "soft_update_only_not_optimizer_step",
+        "pretrained_prior": {
+            "name": str(pretrained_prior_name),
+            "checkpoint": str(base_checkpoint),
+            "role": "frozen_prior_action_chunk_generator",
+            "optimized": False,
+            **(pretrained_prior_parameters or {}),
+        },
+    }
+
+
+def _octo_pretrained_parameter_summary(runtime: Any) -> dict[str, Any]:
+    model = getattr(runtime, "model", None)
+    params = getattr(model, "params", None)
+    if params is None:
+        variables = getattr(model, "variables", None)
+        if isinstance(variables, dict):
+            params = variables.get("params")
+    if params is None:
+        return {"parameter_count_available": False}
+    try:
+        leaves = runtime.jax.tree_util.tree_leaves(params)
+        total = 0
+        for leaf in leaves:
+            size = getattr(leaf, "size", None)
+            total += int(size if size is not None else np.asarray(leaf).size)
+        return {
+            "parameter_count_available": True,
+            "parameter_count": int(total),
+            "trainable_parameter_count": 0,
+        }
+    except Exception as exc:
+        return {
+            "parameter_count_available": False,
+            "parameter_count_error": repr(exc),
+        }
+
+
 def _resolve_checkpoint(raw: str | Path) -> Path:
     path = Path(raw).expanduser().resolve()
     if path.is_file():
@@ -983,6 +1137,74 @@ def _log_scalars(writer: Any, metrics: dict[str, float], step: int) -> None:
         return
     for key, value in metrics.items():
         writer.add_scalar(key, float(value), int(step))
+    writer.flush()
+
+
+def _tensorboard_series_key(raw: Any) -> str:
+    text = str(raw).strip().replace("/", "_").replace("\\", "_").replace(" ", "_")
+    return text or "unknown"
+
+
+def _log_grouped_scalars(writer: Any, main_tag: str, values: dict[str, Any], step: int) -> None:
+    if writer is None or not values:
+        return
+    cleaned: dict[str, float] = {}
+    for key, value in values.items():
+        if value is None:
+            continue
+        try:
+            cleaned[_tensorboard_series_key(key)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    if not cleaned:
+        return
+    add_scalars = getattr(writer, "add_scalars", None)
+    if callable(add_scalars):
+        add_scalars(str(main_tag), cleaned, int(step))
+    else:
+        for key, value in cleaned.items():
+            writer.add_scalar(f"{main_tag}/{key}", value, int(step))
+    writer.flush()
+
+
+def _log_mixed_curriculum_scalars(writer: Any, metrics: dict[str, Any], step: int) -> None:
+    if writer is None:
+        return
+    writer.add_scalar(
+        "curriculum/mixed_enabled",
+        1.0 if bool(metrics.get("mixed_curriculum_enabled", False)) else 0.0,
+        int(step),
+    )
+    _log_grouped_scalars(
+        writer,
+        "curriculum/instruction_sampling_probability",
+        dict(metrics.get("mixed_curriculum_last_probabilities") or {}),
+        step,
+    )
+    _log_grouped_scalars(
+        writer,
+        "curriculum/instruction_success_rate_recent",
+        dict(metrics.get("mixed_curriculum_success_rates") or {}),
+        step,
+    )
+    _log_grouped_scalars(
+        writer,
+        "curriculum/instruction_episode_count_recent",
+        dict(metrics.get("mixed_curriculum_episode_counts") or {}),
+        step,
+    )
+    _log_grouped_scalars(
+        writer,
+        "curriculum/instruction_episode_fraction_recent",
+        dict(metrics.get("mixed_curriculum_recent_episode_fractions") or {}),
+        step,
+    )
+    _log_grouped_scalars(
+        writer,
+        "curriculum/instruction_episode_count_total",
+        dict(metrics.get("mixed_curriculum_total_episode_counts") or {}),
+        step,
+    )
     writer.flush()
 
 
@@ -1239,6 +1461,127 @@ def _info_instruction_type(info: dict[str, Any], fallback_instruction: str | Non
     return str(inferred or "")
 
 
+def _safe_filename_token(value: Any) -> str:
+    token = str(value or "").strip().lower().replace(" ", "_")
+    token = "".join(char if char.isalnum() or char in {"_", "-"} else "_" for char in token)
+    return token.strip("_") or "unknown"
+
+
+def _clear_sim_recording_buffers(sim: Any) -> None:
+    try:
+        from robots.cdpr.cdpr_dataset.synthetic_tasks import clear_sim_recording_buffers
+
+        clear_sim_recording_buffers(sim)
+        return
+    except Exception:
+        pass
+    for attr in ("trajectory_data", "overview_frames", "ee_camera_frames", "frame_capture_timestamps"):
+        if hasattr(sim, attr):
+            try:
+                setattr(sim, attr, [])
+            except Exception:
+                pass
+
+
+def _begin_validation_recording(env: Any, enabled: bool) -> dict[str, Any]:
+    sim = getattr(env, "sim", None)
+    state = {
+        "enabled": bool(enabled),
+        "capture_frames": getattr(env, "capture_frames", None),
+        "sim": sim,
+        "record_trajectory": getattr(sim, "record_trajectory", None) if sim is not None else None,
+    }
+    if not enabled:
+        return state
+    try:
+        env.capture_frames = True
+    except Exception:
+        pass
+    if sim is not None:
+        try:
+            sim.record_trajectory = True
+        except Exception:
+            pass
+        _clear_sim_recording_buffers(sim)
+    return state
+
+
+def _finish_validation_recording(env: Any, state: dict[str, Any]) -> None:
+    if not bool(state.get("enabled", False)):
+        return
+    sim = state.get("sim")
+    if sim is not None:
+        _clear_sim_recording_buffers(sim)
+        previous_recording = state.get("record_trajectory")
+        if previous_recording is not None:
+            try:
+                sim.record_trajectory = bool(previous_recording)
+            except Exception:
+                pass
+    previous_capture = state.get("capture_frames")
+    if previous_capture is not None:
+        try:
+            env.capture_frames = bool(previous_capture)
+        except Exception:
+            pass
+
+
+def _validation_video_frames(sim: Any, episode_length: int) -> list[Any]:
+    frames = list(getattr(sim, "overview_frames", []) or [])
+    if len(frames) != 1:
+        return frames
+    target_frame_count = max(2, min(int(episode_length), 600))
+    return frames * target_frame_count
+
+
+def _save_training_validation_video(
+    *,
+    run_dir: Path,
+    sim: Any,
+    global_step: int,
+    instruction_type: str,
+    episode_index: int,
+    seed: int,
+    success: bool,
+    episode_reward: float,
+    episode_length: int,
+    fps: float,
+) -> dict[str, Any] | None:
+    frames = _validation_video_frames(sim, int(episode_length))
+    if not frames or not hasattr(sim, "save_video"):
+        return None
+    step_dir = run_dir / "validation_videos" / f"step_{int(global_step):07d}"
+    step_dir.mkdir(parents=True, exist_ok=True)
+    outcome = "success" if bool(success) else "failure"
+    output_path = step_dir / (
+        f"{_safe_filename_token(instruction_type)}_{outcome}_episode_{int(episode_index):03d}_overview.mp4"
+    )
+    fps = max(1.0, float(fps))
+    summary: dict[str, Any] = {
+        "video_path": output_path.as_posix(),
+        "global_step": int(global_step),
+        "instruction_type": str(instruction_type),
+        "episode_index": int(episode_index),
+        "seed": int(seed),
+        "success": bool(success),
+        "episode_reward": float(episode_reward),
+        "episode_length": int(episode_length),
+        "frame_count": int(len(frames)),
+        "fps": float(fps),
+        "duration_sec": float(len(frames) / fps),
+    }
+    try:
+        sim.save_video(frames, str(output_path), fps=fps)
+        summary["saved"] = True
+        summary["size_bytes"] = int(output_path.stat().st_size) if output_path.is_file() else 0
+    except Exception as exc:
+        summary["saved"] = False
+        summary["error"] = repr(exc)
+    summary_path = output_path.with_name(output_path.name.replace("_overview.mp4", "_summary.json"))
+    summary_path.write_text(json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8")
+    return summary
+
+
 def _select_validation_chunk(
     actor: nn.Module,
     *,
@@ -1259,6 +1602,7 @@ def _summarize_validation_results(
     stage_index: int,
     instruction_types: Sequence[str],
     results: list[dict[str, Any]],
+    videos: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     episode_count = len(results)
     success_count = sum(1 for item in results if bool(item.get("success", False)))
@@ -1284,6 +1628,7 @@ def _summarize_validation_results(
         "validation_success_rate": float(success_count / episode_count) if episode_count else None,
         "validation_episode_reward_mean": float(sum(reward_values) / len(reward_values)) if reward_values else None,
         "validation_instruction_results": instruction_results,
+        "validation_videos": list(videos or []),
     }
 
 
@@ -1322,6 +1667,28 @@ def _write_validation_summary(
     with metrics_path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(summary, sort_keys=True) + "\n")
     _log_scalars(writer, _validation_summary_scalars(summary), int(summary["global_step"]))
+    instruction_results = summary.get("validation_instruction_results")
+    if isinstance(instruction_results, dict):
+        _log_grouped_scalars(
+            writer,
+            "validation/instruction_success_rate_grouped",
+            {
+                name: item.get("success_rate")
+                for name, item in instruction_results.items()
+                if isinstance(item, dict)
+            },
+            int(summary["global_step"]),
+        )
+        _log_grouped_scalars(
+            writer,
+            "validation/instruction_episode_reward_mean_grouped",
+            {
+                name: item.get("episode_reward_mean")
+                for name, item in instruction_results.items()
+                if isinstance(item, dict)
+            },
+            int(summary["global_step"]),
+        )
 
 
 def _run_octo_distinct_validation(
@@ -1343,6 +1710,8 @@ def _run_octo_distinct_validation(
     was_training = bool(actor.training)
     previous_instruction_types = getattr(validation_env, "instruction_types", None)
     results: list[dict[str, Any]] = []
+    saved_videos: list[dict[str, Any]] = []
+    video_limit = max(0, int(getattr(args, "validation_video_count", 0)))
     actor.eval()
     try:
         for instruction_index, instruction_type in enumerate(instruction_types):
@@ -1356,60 +1725,63 @@ def _run_octo_distinct_validation(
                 )
                 with _silence_output(True):
                     obs, info = validation_env.reset(seed=seed)
-                state = layout.flatten(obs)
-                instruction = _safe_instruction(info)
-                with _silence_output(True):
-                    prior_chunk = _predict_prior_chunk(
-                        runtime=runtime,
-                        obs_adapter=obs_adapter,
-                        action_spec=action_spec,
-                        env=validation_env,
-                        obs=obs,
-                        info=info,
-                        instruction=instruction,
-                    )
-                action_chunk = _select_validation_chunk(
-                    actor,
-                    device=trainer.device,
-                    state=state,
-                    prior_chunk=prior_chunk,
-                )
-                chunk_idx = 0
-                episode_reward = 0.0
-                episode_length = 0
-                terminated = False
-                truncated = False
-                final_info = dict(info)
-                while not (terminated or truncated):
-                    if chunk_idx >= replan_every:
-                        instruction = _safe_instruction(final_info)
-                        with _silence_output(True):
-                            prior_chunk = _predict_prior_chunk(
-                                runtime=runtime,
-                                obs_adapter=obs_adapter,
-                                action_spec=action_spec,
-                                env=validation_env,
-                                obs=obs,
-                                info=final_info,
-                                instruction=instruction,
-                            )
-                        action_chunk = _select_validation_chunk(
-                            actor,
-                            device=trainer.device,
-                            state=state,
-                            prior_chunk=prior_chunk,
-                        )
-                        chunk_idx = 0
-                    action = np.asarray(action_chunk[chunk_idx], dtype=np.float32).reshape(int(args.action_dim))
-                    action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
-                    with _silence_output(True):
-                        obs, reward, terminated, truncated, final_info = validation_env.step(action)
+                should_record_video = len(saved_videos) < video_limit
+                recording_state = _begin_validation_recording(validation_env, should_record_video)
+                video_summary: dict[str, Any] | None = None
+                try:
                     state = layout.flatten(obs)
-                    episode_reward += float(reward)
-                    episode_length += 1
-                    chunk_idx += 1
-                results.append(
-                    {
+                    instruction = _safe_instruction(info)
+                    with _silence_output(True):
+                        prior_chunk = _predict_prior_chunk(
+                            runtime=runtime,
+                            obs_adapter=obs_adapter,
+                            action_spec=action_spec,
+                            env=validation_env,
+                            obs=obs,
+                            info=info,
+                            instruction=instruction,
+                        )
+                    action_chunk = _select_validation_chunk(
+                        actor,
+                        device=trainer.device,
+                        state=state,
+                        prior_chunk=prior_chunk,
+                    )
+                    chunk_idx = 0
+                    episode_reward = 0.0
+                    episode_length = 0
+                    terminated = False
+                    truncated = False
+                    final_info = dict(info)
+                    while not (terminated or truncated):
+                        if chunk_idx >= replan_every:
+                            instruction = _safe_instruction(final_info)
+                            with _silence_output(True):
+                                prior_chunk = _predict_prior_chunk(
+                                    runtime=runtime,
+                                    obs_adapter=obs_adapter,
+                                    action_spec=action_spec,
+                                    env=validation_env,
+                                    obs=obs,
+                                    info=final_info,
+                                    instruction=instruction,
+                                )
+                            action_chunk = _select_validation_chunk(
+                                actor,
+                                device=trainer.device,
+                                state=state,
+                                prior_chunk=prior_chunk,
+                            )
+                            chunk_idx = 0
+                        action = np.asarray(action_chunk[chunk_idx], dtype=np.float32).reshape(int(args.action_dim))
+                        action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
+                        with _silence_output(True):
+                            obs, reward, terminated, truncated, final_info = validation_env.step(action)
+                        state = layout.flatten(obs)
+                        episode_reward += float(reward)
+                        episode_length += 1
+                        chunk_idx += 1
+                    result = {
                         "instruction_type": str(instruction_type),
                         "episode_index": int(episode_index),
                         "seed": int(seed),
@@ -1419,7 +1791,24 @@ def _run_octo_distinct_validation(
                         "terminated": bool(terminated),
                         "truncated": bool(truncated),
                     }
-                )
+                    if should_record_video:
+                        video_summary = _save_training_validation_video(
+                            run_dir=trainer.run_dir,
+                            sim=validation_env.sim,
+                            global_step=global_step,
+                            instruction_type=str(instruction_type),
+                            episode_index=episode_index,
+                            seed=seed,
+                            success=bool(result["success"]),
+                            episode_reward=float(episode_reward),
+                            episode_length=int(episode_length),
+                            fps=float(getattr(args, "validation_video_fps", 10.0)),
+                        )
+                        if video_summary is not None:
+                            saved_videos.append(video_summary)
+                    results.append(result)
+                finally:
+                    _finish_validation_recording(validation_env, recording_state)
     finally:
         actor.train(was_training)
         validation_env.instruction_types = previous_instruction_types
@@ -1429,6 +1818,7 @@ def _run_octo_distinct_validation(
         stage_index=stage_index,
         instruction_types=instruction_types,
         results=results,
+        videos=saved_videos,
     )
 
 
@@ -1571,8 +1961,25 @@ def main(argv: Sequence[str] | None = None) -> None:
             "config": str(args.config or ""),
             "action_keys": ["x", "y", "z", "yaw", "gripper"],
             "chunk_size": int(args.chunk_size),
+            "prior_action_adapter": {
+                "source": "Octo action chunk",
+                "target": "CDPR normalized 5D [x, y, z, yaw, gripper]",
+                "default_source_indices_for_7d": [0, 1, 2, 5, 6],
+                "configured_source_indices": (
+                    list(args.octo_action_indices)
+                    if args.octo_action_indices is not None
+                    else [0, 1, 2, 5, 6]
+                ),
+                "normalization": str(args.octo_action_normalization),
+            },
             "trainable_surface": "torch_residual_chunk_head_and_q_critics",
             "frozen_octo": True,
+            "parameter_training": _residual_trainer_parameter_summary(
+                trainer,
+                pretrained_prior_name="Octo-Small",
+                base_checkpoint=str(args.base_checkpoint),
+                pretrained_prior_parameters=_octo_pretrained_parameter_summary(runtime),
+            ),
             "distributed_world_size": int(dist_ctx.world_size),
             "rank_device": str(dist_ctx.device),
             "success_threshold_to_beat_openvla": {
@@ -1609,6 +2016,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "every_steps": int(args.validation_every_steps),
                 "episodes_per_instruction": int(args.validation_episodes_per_instruction),
                 "seed": int(args.validation_seed),
+                "video_count": int(args.validation_video_count),
+                "video_fps": float(args.validation_video_fps),
             },
         }
         if dist_ctx.is_main:
@@ -1651,6 +2060,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
         last_metrics: dict[str, float] = {}
         progress = _make_progress_bar(args=args, ctx=dist_ctx, start_step=start_step)
+        status_start_t = time.perf_counter()
         last_validation_step = int(start_step)
 
         while global_step < int(args.max_train_steps):
@@ -1804,6 +2214,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 rollout_scalars.update(_episode_metric_scalars(episode_metrics))
                 rollout_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
                 _log_scalars(writer, rollout_scalars, global_step)
+                _log_mixed_curriculum_scalars(writer, mixed_curriculum_metrics, global_step)
 
             if progress is not None:
                 progress.update(1)
@@ -1824,6 +2235,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                     f"[octo-cdpr] step={global_step:07d} episode={episode:05d} "
                     f"ep_len={episode_length:03d} reward_running={episode_reward:+.3f} "
                     f"last_reward={float(reward):+.3f} buffer={buffer.size} instruction={instruction}",
+                )
+                _log(
+                    dist_ctx,
+                    "[octo-cdpr] "
+                    + _format_step_progress(
+                        global_step=global_step,
+                        max_train_steps=int(args.max_train_steps),
+                        start_step=int(start_step),
+                        elapsed_seconds=time.perf_counter() - status_start_t,
+                    ),
                 )
 
             if dist_ctx.is_main and global_step % max(1, int(args.save_every_steps)) == 0:
@@ -1950,6 +2371,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     done_scalars.update(_episode_metric_scalars(episode_metrics))
                     done_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
                     _log_scalars(writer, done_scalars, global_step)
+                    _log_mixed_curriculum_scalars(writer, mixed_curriculum_metrics, global_step)
                 episode += 1
                 episode_reward = 0.0
                 episode_length = 0
