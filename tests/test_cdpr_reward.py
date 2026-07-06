@@ -64,6 +64,58 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertGreater(reward_near, reward_far)
         self.assertGreater(info_far["distance_to_goal"], info_near["distance_to_goal"])
 
+    def test_motion_quality_penalizes_inefficient_sign_flipping_motion(self):
+        spec = self._spec("move_right")
+        metadata = {
+            "direct_translation_reward_enabled": True,
+            "direct_translation_success_displacement": 0.20,
+            "path_efficiency_penalty_weight": 1.0,
+            "path_efficiency_target": 0.90,
+            "sign_flip_penalty_weight": 0.50,
+            "sign_flip_action_threshold": 0.05,
+            "action_delta_penalty_weight": 0.10,
+        }
+
+        smooth_state = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            initial_obj_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+        )
+        reward_smooth, _, info_smooth = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.0, 0.20], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            reward_state=smooth_state,
+            action=np.array([0.60, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            task_metadata=metadata,
+        )
+
+        zigzag_state = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            initial_obj_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+        )
+        _reward_first, _, _info_first = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.0, 0.20], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            reward_state=zigzag_state,
+            action=np.array([0.60, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            task_metadata=metadata,
+        )
+        reward_zigzag, _, info_zigzag = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.02, 0.0, 0.20], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            reward_state=zigzag_state,
+            action=np.array([-0.60, 0.0, 0.0, 0.0, 0.0], dtype=np.float32),
+            task_metadata=metadata,
+        )
+
+        self.assertAlmostEqual(info_smooth["motion_quality_path_efficiency"], 1.0, places=6)
+        self.assertLess(info_zigzag["motion_quality_path_efficiency"], 0.35)
+        self.assertEqual(info_zigzag["motion_quality_sign_flip_rate"], 1.0)
+        self.assertGreater(info_zigzag["motion_quality_penalty"], info_smooth["motion_quality_penalty"])
+        self.assertLess(reward_zigzag, reward_smooth)
+
     def test_direct_gripper_reward_penalizes_xyz_actions_without_success_bonus(self):
         spec = InstructionSpec(
             instruction_type="open_gripper",

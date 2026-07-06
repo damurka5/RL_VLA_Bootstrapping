@@ -335,6 +335,11 @@ class RewardState:
     gripper_closed: bool = False
     grasped: bool = False
     step_count: int = 0
+    path_length: float = 0.0
+    translation_sign_flip_count: int = 0
+    translation_sign_comparison_count: int = 0
+    prev_action: Optional[np.ndarray] = None
+    prev_prev_action: Optional[np.ndarray] = None
 
 
 def canonical_object_name(name: str) -> str:
@@ -597,6 +602,178 @@ def _action_saturation_stats(
     return penalty_raw, saturation_rate, saturation_max_abs
 
 
+def _motion_quality_terms(
+    reward_state: RewardState,
+    ee_pos: np.ndarray,
+    action: Optional[np.ndarray],
+    task_metadata: dict[str, Any] | None,
+) -> dict[str, float]:
+    metadata = dict(task_metadata or {})
+    current_ee = np.asarray(ee_pos, dtype=np.float32).reshape(-1)
+    if current_ee.size < 3:
+        padded = np.zeros((3,), dtype=np.float32)
+        padded[: current_ee.size] = current_ee
+        current_ee = padded
+    else:
+        current_ee = current_ee[:3]
+
+    previous_ee = np.asarray(reward_state.prev_ee_pos, dtype=np.float32).reshape(-1)
+    if previous_ee.size < 3:
+        padded = np.zeros((3,), dtype=np.float32)
+        padded[: previous_ee.size] = previous_ee
+        previous_ee = padded
+    else:
+        previous_ee = previous_ee[:3]
+
+    initial_ee = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
+    if initial_ee.size < 3:
+        padded = np.zeros((3,), dtype=np.float32)
+        padded[: initial_ee.size] = initial_ee
+        initial_ee = padded
+    else:
+        initial_ee = initial_ee[:3]
+
+    step_distance = float(np.linalg.norm(current_ee - previous_ee))
+    path_length = float(max(0.0, float(getattr(reward_state, "path_length", 0.0))) + step_distance)
+    net_distance = float(np.linalg.norm(current_ee - initial_ee))
+    if path_length <= 1e-9:
+        path_efficiency = 1.0 if net_distance <= 1e-9 else 0.0
+    else:
+        path_efficiency = float(np.clip(net_distance / path_length, 0.0, 1.0))
+
+    action_arr = np.asarray(action if action is not None else np.zeros((5,), dtype=np.float32), dtype=np.float32).reshape(-1)
+    prev_action = reward_state.prev_action
+    prev_prev_action = reward_state.prev_prev_action
+
+    action_delta_l2 = 0.0
+    action_delta_mean_sq = 0.0
+    if prev_action is not None:
+        prev_arr = np.asarray(prev_action, dtype=np.float32).reshape(-1)
+        dim = min(action_arr.size, prev_arr.size)
+        if dim > 0:
+            delta = action_arr[:dim] - prev_arr[:dim]
+            action_delta_l2 = float(np.linalg.norm(delta))
+            action_delta_mean_sq = float(np.mean(np.square(delta)))
+
+    action_jerk_l2 = 0.0
+    action_jerk_mean_sq = 0.0
+    if prev_action is not None and prev_prev_action is not None:
+        prev_arr = np.asarray(prev_action, dtype=np.float32).reshape(-1)
+        prev_prev_arr = np.asarray(prev_prev_action, dtype=np.float32).reshape(-1)
+        dim = min(action_arr.size, prev_arr.size, prev_prev_arr.size)
+        if dim > 0:
+            jerk = action_arr[:dim] - 2.0 * prev_arr[:dim] + prev_prev_arr[:dim]
+            action_jerk_l2 = float(np.linalg.norm(jerk))
+            action_jerk_mean_sq = float(np.mean(np.square(jerk)))
+
+    threshold = max(_metadata_float(metadata, "sign_flip_action_threshold", 0.05), 0.0)
+    sign_flips = 0
+    sign_comparisons = 0
+    sign_flip_dim_count = 0
+    if prev_action is not None and action_arr.size > 0:
+        prev_arr = np.asarray(prev_action, dtype=np.float32).reshape(-1)
+        default_dim_limit = float(min(action_arr.size, prev_arr.size))
+        dim_limit = int(round(_metadata_float(metadata, "sign_flip_action_dim_count", default_dim_limit)))
+        dim = max(0, min(dim_limit, action_arr.size, prev_arr.size))
+        sign_flip_dim_count = dim
+        if dim > 0:
+            current_signs = np.zeros((dim,), dtype=np.int8)
+            previous_signs = np.zeros((dim,), dtype=np.int8)
+            current_signs[action_arr[:dim] > threshold] = 1
+            current_signs[action_arr[:dim] < -threshold] = -1
+            previous_signs[prev_arr[:dim] > threshold] = 1
+            previous_signs[prev_arr[:dim] < -threshold] = -1
+            active = (current_signs != 0) & (previous_signs != 0)
+            sign_comparisons = int(np.sum(active))
+            if sign_comparisons:
+                sign_flips = int(np.sum(current_signs[active] != previous_signs[active]))
+
+    total_sign_flips = int(getattr(reward_state, "translation_sign_flip_count", 0)) + sign_flips
+    total_sign_comparisons = int(getattr(reward_state, "translation_sign_comparison_count", 0)) + sign_comparisons
+    sign_flip_rate = float(total_sign_flips / total_sign_comparisons) if total_sign_comparisons else 0.0
+
+    path_efficiency_target = float(np.clip(_metadata_float(metadata, "path_efficiency_target", 0.85), 0.0, 1.0))
+    path_efficiency_penalty = float(
+        _metadata_float(metadata, "path_efficiency_penalty_weight", 0.0)
+        * max(0.0, path_efficiency_target - path_efficiency)
+    )
+    sign_flip_penalty = float(_metadata_float(metadata, "sign_flip_penalty_weight", 0.0) * sign_flip_rate)
+    action_delta_penalty = float(_metadata_float(metadata, "action_delta_penalty_weight", 0.0) * action_delta_mean_sq)
+    action_jerk_penalty = float(_metadata_float(metadata, "action_jerk_penalty_weight", 0.0) * action_jerk_mean_sq)
+    total_penalty = float(
+        path_efficiency_penalty
+        + sign_flip_penalty
+        + action_delta_penalty
+        + action_jerk_penalty
+    )
+
+    return {
+        "motion_quality_step_distance": step_distance,
+        "motion_quality_path_length": path_length,
+        "motion_quality_net_distance": net_distance,
+        "motion_quality_path_efficiency": path_efficiency,
+        "motion_quality_path_efficiency_target": path_efficiency_target,
+        "motion_quality_path_efficiency_penalty": path_efficiency_penalty,
+        "motion_quality_sign_flip_count": float(total_sign_flips),
+        "motion_quality_sign_flip_comparison_count": float(total_sign_comparisons),
+        "motion_quality_sign_flip_step_count": float(sign_flips),
+        "motion_quality_sign_flip_step_comparison_count": float(sign_comparisons),
+        "motion_quality_sign_flip_rate": sign_flip_rate,
+        "motion_quality_sign_flip_dim_count": float(sign_flip_dim_count),
+        "motion_quality_sign_flip_penalty": sign_flip_penalty,
+        "motion_quality_action_delta_l2": action_delta_l2,
+        "motion_quality_action_delta_mean_sq": action_delta_mean_sq,
+        "motion_quality_action_delta_penalty": action_delta_penalty,
+        "motion_quality_action_jerk_l2": action_jerk_l2,
+        "motion_quality_action_jerk_mean_sq": action_jerk_mean_sq,
+        "motion_quality_action_jerk_penalty": action_jerk_penalty,
+        "motion_quality_penalty": total_penalty,
+        "_motion_quality_sign_flips_to_add": float(sign_flips),
+        "_motion_quality_sign_comparisons_to_add": float(sign_comparisons),
+    }
+
+
+def _apply_motion_quality_terms(
+    result: tuple[float, bool, dict[str, float]],
+    *,
+    reward_state: RewardState,
+    action: Optional[np.ndarray],
+    terms: dict[str, float],
+) -> tuple[float, bool, dict[str, float]]:
+    reward, success, info = result
+    out = dict(info)
+    public_terms = {
+        key: value
+        for key, value in terms.items()
+        if not key.startswith("_")
+    }
+    out.update(public_terms)
+
+    penalty = float(terms.get("motion_quality_penalty", 0.0))
+    reward_after_penalty = float(reward) - penalty
+    out["reward_before_motion_quality_penalty"] = float(reward)
+    out["reward_after_motion_quality_penalty"] = reward_after_penalty
+
+    reward_state.path_length = float(terms.get("motion_quality_path_length", reward_state.path_length))
+    reward_state.translation_sign_flip_count = int(
+        getattr(reward_state, "translation_sign_flip_count", 0)
+        + int(round(float(terms.get("_motion_quality_sign_flips_to_add", 0.0))))
+    )
+    reward_state.translation_sign_comparison_count = int(
+        getattr(reward_state, "translation_sign_comparison_count", 0)
+        + int(round(float(terms.get("_motion_quality_sign_comparisons_to_add", 0.0))))
+    )
+    if action is not None:
+        action_arr = np.asarray(action, dtype=np.float32).reshape(-1).copy()
+        reward_state.prev_prev_action = (
+            None
+            if reward_state.prev_action is None
+            else np.asarray(reward_state.prev_action, dtype=np.float32).reshape(-1).copy()
+        )
+        reward_state.prev_action = action_arr
+    return reward_after_penalty, bool(success), out
+
+
 def compute_instruction_reward(
     spec: InstructionSpec,
     ee_pos: np.ndarray,
@@ -623,12 +800,24 @@ def compute_instruction_reward(
     ee_pos = np.asarray(ee_pos, dtype=np.float32)
     goal_pos = np.asarray(obj_pos, dtype=np.float32)
     prev_goal_pos = np.asarray(reward_state.prev_obj_pos, dtype=np.float32)
+    motion_quality = _motion_quality_terms(reward_state, ee_pos, action, task_metadata)
+
+    def finish(result: tuple[float, bool, dict[str, float]]) -> tuple[float, bool, dict[str, float]]:
+        return _normalize_reward_output(
+            _apply_motion_quality_terms(
+                result,
+                reward_state=reward_state,
+                action=action,
+                terms=motion_quality,
+            ),
+            task_metadata,
+        )
 
     if (
         spec.instruction_type in DIRECT_TRANSLATION_INSTRUCTION_TYPES
         and _metadata_bool(task_metadata, "direct_translation_reward_enabled", False)
     ):
-        return _normalize_reward_output(
+        return finish(
             _compute_direct_translation_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -636,12 +825,11 @@ def compute_instruction_reward(
                 reward_state=reward_state,
                 action=action,
                 task_metadata=task_metadata,
-            ),
-            task_metadata,
+            )
         )
 
     if spec.instruction_type in DIRECT_ACTUATOR_INSTRUCTION_TYPES:
-        return _normalize_reward_output(
+        return finish(
             _compute_direct_actuator_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -651,12 +839,11 @@ def compute_instruction_reward(
                 task_metadata=task_metadata,
                 gripper_opening=gripper_opening,
                 env=env,
-            ),
-            task_metadata,
+            )
         )
 
     if _use_sparse_binary_reward(task_metadata):
-        return _normalize_reward_output(
+        return finish(
             _compute_sparse_binary_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -673,12 +860,11 @@ def compute_instruction_reward(
                 target_body_name=target_body_name,
                 reference_body_name=reference_body_name,
                 second_reference_body_name=second_reference_body_name,
-            ),
-            task_metadata,
+            )
         )
 
     if spec.instruction_type in DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES:
-        return _normalize_reward_output(
+        return finish(
             _compute_dense_gripper_edge_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -688,12 +874,11 @@ def compute_instruction_reward(
                 gripper_opening=gripper_opening,
                 env=env,
                 target_body_name=target_body_name,
-            ),
-            task_metadata,
+            )
         )
 
     if spec.instruction_type in ROTATE_OBJECT_INSTRUCTION_TYPES:
-        return _normalize_reward_output(
+        return finish(
             _compute_dense_rotate_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -703,12 +888,11 @@ def compute_instruction_reward(
                 task_metadata=task_metadata,
                 env=env,
                 target_body_name=target_body_name,
-            ),
-            task_metadata,
+            )
         )
 
     if spec.instruction_type in MANIPULATION_SPARSE_INSTRUCTION_TYPES:
-        return _normalize_reward_output(
+        return finish(
             _compute_sparse_manipulation_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -725,11 +909,10 @@ def compute_instruction_reward(
                 target_body_name=target_body_name,
                 reference_body_name=reference_body_name,
                 second_reference_body_name=second_reference_body_name,
-            ),
-            task_metadata,
+            )
         )
     if spec.instruction_type == "pick_up":
-        return _normalize_reward_output(
+        return finish(
             _compute_pick_up_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -742,11 +925,10 @@ def compute_instruction_reward(
                 caught_object_is_target=caught_object_is_target,
                 caught_object_score=caught_object_score,
                 caught_object_catalog=caught_object_catalog,
-            ),
-            task_metadata,
+            )
         )
     if spec.instruction_type == "move_to_object":
-        return _normalize_reward_output(
+        return finish(
             _compute_move_to_object_reward(
                 spec=spec,
                 ee_pos=ee_pos,
@@ -754,8 +936,7 @@ def compute_instruction_reward(
                 reward_state=reward_state,
                 action=action,
                 task_metadata=task_metadata,
-            ),
-            task_metadata,
+            )
         )
 
     distance_vec = goal_pos - ee_pos
@@ -866,7 +1047,7 @@ def compute_instruction_reward(
         "orientation_reward": camera_reward,
         "success_bonus": success_reward,
     }
-    return _normalize_reward_output((reward, success, info), task_metadata)
+    return finish((reward, success, info))
 
 
 def _read_env_body_position(env: Any | None, body_name: str | None) -> np.ndarray | None:
@@ -2575,6 +2756,19 @@ def compute_instruction_validation_success(
             gripper_closed=bool(reward_state.gripper_closed),
             grasped=bool(reward_state.grasped),
             step_count=int(reward_state.step_count),
+            path_length=float(getattr(reward_state, "path_length", 0.0)),
+            translation_sign_flip_count=int(getattr(reward_state, "translation_sign_flip_count", 0)),
+            translation_sign_comparison_count=int(getattr(reward_state, "translation_sign_comparison_count", 0)),
+            prev_action=(
+                None
+                if getattr(reward_state, "prev_action", None) is None
+                else np.asarray(reward_state.prev_action, dtype=np.float32).copy()
+            ),
+            prev_prev_action=(
+                None
+                if getattr(reward_state, "prev_prev_action", None) is None
+                else np.asarray(reward_state.prev_prev_action, dtype=np.float32).copy()
+            ),
         )
         target_source = obj_pos if obj_pos is not None else goal_pos
         if target_source is None:
@@ -2618,6 +2812,19 @@ def compute_instruction_validation_success(
                 gripper_closed=bool(reward_state.gripper_closed),
                 grasped=bool(reward_state.grasped),
                 step_count=int(reward_state.step_count),
+                path_length=float(getattr(reward_state, "path_length", 0.0)),
+                translation_sign_flip_count=int(getattr(reward_state, "translation_sign_flip_count", 0)),
+                translation_sign_comparison_count=int(getattr(reward_state, "translation_sign_comparison_count", 0)),
+                prev_action=(
+                    None
+                    if getattr(reward_state, "prev_action", None) is None
+                    else np.asarray(reward_state.prev_action, dtype=np.float32).copy()
+                ),
+                prev_prev_action=(
+                    None
+                    if getattr(reward_state, "prev_prev_action", None) is None
+                    else np.asarray(reward_state.prev_prev_action, dtype=np.float32).copy()
+                ),
             )
             target_source = obj_pos if obj_pos is not None else goal_pos
             if target_source is None:
