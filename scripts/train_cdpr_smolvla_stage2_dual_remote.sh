@@ -14,17 +14,52 @@ SMOOTH_GPU="${SMOOTH_GPU:-1}"
 SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-1}"
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-COMPLEX_RUN_NAME="${COMPLEX_RUN_NAME:-cdpr_smolvla_stage2_complex_resume_1500000_${timestamp}}"
-SMOOTH_RUN_NAME="${SMOOTH_RUN_NAME:-cdpr_smolvla_smooth_refinement_resume_1500000_${timestamp}}"
+
+checkpoint_step() {
+  local checkpoint="${1%/}"
+  local base
+  while [[ -n "$checkpoint" && "$checkpoint" != "/" && "$checkpoint" != "." ]]; do
+    base="${checkpoint##*/}"
+    if [[ "$base" =~ ^step_([0-9]+)$ ]]; then
+      printf '%d\n' "$((10#${BASH_REMATCH[1]}))"
+      return 0
+    fi
+    checkpoint="${checkpoint%/*}"
+  done
+  return 1
+}
+
+target_train_steps() {
+  local checkpoint="$1"
+  local extra_steps="$2"
+  local explicit_target="$3"
+  local checkpoint_step_value
+
+  if [[ -n "$explicit_target" ]]; then
+    printf '%s\n' "$explicit_target"
+    return 0
+  fi
+  if ! checkpoint_step_value="$(checkpoint_step "$checkpoint")"; then
+    echo "Could not infer checkpoint step from $checkpoint; set an explicit max train step target." >&2
+    return 2
+  fi
+  printf '%d\n' "$((checkpoint_step_value + extra_steps))"
+}
+
+COMPLEX_RUN_NAME="${COMPLEX_RUN_NAME:-cdpr_smolvla_stage2_complex_strict_resume_step_3000000_${timestamp}}"
+SMOOTH_RUN_NAME="${SMOOTH_RUN_NAME:-cdpr_smolvla_smooth_strict_resume_step_3500000_${timestamp}}"
 
 COMPLEX_CONFIG_PATH="${COMPLEX_CONFIG_PATH:-$REPO_ROOT/configs/examples/cdpr_smolvla_stage2_complex_resume_1500000.yaml}"
 SMOOTH_CONFIG_PATH="${SMOOTH_CONFIG_PATH:-$REPO_ROOT/configs/examples/cdpr_smolvla_smooth_refinement_resume_1500000.yaml}"
 
-RESUME_CHECKPOINT_DEFAULT="/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_dense_2gpu_staged_resume_step_0500000_20260705_140035/rl/step_1500000/smolvla_cdpr_adapter.pt"
-COMPLEX_RESUME_CHECKPOINT="${COMPLEX_RESUME_CHECKPOINT:-${RESUME_CHECKPOINT:-$RESUME_CHECKPOINT_DEFAULT}}"
-SMOOTH_RESUME_CHECKPOINT="${SMOOTH_RESUME_CHECKPOINT:-${RESUME_CHECKPOINT:-$RESUME_CHECKPOINT_DEFAULT}}"
-COMPLEX_MAX_TRAIN_STEPS="${COMPLEX_MAX_TRAIN_STEPS:-3500000}"
-SMOOTH_MAX_TRAIN_STEPS="${SMOOTH_MAX_TRAIN_STEPS:-3500000}"
+COMPLEX_RESUME_CHECKPOINT_DEFAULT="/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage2_complex_resume_1500000_20260706_220107/rl/step_3000000/smolvla_cdpr_adapter.pt"
+SMOOTH_RESUME_CHECKPOINT_DEFAULT="/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_smooth_refinement_resume_1500000_20260706_220107/rl/step_3500000/smolvla_cdpr_adapter.pt"
+COMPLEX_RESUME_CHECKPOINT="${COMPLEX_RESUME_CHECKPOINT:-${RESUME_CHECKPOINT:-$COMPLEX_RESUME_CHECKPOINT_DEFAULT}}"
+SMOOTH_RESUME_CHECKPOINT="${SMOOTH_RESUME_CHECKPOINT:-${RESUME_CHECKPOINT:-$SMOOTH_RESUME_CHECKPOINT_DEFAULT}}"
+COMPLEX_EXTRA_TRAIN_STEPS="${COMPLEX_EXTRA_TRAIN_STEPS:-2000000}"
+SMOOTH_EXTRA_TRAIN_STEPS="${SMOOTH_EXTRA_TRAIN_STEPS:-2000000}"
+COMPLEX_MAX_TRAIN_STEPS="$(target_train_steps "$COMPLEX_RESUME_CHECKPOINT" "$COMPLEX_EXTRA_TRAIN_STEPS" "${COMPLEX_MAX_TRAIN_STEPS:-}")"
+SMOOTH_MAX_TRAIN_STEPS="$(target_train_steps "$SMOOTH_RESUME_CHECKPOINT" "$SMOOTH_EXTRA_TRAIN_STEPS" "${SMOOTH_MAX_TRAIN_STEPS:-}")"
 
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"

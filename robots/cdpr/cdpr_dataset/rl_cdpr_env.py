@@ -122,6 +122,8 @@ DEFAULT_FORCE_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     *ROTATE_OBJECT_INSTRUCTION_TYPES,
 )
 DEFAULT_TARGET_AT_GRIPPER_START_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "pick_up",
+    "grab_object",
     *DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
 )
 DEFAULT_CAUGHT_OBJECT_START_OFFSET = (0.0, 0.0, 0.005)
@@ -269,6 +271,10 @@ def _infer_instruction_type_from_text(instruction: str) -> str | None:
         return "rotate_gripper_clockwise"
     if text.startswith("pick up "):
         return "pick_up"
+    if text.startswith("pick "):
+        return "pick_up"
+    if text.startswith("take "):
+        return "pick_up"
     if text.startswith("rotate ") and text.endswith(" counterclockwise"):
         return "rotate_counterclockwise"
     if text.startswith("rotate ") and text.endswith(" clockwise"):
@@ -345,6 +351,21 @@ def _metadata_float(task_metadata: dict[str, Any], key: str, default: float) -> 
     if not np.isfinite(value):
         raise ValueError(f"Task metadata `{key}` must be finite, got {raw!r}")
     return value
+
+
+def _metadata_bool(task_metadata: dict[str, Any], key: str, default: bool) -> bool:
+    raw = task_metadata.get(key, default)
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        value = raw.strip().lower()
+        if value in {"1", "true", "yes", "on"}:
+            return True
+        if value in {"0", "false", "no", "off"}:
+            return False
+    if isinstance(raw, (int, float)):
+        return bool(raw)
+    return bool(raw)
 
 
 def _metadata_float_pair(task_metadata: dict[str, Any], key: str, default: Sequence[float]) -> tuple[float, float]:
@@ -2917,8 +2938,38 @@ class CDPRLanguageRLEnv(_EnvBase):
                     f"{[scene.name for scene in candidates]}."
                 )
 
+        if (
+            instruction_type == "move_to_object"
+            and _metadata_bool(self._task_metadata, "move_to_object_single_object_scene", False)
+        ):
+            candidates = [
+                self._single_object_move_to_object_scene(scene, options=options)
+                for scene in candidates
+            ]
+
         idx = int(self.np_random.integers(0, len(candidates)))
         return candidates[idx]
+
+    def _single_object_move_to_object_scene(
+        self,
+        scene: SceneSpec,
+        *,
+        options: Optional[dict[str, Any]] = None,
+    ) -> SceneSpec:
+        options = dict(options or {})
+        requested = str(options.get("target_object") or options.get("target_catalog_name") or "").strip()
+        preferred = [
+            requested,
+            str(scene.target_object or ""),
+            *[str(name) for name in scene.objects],
+            *[str(name) for name in getattr(self, "target_object_pool", ())],
+            *[str(name) for name in getattr(self, "scene_object_pool", ())],
+            *[str(name) for name in getattr(self, "allowed_objects", ())],
+        ]
+        chosen = next((name for name in preferred if name), "")
+        if not chosen:
+            return scene
+        return SceneSpec(name=scene.name, objects=(chosen,), target_object=chosen)
 
     def _augment_scene_for_instruction_type(self, scene: SceneSpec, instruction_type: str) -> SceneSpec:
         instruction_type = str(instruction_type).strip()
@@ -3041,16 +3092,35 @@ class CDPRLanguageRLEnv(_EnvBase):
         return ee_start
 
     def _sample_episode_ee_start(self, options: Optional[dict[str, Any]] = None) -> np.ndarray:
-        requested = (options or {}).get("ee_start")
+        options = dict(options or {})
+        requested = options.get("ee_start")
         if requested is not None:
             return self._clamp_ee_target(_coerce_ee_start(requested))
 
         ee_start = self._default_ee_start()
         if not self.randomize_ee_start:
+            instruction_type = str(
+                options.get("_sampled_instruction_type") or options.get("instruction_type") or ""
+            )
+            if instruction_type in set(self._target_at_gripper_start_instruction_types()):
+                if "target_at_gripper_start_ee_z" in self._task_metadata:
+                    ee_start[2] = _metadata_float(
+                        self._task_metadata,
+                        "target_at_gripper_start_ee_z",
+                        float(ee_start[2]),
+                    )
             return self._clamp_ee_target(ee_start)
 
         ee_start[0] = float(self.np_random.uniform(*self.ee_start_x_bounds))
         ee_start[1] = float(self.np_random.uniform(*self.ee_start_y_bounds))
+        instruction_type = str(options.get("_sampled_instruction_type") or options.get("instruction_type") or "")
+        if instruction_type in set(self._target_at_gripper_start_instruction_types()):
+            if "target_at_gripper_start_ee_z" in self._task_metadata:
+                ee_start[2] = _metadata_float(
+                    self._task_metadata,
+                    "target_at_gripper_start_ee_z",
+                    float(ee_start[2]),
+                )
         return self._clamp_ee_target(ee_start)
 
     def _ee_workspace_bounds(self) -> tuple[tuple[float, float], tuple[float, float]]:

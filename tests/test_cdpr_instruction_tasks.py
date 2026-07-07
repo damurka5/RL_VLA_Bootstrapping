@@ -200,6 +200,44 @@ class InstructionTextTests(unittest.TestCase):
         self.assertAlmostEqual(info["directional_success_signed_displacement"], 0.22, places=6)
         self.assertAlmostEqual(info["direct_translation_orthogonal_drift"], 0.0, places=6)
 
+    def test_direct_translation_rejects_large_orthogonal_drift(self):
+        spec = InstructionSpec(
+            instruction_type="move_left",
+            text="move left",
+            target_object="",
+            direction=np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        reward_state = init_reward_state(
+            initial_ee_pos=np.array([0.10, 0.0, 0.40], dtype=np.float32),
+            initial_obj_pos=np.zeros((3,), dtype=np.float32),
+        )
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.04, 0.04, 0.40], dtype=np.float32),
+            obj_pos=np.zeros((3,), dtype=np.float32),
+            reward_state=reward_state,
+            action=np.array([-1.0, 0.8, 0.0, 0.0, 0.0], dtype=np.float32),
+            task_metadata={
+                "direct_translation_reward_enabled": True,
+                "direct_translation_success_displacement": 0.05,
+                "direct_translation_orthogonal_tolerance": 0.015,
+                "direct_translation_action_weight": 1.0,
+                "direct_translation_off_axis_action_penalty": 1.0,
+                "direct_translation_orthogonal_drift_penalty": 1.0,
+            },
+        )
+
+        self.assertFalse(success)
+        self.assertEqual(info["direct_translation_orthogonal_check_enabled"], 1.0)
+        self.assertEqual(info["direct_translation_orthogonal_ok"], 0.0)
+        self.assertGreater(info["direct_translation_orthogonal_drift"], 0.015)
+        self.assertEqual(info["direct_translation_correct_action"], 1.0)
+        self.assertGreater(info["direct_translation_off_axis_action"], 0.0)
+        self.assertGreater(info["direct_translation_orthogonal_drift_penalty"], 0.0)
+
     def test_move_to_object_validation_uses_xy_distance_threshold(self):
         spec = InstructionSpec(
             instruction_type="move_to_object",
@@ -228,6 +266,50 @@ class InstructionTextTests(unittest.TestCase):
         self.assertGreater(info["move_to_object_validation_distance_xy"], 0.05)
         self.assertLess(info["move_to_object_validation_distance_xy"], 0.10)
         self.assertAlmostEqual(info["move_to_object_validation_distance_threshold"], 0.10, places=7)
+
+    def test_move_to_object_reward_uses_configured_xy_window(self):
+        spec = InstructionSpec(
+            instruction_type="move_to_object",
+            text="move to apple",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        metadata = {
+            "move_to_object_xy_window_low": 0.10,
+            "move_to_object_xy_window_high": 0.15,
+            "move_to_object_xy_reward_scale": 0.05,
+            "move_to_object_excess_distance_penalty_weight": 1.0,
+            "move_to_object_require_z_window": False,
+        }
+
+        inside_reward, inside_success, inside_info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.12, 0.0, 0.40], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.16], dtype=np.float32),
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.20, 0.0, 0.40], dtype=np.float32),
+                initial_obj_pos=np.array([0.0, 0.0, 0.16], dtype=np.float32),
+            ),
+            task_metadata=metadata,
+        )
+        far_reward, far_success, far_info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.28, 0.0, 0.40], dtype=np.float32),
+            obj_pos=np.array([0.0, 0.0, 0.16], dtype=np.float32),
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.30, 0.0, 0.40], dtype=np.float32),
+                initial_obj_pos=np.array([0.0, 0.0, 0.16], dtype=np.float32),
+            ),
+            task_metadata=metadata,
+        )
+
+        self.assertTrue(inside_success)
+        self.assertEqual(inside_info["move_to_object_inside_xy_window"], 1.0)
+        self.assertFalse(far_success)
+        self.assertGreater(far_info["move_to_object_excess_distance_penalty"], 0.0)
+        self.assertGreater(inside_reward, far_reward)
 
     def test_direct_gripper_open_and_close_instructions_have_dense_success(self):
         for instruction_type, opening, action_value in (
@@ -260,6 +342,37 @@ class InstructionTextTests(unittest.TestCase):
                 self.assertTrue(success)
                 self.assertGreater(reward, 0.0)
                 self.assertEqual(info["direct_actuator_success"], 1.0)
+
+    def test_prepositioned_gripper_reward_closes_for_pick_and_opens_for_release(self):
+        cases = (
+            ("pick_up", 0.10, -1.0, True),
+            ("release_object", 0.90, 1.0, True),
+            ("catch_object", 0.90, 1.0, False),
+        )
+        for instruction_type, opening, gripper_action, expected_success in cases:
+            with self.subTest(instruction_type=instruction_type):
+                spec = sample_instruction(
+                    target_object="ycb_apple",
+                    rng=np.random.default_rng(0),
+                    allowed_instruction_types=[instruction_type],
+                )
+                reward, success, info = compute_instruction_reward(
+                    spec=spec,
+                    ee_pos=np.zeros((3,), dtype=np.float32),
+                    obj_pos=np.zeros((3,), dtype=np.float32),
+                    reward_state=init_reward_state(
+                        initial_ee_pos=np.zeros((3,), dtype=np.float32),
+                        initial_obj_pos=np.zeros((3,), dtype=np.float32),
+                    ),
+                    action=np.array([0.0, 0.0, 0.0, 0.0, gripper_action], dtype=np.float32),
+                    gripper_opening=opening,
+                    task_metadata={"prepositioned_gripper_reward_enabled": True},
+                )
+
+                self.assertEqual(success, expected_success)
+                self.assertEqual(info["prepositioned_gripper_reward_mode"], 1.0)
+                if expected_success:
+                    self.assertGreater(reward, 0.0)
 
     def test_direct_translation_rewards_requested_axis_and_penalizes_wrong_action(self):
         spec = sample_instruction(

@@ -20,7 +20,7 @@ remote:
     RLVLA_CDPR_QUIET: "true"
     RLVLA_CDPR_WRAPPER_LOG: "false"
   notes:
-    - Stage-2 continuation from the selected SmolVLA checkpoint at global step 1500000.
+    - Stage-2 strict-reward continuation from the selected SmolVLA checkpoint at global step 3000000.
     - Hypothesis GPU 0: prioritize object-centric instructions while preserving primitive rehearsal.
     - The pretrained SmolVLA prior remains frozen; only the residual/readout head and critics continue training.
     - Mixed curriculum uses about 30% primitive rehearsal, 30% move-to-object, and 40% manipulation.
@@ -100,9 +100,11 @@ task:
       move_top,
       move_bottom,
       move_to_object,
+      grab_object,
       catch_object,
       grip_object,
       release_object,
+      free_object,
       pick_up,
       put_into_plate,
       open_gripper,
@@ -188,24 +190,40 @@ task:
     distance_reward_exponent: 2.0
     success_distance: 0.02
     success_bonus: 0.0
-    move_to_object_xy_reward_scale: 0.10
+    move_to_object_single_object_scene: true
+    move_to_object_xy_reward_scale: 0.05
     move_to_object_distance_reward_weight: 1.0
-    move_to_object_xy_tolerance: 0.025
-    move_to_object_validation_distance_threshold: 0.025
-    move_to_object_success_bonus: 1.0
+    move_to_object_xy_tolerance: 0.15
+    move_to_object_xy_window_low: 0.10
+    move_to_object_xy_window_high: 0.15
+    move_to_object_validation_distance_min: 0.10
+    move_to_object_validation_distance_threshold: 0.15
+    move_to_object_excess_distance_penalty_weight: 1.0
+    move_to_object_too_close_penalty_weight: 0.25
+    move_to_object_success_bonus: 0.0
+    move_to_object_require_z_window: false
     move_to_object_z_penalty_weight: 0.0
     direct_translation_reward_enabled: true
     direct_translation_success_displacement: 0.05
-    direct_translation_orthogonal_tolerance: 0.05
-    direct_translation_progress_weight: 1.0
-    direct_translation_step_weight: 0.20
+    direct_translation_orthogonal_tolerance: 0.015
+    direct_translation_enforce_orthogonal_tolerance: true
+    direct_translation_progress_weight: 0.0
+    direct_translation_step_weight: 0.0
     direct_translation_step_scale: 0.0125
-    direct_translation_wrong_step_penalty: 0.20
-    direct_translation_action_weight: 0.0
-    direct_translation_wrong_action_penalty: 0.15
-    direct_translation_off_axis_action_penalty: 0.05
-    direct_translation_orthogonal_drift_penalty: 0.0
-    direct_control_success_bonus: 1.0
+    direct_translation_wrong_step_penalty: 0.0
+    direct_translation_action_weight: 1.0
+    direct_translation_wrong_action_penalty: 1.0
+    direct_translation_off_axis_action_penalty: 1.0
+    direct_translation_aux_action_penalty: 0.25
+    direct_translation_orthogonal_drift_penalty: 1.0
+    direct_control_success_bonus: 0.0
+    prepositioned_gripper_reward_enabled: true
+    prepositioned_gripper_progress_weight: 0.20
+    prepositioned_gripper_action_weight: 1.0
+    prepositioned_gripper_wrong_action_penalty: 1.0
+    prepositioned_gripper_translation_penalty: 0.50
+    prepositioned_gripper_yaw_penalty: 0.20
+    prepositioned_gripper_success_bonus: 0.0
     direct_gripper_open_threshold: 0.80
     direct_gripper_closed_threshold: 0.20
     direct_gripper_progress_weight: 1.0
@@ -250,11 +268,13 @@ task:
     reward_output_scale: 2.0
     reward_output_min: -1.0
     reward_output_max: 1.0
-    target_at_gripper_start_instruction_types: [catch_object, grip_object]
+    target_at_gripper_start_instruction_types: [pick_up, grab_object, catch_object, grip_object]
     target_at_gripper_start_probability: 1.0
     target_at_gripper_start_gripper_opening: 1.0
-    caught_object_start_instruction_types: [pick_up, put_into_plate]
-    force_caught_object_start_instruction_types: [release_object]
+    target_at_gripper_start_ee_z: 0.23
+    target_at_gripper_start_min_height_above_table: 0.025
+    caught_object_start_instruction_types: [put_into_plate]
+    force_caught_object_start_instruction_types: [release_object, free_object]
     caught_object_start_probability: 0.80
     caught_object_start_object_offset: [0.0, 0.0, 0.005]
     caught_object_start_xy_jitter: 0.010
@@ -278,6 +298,13 @@ task:
     catch_score_threshold: 0.30
     action_saturation_threshold: 0.80
     action_saturation_penalty_weight: 0.05
+    path_efficiency_target: 0.90
+    path_efficiency_penalty_weight: 0.40
+    sign_flip_action_threshold: 0.05
+    sign_flip_action_dim_count: 5
+    sign_flip_penalty_weight: 0.25
+    action_delta_penalty_weight: 0.08
+    action_jerk_penalty_weight: 0.04
     ee_workspace_x_bounds: [-0.28, 0.28]
     ee_workspace_y_bounds: [-0.28, 0.28]
     object_state_x_bounds: [-0.34, 0.34]
@@ -351,8 +378,8 @@ training:
       standalone: true
       nproc_per_node: 1
     args:
-      resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_dense_2gpu_staged_resume_step_0500000_20260705_140035/rl/step_1500000/smolvla_cdpr_adapter.pt
-      max_train_steps: 3500000
+      resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage2_complex_resume_1500000_20260706_220107/rl/step_3000000/smolvla_cdpr_adapter.pt
+      max_train_steps: 5000000
       max_env_steps: 96
       num_envs_per_rank: 4
       chunk_size: 8
@@ -405,7 +432,7 @@ training:
           rotate_gripper_counterclockwise,
         ]
       dense_stage_two_instruction_types:
-        [move_to_object, catch_object, grip_object, release_object, pick_up, put_into_plate]
+        [move_to_object, grab_object, catch_object, grip_object, release_object, free_object, pick_up, put_into_plate]
       dense_stage_switch_success_rate: 0.0
       dense_stage_min_episodes: 1
       dense_stage_gate_metric: rollout
@@ -426,7 +453,7 @@ training:
       mixed_curriculum_move_to_object_min_prob: 0.30
       mixed_curriculum_manipulation_min_prob: 0.40
       near_success_instruction_types:
-        [catch_object, grip_object, release_object, pick_up, put_into_plate]
+        [grab_object, catch_object, grip_object, release_object, free_object, pick_up, put_into_plate]
       progress_refresh_seconds: 10.0
       progress: true
       progress_only: true

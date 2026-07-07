@@ -103,6 +103,8 @@ class EnvInstructionSamplingTests(unittest.TestCase):
 
         self.assertEqual(_infer_instruction_type_from_text("put apple into plate"), "put_into_plate")
         self.assertEqual(_infer_instruction_type_from_text("push apple forward"), "push_forward")
+        self.assertEqual(_infer_instruction_type_from_text("pick apple"), "pick_up")
+        self.assertEqual(_infer_instruction_type_from_text("take apple"), "pick_up")
         self.assertEqual(_infer_instruction_type_from_text("catch apple"), "catch_object")
         self.assertEqual(_infer_instruction_type_from_text("free apple"), "free_object")
         self.assertEqual(_infer_instruction_type_from_text("rotate apple clockwise"), "rotate_clockwise")
@@ -140,6 +142,23 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         scene = env._sample_scene(options={"required_objects": ["ycb_plate"]})
 
         self.assertEqual(scene.name, "desk_b")
+
+    def test_move_to_object_can_reduce_scene_to_single_target_object(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.scenes = [
+            SceneSpec(name="desk", objects=("ycb_apple", "ycb_mug"), target_object="ycb_apple"),
+        ]
+        env._task_metadata = {"move_to_object_single_object_scene": True}
+        env.target_object_pool = ("ycb_pear",)
+        env.scene_object_pool = ("plate",)
+        env.allowed_objects = ("ycb_apple", "ycb_mug", "ycb_pear", "plate")
+        env.np_random = np.random.default_rng(0)
+
+        scene = env._sample_scene(options={"instruction_type": "move_to_object", "target_object": "ycb_pear"})
+
+        self.assertEqual(scene.name, "desk")
+        self.assertEqual(scene.objects, ("ycb_pear",))
+        self.assertEqual(scene.target_object, "ycb_pear")
 
     def test_sample_scene_filters_put_instruction_to_container_scene(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
@@ -480,15 +499,36 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertFalse(env._should_spawn_target_caught_at_ee(instruction_type="release_object"))
         self.assertFalse(env._should_spawn_target_caught_at_ee(instruction_type="move_between_objects"))
 
-    def test_catch_and_grip_spawn_target_at_gripper_by_default(self):
+    def test_pick_grab_catch_and_grip_spawn_target_at_gripper_by_default(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         env._task_metadata = {}
         env.np_random = np.random.default_rng(0)
         env._target_body_name = "apple_body"
 
+        self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="pick_up"))
+        self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="grab_object"))
         self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="catch_object"))
         self.assertTrue(env._should_spawn_target_at_gripper(instruction_type="grip_object"))
         self.assertFalse(env._should_spawn_target_at_gripper(instruction_type="move_to_object"))
+
+    def test_target_at_gripper_instruction_can_start_near_table_surface(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "target_at_gripper_start_instruction_types": ["pick_up", "grab_object"],
+            "target_at_gripper_start_ee_z": 0.24,
+        }
+        env.defaults = {"ee_start": [0.0, 0.0, 0.40]}
+        env.ee_start_z = None
+        env.randomize_ee_start = False
+        env.ee_start_x_bounds = (-1.0, 1.0)
+        env.ee_start_y_bounds = (-1.0, 1.0)
+        env._ee_min_z = float("-inf")
+
+        pick_start = env._sample_episode_ee_start(options={"instruction_type": "pick_up"})
+        release_start = env._sample_episode_ee_start(options={"instruction_type": "release_object"})
+
+        self.assertAlmostEqual(float(pick_start[2]), 0.24, places=6)
+        self.assertAlmostEqual(float(release_start[2]), 0.40, places=6)
 
     def test_empty_configured_target_at_gripper_list_disables_default_catch_start(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)

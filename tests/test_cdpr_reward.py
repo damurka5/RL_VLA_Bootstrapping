@@ -380,6 +380,10 @@ class RewardDistanceTests(unittest.TestCase):
     def test_move_to_object_success_requires_xy_tolerance_and_z_window(self):
         spec = self._spec("move_to_object")
         target = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+        metadata = {
+            "move_to_object_xy_tolerance": 0.02,
+            "move_to_object_require_z_window": True,
+        }
 
         reward_good, success_good, info_good = compute_instruction_reward(
             spec=spec,
@@ -389,7 +393,7 @@ class RewardDistanceTests(unittest.TestCase):
                 initial_ee_pos=np.array([0.06, 0.06, 0.15], dtype=np.float32),
                 initial_obj_pos=target,
             ),
-            task_metadata={"move_to_object_xy_tolerance": 0.02},
+            task_metadata=metadata,
         )
         reward_high, success_high, info_high = compute_instruction_reward(
             spec=spec,
@@ -399,7 +403,7 @@ class RewardDistanceTests(unittest.TestCase):
                 initial_ee_pos=np.array([0.06, 0.06, 0.28], dtype=np.float32),
                 initial_obj_pos=target,
             ),
-            task_metadata={"move_to_object_xy_tolerance": 0.02},
+            task_metadata=metadata,
         )
 
         self.assertTrue(success_good)

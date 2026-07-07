@@ -128,9 +128,9 @@ INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
     "move_top": "end effector crosses the forward workspace-center threshold",
     "move_bottom": "end effector crosses the backward workspace-center threshold",
     "move_center": "falls back to the task point-success predicate",
-    "move_to_object": "end-effector XY distance to the target object is within the configured tolerance",
-    "pick_up": "target object is grasped and lifted by the configured height",
-    "grab_object": "gripper is closed while the target object is detected as caught",
+    "move_to_object": "end-effector XY distance to the target object is within the configured distance window",
+    "pick_up": "target object is grasped or the prepositioned gripper is closed when configured",
+    "grab_object": "target object is grasped or the prepositioned gripper is closed when configured",
     "put_into_plate": "catchable target object is within the bowl/plate XY/Z tolerance, with release required only when configured",
     "move_left_of_object": "catchable target object is inside the configured left-of-reference success zone",
     "move_right_of_object": "catchable target object is inside the configured right-of-reference success zone",
@@ -143,10 +143,10 @@ INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
     "push_right": "target object has moved right by the configured push displacement",
     "push_forward": "target object has moved forward by the configured push displacement",
     "push_backward": "target object has moved backward by the configured push displacement",
-    "catch_object": "sum of finger-to-object-edge distances is below the configured dense catch threshold",
-    "grip_object": "sum of finger-to-object-edge distances is below the configured dense catch threshold",
-    "release_object": "sum of finger-to-object-edge clearances is above the configured dense release threshold",
-    "free_object": "sum of finger-to-object-edge clearances is above the configured dense release threshold",
+    "catch_object": "finger edges reach the object or the prepositioned gripper is closed when configured",
+    "grip_object": "finger edges reach the object or the prepositioned gripper is closed when configured",
+    "release_object": "finger edges clear the object or the prepositioned gripper is opened when configured",
+    "free_object": "finger edges clear the object or the prepositioned gripper is opened when configured",
     "open_gripper": "normalized gripper opening reaches the configured open threshold",
     "close_gripper": "normalized gripper opening reaches the configured closed threshold",
     "rotate_gripper_clockwise": "end-effector yaw rotates clockwise by the configured angle",
@@ -219,6 +219,21 @@ DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES: tuple[str, ...] = (
 DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES: tuple[str, ...] = (
     *DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
     *DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
+)
+
+PREPOSITIONED_GRIPPER_CLOSE_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "pick_up",
+    "grab_object",
+    *DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
+)
+
+PREPOSITIONED_GRIPPER_OPEN_INSTRUCTION_TYPES: tuple[str, ...] = (
+    *DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
+)
+
+PREPOSITIONED_GRIPPER_INSTRUCTION_TYPES: tuple[str, ...] = (
+    *PREPOSITIONED_GRIPPER_CLOSE_INSTRUCTION_TYPES,
+    *PREPOSITIONED_GRIPPER_OPEN_INSTRUCTION_TYPES,
 )
 
 DIRECT_GRIPPER_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -863,6 +878,22 @@ def compute_instruction_reward(
             )
         )
 
+    if (
+        spec.instruction_type in PREPOSITIONED_GRIPPER_INSTRUCTION_TYPES
+        and _metadata_bool(task_metadata, "prepositioned_gripper_reward_enabled", False)
+    ):
+        return finish(
+            _compute_prepositioned_gripper_reward(
+                spec=spec,
+                ee_pos=ee_pos,
+                goal_pos=goal_pos,
+                reward_state=reward_state,
+                action=action,
+                task_metadata=task_metadata,
+                gripper_opening=gripper_opening,
+            )
+        )
+
     if spec.instruction_type in DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES:
         return finish(
             _compute_dense_gripper_edge_reward(
@@ -1346,6 +1377,100 @@ def _compute_dense_gripper_edge_reward(
     return reward, success, info
 
 
+def _compute_prepositioned_gripper_reward(
+    *,
+    spec: InstructionSpec,
+    ee_pos: np.ndarray,
+    goal_pos: np.ndarray,
+    reward_state: RewardState,
+    action: Optional[np.ndarray] = None,
+    task_metadata: Optional[dict[str, Any]] = None,
+    gripper_opening: Optional[float] = None,
+) -> tuple[float, bool, dict[str, float]]:
+    metadata = dict(task_metadata or {})
+    action_arr = np.asarray(action if action is not None else np.zeros((5,)), dtype=np.float32).reshape(-1)
+    if action_arr.size < 5:
+        action_arr = np.pad(action_arr, (0, 5 - action_arr.size))
+    opening = float(gripper_opening) if gripper_opening is not None else float("nan")
+    if not np.isfinite(opening):
+        opening = 1.0
+    opening = float(np.clip(opening, 0.0, 1.0))
+
+    is_open_task = spec.instruction_type in PREPOSITIONED_GRIPPER_OPEN_INSTRUCTION_TYPES
+    close_threshold = float(
+        np.clip(
+            _metadata_float(
+                metadata,
+                "prepositioned_gripper_closed_threshold",
+                _metadata_float(metadata, "direct_gripper_closed_threshold", 0.20),
+            ),
+            0.0,
+            1.0,
+        )
+    )
+    open_threshold = float(
+        np.clip(
+            _metadata_float(
+                metadata,
+                "prepositioned_gripper_open_threshold",
+                _metadata_float(metadata, "direct_gripper_open_threshold", 0.80),
+            ),
+            0.0,
+            1.0,
+        )
+    )
+
+    target = 1.0 if is_open_task else 0.0
+    direction_sign = 1.0 if is_open_task else -1.0
+    gripper_action = float(action_arr[4])
+    correct_action = float(np.clip(direction_sign * gripper_action, 0.0, 1.0))
+    wrong_action = float(np.clip(-direction_sign * gripper_action, 0.0, 1.0))
+    translation_action = float(np.mean(np.abs(action_arr[:3])))
+    yaw_action = float(abs(action_arr[3]))
+    progress = float(opening if is_open_task else (1.0 - opening))
+    success = bool(opening >= open_threshold) if is_open_task else bool(opening <= close_threshold)
+
+    reward = float(
+        _metadata_float(metadata, "prepositioned_gripper_progress_weight", 0.40) * progress
+        + _metadata_float(metadata, "prepositioned_gripper_action_weight", 1.00) * correct_action
+        - _metadata_float(metadata, "prepositioned_gripper_wrong_action_penalty", 1.00) * wrong_action
+        - _metadata_float(metadata, "prepositioned_gripper_translation_penalty", 0.50) * translation_action
+        - _metadata_float(metadata, "prepositioned_gripper_yaw_penalty", 0.20) * yaw_action
+        + (_metadata_float(metadata, "prepositioned_gripper_success_bonus", 0.0) if success else 0.0)
+    )
+
+    reward_state.prev_ee_pos = np.asarray(ee_pos, dtype=np.float32).copy()
+    reward_state.prev_obj_pos = np.asarray(goal_pos, dtype=np.float32).copy()
+    reward_state.prev_distance = float(abs(target - opening))
+    reward_state.prev_camera_align = None
+    reward_state.gripper_closed = bool(opening <= close_threshold)
+    reward_state.step_count += 1
+    return reward, success, {
+        "prepositioned_gripper_reward_mode": 1.0,
+        "prepositioned_gripper_success": float(success),
+        "prepositioned_gripper_open_task": float(is_open_task),
+        "prepositioned_gripper_opening": float(opening),
+        "prepositioned_gripper_target": float(target),
+        "prepositioned_gripper_progress": float(progress),
+        "prepositioned_gripper_action": float(gripper_action),
+        "prepositioned_gripper_correct_action": float(correct_action),
+        "prepositioned_gripper_wrong_action": float(wrong_action),
+        "prepositioned_gripper_translation_action": float(translation_action),
+        "prepositioned_gripper_yaw_action": float(yaw_action),
+        "prepositioned_gripper_closed_threshold": float(close_threshold),
+        "prepositioned_gripper_open_threshold": float(open_threshold),
+        "distance_to_goal": float(abs(target - opening)),
+        "distance_to_goal_xy": 0.0,
+        "distance_delta": 0.0,
+        "distance_reward": float(progress),
+        "success_bonus": float(_metadata_float(metadata, "prepositioned_gripper_success_bonus", 0.0) if success else 0.0),
+        "orientation_reward": 0.0,
+        "action_saturation_penalty": 0.0,
+        "action_saturation_rate": 0.0,
+        "action_saturation_max_abs": float(np.max(np.abs(action_arr))) if action_arr.size else 0.0,
+    }
+
+
 def _compute_dense_rotate_reward(
     *,
     spec: InstructionSpec,
@@ -1484,7 +1609,18 @@ def _compute_direct_translation_reward(
     wrong_action = float(np.clip(-axis_sign * action_value, 0.0, 1.0))
     translation_actions = action_arr[:3] if action_arr.size >= 3 else np.pad(action_arr, (0, 3 - action_arr.size))
     off_axis_action = float(np.mean(np.abs(np.delete(translation_actions, axis_idx))))
-    success = bool(total_signed_displacement >= target_displacement)
+    aux_action = float(np.mean(np.abs(action_arr[3:]))) if action_arr.size > 3 else 0.0
+    enforce_orthogonal = _metadata_bool(metadata, "direct_translation_enforce_orthogonal_tolerance", True)
+    orthogonal_ok = bool((not enforce_orthogonal) or orthogonal_drift <= orthogonal_tolerance)
+    orthogonal_scale = max(orthogonal_tolerance if orthogonal_tolerance > 0.0 else target_displacement, 1e-6)
+    orthogonal_drift_penalty = float(
+        _metadata_float(metadata, "direct_translation_orthogonal_drift_penalty", 0.0)
+        * np.tanh(orthogonal_drift / orthogonal_scale)
+    )
+    aux_action_penalty = float(
+        _metadata_float(metadata, "direct_translation_aux_action_penalty", 0.0) * aux_action
+    )
+    success = bool(total_signed_displacement >= target_displacement and orthogonal_ok)
     reward = float(
         _metadata_float(metadata, "direct_translation_progress_weight", 1.0) * positive_step_progress
         + _metadata_float(metadata, "direct_translation_step_weight", 0.20)
@@ -1495,6 +1631,8 @@ def _compute_direct_translation_reward(
         - _metadata_float(metadata, "direct_translation_wrong_action_penalty", 0.15) * wrong_action
         - _metadata_float(metadata, "direct_translation_off_axis_action_penalty", 0.05)
         * off_axis_action
+        - orthogonal_drift_penalty
+        - aux_action_penalty
         + (_metadata_float(metadata, "direct_control_success_bonus", 0.0) if success else 0.0)
     )
 
@@ -1516,11 +1654,17 @@ def _compute_direct_translation_reward(
         "direct_translation_target_displacement": float(target_displacement),
         "direct_translation_orthogonal_drift": orthogonal_drift,
         "direct_translation_orthogonal_tolerance": float(orthogonal_tolerance),
-        "direct_translation_orthogonal_check_enabled": 0.0,
+        "direct_translation_orthogonal_check_enabled": float(enforce_orthogonal),
+        "direct_translation_orthogonal_ok": float(orthogonal_ok),
+        "direct_translation_orthogonal_drift_penalty": float(orthogonal_drift_penalty),
         "direct_translation_progress": progress,
         "direct_translation_step_progress": positive_step_progress,
         "direct_translation_action": action_value,
+        "direct_translation_correct_action": correct_action,
+        "direct_translation_wrong_action": wrong_action,
         "direct_translation_off_axis_action": off_axis_action,
+        "direct_translation_aux_action": aux_action,
+        "direct_translation_aux_action_penalty": aux_action_penalty,
         "distance_to_goal": float(max(0.0, target_displacement - total_signed_displacement)),
         "distance_reward": positive_step_progress,
         "orientation_reward": 0.0,
@@ -2304,11 +2448,19 @@ def _compute_move_to_object_reward(
     xyz_distance = float(np.linalg.norm(obj_pos - ee_pos))
     prev_xyz_distance = float(np.linalg.norm(prev_obj - prev_ee))
 
-    default_xy_tolerance = _metadata_float(task_metadata, "success_distance", 0.02)
-    xy_tolerance = max(
-        _metadata_float(task_metadata, "move_to_object_xy_tolerance", default_xy_tolerance),
+    default_xy_tolerance = _metadata_float(task_metadata, "success_distance", 0.10)
+    xy_window_high = max(
+        _metadata_float(
+            task_metadata,
+            "move_to_object_xy_window_high",
+            _metadata_float(task_metadata, "move_to_object_xy_tolerance", default_xy_tolerance),
+        ),
         1e-6,
     )
+    xy_window_low = max(_metadata_float(task_metadata, "move_to_object_xy_window_low", 0.0), 0.0)
+    if xy_window_low > xy_window_high:
+        xy_window_low, xy_window_high = xy_window_high, xy_window_low
+    xy_tolerance = xy_window_high
     xy_reward_scale = max(
         _metadata_float(task_metadata, "move_to_object_xy_reward_scale", max(4.0 * xy_tolerance, 0.08)),
         1e-6,
@@ -2327,6 +2479,7 @@ def _compute_move_to_object_reward(
         1e-6,
     )
     z_penalty_weight = _metadata_float(task_metadata, "move_to_object_z_penalty_weight", 0.20)
+    require_z_window = _metadata_bool(task_metadata, "move_to_object_require_z_window", False)
     action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.70)
     action_saturation_penalty_weight = _metadata_float(
         task_metadata,
@@ -2345,12 +2498,15 @@ def _compute_move_to_object_reward(
         _metadata_float(task_metadata, "success_bonus", 0.0),
     )
 
-    normalized_xy_distance = float(xy_distance / xy_reward_scale)
+    xy_window_error_low = float(max(0.0, xy_window_low - xy_distance))
+    xy_window_error_high = float(max(0.0, xy_distance - xy_window_high))
+    xy_window_error = float(max(xy_window_error_low, xy_window_error_high))
+    normalized_xy_distance = float(xy_window_error / xy_reward_scale)
     distance_reward = float(
         distance_reward_weight
         / (1.0 + np.power(normalized_xy_distance, max(distance_reward_exponent, 1e-6)))
     )
-    above_target = bool(xy_distance <= xy_tolerance)
+    inside_xy_window = bool(xy_window_error <= 1e-9)
     ee_z = float(ee_pos[2])
     if ee_z < z_window_low:
         z_outside_distance = float(z_window_low - ee_z)
@@ -2361,6 +2517,14 @@ def _compute_move_to_object_reward(
     z_in_window = bool(z_outside_distance <= 1e-9)
     z_penalty_raw = float(z_outside_distance / z_penalty_scale)
     z_penalty = float(z_penalty_weight * z_penalty_raw)
+    excess_distance_penalty = float(
+        _metadata_float(task_metadata, "move_to_object_excess_distance_penalty_weight", 0.0)
+        * np.tanh(xy_window_error_high / xy_reward_scale)
+    )
+    too_close_penalty = float(
+        _metadata_float(task_metadata, "move_to_object_too_close_penalty_weight", 0.0)
+        * np.tanh(xy_window_error_low / xy_reward_scale)
+    )
 
     action_saturation_penalty_raw, action_saturation_rate, action_saturation_max_abs = _action_saturation_stats(
         action,
@@ -2370,9 +2534,16 @@ def _compute_move_to_object_reward(
     )
     action_saturation_penalty = float(action_saturation_penalty_weight * action_saturation_penalty_raw)
 
-    success = bool(above_target and z_in_window)
+    success = bool(inside_xy_window and ((not require_z_window) or z_in_window))
     success_reward = float(success_bonus if success else 0.0)
-    reward = float(distance_reward + success_reward - z_penalty - action_saturation_penalty)
+    reward = float(
+        distance_reward
+        + success_reward
+        - z_penalty
+        - action_saturation_penalty
+        - excess_distance_penalty
+        - too_close_penalty
+    )
 
     reward_state.prev_ee_pos = ee_pos.copy()
     reward_state.prev_obj_pos = obj_pos.copy()
@@ -2425,11 +2596,20 @@ def _compute_move_to_object_reward(
         "move_to_object_distance_reward_max": float(distance_reward_weight),
         "move_to_object_xy_distance": xy_distance,
         "move_to_object_xy_distance_prev": prev_xy_distance,
-        "move_to_object_above_target": float(above_target),
+        "move_to_object_above_target": float(inside_xy_window),
+        "move_to_object_inside_xy_window": float(inside_xy_window),
+        "move_to_object_xy_window_low": float(xy_window_low),
+        "move_to_object_xy_window_high": float(xy_window_high),
+        "move_to_object_xy_window_error": float(xy_window_error),
+        "move_to_object_xy_window_error_low": float(xy_window_error_low),
+        "move_to_object_xy_window_error_high": float(xy_window_error_high),
+        "move_to_object_excess_distance_penalty": float(excess_distance_penalty),
+        "move_to_object_too_close_penalty": float(too_close_penalty),
         "move_to_object_above_bonus": 0.0,
         "move_to_object_xy_tolerance": float(xy_tolerance),
         "move_to_object_z": ee_z,
         "move_to_object_z_in_window": float(z_in_window),
+        "move_to_object_require_z_window": float(require_z_window),
         "move_to_object_z_window_low": float(z_window_low),
         "move_to_object_z_window_high": float(z_window_high),
         "move_to_object_z_outside_distance": z_outside_distance,
@@ -2697,7 +2877,9 @@ def compute_instruction_validation_success(
         raw_displacement = float(ee_arr[axis_idx] - start_arr[axis_idx])
         signed_displacement = float(axis_sign * raw_displacement)
         orthogonal_drift = float(np.linalg.norm(np.delete(ee_arr[:3] - start_arr[:3], axis_idx)))
-        direct_success = bool(signed_displacement >= threshold)
+        enforce_orthogonal = _metadata_bool(task_metadata, "direct_translation_enforce_orthogonal_tolerance", True)
+        orthogonal_ok = bool((not enforce_orthogonal) or orthogonal_drift <= orthogonal_tolerance)
+        direct_success = bool(signed_displacement >= threshold and orthogonal_ok)
         if isinstance(reward_info, dict) and "direct_translation_success" in reward_info:
             direct_success = bool(float(reward_info.get("direct_translation_success", 0.0)) >= 0.5)
         return direct_success, {
@@ -2709,7 +2891,8 @@ def compute_instruction_validation_success(
             "direct_translation_threshold": float(threshold),
             "direct_translation_orthogonal_drift": orthogonal_drift,
             "direct_translation_orthogonal_tolerance": float(orthogonal_tolerance),
-            "direct_translation_orthogonal_check_enabled": 0.0,
+            "direct_translation_orthogonal_check_enabled": float(enforce_orthogonal),
+            "direct_translation_orthogonal_ok": float(orthogonal_ok),
             "directional_success_raw_displacement": raw_displacement,
             "directional_success_signed_displacement": signed_displacement,
         }
@@ -2721,6 +2904,18 @@ def compute_instruction_validation_success(
         return direct_success, {
             "validation_success_mode": 7.0,
             "direct_actuator_validation_success": float(direct_success),
+        }
+
+    if (
+        spec.instruction_type in PREPOSITIONED_GRIPPER_INSTRUCTION_TYPES
+        and _metadata_bool(task_metadata, "prepositioned_gripper_reward_enabled", False)
+    ):
+        gripper_success = bool(current_success)
+        if isinstance(reward_info, dict) and "prepositioned_gripper_success" in reward_info:
+            gripper_success = bool(float(reward_info.get("prepositioned_gripper_success", 0.0)) >= 0.5)
+        return gripper_success, {
+            "validation_success_mode": 9.0,
+            "prepositioned_gripper_validation_success": float(gripper_success),
         }
 
     if spec.instruction_type in DENSE_GRIPPER_EDGE_INSTRUCTION_TYPES:
@@ -2864,18 +3059,29 @@ def compute_instruction_validation_success(
             _metadata_float(
                 task_metadata,
                 "move_to_object_validation_distance_threshold",
-                _metadata_float(task_metadata, "success_distance", 0.05),
+                _metadata_float(
+                    task_metadata,
+                    "move_to_object_xy_window_high",
+                    _metadata_float(task_metadata, "success_distance", 0.10),
+                ),
             ),
             1e-6,
         )
+        distance_min = max(
+            _metadata_float(task_metadata, "move_to_object_validation_distance_min", 0.0),
+            0.0,
+        )
+        if distance_min > distance_threshold:
+            distance_min, distance_threshold = distance_threshold, distance_min
         distance_xyz = float(np.linalg.norm(target_arr[:3] - ee_arr[:3]))
         distance_xy = float(np.linalg.norm(target_arr[:2] - ee_arr[:2]))
-        success = bool(distance_xy <= float(distance_threshold))
+        success = bool(distance_min <= distance_xy <= float(distance_threshold))
         return success, {
             "validation_success_mode": 2.0,
             "move_to_object_validation_success": float(success),
             "move_to_object_validation_distance_xyz": distance_xyz,
             "move_to_object_validation_distance_xy": distance_xy,
+            "move_to_object_validation_distance_min": float(distance_min),
             "move_to_object_validation_distance_threshold": float(distance_threshold),
         }
 
