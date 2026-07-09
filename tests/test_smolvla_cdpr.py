@@ -14,6 +14,7 @@ from rl_vla_bootstrapping.cli.validate_cdpr_smolvla_policy import (
 )
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
+from rl_vla_bootstrapping.policy.octo_finetune_cdpr import _format_step_progress
 from rl_vla_bootstrapping.policy.smolvla_cdpr import (
     DEFAULT_SMOLVLA_CHECKPOINT,
     SmolVLAActionAdapterSpec,
@@ -177,10 +178,24 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertNotIn("--materialize-optimizer-state", plan.command)
         self.assertIn("RLVLA_TASK_METADATA_JSON", plan.env)
 
+    def test_resume_progress_formatter_reports_run_window_eta(self):
+        text = _format_step_progress(
+            global_step=3_600_000,
+            max_train_steps=5_500_000,
+            start_step=3_500_000,
+            elapsed_seconds=100.0,
+        )
+
+        self.assertIn("progress=3600000/5500000", text)
+        self.assertIn("run=100000/2000000", text)
+        self.assertIn("rate=1000.00 step/s", text)
+        self.assertIn("eta=31m40s", text)
+
     def test_new_remote_scripts_pass_bash_syntax(self):
         scripts = [
             ROOT / "scripts" / "setup_smolvla_remote.sh",
             ROOT / "scripts" / "train_cdpr_smolvla_dense_2gpu_remote.sh",
+            ROOT / "scripts" / "train_cdpr_smolvla_stage2_dual_remote.sh",
             ROOT / "scripts" / "evaluate_cdpr_smolvla_dense_remote.sh",
         ]
         for script in scripts:

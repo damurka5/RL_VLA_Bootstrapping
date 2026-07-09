@@ -393,6 +393,7 @@ def _format_step_progress(
 ) -> str:
     total = max(1, int(max_train_steps))
     current = max(0, int(global_step))
+    run_total = max(0, total - int(start_step))
     completed_since_start = max(0, current - int(start_step))
     elapsed = max(1e-9, float(elapsed_seconds))
     rate = float(completed_since_start) / elapsed
@@ -401,6 +402,7 @@ def _format_step_progress(
     pct = 100.0 * min(1.0, float(current) / float(total))
     return (
         f"progress={current}/{total} ({pct:.1f}%) "
+        f"run={completed_since_start}/{run_total} "
         f"rate={rate:.2f} step/s eta={_format_duration(eta)}"
     )
 

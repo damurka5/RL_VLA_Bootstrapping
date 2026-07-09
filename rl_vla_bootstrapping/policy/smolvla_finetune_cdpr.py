@@ -229,11 +229,12 @@ def _make_progress_bar(*, args: argparse.Namespace, ctx: DistributedContext, sta
         if not bool(args.progress_only):
             print("[smolvla-cdpr] tqdm is unavailable; falling back to status prints.", flush=True)
         return None
-    total = max(0, int(args.max_train_steps) - int(start_step))
+    max_train_steps = int(args.max_train_steps)
+    total = max(0, max_train_steps - int(start_step))
     return tqdm(
         total=total,
         initial=0,
-        desc="smolvla-cdpr",
+        desc=f"smolvla-cdpr {int(start_step)}->{max_train_steps}",
         unit="env-step",
         dynamic_ncols=True,
         mininterval=float(args.progress_refresh_seconds),
@@ -255,10 +256,17 @@ def _progress_postfix(
     instruction: str,
     world_size: int,
     num_envs: int,
+    global_step: int,
+    start_step: int,
+    max_train_steps: int,
 ) -> None:
     if progress is None:
         return
+    run_total = max(0, int(max_train_steps) - int(start_step))
+    run_done = max(0, int(global_step) - int(start_step))
     progress.set_postfix(
+        step=f"{int(global_step)}/{int(max_train_steps)}",
+        run=f"{run_done}/{run_total}",
         ep=int(episode),
         ep_len=int(episode_length),
         ep_reward=f"{float(episode_reward):+.3f}",
@@ -1310,6 +1318,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                             instruction=slot.instruction,
                             world_size=dist_ctx.world_size,
                             num_envs=len(slots),
+                            global_step=global_step,
+                            start_step=int(start_step),
+                            max_train_steps=int(args.max_train_steps),
                         )
                 elif dist_ctx.is_main and global_step % max(1, int(args.status_every_steps)) == 0:
                     _log(
