@@ -103,7 +103,7 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
 
     resume_checkpoint = os.environ.get("RLVLA_SMOLVLA_RESUME_CHECKPOINT", "").strip()
     if resume_checkpoint:
-        injected.setdefault("resume_checkpoint", resume_checkpoint)
+        injected["resume_checkpoint"] = resume_checkpoint
     max_train_steps = os.environ.get("RLVLA_SMOLVLA_MAX_TRAIN_STEPS", "").strip()
     if max_train_steps:
         injected["max_train_steps"] = int(max_train_steps)

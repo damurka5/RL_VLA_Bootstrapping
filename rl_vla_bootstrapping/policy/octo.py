@@ -101,7 +101,7 @@ def build_octo_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     injected.setdefault("image_size", 256)
     resume_checkpoint = os.environ.get("RLVLA_OCTO_RESUME_CHECKPOINT", "").strip()
     if resume_checkpoint:
-        injected.setdefault("resume_checkpoint", resume_checkpoint)
+        injected["resume_checkpoint"] = resume_checkpoint
     max_train_steps = os.environ.get("RLVLA_OCTO_MAX_TRAIN_STEPS", "").strip()
     if max_train_steps:
         injected["max_train_steps"] = int(max_train_steps)

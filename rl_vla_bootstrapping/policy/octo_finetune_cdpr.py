@@ -104,6 +104,11 @@ _CAUGHT_OBJECT_START_INSTRUCTIONS = frozenset(
         "free_object",
         "pick_up",
         "put_into_plate",
+        "put_into_bowl",
+        "move_object_left",
+        "move_object_right",
+        "move_object_up",
+        "move_object_down",
         "move_left_of_object",
         "move_right_of_object",
         "move_in_front_of_object",
@@ -965,16 +970,134 @@ class ResidualTrainer:
         for src, dst in zip(source.parameters(), target.parameters()):
             dst.data.mul_(1.0 - tau).add_(tau * src.data)
 
+    @staticmethod
+    def _adapt_input_layer_for_state_dim(
+        checkpoint_state: dict[str, torch.Tensor],
+        target_state: dict[str, torch.Tensor],
+        *,
+        old_state_dim: int,
+        new_state_dim: int,
+        old_tail_dim: int,
+        new_tail_dim: int,
+    ) -> tuple[dict[str, torch.Tensor], bool]:
+        key = "net.net.0.weight"
+        if key not in checkpoint_state or key not in target_state:
+            return checkpoint_state, False
+
+        old_weight = checkpoint_state[key]
+        new_weight = target_state[key]
+        if tuple(old_weight.shape) == tuple(new_weight.shape):
+            return checkpoint_state, False
+        if old_weight.ndim != 2 or new_weight.ndim != 2:
+            return checkpoint_state, False
+
+        adapted_state = dict(checkpoint_state)
+        adapted_weight = torch.zeros_like(new_weight)
+        rows = min(int(old_weight.shape[0]), int(new_weight.shape[0]))
+
+        state_cols = min(int(old_state_dim), int(new_state_dim), int(old_weight.shape[1]), int(new_weight.shape[1]))
+        if rows > 0 and state_cols > 0:
+            adapted_weight[:rows, :state_cols] = old_weight[:rows, :state_cols].to(adapted_weight.device)
+
+        old_tail_start = int(old_state_dim)
+        new_tail_start = int(new_state_dim)
+        tail_cols = min(
+            int(old_tail_dim),
+            int(new_tail_dim),
+            max(0, int(old_weight.shape[1]) - old_tail_start),
+            max(0, int(new_weight.shape[1]) - new_tail_start),
+        )
+        if rows > 0 and tail_cols > 0:
+            adapted_weight[:rows, new_tail_start : new_tail_start + tail_cols] = old_weight[
+                :rows,
+                old_tail_start : old_tail_start + tail_cols,
+            ].to(adapted_weight.device)
+
+        adapted_state[key] = adapted_weight
+        return adapted_state, True
+
     def load(self, checkpoint_path: Path) -> int:
         payload = torch.load(checkpoint_path, map_location=self.device)
-        self._unwrap(self.actor).load_state_dict(payload["actor"])
-        self.actor_target.load_state_dict(payload.get("actor_target", payload["actor"]))
-        self._unwrap(self.critic1).load_state_dict(payload["critic1"])
-        self._unwrap(self.critic2).load_state_dict(payload["critic2"])
-        self.critic1_target.load_state_dict(payload.get("critic1_target", payload["critic1"]))
-        self.critic2_target.load_state_dict(payload.get("critic2_target", payload["critic2"]))
-        self.actor_optim.load_state_dict(payload["actor_optim"])
-        self.critic_optim.load_state_dict(payload["critic_optim"])
+        old_state_dim = int(payload.get("state_dim", self.state_dim))
+        old_action_dim = int(payload.get("action_dim", self.action_dim))
+        old_chunk_size = int(payload.get("chunk_size", self.chunk_size))
+        state_dim_changed = bool(old_state_dim != int(self.state_dim))
+
+        actor_old_tail = int(old_chunk_size * old_action_dim)
+        actor_new_tail = int(self.chunk_size * self.action_dim)
+        critic_old_tail = int(old_action_dim)
+        critic_new_tail = int(self.action_dim)
+
+        actor_state, actor_adapted = self._adapt_input_layer_for_state_dim(
+            dict(payload["actor"]),
+            self._unwrap(self.actor).state_dict(),
+            old_state_dim=old_state_dim,
+            new_state_dim=int(self.state_dim),
+            old_tail_dim=actor_old_tail,
+            new_tail_dim=actor_new_tail,
+        )
+        actor_target_state, actor_target_adapted = self._adapt_input_layer_for_state_dim(
+            dict(payload.get("actor_target", payload["actor"])),
+            self.actor_target.state_dict(),
+            old_state_dim=old_state_dim,
+            new_state_dim=int(self.state_dim),
+            old_tail_dim=actor_old_tail,
+            new_tail_dim=actor_new_tail,
+        )
+        critic1_state, critic1_adapted = self._adapt_input_layer_for_state_dim(
+            dict(payload["critic1"]),
+            self._unwrap(self.critic1).state_dict(),
+            old_state_dim=old_state_dim,
+            new_state_dim=int(self.state_dim),
+            old_tail_dim=critic_old_tail,
+            new_tail_dim=critic_new_tail,
+        )
+        critic2_state, critic2_adapted = self._adapt_input_layer_for_state_dim(
+            dict(payload["critic2"]),
+            self._unwrap(self.critic2).state_dict(),
+            old_state_dim=old_state_dim,
+            new_state_dim=int(self.state_dim),
+            old_tail_dim=critic_old_tail,
+            new_tail_dim=critic_new_tail,
+        )
+        critic1_target_state, critic1_target_adapted = self._adapt_input_layer_for_state_dim(
+            dict(payload.get("critic1_target", payload["critic1"])),
+            self.critic1_target.state_dict(),
+            old_state_dim=old_state_dim,
+            new_state_dim=int(self.state_dim),
+            old_tail_dim=critic_old_tail,
+            new_tail_dim=critic_new_tail,
+        )
+        critic2_target_state, critic2_target_adapted = self._adapt_input_layer_for_state_dim(
+            dict(payload.get("critic2_target", payload["critic2"])),
+            self.critic2_target.state_dict(),
+            old_state_dim=old_state_dim,
+            new_state_dim=int(self.state_dim),
+            old_tail_dim=critic_old_tail,
+            new_tail_dim=critic_new_tail,
+        )
+
+        self._unwrap(self.actor).load_state_dict(actor_state)
+        self.actor_target.load_state_dict(actor_target_state)
+        self._unwrap(self.critic1).load_state_dict(critic1_state)
+        self._unwrap(self.critic2).load_state_dict(critic2_state)
+        self.critic1_target.load_state_dict(critic1_target_state)
+        self.critic2_target.load_state_dict(critic2_target_state)
+
+        adapted = any(
+            (
+                state_dim_changed,
+                actor_adapted,
+                actor_target_adapted,
+                critic1_adapted,
+                critic2_adapted,
+                critic1_target_adapted,
+                critic2_target_adapted,
+            )
+        )
+        if not adapted:
+            self.actor_optim.load_state_dict(payload["actor_optim"])
+            self.critic_optim.load_state_dict(payload["critic_optim"])
         self.gradient_step = int(payload.get("gradient_step", 0))
         return int(payload.get("global_step", 0))
 

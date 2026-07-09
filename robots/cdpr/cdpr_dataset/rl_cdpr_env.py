@@ -43,7 +43,9 @@ except Exception:  # pragma: no cover - optional runtime dependency
     Image = None
 
 from .rl_instruction_tasks import (
+    CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES,
     CATCHABLE_TARGET_INSTRUCTION_TYPES,
+    CONTAINER_PLACEMENT_INSTRUCTION_TYPES,
     DEFAULT_CATCHABLE_OBJECTS,
     DEFAULT_CONTAINER_OBJECTS,
     DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES,
@@ -109,6 +111,7 @@ DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
 DEFAULT_GOAL_HEIGHT_ABOVE_TABLE = 0.10
 DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_into_plate",
+    "put_into_bowl",
     "move_left_of_object",
     "move_right_of_object",
     "move_in_front_of_object",
@@ -116,6 +119,7 @@ DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_in_front_of_object",
     "put_behind_object",
     "move_between_objects",
+    *CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES,
 )
 DEFAULT_FORCE_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
     *DENSE_GRIPPER_RELEASE_INSTRUCTION_TYPES,
@@ -279,6 +283,14 @@ def _infer_instruction_type_from_text(instruction: str) -> str | None:
         return "rotate_counterclockwise"
     if text.startswith("rotate ") and text.endswith(" clockwise"):
         return "rotate_clockwise"
+    if text.startswith("move ") and len(text.split()) > 2 and text.endswith(" left") and " to the left of " not in text:
+        return "move_object_left"
+    if text.startswith("move ") and len(text.split()) > 2 and text.endswith(" right") and " to the right of " not in text:
+        return "move_object_right"
+    if text.startswith("move ") and len(text.split()) > 2 and text.endswith(" up"):
+        return "move_object_up"
+    if text.startswith("move ") and len(text.split()) > 2 and text.endswith(" down"):
+        return "move_object_down"
     if text.startswith("push ") and text.endswith(" left"):
         return "push_left"
     if text.startswith("push ") and text.endswith(" right"):
@@ -287,7 +299,9 @@ def _infer_instruction_type_from_text(instruction: str) -> str | None:
         return "push_forward"
     if text.startswith("push ") and text.endswith(" backward"):
         return "push_backward"
-    if text.startswith("put ") and (" plate" in text or " bowl" in text or " into " in text or " on " in text):
+    if text.startswith("put ") and " bowl" in text:
+        return "put_into_bowl"
+    if text.startswith("put ") and (" plate" in text or " into " in text or " on " in text):
         return "put_into_plate"
     if text.startswith("move ") and " to the left of " in text:
         return "move_left_of_object"
@@ -1900,6 +1914,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                 self._reward_state.initial_obj_pos = reward_initial_arr[:3].astype(np.float32).copy()
         if bool(self._curriculum_reset_info.get("curriculum_target_grasped", False)):
             self._reward_state.grasped = True
+        if bool(getattr(self, "_caught_object_start_active", False)):
+            self._reward_state.grasped = True
         self._reward_state.gripper_closed = self._is_gripper_closed(self._get_gripper_opening())
         self._step_count = 0
         self._yaw = self._read_current_yaw()
@@ -2432,6 +2448,11 @@ class CDPRLanguageRLEnv(_EnvBase):
         configured = _metadata_name_list(self._task_metadata, "target_at_gripper_start_instruction_types")
         return configured or DEFAULT_TARGET_AT_GRIPPER_START_INSTRUCTION_TYPES
 
+    def _caught_object_start_above_reference_instruction_types(self) -> tuple[str, ...]:
+        if "caught_object_start_above_reference_instruction_types" in self._task_metadata:
+            return _metadata_name_list(self._task_metadata, "caught_object_start_above_reference_instruction_types")
+        return CONTAINER_PLACEMENT_INSTRUCTION_TYPES
+
     def _should_spawn_target_caught_at_ee(
         self,
         *,
@@ -2778,6 +2799,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         if self.sim is not None:
             self._force_gripper_opening(0.0)
 
+        self._maybe_move_ee_to_caught_start_reference(instruction_type=instruction_type)
         ee_pos = self._get_ee_position().astype(np.float32)
         target_offset = self._caught_object_start_offset()
         min_height = _metadata_float(
@@ -2819,6 +2841,43 @@ class CDPRLanguageRLEnv(_EnvBase):
                 self.sim.run_simulation_step(capture_frame=False)
                 self._maintain_caught_object_start_pose()
             self._force_gripper_opening(gripper_opening)
+        return True
+
+    def _maybe_move_ee_to_caught_start_reference(self, *, instruction_type: str) -> bool:
+        if str(instruction_type) not in set(self._caught_object_start_above_reference_instruction_types()):
+            return False
+        if not self._reference_body_name:
+            return False
+        reference_pos = self._reference_object_position(default=self._get_ee_position()).astype(np.float32)
+        xy_jitter = max(
+            0.0,
+            _metadata_float(self._task_metadata, "caught_object_start_reference_xy_jitter", 0.0),
+        )
+        if xy_jitter > 0.0:
+            reference_pos[:2] += self.np_random.uniform(-xy_jitter, xy_jitter, size=(2,)).astype(np.float32)
+        height = max(
+            _metadata_float(self._task_metadata, "caught_object_start_above_reference_height", 0.16),
+            0.0,
+        )
+        target = np.asarray(reference_pos, dtype=np.float32).reshape(3).copy()
+        target[2] = max(
+            float(reference_pos[2] + height),
+            float(self._support_surface_z + height),
+            float(self._ee_min_z) if np.isfinite(self._ee_min_z) else float("-inf"),
+        )
+        try:
+            from .cdpr_reverse_shells import _move_ee
+
+            _move_ee(self, target)
+        except Exception:
+            self._set_ee_target(self._clamp_ee_target(target))
+            hold_current_pose = getattr(self.sim, "hold_current_pose", None)
+            if callable(hold_current_pose):
+                try:
+                    hold_current_pose(warm_steps=0)
+                except Exception:
+                    pass
+            self._locked_target_xyz = self._clamp_ee_target(target).astype(np.float32)
         return True
 
     def _maybe_spawn_target_at_gripper(
@@ -3001,9 +3060,9 @@ class CDPRLanguageRLEnv(_EnvBase):
                 )
             )
 
-        if instruction_type == "put_into_plate":
+        if instruction_type in CONTAINER_PLACEMENT_INSTRUCTION_TYPES:
             catchable = self._catchable_scene_catalogs(scene_catalogs)
-            containers = self._container_scene_catalogs(scene_catalogs)
+            containers = self._container_scene_catalogs_for_instruction(scene_catalogs, instruction_type)
             if any(container != target for target in catchable for container in containers):
                 return SceneSpec(name=scene.name, objects=tuple(scene_catalogs), target_object=scene.target_object)
 
@@ -3057,8 +3116,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         if instruction_type in CATCHABLE_TARGET_INSTRUCTION_TYPES and not catchable:
             return False
 
-        if instruction_type == "put_into_plate":
-            containers = self._container_scene_catalogs(scene_catalogs)
+        if instruction_type in CONTAINER_PLACEMENT_INSTRUCTION_TYPES:
+            containers = self._container_scene_catalogs_for_instruction(scene_catalogs, instruction_type)
             return any(container != target for target in catchable for container in containers)
 
         if instruction_type in {
@@ -3385,6 +3444,19 @@ class CDPRLanguageRLEnv(_EnvBase):
             return candidates
         return [name for name in scene_catalogs if "plate" in name.lower() or "bowl" in name.lower()]
 
+    def _container_scene_catalogs_for_instruction(
+        self,
+        scene_catalogs: Sequence[str],
+        instruction_type: str,
+    ) -> list[str]:
+        candidates = self._container_scene_catalogs(scene_catalogs)
+        lowered = {name: canonical_object_name(name).lower() for name in candidates}
+        if str(instruction_type) == "put_into_plate":
+            return [name for name in candidates if "plate" in name.lower() or "plate" in lowered[name]]
+        if str(instruction_type) == "put_into_bowl":
+            return [name for name in candidates if "bowl" in name.lower() or "bowl" in lowered[name]]
+        return candidates
+
     def _choose_catalog(self, candidates: Sequence[str], *, fallback: Sequence[str] = ()) -> tuple[str, str]:
         pool = [str(name) for name in candidates if str(name) in self._catalog_to_body]
         if not pool:
@@ -3440,8 +3512,8 @@ class CDPRLanguageRLEnv(_EnvBase):
                 if target_catalog not in self._catalog_to_body:
                     target_catalog, target_body = self._choose_catalog(scene_catalogs)
 
-        if str(instruction_type) == "put_into_plate" and not reference_catalog:
-            container_like = self._container_scene_catalogs(scene_catalogs)
+        if str(instruction_type) in CONTAINER_PLACEMENT_INSTRUCTION_TYPES and not reference_catalog:
+            container_like = self._container_scene_catalogs_for_instruction(scene_catalogs, str(instruction_type))
             reference_catalog, reference_body = self._choose_catalog(
                 [name for name in container_like if name != target_catalog],
                 fallback=[name for name in container_like if name != target_catalog],
@@ -3525,11 +3597,33 @@ class CDPRLanguageRLEnv(_EnvBase):
 
     def _compute_relation_goal_position(self, *, spec, target_pos: np.ndarray) -> np.ndarray:
         instruction_type = str(spec.instruction_type)
-        if instruction_type == "put_into_plate":
+        if instruction_type in CONTAINER_PLACEMENT_INSTRUCTION_TYPES:
             ref_pos = self._reference_object_position(default=target_pos)
             goal = ref_pos.copy()
             goal[2] = max(float(goal[2]), float(self._support_surface_z + 0.02))
             return goal.astype(np.float32)
+
+        if instruction_type in CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES:
+            distance = float(self._task_metadata.get("carried_object_success_displacement", spec.target_displacement))
+            axis = 0
+            sign = 1.0
+            if instruction_type == "move_object_left":
+                axis, sign = 0, -1.0
+            elif instruction_type == "move_object_right":
+                axis, sign = 0, 1.0
+            elif instruction_type == "move_object_up":
+                axis, sign = 2, 1.0
+            elif instruction_type == "move_object_down":
+                axis, sign = 2, -1.0
+            goal = np.asarray(target_pos, dtype=np.float32).copy()
+            initial = (
+                np.asarray(self._reward_state.initial_obj_pos, dtype=np.float32)
+                if self._reward_state is not None
+                else goal
+            )
+            goal = initial.copy()
+            goal[axis] += float(sign * distance)
+            return np.asarray(clamp_xyz(goal), dtype=np.float32)
 
         if instruction_type in {"move_left_of_object", "move_right_of_object"}:
             ref_pos = self._reference_object_position(default=target_pos)
@@ -3598,7 +3692,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         elif instruction_uses_target_object(spec.instruction_type) and self._target_body_name:
             target_pos = self._get_body_position(self._target_body_name).astype(np.float32)
             if spec.instruction_type in {
-                "put_into_plate",
+                *CONTAINER_PLACEMENT_INSTRUCTION_TYPES,
+                *CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES,
                 "move_left_of_object",
                 "move_right_of_object",
                 "move_in_front_of_object",
@@ -4140,7 +4235,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             try:
                 target_pos = self._get_body_position(self._target_body_name).astype(np.float32)
                 if self._instruction_spec.instruction_type in {
-                    "put_into_plate",
+                    *CONTAINER_PLACEMENT_INSTRUCTION_TYPES,
+                    *CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES,
                     "move_left_of_object",
                     "move_right_of_object",
                     "move_in_front_of_object",

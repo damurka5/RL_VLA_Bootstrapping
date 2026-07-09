@@ -39,6 +39,11 @@ INSTRUCTION_TYPES: tuple[str, ...] = (
     "rotate_gripper_counterclockwise",
     "rotate_clockwise",
     "rotate_counterclockwise",
+    "move_object_left",
+    "move_object_right",
+    "move_object_up",
+    "move_object_down",
+    "put_into_bowl",
 )
 
 MOVE_DIRECTIONS: dict[str, np.ndarray] = {
@@ -74,6 +79,11 @@ MOVE_DIRECTIONS: dict[str, np.ndarray] = {
     "rotate_gripper_counterclockwise": np.zeros((3,), dtype=np.float32),
     "rotate_clockwise": np.zeros((3,), dtype=np.float32),
     "rotate_counterclockwise": np.zeros((3,), dtype=np.float32),
+    "move_object_left": np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+    "move_object_right": np.array([1.0, 0.0, 0.0], dtype=np.float32),
+    "move_object_up": np.array([0.0, 0.0, 1.0], dtype=np.float32),
+    "move_object_down": np.array([0.0, 0.0, -1.0], dtype=np.float32),
+    "put_into_bowl": np.zeros((3,), dtype=np.float32),
 }
 
 _DIRECTIONAL_SUCCESS_AXES: dict[str, tuple[int, float]] = {
@@ -118,6 +128,11 @@ INSTRUCTION_TEXT: dict[str, str] = {
     "rotate_gripper_counterclockwise": "rotate the gripper counterclockwise",
     "rotate_clockwise": "rotate object clockwise",
     "rotate_counterclockwise": "rotate object counterclockwise",
+    "move_object_left": "move object left",
+    "move_object_right": "move object right",
+    "move_object_up": "move object up",
+    "move_object_down": "move object down",
+    "put_into_bowl": "put object into bowl",
 }
 
 INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
@@ -153,13 +168,37 @@ INSTRUCTION_SUCCESS_CRITERIA: dict[str, str] = {
     "rotate_gripper_counterclockwise": "end-effector yaw rotates counterclockwise by the configured angle",
     "rotate_clockwise": "target object yaw has changed clockwise by the configured target angle",
     "rotate_counterclockwise": "target object yaw has changed counterclockwise by the configured target angle",
+    "move_object_left": "caught target object is carried left by the configured displacement without falling from the gripper",
+    "move_object_right": "caught target object is carried right by the configured displacement without falling from the gripper",
+    "move_object_up": "caught target object is carried upward by the configured displacement without falling from the gripper",
+    "move_object_down": "caught target object is carried downward by the configured displacement without falling from the gripper",
+    "put_into_bowl": "caught target object starts above the bowl and is lowered into it without release",
 }
+
+CONTAINER_PLACEMENT_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "put_into_plate",
+    "put_into_bowl",
+)
+
+CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "move_object_left",
+    "move_object_right",
+    "move_object_up",
+    "move_object_down",
+)
+
+PUSH_INSTRUCTION_TYPES: tuple[str, ...] = (
+    "push_left",
+    "push_right",
+    "push_forward",
+    "push_backward",
+)
 
 OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = (
     "move_to_object",
     "pick_up",
     "grab_object",
-    "put_into_plate",
+    *CONTAINER_PLACEMENT_INSTRUCTION_TYPES,
     "move_left_of_object",
     "move_right_of_object",
     "move_in_front_of_object",
@@ -167,20 +206,18 @@ OBJECT_CENTRIC_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_in_front_of_object",
     "put_behind_object",
     "move_between_objects",
-    "push_left",
-    "push_right",
-    "push_forward",
-    "push_backward",
+    *PUSH_INSTRUCTION_TYPES,
     "catch_object",
     "grip_object",
     "release_object",
     "free_object",
     "rotate_clockwise",
     "rotate_counterclockwise",
+    *CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES,
 )
 
 REFERENCE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
-    "put_into_plate",
+    *CONTAINER_PLACEMENT_INSTRUCTION_TYPES,
     "move_left_of_object",
     "move_right_of_object",
     "move_in_front_of_object",
@@ -192,7 +229,7 @@ REFERENCE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
 
 MANIPULATION_SPARSE_INSTRUCTION_TYPES: tuple[str, ...] = (
     "grab_object",
-    "put_into_plate",
+    *CONTAINER_PLACEMENT_INSTRUCTION_TYPES,
     "move_left_of_object",
     "move_right_of_object",
     "move_in_front_of_object",
@@ -200,10 +237,8 @@ MANIPULATION_SPARSE_INSTRUCTION_TYPES: tuple[str, ...] = (
     "put_in_front_of_object",
     "put_behind_object",
     "move_between_objects",
-    "push_left",
-    "push_right",
-    "push_forward",
-    "push_backward",
+    *PUSH_INSTRUCTION_TYPES,
+    *CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES,
 )
 
 DENSE_GRIPPER_CATCH_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -268,7 +303,7 @@ ROTATE_OBJECT_INSTRUCTION_TYPES: tuple[str, ...] = (
 CATCHABLE_TARGET_INSTRUCTION_TYPES: tuple[str, ...] = (
     "grab_object",
     "pick_up",
-    "put_into_plate",
+    *CONTAINER_PLACEMENT_INSTRUCTION_TYPES,
     "move_left_of_object",
     "move_right_of_object",
     "move_in_front_of_object",
@@ -282,6 +317,7 @@ CATCHABLE_TARGET_INSTRUCTION_TYPES: tuple[str, ...] = (
     "free_object",
     "rotate_clockwise",
     "rotate_counterclockwise",
+    *CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES,
 )
 
 PLANAR_RELATION_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -452,6 +488,17 @@ def sample_instruction(
     elif selected_instruction_type == "put_into_plate":
         plate_text = reference_text if reference_name else "plate"
         instruction_text = f"put {target_text} into {plate_text}"
+    elif selected_instruction_type == "put_into_bowl":
+        bowl_text = reference_text if reference_name else "bowl"
+        instruction_text = f"put {target_text} into {bowl_text}"
+    elif selected_instruction_type in CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES:
+        direction_text = {
+            "move_object_left": "left",
+            "move_object_right": "right",
+            "move_object_up": "up",
+            "move_object_down": "down",
+        }[selected_instruction_type]
+        instruction_text = f"move {target_text} {direction_text}"
     elif selected_instruction_type == "move_left_of_object":
         instruction_text = f"move {target_text} to the left of {reference_text}"
     elif selected_instruction_type == "move_right_of_object":
@@ -521,6 +568,21 @@ def _metadata_float(task_metadata: dict[str, Any] | None, key: str, default: flo
         return float(raw)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"Task metadata `{key}` must be numeric, got {raw!r}") from exc
+
+
+def _metadata_float_pair(
+    task_metadata: dict[str, Any] | None,
+    key: str,
+    default: Sequence[float],
+) -> tuple[float, float]:
+    raw = None if not isinstance(task_metadata, dict) else task_metadata.get(key)
+    if raw is None:
+        raw = default
+    arr = np.asarray(raw, dtype=np.float64).reshape(-1)
+    if arr.size < 2 or not np.all(np.isfinite(arr[:2])):
+        raise ValueError(f"Task metadata `{key}` must provide two finite numeric values, got {raw!r}")
+    a, b = float(arr[0]), float(arr[1])
+    return (min(a, b), max(a, b))
 
 
 def _metadata_bool(task_metadata: dict[str, Any] | None, key: str, default: bool) -> bool:
@@ -2099,7 +2161,14 @@ def _compute_sparse_manipulation_reward(
     gripper_value = float("nan") if gripper_opening is None else float(gripper_opening)
     gripper_closed = bool(reward_state.gripper_closed)
     if np.isfinite(gripper_value):
-        gripper_closed = bool(gripper_value <= _metadata_float(task_metadata, "grab_closed_opening_threshold", 0.35))
+        closed_threshold = _metadata_float(task_metadata, "grab_closed_opening_threshold", 0.35)
+        threshold_getter = getattr(env, "_caught_object_start_release_opening_threshold", None)
+        if callable(threshold_getter):
+            try:
+                closed_threshold = max(float(closed_threshold), float(threshold_getter()))
+            except Exception:
+                pass
+        gripper_closed = bool(gripper_value <= closed_threshold)
     if not gripper_closed:
         reward_state.grasped = False
     elif bool(caught_object_is_target):
@@ -2140,6 +2209,21 @@ def _compute_sparse_manipulation_reward(
     put_container_z_tolerance = 0.0
     put_release_ok = True
     put_release_fraction = 1.0
+    carried_object_lost = False
+    carried_object_caught_ok = bool(caught_object_is_target)
+    carried_object_fall_penalty = _metadata_float(task_metadata, "carried_object_fall_penalty", 2.0)
+    carried_object_signed_motion = 0.0
+    carried_object_motion_progress = 0.0
+    carried_object_orthogonal_drift = 0.0
+    carried_object_orthogonal_tolerance = 0.0
+    push_surface_reward_enabled = False
+    push_surface_distance = 0.0
+    push_surface_initial_distance = 0.0
+    push_surface_progress = 0.0
+    push_position_only_dense = False
+    put_downward_reward_enabled = False
+    put_downward_motion = 0.0
+    put_downward_progress = 0.0
 
     if spec.instruction_type == "grab_object":
         mode = 3.0
@@ -2159,7 +2243,63 @@ def _compute_sparse_manipulation_reward(
         )
         reward_state.grasped = bool(success or reward_state.grasped)
 
-    elif spec.instruction_type in {"push_left", "push_right", "push_forward", "push_backward"}:
+    elif spec.instruction_type in CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES:
+        mode = 10.0
+        if spec.instruction_type in {"move_object_left", "move_object_right"}:
+            axis = 0
+            sign = -1.0 if spec.instruction_type == "move_object_left" else 1.0
+        elif spec.instruction_type in {"move_object_up", "move_object_down"}:
+            axis = 2
+            sign = 1.0 if spec.instruction_type == "move_object_up" else -1.0
+        else:
+            axis = 1
+            sign = 1.0
+        relation_axis = int(axis)
+        relation_axis_sign = float(sign)
+        relation_motion_required = max(
+            _metadata_float(
+                task_metadata,
+                "carried_object_success_displacement",
+                _metadata_float(task_metadata, "direct_translation_success_displacement", 0.05),
+            ),
+            1e-6,
+        )
+        carried_object_signed_motion = float(sign * target_delta[axis])
+        signed_relation_offset = carried_object_signed_motion
+        carried_object_motion_progress = float(
+            np.clip(carried_object_signed_motion / relation_motion_required, 0.0, 1.0)
+        )
+        orthogonal_delta = np.delete(target_delta[:3], int(axis))
+        carried_object_orthogonal_drift = float(np.linalg.norm(orthogonal_delta))
+        carried_object_orthogonal_tolerance = max(
+            _metadata_float(task_metadata, "carried_object_orthogonal_tolerance", 0.04),
+            0.0,
+        )
+        enforce_orthogonal = _metadata_bool(task_metadata, "carried_object_enforce_orthogonal_tolerance", False)
+        orthogonal_ok = bool(
+            (not enforce_orthogonal)
+            or carried_object_orthogonal_drift <= carried_object_orthogonal_tolerance
+        )
+        relation_orthogonal_error = carried_object_orthogonal_drift
+        relation_error = float(max(0.0, relation_motion_required - carried_object_signed_motion))
+        if enforce_orthogonal:
+            relation_error += float(max(0.0, carried_object_orthogonal_drift - carried_object_orthogonal_tolerance))
+        relation_motion_ok = bool(carried_object_signed_motion >= relation_motion_required and orthogonal_ok)
+        relation_grasp_required = _metadata_bool(task_metadata, "carried_object_require_caught", True)
+        caught_grace_steps = max(0, int(round(_metadata_float(task_metadata, "carried_object_caught_grace_steps", 0.0))))
+        carried_object_lost = bool(
+            relation_grasp_required
+            and int(getattr(reward_state, "step_count", 0)) >= caught_grace_steps
+            and not carried_object_caught_ok
+        )
+        relation_grasp_ok = bool((not relation_grasp_required) or (carried_object_caught_ok and not carried_object_lost))
+        if carried_object_caught_ok:
+            reward_state.grasped = True
+        elif carried_object_lost:
+            reward_state.grasped = False
+        success = bool(relation_motion_ok and relation_grasp_ok and not carried_object_lost)
+
+    elif spec.instruction_type in PUSH_INSTRUCTION_TYPES:
         mode = 4.0
         if spec.instruction_type in {"push_left", "push_right"}:
             push_axis = 0
@@ -2167,15 +2307,50 @@ def _compute_sparse_manipulation_reward(
         else:
             push_axis = 1
             sign = 1.0 if spec.instruction_type == "push_forward" else -1.0
-        push_success_displacement = _metadata_float(task_metadata, "push_success_displacement", 0.08)
-        signed_motion = float(sign * target_delta[push_axis])
-        signed_relation_offset = signed_motion
         relation_axis = int(push_axis)
         relation_axis_sign = float(sign)
-        relation_error = float(max(0.0, push_success_displacement - signed_motion))
-        success = bool(signed_motion >= float(push_success_displacement))
+        push_surface_reward_enabled = _metadata_bool(task_metadata, "push_surface_reward_enabled", False)
+        push_position_only_dense = bool(
+            push_surface_reward_enabled
+            and _metadata_bool(task_metadata, "push_position_only_reward", True)
+        )
+        if push_surface_reward_enabled:
+            bounds = _metadata_float_pair(
+                task_metadata,
+                "object_state_x_bounds" if push_axis == 0 else "object_state_y_bounds",
+                (-0.34, 0.34),
+            )
+            surface_coord = float(bounds[1] if sign > 0.0 else bounds[0])
+            initial_axis_value = float(np.asarray(reward_state.initial_obj_pos, dtype=np.float32).reshape(-1)[push_axis])
+            current_axis_value = float(target_pos[push_axis])
+            push_surface_initial_distance = float(max(0.0, sign * (surface_coord - initial_axis_value)))
+            push_surface_distance = float(max(0.0, sign * (surface_coord - current_axis_value)))
+            surface_success_distance = max(
+                _metadata_float(task_metadata, "push_surface_success_distance", 0.035),
+                0.0,
+            )
+            push_success_displacement = float(max(0.0, push_surface_initial_distance - surface_success_distance))
+            signed_relation_offset = float(push_surface_initial_distance - push_surface_distance)
+            relation_error = push_surface_distance
+            relation_axis_error = push_surface_distance
+            push_surface_progress = float(
+                np.clip(
+                    signed_relation_offset / max(push_success_displacement, 1e-6),
+                    0.0,
+                    1.0,
+                )
+                if push_success_displacement > 0.0
+                else float(push_surface_distance <= surface_success_distance)
+            )
+            success = bool(push_surface_distance <= surface_success_distance)
+        else:
+            push_success_displacement = _metadata_float(task_metadata, "push_success_displacement", 0.08)
+            signed_motion = float(sign * target_delta[push_axis])
+            signed_relation_offset = signed_motion
+            relation_error = float(max(0.0, push_success_displacement - signed_motion))
+            success = bool(signed_motion >= float(push_success_displacement))
 
-    elif spec.instruction_type == "put_into_plate":
+    elif spec.instruction_type in CONTAINER_PLACEMENT_INSTRUCTION_TYPES:
         mode = 5.0
         plate_pos = reference_pos if reference_pos is not None else goal_pos
         plate_xy_tolerance = _metadata_float(
@@ -2206,13 +2381,47 @@ def _compute_sparse_manipulation_reward(
         )
         relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
         relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
-        success = bool(
-            xy_error <= plate_xy_tolerance
-            and z_error <= plate_z_tolerance
-            and release_ok
-            and relation_motion_ok
-            and relation_grasp_ok
-        )
+        put_downward_reward_enabled = _metadata_bool(task_metadata, "put_downward_reward_enabled", False)
+        if put_downward_reward_enabled:
+            relation_motion_required = max(
+                _metadata_float(task_metadata, "put_downward_success_displacement", 0.06),
+                1e-6,
+            )
+            initial_obj_z = float(np.asarray(reward_state.initial_obj_pos, dtype=np.float32).reshape(-1)[2])
+            put_downward_motion = float(max(0.0, initial_obj_z - float(target_pos[2])))
+            put_downward_progress = float(np.clip(put_downward_motion / relation_motion_required, 0.0, 1.0))
+            xy_excess = float(max(0.0, xy_error - plate_xy_tolerance))
+            z_remaining = float(max(0.0, relation_motion_required - put_downward_motion))
+            relation_error = float(z_remaining + xy_excess)
+            put_container_z_error = z_remaining
+            put_container_z_tolerance = 0.0
+            relation_motion_ok = bool(put_downward_motion >= relation_motion_required)
+            relation_grasp_required = _metadata_bool(task_metadata, "put_downward_require_caught", True)
+            caught_grace_steps = max(0, int(round(_metadata_float(task_metadata, "carried_object_caught_grace_steps", 0.0))))
+            carried_object_lost = bool(
+                relation_grasp_required
+                and int(getattr(reward_state, "step_count", 0)) >= caught_grace_steps
+                and not carried_object_caught_ok
+            )
+            relation_grasp_ok = bool((not relation_grasp_required) or (carried_object_caught_ok and not carried_object_lost))
+            if carried_object_caught_ok:
+                reward_state.grasped = True
+            elif carried_object_lost:
+                reward_state.grasped = False
+            success = bool(
+                xy_error <= plate_xy_tolerance
+                and relation_motion_ok
+                and relation_grasp_ok
+                and not carried_object_lost
+            )
+        else:
+            success = bool(
+                xy_error <= plate_xy_tolerance
+                and z_error <= plate_z_tolerance
+                and release_ok
+                and relation_motion_ok
+                and relation_grasp_ok
+            )
 
     elif spec.instruction_type in {
         "move_left_of_object",
@@ -2338,7 +2547,7 @@ def _compute_sparse_manipulation_reward(
             "manipulation_dense_success_bonus",
             _metadata_float(task_metadata, "sparse_success_reward", 1.0),
         )
-        if spec.instruction_type == "put_into_plate":
+        if spec.instruction_type in CONTAINER_PLACEMENT_INSTRUCTION_TYPES:
             z_excess = max(0.0, float(put_container_z_error) - float(put_container_z_tolerance))
             dense_error = float(relation_error + z_excess)
         elif np.isfinite(relation_error):
@@ -2351,23 +2560,50 @@ def _compute_sparse_manipulation_reward(
             _metadata_float(task_metadata, "manipulation_dense_motion_scale", 0.04),
             1e-6,
         )
-        motion_progress = float(np.clip(target_motion_xy / motion_reference, 0.0, 1.0))
-        grasp_progress = float(1.0 if (reward_state.grasped or relation_grasp_ok) else 0.0)
+        if spec.instruction_type in CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES:
+            motion_progress = carried_object_motion_progress
+        elif put_downward_reward_enabled:
+            motion_progress = put_downward_progress
+        elif push_surface_reward_enabled:
+            motion_progress = push_surface_progress
+        else:
+            motion_progress = float(np.clip(target_motion_xy / motion_reference, 0.0, 1.0))
+        if spec.instruction_type in CARRIED_OBJECT_TRANSLATION_INSTRUCTION_TYPES or put_downward_reward_enabled:
+            grasp_progress = float(1.0 if relation_grasp_ok else 0.0)
+        elif push_position_only_dense:
+            grasp_progress = 0.0
+        else:
+            grasp_progress = float(1.0 if (reward_state.grasped or relation_grasp_ok) else 0.0)
         release_progress = float(1.0 if put_release_ok else put_release_fraction)
-        reward = float(
-            dense_weight * relation_progress
-            + dense_motion_weight * motion_progress
-            + dense_grasp_weight * grasp_progress
-            + (dense_release_weight * release_progress if spec.instruction_type == "put_into_plate" else 0.0)
-            + (dense_success_bonus if success else 0.0)
-            - action_saturation_penalty
-        )
+        if push_position_only_dense:
+            reward = float(
+                dense_weight * relation_progress
+                + (dense_success_bonus if success else 0.0)
+                - action_saturation_penalty
+            )
+        else:
+            reward = float(
+                dense_weight * relation_progress
+                + dense_motion_weight * motion_progress
+                + dense_grasp_weight * grasp_progress
+                + (
+                    dense_release_weight * release_progress
+                    if (spec.instruction_type in CONTAINER_PLACEMENT_INSTRUCTION_TYPES and not put_downward_reward_enabled)
+                    else 0.0
+                )
+                + (dense_success_bonus if success else 0.0)
+                - action_saturation_penalty
+            )
+        if carried_object_lost:
+            reward -= float(carried_object_fall_penalty)
     else:
         dense_error = float(relation_error) if np.isfinite(relation_error) else float(ee_xy_distance)
         relation_progress = 0.0
         motion_progress = 0.0
         release_progress = 1.0 if put_release_ok else put_release_fraction
         reward = _sparse_reward_value(success=success, task_metadata=task_metadata) - action_saturation_penalty
+        if carried_object_lost:
+            reward -= float(carried_object_fall_penalty)
     reward_state.prev_ee_pos = ee_pos.copy()
     reward_state.prev_obj_pos = target_pos.copy()
     reward_state.prev_distance = relation_error if np.isfinite(relation_error) else ee_distance
@@ -2398,6 +2634,21 @@ def _compute_sparse_manipulation_reward(
         "relation_left_right_offset": float(relation_left_right_offset),
         "relation_front_behind_offset": float(relation_front_behind_offset),
         "push_success_displacement": float(push_success_displacement),
+        "push_surface_reward_enabled": float(push_surface_reward_enabled),
+        "push_surface_distance": float(push_surface_distance),
+        "push_surface_initial_distance": float(push_surface_initial_distance),
+        "push_surface_progress": float(push_surface_progress),
+        "push_position_only_reward": float(push_position_only_dense),
+        "carried_object_lost": float(carried_object_lost),
+        "carried_object_caught_ok": float(carried_object_caught_ok),
+        "carried_object_fall_penalty": float(carried_object_fall_penalty),
+        "carried_object_signed_motion": float(carried_object_signed_motion),
+        "carried_object_motion_progress": float(carried_object_motion_progress),
+        "carried_object_orthogonal_drift": float(carried_object_orthogonal_drift),
+        "carried_object_orthogonal_tolerance": float(carried_object_orthogonal_tolerance),
+        "put_downward_reward_enabled": float(put_downward_reward_enabled),
+        "put_downward_motion": float(put_downward_motion),
+        "put_downward_progress": float(put_downward_progress),
         "manipulation_dense_reward_enabled": float(
             _metadata_bool(task_metadata, "manipulation_dense_reward_enabled", False)
         ),
