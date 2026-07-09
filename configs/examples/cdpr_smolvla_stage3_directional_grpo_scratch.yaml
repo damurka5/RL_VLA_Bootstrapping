@@ -1,5 +1,5 @@
 project:
-  name: cdpr_smolvla_stage3_object_dense_complex_resume
+  name: cdpr_smolvla_stage3_directional_grpo_scratch
   output_root: ../../runs
   python_executable: python3
 
@@ -20,11 +20,11 @@ remote:
     RLVLA_CDPR_QUIET: "true"
     RLVLA_CDPR_WRAPPER_LOG: "false"
   notes:
-    - Stage-3 object-manipulation dense-reward continuation from the strict complex checkpoint.
-    - Hypothesis GPU 0: train only object-centric dense tasks; no simple primitive rehearsal and no release/free instructions.
-    - The pretrained SmolVLA prior remains frozen; only the residual/readout head and critics continue training.
-    - Mixed curriculum keeps move-to-object and grasping basics, then adds carried-object motion, receptacle lowering, and surface-directed pushes.
-    - Caught-object starts keep carry/place tasks learnable without demonstrations; object drops receive a large dense penalty.
+    - Stage-3 scratch SmolVLA GRPO run for direct directional movement plus move-to-object.
+    - The instruction set is limited to move left/right/forward/backward/up/down and move to <obj>.
+    - Internal move_top and move_bottom emit the language strings "move forward" and "move backward".
+    - The pretrained SmolVLA prior remains frozen; GRPO trains only the residual/readout head and log-std parameters.
+    - This run intentionally has no TD3 critics, replay buffer, gripper, push, carry, or placement instructions.
 
 assets:
   bundles:
@@ -95,21 +95,13 @@ embodiment:
 task:
   instruction_types:
     [
+      move_left,
+      move_right,
+      move_top,
+      move_bottom,
+      move_up,
+      move_down,
       move_to_object,
-      grab_object,
-      catch_object,
-      grip_object,
-      pick_up,
-      move_object_left,
-      move_object_right,
-      move_object_up,
-      move_object_down,
-      put_into_plate,
-      put_into_bowl,
-      push_left,
-      push_right,
-      push_forward,
-      push_backward,
     ]
   target_objects:
     [
@@ -118,8 +110,6 @@ task:
       ycb_peach,
       ycb_b_cups,
       ycb_baseball,
-      plate,
-      bowl,
     ]
   reward:
     file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
@@ -155,8 +145,8 @@ task:
         ycb_b_cups,
         ycb_baseball,
       ]
-    container_object_pool: [plate, bowl]
-    required_scene_object_pool: [plate, bowl]
+    container_object_pool: []
+    required_scene_object_pool: []
     distractor_object_pool:
       [
         ycb_apple,
@@ -164,8 +154,6 @@ task:
         ycb_peach,
         ycb_b_cups,
         ycb_baseball,
-        plate,
-        bowl,
       ]
     scene_object_pool:
       [
@@ -174,11 +162,9 @@ task:
         ycb_peach,
         ycb_b_cups,
         ycb_baseball,
-        plate,
-        bowl,
       ]
-    min_scene_objects: 3
-    max_scene_objects: 4
+    min_scene_objects: 1
+    max_scene_objects: 3
     scene_variant_count: 256
     goal_center_xy: [0.0, 0.0]
     goal_height_above_table: 0.10
@@ -267,17 +253,15 @@ task:
     reward_output_scale: 2.0
     reward_output_min: -1.0
     reward_output_max: 1.0
-    target_at_gripper_start_instruction_types: [pick_up, grab_object, catch_object, grip_object]
-    target_at_gripper_start_probability: 1.0
+    target_at_gripper_start_instruction_types: []
+    target_at_gripper_start_probability: 0.0
     target_at_gripper_start_gripper_opening: 1.0
     target_at_gripper_start_ee_z: 0.23
     target_at_gripper_start_min_height_above_table: 0.025
-    caught_object_start_instruction_types:
-      [move_object_left, move_object_right, move_object_up, move_object_down, put_into_plate, put_into_bowl]
-    force_caught_object_start_instruction_types:
-      [move_object_left, move_object_right, move_object_up, move_object_down, put_into_plate, put_into_bowl]
-    caught_object_start_above_reference_instruction_types: [put_into_plate, put_into_bowl]
-    caught_object_start_probability: 1.0
+    caught_object_start_instruction_types: []
+    force_caught_object_start_instruction_types: []
+    caught_object_start_above_reference_instruction_types: []
+    caught_object_start_probability: 0.0
     caught_object_start_above_reference_height: 0.16
     caught_object_start_reference_xy_jitter: 0.010
     caught_object_start_object_offset: [0.0, 0.0, 0.005]
@@ -367,13 +351,13 @@ simulation:
     ee_start: [0.0, 0.0, 0.40]
   randomization:
     random_scene_count: 100
-    max_objects: 4
+    max_objects: 3
     use_domain_randomization: true
 
 policy:
   type: smolvla_cdpr
   base_checkpoint: lerobot/smolvla_base
-  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_finetune_cdpr.py
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_finetune_cdpr.py
   num_images_in_input: 3
   action_codec:
     chunk_size: 8
@@ -388,19 +372,18 @@ training:
   preview_before_rl: false
   rl:
     enabled: true
-    algorithm: smolvla_residual_td3
-    script_path: ../../rl_vla_bootstrapping/policy/smolvla_finetune_cdpr.py
+    algorithm: smolvla_residual_grpo
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_finetune_cdpr.py
     launcher: torchrun
     launcher_args:
       standalone: true
       nproc_per_node: 1
     args:
-      resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage2_complex_strict_resume_step_3000000_20260707_234721/rl/step_5000000/smolvla_cdpr_adapter.pt
-      max_train_steps: 10000000
+      max_train_steps: 5000000
       max_env_steps: 96
       num_envs_per_rank: 4
       chunk_size: 8
-      replan_every: 4
+      replan_every: 1
       image_size: 256
       state_dim: 6
       include_wrist: true
@@ -409,18 +392,25 @@ training:
       smolvla_action_normalization: tanh
       hidden_dim: 1024
       residual_scale: 0.30
-      actor_lr: 2.0e-4
-      critic_lr: 3.0e-4
-      gamma: 0.98
-      tau: 0.01
-      replay_size: 200000
-      batch_size: 16384
-      update_after: 2048
-      updates_per_step: 2
-      exploration_noise: 0.10
-      min_exploration_noise: 0.02
-      noise_decay_steps: 200000
+      learning_rate: 2.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      init_log_std: -1.2
+      min_log_std: -5.0
+      max_log_std: 0.5
+      clip_range: 0.20
+      entropy_coef: 0.0
       action_l2: 2.0e-3
+      max_grad_norm: 1.0
+      grpo_group_size: 2
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      rollout_steps: 2048
+      ppo_epochs: 2
+      batch_size: 16384
+      minibatch_size: 16384
+      microbatch_size: 2048
       action_step_xyz: 0.015
       action_step_yaw: 0.08
       action_step_gripper: 0.05
@@ -437,64 +427,12 @@ training:
       log_every_steps: 250
       status_every_steps: 500
       metrics_window_episodes: 100
-      dense_stage_one_instruction_types:
-        [
-          move_to_object,
-          grab_object,
-          catch_object,
-          grip_object,
-          pick_up,
-        ]
-      dense_stage_two_instruction_types:
-        [
-          move_to_object,
-          grab_object,
-          catch_object,
-          grip_object,
-          pick_up,
-          move_object_left,
-          move_object_right,
-          move_object_up,
-          move_object_down,
-          put_into_plate,
-          put_into_bowl,
-          push_left,
-          push_right,
-          push_forward,
-          push_backward,
-        ]
-      dense_stage_switch_success_rate: 0.0
-      dense_stage_min_episodes: 1
-      dense_stage_gate_metric: rollout
-      dense_stage_gate_aggregation: worst
       validation_every_steps: 50000
       validation_episodes_per_instruction: 10
       validation_seed: 1000000
       validation_video_count: 3
       validation_video_fps: 10.0
-      mixed_curriculum_enabled: true
-      mixed_curriculum_adaptive: true
-      mixed_curriculum_success_target: 0.80
-      mixed_curriculum_history_episodes: 120
-      mixed_curriculum_min_gap_weight: 0.05
-      mixed_curriculum_min_prob: 0.03
-      mixed_curriculum_max_prob: 0.35
-      mixed_curriculum_rehearsal_min_prob: 0.25
-      mixed_curriculum_move_to_object_min_prob: 0.20
-      mixed_curriculum_manipulation_min_prob: 0.55
-      near_success_instruction_types:
-        [
-          grab_object,
-          catch_object,
-          grip_object,
-          pick_up,
-          move_object_left,
-          move_object_right,
-          move_object_up,
-          move_object_down,
-          put_into_plate,
-          put_into_bowl,
-        ]
+      mixed_curriculum_enabled: false
       progress_refresh_seconds: 10.0
       progress: true
       progress_only: true

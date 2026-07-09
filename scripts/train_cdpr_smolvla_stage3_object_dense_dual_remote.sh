@@ -8,9 +8,9 @@ WALLTIME="${WALLTIME:-none}"
 DRY_RUN="${DRY_RUN:-0}"
 
 RUN_COMPLEX="${RUN_COMPLEX:-1}"
-RUN_SMOOTH="${RUN_SMOOTH:-1}"
+RUN_GRPO="${RUN_GRPO:-${RUN_SMOOTH:-1}}"
 COMPLEX_GPU="${COMPLEX_GPU:-0}"
-SMOOTH_GPU="${SMOOTH_GPU:-1}"
+GRPO_GPU="${GRPO_GPU:-${SMOOTH_GPU:-1}}"
 SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-1}"
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
@@ -46,20 +46,18 @@ target_train_steps() {
   printf '%d\n' "$((checkpoint_step_value + extra_steps))"
 }
 
-COMPLEX_RUN_NAME="${COMPLEX_RUN_NAME:-cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_${timestamp}}"
-SMOOTH_RUN_NAME="${SMOOTH_RUN_NAME:-cdpr_smolvla_stage3_object_dense_smooth_resume_step_5500000_${timestamp}}"
+COMPLEX_RUN_NAME="${COMPLEX_RUN_NAME:-cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_to_10000000_${timestamp}}"
+GRPO_RUN_NAME="${GRPO_RUN_NAME:-cdpr_smolvla_stage3_directional_grpo_scratch_step_0000000_to_5000000_${timestamp}}"
 
 COMPLEX_CONFIG_PATH="${COMPLEX_CONFIG_PATH:-$REPO_ROOT/configs/examples/cdpr_smolvla_stage3_object_dense_complex_resume.yaml}"
-SMOOTH_CONFIG_PATH="${SMOOTH_CONFIG_PATH:-$REPO_ROOT/configs/examples/cdpr_smolvla_stage3_object_dense_smooth_resume.yaml}"
+GRPO_CONFIG_PATH="${GRPO_CONFIG_PATH:-$REPO_ROOT/configs/examples/cdpr_smolvla_stage3_directional_grpo_scratch.yaml}"
 
 COMPLEX_RESUME_CHECKPOINT_DEFAULT="/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage2_complex_strict_resume_step_3000000_20260707_234721/rl/step_5000000"
-SMOOTH_RESUME_CHECKPOINT_DEFAULT="/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_smooth_strict_resume_step_3500000_20260707_234721/rl/step_5500000"
 COMPLEX_RESUME_CHECKPOINT="${COMPLEX_RESUME_CHECKPOINT:-${RESUME_CHECKPOINT:-$COMPLEX_RESUME_CHECKPOINT_DEFAULT}}"
-SMOOTH_RESUME_CHECKPOINT="${SMOOTH_RESUME_CHECKPOINT:-${RESUME_CHECKPOINT:-$SMOOTH_RESUME_CHECKPOINT_DEFAULT}}"
+GRPO_RESUME_CHECKPOINT="${GRPO_RESUME_CHECKPOINT:-}"
 COMPLEX_EXTRA_TRAIN_STEPS="${COMPLEX_EXTRA_TRAIN_STEPS:-5000000}"
-SMOOTH_EXTRA_TRAIN_STEPS="${SMOOTH_EXTRA_TRAIN_STEPS:-5000000}"
 COMPLEX_MAX_TRAIN_STEPS="$(target_train_steps "$COMPLEX_RESUME_CHECKPOINT" "$COMPLEX_EXTRA_TRAIN_STEPS" "${COMPLEX_MAX_TRAIN_STEPS:-}")"
-SMOOTH_MAX_TRAIN_STEPS="$(target_train_steps "$SMOOTH_RESUME_CHECKPOINT" "$SMOOTH_EXTRA_TRAIN_STEPS" "${SMOOTH_MAX_TRAIN_STEPS:-}")"
+GRPO_MAX_TRAIN_STEPS="${GRPO_MAX_TRAIN_STEPS:-5000000}"
 
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
 export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
@@ -76,8 +74,8 @@ export PYTHONUNBUFFERED=1
 
 cd "$REPO_ROOT"
 
-if [[ "$RUN_COMPLEX" == "1" && "$RUN_SMOOTH" == "1" && "$COMPLEX_RUN_NAME" == "$SMOOTH_RUN_NAME" ]]; then
-  echo "COMPLEX_RUN_NAME and SMOOTH_RUN_NAME must be different." >&2
+if [[ "$RUN_COMPLEX" == "1" && "$RUN_GRPO" == "1" && "$COMPLEX_RUN_NAME" == "$GRPO_RUN_NAME" ]]; then
+  echo "COMPLEX_RUN_NAME and GRPO_RUN_NAME must be different." >&2
   exit 2
 fi
 
@@ -177,21 +175,21 @@ if [[ "$RUN_COMPLEX" == "1" ]]; then
   names+=("complex")
 fi
 
-if [[ "$RUN_SMOOTH" == "1" ]]; then
+if [[ "$RUN_GRPO" == "1" ]]; then
   run_experiment \
-    smooth \
-    "$SMOOTH_GPU" \
-    "$SMOOTH_CONFIG_PATH" \
-    "$SMOOTH_RUN_NAME" \
-    "$SMOOTH_RESUME_CHECKPOINT" \
-    "$SMOOTH_MAX_TRAIN_STEPS" \
+    grpo \
+    "$GRPO_GPU" \
+    "$GRPO_CONFIG_PATH" \
+    "$GRPO_RUN_NAME" \
+    "$GRPO_RESUME_CHECKPOINT" \
+    "$GRPO_MAX_TRAIN_STEPS" \
     "$@" &
   pids+=("$!")
-  names+=("smooth")
+  names+=("grpo")
 fi
 
 if [[ "${#pids[@]}" -eq 0 ]]; then
-  echo "Nothing to run: RUN_COMPLEX=$RUN_COMPLEX RUN_SMOOTH=$RUN_SMOOTH" >&2
+  echo "Nothing to run: RUN_COMPLEX=$RUN_COMPLEX RUN_GRPO=$RUN_GRPO" >&2
   exit 2
 fi
 

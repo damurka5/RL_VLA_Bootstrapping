@@ -29,7 +29,7 @@ def _build_stage_prefix(
         argv = [launcher]
         for key, value in launcher_args.items():
             append_cli_arg(argv, key, value)
-        if module_name and str(script_path).endswith("smolvla_finetune_cdpr.py"):
+        if module_name:
             argv.extend(["-m", module_name])
         else:
             argv.append(str(script_path))
@@ -51,6 +51,8 @@ def _module_name_for_script(script_path: Path) -> str | None:
     parts = script_path.parts[-3:]
     if parts == ("rl_vla_bootstrapping", "policy", "smolvla_finetune_cdpr.py"):
         return "rl_vla_bootstrapping.policy.smolvla_finetune_cdpr"
+    if parts == ("rl_vla_bootstrapping", "policy", "smolvla_grpo_finetune_cdpr.py"):
+        return "rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr"
     return None
 
 
@@ -150,11 +152,14 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     for key, value in injected.items():
         _append_smolvla_script_arg(argv, key, value)
 
+    algorithm = str(config.training.rl.algorithm or "").lower()
     notes = [
         "SmolVLA CDPR RL stage: frozen LeRobot SmolVLA prior plus a small Torch residual/readout head.",
-        "This first experiment is online dense RL; MuJoCo stepping remains CPU-side while model inference/training runs on GPU.",
+        "MuJoCo stepping remains CPU-side while model inference/training runs on GPU.",
         "LeRobot/SmolVLA imports are runtime-only; local config parsing does not download weights.",
     ]
+    if "grpo" in algorithm:
+        notes.append("GRPO mode trains the residual policy with grouped relative advantages and no TD3 critics.")
     if desk_texture_note:
         notes.append(desk_texture_note)
     if config.task.reward is not None:
