@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import copy
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional, Sequence
 import hashlib
@@ -57,6 +57,7 @@ from .rl_instruction_tasks import (
     canonical_object_name,
     compute_instruction_reward,
     init_reward_state,
+    instruction_text_for_metadata,
     instruction_uses_target_object,
     instruction_to_onehot,
     sample_instruction,
@@ -301,6 +302,12 @@ def _infer_instruction_type_from_text(instruction: str) -> str | None:
         return "push_backward"
     if text.startswith("put ") and " bowl" in text:
         return "put_into_bowl"
+    if text.startswith("put ") and " to the left of " in text:
+        return "move_left_of_object"
+    if text.startswith("put ") and " to the right of " in text:
+        return "move_right_of_object"
+    if text.startswith("put ") and " between " in text and " and " in text:
+        return "move_between_objects"
     if text.startswith("put ") and (" plate" in text or " into " in text or " on " in text):
         return "put_into_plate"
     if text.startswith("move ") and " to the left of " in text:
@@ -1827,6 +1834,9 @@ class CDPRLanguageRLEnv(_EnvBase):
             reference_object=self._reference_catalog_name or None,
             second_reference_object=self._second_reference_catalog_name or None,
         )
+        language_text = instruction_text_for_metadata(self._instruction_spec, self._task_metadata)
+        if language_text != self._instruction_spec.text:
+            self._instruction_spec = replace(self._instruction_spec, text=language_text)
         setattr(self.sim, "language_instruction", self._instruction_spec.text)
 
         episode_ee_yaw = self._sample_episode_ee_yaw(options=options)
@@ -1856,6 +1866,20 @@ class CDPRLanguageRLEnv(_EnvBase):
                 apply_cdpr_reverse_shell(
                     self,
                     shell_id=int(self._curriculum_shell),
+                    rng=self.np_random,
+                )
+            )
+            hold_current_pose = getattr(self.sim, "hold_current_pose", None)
+            if callable(hold_current_pose):
+                hold_current_pose(warm_steps=0)
+        elif self._curriculum_mode == "lchol_put_stage":
+            from .cdpr_reverse_shells import apply_cdpr_put_start_stage
+
+            stage_id = int(options.get("put_start_stage", options.get("curriculum_shell", 0)))
+            self._curriculum_reset_info = dict(
+                apply_cdpr_put_start_stage(
+                    self,
+                    stage_id=stage_id,
                     rng=self.np_random,
                 )
             )
@@ -2431,26 +2455,30 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_gripper_opening = 0.0
 
     def _caught_object_start_instruction_types(self) -> tuple[str, ...]:
-        if "caught_object_start_instruction_types" in self._task_metadata:
-            return _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
-        configured = _metadata_name_list(self._task_metadata, "caught_object_start_instruction_types")
+        metadata = getattr(self, "_task_metadata", {}) or {}
+        if "caught_object_start_instruction_types" in metadata:
+            return _metadata_name_list(metadata, "caught_object_start_instruction_types")
+        configured = _metadata_name_list(metadata, "caught_object_start_instruction_types")
         return configured or DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES
 
     def _force_caught_object_start_instruction_types(self) -> tuple[str, ...]:
-        if "force_caught_object_start_instruction_types" in self._task_metadata:
-            return _metadata_name_list(self._task_metadata, "force_caught_object_start_instruction_types")
-        configured = _metadata_name_list(self._task_metadata, "force_caught_object_start_instruction_types")
+        metadata = getattr(self, "_task_metadata", {}) or {}
+        if "force_caught_object_start_instruction_types" in metadata:
+            return _metadata_name_list(metadata, "force_caught_object_start_instruction_types")
+        configured = _metadata_name_list(metadata, "force_caught_object_start_instruction_types")
         return configured or DEFAULT_FORCE_CAUGHT_OBJECT_START_INSTRUCTION_TYPES
 
     def _target_at_gripper_start_instruction_types(self) -> tuple[str, ...]:
-        if "target_at_gripper_start_instruction_types" in self._task_metadata:
-            return _metadata_name_list(self._task_metadata, "target_at_gripper_start_instruction_types")
-        configured = _metadata_name_list(self._task_metadata, "target_at_gripper_start_instruction_types")
+        metadata = getattr(self, "_task_metadata", {}) or {}
+        if "target_at_gripper_start_instruction_types" in metadata:
+            return _metadata_name_list(metadata, "target_at_gripper_start_instruction_types")
+        configured = _metadata_name_list(metadata, "target_at_gripper_start_instruction_types")
         return configured or DEFAULT_TARGET_AT_GRIPPER_START_INSTRUCTION_TYPES
 
     def _caught_object_start_above_reference_instruction_types(self) -> tuple[str, ...]:
-        if "caught_object_start_above_reference_instruction_types" in self._task_metadata:
-            return _metadata_name_list(self._task_metadata, "caught_object_start_above_reference_instruction_types")
+        metadata = getattr(self, "_task_metadata", {}) or {}
+        if "caught_object_start_above_reference_instruction_types" in metadata:
+            return _metadata_name_list(metadata, "caught_object_start_above_reference_instruction_types")
         return CONTAINER_PLACEMENT_INSTRUCTION_TYPES
 
     def _should_spawn_target_caught_at_ee(
@@ -2590,8 +2618,14 @@ class CDPRLanguageRLEnv(_EnvBase):
                     return int(gid)
             return -1
 
-        left_gid = _first_geom_id(("finger_l_tip", "finger_l_link"))
-        right_gid = _first_geom_id(("finger_r_tip", "finger_r_link"))
+        # Caught objects must be centered between the *collision pads*.  The
+        # visual tip capsules are lower than the pads, have contacts disabled,
+        # and therefore describe the wrong grasp center.  Using their midpoint
+        # placed round YCB objects near the bottom edge of the pads, where the
+        # local cross-section was narrower than the configured gripper gap; the
+        # object then fell on the first physics step despite a fitted opening.
+        left_gid = _first_geom_id(("left_finger_pad", "finger_l_tip", "finger_l_link"))
+        right_gid = _first_geom_id(("right_finger_pad", "finger_r_tip", "finger_r_link"))
         if left_gid == -1 or right_gid == -1:
             return None
 
@@ -3988,6 +4022,30 @@ class CDPRLanguageRLEnv(_EnvBase):
             self._prev_ee_for_catch = np.asarray(ee_pos, dtype=np.float32).copy()
             return "", "", 0.0, False
 
+        # A pinned caught-object curriculum start is an explicit environment
+        # constraint, so it is the authoritative grasp state until the policy
+        # commands an opening past the release threshold.  Geometry-only catch
+        # scoring can otherwise report a false loss while the constrained object
+        # is visibly following the gripper (especially for wide fitted openings).
+        pinned_body = str(getattr(self, "_caught_object_start_body", ""))
+        if (
+            bool(getattr(self, "_caught_object_start_active", False))
+            and self._caught_object_start_pin_object_enabled()
+            and pinned_body
+            and self._caught_object_start_gripper_is_closed()
+        ):
+            self._prev_ee_for_catch = np.asarray(ee_pos, dtype=np.float32).copy()
+            pinned_catalog = str(
+                getattr(self, "_caught_object_start_catalog", "")
+                or self._inverse_catalog_to_body.get(pinned_body, pinned_body)
+            )
+            return (
+                pinned_body,
+                pinned_catalog,
+                1.0,
+                bool(pinned_catalog == self._target_catalog_name),
+            )
+
         gripper_closed = bool(self._reward_state.gripper_closed)
         ee_now = np.asarray(ee_pos, dtype=np.float32)
         ee_step = ee_now - self._prev_ee_for_catch
@@ -4327,6 +4385,11 @@ class CDPRLanguageRLEnv(_EnvBase):
     def _is_gripper_closed(self, opening: float | None) -> bool:
         if opening is None or not np.isfinite(opening):
             return bool(self._reward_state.gripper_closed) if self._reward_state is not None else False
+        if (
+            bool(getattr(self, "_caught_object_start_active", False))
+            and self._caught_object_start_pin_object_enabled()
+        ):
+            return self._caught_object_start_gripper_is_closed()
         grip_min = float(getattr(self.sim, "gripper_min", 0.0))
         grip_max = float(getattr(self.sim, "gripper_max", 1.0))
         threshold = grip_min + 0.35 * max(grip_max - grip_min, 1e-6)
@@ -4589,5 +4652,11 @@ class CDPRLanguageRLEnv(_EnvBase):
             ),
             "curriculum_instruction_id": str(
                 getattr(self, "_curriculum_reset_info", {}).get("curriculum_instruction_id", "")
+            ),
+            "curriculum_put_start_stage": int(
+                getattr(self, "_curriculum_reset_info", {}).get("curriculum_put_start_stage", -1)
+            ),
+            "curriculum_shell_target_sim_steps": int(
+                getattr(self, "_curriculum_reset_info", {}).get("curriculum_shell_target_sim_steps", -1)
             ),
         }

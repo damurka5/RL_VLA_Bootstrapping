@@ -27,6 +27,21 @@ class PerOptionReplayBuffer:
     def __len__(self) -> int:
         return sum(len(items) for items in self._buffers.values())
 
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            "capacity_per_option": int(self.capacity_per_option),
+            "buffers": {
+                str(option): list(items)
+                for option, items in sorted(self._buffers.items())
+                if items
+            },
+        }
+
+    def load_state_dict(self, state: dict[str, Any]) -> None:
+        self._buffers.clear()
+        for option, records in dict(state.get("buffers") or {}).items():
+            self.extend(str(option), list(records or ()))
+
     def sample_balanced(
         self,
         *,

@@ -12,6 +12,20 @@ from .rl_instruction_tasks import canonical_object_name
 _PHASE_SUCCESS_BONUS = 10.0
 _WRONG_CONTACT_BLOCK_THRESHOLD = 0.20
 
+_DIRECT_MOVE_OPTIONS = frozenset(
+    {"move_left", "move_right", "move_top", "move_bottom", "move_up", "move_down"}
+)
+_PUSH_OPTIONS = frozenset({"push_left", "push_right", "push_forward", "push_backward"})
+_PLACEMENT_SOURCE_OPTIONS = frozenset(
+    {
+        "put_into_plate",
+        "put_into_bowl",
+        "move_left_of_object",
+        "move_right_of_object",
+        "move_between_objects",
+    }
+)
+
 
 class CDPRLCHOLSpec:
     option_names: tuple[str, ...] = (
@@ -23,6 +37,7 @@ class CDPRLCHOLSpec:
         "push_forward",
         "push_backward",
         "put_into_plate",
+        "put_into_bowl",
         "move_left_of_object",
         "move_right_of_object",
         "move_in_front_of_object",
@@ -30,6 +45,13 @@ class CDPRLCHOLSpec:
         "put_in_front_of_object",
         "put_behind_object",
         "move_between_objects",
+        "move_left",
+        "move_right",
+        "move_top",
+        "move_bottom",
+        "move_up",
+        "move_down",
+        "put_near_reference",
     )
 
     def phase_score(self, trajectory: Sequence[Mapping[str, Any]], option_name: str | None = None) -> float:
@@ -80,7 +102,7 @@ class CDPRLCHOLSpec:
             )
             return _phase_total_score(sparse_success=sparse_success, progress=shaped)
 
-        if option == "put_into_plate":
+        if option in {"put_into_plate", "put_into_bowl"}:
             relation = _relation_score(info, default_scale=0.16)
             release = relation * (1.0 - float(gripper_closed) if "gripper_closed" in info else 1.0)
             off_plate = 1.0 - relation if _boolish(info.get("env_done")) and not sparse_success else 0.0
@@ -126,7 +148,7 @@ class CDPRLCHOLSpec:
         )
 
     def achieved_options(self, trajectory: Sequence[Mapping[str, Any]]) -> list[AchievedOption]:
-        achieved: dict[str, AchievedOption] = {}
+        achieved: dict[tuple[str, str], AchievedOption] = {}
         for timestep, raw_info in enumerate(trajectory):
             info = dict(raw_info)
             target = str(info.get("target_object_catalog") or info.get("target_object_name") or "")
@@ -134,8 +156,32 @@ class CDPRLCHOLSpec:
             second_reference = str(info.get("second_reference_object_catalog") or "")
             source_instruction = str(info.get("source_instruction") or info.get("language_instruction") or "")
 
-            if "grab_object" not in achieved and _grab_predicate(info):
-                achieved["grab_object"] = AchievedOption(
+            if _move_to_predicate(info):
+                key = ("move_to_object", target)
+                if key not in achieved:
+                    achieved[key] = AchievedOption(
+                        option_name="move_to_object",
+                        first_timestep=timestep,
+                        instruction=self._instruction_text("move_to_object", target, reference, second_reference),
+                        target_object=target,
+                        predicate_value=max(0.0, 1.0 - _float(info.get("distance_ee_to_object_xy"), 1.0)),
+                        metadata={"source_instruction": source_instruction},
+                    )
+
+            for direct_option, displacement in _direct_move_achievements(info):
+                key = (direct_option, "")
+                if key in achieved:
+                    continue
+                achieved[key] = AchievedOption(
+                    option_name=direct_option,
+                    first_timestep=timestep,
+                    instruction=self._instruction_text(direct_option, target, reference, second_reference),
+                    predicate_value=float(displacement),
+                    metadata={"source_instruction": source_instruction},
+                )
+
+            if ("grab_object", target) not in achieved and _grab_predicate(info):
+                achieved[("grab_object", target)] = AchievedOption(
                     option_name="grab_object",
                     first_timestep=timestep,
                     instruction=self._instruction_text("grab_object", target, reference, second_reference),
@@ -144,8 +190,8 @@ class CDPRLCHOLSpec:
                     metadata={"source_instruction": source_instruction},
                 )
 
-            if "pick_up" not in achieved and _pick_predicate(info):
-                achieved["pick_up"] = AchievedOption(
+            if ("pick_up", target) not in achieved and _pick_predicate(info):
+                achieved[("pick_up", target)] = AchievedOption(
                     option_name="pick_up",
                     first_timestep=timestep,
                     instruction=self._instruction_text("pick_up", target, reference, second_reference),
@@ -154,21 +200,40 @@ class CDPRLCHOLSpec:
                     metadata={"source_instruction": source_instruction},
                 )
 
-            push = _push_achievement(info)
-            if push and push not in achieved:
-                push_motion_key = "target_motion_y" if push in {"push_forward", "push_backward"} else "target_motion_x"
-                achieved[push] = AchievedOption(
+            for push, pushed_object, predicate_value in _push_achievements(info):
+                key = (push, pushed_object)
+                if key in achieved:
+                    continue
+                achieved[key] = AchievedOption(
                     option_name=push,
                     first_timestep=timestep,
-                    instruction=self._instruction_text(push, target, reference, second_reference),
-                    target_object=target,
-                    predicate_value=abs(_float(info.get(push_motion_key), 0.0)),
+                    instruction=self._instruction_text(push, pushed_object, reference, second_reference),
+                    target_object=pushed_object,
+                    predicate_value=float(predicate_value),
                     metadata={"source_instruction": source_instruction},
                 )
 
+            if _near_reference_predicate(info):
+                key = ("put_near_reference", target)
+                if key not in achieved:
+                    achieved[key] = AchievedOption(
+                        option_name="put_near_reference",
+                        first_timestep=timestep,
+                        instruction=self._instruction_text(
+                            "put_near_reference",
+                            target,
+                            reference,
+                            second_reference,
+                        ),
+                        target_object=target,
+                        reference_object=reference,
+                        predicate_value=max(0.0, 1.0 - _target_reference_xy_distance(info)),
+                        metadata={"source_instruction": source_instruction},
+                    )
+
             relation = _relation_achievement(info)
-            if relation and relation not in achieved:
-                achieved[relation] = AchievedOption(
+            if relation and (relation, target) not in achieved:
+                achieved[(relation, target)] = AchievedOption(
                     option_name=relation,
                     first_timestep=timestep,
                     instruction=self._instruction_text(relation, target, reference, second_reference),
@@ -179,7 +244,10 @@ class CDPRLCHOLSpec:
                     metadata={"source_instruction": source_instruction},
                 )
 
-        return sorted(achieved.values(), key=lambda item: (item.first_timestep, item.option_name))
+        return sorted(
+            achieved.values(),
+            key=lambda item: (item.first_timestep, item.option_name, item.target_object),
+        )
 
     def relabel_instruction(self, achieved_option: AchievedOption) -> str:
         if achieved_option.instruction:
@@ -222,6 +290,8 @@ class CDPRLCHOLSpec:
             if _normalise_instruction_text(source_instruction) == _normalise_instruction_text(instruction):
                 continue
             original_option = str(final.get("instruction_type") or final.get("option_name") or "")
+            if option.option_name not in _allowed_relabel_options(original_option):
+                continue
             prefix_start = int(start)
             prefix_end = int(end - 1)
             records.append(
@@ -279,11 +349,13 @@ class CDPRLCHOLSpec:
         if option == "push_backward":
             return f"push {target_text} backward"
         if option == "put_into_plate":
-            return f"put {target_text} into {reference_text or 'plate'}"
+            return f"put {target_text} on {reference_text or 'plate'}"
+        if option == "put_into_bowl":
+            return f"put {target_text} into {reference_text or 'bowl'}"
         if option == "move_left_of_object":
-            return f"move {target_text} to the left of {reference_text}"
+            return f"put {target_text} to the left of {reference_text}"
         if option == "move_right_of_object":
-            return f"move {target_text} to the right of {reference_text}"
+            return f"put {target_text} to the right of {reference_text}"
         if option == "move_in_front_of_object":
             return f"move {target_text} in front of {reference_text}"
         if option == "move_behind_object":
@@ -293,7 +365,21 @@ class CDPRLCHOLSpec:
         if option == "put_behind_object":
             return f"put {target_text} behind {reference_text}"
         if option == "move_between_objects":
-            return f"move {target_text} between {reference_text} and {second_text}"
+            return f"put {target_text} between {reference_text} and {second_text}"
+        if option == "move_left":
+            return "move left"
+        if option == "move_right":
+            return "move right"
+        if option == "move_top":
+            return "move forward"
+        if option == "move_bottom":
+            return "move backward"
+        if option == "move_up":
+            return "move up"
+        if option == "move_down":
+            return "move down"
+        if option == "put_near_reference":
+            return f"put {target_text} near {reference_text}"
         return option.replace("_", " ")
 
 
@@ -421,6 +507,90 @@ def _pick_predicate(info: Mapping[str, Any]) -> bool:
     return lift >= threshold
 
 
+def _allowed_relabel_options(source_option: str) -> frozenset[str]:
+    source = str(source_option or "")
+    if source == "move_to_object":
+        return frozenset({*_DIRECT_MOVE_OPTIONS, *_PUSH_OPTIONS})
+    if source in _PUSH_OPTIONS:
+        return frozenset({"move_to_object", *_DIRECT_MOVE_OPTIONS, *_PUSH_OPTIONS})
+    if source in _PLACEMENT_SOURCE_OPTIONS:
+        return frozenset(
+            {
+                "move_to_object",
+                "grab_object",
+                "pick_up",
+                "put_near_reference",
+                *_DIRECT_MOVE_OPTIONS,
+                *_PUSH_OPTIONS,
+            }
+        )
+    # Preserve the broader OpenVLA LC-HOL behavior for its legacy option set.
+    return frozenset(CDPRLCHOLSpec.option_names)
+
+
+def _move_to_predicate(info: Mapping[str, Any]) -> bool:
+    distance = _float(
+        info.get("distance_ee_to_object_xy", info.get("distance_to_goal_xy")),
+        1.0,
+    )
+    threshold = max(
+        _float(
+            info.get(
+                "move_to_object_validation_distance_threshold",
+                info.get("move_to_object_xy_tolerance", 0.03),
+            ),
+            0.03,
+        ),
+        1e-6,
+    )
+    z_ok = _boolish(
+        info.get(
+            "move_to_object_validation_z_excursion_ok",
+            info.get("move_to_object_z_excursion_ok", True),
+        ),
+        True,
+    )
+    return bool(distance <= threshold and z_ok)
+
+
+def _direct_move_achievements(info: Mapping[str, Any]) -> list[tuple[str, float]]:
+    current = np.asarray(info.get("ee_position", ()), dtype=np.float32).reshape(-1)
+    start = np.asarray(info.get("ee_start", ()), dtype=np.float32).reshape(-1)
+    if current.size < 3 or start.size < 3:
+        return []
+    delta = current[:3] - start[:3]
+    threshold = max(_float(info.get("lchol_direction_displacement_threshold"), 0.05), 1e-6)
+    mapping = (
+        ("move_left", 0, -1.0),
+        ("move_right", 0, 1.0),
+        ("move_bottom", 1, -1.0),
+        ("move_top", 1, 1.0),
+        ("move_down", 2, -1.0),
+        ("move_up", 2, 1.0),
+    )
+    return [
+        (name, float(sign * delta[axis]))
+        for name, axis, sign in mapping
+        if float(sign * delta[axis]) >= threshold
+    ]
+
+
+def _target_reference_xy_distance(info: Mapping[str, Any]) -> float:
+    target = np.asarray(info.get("target_object_position_actual", ()), dtype=np.float32).reshape(-1)
+    reference = np.asarray(info.get("reference_object_position", ()), dtype=np.float32).reshape(-1)
+    if target.size < 2 or reference.size < 2:
+        return float("inf")
+    return float(np.linalg.norm(target[:2] - reference[:2]))
+
+
+def _near_reference_predicate(info: Mapping[str, Any]) -> bool:
+    source = str(info.get("instruction_type") or "")
+    if source not in _PLACEMENT_SOURCE_OPTIONS:
+        return False
+    threshold = max(_float(info.get("lchol_near_reference_tolerance"), 0.16), 1e-6)
+    return bool(_target_reference_xy_distance(info) <= threshold)
+
+
 def _push_achievement(info: Mapping[str, Any]) -> str:
     if _wrong_object_contact(info) >= _WRONG_CONTACT_BLOCK_THRESHOLD:
         return ""
@@ -438,10 +608,45 @@ def _push_achievement(info: Mapping[str, Any]) -> str:
     return ""
 
 
+def _push_achievements(info: Mapping[str, Any]) -> list[tuple[str, str, float]]:
+    out: list[tuple[str, str, float]] = []
+    target = str(info.get("target_object_catalog") or info.get("target_object_name") or "")
+    target_push = _push_achievement(info)
+    if target_push:
+        motion_key = "target_motion_y" if target_push in {"push_forward", "push_backward"} else "target_motion_x"
+        out.append((target_push, target, abs(_float(info.get(motion_key), 0.0))))
+
+    names = [str(item) for item in (info.get("scene_objects") or ())]
+    current = np.asarray(info.get("all_object_positions", ()), dtype=np.float32)
+    initial = np.asarray(info.get("initial_all_object_positions", ()), dtype=np.float32)
+    if current.ndim != 2 or initial.ndim != 2:
+        return out
+    count = min(len(names), current.shape[0], initial.shape[0])
+    threshold = max(_float(info.get("push_success_displacement"), 0.08), 0.02)
+    for index in range(count):
+        name = names[index]
+        if not name or name == target:
+            continue
+        delta = current[index, :2] - initial[index, :2]
+        candidates = (
+            ("push_right", float(delta[0])),
+            ("push_left", float(-delta[0])),
+            ("push_forward", float(delta[1])),
+            ("push_backward", float(-delta[1])),
+        )
+        for option, signed_motion in candidates:
+            if signed_motion >= threshold:
+                out.append((option, name, signed_motion))
+                break
+    return out
+
+
 def _relation_achievement(info: Mapping[str, Any]) -> str:
     instruction = str(info.get("instruction_type") or "")
-    if instruction == "put_into_plate" and (_success(info) >= 0.5 or _relation_score(info, default_scale=0.16) >= 0.75):
-        return "put_into_plate"
+    if instruction in {"put_into_plate", "put_into_bowl"} and (
+        _success(info) >= 0.5 or _relation_score(info, default_scale=0.16) >= 0.75
+    ):
+        return instruction
     if instruction == "move_between_objects" and _success(info) >= 0.5:
         return "move_between_objects"
     if instruction in {

@@ -854,6 +854,73 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertAlmostEqual(info["signed_relation_offset"], 0.055, places=6)
         self.assertEqual(info["relation_axis"], 1.0)
 
+    def test_push_success_rejects_object_that_fell_below_support(self):
+        spec = InstructionSpec(
+            instruction_type="push_right",
+            text="push apple right",
+            target_object="ycb_apple",
+            direction=np.array([1.0, 0.0, 0.0], dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        initial = np.array([0.00, 0.00, 0.10], dtype=np.float32)
+        fallen = np.array([0.09, 0.00, 0.02], dtype=np.float32)
+
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.08, 0.00, 0.18], dtype=np.float32),
+            obj_pos=fallen,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+                initial_obj_pos=initial,
+            ),
+            task_metadata={
+                "push_success_displacement": 0.08,
+                "push_require_object_on_support": True,
+                "push_support_min_clearance": 0.005,
+                "push_support_vertical_tolerance": 0.06,
+            },
+            support_surface_z=0.035,
+        )
+
+        self.assertFalse(success)
+        self.assertEqual(reward, 0.0)
+        self.assertEqual(info["push_support_ok"], 0.0)
+
+    def test_push_support_guard_accepts_tabletop_displacement(self):
+        spec = InstructionSpec(
+            instruction_type="push_left",
+            text="push apple left",
+            target_object="ycb_apple",
+            direction=np.array([-1.0, 0.0, 0.0], dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        initial = np.array([0.10, 0.00, 0.10], dtype=np.float32)
+        moved = np.array([0.015, 0.00, 0.071], dtype=np.float32)
+
+        _reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.07, 0.00, 0.09], dtype=np.float32),
+            obj_pos=moved,
+            reward_state=init_reward_state(
+                initial_ee_pos=np.array([0.20, 0.0, 0.20], dtype=np.float32),
+                initial_obj_pos=initial,
+            ),
+            task_metadata={
+                "push_success_displacement": 0.08,
+                "push_require_object_on_support": True,
+                "push_support_min_clearance": 0.005,
+                "push_support_vertical_tolerance": 0.06,
+                "push_position_only_reward": True,
+            },
+            support_surface_z=0.035,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(info["push_support_ok"], 1.0)
+        self.assertEqual(info["push_position_only_reward"], 1.0)
+
     def test_left_of_object_sparse_reward_uses_square_success_zone(self):
         class _Env:
             def _get_body_position(self, body_name):

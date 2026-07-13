@@ -11,7 +11,7 @@ import time
 from collections import deque
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -763,15 +763,27 @@ def _run_smolvla_distinct_validation(
     global_step: int,
     stage_index: int,
     instruction_types: Sequence[str],
+    reset_options_by_instruction: Mapping[str, Mapping[str, Any]] | None = None,
+    episodes_per_instruction: int | None = None,
+    record_videos: bool = True,
 ) -> dict[str, Any]:
-    episode_count = max(1, int(args.validation_episodes_per_instruction))
+    episode_count = max(
+        1,
+        int(
+            args.validation_episodes_per_instruction
+            if episodes_per_instruction is None
+            else episodes_per_instruction
+        ),
+    )
     replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
     actor = trainer._unwrap(trainer.actor)
     was_training = bool(actor.training)
     previous_instruction_types = getattr(validation_env, "instruction_types", None)
     results: list[dict[str, Any]] = []
     saved_videos: list[dict[str, Any]] = []
-    video_limit = max(0, int(getattr(args, "validation_video_count", 0)))
+    video_limit = (
+        max(0, int(getattr(args, "validation_video_count", 0))) if record_videos else 0
+    )
     video_slots = _validation_video_episode_slots(
         instruction_count=len(instruction_types),
         episode_count=episode_count,
@@ -790,8 +802,12 @@ def _run_smolvla_distinct_validation(
                     + int(instruction_index) * 1009
                     + int(episode_index)
                 )
+                reset_options = dict(
+                    (reset_options_by_instruction or {}).get(str(instruction_type), {})
+                )
+                reset_options.setdefault("instruction_type", str(instruction_type))
                 with _silence_output(True):
-                    obs, info = validation_env.reset(seed=seed)
+                    obs, info = validation_env.reset(seed=seed, options=reset_options)
                 should_record_video = (int(instruction_index), int(episode_index)) in video_slots
                 recording_state = _begin_validation_recording(validation_env, should_record_video)
                 video_summary: dict[str, Any] | None = None
@@ -853,6 +869,7 @@ def _run_smolvla_distinct_validation(
                         "episode_length": int(episode_length),
                         "terminated": bool(terminated),
                         "truncated": bool(truncated),
+                        "curriculum_shell": int(info.get("curriculum_shell", -1)),
                     }
                     if should_record_video:
                         video_summary = _save_training_validation_video(

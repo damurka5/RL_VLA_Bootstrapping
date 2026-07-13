@@ -499,7 +499,13 @@ class LCHOLGRPORuntime:
             )
         except Exception:
             records = []
+        allowed_options = {
+            str(option)
+            for option in (self.sparse_instruction_types or self.available_options)
+        }
         for record in records:
+            if allowed_options and str(record.option_name) not in allowed_options:
+                continue
             self.replay.add(record.option_name, record)
             episode_key = self._episode_key(info)
             self.replay_episode_keys.add(episode_key)

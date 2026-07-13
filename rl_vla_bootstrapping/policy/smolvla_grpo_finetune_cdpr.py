@@ -8,7 +8,7 @@ import random
 import time
 from collections import deque
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -27,6 +27,7 @@ except Exception:  # pragma: no cover - optional dependency
     SummaryWriter = None
 
 from rl_vla_bootstrapping.policy.octo_cdpr_adapter import CDPRStateLayout
+from rl_vla_bootstrapping.lchol.smolvla_complex import SmolVLAComplexRuntime
 from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
     ResidualChunkActor,
     _apply_dense_stage_to_envs,
@@ -206,6 +207,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--status-every-steps", type=int, default=500)
     parser.add_argument("--metrics-window-episodes", type=int, default=100)
 
+    parser.add_argument(
+        "--complex-training-approach",
+        choices=("none", "reverse_frontier", "lchol_hindsight"),
+        default="none",
+    )
+    parser.add_argument("--reverse-frontier-promotion-success", type=float, default=0.80)
+    parser.add_argument("--reverse-frontier-demotion-success", type=float, default=-1.0)
+    parser.add_argument("--reverse-frontier-validation-episodes", type=int, default=50)
+    parser.add_argument("--reverse-frontier-min-train-updates", type=int, default=1)
+    parser.add_argument("--reverse-frontier-saturation-abort-threshold", type=float, default=1.01)
+    parser.add_argument("--reverse-frontier-sample-probability", type=float, default=0.80)
+    parser.add_argument("--reverse-frontier-rehearsal-probability", type=float, default=0.20)
+    parser.add_argument("--lchol-hindsight-replay-capacity", type=int, default=20000)
+    parser.add_argument("--lchol-hindsight-replay-ratio", type=float, default=0.25)
+    parser.add_argument("--lchol-hindsight-prefix-max-steps", type=int, default=16)
+    parser.add_argument("--lchol-hindsight-bc-coef", type=float, default=0.20)
+    parser.add_argument("--put-stage-promotion-success", type=float, default=0.80)
+    parser.add_argument("--put-stage-min-episodes", type=int, default=30)
+    parser.add_argument("--put-stage-history-episodes", type=int, default=50)
+
     parser.add_argument("--dense-stage-one-instruction-types", nargs="+", default=None)
     parser.add_argument("--dense-stage-two-instruction-types", nargs="+", default=None)
     parser.add_argument("--dense-stage-switch-success-rate", type=float, default=0.50)
@@ -229,6 +250,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validation-seed", type=int, default=1000000)
     parser.add_argument("--validation-video-count", type=int, default=3)
     parser.add_argument("--validation-video-fps", type=float, default=10.0)
+    parser.add_argument("--comparison-validation-episodes-per-instruction", type=int, default=10)
 
     args = parser.parse_args(argv)
     if args.batch_size is not None and args.minibatch_size is None:
@@ -302,6 +324,8 @@ class SmolVLAGRPOTrainer:
             weight_decay=float(args.weight_decay),
         )
         self.gradient_step = 0
+        self.loaded_extra_state: dict[str, Any] = {}
+        self.bootstrap_source = "fresh_grpo"
 
     @staticmethod
     def _unwrap(module: nn.Module) -> nn.Module:
@@ -344,7 +368,12 @@ class SmolVLAGRPOTrainer:
             mean.detach().to(dtype=torch.float32).cpu().numpy()[0],
         )
 
-    def update(self, records: list[dict[str, Any]]) -> dict[str, float]:
+    def update(
+        self,
+        records: list[dict[str, Any]],
+        *,
+        hindsight_records: Sequence[Mapping[str, Any]] = (),
+    ) -> dict[str, float]:
         if not records:
             return {}
         states = torch.as_tensor(np.stack([row["state"] for row in records]), dtype=torch.float32, device=self.device)
@@ -397,7 +426,7 @@ class SmolVLAGRPOTrainer:
                 self.gradient_step += 1
 
         base = self._unwrap(self.actor)
-        return {
+        metrics = {
             "loss_policy_mean": float(np.mean(policy_losses)) if policy_losses else 0.0,
             "entropy_mean": float(np.mean(entropy_values)) if entropy_values else 0.0,
             "approx_kl_mean": float(np.mean(approx_kls)) if approx_kls else 0.0,
@@ -408,15 +437,89 @@ class SmolVLAGRPOTrainer:
             "train_records": float(n_items),
         }
 
+        hindsight_losses: list[float] = []
+        bc_coef = max(0.0, float(getattr(self.args, "lchol_hindsight_bc_coef", 0.0)))
+        if hindsight_records and bc_coef > 0.0:
+            replay_states = torch.as_tensor(
+                np.stack([row["state"] for row in hindsight_records]),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            replay_priors = torch.as_tensor(
+                np.stack([row["prior"] for row in hindsight_records]),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            replay_actions = torch.as_tensor(
+                np.stack([row["action"] for row in hindsight_records]),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            replay_indices = torch.as_tensor(
+                [int(row.get("action_index", 0)) for row in hindsight_records],
+                dtype=torch.long,
+                device=self.device,
+            )
+            replay_minibatch = max(1, min(int(self.args.minibatch_size), len(hindsight_records)))
+            order = torch.randperm(len(hindsight_records), device=self.device)
+            for start in range(0, len(hindsight_records), replay_minibatch):
+                idx = order[start : start + replay_minibatch]
+                self.optimizer.zero_grad(set_to_none=True)
+                mean, log_std = self._mean_and_log_std(
+                    replay_states[idx], replay_priors[idx], replay_indices[idx]
+                )
+                nll = -_normal_log_prob(replay_actions[idx], mean, log_std).mean()
+                (bc_coef * nll).backward()
+                if float(self.args.max_grad_norm) > 0.0:
+                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), float(self.args.max_grad_norm))
+                self.optimizer.step()
+                self.gradient_step += 1
+                hindsight_losses.append(float(nll.detach().item()))
+        metrics.update(
+            {
+                "hindsight_records": float(len(hindsight_records)),
+                "hindsight_bc_loss": float(np.mean(hindsight_losses)) if hindsight_losses else 0.0,
+                "hindsight_bc_coef": float(bc_coef),
+            }
+        )
+        return metrics
+
     def load(self, checkpoint_path: Path) -> int:
-        payload = torch.load(Path(checkpoint_path), map_location=self.device)
-        self._unwrap(self.actor).load_state_dict(payload["policy"])
-        if "optimizer" in payload:
-            self.optimizer.load_state_dict(payload["optimizer"])
-        self.gradient_step = int(payload.get("gradient_step", 0))
+        try:
+            payload = torch.load(
+                Path(checkpoint_path),
+                map_location=self.device,
+                weights_only=False,
+            )
+        except TypeError:  # PyTorch < 2.6 has no weights_only keyword.
+            payload = torch.load(Path(checkpoint_path), map_location=self.device)
+        base = self._unwrap(self.actor)
+        if "policy" in payload:
+            base.load_state_dict(payload["policy"])
+            if "optimizer" in payload:
+                self.optimizer.load_state_dict(payload["optimizer"])
+            self.gradient_step = int(payload.get("gradient_step", 0))
+            self.loaded_extra_state = dict(payload.get("extra_state") or {})
+            self.bootstrap_source = "grpo_resume"
+        elif "actor" in payload:
+            base.actor.load_state_dict(payload["actor"])
+            self.gradient_step = 0
+            self.loaded_extra_state = {}
+            self.bootstrap_source = "smolvla_td3_actor"
+        else:
+            raise KeyError(
+                f"Unsupported SmolVLA checkpoint {checkpoint_path}: expected 'policy' or 'actor'."
+            )
         return int(payload.get("global_step", 0))
 
-    def save(self, *, global_step: int, args: argparse.Namespace, latest: bool = False) -> Path:
+    def save(
+        self,
+        *,
+        global_step: int,
+        args: argparse.Namespace,
+        latest: bool = False,
+        extra_state: Mapping[str, Any] | None = None,
+    ) -> Path:
         payload = {
             "policy_type": "smolvla_cdpr_grpo",
             "base_checkpoint": str(args.base_checkpoint),
@@ -429,6 +532,7 @@ class SmolVLAGRPOTrainer:
             "hidden_dim": int(args.hidden_dim),
             "policy": self._unwrap(self.actor).state_dict(),
             "optimizer": self.optimizer.state_dict(),
+            "extra_state": dict(extra_state or {}),
             "args": vars(args),
         }
         if latest:
@@ -447,7 +551,7 @@ def _resolve_checkpoint(raw: str | Path) -> Path:
     path = Path(raw).expanduser().resolve()
     if path.is_file():
         return path
-    for name in ("smolvla_grpo_adapter.pt", "latest.pt"):
+    for name in ("smolvla_grpo_adapter.pt", "smolvla_cdpr_adapter.pt", "latest.pt"):
         candidate = path / name
         if candidate.is_file():
             return candidate
@@ -542,6 +646,11 @@ def _evaluate_candidate_group(
         "candidate_reward_min": float(reward_arr.min()),
         "candidate_selected_reward": float(reward_arr[selected]),
         "candidate_selected_index": int(selected),
+        "candidate_success_count": float(np.sum(reward_arr >= 1.0 - 1e-6)),
+        "candidate_binary_reward_rate": float(
+            np.mean(np.logical_or(np.isclose(reward_arr, 0.0), np.isclose(reward_arr, 1.0)))
+        ),
+        "zero_advantage_group": float(float(reward_arr.std()) <= 1e-8),
     }
     return records, selected, group_stats
 
@@ -587,7 +696,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     metrics_path = run_dir / "metrics.jsonl"
 
     metrics_window = max(1, int(args.metrics_window_episodes))
-    dense_curriculum_active = _dense_curriculum_enabled(args)
+    complex_runtime = SmolVLAComplexRuntime(args=args, seed=int(rollout_seed))
+    complex_training_active = str(args.complex_training_approach) != "none"
+    dense_curriculum_active = _dense_curriculum_enabled(args) and not complex_training_active
     dense_stage_index = 1 if dense_curriculum_active else 0
     dense_stage_successes: deque[float] = deque(maxlen=metrics_window)
     dense_stage_episode_count = 0
@@ -624,6 +735,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     _log(dist_ctx, f"[smolvla-grpo] Loaded SmolVLA; {runtime.device_summary()}")
 
     slots: list[EnvSlot] = []
+    episode_initial_object_positions: dict[int, np.ndarray] = {}
     validation_env = None
     progress = None
     try:
@@ -635,8 +747,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                 env = _build_env(args, seed=seed)
                 if dense_curriculum_active:
                     dense_stage_instruction_types = _apply_dense_stage_to_envs([env], args, dense_stage_index)
-                obs, info = env.reset(seed=seed, options=mixed_sampler.reset_options(dense_stage_index))
+                reset_options = (
+                    complex_runtime.reset_options()
+                    if complex_training_active
+                    else mixed_sampler.reset_options(dense_stage_index)
+                )
+                obs, info = env.reset(seed=seed, options=reset_options)
             layout = CDPRStateLayout.from_observation(obs) if env_idx == 0 else layout
+            episode_initial_object_positions[env_idx] = np.asarray(
+                obs["all_object_positions"], dtype=np.float32
+            ).copy()
+            complex_runtime.reset_episode(env_idx)
             slots.append(
                 EnvSlot(
                     env=env,
@@ -667,7 +788,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.resume_checkpoint:
             resume_path = _resolve_checkpoint(args.resume_checkpoint)
             start_step = trainer.load(resume_path)
-            _log(dist_ctx, f"[smolvla-grpo] Resumed checkpoint {resume_path} at step {start_step}")
+            complex_runtime.load_state_dict(
+                dict(trainer.loaded_extra_state.get("complex_runtime") or {})
+            )
+            _log(
+                dist_ctx,
+                f"[smolvla-grpo] Loaded checkpoint {resume_path} at step {start_step} "
+                f"(source={trainer.bootstrap_source})",
+            )
 
         manifest = {
             "policy_type": "smolvla_cdpr_grpo",
@@ -679,6 +807,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             "frozen_smolvla": True,
             "trainable_surface": "residual_chunk_head_and_log_std",
             "no_td3_critics": True,
+            "checkpoint_bootstrap_source": str(trainer.bootstrap_source),
+            "complex_training_approach": str(args.complex_training_approach),
+            "policy_gradient_reward": "exact_sparse_binary_0_or_1",
+            "hindsight_replay_role": (
+                "separate_auxiliary_behavior_cloning"
+                if complex_runtime.hindsight_enabled
+                else "disabled"
+            ),
             "grpo": {
                 "group_size": int(args.grpo_group_size),
                 "group_selection": str(args.grpo_group_selection),
@@ -697,6 +833,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         }
         if dist_ctx.is_main:
             _write_json(run_dir / "smolvla_grpo_manifest.json", manifest)
+            _write_json(run_dir / "complex_curriculum_state.json", complex_runtime.json_state())
 
         global_step = int(start_step)
         last_validation_step = int(start_step)
@@ -729,7 +866,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                         args=args,
                         progress_only=bool(args.progress_only) or not dist_ctx.is_main,
                     )
+                    source_instruction_type = _info_instruction_type(slot.info, slot.instruction)
+                    for record in records:
+                        record["instruction_type"] = str(source_instruction_type)
                     selected_action = np.asarray(records[selected_idx]["action"], dtype=np.float32)
+                    pre_action_snapshot = slot.env.capture_state()
                     with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
                         next_obs, reward, terminated, truncated, next_info = slot.env.step(selected_action)
                     next_state = layout.flatten(next_obs)
@@ -740,6 +881,66 @@ def main(argv: Sequence[str] | None = None) -> None:
                     global_step += 1
                     slot.episode_length += 1
                     slot.episode_reward += float(reward)
+
+                    if complex_runtime.hindsight_enabled:
+                        trajectory_step = dict(next_info)
+                        trajectory_step.update(
+                            {
+                                "action": selected_action.copy(),
+                                "source_instruction": str(slot.instruction),
+                                "instruction_type": str(source_instruction_type),
+                                "all_object_positions": np.asarray(
+                                    next_obs["all_object_positions"], dtype=np.float32
+                                ).copy(),
+                                "initial_all_object_positions": episode_initial_object_positions[
+                                    slot_idx
+                                ].copy(),
+                                "source_rollout_id": f"rank{dist_ctx.rank}-slot{slot_idx}-episode{slot.episode}",
+                                "source_policy_version": int(trainer.gradient_step),
+                            }
+                        )
+                        new_relabels = complex_runtime.append_trajectory_step(
+                            slot_idx, trajectory_step
+                        )
+                        eligible_relabels = [
+                            hindsight
+                            for hindsight in new_relabels
+                            if int(hindsight.first_timestep) == int(slot.episode_length - 1)
+                        ]
+                        if eligible_relabels:
+                            post_action_snapshot = slot.env.capture_state()
+                            try:
+                                slot.env.restore_state(pre_action_snapshot)
+                                with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
+                                    relabeled_priors = runtime.sample_cdpr_chunks_from_envs(
+                                        envs=[slot.env] * len(eligible_relabels),
+                                        observations=[slot.obs] * len(eligible_relabels),
+                                        infos=[slot.info] * len(eligible_relabels),
+                                        instructions=[
+                                            str(hindsight.instruction)
+                                            for hindsight in eligible_relabels
+                                        ],
+                                    )
+                                for hindsight, relabeled_prior in zip(
+                                    eligible_relabels, relabeled_priors
+                                ):
+                                    complex_runtime.add_hindsight_record(
+                                        {
+                                            "option_name": str(hindsight.option_name),
+                                            "instruction": str(hindsight.instruction),
+                                            "source_instruction": str(hindsight.source_instruction),
+                                            "state": np.asarray(slot.state, dtype=np.float32).copy(),
+                                            "prior": np.asarray(
+                                                relabeled_prior, dtype=np.float32
+                                            ).copy(),
+                                            "action_index": 0,
+                                            "action": selected_action.copy(),
+                                            "first_timestep": int(hindsight.first_timestep),
+                                            "metadata": dict(hindsight.metadata),
+                                        }
+                                    )
+                            finally:
+                                slot.env.restore_state(post_action_snapshot)
 
                     dense_stage_switched = False
                     if dense_curriculum_active:
@@ -804,6 +1005,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                             success_count=dense_stage_success_count,
                         )
                         group_reward_mean = float(np.mean([item["candidate_reward_mean"] for item in rollout_group_stats])) if rollout_group_stats else 0.0
+                        zero_advantage_rate = float(
+                            np.mean([item["zero_advantage_group"] for item in rollout_group_stats])
+                        ) if rollout_group_stats else 0.0
+                        binary_reward_rate = float(
+                            np.mean([item["candidate_binary_reward_rate"] for item in rollout_group_stats])
+                        ) if rollout_group_stats else 0.0
+                        complex_metrics = complex_runtime.metrics()
                         row = {
                             "event": "rollout_step",
                             "global_step": int(global_step),
@@ -816,8 +1024,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                             "done": bool(done),
                             "instruction": str(slot.instruction),
                             "candidate_reward_mean": group_reward_mean,
+                            "zero_advantage_group_rate": zero_advantage_rate,
+                            "candidate_binary_reward_rate": binary_reward_rate,
                             **episode_metrics,
                             **dense_stage_metrics,
+                            **complex_metrics,
                             **last_metrics,
                             **_gpu_metrics(device),
                         }
@@ -827,13 +1038,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                             "rollout/reward": float(reward),
                             "rollout/episode_reward_running": float(slot.episode_reward),
                             "rollout/candidate_reward_mean": group_reward_mean,
+                            "rollout/zero_advantage_group_rate": zero_advantage_rate,
+                            "rollout/candidate_binary_reward_rate": binary_reward_rate,
                             "rollout/grpo_records_pending": float(len(rollout_records)),
                             **{f"gpu/{k}": v for k, v in _gpu_metrics(device).items()},
                         }
                         rollout_scalars.update(_episode_metric_scalars(episode_metrics))
                         rollout_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
+                        rollout_scalars.update(complex_runtime.metrics(consume_interval_counts=True))
                         _log_scalars(writer, rollout_scalars, global_step)
-                        _log_mixed_curriculum_scalars(writer, mixed_sampler.snapshot(), global_step)
+                        if not complex_training_active:
+                            _log_mixed_curriculum_scalars(writer, mixed_sampler.snapshot(), global_step)
 
                     if progress is not None:
                         progress.update(1)
@@ -872,7 +1087,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                         )
 
                     if dist_ctx.is_main and global_step % max(1, int(args.save_every_steps)) == 0:
-                        checkpoint = trainer.save(global_step=global_step, args=args, latest=False)
+                        checkpoint = trainer.save(
+                            global_step=global_step,
+                            args=args,
+                            latest=False,
+                            extra_state={"complex_runtime": complex_runtime.state_dict()},
+                        )
+                        _write_json(
+                            run_dir / "complex_curriculum_state.json",
+                            complex_runtime.json_state(),
+                        )
                         _log(dist_ctx, f"[smolvla-grpo] Saved checkpoint: {checkpoint}", progress=progress)
 
                     if _validation_due(args, global_step=global_step, last_validation_step=last_validation_step):
@@ -883,6 +1107,72 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 dense_stage_index=dense_stage_index,
                             )
                             if validation_env is not None and validation_instruction_types:
+                                reverse_plan = dict(complex_runtime.reverse_validation_plan())
+                                if reverse_plan:
+                                    active_instruction_types = tuple(reverse_plan)
+                                    active_reset_options = {
+                                        instruction: {
+                                            "instruction_type": instruction,
+                                            "curriculum_mode": "reverse_frontier",
+                                            "curriculum_shell": int(shell),
+                                            "start_with_caught_object": False,
+                                            "start_with_target_at_gripper": False,
+                                        }
+                                        for instruction, shell in reverse_plan.items()
+                                    }
+                                    active_summary = _run_smolvla_distinct_validation(
+                                        validation_env=validation_env,
+                                        runtime=runtime,
+                                        trainer=trainer,
+                                        layout=layout,
+                                        args=args,
+                                        global_step=global_step,
+                                        stage_index=dense_stage_index,
+                                        instruction_types=active_instruction_types,
+                                        reset_options_by_instruction=active_reset_options,
+                                        episodes_per_instruction=int(
+                                            args.reverse_frontier_validation_episodes
+                                        ),
+                                        record_videos=False,
+                                    )
+                                    active_summary["event"] = "reverse_frontier_validation"
+                                    active_summary["reverse_frontier_shells"] = reverse_plan
+                                    with metrics_path.open("a", encoding="utf-8") as handle:
+                                        handle.write(json.dumps(active_summary, sort_keys=True) + "\n")
+                                    per_instruction = active_summary.get(
+                                        "validation_instruction_results", {}
+                                    )
+                                    complex_runtime.record_reverse_validation(
+                                        [
+                                            {
+                                                "instruction_id": instruction,
+                                                "shell_id": int(shell),
+                                                "success_rate": float(
+                                                    per_instruction.get(instruction, {}).get(
+                                                        "success_rate", 0.0
+                                                    )
+                                                    or 0.0
+                                                ),
+                                                "rollouts": int(
+                                                    per_instruction.get(instruction, {}).get(
+                                                        "episodes", 0
+                                                    )
+                                                    or 0
+                                                ),
+                                                "action_saturation_rate": 0.0,
+                                            }
+                                            for instruction, shell in reverse_plan.items()
+                                        ]
+                                    )
+                                    _write_json(
+                                        run_dir / "complex_curriculum_state.json",
+                                        complex_runtime.json_state(),
+                                    )
+                                    _log_scalars(
+                                        writer,
+                                        complex_runtime.metrics(),
+                                        global_step,
+                                    )
                                 validation_summary = _run_smolvla_distinct_validation(
                                     validation_env=validation_env,
                                     runtime=runtime,
@@ -892,7 +1182,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                                     global_step=global_step,
                                     stage_index=dense_stage_index,
                                     instruction_types=validation_instruction_types,
+                                    reset_options_by_instruction=None,
+                                    episodes_per_instruction=int(
+                                        args.comparison_validation_episodes_per_instruction
+                                    ),
+                                    record_videos=True,
                                 )
+                                validation_summary["event"] = "full_task_comparison_validation"
                                 _write_validation_summary(
                                     metrics_path=metrics_path,
                                     writer=writer,
@@ -908,6 +1204,20 @@ def main(argv: Sequence[str] | None = None) -> None:
                         last_validation_step = int(global_step)
 
                     if done:
+                        episode_instruction_type = _info_instruction_type(
+                            next_info, slot.instruction
+                        )
+                        episode_put_stage = int(
+                            slot.info.get(
+                                "curriculum_put_start_stage",
+                                slot.info.get("curriculum_shell", -1),
+                            )
+                        )
+                        put_stage_promoted = complex_runtime.record_episode(
+                            instruction_type=episode_instruction_type,
+                            success=episode_success,
+                            episode_put_stage=episode_put_stage,
+                        )
                         completed_episode_rewards.append(float(slot.episode_reward))
                         completed_episode_successes.append(1.0 if episode_success else 0.0)
                         completed_episode_count += 1
@@ -944,9 +1254,15 @@ def main(argv: Sequence[str] | None = None) -> None:
                                             "instruction": str(slot.instruction),
                                             "episode_dense_stage_index": int(slot.stage_index),
                                             "dense_stage_switched": bool(dense_stage_switched),
+                                            "put_stage_promoted": bool(put_stage_promoted),
                                             **episode_metrics,
                                             **dense_stage_metrics,
-                                            **mixed_sampler.snapshot(),
+                                            **complex_runtime.metrics(),
+                                            **(
+                                                {}
+                                                if complex_training_active
+                                                else mixed_sampler.snapshot()
+                                            ),
                                         },
                                         sort_keys=True,
                                     )
@@ -958,15 +1274,27 @@ def main(argv: Sequence[str] | None = None) -> None:
                             }
                             done_scalars.update(_episode_metric_scalars(episode_metrics))
                             done_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
+                            done_scalars.update(complex_runtime.metrics())
                             _log_scalars(writer, done_scalars, global_step)
-                            _log_mixed_curriculum_scalars(writer, mixed_sampler.snapshot(), global_step)
+                            if not complex_training_active:
+                                _log_mixed_curriculum_scalars(writer, mixed_sampler.snapshot(), global_step)
                         slot.episode += 1
-                        mixed_sampler.record(_info_instruction_type(next_info, slot.instruction), episode_success)
+                        if not complex_training_active:
+                            mixed_sampler.record(episode_instruction_type, episode_success)
+                        reset_options = (
+                            complex_runtime.reset_options()
+                            if complex_training_active
+                            else mixed_sampler.reset_options(dense_stage_index)
+                        )
                         with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
                             obs, info = slot.env.reset(
                                 seed=None,
-                                options=mixed_sampler.reset_options(dense_stage_index),
+                                options=reset_options,
                             )
+                        episode_initial_object_positions[slot_idx] = np.asarray(
+                            obs["all_object_positions"], dtype=np.float32
+                        ).copy()
+                        complex_runtime.reset_episode(slot_idx)
                         slot.obs = obs
                         slot.info = dict(info)
                         slot.state = layout.flatten(obs)
@@ -982,12 +1310,25 @@ def main(argv: Sequence[str] | None = None) -> None:
                     slot.instruction = _safe_instruction(slot.info)
 
             if rollout_records:
-                last_metrics = trainer.update(rollout_records)
+                hindsight_records = complex_runtime.sample_hindsight(len(rollout_records))
+                last_metrics = trainer.update(
+                    rollout_records,
+                    hindsight_records=hindsight_records,
+                )
+                complex_runtime.record_train_update(
+                    [str(item.get("instruction_type", "")) for item in rollout_records]
+                )
                 if dist_ctx.is_main:
                     _log_scalars(writer, {f"train/{k}": v for k, v in last_metrics.items()}, trainer.gradient_step)
 
         if dist_ctx.is_main:
-            latest = trainer.save(global_step=global_step, args=args, latest=True)
+            latest = trainer.save(
+                global_step=global_step,
+                args=args,
+                latest=True,
+                extra_state={"complex_runtime": complex_runtime.state_dict()},
+            )
+            _write_json(run_dir / "complex_curriculum_state.json", complex_runtime.json_state())
             _log(dist_ctx, f"[smolvla-grpo] Final latest checkpoint: {latest}", progress=progress)
     finally:
         if progress is not None:

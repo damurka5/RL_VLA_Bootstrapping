@@ -387,6 +387,7 @@ class RewardState:
     grasped: bool = False
     step_count: int = 0
     path_length: float = 0.0
+    max_abs_z_displacement: float = 0.0
     translation_sign_flip_count: int = 0
     translation_sign_comparison_count: int = 0
     prev_action: Optional[np.ndarray] = None
@@ -531,6 +532,32 @@ def sample_instruction(
         reference_object=reference_name,
         second_reference_object=second_reference_name,
     )
+
+
+def instruction_text_for_metadata(
+    spec: InstructionSpec,
+    task_metadata: Optional[dict[str, Any]] = None,
+) -> str:
+    """Return the language form while preserving the canonical internal task id."""
+    metadata = dict(task_metadata or {})
+    target = canonical_object_name(spec.target_object)
+    reference = canonical_object_name(spec.reference_object)
+    second_reference = canonical_object_name(spec.second_reference_object)
+
+    if spec.instruction_type == "put_into_plate" and _metadata_bool(
+        metadata,
+        "put_plate_language_use_on",
+        False,
+    ):
+        return f"put {target} on {reference or 'plate'}"
+    if _metadata_bool(metadata, "put_relation_language", False):
+        if spec.instruction_type == "move_left_of_object":
+            return f"put {target} to the left of {reference}"
+        if spec.instruction_type == "move_right_of_object":
+            return f"put {target} to the right of {reference}"
+        if spec.instruction_type == "move_between_objects":
+            return f"put {target} between {reference} and {second_reference}"
+    return str(spec.text)
 
 
 def init_reward_state(initial_ee_pos: np.ndarray, initial_obj_pos: np.ndarray) -> RewardState:
@@ -920,24 +947,25 @@ def compute_instruction_reward(
         )
 
     if _use_sparse_binary_reward(task_metadata):
-        return finish(
-            _compute_sparse_binary_reward(
-                spec=spec,
-                ee_pos=ee_pos,
-                goal_pos=goal_pos,
-                reward_state=reward_state,
-                action=action,
-                task_metadata=task_metadata,
-                gripper_opening=gripper_opening,
-                support_surface_z=support_surface_z,
-                caught_object_is_target=caught_object_is_target,
-                caught_object_score=caught_object_score,
-                caught_object_catalog=caught_object_catalog,
-                env=env,
-                target_body_name=target_body_name,
-                reference_body_name=reference_body_name,
-                second_reference_body_name=second_reference_body_name,
-            )
+        # Sparse mode is an exact task outcome, not a dense reward with a sparse
+        # term.  In particular, output scaling and motion-quality penalties must
+        # not turn {0, 1} into fractional or negative rewards.
+        return _compute_sparse_binary_reward(
+            spec=spec,
+            ee_pos=ee_pos,
+            goal_pos=goal_pos,
+            reward_state=reward_state,
+            action=action,
+            task_metadata=task_metadata,
+            gripper_opening=gripper_opening,
+            support_surface_z=support_surface_z,
+            caught_object_is_target=caught_object_is_target,
+            caught_object_score=caught_object_score,
+            caught_object_catalog=caught_object_catalog,
+            env=env,
+            target_body_name=target_body_name,
+            reference_body_name=reference_body_name,
+            second_reference_body_name=second_reference_body_name,
         )
 
     if (
@@ -1190,7 +1218,11 @@ def _sparse_reward_value(
 
 def _force_binary_sparse_metadata(task_metadata: Optional[dict[str, Any]]) -> dict[str, Any]:
     metadata = dict(task_metadata or {})
+    metadata["sparse_success_reward"] = 1.0
+    metadata["sparse_failure_reward"] = 0.0
     metadata["action_saturation_penalty_weight"] = 0.0
+    metadata["manipulation_dense_reward_enabled"] = False
+    metadata["carried_object_fall_penalty"] = 0.0
     return metadata
 
 
@@ -1914,7 +1946,7 @@ def _compute_sparse_binary_reward(
             reference_body_name=reference_body_name,
             second_reference_body_name=second_reference_body_name,
         )
-        info["sparse_binary_reward"] = 1.0
+        info["sparse_binary_reward"] = float(bool(success))
         return float(reward), bool(success), info
 
     if spec.instruction_type == "pick_up":
@@ -1934,6 +1966,11 @@ def _compute_sparse_binary_reward(
             target_body_name=target_body_name,
         )
 
+    current_abs_z_displacement = float(abs(float(ee_pos[2]) - float(reward_state.initial_ee_pos[2])))
+    reward_state.max_abs_z_displacement = max(
+        float(getattr(reward_state, "max_abs_z_displacement", 0.0)),
+        current_abs_z_displacement,
+    )
     success, validation_info = compute_instruction_validation_success(
         spec=spec,
         ee_pos=ee_pos,
@@ -1979,7 +2016,7 @@ def _compute_sparse_binary_reward(
     info = {
         "sparse_success": float(bool(success)),
         "sparse_reward_mode": 1.0,
-        "sparse_binary_reward": 1.0,
+        "sparse_binary_reward": float(bool(success)),
         "distance_to_goal": xy_distance if spec.instruction_type == "move_to_object" else distance,
         "distance_to_goal_xy": xy_distance,
         "distance_to_goal_prev": prev_xy_distance if spec.instruction_type == "move_to_object" else prev_distance,
@@ -2002,9 +2039,17 @@ def _compute_sparse_binary_reward(
         "distance_ee_to_object_prev_xyz": prev_distance,
         "distance_ee_to_object_prev_xy": prev_xy_distance,
         "orientation_reward": 0.0,
+        "max_abs_z_displacement": float(reward_state.max_abs_z_displacement),
         "success_bonus": float(_metadata_float(metadata, "sparse_success_reward", 1.0) if success else 0.0),
     }
     info.update({str(key): float(value) for key, value in validation_info.items()})
+    if spec.instruction_type == "move_to_object":
+        info["move_to_object_max_abs_z_displacement"] = float(
+            reward_state.max_abs_z_displacement
+        )
+        info["move_to_object_z_excursion_ok"] = float(
+            validation_info.get("move_to_object_validation_z_excursion_ok", 1.0)
+        )
     return float(reward), bool(success), info
 
 
@@ -2196,6 +2241,8 @@ def _compute_sparse_manipulation_reward(
     relation_motion_ok = True
     relation_grasp_required = False
     relation_grasp_ok = True
+    relation_release_required = False
+    relation_release_ok = True
     relation_axis = -1
     relation_axis_sign = 0.0
     relation_axis_error = float("inf")
@@ -2221,6 +2268,12 @@ def _compute_sparse_manipulation_reward(
     push_surface_initial_distance = 0.0
     push_surface_progress = 0.0
     push_position_only_dense = False
+    push_require_object_on_support = False
+    push_support_height = float("nan")
+    push_vertical_drift = 0.0
+    push_support_min_clearance = 0.0
+    push_support_vertical_tolerance = 0.0
+    push_support_ok = True
     put_downward_reward_enabled = False
     put_downward_motion = 0.0
     put_downward_progress = 0.0
@@ -2310,10 +2363,7 @@ def _compute_sparse_manipulation_reward(
         relation_axis = int(push_axis)
         relation_axis_sign = float(sign)
         push_surface_reward_enabled = _metadata_bool(task_metadata, "push_surface_reward_enabled", False)
-        push_position_only_dense = bool(
-            push_surface_reward_enabled
-            and _metadata_bool(task_metadata, "push_position_only_reward", True)
-        )
+        push_position_only_dense = _metadata_bool(task_metadata, "push_position_only_reward", True)
         if push_surface_reward_enabled:
             bounds = _metadata_float_pair(
                 task_metadata,
@@ -2349,6 +2399,34 @@ def _compute_sparse_manipulation_reward(
             signed_relation_offset = signed_motion
             relation_error = float(max(0.0, push_success_displacement - signed_motion))
             success = bool(signed_motion >= float(push_success_displacement))
+
+        # Directional displacement alone can become a false positive if the
+        # object leaves the desk.  The optional support guard requires the
+        # target to stay above the support plane and close to its reset height.
+        push_require_object_on_support = _metadata_bool(
+            task_metadata,
+            "push_require_object_on_support",
+            False,
+        )
+        push_support_min_clearance = max(
+            _metadata_float(task_metadata, "push_support_min_clearance", 0.005),
+            0.0,
+        )
+        push_support_vertical_tolerance = max(
+            _metadata_float(task_metadata, "push_support_vertical_tolerance", 0.06),
+            0.0,
+        )
+        push_vertical_drift = float(abs(target_delta[2]))
+        if push_require_object_on_support:
+            support_is_valid = bool(support_surface_z is not None and np.isfinite(float(support_surface_z)))
+            if support_is_valid:
+                push_support_height = float(target_pos[2] - float(support_surface_z))
+            push_support_ok = bool(
+                support_is_valid
+                and push_support_height >= push_support_min_clearance
+                and push_vertical_drift <= push_support_vertical_tolerance
+            )
+            success = bool(success and push_support_ok)
 
     elif spec.instruction_type in CONTAINER_PLACEMENT_INSTRUCTION_TYPES:
         mode = 5.0
@@ -2470,11 +2548,22 @@ def _compute_sparse_manipulation_reward(
         relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
         relation_grasp_required = _metadata_bool(task_metadata, "move_relation_require_target_grasp", False)
         relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
+        relation_release_required = _metadata_bool(
+            task_metadata, "move_relation_require_release", False
+        )
+        relation_release_threshold = _metadata_float(
+            task_metadata, "put_release_opening_threshold", 0.55
+        )
+        relation_release_ok = bool(
+            (not relation_release_required)
+            or (np.isfinite(gripper_value) and gripper_value >= relation_release_threshold)
+        )
         success = bool(
             relation_axis_error <= relation_zone_half_extent
             and relation_orthogonal_error <= relation_zone_half_extent
             and relation_motion_ok
             and relation_grasp_ok
+            and relation_release_ok
         )
 
     elif spec.instruction_type in {"put_in_front_of_object", "put_behind_object"}:
@@ -2526,11 +2615,22 @@ def _compute_sparse_manipulation_reward(
             relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
             relation_grasp_required = _metadata_bool(task_metadata, "relation_require_target_grasp", True)
             relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
+            relation_release_required = _metadata_bool(
+                task_metadata, "relation_require_release", False
+            )
+            relation_release_threshold = _metadata_float(
+                task_metadata, "put_release_opening_threshold", 0.55
+            )
+            relation_release_ok = bool(
+                (not relation_release_required)
+                or (np.isfinite(gripper_value) and gripper_value >= relation_release_threshold)
+            )
             success = bool(
                 relation_error <= float(between_tolerance)
                 and 0.0 <= projection <= 1.0
                 and relation_motion_ok
                 and relation_grasp_ok
+                and relation_release_ok
             )
             signed_relation_offset = projection
         else:
@@ -2639,6 +2739,12 @@ def _compute_sparse_manipulation_reward(
         "push_surface_initial_distance": float(push_surface_initial_distance),
         "push_surface_progress": float(push_surface_progress),
         "push_position_only_reward": float(push_position_only_dense),
+        "push_require_object_on_support": float(push_require_object_on_support),
+        "push_support_height": float(push_support_height) if np.isfinite(push_support_height) else -1.0,
+        "push_vertical_drift": float(push_vertical_drift),
+        "push_support_min_clearance": float(push_support_min_clearance),
+        "push_support_vertical_tolerance": float(push_support_vertical_tolerance),
+        "push_support_ok": float(push_support_ok),
         "carried_object_lost": float(carried_object_lost),
         "carried_object_caught_ok": float(carried_object_caught_ok),
         "carried_object_fall_penalty": float(carried_object_fall_penalty),
@@ -2663,6 +2769,8 @@ def _compute_sparse_manipulation_reward(
         "relation_motion_ok": float(relation_motion_ok),
         "relation_grasp_required": float(relation_grasp_required),
         "relation_grasp_ok": float(relation_grasp_ok),
+        "relation_release_required": float(relation_release_required),
+        "relation_release_ok": float(relation_release_ok),
         "gripper_closed": float(gripper_closed),
         "grasped": float(reward_state.grasped),
         "caught_object_score": float(caught_object_score),
@@ -2731,6 +2839,10 @@ def _compute_move_to_object_reward(
     )
     z_penalty_weight = _metadata_float(task_metadata, "move_to_object_z_penalty_weight", 0.20)
     require_z_window = _metadata_bool(task_metadata, "move_to_object_require_z_window", False)
+    max_z_excursion = max(
+        _metadata_float(task_metadata, "move_to_object_max_z_excursion", float("inf")),
+        0.0,
+    )
     action_saturation_threshold = _metadata_float(task_metadata, "action_saturation_threshold", 0.70)
     action_saturation_penalty_weight = _metadata_float(
         task_metadata,
@@ -2766,6 +2878,12 @@ def _compute_move_to_object_reward(
     else:
         z_outside_distance = 0.0
     z_in_window = bool(z_outside_distance <= 1e-9)
+    current_abs_z_displacement = float(abs(ee_z - float(reward_state.initial_ee_pos[2])))
+    max_abs_z_displacement = max(
+        float(getattr(reward_state, "max_abs_z_displacement", 0.0)),
+        current_abs_z_displacement,
+    )
+    z_excursion_ok = bool(max_abs_z_displacement <= max_z_excursion)
     z_penalty_raw = float(z_outside_distance / z_penalty_scale)
     z_penalty = float(z_penalty_weight * z_penalty_raw)
     excess_distance_penalty = float(
@@ -2785,7 +2903,11 @@ def _compute_move_to_object_reward(
     )
     action_saturation_penalty = float(action_saturation_penalty_weight * action_saturation_penalty_raw)
 
-    success = bool(inside_xy_window and ((not require_z_window) or z_in_window))
+    success = bool(
+        inside_xy_window
+        and ((not require_z_window) or z_in_window)
+        and z_excursion_ok
+    )
     success_reward = float(success_bonus if success else 0.0)
     reward = float(
         distance_reward
@@ -2800,6 +2922,7 @@ def _compute_move_to_object_reward(
     reward_state.prev_obj_pos = obj_pos.copy()
     reward_state.prev_distance = xy_distance
     reward_state.prev_camera_align = None
+    reward_state.max_abs_z_displacement = float(max_abs_z_displacement)
     reward_state.step_count += 1
 
     goal_dir_unit, goal_dir_norm = _safe_unit(np.array([xy_offset[0], xy_offset[1], 0.0], dtype=np.float32))
@@ -2867,6 +2990,9 @@ def _compute_move_to_object_reward(
         "move_to_object_z_penalty_raw": z_penalty_raw,
         "move_to_object_z_penalty": z_penalty,
         "move_to_object_z_penalty_scale": float(z_penalty_scale),
+        "move_to_object_max_z_excursion": float(max_z_excursion),
+        "move_to_object_max_abs_z_displacement": float(max_abs_z_displacement),
+        "move_to_object_z_excursion_ok": float(z_excursion_ok),
     }
     return reward, success, info
 
@@ -3203,6 +3329,7 @@ def compute_instruction_validation_success(
             grasped=bool(reward_state.grasped),
             step_count=int(reward_state.step_count),
             path_length=float(getattr(reward_state, "path_length", 0.0)),
+            max_abs_z_displacement=float(getattr(reward_state, "max_abs_z_displacement", 0.0)),
             translation_sign_flip_count=int(getattr(reward_state, "translation_sign_flip_count", 0)),
             translation_sign_comparison_count=int(getattr(reward_state, "translation_sign_comparison_count", 0)),
             prev_action=(
@@ -3259,6 +3386,7 @@ def compute_instruction_validation_success(
                 grasped=bool(reward_state.grasped),
                 step_count=int(reward_state.step_count),
                 path_length=float(getattr(reward_state, "path_length", 0.0)),
+                max_abs_z_displacement=float(getattr(reward_state, "max_abs_z_displacement", 0.0)),
                 translation_sign_flip_count=int(getattr(reward_state, "translation_sign_flip_count", 0)),
                 translation_sign_comparison_count=int(getattr(reward_state, "translation_sign_comparison_count", 0)),
                 prev_action=(
@@ -3282,6 +3410,7 @@ def compute_instruction_validation_success(
                 reward_state=reward_state_copy,
                 task_metadata=task_metadata,
                 gripper_opening=gripper_opening,
+                support_surface_z=support_surface_z,
                 caught_object_is_target=caught_object_is_target,
                 caught_object_score=caught_object_score,
                 env=env,
@@ -3326,7 +3455,29 @@ def compute_instruction_validation_success(
             distance_min, distance_threshold = distance_threshold, distance_min
         distance_xyz = float(np.linalg.norm(target_arr[:3] - ee_arr[:3]))
         distance_xy = float(np.linalg.norm(target_arr[:2] - ee_arr[:2]))
-        success = bool(distance_min <= distance_xy <= float(distance_threshold))
+        max_z_excursion = max(
+            _metadata_float(task_metadata, "move_to_object_max_z_excursion", float("inf")),
+            0.0,
+        )
+        initial_ee = np.asarray(reward_state.initial_ee_pos, dtype=np.float32).reshape(-1)
+        current_abs_z_displacement = (
+            float(abs(float(ee_arr[2]) - float(initial_ee[2]))) if initial_ee.size >= 3 else 0.0
+        )
+        max_abs_z_displacement = max(
+            float(getattr(reward_state, "max_abs_z_displacement", 0.0)),
+            current_abs_z_displacement,
+        )
+        z_excursion_ok = bool(max_abs_z_displacement <= max_z_excursion)
+        require_z_window = _metadata_bool(task_metadata, "move_to_object_require_z_window", False)
+        z_window_low = _metadata_float(task_metadata, "move_to_object_z_window_low", 0.10)
+        z_window_high = _metadata_float(task_metadata, "move_to_object_z_window_high", 0.20)
+        z_window_low, z_window_high = sorted((float(z_window_low), float(z_window_high)))
+        z_in_window = bool(z_window_low <= float(ee_arr[2]) <= z_window_high)
+        success = bool(
+            distance_min <= distance_xy <= float(distance_threshold)
+            and z_excursion_ok
+            and ((not require_z_window) or z_in_window)
+        )
         return success, {
             "validation_success_mode": 2.0,
             "move_to_object_validation_success": float(success),
@@ -3334,6 +3485,10 @@ def compute_instruction_validation_success(
             "move_to_object_validation_distance_xy": distance_xy,
             "move_to_object_validation_distance_min": float(distance_min),
             "move_to_object_validation_distance_threshold": float(distance_threshold),
+            "move_to_object_validation_max_z_excursion": float(max_z_excursion),
+            "move_to_object_validation_max_abs_z_displacement": float(max_abs_z_displacement),
+            "move_to_object_validation_z_excursion_ok": float(z_excursion_ok),
+            "move_to_object_validation_z_in_window": float(z_in_window),
         }
 
     axis_spec = _DIRECTIONAL_SUCCESS_AXES.get(spec.instruction_type)

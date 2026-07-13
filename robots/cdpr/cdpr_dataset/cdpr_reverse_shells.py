@@ -29,11 +29,30 @@ _SHELL_COUNTS: dict[str, int] = {
     "move_between_objects": 5,
 }
 
+SMOLVLA_COMPLEX_PROFILE = "smolvla_complex_v1"
+_SMOLVLA_COMPLEX_SHELL_COUNTS: dict[str, int] = {
+    "move_to_object": 4,
+    "push_left": 4,
+    "push_right": 4,
+    "put_into_plate": 4,
+    "put_into_bowl": 4,
+    "move_left_of_object": 4,
+    "move_right_of_object": 4,
+    "move_between_objects": 4,
+}
+_SHELL_SIM_STEP_BOUNDS: tuple[tuple[int, int], ...] = (
+    (1, 5),
+    (5, 10),
+    (10, 20),
+    (20, 40),
+)
+
 _TEMPLATES: dict[str, str] = {
     "move_to_object": "move to <object>",
     "grab_object": "grab <object>",
     "pick_up": "pick up <object>",
     "put_into_plate": "put <object> into <receptacle>",
+    "put_into_bowl": "put <object> into <receptacle>",
     "push_left": "push <object> left",
     "push_right": "push <object> right",
     "push_forward": "push <object> forward",
@@ -65,6 +84,7 @@ class CDPRReverseShellSpec:
     instruction_id: str
     instruction_template: str
     shell_count: int
+    profile: str = "legacy"
 
     def sample_scene(self, rng: Any) -> Mapping[str, Any]:
         del rng
@@ -78,7 +98,7 @@ class CDPRReverseShellSpec:
                 shell_id=clamp_shell_id(shell_id, self.shell_count),
                 metadata={"scene": scene},
             )
-        metadata = apply_cdpr_reverse_shell(env, shell_id=shell_id, rng=rng)
+        metadata = apply_cdpr_reverse_shell(env, shell_id=shell_id, rng=rng, profile=self.profile)
         return ReverseShellReset(
             instruction_id=self.instruction_id,
             shell_id=int(metadata["curriculum_shell"]),
@@ -114,16 +134,23 @@ class CDPRReverseShellSpec:
         return bool(success)
 
 
-def get_cdpr_reverse_shell_specs(instruction_types: Sequence[str] | None = None) -> tuple[CDPRReverseShellSpec, ...]:
+def get_cdpr_reverse_shell_specs(
+    instruction_types: Sequence[str] | None = None,
+    *,
+    profile: str = "legacy",
+) -> tuple[CDPRReverseShellSpec, ...]:
+    profile = str(profile or "legacy")
+    shell_counts = _SMOLVLA_COMPLEX_SHELL_COUNTS if profile == SMOLVLA_COMPLEX_PROFILE else _SHELL_COUNTS
     if instruction_types is None:
-        names = tuple(_SHELL_COUNTS)
+        names = tuple(shell_counts)
     else:
-        names = tuple(str(item) for item in instruction_types if str(item) in _SHELL_COUNTS)
+        names = tuple(str(item) for item in instruction_types if str(item) in shell_counts)
     return tuple(
         CDPRReverseShellSpec(
             instruction_id=name,
             instruction_template=_TEMPLATES[name],
-            shell_count=int(_SHELL_COUNTS[name]),
+            shell_count=int(shell_counts[name]),
+            profile=profile,
         )
         for name in names
     )
@@ -134,11 +161,15 @@ def apply_cdpr_reverse_shell(
     *,
     shell_id: int,
     rng: np.random.Generator | None = None,
+    profile: str | None = None,
 ) -> dict[str, Any]:
     rng = rng or getattr(env, "np_random", np.random.default_rng())
     spec = getattr(env, "_instruction_spec", None)
     instruction_type = str(getattr(spec, "instruction_type", ""))
-    shell_count = int(_SHELL_COUNTS.get(instruction_type, 1))
+    metadata = getattr(env, "_task_metadata", {}) or {}
+    profile = str(profile or metadata.get("reverse_frontier_profile") or "legacy")
+    shell_counts = _SMOLVLA_COMPLEX_SHELL_COUNTS if profile == SMOLVLA_COMPLEX_PROFILE else _SHELL_COUNTS
+    shell_count = int(shell_counts.get(instruction_type, 1))
     shell_id = clamp_shell_id(int(shell_id), shell_count)
     info: dict[str, Any] = {
         "curriculum_mode": "reverse_frontier",
@@ -146,9 +177,16 @@ def apply_cdpr_reverse_shell(
         "curriculum_shell_count": int(shell_count),
         "curriculum_instruction_id": instruction_type,
         "curriculum_shell_source": "reverse_frontier",
-        "curriculum_shell_normal_reset": bool(shell_id >= shell_count - 1),
+        "curriculum_shell_normal_reset": bool(
+            profile != SMOLVLA_COMPLEX_PROFILE and shell_id >= shell_count - 1
+        ),
+        "curriculum_shell_profile": profile,
         "curriculum_target_grasped": False,
     }
+    if profile == SMOLVLA_COMPLEX_PROFILE:
+        info.update(_shell_horizon_metadata(env, shell_id=shell_id, rng=rng))
+        info.update(_apply_smolvla_complex_shell(env, shell_id=shell_id, rng=rng))
+        return info
     if not instruction_type or shell_id >= shell_count - 1:
         return info
 
@@ -172,6 +210,218 @@ def apply_cdpr_reverse_shell(
     elif instruction_type == "move_between_objects":
         info.update(_apply_between_shell(env, shell_id=shell_id, rng=rng))
     return info
+
+
+def _shell_horizon_metadata(
+    env: Any,
+    *,
+    shell_id: int,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    low, high = _SHELL_SIM_STEP_BOUNDS[clamp_shell_id(shell_id, len(_SHELL_SIM_STEP_BOUNDS))]
+    target_sim_steps = int(rng.integers(int(low), int(high) + 1))
+    simulator_steps_per_action = max(1, 1 + int(getattr(env, "hold_steps", 0)))
+    target_policy_steps = max(1, int(np.ceil(target_sim_steps / simulator_steps_per_action)))
+    return {
+        "curriculum_shell_sim_steps_low": int(low),
+        "curriculum_shell_sim_steps_high": int(high),
+        "curriculum_shell_target_sim_steps": int(target_sim_steps),
+        "curriculum_shell_target_policy_steps": int(target_policy_steps),
+        "curriculum_sim_steps_per_policy_action": int(simulator_steps_per_action),
+    }
+
+
+def _apply_smolvla_complex_shell(
+    env: Any,
+    *,
+    shell_id: int,
+    rng: np.random.Generator,
+) -> dict[str, Any]:
+    instruction_type = str(getattr(getattr(env, "_instruction_spec", None), "instruction_type", ""))
+    if instruction_type == "move_to_object":
+        return _apply_complex_move_to_shell(env, shell_id=shell_id, rng=rng)
+    if instruction_type in {"push_left", "push_right"}:
+        return _apply_complex_push_shell(env, shell_id=shell_id, rng=rng)
+    if instruction_type in {"put_into_plate", "put_into_bowl"}:
+        return _apply_complex_put_shell(env, shell_id=shell_id, rng=rng)
+    if instruction_type in {"move_left_of_object", "move_right_of_object"}:
+        return _apply_complex_binary_relation_shell(env, shell_id=shell_id, rng=rng)
+    if instruction_type == "move_between_objects":
+        return _apply_complex_between_shell(env, shell_id=shell_id, rng=rng)
+    return {}
+
+
+def _sample_shell_distance(env: Any, *, shell_id: int, rng: np.random.Generator) -> float:
+    _, high = _SHELL_SIM_STEP_BOUNDS[clamp_shell_id(shell_id, len(_SHELL_SIM_STEP_BOUNDS))]
+    sim_per_action = max(1, 1 + int(getattr(env, "hold_steps", 0)))
+    max_actions = max(1, int(np.ceil(float(high) / float(sim_per_action))))
+    min_actions = max(1, int(np.floor(float(_SHELL_SIM_STEP_BOUNDS[shell_id][0]) / float(sim_per_action))))
+    actions = int(rng.integers(min_actions, max_actions + 1))
+    step = max(0.005, float(getattr(env, "action_step_xyz", 0.015)))
+    return float(actions * step * rng.uniform(0.65, 1.0))
+
+
+def _apply_complex_move_to_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> dict[str, Any]:
+    target = _body_position(env, getattr(env, "_target_body_name", ""))
+    if target is None:
+        return {}
+    distance = _sample_shell_distance(env, shell_id=shell_id, rng=rng)
+    direction = _unit_xy(rng)
+    ee = np.asarray(target, dtype=np.float32).copy()
+    ee[:2] += direction * distance
+    # The strict move-to task is planar. Every shell begins at a valid fixed
+    # working height, and success rejects vertical excursions from this reset.
+    ee[2] = float(getattr(env, "_get_ee_position")()[2])
+    _move_ee(env, ee)
+    return {
+        "curriculum_shell_distance_m": float(distance),
+        "curriculum_shell_relation": "strict_planar_ee_to_target",
+        "curriculum_put_start_stage": -1,
+    }
+
+
+def _apply_complex_push_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> dict[str, Any]:
+    target = _body_position(env, getattr(env, "_target_body_name", ""))
+    if target is None:
+        return {}
+    instruction_type = str(getattr(getattr(env, "_instruction_spec", None), "instruction_type", "push_right"))
+    sign = -1.0 if instruction_type == "push_left" else 1.0
+    success_distance = max(_metadata_float(env, "push_success_displacement", 0.08), 0.01)
+    remaining = min(success_distance, _sample_shell_distance(env, shell_id=shell_id, rng=rng))
+    current_progress = max(0.0, success_distance - remaining)
+    reward_initial = np.asarray(target, dtype=np.float32).copy()
+    reward_initial[0] -= sign * current_progress
+    contact_gap = 0.018 + min(0.04, 0.4 * remaining)
+    ee = np.asarray(target, dtype=np.float32).copy()
+    ee[0] -= sign * contact_gap
+    ee[1] += float(rng.uniform(-0.008, 0.008))
+    ee[2] = _ee_task_height(env, target, clearance=0.045)
+    _force_gripper(env, 0.0)
+    _move_ee(env, ee)
+    return {
+        "curriculum_shell_distance_m": float(remaining),
+        "curriculum_shell_relation": "push_remaining_distance",
+        "curriculum_reward_initial_obj_pos": reward_initial.tolist(),
+        "curriculum_push_remaining_distance_m": float(remaining),
+        "curriculum_put_start_stage": -1,
+    }
+
+
+def _full_put_start(env: Any, *, target: np.ndarray, rng: np.random.Generator) -> dict[str, Any]:
+    ee = _near_object_ee(env, target, rng=rng, distance_range=(0.0, 0.020), clearance=0.10)
+    distance = float(np.linalg.norm(ee[:2] - np.asarray(target, dtype=np.float32)[:2]))
+    _force_gripper(env, 1.0)
+    _move_ee(env, ee)
+    return {
+        "curriculum_shell_distance_m": float(distance),
+        "curriculum_shell_height_m": 0.10,
+        "curriculum_shell_relation": "open_gripper_above_target",
+        "curriculum_target_grasped": False,
+        "curriculum_put_start_stage": 1,
+    }
+
+
+def _apply_complex_put_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> dict[str, Any]:
+    reference = _reference_position(env)
+    target = _body_position(env, getattr(env, "_target_body_name", ""))
+    if reference is None or target is None:
+        return {}
+    if shell_id >= 3:
+        return _full_put_start(env, target=target, rng=rng)
+    distance = _sample_shell_distance(env, shell_id=shell_id, rng=rng)
+    direction = _unit_xy(rng)
+    object_pos = np.asarray(reference, dtype=np.float32).copy()
+    object_pos[:2] += direction * distance
+    object_pos[2] = float(reference[2] + max(0.02, min(0.10, distance)))
+    held = _set_target_held_at(env, object_pos=object_pos)
+    return {
+        "curriculum_shell_distance_m": float(distance),
+        "curriculum_shell_height_m": float(object_pos[2] - reference[2]),
+        "curriculum_shell_relation": "held_object_near_receptacle",
+        "curriculum_target_grasped": True,
+        "curriculum_put_start_stage": 0,
+        "curriculum_reward_initial_obj_pos": _reward_motion_baseline(env, object_pos, direction).tolist(),
+        **held,
+    }
+
+
+def _apply_complex_binary_relation_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> dict[str, Any]:
+    reference = _reference_position(env)
+    target = _body_position(env, getattr(env, "_target_body_name", ""))
+    if reference is None or target is None:
+        return {}
+    if shell_id >= 3:
+        return _full_put_start(env, target=target, rng=rng)
+    instruction_type = str(getattr(getattr(env, "_instruction_spec", None), "instruction_type", ""))
+    axis, sign, offset, _ = _relation_axis(env, instruction_type)
+    desired = np.asarray(reference, dtype=np.float32).copy()
+    desired[axis] += sign * offset
+    desired[2] = max(float(target[2]), float(reference[2] + 0.035))
+    distance = _sample_shell_distance(env, shell_id=shell_id, rng=rng)
+    direction = _unit_xy(rng)
+    object_pos = desired.copy()
+    object_pos[:2] += direction * distance
+    held = _set_target_held_at(env, object_pos=object_pos)
+    return {
+        "curriculum_shell_distance_m": float(distance),
+        "curriculum_shell_relation": "held_object_near_binary_relation",
+        "curriculum_target_grasped": True,
+        "curriculum_put_start_stage": 0,
+        "curriculum_reward_initial_obj_pos": _reward_motion_baseline(env, object_pos, direction).tolist(),
+        **held,
+    }
+
+
+def _apply_complex_between_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> dict[str, Any]:
+    ref_a = _reference_position(env, second=False)
+    ref_b = _reference_position(env, second=True)
+    target = _body_position(env, getattr(env, "_target_body_name", ""))
+    if ref_a is None or ref_b is None or target is None:
+        return {}
+    if shell_id >= 3:
+        return _full_put_start(env, target=target, rng=rng)
+    midpoint = 0.5 * (np.asarray(ref_a, dtype=np.float32) + np.asarray(ref_b, dtype=np.float32))
+    midpoint[2] = max(float(target[2]), float(midpoint[2] + 0.035))
+    distance = _sample_shell_distance(env, shell_id=shell_id, rng=rng)
+    direction = _unit_xy(rng)
+    object_pos = midpoint.copy()
+    object_pos[:2] += direction * distance
+    held = _set_target_held_at(env, object_pos=object_pos)
+    return {
+        "curriculum_shell_distance_m": float(distance),
+        "curriculum_shell_relation": "held_object_near_between_region",
+        "curriculum_target_grasped": True,
+        "curriculum_put_start_stage": 0,
+        "curriculum_reward_initial_obj_pos": _reward_motion_baseline(env, object_pos, direction).tolist(),
+        **held,
+    }
+
+
+def apply_cdpr_put_start_stage(
+    env: Any,
+    *,
+    stage_id: int,
+    rng: np.random.Generator | None = None,
+) -> dict[str, Any]:
+    """Apply the two-stage placement start: held object, then open gripper above it."""
+    rng = rng or getattr(env, "np_random", np.random.default_rng())
+    stage_id = int(np.clip(int(stage_id), 0, 1))
+    target = _body_position(env, getattr(env, "_target_body_name", ""))
+    if target is None:
+        return {"curriculum_put_start_stage": int(stage_id)}
+    if stage_id == 0:
+        # reset(options={start_with_caught_object: true}) already created the
+        # grasp; this branch records the abstraction without moving it again.
+        return {
+            "curriculum_mode": "lchol_put_stage",
+            "curriculum_put_start_stage": 0,
+            "curriculum_target_grasped": bool(getattr(env, "_caught_object_start_active", False)),
+            "curriculum_shell_relation": "held_object_start",
+        }
+    return {
+        "curriculum_mode": "lchol_put_stage",
+        **_full_put_start(env, target=target, rng=rng),
+    }
 
 
 def _apply_move_to_object_shell(env: Any, *, shell_id: int, rng: np.random.Generator) -> dict[str, Any]:
