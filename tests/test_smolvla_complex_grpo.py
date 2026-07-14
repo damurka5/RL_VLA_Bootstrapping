@@ -83,7 +83,9 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 command = plan.command
                 self.assertIn("rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr", command)
                 self.assertEqual(command[command.index("--complex-training-approach") + 1], approach)
-                self.assertEqual(command[command.index("--batch-size") + 1], "16384")
+                self.assertEqual(command[command.index("--batch-size") + 1], "4096")
+                self.assertEqual(command[command.index("--minibatch-size") + 1], "4096")
+                self.assertEqual(command[command.index("--microbatch-size") + 1], "2048")
                 self.assertEqual(command[command.index("--resume-checkpoint") + 1], CHECKPOINT)
                 self.assertEqual(config.task.metadata["reward_mode"], "sparse_binary")
                 self.assertFalse(config.task.metadata["reward_output_normalization_enabled"])

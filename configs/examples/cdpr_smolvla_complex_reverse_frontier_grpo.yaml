@@ -320,8 +320,8 @@ training:
       grpo_clip_advantage_abs: 6.0
       rollout_steps: 2048
       ppo_epochs: 2
-      batch_size: 16384
-      minibatch_size: 16384
+      batch_size: 4096
+      minibatch_size: 4096
       microbatch_size: 2048
       complex_training_approach: reverse_frontier
       reverse_frontier_promotion_success: 0.80
