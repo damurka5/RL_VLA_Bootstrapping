@@ -2268,6 +2268,12 @@ def _compute_sparse_manipulation_reward(
     push_surface_initial_distance = 0.0
     push_surface_progress = 0.0
     push_position_only_dense = False
+    push_enforce_orthogonal_tolerance = False
+    push_orthogonal_drift = 0.0
+    push_orthogonal_tolerance = 0.0
+    push_enforce_max_overshoot = False
+    push_axis_overshoot = 0.0
+    push_max_overshoot = 0.0
     push_require_object_on_support = False
     push_support_height = float("nan")
     push_vertical_drift = 0.0
@@ -2397,8 +2403,51 @@ def _compute_sparse_manipulation_reward(
             push_success_displacement = _metadata_float(task_metadata, "push_success_displacement", 0.08)
             signed_motion = float(sign * target_delta[push_axis])
             signed_relation_offset = signed_motion
+            planar_orthogonal_axis = 1 - int(push_axis)
+            push_orthogonal_drift = float(abs(target_delta[planar_orthogonal_axis]))
+            push_orthogonal_tolerance = max(
+                _metadata_float(task_metadata, "push_orthogonal_tolerance", 0.03),
+                0.0,
+            )
+            push_enforce_orthogonal_tolerance = _metadata_bool(
+                task_metadata,
+                "push_enforce_orthogonal_tolerance",
+                False,
+            )
+            push_axis_overshoot = float(
+                max(0.0, signed_motion - float(push_success_displacement))
+            )
+            push_max_overshoot = max(
+                _metadata_float(task_metadata, "push_max_overshoot", 0.04),
+                0.0,
+            )
+            push_enforce_max_overshoot = _metadata_bool(
+                task_metadata,
+                "push_enforce_max_overshoot",
+                False,
+            )
+            push_orthogonal_ok = bool(
+                (not push_enforce_orthogonal_tolerance)
+                or push_orthogonal_drift <= push_orthogonal_tolerance
+            )
+            push_overshoot_ok = bool(
+                (not push_enforce_max_overshoot)
+                or push_axis_overshoot <= push_max_overshoot
+            )
+            relation_axis_error = float(abs(signed_motion - push_success_displacement))
+            relation_orthogonal_error = float(push_orthogonal_drift)
             relation_error = float(max(0.0, push_success_displacement - signed_motion))
-            success = bool(signed_motion >= float(push_success_displacement))
+            if push_enforce_orthogonal_tolerance:
+                relation_error += float(
+                    max(0.0, push_orthogonal_drift - push_orthogonal_tolerance)
+                )
+            if push_enforce_max_overshoot:
+                relation_error += float(max(0.0, push_axis_overshoot - push_max_overshoot))
+            success = bool(
+                signed_motion >= float(push_success_displacement)
+                and push_orthogonal_ok
+                and push_overshoot_ok
+            )
 
         # Directional displacement alone can become a false positive if the
         # object leaves the desk.  The optional support guard requires the
@@ -2739,6 +2788,12 @@ def _compute_sparse_manipulation_reward(
         "push_surface_initial_distance": float(push_surface_initial_distance),
         "push_surface_progress": float(push_surface_progress),
         "push_position_only_reward": float(push_position_only_dense),
+        "push_enforce_orthogonal_tolerance": float(push_enforce_orthogonal_tolerance),
+        "push_orthogonal_drift": float(push_orthogonal_drift),
+        "push_orthogonal_tolerance": float(push_orthogonal_tolerance),
+        "push_enforce_max_overshoot": float(push_enforce_max_overshoot),
+        "push_axis_overshoot": float(push_axis_overshoot),
+        "push_max_overshoot": float(push_max_overshoot),
         "push_require_object_on_support": float(push_require_object_on_support),
         "push_support_height": float(push_support_height) if np.isfinite(push_support_height) else -1.0,
         "push_vertical_drift": float(push_vertical_drift),

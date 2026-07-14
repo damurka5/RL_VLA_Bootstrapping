@@ -87,24 +87,49 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 self.assertEqual(command[command.index("--resume-checkpoint") + 1], CHECKPOINT)
                 self.assertEqual(config.task.metadata["reward_mode"], "sparse_binary")
                 self.assertFalse(config.task.metadata["reward_output_normalization_enabled"])
+                if approach == "reverse_frontier":
+                    self.assertEqual(config.task.metadata["move_to_object_xy_tolerance"], 0.02)
+                    self.assertEqual(config.task.metadata["put_container_xy_tolerance"], 0.03)
+                    self.assertEqual(config.task.metadata["move_relation_success_zone_size"], 0.03)
+                    self.assertEqual(config.task.metadata["between_xy_tolerance"], 0.03)
+                    self.assertTrue(config.task.metadata["push_enforce_orthogonal_tolerance"])
+                    self.assertTrue(config.task.metadata["push_enforce_max_overshoot"])
 
     def test_reverse_frontier_profile_has_four_requested_shells_and_horizons(self):
         specs = get_cdpr_reverse_shell_specs(profile=SMOLVLA_COMPLEX_PROFILE)
         self.assertEqual(len(specs), 8)
         self.assertTrue(all(spec.shell_count == 4 for spec in specs))
 
-        expected = ((1, 5), (5, 10), (10, 20), (20, 40))
+        expected = ((2, 3), (3, 4), (4, 6), (6, 10))
         for shell_id, bounds in enumerate(expected):
             env = _MoveShellEnv()
             info = apply_cdpr_reverse_shell(
                 env, shell_id=shell_id, rng=np.random.default_rng(100 + shell_id)
             )
             self.assertEqual(
-                (info["curriculum_shell_sim_steps_low"], info["curriculum_shell_sim_steps_high"]),
+                (
+                    info["curriculum_shell_policy_steps_low"],
+                    info["curriculum_shell_policy_steps_high"],
+                ),
                 bounds,
             )
-            self.assertGreaterEqual(info["curriculum_shell_target_sim_steps"], bounds[0])
-            self.assertLessEqual(info["curriculum_shell_target_sim_steps"], bounds[1])
+            self.assertGreaterEqual(info["curriculum_shell_target_policy_steps"], bounds[0])
+            self.assertLessEqual(info["curriculum_shell_target_policy_steps"], bounds[1])
+            self.assertEqual(
+                info["curriculum_shell_target_sim_steps"],
+                7 * info["curriculum_shell_target_policy_steps"],
+            )
+            self.assertEqual(
+                (
+                    info["curriculum_shell_sim_steps_low"],
+                    info["curriculum_shell_sim_steps_high"],
+                ),
+                (7 * bounds[0], 7 * bounds[1]),
+            )
+            expected_distance = 0.03 + (
+                info["curriculum_shell_target_policy_steps"] - 0.5
+            ) * env.action_step_xyz * 0.44
+            self.assertAlmostEqual(info["curriculum_shell_distance_m"], expected_distance)
             self.assertEqual(info["curriculum_shell_profile"], SMOLVLA_COMPLEX_PROFILE)
 
     def test_lchol_put_stage_promotes_only_after_eighty_percent(self):

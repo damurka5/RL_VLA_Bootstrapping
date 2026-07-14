@@ -854,6 +854,47 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertAlmostEqual(info["signed_relation_offset"], 0.055, places=6)
         self.assertEqual(info["relation_axis"], 1.0)
 
+    def test_push_endpoint_gate_rejects_sideways_drift_and_large_overshoot(self):
+        spec = InstructionSpec(
+            instruction_type="push_right",
+            text="push apple right",
+            target_object="ycb_apple",
+            direction=np.array([1.0, 0.0, 0.0], dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+        )
+        initial = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+        metadata = {
+            "push_success_displacement": 0.08,
+            "push_enforce_orthogonal_tolerance": True,
+            "push_orthogonal_tolerance": 0.02,
+            "push_enforce_max_overshoot": True,
+            "push_max_overshoot": 0.025,
+        }
+
+        for moved, expected_success in (
+            (np.array([0.09, 0.01, 0.16], dtype=np.float32), True),
+            (np.array([0.09, 0.03, 0.16], dtype=np.float32), False),
+            (np.array([0.12, 0.00, 0.16], dtype=np.float32), False),
+        ):
+            with self.subTest(moved=moved.tolist()):
+                reward, success, info = compute_instruction_reward(
+                    spec=spec,
+                    ee_pos=np.array([0.08, 0.00, 0.18], dtype=np.float32),
+                    obj_pos=moved,
+                    reward_state=init_reward_state(
+                        initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+                        initial_obj_pos=initial,
+                    ),
+                    task_metadata=metadata,
+                )
+
+                self.assertEqual(success, expected_success)
+                self.assertEqual(reward, float(expected_success))
+                self.assertEqual(info["push_enforce_orthogonal_tolerance"], 1.0)
+                self.assertEqual(info["push_enforce_max_overshoot"], 1.0)
+
+
     def test_push_success_rejects_object_that_fell_below_support(self):
         spec = InstructionSpec(
             instruction_type="push_right",

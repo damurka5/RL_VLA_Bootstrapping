@@ -20,7 +20,7 @@ remote:
     RLVLA_CDPR_WRAPPER_LOG: "false"
   notes:
     - Four-shell Reverse Frontier comparison run using exact sparse binary GRPO rewards.
-    - Shells represent 1-5, 5-10, 10-20, and 20-40 target simulator steps.
+    - Shells represent 2-3, 3-4, 4-6, and 6-10 target policy decisions.
     - Each instruction advances one shell only after at least 80 percent held-out success.
 
 assets:
@@ -103,6 +103,16 @@ task:
     manipulation_dense_reward_enabled: false
     simulation_instability_penalty: 0.0
     reverse_frontier_profile: smolvla_complex_v1
+    # Horizons are policy decisions, not raw MuJoCo substeps. With hold_steps=6,
+    # one decision still advances seven simulator steps internally.
+    reverse_frontier_policy_decision_bounds:
+      - [2, 3]
+      - [3, 4]
+      - [4, 6]
+      - [6, 10]
+    # Effective Cartesian progress per decision as a fraction of action_step_xyz.
+    # The imitation controller commands 0.60; cable dynamics realize about 0.44.
+    reverse_frontier_nominal_progress_fraction: 0.44
     put_plate_language_use_on: true
     put_relation_language: true
 
@@ -118,17 +128,25 @@ task:
     scene_variant_count: 256
 
     move_to_object_single_object_scene: false
-    move_to_object_xy_tolerance: 0.03
+    move_to_object_xy_tolerance: 0.02
     move_to_object_xy_window_low: 0.0
-    move_to_object_xy_window_high: 0.03
+    move_to_object_xy_window_high: 0.02
     move_to_object_validation_distance_min: 0.0
-    move_to_object_validation_distance_threshold: 0.03
-    move_to_object_max_z_excursion: 0.015
+    move_to_object_validation_distance_threshold: 0.02
+    # Longer policy-defined shells accumulate small passive cable Z drift even
+    # when the action keeps commanding the reset height.
+    move_to_object_max_z_excursion: 0.03
     move_to_object_require_z_window: false
 
     push_surface_reward_enabled: false
     push_position_only_reward: true
     push_success_displacement: 0.08
+    # A directional displacement is not enough: the object must finish near
+    # the intended planar endpoint rather than drifting sideways or overshooting.
+    push_enforce_orthogonal_tolerance: true
+    push_orthogonal_tolerance: 0.02
+    push_enforce_max_overshoot: true
+    push_max_overshoot: 0.025
     push_require_object_on_support: true
     push_support_min_clearance: 0.005
     push_support_vertical_tolerance: 0.04
@@ -153,7 +171,9 @@ task:
     caught_object_start_release_opening_threshold: 0.010
     caught_object_start_release_opening_margin: 0.04
 
-    put_container_xy_tolerance: 0.08
+    # Require the target center to be visibly inside/on the receptacle. The Z
+    # tolerance remains geometry-aware because bowl/plate body origins differ.
+    put_container_xy_tolerance: 0.03
     put_container_z_tolerance: 0.12
     put_require_release: true
     put_release_opening_threshold: 0.55
@@ -161,14 +181,15 @@ task:
     put_downward_reward_enabled: false
     put_min_target_motion: 0.04
     relation_left_right_offset: 0.10
-    move_relation_success_zone_size: 0.06
+    # Square zone side length: 0.03 means +/-1.5 cm on each planar axis.
+    move_relation_success_zone_size: 0.03
     move_relation_min_target_motion: 0.04
     move_relation_require_target_grasp: false
     move_relation_require_release: true
     relation_min_target_motion: 0.04
     relation_require_target_grasp: false
     relation_require_release: true
-    between_xy_tolerance: 0.06
+    between_xy_tolerance: 0.03
 
     grab_require_caught: true
     grab_xy_tolerance: 0.025

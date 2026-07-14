@@ -1472,6 +1472,49 @@ def _normalize_success_result(result: Any, current_success: bool) -> tuple[bool,
     return bool(result), {}
 
 
+def _apply_reverse_frontier_policy_gate(
+    *,
+    success: bool,
+    reward: float,
+    reward_info: dict[str, Any],
+    curriculum_mode: str,
+    curriculum_reset_info: dict[str, Any],
+    policy_step: int,
+    task_metadata: dict[str, Any],
+) -> tuple[bool, float, dict[str, Any]]:
+    """Prevent a reverse-frontier episode from succeeding before its sampled horizon."""
+    info = dict(reward_info)
+    raw_success = bool(success)
+    target_policy_steps = int(
+        curriculum_reset_info.get("curriculum_shell_target_policy_steps", 0) or 0
+    )
+    gate_active = str(curriculum_mode) == "reverse_frontier" and target_policy_steps > 0
+    gate_satisfied = not gate_active or int(policy_step) >= target_policy_steps
+
+    info.update(
+        {
+            "reverse_frontier_raw_success": float(raw_success),
+            "reverse_frontier_policy_gate_active": float(gate_active),
+            "reverse_frontier_policy_gate_satisfied": float(gate_satisfied),
+            "reverse_frontier_policy_target_steps": int(target_policy_steps),
+            "reverse_frontier_policy_steps_remaining": int(
+                max(0, target_policy_steps - int(policy_step)) if gate_active else 0
+            ),
+        }
+    )
+    if not (gate_active and raw_success and not gate_satisfied):
+        return raw_success, float(reward), info
+
+    # Sparse GRPO must not receive a positive sample for an early geometric
+    # success; the policy still has to maintain/complete it at the sampled step.
+    if str(task_metadata.get("reward_mode", "")).strip().lower() == "sparse_binary":
+        reward = _metadata_float(task_metadata, "sparse_failure_reward", 0.0)
+        info["sparse_success"] = 0.0
+        if "success_bonus" in info:
+            info["success_bonus"] = 0.0
+    return False, float(reward), info
+
+
 class _EnvBase:
     pass
 
@@ -2070,11 +2113,21 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._goal_motion_direction = self._current_goal_motion_direction(ee_pos=ee, goal_pos=goal_pos)
 
         self._step_count += 1
+        success, reward, reward_info = _apply_reverse_frontier_policy_gate(
+            success=bool(success),
+            reward=float(reward),
+            reward_info=reward_info,
+            curriculum_mode=self._curriculum_mode,
+            curriculum_reset_info=self._curriculum_reset_info,
+            policy_step=self._step_count,
+            task_metadata=self._task_metadata,
+        )
         terminated = bool(success)
         truncated = bool(self._step_count >= self.max_steps and not terminated)
 
         obs = self._get_obs()
         info = self._base_info()
+        info.update(self._curriculum_reset_info)
         info.update(reward_info)
         info["success"] = bool(success)
         info["reward"] = float(reward)
