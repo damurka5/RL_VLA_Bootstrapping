@@ -1129,6 +1129,100 @@ class RewardDistanceTests(unittest.TestCase):
         self.assertEqual(info["relation_motion_ok"], 1.0)
         self.assertEqual(info["relation_grasp_ok"], 1.0)
 
+    def test_released_plate_success_requires_real_grasp_history(self):
+        class _Env:
+            def __init__(self):
+                self.bodies = {
+                    "target_body": np.array([0.10, 0.00, 0.16], dtype=np.float32),
+                    "plate_body": np.array([0.00, 0.00, 0.08], dtype=np.float32),
+                }
+
+            def _get_body_position(self, body_name):
+                return self.bodies[body_name]
+
+            def _caught_object_start_gripper_opening_for_body(self, body_name):
+                del body_name
+                return 0.90
+
+        env = _Env()
+        spec = InstructionSpec(
+            instruction_type="put_into_plate",
+            text="put apple into plate",
+            target_object="ycb_apple",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.40,
+            lift_target=0.10,
+            reference_object="plate",
+        )
+        metadata = {
+            "put_container_xy_tolerance": 0.03,
+            "put_container_z_tolerance": 0.12,
+            "put_require_release": True,
+            "put_release_opening_threshold": 0.55,
+            "put_min_target_motion": 0.04,
+            "put_require_target_grasp_history": True,
+            "grasp_history_release_use_fitted_opening": True,
+            "caught_object_start_release_opening_margin": 0.04,
+        }
+        state = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            initial_obj_pos=env.bodies["target_body"],
+        )
+
+        _, first_success, first_info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.10, 0.00, 0.20], dtype=np.float32),
+            obj_pos=env.bodies["plate_body"],
+            reward_state=state,
+            task_metadata=metadata,
+            env=env,
+            target_body_name="target_body",
+            reference_body_name="plate_body",
+            gripper_opening=0.90,
+            caught_object_is_target=True,
+        )
+        self.assertFalse(first_success)
+        self.assertEqual(first_info["ever_grasped"], 1.0)
+
+        env.bodies["target_body"] = np.array([0.00, 0.00, 0.16], dtype=np.float32)
+        reward, success, info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.00, 0.00, 0.20], dtype=np.float32),
+            obj_pos=env.bodies["plate_body"],
+            reward_state=state,
+            task_metadata=metadata,
+            env=env,
+            target_body_name="target_body",
+            reference_body_name="plate_body",
+            gripper_opening=0.96,
+            caught_object_is_target=False,
+        )
+
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertEqual(info["relation_grasp_history_required"], 1.0)
+        self.assertEqual(info["relation_grasp_history_ok"], 1.0)
+        self.assertEqual(info["ever_grasped"], 1.0)
+
+        never_grasped = init_reward_state(
+            initial_ee_pos=np.array([0.0, 0.0, 0.20], dtype=np.float32),
+            initial_obj_pos=np.array([0.10, 0.00, 0.16], dtype=np.float32),
+        )
+        _, false_success, false_info = compute_instruction_reward(
+            spec=spec,
+            ee_pos=np.array([0.00, 0.00, 0.20], dtype=np.float32),
+            obj_pos=env.bodies["plate_body"],
+            reward_state=never_grasped,
+            task_metadata=metadata,
+            env=env,
+            target_body_name="target_body",
+            reference_body_name="plate_body",
+            gripper_opening=0.96,
+            caught_object_is_target=False,
+        )
+        self.assertFalse(false_success)
+        self.assertEqual(false_info["relation_grasp_history_ok"], 0.0)
+
     def test_pick_up_reward_prefers_open_centered_pregrasp(self):
         spec = self._spec("pick_up")
         initial_obj = np.array([0.0, 0.0, 0.18], dtype=np.float32)

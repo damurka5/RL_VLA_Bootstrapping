@@ -94,13 +94,64 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     self.assertEqual(config.task.metadata["between_xy_tolerance"], 0.03)
                     self.assertTrue(config.task.metadata["push_enforce_orthogonal_tolerance"])
                     self.assertTrue(config.task.metadata["push_enforce_max_overshoot"])
+                    self.assertEqual(
+                        config.task.metadata["reverse_frontier_policy_decision_bounds"],
+                        [
+                            [4, 6],
+                            [7, 10],
+                            [11, 16],
+                            [17, 24],
+                            [25, 52],
+                            [53, 80],
+                            [81, 128],
+                        ],
+                    )
+                    self.assertTrue(config.task.metadata["put_require_target_grasp_history"])
+                    self.assertTrue(
+                        config.task.metadata["move_relation_require_target_grasp_history"]
+                    )
+                    self.assertTrue(
+                        config.task.metadata["relation_require_target_grasp_history"]
+                    )
+                    self.assertTrue(
+                        config.task.metadata["reverse_frontier_dynamic_grasp_latch"]
+                    )
+                    self.assertEqual(
+                        config.task.metadata["reverse_frontier_grasp_latch_xy_distance"],
+                        0.030,
+                    )
+                    self.assertEqual(
+                        config.task.metadata["reverse_frontier_grasp_latch_z_distance"],
+                        0.060,
+                    )
+                    self.assertEqual(
+                        config.task.metadata[
+                            "reverse_frontier_grasp_latch_min_finger_contacts"
+                        ],
+                        1,
+                    )
+                    self.assertEqual(
+                        command[command.index("--max-env-steps") + 1],
+                        "128",
+                    )
 
-    def test_reverse_frontier_profile_has_four_requested_shells_and_horizons(self):
+    def test_reverse_frontier_profile_has_longer_base_and_grasp_shells(self):
         specs = get_cdpr_reverse_shell_specs(profile=SMOLVLA_COMPLEX_PROFILE)
         self.assertEqual(len(specs), 8)
-        self.assertTrue(all(spec.shell_count == 4 for spec in specs))
+        shell_counts = {spec.instruction_id: spec.shell_count for spec in specs}
+        self.assertEqual(shell_counts["move_to_object"], 4)
+        self.assertEqual(shell_counts["push_left"], 4)
+        self.assertEqual(shell_counts["push_right"], 4)
+        self.assertEqual(shell_counts["put_into_bowl"], 4)
+        for instruction in (
+            "put_into_plate",
+            "move_left_of_object",
+            "move_right_of_object",
+            "move_between_objects",
+        ):
+            self.assertEqual(shell_counts[instruction], 7)
 
-        expected = ((2, 3), (3, 4), (4, 6), (6, 10))
+        expected = ((4, 6), (7, 10), (11, 16), (17, 24))
         for shell_id, bounds in enumerate(expected):
             env = _MoveShellEnv()
             info = apply_cdpr_reverse_shell(

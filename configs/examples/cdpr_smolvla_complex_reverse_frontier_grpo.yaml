@@ -19,8 +19,9 @@ remote:
     RLVLA_CDPR_QUIET: "true"
     RLVLA_CDPR_WRAPPER_LOG: "false"
   notes:
-    - Four-shell Reverse Frontier comparison run using exact sparse binary GRPO rewards.
-    - Shells represent 2-3, 3-4, 4-6, and 6-10 target policy decisions.
+    - Reverse Frontier comparison run using exact sparse binary GRPO rewards.
+    - Base shells represent 4-6, 7-10, 11-16, and 17-24 target policy decisions.
+    - Plate and spatial-relation tasks add aligned-catch, approach-catch, and full-task shells.
     - Each instruction advances one shell only after at least 80 percent held-out success.
 
 assets:
@@ -106,10 +107,13 @@ task:
     # Horizons are policy decisions, not raw MuJoCo substeps. With hold_steps=6,
     # one decision still advances seven simulator steps internally.
     reverse_frontier_policy_decision_bounds:
-      - [2, 3]
-      - [3, 4]
       - [4, 6]
-      - [6, 10]
+      - [7, 10]
+      - [11, 16]
+      - [17, 24]
+      - [25, 52]
+      - [53, 80]
+      - [81, 128]
     # Effective Cartesian progress per decision as a fraction of action_step_xyz.
     # The imitation controller commands 0.60; cable dynamics realize about 0.44.
     reverse_frontier_nominal_progress_fraction: 0.44
@@ -170,6 +174,24 @@ task:
     caught_object_start_min_height_above_table: 0.08
     caught_object_start_release_opening_threshold: 0.010
     caught_object_start_release_opening_margin: 0.04
+    # Wide YCB objects are physically caught with a large normalized opening;
+    # detect closure around the object, then require opening past its fitted
+    # width before a released placement can succeed.
+    catch_gripper_closed_opening_threshold: 0.94
+    grasp_history_release_use_fitted_opening: true
+    # Grasp-learning shells start with a free object. Once the policy has
+    # centered the gripper and actively closed to the fitted object width,
+    # engage the same stable carry constraint used by the held-object shells.
+    # This remains disabled at reset, so approach and closing are still
+    # required policy phases.
+    reverse_frontier_dynamic_grasp_latch: true
+    reverse_frontier_grasp_latch_xy_distance: 0.030
+    reverse_frontier_grasp_latch_z_distance: 0.060
+    reverse_frontier_grasp_latch_min_finger_contacts: 1
+    reverse_frontier_grasp_latch_contactless_xy_distance: 0.028
+    reverse_frontier_grasp_latch_contactless_z_distance: 0.030
+    reverse_frontier_grasp_latch_opening_margin: 0.012
+    reverse_frontier_grasp_latch_closing_command_threshold: 0.05
 
     # Require the target center to be visibly inside/on the receptacle. The Z
     # tolerance remains geometry-aware because bowl/plate body origins differ.
@@ -178,6 +200,7 @@ task:
     put_require_release: true
     put_release_opening_threshold: 0.55
     put_require_target_grasp: false
+    put_require_target_grasp_history: true
     put_downward_reward_enabled: false
     put_min_target_motion: 0.04
     relation_left_right_offset: 0.10
@@ -185,9 +208,11 @@ task:
     move_relation_success_zone_size: 0.03
     move_relation_min_target_motion: 0.04
     move_relation_require_target_grasp: false
+    move_relation_require_target_grasp_history: true
     move_relation_require_release: true
     relation_min_target_motion: 0.04
     relation_require_target_grasp: false
+    relation_require_target_grasp_history: true
     relation_require_release: true
     between_xy_tolerance: 0.03
 
@@ -267,7 +292,7 @@ training:
     args:
       resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_to_10000000_20260710_193100/rl/step_6700000
       max_train_steps: 10000000
-      max_env_steps: 96
+      max_env_steps: 128
       num_envs_per_rank: 4
       chunk_size: 8
       replan_every: 1

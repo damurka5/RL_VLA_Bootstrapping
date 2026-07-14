@@ -14,7 +14,10 @@ from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
     RewardState,
     compute_instruction_reward,
 )
-from robots.cdpr.cdpr_dataset.rl_cdpr_env import _apply_reverse_frontier_policy_gate
+from robots.cdpr.cdpr_dataset.rl_cdpr_env import (
+    CDPRLanguageRLEnv,
+    _apply_reverse_frontier_policy_gate,
+)
 
 
 class _FakeEnv:
@@ -102,6 +105,52 @@ class _FakeEnv:
 
 
 class CDPRReverseShellTests(unittest.TestCase):
+    def test_grasp_shell_latches_only_after_aligned_policy_close(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env._task_metadata = {
+            "reverse_frontier_dynamic_grasp_latch": True,
+            "reverse_frontier_grasp_latch_xy_distance": 0.030,
+            "reverse_frontier_grasp_latch_z_distance": 0.060,
+            "reverse_frontier_grasp_latch_min_finger_contacts": 1,
+            "reverse_frontier_grasp_latch_contactless_xy_distance": 0.028,
+            "reverse_frontier_grasp_latch_contactless_z_distance": 0.030,
+            "reverse_frontier_grasp_latch_opening_margin": 0.012,
+            "reverse_frontier_grasp_latch_closing_command_threshold": 0.05,
+            "caught_object_start_object_offset": [0.0, 0.0, 0.005],
+        }
+        env._curriculum_mode = "reverse_frontier"
+        env._curriculum_reset_info = {"curriculum_grasp_required": True}
+        env._target_body_name = "target_body"
+        env._target_catalog_name = "ycb_apple"
+        env._caught_object_start_active = False
+        env._reverse_frontier_dynamic_grasp_latched = False
+        env._last_gripper_cmd = 0.0
+        env._get_gripper_target = lambda: 0.85
+        env._caught_object_start_gripper_opening_for_body = lambda body: 0.85
+        env._caught_object_start_hold_center = lambda: np.array(
+            [0.10, -0.05, 0.07], dtype=np.float32
+        )
+        env._get_body_position = lambda body: np.array(
+            [0.10, -0.05, 0.075], dtype=np.float32
+        )
+        env._maintain_caught_object_start_pose = lambda: True
+        env._reverse_frontier_target_finger_contact_count = lambda body: 1
+        ee = np.array([0.10, -0.05, 0.14], dtype=np.float32)
+
+        self.assertFalse(env._maybe_latch_reverse_frontier_grasp(ee))
+        self.assertFalse(env._caught_object_start_active)
+
+        env._last_gripper_cmd = -1.0
+        self.assertTrue(env._maybe_latch_reverse_frontier_grasp(ee))
+        self.assertTrue(env._caught_object_start_active)
+        self.assertTrue(env._reverse_frontier_dynamic_grasp_latched)
+        self.assertEqual(env._caught_object_start_body, "target_body")
+        np.testing.assert_allclose(
+            env._caught_object_start_hold_offset,
+            np.array([0.0, 0.0, 0.005], dtype=np.float32),
+            atol=1e-7,
+        )
+
     def test_policy_gate_blocks_early_sparse_success_until_sampled_target(self):
         reset_info = {"curriculum_shell_target_policy_steps": 3}
         metadata = {"reward_mode": "sparse_binary", "sparse_failure_reward": 0.0}
@@ -218,15 +267,70 @@ class CDPRReverseShellTests(unittest.TestCase):
 
         self.assertEqual(
             (info["curriculum_shell_policy_steps_low"], info["curriculum_shell_policy_steps_high"]),
-            (6, 10),
+            (17, 24),
         )
-        self.assertGreaterEqual(info["curriculum_shell_target_policy_steps"], 6)
-        self.assertLessEqual(info["curriculum_shell_target_policy_steps"], 10)
+        self.assertGreaterEqual(info["curriculum_shell_target_policy_steps"], 17)
+        self.assertLessEqual(info["curriculum_shell_target_policy_steps"], 24)
         self.assertTrue(info["curriculum_target_grasped"])
         self.assertTrue(env._caught_object_start_active)
         self.assertEqual(info["curriculum_put_start_stage"], 0)
         self.assertEqual(info["curriculum_shell_relation"], "held_object_near_receptacle")
         self.assertGreater(info["curriculum_shell_distance_m"], 0.08)
+
+    def test_complex_plate_adds_aligned_approach_and_full_grasp_shells(self):
+        expected = {
+            4: ("aligned_open_gripper_catch_then_finish", (25, 52), 0),
+            5: ("near_object_approach_catch_then_finish", (53, 80), 1),
+            6: ("full_randomized_approach_catch_then_finish", (81, 128), 2),
+        }
+        for shell_id, (relation, bounds, phase) in expected.items():
+            with self.subTest(shell_id=shell_id):
+                env = _FakeEnv()
+                ee_before = env._get_ee_position()
+                apple_before = env._get_body_position("apple_body")
+                info = apply_cdpr_reverse_shell(
+                    env,
+                    shell_id=shell_id,
+                    rng=np.random.default_rng(200 + shell_id),
+                    profile=SMOLVLA_COMPLEX_PROFILE,
+                )
+
+                self.assertEqual(info["curriculum_shell_count"], 7)
+                self.assertEqual(info["curriculum_shell_relation"], relation)
+                self.assertEqual(
+                    (
+                        info["curriculum_shell_policy_steps_low"],
+                        info["curriculum_shell_policy_steps_high"],
+                    ),
+                    bounds,
+                )
+                self.assertEqual(info["curriculum_grasp_start_phase"], phase)
+                self.assertTrue(info["curriculum_grasp_required"])
+                self.assertFalse(info["curriculum_target_grasped"])
+                self.assertFalse(env._caught_object_start_active)
+                self.assertEqual(env._get_gripper_opening(), 1.0)
+                if shell_id == 6:
+                    np.testing.assert_allclose(env._get_ee_position(), ee_before)
+                    np.testing.assert_allclose(
+                        env._get_body_position("apple_body"), apple_before
+                    )
+                    self.assertTrue(
+                        np.isnan(info["curriculum_grasp_start_goal_distance_m"])
+                    )
+                    self.assertTrue(info["curriculum_shell_normal_reset"])
+                else:
+                    start_distance = info["curriculum_grasp_start_goal_distance_m"]
+                    expected_range = (0.120, 0.145) if shell_id == 4 else (0.160, 0.200)
+                    self.assertGreaterEqual(start_distance, expected_range[0])
+                    self.assertLessEqual(start_distance, expected_range[1])
+                    plate = env._get_body_position("plate_body")
+                    apple = env._get_body_position("apple_body")
+                    self.assertAlmostEqual(
+                        float(np.linalg.norm(apple[:2] - plate[:2])),
+                        float(start_distance),
+                        places=5,
+                    )
+                    self.assertFalse(info["curriculum_shell_normal_reset"])
 
     def test_complex_motion_credit_stays_valid_while_approaching_goal(self):
         env = _FakeEnv()

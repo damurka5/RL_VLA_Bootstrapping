@@ -1767,6 +1767,12 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_ee_offset = np.zeros((3,), dtype=np.float32)
         self._caught_object_start_hold_offset = np.zeros((3,), dtype=np.float32)
         self._caught_object_start_gripper_opening = 0.0
+        self._reverse_frontier_dynamic_grasp_latched = False
+        self._reverse_frontier_grasp_latch_status = "inactive"
+        self._reverse_frontier_grasp_latch_distance = float("nan")
+        self._reverse_frontier_grasp_latch_xy_distance = float("nan")
+        self._reverse_frontier_grasp_latch_z_distance = float("nan")
+        self._reverse_frontier_grasp_latch_contact_count = 0
         self._curriculum_mode = ""
         self._curriculum_shell: int | None = None
         self._curriculum_reset_info: dict[str, Any] = {}
@@ -1981,8 +1987,10 @@ class CDPRLanguageRLEnv(_EnvBase):
                 self._reward_state.initial_obj_pos = reward_initial_arr[:3].astype(np.float32).copy()
         if bool(self._curriculum_reset_info.get("curriculum_target_grasped", False)):
             self._reward_state.grasped = True
+            self._reward_state.ever_grasped = True
         if bool(getattr(self, "_caught_object_start_active", False)):
             self._reward_state.grasped = True
+            self._reward_state.ever_grasped = True
         self._reward_state.gripper_closed = self._is_gripper_closed(self._get_gripper_opening())
         self._step_count = 0
         self._yaw = self._read_current_yaw()
@@ -2387,6 +2395,24 @@ class CDPRLanguageRLEnv(_EnvBase):
             "caught_object_start_gripper_opening": float(
                 getattr(self, "_caught_object_start_gripper_opening", 0.0)
             ),
+            "reverse_frontier_dynamic_grasp_latched": bool(
+                getattr(self, "_reverse_frontier_dynamic_grasp_latched", False)
+            ),
+            "reverse_frontier_grasp_latch_status": str(
+                getattr(self, "_reverse_frontier_grasp_latch_status", "inactive")
+            ),
+            "reverse_frontier_grasp_latch_distance": float(
+                getattr(self, "_reverse_frontier_grasp_latch_distance", float("nan"))
+            ),
+            "reverse_frontier_grasp_latch_xy_distance": float(
+                getattr(self, "_reverse_frontier_grasp_latch_xy_distance", float("nan"))
+            ),
+            "reverse_frontier_grasp_latch_z_distance": float(
+                getattr(self, "_reverse_frontier_grasp_latch_z_distance", float("nan"))
+            ),
+            "reverse_frontier_grasp_latch_contact_count": int(
+                getattr(self, "_reverse_frontier_grasp_latch_contact_count", 0)
+            ),
             "curriculum_mode": str(getattr(self, "_curriculum_mode", "")),
             "curriculum_shell": copy.deepcopy(getattr(self, "_curriculum_shell", None)),
             "curriculum_reset_info": copy.deepcopy(getattr(self, "_curriculum_reset_info", {})),
@@ -2453,6 +2479,24 @@ class CDPRLanguageRLEnv(_EnvBase):
             dtype=np.float32,
         ).reshape(3).copy()
         self._caught_object_start_gripper_opening = float(snapshot.get("caught_object_start_gripper_opening", 0.0))
+        self._reverse_frontier_dynamic_grasp_latched = bool(
+            snapshot.get("reverse_frontier_dynamic_grasp_latched", False)
+        )
+        self._reverse_frontier_grasp_latch_status = str(
+            snapshot.get("reverse_frontier_grasp_latch_status", "inactive")
+        )
+        self._reverse_frontier_grasp_latch_distance = float(
+            snapshot.get("reverse_frontier_grasp_latch_distance", float("nan"))
+        )
+        self._reverse_frontier_grasp_latch_xy_distance = float(
+            snapshot.get("reverse_frontier_grasp_latch_xy_distance", float("nan"))
+        )
+        self._reverse_frontier_grasp_latch_z_distance = float(
+            snapshot.get("reverse_frontier_grasp_latch_z_distance", float("nan"))
+        )
+        self._reverse_frontier_grasp_latch_contact_count = int(
+            snapshot.get("reverse_frontier_grasp_latch_contact_count", 0)
+        )
         self._curriculum_mode = str(snapshot.get("curriculum_mode", ""))
         self._curriculum_shell = copy.deepcopy(snapshot.get("curriculum_shell", None))
         self._curriculum_reset_info = dict(snapshot.get("curriculum_reset_info", {}) or {})
@@ -2506,6 +2550,12 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._caught_object_start_ee_offset = np.zeros((3,), dtype=np.float32)
         self._caught_object_start_hold_offset = np.zeros((3,), dtype=np.float32)
         self._caught_object_start_gripper_opening = 0.0
+        self._reverse_frontier_dynamic_grasp_latched = False
+        self._reverse_frontier_grasp_latch_status = "inactive"
+        self._reverse_frontier_grasp_latch_distance = float("nan")
+        self._reverse_frontier_grasp_latch_xy_distance = float("nan")
+        self._reverse_frontier_grasp_latch_z_distance = float("nan")
+        self._reverse_frontier_grasp_latch_contact_count = 0
 
     def _caught_object_start_instruction_types(self) -> tuple[str, ...]:
         metadata = getattr(self, "_task_metadata", {}) or {}
@@ -4075,6 +4125,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             self._prev_ee_for_catch = np.asarray(ee_pos, dtype=np.float32).copy()
             return "", "", 0.0, False
 
+        self._maybe_latch_reverse_frontier_grasp(ee_pos)
+
         # A pinned caught-object curriculum start is an explicit environment
         # constraint, so it is the authoritative grasp state until the policy
         # commands an opening past the release threshold.  Geometry-only catch
@@ -4099,9 +4151,29 @@ class CDPRLanguageRLEnv(_EnvBase):
                 bool(pinned_catalog == self._target_catalog_name),
             )
 
+        # In the explicit grasp-learning shells, contact proximity is not yet a
+        # completed catch. Require the aligned close transition above to engage
+        # the carry latch before recording target-grasp history.
+        if (
+            bool((getattr(self, "_curriculum_reset_info", {}) or {}).get("curriculum_grasp_required", False))
+            and _metadata_bool(
+                self._task_metadata,
+                "reverse_frontier_dynamic_grasp_latch",
+                False,
+            )
+        ):
+            self._prev_ee_for_catch = np.asarray(ee_pos, dtype=np.float32).copy()
+            return "", "", 0.0, False
+
         gripper_closed = bool(self._reward_state.gripper_closed)
         ee_now = np.asarray(ee_pos, dtype=np.float32)
         ee_step = ee_now - self._prev_ee_for_catch
+        hold_center = self._caught_object_start_hold_center()
+        contact_origin = (
+            np.asarray(hold_center, dtype=np.float32).reshape(3)
+            if hold_center is not None
+            else ee_now
+        )
 
         best_body = ""
         best_score = 0.0
@@ -4114,7 +4186,7 @@ class CDPRLanguageRLEnv(_EnvBase):
 
             obj_prev = self._prev_object_positions.get(body_name, obj_now)
             obj_step = obj_now - obj_prev
-            dist = float(np.linalg.norm(ee_now - obj_now))
+            dist = float(np.linalg.norm(contact_origin - obj_now))
             contact_score = float(np.exp(-28.0 * dist))
             follow_score = float(np.exp(-35.0 * np.linalg.norm(obj_step - ee_step)))
             score = contact_score * follow_score
@@ -4144,6 +4216,205 @@ class CDPRLanguageRLEnv(_EnvBase):
             float(best_score),
             bool(catalog_name == self._target_catalog_name),
         )
+
+    def _reverse_frontier_target_finger_contact_count(self, body_name: str) -> int:
+        """Count distinct collision pads currently contacting the target body."""
+        sim = getattr(self, "sim", None)
+        if sim is None or not hasattr(sim, "model") or not hasattr(sim, "data"):
+            return 0
+        target_body_id = mj.mj_name2id(sim.model, mj.mjtObj.mjOBJ_BODY, str(body_name))
+        if int(target_body_id) == -1:
+            return 0
+        pad_ids = {
+            int(geom_id)
+            for geom_name in ("left_finger_pad", "right_finger_pad")
+            if int(
+                geom_id := mj.mj_name2id(
+                    sim.model,
+                    mj.mjtObj.mjOBJ_GEOM,
+                    geom_name,
+                )
+            )
+            != -1
+        }
+        contacted: set[int] = set()
+        for index in range(int(sim.data.ncon)):
+            contact = sim.data.contact[index]
+            geom1 = int(contact.geom1)
+            geom2 = int(contact.geom2)
+            body1 = int(sim.model.geom_bodyid[geom1])
+            body2 = int(sim.model.geom_bodyid[geom2])
+            if geom1 in pad_ids and body2 == int(target_body_id):
+                contacted.add(geom1)
+            if geom2 in pad_ids and body1 == int(target_body_id):
+                contacted.add(geom2)
+        return len(contacted)
+
+    def _maybe_latch_reverse_frontier_grasp(self, ee_pos: np.ndarray) -> bool:
+        """Stabilize a free target only after an explicit, aligned close action.
+
+        The later reverse-frontier shells must teach approach and catching, so
+        they cannot begin with the object pinned. Pure MuJoCo friction is not
+        stable at the policy cadence used for training, however. This method
+        turns on the existing carry constraint only at the instant the policy
+        closes around the live target within the configured grasp geometry.
+        """
+        if bool(getattr(self, "_caught_object_start_active", False)):
+            return False
+        if str(getattr(self, "_curriculum_mode", "")) != "reverse_frontier":
+            return False
+        reset_info = getattr(self, "_curriculum_reset_info", {}) or {}
+        if not bool(reset_info.get("curriculum_grasp_required", False)):
+            return False
+        if not _metadata_bool(
+            self._task_metadata,
+            "reverse_frontier_dynamic_grasp_latch",
+            False,
+        ):
+            return False
+
+        body_name = str(getattr(self, "_target_body_name", ""))
+        catalog_name = str(getattr(self, "_target_catalog_name", ""))
+        if not body_name or not catalog_name:
+            return False
+
+        closing_threshold = max(
+            0.0,
+            _metadata_float(
+                self._task_metadata,
+                "reverse_frontier_grasp_latch_closing_command_threshold",
+                0.05,
+            ),
+        )
+        if float(getattr(self, "_last_gripper_cmd", 0.0)) > -closing_threshold:
+            self._reverse_frontier_grasp_latch_status = "waiting_for_close_command"
+            return False
+
+        fitted_opening = float(self._caught_object_start_gripper_opening_for_body(body_name))
+        opening_margin = max(
+            0.0,
+            _metadata_float(
+                self._task_metadata,
+                "reverse_frontier_grasp_latch_opening_margin",
+                0.012,
+            ),
+        )
+        try:
+            gripper_target = float(self._get_gripper_target())
+        except Exception:
+            gripper_target = float("inf")
+        if not np.isfinite(gripper_target) or gripper_target > fitted_opening + opening_margin:
+            self._reverse_frontier_grasp_latch_status = "closing_to_fitted_width"
+            return False
+
+        hold_center = self._caught_object_start_hold_center()
+        if hold_center is None:
+            self._reverse_frontier_grasp_latch_status = "missing_hold_center"
+            return False
+        try:
+            target_position = self._get_body_position(body_name).astype(np.float32)
+        except Exception:
+            return False
+
+        raw_offset = self._task_metadata.get(
+            "caught_object_start_object_offset",
+            DEFAULT_CAUGHT_OBJECT_START_OFFSET,
+        )
+        try:
+            hold_offset = np.asarray(raw_offset, dtype=np.float32).reshape(-1)[:3]
+        except Exception:
+            return False
+        if hold_offset.size != 3 or not np.all(np.isfinite(hold_offset)):
+            return False
+        expected_target = np.asarray(hold_center, dtype=np.float32).reshape(3) + hold_offset
+        alignment_delta = target_position - expected_target
+        grasp_xy_distance = float(np.linalg.norm(alignment_delta[:2]))
+        grasp_z_distance = float(abs(alignment_delta[2]))
+        grasp_distance = float(np.linalg.norm(alignment_delta))
+        self._reverse_frontier_grasp_latch_distance = grasp_distance
+        self._reverse_frontier_grasp_latch_xy_distance = grasp_xy_distance
+        self._reverse_frontier_grasp_latch_z_distance = grasp_z_distance
+        finger_contact_count = self._reverse_frontier_target_finger_contact_count(body_name)
+        self._reverse_frontier_grasp_latch_contact_count = int(finger_contact_count)
+        xy_distance_threshold = max(
+            0.0,
+            _metadata_float(
+                self._task_metadata,
+                "reverse_frontier_grasp_latch_xy_distance",
+                0.030,
+            ),
+        )
+        z_distance_threshold = max(
+            0.0,
+            _metadata_float(
+                self._task_metadata,
+                "reverse_frontier_grasp_latch_z_distance",
+                0.060,
+            ),
+        )
+        min_finger_contacts = max(
+            0,
+            int(
+                round(
+                    _metadata_float(
+                        self._task_metadata,
+                        "reverse_frontier_grasp_latch_min_finger_contacts",
+                        1.0,
+                    )
+                )
+            ),
+        )
+        contactless_xy_threshold = max(
+            0.0,
+            _metadata_float(
+                self._task_metadata,
+                "reverse_frontier_grasp_latch_contactless_xy_distance",
+                0.005,
+            ),
+        )
+        contactless_z_threshold = max(
+            0.0,
+            _metadata_float(
+                self._task_metadata,
+                "reverse_frontier_grasp_latch_contactless_z_distance",
+                0.030,
+            ),
+        )
+        centered_close_fallback = bool(
+            grasp_xy_distance <= contactless_xy_threshold
+            and grasp_z_distance <= contactless_z_threshold
+        )
+        contact_gate_ok = bool(
+            finger_contact_count >= min_finger_contacts
+            or centered_close_fallback
+        )
+        if (
+            not np.isfinite(grasp_distance)
+            or grasp_xy_distance > xy_distance_threshold
+            or grasp_z_distance > z_distance_threshold
+            or not contact_gate_ok
+        ):
+            self._reverse_frontier_grasp_latch_status = (
+                "waiting_for_finger_contact"
+                if not contact_gate_ok
+                else "outside_alignment_distance"
+            )
+            return False
+
+        ee_arr = np.asarray(ee_pos, dtype=np.float32).reshape(3)
+        self._caught_object_start_active = True
+        self._caught_object_start_body = body_name
+        self._caught_object_start_catalog = catalog_name
+        self._caught_object_start_position = target_position.copy()
+        self._caught_object_start_ee_offset = (target_position - ee_arr).astype(np.float32)
+        self._caught_object_start_hold_offset = (
+            target_position - np.asarray(hold_center, dtype=np.float32).reshape(3)
+        ).astype(np.float32)
+        self._caught_object_start_gripper_opening = fitted_opening
+        self._reverse_frontier_dynamic_grasp_latched = True
+        self._reverse_frontier_grasp_latch_status = "latched_after_policy_close"
+        self._maintain_caught_object_start_pose()
+        return True
 
     def _resolve_objects(self, catalog_objects: Sequence[str]) -> tuple[dict[str, str], list[str]]:
         mapping: dict[str, str] = {}
@@ -4446,6 +4717,12 @@ class CDPRLanguageRLEnv(_EnvBase):
         grip_min = float(getattr(self.sim, "gripper_min", 0.0))
         grip_max = float(getattr(self.sim, "gripper_max", 1.0))
         threshold = grip_min + 0.35 * max(grip_max - grip_min, 1e-6)
+        configured_threshold = _metadata_float(
+            self._task_metadata,
+            "catch_gripper_closed_opening_threshold",
+            threshold,
+        )
+        threshold = max(threshold, float(configured_threshold))
         if bool(getattr(self, "_caught_object_start_active", False)):
             threshold = max(threshold, self._caught_object_start_release_opening_threshold())
         return bool(float(opening) <= threshold)
@@ -4635,6 +4912,24 @@ class CDPRLanguageRLEnv(_EnvBase):
             "target_object_body": self._target_body_name,
             "target_object_position_actual": [float(x) for x in target_object_position.tolist()],
             "caught_object_start": bool(getattr(self, "_caught_object_start_active", False)),
+            "reverse_frontier_dynamic_grasp_latched": bool(
+                getattr(self, "_reverse_frontier_dynamic_grasp_latched", False)
+            ),
+            "reverse_frontier_grasp_latch_status": str(
+                getattr(self, "_reverse_frontier_grasp_latch_status", "inactive")
+            ),
+            "reverse_frontier_grasp_latch_distance": float(
+                getattr(self, "_reverse_frontier_grasp_latch_distance", float("nan"))
+            ),
+            "reverse_frontier_grasp_latch_xy_distance": float(
+                getattr(self, "_reverse_frontier_grasp_latch_xy_distance", float("nan"))
+            ),
+            "reverse_frontier_grasp_latch_z_distance": float(
+                getattr(self, "_reverse_frontier_grasp_latch_z_distance", float("nan"))
+            ),
+            "reverse_frontier_grasp_latch_contact_count": int(
+                getattr(self, "_reverse_frontier_grasp_latch_contact_count", 0)
+            ),
             "caught_object_start_body": str(getattr(self, "_caught_object_start_body", "")),
             "caught_object_start_catalog": str(getattr(self, "_caught_object_start_catalog", "")),
             "caught_object_start_position": [

@@ -385,6 +385,7 @@ class RewardState:
     prev_ee_yaw: Optional[float] = None
     gripper_closed: bool = False
     grasped: bool = False
+    ever_grasped: bool = False
     step_count: int = 0
     path_length: float = 0.0
     max_abs_z_displacement: float = 0.0
@@ -2175,6 +2176,33 @@ def _target_motion_from_initial(target_pos: np.ndarray, reward_state: RewardStat
     return delta, float(np.linalg.norm(delta[:2]))
 
 
+def _fitted_target_release_threshold(
+    *,
+    task_metadata: dict[str, Any],
+    env: Any | None,
+    target_body_name: str | None,
+    base_threshold: float,
+) -> float:
+    if not _metadata_bool(
+        task_metadata,
+        "grasp_history_release_use_fitted_opening",
+        False,
+    ):
+        return float(base_threshold)
+    getter = getattr(env, "_caught_object_start_gripper_opening_for_body", None)
+    if not callable(getter) or not target_body_name:
+        return float(base_threshold)
+    try:
+        fitted_opening = float(getter(str(target_body_name)))
+    except Exception:
+        return float(base_threshold)
+    margin = max(
+        0.0,
+        _metadata_float(task_metadata, "caught_object_start_release_opening_margin", 0.04),
+    )
+    return float(np.clip(max(float(base_threshold), fitted_opening + margin), 0.0, 1.0))
+
+
 def _compute_sparse_manipulation_reward(
     *,
     spec: InstructionSpec,
@@ -2214,6 +2242,8 @@ def _compute_sparse_manipulation_reward(
             except Exception:
                 pass
         gripper_closed = bool(gripper_value <= closed_threshold)
+    if bool(caught_object_is_target):
+        reward_state.ever_grasped = True
     if not gripper_closed:
         reward_state.grasped = False
     elif bool(caught_object_is_target):
@@ -2241,6 +2271,8 @@ def _compute_sparse_manipulation_reward(
     relation_motion_ok = True
     relation_grasp_required = False
     relation_grasp_ok = True
+    relation_grasp_history_required = False
+    relation_grasp_history_ok = True
     relation_release_required = False
     relation_release_ok = True
     relation_axis = -1
@@ -2494,6 +2526,18 @@ def _compute_sparse_manipulation_reward(
         require_release = _metadata_bool(task_metadata, "put_require_release", False)
         relation_motion_required = _metadata_float(task_metadata, "put_min_target_motion", 0.0)
         relation_grasp_required = _metadata_bool(task_metadata, "put_require_target_grasp", False)
+        relation_grasp_history_required = _metadata_bool(
+            task_metadata,
+            "put_require_target_grasp_history",
+            False,
+        )
+        if relation_grasp_history_required:
+            release_threshold = _fitted_target_release_threshold(
+                task_metadata=task_metadata,
+                env=env,
+                target_body_name=target_body_name,
+                base_threshold=release_threshold,
+            )
         xy_error = float(np.linalg.norm(target_pos[:2] - plate_pos[:2]))
         z_error = float(abs(float(target_pos[2]) - float(plate_pos[2])))
         put_container_z_error = z_error
@@ -2507,7 +2551,13 @@ def _compute_sparse_manipulation_reward(
             else float(np.clip((gripper_value if np.isfinite(gripper_value) else 0.0) / max(release_threshold, 1e-6), 0.0, 1.0))
         )
         relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
-        relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
+        relation_grasp_history_ok = bool(
+            (not relation_grasp_history_required) or reward_state.ever_grasped
+        )
+        relation_grasp_ok = bool(
+            ((not relation_grasp_required) or reward_state.grasped)
+            and relation_grasp_history_ok
+        )
         put_downward_reward_enabled = _metadata_bool(task_metadata, "put_downward_reward_enabled", False)
         if put_downward_reward_enabled:
             relation_motion_required = max(
@@ -2596,13 +2646,31 @@ def _compute_sparse_manipulation_reward(
         relation_motion_required = _metadata_float(task_metadata, "move_relation_min_target_motion", 0.0)
         relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
         relation_grasp_required = _metadata_bool(task_metadata, "move_relation_require_target_grasp", False)
-        relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
+        relation_grasp_history_required = _metadata_bool(
+            task_metadata,
+            "move_relation_require_target_grasp_history",
+            False,
+        )
+        relation_grasp_history_ok = bool(
+            (not relation_grasp_history_required) or reward_state.ever_grasped
+        )
+        relation_grasp_ok = bool(
+            ((not relation_grasp_required) or reward_state.grasped)
+            and relation_grasp_history_ok
+        )
         relation_release_required = _metadata_bool(
             task_metadata, "move_relation_require_release", False
         )
         relation_release_threshold = _metadata_float(
             task_metadata, "put_release_opening_threshold", 0.55
         )
+        if relation_grasp_history_required:
+            relation_release_threshold = _fitted_target_release_threshold(
+                task_metadata=task_metadata,
+                env=env,
+                target_body_name=target_body_name,
+                base_threshold=relation_release_threshold,
+            )
         relation_release_ok = bool(
             (not relation_release_required)
             or (np.isfinite(gripper_value) and gripper_value >= relation_release_threshold)
@@ -2663,13 +2731,31 @@ def _compute_sparse_manipulation_reward(
             relation_error = float(np.linalg.norm(target_pos[:2] - midpoint))
             relation_motion_ok = bool(target_motion_xy >= relation_motion_required)
             relation_grasp_required = _metadata_bool(task_metadata, "relation_require_target_grasp", True)
-            relation_grasp_ok = bool((not relation_grasp_required) or reward_state.grasped)
+            relation_grasp_history_required = _metadata_bool(
+                task_metadata,
+                "relation_require_target_grasp_history",
+                False,
+            )
+            relation_grasp_history_ok = bool(
+                (not relation_grasp_history_required) or reward_state.ever_grasped
+            )
+            relation_grasp_ok = bool(
+                ((not relation_grasp_required) or reward_state.grasped)
+                and relation_grasp_history_ok
+            )
             relation_release_required = _metadata_bool(
                 task_metadata, "relation_require_release", False
             )
             relation_release_threshold = _metadata_float(
                 task_metadata, "put_release_opening_threshold", 0.55
             )
+            if relation_grasp_history_required:
+                relation_release_threshold = _fitted_target_release_threshold(
+                    task_metadata=task_metadata,
+                    env=env,
+                    target_body_name=target_body_name,
+                    base_threshold=relation_release_threshold,
+                )
             relation_release_ok = bool(
                 (not relation_release_required)
                 or (np.isfinite(gripper_value) and gripper_value >= relation_release_threshold)
@@ -2824,10 +2910,13 @@ def _compute_sparse_manipulation_reward(
         "relation_motion_ok": float(relation_motion_ok),
         "relation_grasp_required": float(relation_grasp_required),
         "relation_grasp_ok": float(relation_grasp_ok),
+        "relation_grasp_history_required": float(relation_grasp_history_required),
+        "relation_grasp_history_ok": float(relation_grasp_history_ok),
         "relation_release_required": float(relation_release_required),
         "relation_release_ok": float(relation_release_ok),
         "gripper_closed": float(gripper_closed),
         "grasped": float(reward_state.grasped),
+        "ever_grasped": float(reward_state.ever_grasped),
         "caught_object_score": float(caught_object_score),
         "caught_object_is_target": float(bool(caught_object_is_target)),
         "success_bonus": float(_metadata_float(task_metadata, "sparse_success_reward", 1.0) if success else 0.0),
@@ -3382,6 +3471,7 @@ def compute_instruction_validation_success(
             prev_ee_yaw=reward_state.prev_ee_yaw,
             gripper_closed=bool(reward_state.gripper_closed),
             grasped=bool(reward_state.grasped),
+            ever_grasped=bool(reward_state.ever_grasped),
             step_count=int(reward_state.step_count),
             path_length=float(getattr(reward_state, "path_length", 0.0)),
             max_abs_z_displacement=float(getattr(reward_state, "max_abs_z_displacement", 0.0)),
@@ -3439,6 +3529,7 @@ def compute_instruction_validation_success(
                 prev_ee_yaw=reward_state.prev_ee_yaw,
                 gripper_closed=bool(reward_state.gripper_closed),
                 grasped=bool(reward_state.grasped),
+                ever_grasped=bool(reward_state.ever_grasped),
                 step_count=int(reward_state.step_count),
                 path_length=float(getattr(reward_state, "path_length", 0.0)),
                 max_abs_z_displacement=float(getattr(reward_state, "max_abs_z_displacement", 0.0)),

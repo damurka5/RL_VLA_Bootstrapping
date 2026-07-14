@@ -41,12 +41,18 @@ CDPR_ROOT = ROOT / "robots" / "cdpr"
 if str(CDPR_ROOT) not in sys.path:
     sys.path.insert(0, str(CDPR_ROOT))
 
+from robots.cdpr.cdpr_dataset.cdpr_reverse_shells import (
+    SMOLVLA_COMPLEX_POLICY_DECISION_BOUNDS,
+    SMOLVLA_COMPLEX_PROFILE,
+    get_cdpr_reverse_shell_specs,
+)
+
 DEFAULT_CONFIG = ROOT / "configs" / "examples" / "cdpr_smolvla_complex_reverse_frontier_grpo.yaml"
 DEFAULT_OUTPUT = ROOT / "runs" / "cdpr_reverse_frontier_shell_videos"
 DEFAULT_TARGET = "ycb_apple"
 MODES = ("training", "validation")
 ACTION_NAMES = ("x", "y", "z", "yaw", "gripper")
-SHELL_POLICY_DECISION_BOUNDS = ((2, 3), (3, 4), (4, 6), (6, 10))
+SHELL_POLICY_DECISION_BOUNDS = SMOLVLA_COMPLEX_POLICY_DECISION_BOUNDS
 PLACEMENT_TYPES = ("put_into_plate", "put_into_bowl")
 RELATION_TYPES = ("move_left_of_object", "move_right_of_object", "move_between_objects")
 
@@ -330,6 +336,9 @@ def _capture(
     success = bool(info.get("success", False))
     caught = bool(info.get("caught_object_is_target", False))
     pinned = bool(getattr(env, "_caught_object_start_active", False))
+    dynamically_latched = bool(
+        getattr(env, "_reverse_frontier_dynamic_grasp_latched", False)
+    )
     status = (100, 255, 120) if success else ((255, 210, 80) if caught else (255, 255, 255))
     source = "RESET - no policy action" if policy_step == 0 else "NEW IMITATED VLA CHUNK"
     lines = [
@@ -350,7 +359,16 @@ def _capture(
         (f"ee={_format_vec(ee, count=3)} target={_format_vec(obj, count=3)} ref={_format_vec(ref, count=3)}", status),
         (
             f"gripper={float(info.get('gripper_opening', env._get_gripper_opening() or 0.0)):.3f} "
-            f"caught={int(caught)} reverse-pin-active={int(pinned)} reward={float(reward):+.3f}",
+            f"caught={int(caught)} ever-grasped={int(float(info.get('ever_grasped', 0.0)) >= 0.5)} "
+            f"carry-latch={int(pinned)} caught-after-policy-close={int(dynamically_latched)} "
+            f"reward={float(reward):+.3f}",
+            status,
+        ),
+        (
+            f"catch-gate={getattr(env, '_reverse_frontier_grasp_latch_status', 'inactive')} "
+            f"align-xy={float(getattr(env, '_reverse_frontier_grasp_latch_xy_distance', float('nan'))):.3f}m "
+            f"align-z={float(getattr(env, '_reverse_frontier_grasp_latch_z_distance', float('nan'))):.3f}m "
+            f"finger-contacts={int(getattr(env, '_reverse_frontier_grasp_latch_contact_count', 0))}",
             status,
         ),
         (
@@ -405,7 +423,7 @@ def _held_opening(env: Any) -> float:
 
 def _physical_grasp_target(env: Any) -> float:
     # Reverse-held shells pin the body and use the fitted opening exactly.  A
-    # real shell-3 contact grasp needs extra actuator preload to create friction.
+    # free-object grasp shell uses extra preload before its aligned close latch.
     return float(np.clip(_held_opening(env) - 0.03, 0.0, 1.0))
 
 
@@ -435,7 +453,7 @@ def _desired_object_position(env: Any, instruction_type: str, current: np.ndarra
         desired = current.copy()
         desired[:2] = ref[:2]
         # Keep the held object safely above the receptacle until release.
-        clearance = 0.10 if instruction_type == "put_into_bowl" else 0.045
+        clearance = 0.10 if instruction_type == "put_into_bowl" else 0.09
         desired[2] = max(float(current[2]), float(ref[2] + clearance))
         return desired
     if instruction_type in {"move_left_of_object", "move_right_of_object"}:
@@ -556,6 +574,13 @@ def _oracle_action(
     ee = np.asarray(env._get_ee_position(), dtype=float).reshape(3)
     obj = np.asarray(env._current_manipulated_object_position(default=env._goal_position), dtype=float).reshape(3)
 
+    if (
+        float(info.get("reverse_frontier_raw_success", 0.0)) >= 0.5
+        and float(info.get("reverse_frontier_policy_gate_satisfied", 0.0)) < 0.5
+    ):
+        oracle.phase = "hold_raw_success_until_required_policy_decision"
+        return action, oracle.phase
+
     if instruction_type == "move_to_object":
         if oracle.move_to_start_z is None:
             oracle.move_to_start_z = float(ee[2])
@@ -580,12 +605,16 @@ def _oracle_action(
     if instruction_type not in PLACEMENT_TYPES + RELATION_TYPES:
         raise ValueError(f"No imitation oracle for {instruction_type!r}.")
 
-    if oracle.desired_object_position is None:
-        oracle.desired_object_position = _desired_object_position(env, instruction_type, obj)
+    # Replan from the live reference pose just like the training policy replans
+    # from a fresh observation. Receptacles and reference objects are free
+    # MuJoCo bodies and can drift after contact; caching their reset pose makes
+    # a visually correct controller chase a stale goal.
+    oracle.desired_object_position = _desired_object_position(env, instruction_type, obj)
     desired = np.asarray(oracle.desired_object_position, dtype=float).reshape(3)
+    env._recorder_oracle_desired_object_position = desired.copy()
     pinned = bool(getattr(env, "_caught_object_start_active", False))
     caught = bool(info.get("caught_object_is_target", False)) or pinned
-    if oracle.shell_id >= 3 and not pinned and instruction_type != "put_into_bowl":
+    if oracle.shell_id == 3 and not pinned and instruction_type != "put_into_bowl":
         return _shell3_position_only_action(env, oracle, obj, desired)
     if (
         oracle.shell_id >= 3
@@ -603,12 +632,36 @@ def _oracle_action(
         oracle.grasp_lift_goal_object_z = None
         oracle.grasp_steps = 0
 
-    # Updated Reverse Frontier shells 0-3 are all progressively farther
-    # held/pinned starts. The unpinned branch remains as a compatibility path
-    # for manifests recorded from older configurations.
+    # Shells 0-3 are progressively farther held/pinned starts. Shells 4-6
+    # deliberately enter the unpinned branch below to learn close/catch,
+    # approach/catch, and the full randomized grasp-to-placement task.
     if oracle.shell_id < 3 or caught or oracle.caught_once:
         if caught:
             oracle.caught_once = True
+        if instruction_type in PLACEMENT_TYPES + RELATION_TYPES and oracle.shell_id >= 4 and pinned:
+            if oracle.grasp_lift_goal_object_z is None:
+                ref = np.asarray(
+                    env._reference_object_position(default=obj), dtype=float
+                ).reshape(3)
+                if instruction_type == "move_between_objects":
+                    second_ref = np.asarray(
+                        env._reference_object_position(second=True, default=ref),
+                        dtype=float,
+                    ).reshape(3)
+                    ref[2] = max(float(ref[2]), float(second_ref[2]))
+                oracle.grasp_lift_goal_object_z = max(
+                    float(obj[2] + 0.070), float(ref[2] + 0.090)
+                )
+            if not oracle.grasp_lifted:
+                if float(obj[2]) >= float(oracle.grasp_lift_goal_object_z) - 0.010:
+                    oracle.grasp_lifted = True
+                else:
+                    lift_target = ee.copy()
+                    lift_target[2] += 0.015
+                    action[:3] = _target_action(env, lift_target, max_norm=0.65)
+                    action[4] = _gripper_action_to_target(env, _held_opening(env))
+                    oracle.phase = "post_catch_lift_target_clear_of_reference"
+                    return action, oracle.phase
         if instruction_type == "put_into_bowl" and oracle.shell_id >= 3 and not pinned:
             if oracle.grasp_lift_goal_object_z is None:
                 ref = np.asarray(
@@ -668,9 +721,8 @@ def _oracle_action(
         oracle.phase = "shell3_close_fingers_and_stabilize_physical_grasp"
         return action, oracle.phase
     if grasp_error > 0.010 and not (at_workspace_floor and grasp_xy_error <= 0.025):
-        action[:3] = _target_action(env, grasp_ee, max_norm=0.32)
-        approach_opening = float(np.clip(_held_opening(env) + 0.06, 0.0, 1.0))
-        action[4] = _gripper_action_to_target(env, approach_opening)
+        action[:3] = _target_action(env, grasp_ee, max_norm=0.65)
+        action[4] = _gripper_action_to_target(env, 1.0)
         oracle.phase = "shell3_descend_open_gripper_around_target"
         return action, oracle.phase
 
@@ -682,6 +734,18 @@ def _oracle_action(
         action[4] = _gripper_action_to_target(env, grasp_target)
         oracle.grasp_steps += 1
         oracle.phase = "shell3_close_fingers_and_stabilize_physical_grasp"
+        return action, oracle.phase
+
+    if bool((getattr(env, "_curriculum_reset_info", {}) or {}).get("curriculum_grasp_required", False)):
+        # A close that did not engage the environment's contact/alignment latch
+        # is not a catch. Reopen and recenter on the live object instead of
+        # pretending it was grasped and pushing it toward the goal.
+        oracle.grasp_steps = 0
+        oracle.caught_once = False
+        oracle.grasp_lifted = False
+        oracle.grasp_lift_goal_object_z = None
+        action[4] = _gripper_action_to_target(env, 1.0)
+        oracle.phase = "grasp_retry_reopen_and_recenter_on_live_target"
         return action, oracle.phase
 
     # The generic detector calls a gripper "closed" only below 35% opening, while
@@ -714,6 +778,11 @@ def _trace_row(
 ) -> dict[str, Any]:
     ee = np.asarray(env._get_ee_position(), dtype=float).reshape(3)
     obj = np.asarray(env._current_manipulated_object_position(default=env._goal_position), dtype=float).reshape(3)
+    ref = np.asarray(env._reference_object_position(default=obj), dtype=float).reshape(3)
+    desired = np.asarray(
+        getattr(env, "_recorder_oracle_desired_object_position", np.full(3, np.nan)),
+        dtype=float,
+    ).reshape(3)
     row: dict[str, Any] = {
         "mode": mode,
         "instruction_type": instruction_type,
@@ -737,15 +806,46 @@ def _trace_row(
             "simulation_state_valid": int(bool(info.get("simulation_state_valid", True))),
             "caught_object_is_target": int(bool(info.get("caught_object_is_target", False))),
             "reverse_pin_active": int(bool(getattr(env, "_caught_object_start_active", False))),
+            "dynamic_grasp_latched": int(
+                bool(getattr(env, "_reverse_frontier_dynamic_grasp_latched", False))
+            ),
+            "grasp_latch_status": str(
+                getattr(env, "_reverse_frontier_grasp_latch_status", "inactive")
+            ),
+            "grasp_latch_distance": float(
+                getattr(env, "_reverse_frontier_grasp_latch_distance", float("nan"))
+            ),
+            "grasp_latch_xy_distance": float(
+                getattr(env, "_reverse_frontier_grasp_latch_xy_distance", float("nan"))
+            ),
+            "grasp_latch_z_distance": float(
+                getattr(env, "_reverse_frontier_grasp_latch_z_distance", float("nan"))
+            ),
+            "grasp_latch_contact_count": int(
+                getattr(env, "_reverse_frontier_grasp_latch_contact_count", 0)
+            ),
             "ee_x": float(ee[0]),
             "ee_y": float(ee[1]),
             "ee_z": float(ee[2]),
             "object_x": float(obj[0]),
             "object_y": float(obj[1]),
             "object_z": float(obj[2]),
+            "reference_x": float(ref[0]),
+            "reference_y": float(ref[1]),
+            "reference_z": float(ref[2]),
+            "oracle_desired_x": float(desired[0]),
+            "oracle_desired_y": float(desired[1]),
+            "oracle_desired_z": float(desired[2]),
             "gripper_opening": float(info.get("gripper_opening", 0.0)),
             "gripper_target": float(info.get("gripper_target", 0.0)),
             "sparse_success": float(info.get("sparse_success", 0.0)),
+            "ever_grasped": float(info.get("ever_grasped", 0.0)),
+            "relation_grasp_history_required": float(
+                info.get("relation_grasp_history_required", 0.0)
+            ),
+            "relation_grasp_history_ok": float(
+                info.get("relation_grasp_history_ok", 0.0)
+            ),
             "reverse_frontier_raw_success": float(
                 info.get("reverse_frontier_raw_success", info.get("success", False))
             ),
@@ -866,6 +966,7 @@ def _attempt_rollout(
             shell_id >= 3
             and instruction_type in PLACEMENT_TYPES + RELATION_TYPES
             and not bool(reset_info.get("curriculum_target_grasped", False))
+            and not bool(reset_info.get("curriculum_grasp_required", False))
             and initial_goal_distance > float(shell3_max_initial_goal_distance)
         )
         initial_info = dict(reset_info)
@@ -950,7 +1051,18 @@ def _attempt_rollout(
         policy_steps_within_shell_range = bool(
             policy_low <= len(rows) <= policy_high
         )
-        selected_success = bool(success and policy_steps_within_shell_range)
+        # Training samples a minimum decision gate inside the shell range.  The
+        # upper bound is not an episode timeout: a rollout may legitimately
+        # finish later (for example, while waiting for a released object to
+        # settle).  Select videos with the same rule used by training instead
+        # of imposing an artificial recorder-only maximum.
+        minimum_decision_gate_satisfied = bool(
+            final_info.get(
+                "reverse_frontier_policy_gate_satisfied",
+                len(rows) >= policy_low,
+            )
+        )
+        selected_success = bool(success and minimum_decision_gate_satisfied)
         final_obj = np.asarray(
             env._current_manipulated_object_position(default=env._goal_position), dtype=float
         ).reshape(3)
@@ -959,11 +1071,7 @@ def _attempt_rollout(
             frames.extend([frames[-1].copy() for _ in range(max(6, int(round(fps))))])
 
         mode_dir = run_dir / mode / instruction_type
-        outcome = (
-            "success"
-            if selected_success
-            else ("horizon_mismatch" if success else "failure")
-        )
+        outcome = "success" if selected_success else "failure"
         stem = f"{mode}_like_{instruction_type}_shell_{shell_id:02d}_{outcome}"
         video_path = mode_dir / f"{stem}.mp4"
         trace_path = mode_dir / f"{stem}_actions.csv"
@@ -982,6 +1090,7 @@ def _attempt_rollout(
             "attempt": int(attempt),
             "success": success,
             "selected_success": selected_success,
+            "minimum_decision_gate_satisfied": minimum_decision_gate_satisfied,
             "policy_steps_within_shell_range": policy_steps_within_shell_range,
             "shell_policy_steps_low": policy_low,
             "shell_policy_steps_high": policy_high,
@@ -1069,7 +1178,14 @@ def main() -> int:
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT)
     parser.add_argument("--modes", nargs="+", choices=MODES, default=list(MODES))
     parser.add_argument("--instruction-types", nargs="+", default=None)
-    parser.add_argument("--shells", nargs="+", type=int, choices=range(4), default=list(range(4)))
+    parser.add_argument(
+        "--shells",
+        nargs="+",
+        type=int,
+        choices=range(len(SHELL_POLICY_DECISION_BOUNDS)),
+        default=None,
+        help="Optional shell subset; by default each instruction records all configured shells.",
+    )
     parser.add_argument("--target-object", default=DEFAULT_TARGET)
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--global-step", type=int, default=6_700_000)
@@ -1095,6 +1211,25 @@ def main() -> int:
     config = _load_yaml(config_path)
     _, _, rl_args = _config_parts(config)
     instructions = _selected_instructions(config, args.instruction_types)
+    shell_counts = {
+        spec.instruction_id: int(spec.shell_count)
+        for spec in get_cdpr_reverse_shell_specs(
+            instructions,
+            profile=SMOLVLA_COMPLEX_PROFILE,
+        )
+    }
+    shells_by_instruction = {
+        instruction: tuple(
+            shell_id
+            for shell_id in (
+                args.shells
+                if args.shells is not None
+                else range(int(shell_counts[instruction]))
+            )
+            if int(shell_id) < int(shell_counts[instruction])
+        )
+        for instruction in instructions
+    }
     validation_seed = int(rl_args.get("validation_seed", 1_000_000))
     run_dir = args.output_dir.expanduser().resolve() / datetime.now().strftime("%Y%m%d_%H%M%S")
     run_dir.mkdir(parents=True, exist_ok=True)
@@ -1103,7 +1238,7 @@ def main() -> int:
     attempts: list[dict[str, Any]] = []
     for mode in args.modes:
         for instruction_index, instruction_type in enumerate(instructions):
-            for shell_id in args.shells:
+            for shell_id in shells_by_instruction[instruction_type]:
                 case_result: dict[str, Any] | None = None
                 for attempt in range(max(1, int(args.attempts_per_case))):
                     seed = _case_seed(
@@ -1165,7 +1300,9 @@ def main() -> int:
                         flush=True,
                     )
 
-    expected_count = len(args.modes) * len(instructions) * len(args.shells)
+    expected_count = len(args.modes) * sum(
+        len(shells) for shells in shells_by_instruction.values()
+    )
     config_sha256 = hashlib.sha256(config_path.read_bytes()).hexdigest()
     renderer_path = Path(__file__).resolve()
     hold_steps = int(rl_args.get("hold_steps", 6))
@@ -1193,21 +1330,31 @@ def main() -> int:
         "replan_every": int(rl_args.get("replan_every", 1)),
         "hold_steps": hold_steps,
         "simulator_steps_per_policy_action": 1 + hold_steps,
+        "video_selection_rule": (
+            "Training-equivalent: successful after the shell's sampled minimum policy-"
+            "decision gate. The shell range upper bound is not an episode timeout."
+        ),
         "nominal_shell_sim_step_bounds": [
             [low * (1 + hold_steps), high * (1 + hold_steps)]
             for low, high in SHELL_POLICY_DECISION_BOUNDS
         ],
         "nominal_shell_policy_step_bounds": [
-            list(_policy_step_bounds(hold_steps, shell_id)) for shell_id in range(4)
+            list(_policy_step_bounds(hold_steps, shell_id))
+            for shell_id in range(len(SHELL_POLICY_DECISION_BOUNDS))
         ],
         "shell3_discontinuity": False,
         "shell_progression": (
-            "All four shells use progressively farther starts sized in policy-decision units; "
-            "placement and relation shells remain held/pinned through shell 3."
+            "Shells 0-3 use progressively farther held starts. Plate, left/right relation, "
+            "and between-object tasks add aligned catch, near-object approach/catch, and "
+            "full randomized approach/catch shells 4-6."
         ),
         "modes": list(args.modes),
         "instruction_types": list(instructions),
-        "shells": [int(value) for value in args.shells],
+        "shell_counts": shell_counts,
+        "shells_by_instruction": {
+            instruction: [int(value) for value in shells]
+            for instruction, shells in shells_by_instruction.items()
+        },
         "target_object": str(args.target_object),
         "base_training_seed": int(args.seed),
         "validation_seed": validation_seed,
