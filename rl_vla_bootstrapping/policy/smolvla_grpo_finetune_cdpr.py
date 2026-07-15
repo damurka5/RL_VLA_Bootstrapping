@@ -760,14 +760,18 @@ def _observation_reset_signature(
 ) -> dict[str, Any]:
     """Compact deterministic signature used to verify rank-synchronized resets."""
     digest = hashlib.sha256()
+    key_digests: dict[str, str] = {}
     for key in sorted(observation):
         value = np.asarray(observation[key])
+        value_bytes = np.ascontiguousarray(value).tobytes()
+        key_digests[str(key)] = hashlib.sha256(value_bytes).hexdigest()
         digest.update(str(key).encode("utf-8"))
         digest.update(str(value.dtype).encode("utf-8"))
         digest.update(np.asarray(value.shape, dtype=np.int64).tobytes())
-        digest.update(np.ascontiguousarray(value).tobytes())
+        digest.update(value_bytes)
     return {
         "observation_sha256": digest.hexdigest(),
+        "observation_key_sha256": key_digests,
         "scene": str(info.get("scene", "")),
         "scene_objects": tuple(str(item) for item in info.get("scene_objects", ())),
         "instruction_type": str(info.get("instruction_type", "")),
@@ -797,6 +801,54 @@ def _assert_synchronized_reset(
             "Synchronized Reverse Frontier reset produced different rank states: "
             f"{signatures}"
         )
+
+
+def _synchronize_environment_reset_state(
+    *,
+    env: Any,
+    observation: Mapping[str, Any],
+    info: Mapping[str, Any],
+    ctx: DistributedContext,
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """Restore every rank from rank 0's exact post-reset simulator snapshot."""
+    if not ctx.enabled:
+        return (
+            {
+                str(key): np.asarray(value).copy()
+                for key, value in observation.items()
+            },
+            dict(info),
+        )
+
+    payload = None
+    if ctx.is_main:
+        payload = {
+            "snapshot": env.capture_state(),
+            "observation": {
+                str(key): np.asarray(value).copy()
+                for key, value in observation.items()
+            },
+            "info": dict(info),
+        }
+    canonical = dict(_dist_broadcast_object(payload, ctx, src=0))
+
+    # Restore rank 0 as well so both ranks execute the identical mj_setState +
+    # mj_forward path before the byte-for-byte verification below.
+    env.restore_state(canonical["snapshot"])
+    get_observation = getattr(env, "_get_obs", None)
+    if callable(get_observation):
+        synchronized_observation = {
+            str(key): np.asarray(value).copy()
+            for key, value in dict(get_observation()).items()
+        }
+    else:
+        synchronized_observation = {
+            str(key): np.asarray(value).copy()
+            for key, value in dict(canonical["observation"]).items()
+        }
+    synchronized_info = dict(canonical["info"])
+    _assert_synchronized_reset(synchronized_observation, synchronized_info, ctx)
+    return synchronized_observation, synchronized_info
 
 
 def _synchronized_reset_payload(
@@ -1685,7 +1737,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
                 obs, info = env.reset(seed=seed, options=reset_options)
             if synchronized_trajectory_groups:
-                _assert_synchronized_reset(obs, info, dist_ctx)
+                obs, info = _synchronize_environment_reset_state(
+                    env=env,
+                    observation=obs,
+                    info=info,
+                    ctx=dist_ctx,
+                )
             layout = CDPRStateLayout.from_observation(obs) if env_idx == 0 else layout
             episode_initial_object_positions[env_idx] = np.asarray(
                 obs["all_object_positions"], dtype=np.float32
@@ -2454,7 +2511,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 options=reset_options,
                             )
                         if synchronized_trajectory_groups:
-                            _assert_synchronized_reset(obs, info, dist_ctx)
+                            obs, info = _synchronize_environment_reset_state(
+                                env=slot.env,
+                                observation=obs,
+                                info=info,
+                                ctx=dist_ctx,
+                            )
                         episode_initial_object_positions[slot_idx] = np.asarray(
                             obs["all_object_positions"], dtype=np.float32
                         ).copy()

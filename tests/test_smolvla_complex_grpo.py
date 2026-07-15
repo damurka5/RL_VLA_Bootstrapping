@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest.mock import patch
 
 import numpy as np
 
@@ -18,6 +19,7 @@ from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
     _evaluate_trajectory_group,
     _observation_reset_signature,
     _resolve_checkpoint,
+    _synchronize_environment_reset_state,
     _trajectory_decision_horizon,
     _trajectory_group_is_informative,
     _trajectory_group_metric_scalars,
@@ -121,6 +123,20 @@ class _TrajectoryTestTrainer:
         self.calls += 1
         action = np.full((1, 5), sign, dtype=np.float32)
         return action, np.zeros((1,), dtype=np.float32), action[0].copy()
+
+
+class _SnapshotSyncTestEnv:
+    def __init__(self, value: float) -> None:
+        self.value = float(value)
+
+    def capture_state(self):
+        return {"value": float(self.value)}
+
+    def restore_state(self, snapshot):
+        self.value = float(snapshot["value"])
+
+    def _get_obs(self):
+        return {"state": np.array([self.value], dtype=np.float32)}
 
 
 class SmolVLAComplexGRPOTests(unittest.TestCase):
@@ -293,6 +309,44 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 observation, {**info, "curriculum_shell": 1}
             ),
         )
+
+    def test_non_main_rank_restores_rank_zero_post_reset_snapshot(self):
+        env = _SnapshotSyncTestEnv(9.0)
+        canonical_payload = {
+            "snapshot": {"value": 3.0},
+            "observation": {"state": np.array([3.0], dtype=np.float32)},
+            "info": {
+                "instruction_type": "move_to_object",
+                "curriculum_mode": "reverse_frontier",
+                "curriculum_shell": 0,
+            },
+        }
+        ctx = DistributedContext(
+            rank=1,
+            local_rank=1,
+            world_size=2,
+            enabled=True,
+            device="cpu",
+        )
+        with patch(
+            "rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr._dist_broadcast_object",
+            return_value=canonical_payload,
+        ), patch(
+            "rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr._dist_all_gather_object",
+            side_effect=lambda value, _ctx: [value, value],
+        ):
+            observation, info = _synchronize_environment_reset_state(
+                env=env,
+                observation={"state": np.array([9.0], dtype=np.float32)},
+                info={"instruction_type": "wrong"},
+                ctx=ctx,
+            )
+
+        self.assertEqual(env.value, 3.0)
+        np.testing.assert_array_equal(
+            observation["state"], np.array([3.0], dtype=np.float32)
+        )
+        self.assertEqual(info["instruction_type"], "move_to_object")
 
     def test_reverse_frontier_profile_has_longer_base_and_grasp_shells(self):
         specs = get_cdpr_reverse_shell_specs(profile=SMOLVLA_COMPLEX_PROFILE)
