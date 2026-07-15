@@ -602,8 +602,10 @@ class HeadlessCDPRSimulation:
                                mj.mjtCatBit.mjCAT_ALL.value, self.scene)
             mj.mjr_render(self.offviewport, self.scene, self.context)
             rgb = np.zeros((self.offheight, self.offwidth, 3), dtype=np.uint8)
-            depth = np.zeros((self.offheight, self.offwidth), dtype=np.float32)
-            mj.mjr_readPixels(rgb, depth, self.offviewport, self.context)
+            # Policy inference only consumes RGB. Reading the depth attachment as
+            # well more than doubles PCIe readback traffic and forces an additional
+            # synchronous GPU-to-CPU copy at every policy decision.
+            mj.mjr_readPixels(rgb, None, self.offviewport, self.context)
             return np.flipud(rgb)
         except Exception as e:
             if _log_enabled():

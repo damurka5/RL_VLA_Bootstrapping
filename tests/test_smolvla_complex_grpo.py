@@ -19,6 +19,7 @@ from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
     _evaluate_trajectory_group,
     _observation_reset_signature,
     _resolve_checkpoint,
+    _rollout_candidate_partition_batched,
     _synchronize_environment_reset_state,
     _trajectory_decision_horizon,
     _trajectory_group_is_informative,
@@ -112,6 +113,19 @@ class _TrajectoryTestRuntime:
     def sample_cdpr_chunks_from_envs(*, envs, observations, infos, instructions):
         return np.zeros((len(envs), 2, 5), dtype=np.float32)
 
+    @staticmethod
+    def capture_cdpr_images(env):
+        del env
+        image = np.zeros((8, 8, 3), dtype=np.uint8)
+        return image, image
+
+    @staticmethod
+    def sample_cdpr_chunks_from_images(
+        *, primary_images, wrist_images, observations, infos, instructions
+    ):
+        del wrist_images, observations, infos, instructions
+        return np.zeros((len(primary_images), 2, 5), dtype=np.float32)
+
 
 class _TrajectoryTestTrainer:
     def __init__(self) -> None:
@@ -133,6 +147,23 @@ class _TrajectoryTestTrainer:
         return (
             actions,
             np.zeros((int(action_count),), dtype=np.float32),
+            actions.copy(),
+        )
+
+    def sample_action_chunks_batch(self, *, states, priors, action_count):
+        del priors
+        batch_size = int(np.asarray(states).shape[0])
+        if self.calls == 0 and batch_size == 2:
+            signs = np.array([1.0, -1.0], dtype=np.float32)
+        else:
+            signs = np.full((batch_size,), -1.0, dtype=np.float32)
+        self.calls += batch_size
+        actions = np.repeat(
+            signs[:, None, None], int(action_count) * 5, axis=1
+        ).reshape(batch_size, int(action_count), 5)
+        return (
+            actions,
+            np.zeros((batch_size, int(action_count)), dtype=np.float32),
             actions.copy(),
         )
 
@@ -161,6 +192,11 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
         self.assertIn('REVERSE_GPU="${REVERSE_GPU:-0,1}"', launcher)
         self.assertIn(
             'SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-2}"',
+            launcher,
+        )
+        self.assertIn('MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-10000000}"', launcher)
+        self.assertIn(
+            'RLVLA_CDPR_OFFSCREEN_WIDTH="${RLVLA_CDPR_OFFSCREEN_WIDTH:-320}"',
             launcher,
         )
 
@@ -198,6 +234,24 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                         "32",
                     )
                     self.assertEqual(command[command.index("--replan-every") + 1], "4")
+                    self.assertEqual(
+                        command[command.index("--smolvla-model-image-size") + 1],
+                        "256",
+                    )
+                    self.assertIn("--smolvla-compile-model", command)
+                    self.assertEqual(
+                        command[command.index("--smolvla-compile-mode") + 1],
+                        "max-autotune",
+                    )
+                    self.assertEqual(
+                        command[
+                            command.index(
+                                "--grpo-candidate-inference-batch-size"
+                            )
+                            + 1
+                        ],
+                        "0",
+                    )
                     self.assertEqual(
                         command[command.index("--grpo-target-records-per-update") + 1],
                         "1024",
@@ -725,6 +779,55 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
         self.assertGreater(trajectory_advantages[0], 0.0)
         self.assertLess(trajectory_advantages[1], 0.0)
         self.assertIn(int(selected_state["length"]), {2, 3})
+
+    def test_candidate_partition_batches_frozen_vla_inference(self):
+        args = parse_args(
+            [
+                "--no-distributed",
+                "--grpo-group-size",
+                "2",
+                "--grpo-trajectory-groups",
+                "--grpo-trajectory-max-decisions",
+                "3",
+                "--replan-every",
+                "2",
+                "--action-dim",
+                "5",
+                "--grpo-candidate-inference-batch-size",
+                "0",
+            ]
+        )
+        env = _TrajectoryTestEnv()
+        obs = {"state": np.zeros((6,), dtype=np.float32)}
+        info = {
+            "instruction_type": "move_to_object",
+            "language_instruction": "move to apple",
+        }
+        slot = EnvSlot(
+            env=env,
+            obs=obs,
+            info=info,
+            state=np.zeros((6,), dtype=np.float32),
+            instruction="move to apple",
+        )
+        result = _rollout_candidate_partition_batched(
+            trainer=_TrajectoryTestTrainer(),
+            runtime=_TrajectoryTestRuntime(),
+            slot=slot,
+            layout=_TrajectoryTestLayout(),
+            args=args,
+            progress_only=True,
+            base_snapshot=env.capture_state(),
+            candidate_indices=[0, 1],
+            max_action_steps=3,
+        )
+        self.assertIsNotNone(result)
+        trajectories, summaries, timings = result
+        self.assertEqual([len(trajectories[index]) for index in (0, 1)], [2, 3])
+        self.assertEqual([item["outcome"] for item in summaries], [1.0, 0.0])
+        self.assertEqual(timings["candidate_inference_batches"], 2.0)
+        self.assertEqual(timings["candidate_inference_batch_size_max"], 2.0)
+        self.assertEqual(timings["candidate_inference_batch_size_mean"], 1.5)
 
     def test_lchol_put_stage_promotes_only_after_eighty_percent(self):
         args = SimpleNamespace(

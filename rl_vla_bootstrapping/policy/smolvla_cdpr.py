@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import warnings
 from dataclasses import dataclass
 from typing import Any, Sequence
 
@@ -331,6 +332,10 @@ class SmolVLARuntime:
         obs_spec: SmolVLAObservationSpec,
         action_spec: SmolVLAActionAdapterSpec,
         tokenizer: Any | None = None,
+        model_image_size: int | None = None,
+        compile_model: bool = False,
+        compile_mode: str = "max-autotune",
+        original_sample_actions: Any | None = None,
     ) -> None:
         self.policy = policy
         self.checkpoint = str(checkpoint)
@@ -340,6 +345,13 @@ class SmolVLARuntime:
         self.action_spec = action_spec
         self.tokenizer = tokenizer or self._resolve_tokenizer(policy)
         self._token_cache: dict[tuple[str, ...], tuple[Any, Any]] = {}
+        self.model_image_size = (
+            None if model_image_size is None else int(model_image_size)
+        )
+        self.compile_model = bool(compile_model)
+        self.compile_mode = str(compile_mode)
+        self._original_sample_actions = original_sample_actions
+        self._compile_fallback_used = False
 
     @classmethod
     def load(
@@ -357,6 +369,9 @@ class SmolVLARuntime:
         action_dim: int = 5,
         action_indices: tuple[int, ...] | None = None,
         action_normalization: str = "tanh",
+        model_image_size: int | None = None,
+        compile_model: bool = False,
+        compile_mode: str = "max-autotune",
     ) -> "SmolVLARuntime":
         if torch is None:
             raise RuntimeError("SmolVLA runtime requires PyTorch plus `lerobot[smolvla]`.")
@@ -383,6 +398,48 @@ class SmolVLARuntime:
             policy.reset()
 
         cfg = getattr(policy, "config", None)
+        resolved_model_image_size = (
+            None
+            if model_image_size is None or int(model_image_size) <= 0
+            else int(model_image_size)
+        )
+        if resolved_model_image_size is not None and hasattr(
+            cfg, "resize_imgs_with_padding"
+        ):
+            # LeRobot otherwise upsamples the already-preprocessed 256px inputs
+            # back to the checkpoint default (typically 512px). Keeping the
+            # model-side resize explicit avoids 4x vision-token work hidden
+            # behind a seemingly smaller runtime image_size.
+            cfg.resize_imgs_with_padding = (
+                resolved_model_image_size,
+                resolved_model_image_size,
+            )
+
+        original_sample_actions = None
+        compile_enabled = False
+        if bool(compile_model) and torch_device.type == "cuda":
+            model = getattr(policy, "model", None)
+            sample_actions = getattr(model, "sample_actions", None)
+            if model is None or not callable(sample_actions):
+                warnings.warn(
+                    "SmolVLA torch.compile was requested, but this LeRobot policy "
+                    "does not expose model.sample_actions; continuing eagerly.",
+                    RuntimeWarning,
+                )
+            elif not hasattr(torch, "compile"):
+                warnings.warn(
+                    "SmolVLA torch.compile was requested, but this PyTorch build "
+                    "does not provide torch.compile; continuing eagerly.",
+                    RuntimeWarning,
+                )
+            else:
+                torch.set_float32_matmul_precision("high")
+                original_sample_actions = sample_actions
+                model.sample_actions = torch.compile(
+                    sample_actions,
+                    mode=str(compile_mode),
+                )
+                compile_enabled = True
         cfg_state_dim = _feature_dim(getattr(cfg, "robot_state_feature", None))
         cfg_action_dim = _feature_dim(getattr(cfg, "action_feature", None))
         cfg_image_keys = tuple(getattr(getattr(cfg, "image_features", {}), "keys", lambda: [])())
@@ -406,6 +463,10 @@ class SmolVLARuntime:
             dtype=dtype,
             obs_spec=obs_spec,
             action_spec=action_spec,
+            model_image_size=resolved_model_image_size,
+            compile_model=compile_enabled,
+            compile_mode=str(compile_mode),
+            original_sample_actions=original_sample_actions,
         )
 
     @staticmethod
@@ -498,31 +559,66 @@ class SmolVLARuntime:
             instructions=instructions,
         )
         autocast_enabled = self.device.type == "cuda" and self.dtype in {torch.bfloat16, torch.float16}
-        with torch.inference_mode():
-            with torch.autocast(device_type=self.device.type, dtype=self.dtype, enabled=bool(autocast_enabled)):
-                if hasattr(self.policy, "predict_action_chunk"):
-                    actions = self.policy.predict_action_chunk(batch)
-                else:
-                    actions = self.policy.select_action(batch)
+
+        def predict() -> Any:
+            with torch.inference_mode():
+                with torch.autocast(
+                    device_type=self.device.type,
+                    dtype=self.dtype,
+                    enabled=bool(autocast_enabled),
+                ):
+                    if hasattr(self.policy, "predict_action_chunk"):
+                        return self.policy.predict_action_chunk(batch)
+                    return self.policy.select_action(batch)
+
+        try:
+            actions = predict()
+        except Exception as compile_exc:
+            # Compilation is an optimization, not a correctness requirement.
+            # Backend/driver incompatibilities generally surface on the first
+            # compiled invocation rather than at torch.compile(...).
+            model = getattr(self.policy, "model", None)
+            if (
+                not self.compile_model
+                or self._original_sample_actions is None
+                or model is None
+                or self._compile_fallback_used
+            ):
+                raise
+            model.sample_actions = self._original_sample_actions
+            self.compile_model = False
+            self._compile_fallback_used = True
+            warnings.warn(
+                "Compiled SmolVLA inference failed; restored eager inference. "
+                f"First compile error: {compile_exc}",
+                RuntimeWarning,
+            )
+            actions = predict()
         if actions.ndim == 2:
             actions = actions[:, None, :]
         return actions.detach().to(dtype=torch.float32).cpu().numpy()
 
-    def sample_cdpr_chunks_from_envs(
+    def capture_cdpr_images(self, env: Any) -> tuple[np.ndarray, np.ndarray | None]:
+        """Render the camera inputs for one CDPR environment state."""
+        sim = env.sim
+        primary = sim.capture_frame(sim.overview_cam, "overview")
+        wrist = (
+            sim.capture_frame(sim.ee_cam, "ee_camera")
+            if hasattr(sim, "ee_cam")
+            else None
+        )
+        return primary, wrist
+
+    def sample_cdpr_chunks_from_images(
         self,
         *,
-        envs: Sequence[Any],
+        primary_images: Sequence[np.ndarray],
+        wrist_images: Sequence[np.ndarray | None] | None,
         observations: Sequence[dict[str, np.ndarray]],
         infos: Sequence[dict[str, Any] | None],
         instructions: Sequence[str],
     ) -> np.ndarray:
-        primary_images = []
-        wrist_images: list[np.ndarray | None] = []
-        for env in envs:
-            sim = env.sim
-            primary_images.append(sim.capture_frame(sim.overview_cam, "overview"))
-            wrist = sim.capture_frame(sim.ee_cam, "ee_camera") if hasattr(sim, "ee_cam") else None
-            wrist_images.append(wrist)
+        """Run one batched SmolVLA forward for already-rendered CDPR views."""
         raw = self.sample_actions_from_images(
             primary_images=primary_images,
             wrist_images=wrist_images,
@@ -537,6 +633,28 @@ class SmolVLARuntime:
         ]
         return np.stack(chunks, axis=0).astype(np.float32, copy=False)
 
+    def sample_cdpr_chunks_from_envs(
+        self,
+        *,
+        envs: Sequence[Any],
+        observations: Sequence[dict[str, np.ndarray]],
+        infos: Sequence[dict[str, Any] | None],
+        instructions: Sequence[str],
+    ) -> np.ndarray:
+        primary_images = []
+        wrist_images: list[np.ndarray | None] = []
+        for env in envs:
+            primary, wrist = self.capture_cdpr_images(env)
+            primary_images.append(primary)
+            wrist_images.append(wrist)
+        return self.sample_cdpr_chunks_from_images(
+            primary_images=primary_images,
+            wrist_images=wrist_images,
+            observations=observations,
+            infos=infos,
+            instructions=instructions,
+        )
+
     def device_summary(self) -> str:
         if torch is None:
             return "torch=unavailable"
@@ -545,7 +663,11 @@ class SmolVLARuntime:
         index = int(self.device.index or torch.cuda.current_device())
         props = torch.cuda.get_device_properties(index)
         total_gb = props.total_memory / (1024**3)
-        return f"device={self.device}; name={props.name}; total_vram_gb={total_gb:.1f}; dtype={self.dtype}"
+        return (
+            f"device={self.device}; name={props.name}; total_vram_gb={total_gb:.1f}; "
+            f"dtype={self.dtype}; model_image_size={self.model_image_size or 'checkpoint'}; "
+            f"compiled={self.compile_model}; compile_mode={self.compile_mode}"
+        )
 
 
 def _feature_dim(feature: Any) -> int | None:

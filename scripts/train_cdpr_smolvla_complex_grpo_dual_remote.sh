@@ -28,6 +28,8 @@ export TRANSFORMERS_VERBOSITY="${TRANSFORMERS_VERBOSITY:-error}"
 export HF_HUB_DISABLE_PROGRESS_BARS="${HF_HUB_DISABLE_PROGRESS_BARS:-1}"
 export TORCH_NCCL_ASYNC_ERROR_HANDLING="${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
+export RLVLA_CDPR_OFFSCREEN_WIDTH="${RLVLA_CDPR_OFFSCREEN_WIDTH:-320}"
+export RLVLA_CDPR_OFFSCREEN_HEIGHT="${RLVLA_CDPR_OFFSCREEN_HEIGHT:-240}"
 export RLVLA_CDPR_QUIET="${RLVLA_CDPR_QUIET:-1}"
 export RLVLA_CDPR_WRAPPER_LOG="${RLVLA_CDPR_WRAPPER_LOG:-0}"
 export PYTHONUNBUFFERED=1
@@ -69,6 +71,7 @@ run_experiment() {
     printf '[%s] GPU: %s\n' "$label" "$gpu"
     printf '[%s] checkpoint: %s\n' "$label" "$CHECKPOINT"
     printf '[%s] target global step: %s\n' "$label" "$MAX_TRAIN_STEPS"
+    printf '[%s] offscreen render size: %sx%s\n' "$label" "$RLVLA_CDPR_OFFSCREEN_WIDTH" "$RLVLA_CDPR_OFFSCREEN_HEIGHT"
     printf '[%s] command:' "$label"
     printf ' %q' "${cmd[@]}"
     printf '\n'

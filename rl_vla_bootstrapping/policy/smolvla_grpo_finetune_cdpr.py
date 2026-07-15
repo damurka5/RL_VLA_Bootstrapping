@@ -178,6 +178,32 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     _bool_arg(parser, "reuse_existing_wrapper_variants", default=True, help_text="Prefer compatible wrapper variants.")
 
     parser.add_argument("--image-size", type=int, default=256)
+    parser.add_argument(
+        "--smolvla-model-image-size",
+        type=int,
+        default=0,
+        help=(
+            "Override LeRobot's model-side padded image size. Zero preserves the "
+            "checkpoint default (commonly 512); 256 avoids silently upsampling the "
+            "already-resized CDPR frames before the vision encoder."
+        ),
+    )
+    _bool_arg(
+        parser,
+        "smolvla_compile_model",
+        default=False,
+        help_text="Compile frozen SmolVLA action sampling with torch.compile on CUDA.",
+    )
+    parser.add_argument(
+        "--smolvla-compile-mode",
+        choices=(
+            "default",
+            "reduce-overhead",
+            "max-autotune",
+            "max-autotune-no-cudagraphs",
+        ),
+        default="max-autotune",
+    )
     parser.add_argument("--state-dim", type=int, default=6)
     parser.add_argument("--image-feature-keys", nargs="+", default=None)
     _bool_arg(parser, "include_wrist", default=True, help_text="Include the CDPR wrist camera.")
@@ -229,6 +255,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--grpo-trajectory-horizon-multiplier", type=float, default=1.5)
     parser.add_argument("--grpo-trajectory-horizon-grace-decisions", type=int, default=8)
+    parser.add_argument(
+        "--grpo-candidate-inference-batch-size",
+        type=int,
+        default=0,
+        help=(
+            "Batch divergent trajectory candidates into each frozen-VLA forward. "
+            "Zero batches every candidate assigned to the local rank; one restores "
+            "the legacy serial inference path."
+        ),
+    )
     parser.add_argument("--grpo-target-records-per-update", type=int, default=0)
     parser.add_argument("--grpo-max-groups-per-update", type=int, default=64)
     parser.add_argument(
@@ -327,6 +363,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.grpo_trajectory_horizon_grace_decisions = max(
         0, int(args.grpo_trajectory_horizon_grace_decisions)
     )
+    args.grpo_candidate_inference_batch_size = max(
+        0, int(args.grpo_candidate_inference_batch_size)
+    )
+    args.smolvla_model_image_size = max(0, int(args.smolvla_model_image_size))
     args.grpo_target_records_per_update = max(0, int(args.grpo_target_records_per_update))
     args.grpo_max_groups_per_update = max(1, int(args.grpo_max_groups_per_update))
     args.grpo_max_collection_seconds_per_update = max(
@@ -452,17 +492,38 @@ class SmolVLAGRPOTrainer:
         action_count: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Sample one open-loop action chunk from a single policy decision."""
+        actions, log_probs, means = self.sample_action_chunks_batch(
+            states=np.asarray(state, dtype=np.float32)[None, ...],
+            priors=np.asarray(prior, dtype=np.float32)[None, ...],
+            action_count=action_count,
+        )
+        return actions[0], log_probs[0], means[0]
+
+    def sample_action_chunks_batch(
+        self,
+        *,
+        states: np.ndarray,
+        priors: np.ndarray,
+        action_count: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Sample open-loop chunks for several candidate states in one forward."""
         count = max(1, min(int(action_count), int(self.chunk_size)))
-        state_t = torch.as_tensor(
-            state, dtype=torch.float32, device=self.device
-        ).unsqueeze(0)
-        prior_t = torch.as_tensor(
-            prior, dtype=torch.float32, device=self.device
-        ).unsqueeze(0)
+        state_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
+        prior_t = torch.as_tensor(priors, dtype=torch.float32, device=self.device)
+        if state_t.ndim != 2 or prior_t.ndim != 3:
+            raise ValueError(
+                "Batched GRPO sampling expects states [B,D] and priors [B,H,A], "
+                f"got {tuple(state_t.shape)} and {tuple(prior_t.shape)}."
+            )
+        if int(state_t.shape[0]) != int(prior_t.shape[0]):
+            raise ValueError("Batched GRPO states and priors must have matching batch sizes.")
         with torch.no_grad():
-            mean_chunk = self.actor(state_t, prior_t)[0, :count]
+            # Rollout inference does not need the DDP wrapper. Parameters remain
+            # synchronized by DDP optimizer updates, while bypassing the wrapper
+            # avoids per-forward reducer bookkeeping on divergent rank rollouts.
             base = self._unwrap(self.actor)
-            log_std = base.clamped_log_std()[:count]
+            mean_chunk = base(state_t, prior_t)[:, :count]
+            log_std = base.clamped_log_std()[:count].unsqueeze(0)
             actions = torch.clamp(
                 mean_chunk + torch.randn_like(mean_chunk) * torch.exp(log_std),
                 -1.0,
@@ -1005,6 +1066,42 @@ def _trajectory_group_metric_scalars(
     total_sampled_actions = sum(
         float(item.get("sampled_environment_actions", 0.0)) for item in stats
     )
+    total_selected_actions = sum(
+        float(
+            item.get(
+                "selected_environment_actions",
+                float(item.get("sampled_environment_actions", 0.0))
+                / max(1, int(group_size)),
+            )
+        )
+        for item in stats
+    )
+    total_camera_render_time_s = sum(
+        float(item.get("camera_render_time_s", 0.0)) for item in stats
+    )
+    total_prior_model_time_s = sum(
+        float(item.get("prior_model_time_s", 0.0)) for item in stats
+    )
+    total_residual_inference_time_s = sum(
+        float(item.get("residual_inference_time_s", 0.0)) for item in stats
+    )
+    total_env_step_time_s = sum(
+        float(item.get("env_step_time_s", 0.0)) for item in stats
+    )
+    total_snapshot_time_s = sum(
+        float(item.get("snapshot_time_s", 0.0)) for item in stats
+    )
+    total_distributed_sync_time_s = sum(
+        float(item.get("distributed_sync_time_s", 0.0)) for item in stats
+    )
+    total_candidate_inference_batches = sum(
+        float(item.get("candidate_inference_batches", 0.0)) for item in stats
+    )
+    total_candidate_inference_batch_items = sum(
+        float(item.get("candidate_inference_batch_size_mean", 0.0))
+        * float(item.get("candidate_inference_batches", 0.0))
+        for item in stats
+    )
     total_accepted_records = sum(
         float(item.get("accepted_policy_records", 0.0)) for item in stats
     )
@@ -1035,6 +1132,12 @@ def _trajectory_group_metric_scalars(
             np.mean(
                 [float(item.get("sampled_environment_actions", 0.0)) for item in stats]
             )
+        ),
+        "rollout/grpo_selected_environment_actions_total": float(
+            total_selected_actions
+        ),
+        "rollout/grpo_trajectory_work_amplification": float(
+            total_sampled_actions / max(1.0, total_selected_actions)
         ),
         "rollout/grpo_accepted_policy_records": float(
             total_accepted_records
@@ -1090,14 +1193,54 @@ def _trajectory_group_metric_scalars(
         "rollout/grpo_prior_inference_time_s_total": float(
             sum(float(item.get("prior_inference_time_s", 0.0)) for item in stats)
         ),
-        "rollout/grpo_env_step_time_s_total": float(
-            sum(float(item.get("env_step_time_s", 0.0)) for item in stats)
+        "rollout/grpo_camera_render_time_s_total": float(
+            total_camera_render_time_s
+        ),
+        "rollout/grpo_prior_model_time_s_total": float(total_prior_model_time_s),
+        "rollout/grpo_residual_inference_time_s_total": float(
+            total_residual_inference_time_s
+        ),
+        "rollout/grpo_env_step_time_s_total": float(total_env_step_time_s),
+        "rollout/grpo_snapshot_time_s_total": float(total_snapshot_time_s),
+        "rollout/grpo_distributed_sync_time_s_total": float(
+            total_distributed_sync_time_s
+        ),
+        "rollout/grpo_camera_render_wall_fraction": float(
+            total_camera_render_time_s / total_group_wall_time_s
+        ),
+        "rollout/grpo_prior_model_wall_fraction": float(
+            total_prior_model_time_s / total_group_wall_time_s
+        ),
+        "rollout/grpo_residual_inference_wall_fraction": float(
+            total_residual_inference_time_s / total_group_wall_time_s
+        ),
+        "rollout/grpo_env_step_wall_fraction": float(
+            total_env_step_time_s / total_group_wall_time_s
+        ),
+        "rollout/grpo_snapshot_wall_fraction": float(
+            total_snapshot_time_s / total_group_wall_time_s
+        ),
+        "rollout/grpo_distributed_sync_wall_fraction": float(
+            total_distributed_sync_time_s / total_group_wall_time_s
+        ),
+        "rollout/grpo_candidate_inference_batch_size_mean": float(
+            total_candidate_inference_batch_items
+            / max(1.0, total_candidate_inference_batches)
+        ),
+        "rollout/grpo_candidate_inference_batch_size_max": float(
+            max(
+                float(item.get("candidate_inference_batch_size_max", 1.0))
+                for item in stats
+            )
         ),
         "rollout/grpo_sampled_policy_decisions_per_second": float(
             total_sampled_decisions / total_group_wall_time_s
         ),
         "rollout/grpo_sampled_environment_actions_per_second": float(
             total_sampled_actions / total_group_wall_time_s
+        ),
+        "rollout/grpo_selected_environment_actions_per_second": float(
+            total_selected_actions / total_group_wall_time_s
         ),
         "rollout/grpo_accepted_policy_records_per_second": float(
             total_accepted_records / total_group_wall_time_s
@@ -1424,6 +1567,10 @@ def _evaluate_trajectory_group(
         "all_success_group": float(success_count == group_size),
         "sampled_policy_decisions": float(policy_decision_counts.sum()),
         "sampled_environment_actions": float(lengths.sum()),
+        "selected_environment_actions": float(lengths[selected]),
+        "trajectory_work_amplification": float(
+            lengths.sum() / max(1, int(lengths[selected]))
+        ),
         "accepted_policy_records": float(len(records)),
         "trajectory_length_mean": float(lengths.mean()),
         "trajectory_length_min": float(lengths.min()),
@@ -1444,6 +1591,15 @@ def _evaluate_trajectory_group(
         "sampled_policy_decisions_per_second": float(
             policy_decision_counts.sum() / group_wall_time_s
         ),
+        "sampled_environment_actions_per_second": float(
+            lengths.sum() / group_wall_time_s
+        ),
+        "selected_environment_actions_per_second": float(
+            lengths[selected] / group_wall_time_s
+        ),
+        "candidate_inference_batches": float(policy_decision_counts.sum()),
+        "candidate_inference_batch_size_mean": 1.0,
+        "candidate_inference_batch_size_max": 1.0,
         "trajectory_terminated_count": float(
             sum(bool(item["terminated"]) for item in final_states)
         ),
@@ -1469,6 +1625,266 @@ def _evaluate_trajectory_group(
         }
     )
     return records, selected, group_stats, selected_state
+
+
+def _rollout_candidate_partition_batched(
+    *,
+    trainer: SmolVLAGRPOTrainer,
+    runtime: Any,
+    slot: EnvSlot,
+    layout: CDPRStateLayout,
+    args: argparse.Namespace,
+    progress_only: bool,
+    base_snapshot: Mapping[str, Any],
+    candidate_indices: Sequence[int],
+    max_action_steps: int,
+) -> tuple[
+    dict[int, list[dict[str, Any]]],
+    list[dict[str, Any]],
+    dict[str, float],
+] | None:
+    """Roll out local candidates in lockstep and batch their VLA forwards.
+
+    One MuJoCo instance is time-multiplexed through captured snapshots, so this
+    does not require extra simulator memory. Camera rendering and environment
+    stepping remain serial, but all locally assigned candidate observations are
+    fed through one frozen-SmolVLA forward per policy decision.
+    """
+    configured_batch = int(getattr(args, "grpo_candidate_inference_batch_size", 0))
+    required_methods = (
+        callable(getattr(runtime, "capture_cdpr_images", None)),
+        callable(getattr(runtime, "sample_cdpr_chunks_from_images", None)),
+        callable(getattr(trainer, "sample_action_chunks_batch", None)),
+    )
+    if configured_batch == 1 or not all(required_methods) or not candidate_indices:
+        return None
+
+    batch_limit = (
+        len(candidate_indices)
+        if configured_batch <= 0
+        else max(2, configured_batch)
+    )
+    candidates: dict[int, dict[str, Any]] = {
+        int(candidate_idx): {
+            "candidate_index": int(candidate_idx),
+            "snapshot": base_snapshot,
+            "obs": slot.obs,
+            "info": dict(slot.info),
+            "state": np.asarray(slot.state, dtype=np.float32).copy(),
+            "instruction": str(slot.instruction),
+            "trajectory": [],
+            "terminated": False,
+            "truncated": False,
+            "final_reward": 0.0,
+            "policy_decisions": 0,
+        }
+        for candidate_idx in candidate_indices
+    }
+    camera_render_time_s = 0.0
+    prior_model_time_s = 0.0
+    residual_inference_time_s = 0.0
+    env_step_time_s = 0.0
+    snapshot_time_s = 0.0
+    inference_batches = 0
+    inference_batch_items = 0
+    inference_batch_size_max = 0
+
+    while True:
+        active = [
+            candidate
+            for candidate in candidates.values()
+            if not bool(candidate["terminated"] or candidate["truncated"])
+            and len(candidate["trajectory"]) < int(max_action_steps)
+        ]
+        if not active:
+            break
+
+        # Candidates that terminated inside an earlier chunk can leave the
+        # survivors at different offsets. Group equal remaining chunk lengths
+        # so every tensor in a batched actor call has the same [H,A] shape.
+        by_action_count: dict[int, list[dict[str, Any]]] = {}
+        for candidate in active:
+            action_count = min(
+                int(args.replan_every),
+                int(max_action_steps) - len(candidate["trajectory"]),
+            )
+            by_action_count.setdefault(int(action_count), []).append(candidate)
+
+        for action_count, same_count_candidates in by_action_count.items():
+            for batch_start in range(0, len(same_count_candidates), batch_limit):
+                batch_candidates = same_count_candidates[
+                    batch_start : batch_start + batch_limit
+                ]
+                primary_images: list[np.ndarray] = []
+                wrist_images: list[np.ndarray | None] = []
+
+                render_started = time.perf_counter()
+                for candidate in batch_candidates:
+                    slot.env.restore_state(candidate["snapshot"])
+                    primary, wrist = runtime.capture_cdpr_images(slot.env)
+                    primary_images.append(primary)
+                    wrist_images.append(wrist)
+                camera_render_time_s += float(time.perf_counter() - render_started)
+
+                prior_started = time.perf_counter()
+                priors = runtime.sample_cdpr_chunks_from_images(
+                    primary_images=primary_images,
+                    wrist_images=wrist_images,
+                    observations=[candidate["obs"] for candidate in batch_candidates],
+                    infos=[candidate["info"] for candidate in batch_candidates],
+                    instructions=[
+                        str(candidate["instruction"])
+                        for candidate in batch_candidates
+                    ],
+                )
+                prior_model_time_s += float(time.perf_counter() - prior_started)
+
+                residual_started = time.perf_counter()
+                actions, old_log_probs, means = trainer.sample_action_chunks_batch(
+                    states=np.stack(
+                        [candidate["state"] for candidate in batch_candidates]
+                    ).astype(np.float32, copy=False),
+                    priors=np.asarray(priors, dtype=np.float32),
+                    action_count=int(action_count),
+                )
+                residual_inference_time_s += float(
+                    time.perf_counter() - residual_started
+                )
+                inference_batches += 1
+                inference_batch_items += len(batch_candidates)
+                inference_batch_size_max = max(
+                    inference_batch_size_max, len(batch_candidates)
+                )
+
+                for batch_idx, candidate in enumerate(batch_candidates):
+                    snapshot_started = time.perf_counter()
+                    slot.env.restore_state(candidate["snapshot"])
+                    snapshot_time_s += float(time.perf_counter() - snapshot_started)
+                    plan_state = np.asarray(
+                        candidate["state"], dtype=np.float32
+                    ).copy()
+                    policy_decision = int(candidate["policy_decisions"])
+                    candidate["policy_decisions"] = policy_decision + 1
+
+                    for chunk_action_index in range(int(action_count)):
+                        action = np.asarray(
+                            actions[batch_idx, chunk_action_index],
+                            dtype=np.float32,
+                        )
+                        env_step_started = time.perf_counter()
+                        with _silence_output(bool(progress_only)):
+                            (
+                                next_obs,
+                                reward,
+                                terminated,
+                                truncated,
+                                next_info,
+                            ) = slot.env.step(action)
+                        env_step_time_s += float(
+                            time.perf_counter() - env_step_started
+                        )
+                        trajectory = candidate["trajectory"]
+                        trajectory.append(
+                            {
+                                "state": plan_state.copy(),
+                                "prior": np.asarray(
+                                    priors[batch_idx], dtype=np.float32
+                                ).copy(),
+                                "action_index": int(chunk_action_index),
+                                "action": action.copy(),
+                                "old_log_prob": float(
+                                    old_log_probs[batch_idx, chunk_action_index]
+                                ),
+                                "reward": 0.0,
+                                "selected": False,
+                                "candidate_success": False,
+                                "candidate_done": bool(terminated or truncated),
+                                "mean_action": np.asarray(
+                                    means[batch_idx, chunk_action_index],
+                                    dtype=np.float32,
+                                ).copy(),
+                                "trajectory_index": int(
+                                    candidate["candidate_index"]
+                                ),
+                                "trajectory_step": int(len(trajectory) - 1),
+                                "policy_decision_index": policy_decision,
+                                "chunk_action_index": int(chunk_action_index),
+                            }
+                        )
+                        candidate["obs"] = next_obs
+                        candidate["info"] = dict(next_info)
+                        candidate["state"] = layout.flatten(next_obs)
+                        candidate["instruction"] = _safe_instruction(next_info)
+                        candidate["final_reward"] = float(reward)
+                        candidate["terminated"] = bool(terminated)
+                        candidate["truncated"] = bool(truncated)
+                        if bool(terminated or truncated):
+                            break
+
+                    snapshot_started = time.perf_counter()
+                    candidate["snapshot"] = slot.env.capture_state()
+                    snapshot_time_s += float(time.perf_counter() - snapshot_started)
+
+    local_trajectories: dict[int, list[dict[str, Any]]] = {}
+    local_summaries: list[dict[str, Any]] = []
+    for candidate_idx in candidate_indices:
+        candidate = candidates[int(candidate_idx)]
+        trajectory = candidate["trajectory"]
+        info = dict(candidate["info"])
+        terminated = bool(candidate["terminated"])
+        truncated = bool(candidate["truncated"])
+        success = bool(info.get("success", False))
+        outcome = 1.0 if success else 0.0
+        if not bool(terminated or truncated):
+            truncated = True
+            info.update(
+                {
+                    "truncated": True,
+                    "env_done": True,
+                    "trajectory_horizon_truncated": True,
+                }
+            )
+        for record in trajectory:
+            record["reward"] = float(outcome)
+            record["candidate_success"] = bool(success)
+            record["trajectory_length"] = int(len(trajectory))
+        local_trajectories[int(candidate_idx)] = trajectory
+        local_summaries.append(
+            {
+                "candidate_index": int(candidate_idx),
+                "outcome": float(outcome),
+                "reward": float(candidate["final_reward"]),
+                "info": info,
+                "instruction": str(candidate["instruction"]),
+                "terminated": bool(terminated),
+                "truncated": bool(truncated),
+                "length": int(len(trajectory)),
+                "policy_decisions": int(candidate["policy_decisions"]),
+                "last_action": (
+                    np.asarray(trajectory[-1]["action"], dtype=np.float32).copy()
+                    if trajectory
+                    else np.zeros((int(args.action_dim),), dtype=np.float32)
+                ),
+            }
+        )
+
+    timings = {
+        "prior_inference_time_s": float(
+            camera_render_time_s + prior_model_time_s
+        ),
+        "camera_render_time_s": float(camera_render_time_s),
+        "prior_model_time_s": float(prior_model_time_s),
+        "residual_inference_time_s": float(residual_inference_time_s),
+        "env_step_time_s": float(env_step_time_s),
+        "snapshot_time_s": float(snapshot_time_s),
+        "candidate_inference_batches": float(inference_batches),
+        "candidate_inference_batch_items": float(inference_batch_items),
+        "candidate_inference_batch_size_max": float(inference_batch_size_max),
+        "candidate_inference_batch_size_mean": float(
+            inference_batch_items / max(1, inference_batches)
+        ),
+    }
+    return local_trajectories, local_summaries, timings
 
 
 def _evaluate_distributed_trajectory_group(
@@ -1503,8 +1919,38 @@ def _evaluate_distributed_trajectory_group(
     local_summaries: list[dict[str, Any]] = []
     prior_inference_time_s = 0.0
     env_step_time_s = 0.0
+    candidate_timings: dict[str, float] = {
+        "camera_render_time_s": 0.0,
+        "prior_model_time_s": 0.0,
+        "residual_inference_time_s": 0.0,
+        "snapshot_time_s": 0.0,
+        "candidate_inference_batches": 0.0,
+        "candidate_inference_batch_items": 0.0,
+        "candidate_inference_batch_size_max": 1.0,
+        "candidate_inference_batch_size_mean": 1.0,
+    }
 
-    for candidate_idx in candidate_indices:
+    batched_partition = _rollout_candidate_partition_batched(
+        trainer=trainer,
+        runtime=runtime,
+        slot=slot,
+        layout=layout,
+        args=args,
+        progress_only=progress_only,
+        base_snapshot=snapshot,
+        candidate_indices=candidate_indices,
+        max_action_steps=max_action_steps,
+    )
+    candidate_indices_to_roll = list(candidate_indices)
+    if batched_partition is not None:
+        local_trajectories, local_summaries, candidate_timings = batched_partition
+        prior_inference_time_s = float(
+            candidate_timings["prior_inference_time_s"]
+        )
+        env_step_time_s = float(candidate_timings["env_step_time_s"])
+        candidate_indices_to_roll = []
+
+    for candidate_idx in candidate_indices_to_roll:
         slot.env.restore_state(snapshot)
         obs = slot.obs
         info = dict(slot.info)
@@ -1618,6 +2064,26 @@ def _evaluate_distributed_trajectory_group(
         "candidates": local_summaries,
         "prior_inference_time_s": float(prior_inference_time_s),
         "env_step_time_s": float(env_step_time_s),
+        "camera_render_time_s": float(
+            candidate_timings["camera_render_time_s"]
+        ),
+        "prior_model_time_s": float(candidate_timings["prior_model_time_s"]),
+        "residual_inference_time_s": float(
+            candidate_timings["residual_inference_time_s"]
+        ),
+        "snapshot_time_s": float(candidate_timings["snapshot_time_s"]),
+        "candidate_inference_batches": float(
+            candidate_timings["candidate_inference_batches"]
+        ),
+        "candidate_inference_batch_items": float(
+            candidate_timings["candidate_inference_batch_items"]
+        ),
+        "candidate_inference_batch_size_max": float(
+            candidate_timings["candidate_inference_batch_size_max"]
+        ),
+        "candidate_inference_batch_size_mean": float(
+            candidate_timings["candidate_inference_batch_size_mean"]
+        ),
         "local_rollout_time_s": float(time.perf_counter() - group_started),
         "sampled_policy_decisions": int(
             sum(int(item["policy_decisions"]) for item in local_summaries)
@@ -1683,6 +2149,14 @@ def _evaluate_distributed_trajectory_group(
         float(payload["local_rollout_time_s"]) for payload in rank_payloads
     ]
     min_rank_rollout_time = max(1e-9, min(rank_rollout_times))
+    candidate_inference_batches = sum(
+        float(payload["candidate_inference_batches"])
+        for payload in rank_payloads
+    )
+    candidate_inference_batch_items = sum(
+        float(payload["candidate_inference_batch_items"])
+        for payload in rank_payloads
+    )
     accepted_policy_records = int(lengths.sum()) if informative else 0
     group_stats = {
         "group_size": int(group_size),
@@ -1706,6 +2180,10 @@ def _evaluate_distributed_trajectory_group(
         "all_success_group": float(success_count == group_size),
         "sampled_policy_decisions": float(policy_decision_counts.sum()),
         "sampled_environment_actions": float(lengths.sum()),
+        "selected_environment_actions": float(lengths[selected]),
+        "trajectory_work_amplification": float(
+            lengths.sum() / max(1, int(lengths[selected]))
+        ),
         "accepted_policy_records": float(accepted_policy_records),
         "trajectory_length_mean": float(lengths.mean()),
         "trajectory_length_min": float(lengths.min()),
@@ -1727,8 +2205,43 @@ def _evaluate_distributed_trajectory_group(
         "env_step_time_s": float(
             max(float(payload["env_step_time_s"]) for payload in rank_payloads)
         ),
+        "camera_render_time_s": float(
+            max(float(payload["camera_render_time_s"]) for payload in rank_payloads)
+        ),
+        "prior_model_time_s": float(
+            max(float(payload["prior_model_time_s"]) for payload in rank_payloads)
+        ),
+        "residual_inference_time_s": float(
+            max(
+                float(payload["residual_inference_time_s"])
+                for payload in rank_payloads
+            )
+        ),
+        "snapshot_time_s": float(
+            max(float(payload["snapshot_time_s"]) for payload in rank_payloads)
+        ),
+        "distributed_sync_time_s": float(
+            max(0.0, group_wall_time_s - max(rank_rollout_times))
+        ),
+        "candidate_inference_batches": float(candidate_inference_batches),
+        "candidate_inference_batch_size_mean": float(
+            candidate_inference_batch_items
+            / max(1.0, candidate_inference_batches)
+        ),
+        "candidate_inference_batch_size_max": float(
+            max(
+                float(payload["candidate_inference_batch_size_max"])
+                for payload in rank_payloads
+            )
+        ),
         "sampled_policy_decisions_per_second": float(
             policy_decision_counts.sum() / group_wall_time_s
+        ),
+        "sampled_environment_actions_per_second": float(
+            lengths.sum() / group_wall_time_s
+        ),
+        "selected_environment_actions_per_second": float(
+            lengths[selected] / group_wall_time_s
         ),
         "trajectory_terminated_count": float(
             sum(bool(item["terminated"]) for item in summaries)
@@ -1900,6 +2413,13 @@ def main(argv: Sequence[str] | None = None) -> None:
             if args.smolvla_action_indices is None
             else tuple(int(v) for v in args.smolvla_action_indices),
             action_normalization=str(args.smolvla_action_normalization),
+            model_image_size=(
+                None
+                if int(args.smolvla_model_image_size) <= 0
+                else int(args.smolvla_model_image_size)
+            ),
+            compile_model=bool(args.smolvla_compile_model),
+            compile_mode=str(args.smolvla_compile_mode),
         )
     _log(dist_ctx, f"[smolvla-grpo] Loaded SmolVLA; {runtime.device_summary()}")
 
@@ -2022,6 +2542,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             "action_keys": ["x", "y", "z", "yaw", "gripper"],
             "chunk_size": int(args.chunk_size),
             "replan_every": int(args.replan_every),
+            "smolvla_model_image_size": int(args.smolvla_model_image_size),
+            "smolvla_compile_model": bool(args.smolvla_compile_model),
+            "smolvla_compile_mode": str(args.smolvla_compile_mode),
             "frozen_smolvla": True,
             "trainable_surface": "residual_chunk_head_and_log_std",
             "no_td3_critics": True,
@@ -2046,6 +2569,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 ),
                 "trajectory_horizon_grace_decisions": int(
                     args.grpo_trajectory_horizon_grace_decisions
+                ),
+                "candidate_inference_batch_size": int(
+                    args.grpo_candidate_inference_batch_size
                 ),
                 "dynamic_sampling": bool(args.grpo_dynamic_sampling),
                 "dynamic_min_pass_rate": float(args.grpo_dynamic_min_pass_rate),
@@ -2409,6 +2935,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                         rollout_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
                         rollout_scalars.update(complex_runtime.metrics(consume_interval_counts=True))
                         _log_scalars(writer, rollout_scalars, global_step)
+                        if trajectory_group_scalars:
+                            metric = trajectory_group_scalars.get
+                            _log(
+                                dist_ctx,
+                                "[smolvla-grpo] rollout profile "
+                                f"selected_step_s={metric('rollout/grpo_selected_environment_actions_per_second', 0.0):.2f} "
+                                f"sampled_action_s={metric('rollout/grpo_sampled_environment_actions_per_second', 0.0):.2f} "
+                                f"work_amp={metric('rollout/grpo_trajectory_work_amplification', 0.0):.2f}x "
+                                f"vla_batch={metric('rollout/grpo_candidate_inference_batch_size_mean', 0.0):.2f} "
+                                f"render={metric('rollout/grpo_camera_render_wall_fraction', 0.0):.1%} "
+                                f"prior={metric('rollout/grpo_prior_model_wall_fraction', 0.0):.1%} "
+                                f"env={metric('rollout/grpo_env_step_wall_fraction', 0.0):.1%} "
+                                f"sync={metric('rollout/grpo_distributed_sync_wall_fraction', 0.0):.1%}",
+                                progress=progress,
+                            )
                         if not complex_training_active:
                             _log_mixed_curriculum_scalars(writer, mixed_sampler.snapshot(), global_step)
                         last_log_step = int(global_step)
@@ -2777,13 +3318,19 @@ def main(argv: Sequence[str] | None = None) -> None:
 
             if rollout_records:
                 hindsight_records = complex_runtime.sample_hindsight(len(rollout_records))
+                update_started = time.perf_counter()
                 last_metrics = trainer.update(
                     rollout_records,
                     hindsight_records=hindsight_records,
                 )
+                update_wall_time_s = float(time.perf_counter() - update_started)
                 last_metrics.update(
                     {
+                        "optimizer_update_wall_time_s": update_wall_time_s,
                         "collection_wall_time_s": collection_wall_time_s,
+                        "collection_to_update_time_ratio": float(
+                            collection_wall_time_s / max(1e-9, update_wall_time_s)
+                        ),
                         "collection_groups": float(groups_attempted),
                         "collection_accepted_records": float(
                             accepted_records_collected
