@@ -293,7 +293,7 @@ training:
       resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_to_10000000_20260710_193100/rl/step_6700000
       max_train_steps: 10000000
       max_env_steps: 128
-      num_envs_per_rank: 4
+      num_envs_per_rank: 1
       chunk_size: 8
       replan_every: 1
       image_size: 256
@@ -325,6 +325,9 @@ training:
       grpo_dynamic_min_pass_rate: 0.10
       grpo_dynamic_max_pass_rate: 0.90
       grpo_trajectory_max_decisions: 128
+      grpo_trajectory_shell_aware_horizon: true
+      grpo_trajectory_horizon_multiplier: 1.5
+      grpo_trajectory_horizon_grace_decisions: 8
       grpo_target_records_per_update: 4096
       grpo_max_groups_per_update: 64
       grpo_all_success_sample_harder: true
@@ -368,6 +371,7 @@ training:
       progress_only: true
       distributed: true
       distributed_backend: nccl
+      distributed_timeout_seconds: 21600
       wrapper_cleanup: false
       use_wrapper_cache: true
       reuse_existing_wrapper_variants: true

@@ -10,6 +10,7 @@ import sys
 import time
 from collections import deque
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -167,7 +168,17 @@ def _configure_distributed(args: argparse.Namespace) -> DistributedContext:
             backend = str(args.distributed_backend)
             if backend == "nccl" and not torch.cuda.is_available():
                 backend = "gloo"
-            dist.init_process_group(backend=backend, rank=rank, world_size=world_size)
+            timeout_seconds = max(
+                0, int(getattr(args, "distributed_timeout_seconds", 0) or 0)
+            )
+            init_kwargs: dict[str, Any] = {
+                "backend": backend,
+                "rank": rank,
+                "world_size": world_size,
+            }
+            if timeout_seconds > 0:
+                init_kwargs["timeout"] = timedelta(seconds=timeout_seconds)
+            dist.init_process_group(**init_kwargs)
 
     return DistributedContext(
         rank=rank,

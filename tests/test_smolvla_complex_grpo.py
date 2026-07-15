@@ -13,9 +13,12 @@ from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
 from rl_vla_bootstrapping.policy.smolvla_finetune_cdpr import DistributedContext, EnvSlot
 from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
     SmolVLAGRPOTrainer,
+    _distributed_candidate_indices,
     _dynamic_frontier_retry_options,
     _evaluate_trajectory_group,
+    _observation_reset_signature,
     _resolve_checkpoint,
+    _trajectory_decision_horizon,
     _trajectory_group_is_informative,
     _trajectory_group_metric_scalars,
     parse_args,
@@ -143,6 +146,11 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 self.assertFalse(config.task.metadata["reward_output_normalization_enabled"])
                 if approach == "reverse_frontier":
                     self.assertEqual(command[command.index("--grpo-group-size") + 1], "8")
+                    self.assertEqual(command[command.index("--num-envs-per-rank") + 1], "1")
+                    self.assertEqual(
+                        command[command.index("--distributed-timeout-seconds") + 1],
+                        "21600",
+                    )
                     self.assertIn("--grpo-trajectory-groups", command)
                     self.assertIn("--grpo-dynamic-sampling", command)
                     self.assertEqual(
@@ -152,6 +160,19 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     self.assertEqual(
                         command[command.index("--grpo-target-records-per-update") + 1],
                         "4096",
+                    )
+                    self.assertIn("--grpo-trajectory-shell-aware-horizon", command)
+                    self.assertEqual(
+                        command[
+                            command.index("--grpo-trajectory-horizon-multiplier") + 1
+                        ],
+                        "1.5",
+                    )
+                    self.assertEqual(
+                        command[
+                            command.index("--grpo-trajectory-horizon-grace-decisions") + 1
+                        ],
+                        "8",
                     )
                     self.assertEqual(command[command.index("--clip-range-low") + 1], "0.2")
                     self.assertEqual(command[command.index("--clip-range-high") + 1], "0.28")
@@ -203,6 +224,50 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                         command[command.index("--max-env-steps") + 1],
                         "128",
                     )
+
+    def test_two_gpu_candidate_partition_is_balanced_and_complete(self):
+        rank_zero = _distributed_candidate_indices(8, 2, 0)
+        rank_one = _distributed_candidate_indices(8, 2, 1)
+        self.assertEqual(rank_zero, [0, 2, 4, 6])
+        self.assertEqual(rank_one, [1, 3, 5, 7])
+        self.assertFalse(set(rank_zero).intersection(rank_one))
+        self.assertEqual(sorted(rank_zero + rank_one), list(range(8)))
+
+    def test_synchronized_reset_signature_tracks_state_and_frontier(self):
+        observation = {
+            "ee_position": np.array([0.1, 0.2, 0.3], dtype=np.float32),
+            "all_object_positions": np.zeros((4, 3), dtype=np.float32),
+        }
+        info = {
+            "scene": "scene_a",
+            "scene_objects": ["apple", "plate"],
+            "instruction_type": "put_into_plate",
+            "language_instruction": "put apple into plate",
+            "target_object_catalog": "apple",
+            "curriculum_mode": "reverse_frontier",
+            "curriculum_shell": 2,
+            "curriculum_shell_target_policy_steps": 14,
+        }
+        first = _observation_reset_signature(observation, info)
+        second = _observation_reset_signature(observation, info)
+        self.assertEqual(first, second)
+
+        changed_observation = dict(observation)
+        changed_observation["ee_position"] = np.array(
+            [0.1, 0.2, 0.31], dtype=np.float32
+        )
+        self.assertNotEqual(
+            first["observation_sha256"],
+            _observation_reset_signature(changed_observation, info)[
+                "observation_sha256"
+            ],
+        )
+        self.assertNotEqual(
+            first,
+            _observation_reset_signature(
+                observation, {**info, "curriculum_shell": 1}
+            ),
+        )
 
     def test_reverse_frontier_profile_has_longer_base_and_grasp_shells(self):
         specs = get_cdpr_reverse_shell_specs(profile=SMOLVLA_COMPLEX_PROFILE)
@@ -312,6 +377,41 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
         self.assertEqual(retry_kind, "harder_shell")
         self.assertEqual(harder["curriculum_shell"], 4)
 
+    def test_shell_aware_trajectory_horizon_preserves_gate_and_caps_failures(self):
+        args = parse_args(
+            [
+                "--no-distributed",
+                "--grpo-trajectory-max-decisions",
+                "128",
+                "--grpo-trajectory-shell-aware-horizon",
+                "--grpo-trajectory-horizon-multiplier",
+                "1.5",
+                "--grpo-trajectory-horizon-grace-decisions",
+                "8",
+            ]
+        )
+        expected = {
+            0: (6, 14),
+            1: (10, 18),
+            2: (16, 24),
+            3: (24, 36),
+            4: (52, 78),
+            5: (80, 120),
+            6: (128, 128),
+        }
+        for shell, (high, horizon) in expected.items():
+            with self.subTest(shell=shell):
+                info = {
+                    "curriculum_mode": "reverse_frontier",
+                    "curriculum_shell": shell,
+                    "curriculum_shell_target_policy_steps": high,
+                    "curriculum_shell_policy_steps_high": high,
+                }
+                self.assertEqual(_trajectory_decision_horizon(info, args), horizon)
+                self.assertGreaterEqual(horizon, high)
+
+        self.assertEqual(_trajectory_decision_horizon({}, args), 128)
+
     def test_trajectory_group_metrics_include_histogram_lengths_and_shell_pass_rate(self):
         stats = [
             {
@@ -325,6 +425,9 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 "trajectory_length_mean": 4.625,
                 "trajectory_length_min": 3.0,
                 "trajectory_length_max": 7.0,
+                "distributed_candidate_parallelism": 2.0,
+                "candidates_per_rank_min": 4.0,
+                "candidates_per_rank_max": 4.0,
                 "instruction_type": "put_into_plate",
                 "curriculum_shell": 0,
             },
@@ -339,6 +442,9 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 "trajectory_length_mean": 8.0,
                 "trajectory_length_min": 8.0,
                 "trajectory_length_max": 8.0,
+                "distributed_candidate_parallelism": 2.0,
+                "candidates_per_rank_min": 4.0,
+                "candidates_per_rank_max": 4.0,
                 "shell0_easiest_retry": 1.0,
                 "instruction_type": "put_into_plate",
                 "curriculum_shell": 0,
@@ -350,6 +456,9 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
         self.assertEqual(metrics["rollout/grpo_informative_group_rate"], 0.5)
         self.assertEqual(metrics["rollout/grpo_trajectory_length_min"], 3.0)
         self.assertEqual(metrics["rollout/grpo_trajectory_length_max"], 8.0)
+        self.assertEqual(metrics["rollout/grpo_distributed_candidate_parallelism"], 2.0)
+        self.assertEqual(metrics["rollout/grpo_candidates_per_rank_min"], 4.0)
+        self.assertEqual(metrics["rollout/grpo_candidates_per_rank_max"], 4.0)
         self.assertAlmostEqual(
             metrics["rollout/grpo_group_pass_rate/put_into_plate/shell_00"],
             0.0625,

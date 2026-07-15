@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import random
@@ -133,6 +134,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--device", default=_default_device())
     _bool_arg(parser, "distributed", default=True, help_text="Enable torch.distributed under torchrun.")
     parser.add_argument("--distributed-backend", default="nccl")
+    parser.add_argument(
+        "--distributed-timeout-seconds",
+        type=int,
+        default=0,
+        help="Process-group timeout; increase it when rank 0 performs long validation runs.",
+    )
     parser.add_argument("--mixed-precision", choices=("auto", "bf16", "fp16", "fp32"), default="bf16")
     _bool_arg(parser, "progress", default=True, help_text="Show a tqdm training progress bar on rank 0.")
     parser.add_argument("--progress-refresh-seconds", type=float, default=10.0)
@@ -214,6 +221,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--grpo-dynamic-min-pass-rate", type=float, default=0.10)
     parser.add_argument("--grpo-dynamic-max-pass-rate", type=float, default=0.90)
     parser.add_argument("--grpo-trajectory-max-decisions", type=int, default=0)
+    _bool_arg(
+        parser,
+        "grpo_trajectory_shell_aware_horizon",
+        default=False,
+        help_text="Shorten failed Reverse Frontier continuations according to the sampled shell horizon.",
+    )
+    parser.add_argument("--grpo-trajectory-horizon-multiplier", type=float, default=1.5)
+    parser.add_argument("--grpo-trajectory-horizon-grace-decisions", type=int, default=8)
     parser.add_argument("--grpo-target-records-per-update", type=int, default=0)
     parser.add_argument("--grpo-max-groups-per-update", type=int, default=64)
     _bool_arg(
@@ -300,6 +315,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     if args.grpo_dynamic_min_pass_rate >= args.grpo_dynamic_max_pass_rate:
         parser.error("--grpo-dynamic-min-pass-rate must be smaller than --grpo-dynamic-max-pass-rate")
     args.grpo_trajectory_max_decisions = max(0, int(args.grpo_trajectory_max_decisions))
+    args.grpo_trajectory_horizon_multiplier = max(
+        1.0, float(args.grpo_trajectory_horizon_multiplier)
+    )
+    args.grpo_trajectory_horizon_grace_decisions = max(
+        0, int(args.grpo_trajectory_horizon_grace_decisions)
+    )
     args.grpo_target_records_per_update = max(0, int(args.grpo_target_records_per_update))
     args.grpo_max_groups_per_update = max(1, int(args.grpo_max_groups_per_update))
     args.replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
@@ -357,6 +378,10 @@ class SmolVLAGRPOTrainer:
             if device.type == "cuda":
                 ddp_kwargs["device_ids"] = [int(device.index or 0)]
                 ddp_kwargs["output_device"] = int(device.index or 0)
+            # Rollout ranks may execute different numbers of inference forwards because
+            # successful candidates terminate early. Buffer broadcasts would turn those
+            # independent forwards into mismatched collectives.
+            ddp_kwargs["broadcast_buffers"] = False
             policy = DDP(policy, **ddp_kwargs)
         self.actor = policy
         self.optimizer = torch.optim.AdamW(
@@ -427,6 +452,8 @@ class SmolVLAGRPOTrainer:
         if advantages.numel() > 1:
             advantages = (advantages - advantages.mean()) / advantages.std(unbiased=False).clamp_min(1e-6)
 
+        base = self._unwrap(self.actor)
+        initial_log_std = base.clamped_log_std().detach().clone()
         n_items = int(states.shape[0])
         minibatch = max(1, min(int(self.args.minibatch_size), n_items))
         microbatch = max(1, min(int(self.args.microbatch_size), minibatch))
@@ -436,6 +463,8 @@ class SmolVLAGRPOTrainer:
         clip_fracs: list[float] = []
         clip_low_fracs: list[float] = []
         clip_high_fracs: list[float] = []
+        gradient_norms: list[float] = []
+        optimizer_steps = 0
 
         for _epoch in range(max(1, int(self.args.ppo_epochs))):
             order = torch.randperm(n_items, device=self.device)
@@ -478,12 +507,17 @@ class SmolVLAGRPOTrainer:
                         clip_high_fracs.append(
                             float((ratio > 1.0 + clip_high).float().mean().detach().item())
                         )
-                if float(self.args.max_grad_norm) > 0.0:
-                    torch.nn.utils.clip_grad_norm_(self.actor.parameters(), float(self.args.max_grad_norm))
+                grad_limit = (
+                    float(self.args.max_grad_norm)
+                    if float(self.args.max_grad_norm) > 0.0
+                    else float("inf")
+                )
+                grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), grad_limit)
+                gradient_norms.append(float(grad_norm.detach().item()))
                 self.optimizer.step()
                 self.gradient_step += 1
+                optimizer_steps += 1
 
-        base = self._unwrap(self.actor)
         metrics = {
             "loss_policy_mean": float(np.mean(policy_losses)) if policy_losses else 0.0,
             "entropy_mean": float(np.mean(entropy_values)) if entropy_values else 0.0,
@@ -491,9 +525,15 @@ class SmolVLAGRPOTrainer:
             "clip_fraction_mean": float(np.mean(clip_fracs)) if clip_fracs else 0.0,
             "clip_fraction_low_mean": float(np.mean(clip_low_fracs)) if clip_low_fracs else 0.0,
             "clip_fraction_high_mean": float(np.mean(clip_high_fracs)) if clip_high_fracs else 0.0,
+            "gradient_norm_mean": float(np.mean(gradient_norms)) if gradient_norms else 0.0,
+            "gradient_norm_max": float(np.max(gradient_norms)) if gradient_norms else 0.0,
+            "optimizer_steps": float(optimizer_steps),
             "advantage_mean": float(advantages.mean().detach().item()),
             "advantage_std": float(advantages.std(unbiased=False).detach().item()) if advantages.numel() > 1 else 0.0,
             "log_std_mean": float(base.clamped_log_std().detach().mean().item()),
+            "log_std_update_abs_mean": float(
+                (base.clamped_log_std().detach() - initial_log_std).abs().mean().item()
+            ),
             "train_records": float(n_items),
         }
 
@@ -671,6 +711,98 @@ def _sample_prior_for_observation(
     return np.asarray(priors[0], dtype=np.float32)
 
 
+def _distributed_candidate_indices(
+    group_size: int,
+    world_size: int,
+    rank: int,
+) -> list[int]:
+    """Assign global GRPO candidates to ranks without overlap."""
+    return list(range(int(rank), max(0, int(group_size)), max(1, int(world_size))))
+
+
+def _dist_all_gather_object(value: Any, ctx: DistributedContext) -> list[Any]:
+    if not ctx.enabled:
+        return [value]
+    import torch.distributed as dist
+
+    gathered: list[Any] = [None for _ in range(int(ctx.world_size))]
+    dist.all_gather_object(gathered, value)
+    return gathered
+
+
+def _dist_broadcast_object(
+    value: Any,
+    ctx: DistributedContext,
+    *,
+    src: int = 0,
+) -> Any:
+    if not ctx.enabled:
+        return value
+    import torch.distributed as dist
+
+    payload = [value if int(ctx.rank) == int(src) else None]
+    dist.broadcast_object_list(payload, src=int(src))
+    return payload[0]
+
+
+def _observation_reset_signature(
+    observation: Mapping[str, Any],
+    info: Mapping[str, Any],
+) -> dict[str, Any]:
+    """Compact deterministic signature used to verify rank-synchronized resets."""
+    digest = hashlib.sha256()
+    for key in sorted(observation):
+        value = np.asarray(observation[key])
+        digest.update(str(key).encode("utf-8"))
+        digest.update(str(value.dtype).encode("utf-8"))
+        digest.update(np.asarray(value.shape, dtype=np.int64).tobytes())
+        digest.update(np.ascontiguousarray(value).tobytes())
+    return {
+        "observation_sha256": digest.hexdigest(),
+        "scene": str(info.get("scene", "")),
+        "scene_objects": tuple(str(item) for item in info.get("scene_objects", ())),
+        "instruction_type": str(info.get("instruction_type", "")),
+        "language_instruction": str(info.get("language_instruction", "")),
+        "target_object_catalog": str(info.get("target_object_catalog", "")),
+        "curriculum_mode": str(info.get("curriculum_mode", "")),
+        "curriculum_shell": int(info.get("curriculum_shell", -1)),
+        "curriculum_shell_target_policy_steps": int(
+            info.get("curriculum_shell_target_policy_steps", 0) or 0
+        ),
+    }
+
+
+def _assert_synchronized_reset(
+    observation: Mapping[str, Any],
+    info: Mapping[str, Any],
+    ctx: DistributedContext,
+) -> None:
+    if not ctx.enabled:
+        return
+    signatures = _dist_all_gather_object(
+        _observation_reset_signature(observation, info), ctx
+    )
+    expected = signatures[0]
+    if any(signature != expected for signature in signatures[1:]):
+        raise RuntimeError(
+            "Synchronized Reverse Frontier reset produced different rank states: "
+            f"{signatures}"
+        )
+
+
+def _synchronized_reset_payload(
+    *,
+    ctx: DistributedContext,
+    options: Mapping[str, Any] | None,
+    seed: int,
+) -> dict[str, Any]:
+    payload = {
+        "options": None if options is None else dict(options),
+        "seed": int(seed),
+    }
+    return dict(_dist_broadcast_object(payload, ctx, src=0))
+
+
 def _trajectory_group_is_informative(
     outcomes: np.ndarray,
     args: argparse.Namespace,
@@ -756,6 +888,15 @@ def _trajectory_group_metric_scalars(
     informative_count = int(
         sum(float(item.get("informative_group", 0.0)) >= 0.5 for item in stats)
     )
+    total_group_wall_time_s = max(
+        1e-9, sum(float(item.get("group_wall_time_s", 0.0)) for item in stats)
+    )
+    total_sampled_decisions = sum(
+        float(item.get("sampled_policy_decisions", 0.0)) for item in stats
+    )
+    total_accepted_records = sum(
+        float(item.get("accepted_policy_records", 0.0)) for item in stats
+    )
     out = {
         "rollout/grpo_groups_attempted": float(len(stats)),
         "rollout/grpo_groups_accepted": float(informative_count),
@@ -771,13 +912,13 @@ def _trajectory_group_metric_scalars(
             np.mean([float(item.get("all_success_group", 0.0)) for item in stats])
         ),
         "rollout/grpo_sampled_policy_decisions_total": float(
-            sum(float(item.get("sampled_policy_decisions", 0.0)) for item in stats)
+            total_sampled_decisions
         ),
         "rollout/grpo_sampled_policy_decisions_per_group": float(
             np.mean([float(item.get("sampled_policy_decisions", 0.0)) for item in stats])
         ),
         "rollout/grpo_accepted_policy_records": float(
-            sum(float(item.get("accepted_policy_records", 0.0)) for item in stats)
+            total_accepted_records
         ),
         "rollout/grpo_trajectory_length_mean": float(
             np.mean([float(item.get("trajectory_length_mean", 0.0)) for item in stats])
@@ -788,6 +929,28 @@ def _trajectory_group_metric_scalars(
         "rollout/grpo_trajectory_length_max": float(
             max(float(item.get("trajectory_length_max", 0.0)) for item in stats)
         ),
+        "rollout/grpo_trajectory_decision_horizon_mean": float(
+            np.mean([float(item.get("trajectory_decision_horizon", 0.0)) for item in stats])
+        ),
+        "rollout/grpo_trajectory_decision_horizon_max": float(
+            max(float(item.get("trajectory_decision_horizon", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_group_wall_time_s_mean": float(
+            np.mean([float(item.get("group_wall_time_s", 0.0)) for item in stats])
+        ),
+        "rollout/grpo_group_wall_time_s_total": float(total_group_wall_time_s),
+        "rollout/grpo_prior_inference_time_s_total": float(
+            sum(float(item.get("prior_inference_time_s", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_env_step_time_s_total": float(
+            sum(float(item.get("env_step_time_s", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_sampled_policy_decisions_per_second": float(
+            total_sampled_decisions / total_group_wall_time_s
+        ),
+        "rollout/grpo_accepted_policy_records_per_second": float(
+            total_accepted_records / total_group_wall_time_s
+        ),
         "rollout/grpo_easier_shell_retry_rate": float(
             np.mean([float(item.get("easier_shell_retry", 0.0)) for item in stats])
         ),
@@ -796,6 +959,37 @@ def _trajectory_group_metric_scalars(
         ),
         "rollout/grpo_harder_shell_retry_rate": float(
             np.mean([float(item.get("harder_shell_retry", 0.0)) for item in stats])
+        ),
+        "rollout/grpo_distributed_candidate_parallelism": float(
+            np.mean(
+                [float(item.get("distributed_candidate_parallelism", 1.0)) for item in stats]
+            )
+        ),
+        "rollout/grpo_candidates_per_rank_min": float(
+            min(float(item.get("candidates_per_rank_min", group_size)) for item in stats)
+        ),
+        "rollout/grpo_candidates_per_rank_max": float(
+            max(float(item.get("candidates_per_rank_max", group_size)) for item in stats)
+        ),
+        "rollout/grpo_candidate_load_imbalance_mean": float(
+            np.mean(
+                [float(item.get("candidate_load_imbalance", 0.0)) for item in stats]
+            )
+        ),
+        "rollout/grpo_decisions_per_rank_min": float(
+            min(float(item.get("decisions_per_rank_min", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_decisions_per_rank_max": float(
+            max(float(item.get("decisions_per_rank_max", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_rank_rollout_time_s_min": float(
+            min(float(item.get("rank_rollout_time_s_min", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_rank_rollout_time_s_max": float(
+            max(float(item.get("rank_rollout_time_s_max", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_rank_straggler_ratio_mean": float(
+            np.mean([float(item.get("rank_straggler_ratio", 1.0)) for item in stats])
         ),
     }
     out["rollout/grpo_dynamic_sampling_efficiency"] = out[
@@ -831,6 +1025,33 @@ def _step_interval_due(*, global_step: int, last_step: int, every: int) -> bool:
     return int(global_step) // interval > int(last_step) // interval
 
 
+def _trajectory_decision_horizon(
+    info: Mapping[str, Any],
+    args: argparse.Namespace,
+) -> int:
+    configured_cap = int(args.grpo_trajectory_max_decisions)
+    cap = configured_cap if configured_cap > 0 else int(args.max_env_steps)
+    cap = max(1, cap)
+    if not bool(args.grpo_trajectory_shell_aware_horizon):
+        return cap
+    if str(info.get("curriculum_mode", "")) != "reverse_frontier":
+        return cap
+
+    target = int(info.get("curriculum_shell_target_policy_steps", 0) or 0)
+    high = int(info.get("curriculum_shell_policy_steps_high", target) or target)
+    if target <= 0 and high <= 0:
+        return cap
+    high = max(1, high, target)
+    multiplier = max(1.0, float(args.grpo_trajectory_horizon_multiplier))
+    grace = max(0, int(args.grpo_trajectory_horizon_grace_decisions))
+    shell_horizon = max(
+        target,
+        int(math.ceil(float(high) * multiplier)),
+        int(high + grace),
+    )
+    return max(1, min(cap, shell_horizon))
+
+
 def _evaluate_trajectory_group(
     *,
     trainer: SmolVLAGRPOTrainer,
@@ -841,14 +1062,15 @@ def _evaluate_trajectory_group(
     progress_only: bool,
 ) -> tuple[list[dict[str, Any]], int, dict[str, Any], dict[str, Any]]:
     """Roll out complete stochastic continuations from one identical state snapshot."""
+    group_started = time.perf_counter()
     snapshot = slot.env.capture_state()
     group_size = max(2, int(args.grpo_group_size))
-    configured_horizon = int(args.grpo_trajectory_max_decisions)
-    max_decisions = configured_horizon if configured_horizon > 0 else int(args.max_env_steps)
-    max_decisions = max(1, max_decisions)
+    max_decisions = _trajectory_decision_horizon(slot.info, args)
     trajectories: list[list[dict[str, Any]]] = []
     outcomes: list[float] = []
     final_states: list[dict[str, Any]] = []
+    prior_inference_time_s = 0.0
+    env_step_time_s = 0.0
 
     for candidate_idx in range(group_size):
         slot.env.restore_state(snapshot)
@@ -861,6 +1083,7 @@ def _evaluate_trajectory_group(
         truncated = False
         final_reward = 0.0
         for trajectory_step in range(max_decisions):
+            prior_started = time.perf_counter()
             prior = _sample_prior_for_observation(
                 runtime,
                 env=slot.env,
@@ -869,6 +1092,7 @@ def _evaluate_trajectory_group(
                 instruction=instruction,
                 progress_only=progress_only,
             )
+            prior_inference_time_s += float(time.perf_counter() - prior_started)
             actions, old_log_probs, mean = trainer.sample_action_group(
                 state=state,
                 prior=prior,
@@ -876,8 +1100,10 @@ def _evaluate_trajectory_group(
                 group_size=1,
             )
             action = np.asarray(actions[0], dtype=np.float32)
+            env_step_started = time.perf_counter()
             with _silence_output(bool(progress_only)):
                 next_obs, reward, terminated, truncated, next_info = slot.env.step(action)
+            env_step_time_s += float(time.perf_counter() - env_step_started)
             trajectory.append(
                 {
                     "state": state.copy(),
@@ -955,6 +1181,7 @@ def _evaluate_trajectory_group(
     slot.env.restore_state(selected_state["snapshot"])
     lengths = np.asarray([len(trajectory) for trajectory in trajectories], dtype=np.int64)
     success_count = int(outcome_arr.sum())
+    group_wall_time_s = max(1e-9, float(time.perf_counter() - group_started))
     group_stats = {
         "group_size": int(group_size),
         "instruction_type": str(_info_instruction_type(slot.info, slot.instruction)),
@@ -980,12 +1207,276 @@ def _evaluate_trajectory_group(
         "trajectory_length_mean": float(lengths.mean()),
         "trajectory_length_min": float(lengths.min()),
         "trajectory_length_max": float(lengths.max()),
+        "trajectory_decision_horizon": float(max_decisions),
+        "group_wall_time_s": float(group_wall_time_s),
+        "prior_inference_time_s": float(prior_inference_time_s),
+        "env_step_time_s": float(env_step_time_s),
+        "sampled_policy_decisions_per_second": float(lengths.sum() / group_wall_time_s),
         "trajectory_terminated_count": float(
             sum(bool(item["terminated"]) for item in final_states)
         ),
         "trajectory_truncated_count": float(
             sum(bool(item["truncated"]) for item in final_states)
         ),
+        "distributed_candidate_parallelism": 1.0,
+        "candidates_per_rank_min": float(group_size),
+        "candidates_per_rank_max": float(group_size),
+        "candidate_load_imbalance": 0.0,
+        "decisions_per_rank_min": float(lengths.sum()),
+        "decisions_per_rank_max": float(lengths.sum()),
+        "rank_rollout_time_s_min": float(group_wall_time_s),
+        "rank_rollout_time_s_max": float(group_wall_time_s),
+        "rank_straggler_ratio": 1.0,
+    }
+    _retry_options, retry_kind = _dynamic_frontier_retry_options(group_stats, args)
+    group_stats.update(
+        {
+            "easier_shell_retry": float(retry_kind == "easier_shell"),
+            "shell0_easiest_retry": float(retry_kind == "shell0_easiest"),
+            "harder_shell_retry": float(retry_kind == "harder_shell"),
+        }
+    )
+    return records, selected, group_stats, selected_state
+
+
+def _evaluate_distributed_trajectory_group(
+    *,
+    trainer: SmolVLAGRPOTrainer,
+    runtime: Any,
+    slot: EnvSlot,
+    layout: CDPRStateLayout,
+    args: argparse.Namespace,
+    progress_only: bool,
+    dist_ctx: DistributedContext,
+) -> tuple[list[dict[str, Any]], int, dict[str, Any], dict[str, Any]]:
+    """Evaluate disjoint continuations on each rank and form one global GRPO group."""
+    if not dist_ctx.enabled:
+        return _evaluate_trajectory_group(
+            trainer=trainer,
+            runtime=runtime,
+            slot=slot,
+            layout=layout,
+            args=args,
+            progress_only=progress_only,
+        )
+
+    group_started = time.perf_counter()
+    snapshot = slot.env.capture_state()
+    group_size = max(2, int(args.grpo_group_size))
+    max_decisions = _trajectory_decision_horizon(slot.info, args)
+    candidate_indices = _distributed_candidate_indices(
+        group_size, dist_ctx.world_size, dist_ctx.rank
+    )
+    local_trajectories: dict[int, list[dict[str, Any]]] = {}
+    local_summaries: list[dict[str, Any]] = []
+    prior_inference_time_s = 0.0
+    env_step_time_s = 0.0
+
+    for candidate_idx in candidate_indices:
+        slot.env.restore_state(snapshot)
+        obs = slot.obs
+        info = dict(slot.info)
+        state = np.asarray(slot.state, dtype=np.float32).copy()
+        instruction = str(slot.instruction)
+        trajectory: list[dict[str, Any]] = []
+        terminated = False
+        truncated = False
+        final_reward = 0.0
+        for trajectory_step in range(max_decisions):
+            prior_started = time.perf_counter()
+            prior = _sample_prior_for_observation(
+                runtime,
+                env=slot.env,
+                obs=obs,
+                info=info,
+                instruction=instruction,
+                progress_only=progress_only,
+            )
+            prior_inference_time_s += float(time.perf_counter() - prior_started)
+            actions, old_log_probs, mean = trainer.sample_action_group(
+                state=state,
+                prior=prior,
+                action_index=0,
+                group_size=1,
+            )
+            action = np.asarray(actions[0], dtype=np.float32)
+            env_step_started = time.perf_counter()
+            with _silence_output(bool(progress_only)):
+                next_obs, reward, terminated, truncated, next_info = slot.env.step(action)
+            env_step_time_s += float(time.perf_counter() - env_step_started)
+            trajectory.append(
+                {
+                    "state": state.copy(),
+                    "prior": prior.copy(),
+                    "action_index": 0,
+                    "action": action.copy(),
+                    "old_log_prob": float(old_log_probs[0]),
+                    "reward": 0.0,
+                    "selected": False,
+                    "candidate_success": False,
+                    "candidate_done": bool(terminated or truncated),
+                    "mean_action": np.asarray(mean, dtype=np.float32).copy(),
+                    "trajectory_index": int(candidate_idx),
+                    "trajectory_step": int(trajectory_step),
+                }
+            )
+            obs = next_obs
+            info = dict(next_info)
+            state = layout.flatten(next_obs)
+            instruction = _safe_instruction(info)
+            final_reward = float(reward)
+            if bool(terminated or truncated):
+                break
+
+        success = bool(info.get("success", False))
+        outcome = 1.0 if success else 0.0
+        if not bool(terminated or truncated):
+            truncated = True
+            info.update(
+                {
+                    "truncated": True,
+                    "env_done": True,
+                    "trajectory_horizon_truncated": True,
+                }
+            )
+        for record in trajectory:
+            record["reward"] = float(outcome)
+            record["candidate_success"] = bool(success)
+            record["trajectory_length"] = int(len(trajectory))
+        local_trajectories[int(candidate_idx)] = trajectory
+        local_summaries.append(
+            {
+                "candidate_index": int(candidate_idx),
+                "outcome": float(outcome),
+                "reward": float(final_reward),
+                "info": info,
+                "instruction": instruction,
+                "terminated": bool(terminated),
+                "truncated": bool(truncated),
+                "length": int(len(trajectory)),
+                "last_action": (
+                    np.asarray(trajectory[-1]["action"], dtype=np.float32).copy()
+                    if trajectory
+                    else np.zeros((int(args.action_dim),), dtype=np.float32)
+                ),
+            }
+        )
+
+    local_payload = {
+        "rank": int(dist_ctx.rank),
+        "candidate_indices": list(candidate_indices),
+        "candidates": local_summaries,
+        "prior_inference_time_s": float(prior_inference_time_s),
+        "env_step_time_s": float(env_step_time_s),
+        "local_rollout_time_s": float(time.perf_counter() - group_started),
+        "sampled_policy_decisions": int(
+            sum(int(item["length"]) for item in local_summaries)
+        ),
+    }
+    rank_payloads = _dist_all_gather_object(local_payload, dist_ctx)
+    summaries = sorted(
+        [
+            dict(candidate)
+            for payload in rank_payloads
+            for candidate in payload["candidates"]
+        ],
+        key=lambda item: int(item["candidate_index"]),
+    )
+    observed_indices = [int(item["candidate_index"]) for item in summaries]
+    expected_indices = list(range(group_size))
+    if observed_indices != expected_indices:
+        raise RuntimeError(
+            "Distributed GRPO candidate partition is incomplete or overlapping: "
+            f"expected={expected_indices}, observed={observed_indices}"
+        )
+
+    outcome_arr = np.asarray([item["outcome"] for item in summaries], dtype=np.float32)
+    advantages = _group_advantages(outcome_arr, args)
+    informative = _trajectory_group_is_informative(outcome_arr, args)
+    selected_value = _select_candidate(outcome_arr, args) if dist_ctx.is_main else None
+    selected = int(_dist_broadcast_object(selected_value, dist_ctx, src=0))
+
+    records: list[dict[str, Any]] = []
+    for candidate_idx, trajectory in local_trajectories.items():
+        for record in trajectory:
+            record["advantage"] = float(advantages[candidate_idx])
+            record["selected"] = bool(candidate_idx == selected)
+            if informative:
+                records.append(record)
+
+    slot.env.restore_state(snapshot)
+    selected_summary = dict(summaries[selected])
+    selected_state = {
+        **selected_summary,
+        # Trajectory groups are terminal continuations and reset immediately. Keeping
+        # the compact base observation avoids gathering camera-sized data every group.
+        "obs": slot.obs,
+        "state": np.asarray(slot.state, dtype=np.float32).copy(),
+    }
+    lengths = np.asarray([int(item["length"]) for item in summaries], dtype=np.int64)
+    success_count = int(outcome_arr.sum())
+    group_wall_times = _dist_all_gather_object(
+        float(time.perf_counter() - group_started), dist_ctx
+    )
+    group_wall_time_s = max(1e-9, max(float(value) for value in group_wall_times))
+    candidate_counts = [len(payload["candidate_indices"]) for payload in rank_payloads]
+    decision_counts = [
+        int(payload["sampled_policy_decisions"]) for payload in rank_payloads
+    ]
+    rank_rollout_times = [
+        float(payload["local_rollout_time_s"]) for payload in rank_payloads
+    ]
+    min_rank_rollout_time = max(1e-9, min(rank_rollout_times))
+    accepted_policy_records = int(lengths.sum()) if informative else 0
+    group_stats = {
+        "group_size": int(group_size),
+        "instruction_type": str(_info_instruction_type(slot.info, slot.instruction)),
+        "curriculum_shell": int(slot.info.get("curriculum_shell", -1)),
+        "curriculum_shell_count": int(slot.info.get("curriculum_shell_count", 0)),
+        "curriculum_shell_policy_steps_low": int(
+            slot.info.get("curriculum_shell_policy_steps_low", 1)
+        ),
+        "candidate_reward_mean": float(outcome_arr.mean()),
+        "candidate_reward_std": float(outcome_arr.std()),
+        "candidate_reward_max": float(outcome_arr.max()),
+        "candidate_reward_min": float(outcome_arr.min()),
+        "candidate_selected_reward": float(outcome_arr[selected]),
+        "candidate_selected_index": int(selected),
+        "candidate_success_count": float(success_count),
+        "candidate_binary_reward_rate": 1.0,
+        "zero_advantage_group": float(float(outcome_arr.std()) <= 1e-8),
+        "informative_group": float(informative),
+        "all_fail_group": float(success_count == 0),
+        "all_success_group": float(success_count == group_size),
+        "sampled_policy_decisions": float(lengths.sum()),
+        "accepted_policy_records": float(accepted_policy_records),
+        "trajectory_length_mean": float(lengths.mean()),
+        "trajectory_length_min": float(lengths.min()),
+        "trajectory_length_max": float(lengths.max()),
+        "trajectory_decision_horizon": float(max_decisions),
+        "group_wall_time_s": float(group_wall_time_s),
+        "prior_inference_time_s": float(
+            max(float(payload["prior_inference_time_s"]) for payload in rank_payloads)
+        ),
+        "env_step_time_s": float(
+            max(float(payload["env_step_time_s"]) for payload in rank_payloads)
+        ),
+        "sampled_policy_decisions_per_second": float(lengths.sum() / group_wall_time_s),
+        "trajectory_terminated_count": float(
+            sum(bool(item["terminated"]) for item in summaries)
+        ),
+        "trajectory_truncated_count": float(
+            sum(bool(item["truncated"]) for item in summaries)
+        ),
+        "distributed_candidate_parallelism": float(dist_ctx.world_size),
+        "candidates_per_rank_min": float(min(candidate_counts)),
+        "candidates_per_rank_max": float(max(candidate_counts)),
+        "candidate_load_imbalance": float(max(candidate_counts) - min(candidate_counts)),
+        "decisions_per_rank_min": float(min(decision_counts)),
+        "decisions_per_rank_max": float(max(decision_counts)),
+        "rank_rollout_time_s_min": float(min(rank_rollout_times)),
+        "rank_rollout_time_s_max": float(max(rank_rollout_times)),
+        "rank_straggler_ratio": float(max(rank_rollout_times) / min_rank_rollout_time),
     }
     _retry_options, retry_kind = _dynamic_frontier_retry_options(group_stats, args)
     group_stats.update(
@@ -1094,6 +1585,9 @@ def main(argv: Sequence[str] | None = None) -> None:
     _set_quiet_env(args, dist_ctx)
     _set_seed(int(args.seed))
     rollout_seed = _rank_seed(int(args.seed), dist_ctx)
+    synchronized_trajectory_groups = bool(
+        args.grpo_trajectory_groups and dist_ctx.enabled
+    )
 
     run_dir = _make_run_dir(args.run_root_dir, args.run_id)
     if dist_ctx.is_main:
@@ -1102,7 +1596,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     metrics_path = run_dir / "metrics.jsonl"
 
     metrics_window = max(1, int(args.metrics_window_episodes))
-    complex_runtime = SmolVLAComplexRuntime(args=args, seed=int(rollout_seed))
+    curriculum_seed = int(args.seed) if synchronized_trajectory_groups else int(rollout_seed)
+    complex_runtime = SmolVLAComplexRuntime(args=args, seed=curriculum_seed)
     complex_training_active = str(args.complex_training_approach) != "none"
     dense_curriculum_active = _dense_curriculum_enabled(args) and not complex_training_active
     dense_stage_index = 1 if dense_curriculum_active else 0
@@ -1148,17 +1643,40 @@ def main(argv: Sequence[str] | None = None) -> None:
         env_count = max(1, int(args.num_envs_per_rank))
         _log(dist_ctx, f"[smolvla-grpo] Building {env_count} CDPR env(s) on rank {dist_ctx.rank}...")
         for env_idx in range(env_count):
-            seed = int(rollout_seed) + env_idx * 997
+            seed = (
+                int(args.seed) + env_idx * 997
+                if synchronized_trajectory_groups
+                else int(rollout_seed) + env_idx * 997
+            )
             with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
                 env = _build_env(args, seed=seed)
                 if dense_curriculum_active:
                     dense_stage_instruction_types = _apply_dense_stage_to_envs([env], args, dense_stage_index)
+            if synchronized_trajectory_groups:
+                main_options = None
+                if dist_ctx.is_main:
+                    main_options = (
+                        complex_runtime.reset_options()
+                        if complex_training_active
+                        else mixed_sampler.reset_options(dense_stage_index)
+                    )
+                reset_payload = _synchronized_reset_payload(
+                    ctx=dist_ctx,
+                    options=main_options,
+                    seed=seed,
+                )
+                reset_options = reset_payload["options"]
+                seed = int(reset_payload["seed"])
+            else:
                 reset_options = (
                     complex_runtime.reset_options()
                     if complex_training_active
                     else mixed_sampler.reset_options(dense_stage_index)
                 )
+            with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
                 obs, info = env.reset(seed=seed, options=reset_options)
+            if synchronized_trajectory_groups:
+                _assert_synchronized_reset(obs, info, dist_ctx)
             layout = CDPRStateLayout.from_observation(obs) if env_idx == 0 else layout
             episode_initial_object_positions[env_idx] = np.asarray(
                 obs["all_object_positions"], dtype=np.float32
@@ -1207,6 +1725,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "Trajectory-group GRPO is currently scoped to Reverse Frontier; "
                 "disable it for LC-HOL hindsight collection."
             )
+        if synchronized_trajectory_groups:
+            # Model construction and checkpoint loading need identical initialization.
+            # Candidate sampling needs rank-local RNG streams afterwards.
+            _set_seed(int(rollout_seed))
+            candidate_plan = {
+                rank: _distributed_candidate_indices(
+                    int(args.grpo_group_size), int(dist_ctx.world_size), rank
+                )
+                for rank in range(int(dist_ctx.world_size))
+            }
+            _log(
+                dist_ctx,
+                "[smolvla-grpo] Synchronized distributed trajectory collection active: "
+                f"{candidate_plan}",
+            )
 
         manifest = {
             "policy_type": "smolvla_cdpr_grpo",
@@ -1231,6 +1764,15 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "group_selection": str(args.grpo_group_selection),
                 "trajectory_groups": bool(args.grpo_trajectory_groups),
                 "trajectory_max_decisions": int(args.grpo_trajectory_max_decisions),
+                "trajectory_shell_aware_horizon": bool(
+                    args.grpo_trajectory_shell_aware_horizon
+                ),
+                "trajectory_horizon_multiplier": float(
+                    args.grpo_trajectory_horizon_multiplier
+                ),
+                "trajectory_horizon_grace_decisions": int(
+                    args.grpo_trajectory_horizon_grace_decisions
+                ),
                 "dynamic_sampling": bool(args.grpo_dynamic_sampling),
                 "dynamic_min_pass_rate": float(args.grpo_dynamic_min_pass_rate),
                 "dynamic_max_pass_rate": float(args.grpo_dynamic_max_pass_rate),
@@ -1245,6 +1787,15 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "ppo_epochs": int(args.ppo_epochs),
                 "minibatch_size": int(args.minibatch_size),
                 "microbatch_size": int(args.microbatch_size),
+                "distributed_candidate_collection": bool(
+                    synchronized_trajectory_groups
+                ),
+                "candidates_per_rank": {
+                    str(rank): _distributed_candidate_indices(
+                        int(args.grpo_group_size), int(dist_ctx.world_size), rank
+                    )
+                    for rank in range(int(dist_ctx.world_size))
+                },
             },
             "parameter_training": _parameter_summary(trainer, runtime.policy, args),
             "instruction_types": list(args.instruction_types or []),
@@ -1276,6 +1827,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             rollout_group_stats: list[dict[str, Any]] = []
             rollout_iteration = 0
             groups_attempted = 0
+            accepted_records_collected = 0
             target_records = int(args.grpo_target_records_per_update)
             if target_records <= 0:
                 target_records = int(args.batch_size or args.rollout_steps)
@@ -1285,7 +1837,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 if trajectory_groups_enabled:
                     if groups_attempted >= int(args.grpo_max_groups_per_update):
                         break
-                    if rollout_records and len(rollout_records) >= max(1, target_records):
+                    if accepted_records_collected >= max(1, target_records):
                         break
                 elif rollout_iteration >= max(1, int(args.rollout_steps)):
                     break
@@ -1295,22 +1847,36 @@ def main(argv: Sequence[str] | None = None) -> None:
                         break
                     if trajectory_groups_enabled and (
                         groups_attempted >= int(args.grpo_max_groups_per_update)
-                        or (rollout_records and len(rollout_records) >= max(1, target_records))
+                        or accepted_records_collected >= max(1, target_records)
                     ):
                         break
                     source_instruction_type = _info_instruction_type(slot.info, slot.instruction)
                     if trajectory_groups_enabled:
+                        trajectory_evaluator = (
+                            _evaluate_distributed_trajectory_group
+                            if synchronized_trajectory_groups
+                            else _evaluate_trajectory_group
+                        )
+                        evaluator_kwargs: dict[str, Any] = {
+                            "trainer": trainer,
+                            "runtime": runtime,
+                            "slot": slot,
+                            "layout": layout,
+                            "args": args,
+                            "progress_only": bool(args.progress_only)
+                            or not dist_ctx.is_main,
+                        }
+                        if synchronized_trajectory_groups:
+                            evaluator_kwargs["dist_ctx"] = dist_ctx
                         records, selected_idx, group_stats, selected_state = (
-                            _evaluate_trajectory_group(
-                                trainer=trainer,
-                                runtime=runtime,
-                                slot=slot,
-                                layout=layout,
-                                args=args,
-                                progress_only=bool(args.progress_only) or not dist_ctx.is_main,
+                            trajectory_evaluator(
+                                **evaluator_kwargs,
                             )
                         )
                         groups_attempted += 1
+                        accepted_records_collected += int(
+                            group_stats.get("accepted_policy_records", 0)
+                        )
                         selected_action = np.asarray(
                             selected_state["last_action"], dtype=np.float32
                         )
@@ -1532,7 +2098,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                             "rollout/candidate_reward_mean": group_reward_mean,
                             "rollout/zero_advantage_group_rate": zero_advantage_rate,
                             "rollout/candidate_binary_reward_rate": binary_reward_rate,
-                            "rollout/grpo_records_pending": float(len(rollout_records)),
+                            "rollout/grpo_records_pending": float(
+                                accepted_records_collected
+                                if trajectory_groups_enabled
+                                else len(rollout_records)
+                            ),
                             **trajectory_group_scalars,
                             **{f"gpu/{k}": v for k, v in _gpu_metrics(device).items()},
                         }
@@ -1557,7 +2127,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 episode_length=slot.episode_length,
                                 episode_reward=slot.episode_reward,
                                 reward=float(reward),
-                                buffer_size=len(rollout_records),
+                                buffer_size=(
+                                    accepted_records_collected
+                                    if trajectory_groups_enabled
+                                    else len(rollout_records)
+                                ),
                                 instruction=slot.instruction,
                                 world_size=dist_ctx.world_size,
                                 num_envs=len(slots),
@@ -1710,6 +2284,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                                     f"success_rate={float(validation_summary['validation_success_rate'] or 0.0):.3f}",
                                     progress=progress,
                                 )
+                        if synchronized_trajectory_groups:
+                            synchronized_runtime_state = _dist_broadcast_object(
+                                complex_runtime.state_dict()
+                                if dist_ctx.is_main
+                                else None,
+                                dist_ctx,
+                                src=0,
+                            )
+                            if not dist_ctx.is_main:
+                                complex_runtime.load_state_dict(
+                                    dict(synchronized_runtime_state or {})
+                                )
                         last_validation_step = int(global_step)
 
                     if done:
@@ -1794,19 +2380,47 @@ def main(argv: Sequence[str] | None = None) -> None:
                             group_stats,
                             args,
                         )
-                        if retry_options is not None:
+                        if synchronized_trajectory_groups:
+                            main_options = None
+                            if dist_ctx.is_main:
+                                if retry_options is not None:
+                                    main_options = retry_options
+                                else:
+                                    main_options = (
+                                        complex_runtime.reset_options()
+                                        if complex_training_active
+                                        else mixed_sampler.reset_options(dense_stage_index)
+                                    )
+                            reset_payload = _synchronized_reset_payload(
+                                ctx=dist_ctx,
+                                options=main_options,
+                                seed=(
+                                    int(args.seed)
+                                    + 1_000_003
+                                    + int(slot_idx) * 100_003
+                                    + int(global_step) * 997
+                                )
+                                % (2**32 - 1),
+                            )
+                            reset_options = reset_payload["options"]
+                            reset_seed = int(reset_payload["seed"])
+                        elif retry_options is not None:
                             reset_options = retry_options
+                            reset_seed = None
                         else:
                             reset_options = (
                                 complex_runtime.reset_options()
                                 if complex_training_active
                                 else mixed_sampler.reset_options(dense_stage_index)
                             )
+                            reset_seed = None
                         with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
                             obs, info = slot.env.reset(
-                                seed=None,
+                                seed=reset_seed,
                                 options=reset_options,
                             )
+                        if synchronized_trajectory_groups:
+                            _assert_synchronized_reset(obs, info, dist_ctx)
                         episode_initial_object_positions[slot_idx] = np.asarray(
                             obs["all_object_positions"], dtype=np.float32
                         ).copy()
@@ -1824,6 +2438,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                     slot.info = dict(next_info)
                     slot.state = next_state
                     slot.instruction = _safe_instruction(slot.info)
+
+            if synchronized_trajectory_groups and accepted_records_collected > 0:
+                rank_record_batches = _dist_all_gather_object(
+                    rollout_records, dist_ctx
+                )
+                rollout_records = [
+                    record
+                    for rank_records in rank_record_batches
+                    for record in rank_records
+                ]
+                if len(rollout_records) != int(accepted_records_collected):
+                    raise RuntimeError(
+                        "Distributed GRPO record gather disagrees with accepted count: "
+                        f"accepted={accepted_records_collected}, gathered={len(rollout_records)}"
+                    )
 
             if rollout_records:
                 hindsight_records = complex_runtime.sample_hindsight(len(rollout_records))
