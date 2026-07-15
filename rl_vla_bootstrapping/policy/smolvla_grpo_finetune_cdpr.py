@@ -231,6 +231,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--grpo-trajectory-horizon-grace-decisions", type=int, default=8)
     parser.add_argument("--grpo-target-records-per-update", type=int, default=0)
     parser.add_argument("--grpo-max-groups-per-update", type=int, default=64)
+    parser.add_argument(
+        "--grpo-max-collection-seconds-per-update",
+        type=float,
+        default=0.0,
+        help="Stop trajectory collection after this many seconds and update on accepted records; disabled at 0.",
+    )
     _bool_arg(
         parser,
         "grpo_all_success_sample_harder",
@@ -323,6 +329,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     args.grpo_target_records_per_update = max(0, int(args.grpo_target_records_per_update))
     args.grpo_max_groups_per_update = max(1, int(args.grpo_max_groups_per_update))
+    args.grpo_max_collection_seconds_per_update = max(
+        0.0, float(args.grpo_max_collection_seconds_per_update)
+    )
     args.replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
     return args
 
@@ -1778,6 +1787,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "dynamic_max_pass_rate": float(args.grpo_dynamic_max_pass_rate),
                 "target_records_per_update": int(args.grpo_target_records_per_update),
                 "max_groups_per_update": int(args.grpo_max_groups_per_update),
+                "max_collection_seconds_per_update": float(
+                    args.grpo_max_collection_seconds_per_update
+                ),
                 "normalize_group_advantage": bool(args.grpo_normalize_group_advantage),
                 "clip_advantage_abs": float(args.grpo_clip_advantage_abs),
                 "clip_range": float(args.clip_range),
@@ -1828,6 +1840,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             rollout_iteration = 0
             groups_attempted = 0
             accepted_records_collected = 0
+            collection_started = time.perf_counter()
+            collection_time_limit_reached = False
             target_records = int(args.grpo_target_records_per_update)
             if target_records <= 0:
                 target_records = int(args.batch_size or args.rollout_steps)
@@ -1835,6 +1849,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 if global_step >= int(args.max_train_steps):
                     break
                 if trajectory_groups_enabled:
+                    if collection_time_limit_reached:
+                        break
                     if groups_attempted >= int(args.grpo_max_groups_per_update):
                         break
                     if accepted_records_collected >= max(1, target_records):
@@ -1846,7 +1862,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                     if global_step >= int(args.max_train_steps):
                         break
                     if trajectory_groups_enabled and (
-                        groups_attempted >= int(args.grpo_max_groups_per_update)
+                        collection_time_limit_reached
+                        or groups_attempted >= int(args.grpo_max_groups_per_update)
                         or accepted_records_collected >= max(1, target_records)
                     ):
                         break
@@ -1877,6 +1894,23 @@ def main(argv: Sequence[str] | None = None) -> None:
                         accepted_records_collected += int(
                             group_stats.get("accepted_policy_records", 0)
                         )
+                        collection_limit_seconds = float(
+                            args.grpo_max_collection_seconds_per_update
+                        )
+                        if collection_limit_seconds > 0.0:
+                            limit_reached_value = (
+                                time.perf_counter() - collection_started
+                                >= collection_limit_seconds
+                                if dist_ctx.is_main
+                                else None
+                            )
+                            collection_time_limit_reached = bool(
+                                _dist_broadcast_object(
+                                    limit_reached_value,
+                                    dist_ctx,
+                                    src=0,
+                                )
+                            )
                         selected_action = np.asarray(
                             selected_state["last_action"], dtype=np.float32
                         )
@@ -2439,6 +2473,23 @@ def main(argv: Sequence[str] | None = None) -> None:
                     slot.state = next_state
                     slot.instruction = _safe_instruction(slot.info)
 
+            collection_wall_time_s = float(time.perf_counter() - collection_started)
+            if dist_ctx.is_main:
+                _log_scalars(
+                    writer,
+                    {
+                        "rollout/grpo_collection_wall_time_s": collection_wall_time_s,
+                        "rollout/grpo_collection_groups": float(groups_attempted),
+                        "rollout/grpo_collection_accepted_records": float(
+                            accepted_records_collected
+                        ),
+                        "rollout/grpo_collection_time_limit_reached": float(
+                            collection_time_limit_reached
+                        ),
+                    },
+                    global_step,
+                )
+
             if synchronized_trajectory_groups and accepted_records_collected > 0:
                 rank_record_batches = _dist_all_gather_object(
                     rollout_records, dist_ctx
@@ -2459,6 +2510,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 last_metrics = trainer.update(
                     rollout_records,
                     hindsight_records=hindsight_records,
+                )
+                last_metrics.update(
+                    {
+                        "collection_wall_time_s": collection_wall_time_s,
+                        "collection_groups": float(groups_attempted),
+                        "collection_accepted_records": float(
+                            accepted_records_collected
+                        ),
+                        "collection_time_limit_reached": float(
+                            collection_time_limit_reached
+                        ),
+                    }
                 )
                 complex_runtime.record_train_update(
                     [str(item.get("instruction_type", "")) for item in rollout_records]

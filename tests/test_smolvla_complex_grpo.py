@@ -124,6 +124,18 @@ class _TrajectoryTestTrainer:
 
 
 class SmolVLAComplexGRPOTests(unittest.TestCase):
+    def test_remote_launcher_defaults_to_reverse_frontier_on_both_gpus(self):
+        launcher = (
+            ROOT / "scripts" / "train_cdpr_smolvla_complex_grpo_dual_remote.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('RUN_REVERSE="${RUN_REVERSE:-1}"', launcher)
+        self.assertIn('RUN_LCHOL="${RUN_LCHOL:-0}"', launcher)
+        self.assertIn('REVERSE_GPU="${REVERSE_GPU:-0,1}"', launcher)
+        self.assertIn(
+            'SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-2}"',
+            launcher,
+        )
+
     def test_comparison_configs_build_distinct_grpo_plans(self):
         expected = {
             "cdpr_smolvla_complex_reverse_frontier_grpo.yaml": "reverse_frontier",
@@ -159,7 +171,20 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     )
                     self.assertEqual(
                         command[command.index("--grpo-target-records-per-update") + 1],
-                        "4096",
+                        "1024",
+                    )
+                    self.assertEqual(
+                        command[command.index("--grpo-max-groups-per-update") + 1],
+                        "16",
+                    )
+                    self.assertEqual(
+                        command[
+                            command.index(
+                                "--grpo-max-collection-seconds-per-update"
+                            )
+                            + 1
+                        ],
+                        "600",
                     )
                     self.assertIn("--grpo-trajectory-shell-aware-horizon", command)
                     self.assertEqual(

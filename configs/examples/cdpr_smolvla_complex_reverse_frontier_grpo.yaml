@@ -328,8 +328,9 @@ training:
       grpo_trajectory_shell_aware_horizon: true
       grpo_trajectory_horizon_multiplier: 1.5
       grpo_trajectory_horizon_grace_decisions: 8
-      grpo_target_records_per_update: 4096
-      grpo_max_groups_per_update: 64
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 16
+      grpo_max_collection_seconds_per_update: 600
       grpo_all_success_sample_harder: true
       grpo_shell0_retry_easiest: true
       rollout_steps: 2048

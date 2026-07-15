@@ -9,10 +9,10 @@ STAGE="${STAGE:-rl}"
 DRY_RUN="${DRY_RUN:-0}"
 WALLTIME="${WALLTIME:-none}"
 RUN_REVERSE="${RUN_REVERSE:-1}"
-RUN_LCHOL="${RUN_LCHOL:-1}"
-REVERSE_GPU="${REVERSE_GPU:-0}"
+RUN_LCHOL="${RUN_LCHOL:-0}"
+REVERSE_GPU="${REVERSE_GPU:-0,1}"
 LCHOL_GPU="${LCHOL_GPU:-1}"
-SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-1}"
+SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-2}"
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 REVERSE_RUN_NAME="${REVERSE_RUN_NAME:-cdpr_smolvla_complex_reverse_frontier_step_6700000_to_10000000_${timestamp}}"
@@ -131,6 +131,10 @@ for index in "${!pids[@]}"; do
 done
 
 printf 'TensorBoard: tensorboard --logdir %q --port 6006\n' "$REPO_ROOT/runs"
-printf 'Reverse logdir: %s\n' "$REPO_ROOT/runs/$REVERSE_RUN_NAME/rl/tensorboard"
-printf 'LC-HOL++ logdir: %s\n' "$REPO_ROOT/runs/$LCHOL_RUN_NAME/rl/tensorboard"
+if [[ "$RUN_REVERSE" == "1" ]]; then
+  printf 'Reverse logdir: %s\n' "$REPO_ROOT/runs/$REVERSE_RUN_NAME/rl/tensorboard"
+fi
+if [[ "$RUN_LCHOL" == "1" ]]; then
+  printf 'LC-HOL++ logdir: %s\n' "$REPO_ROOT/runs/$LCHOL_RUN_NAME/rl/tensorboard"
+fi
 exit "$status"
