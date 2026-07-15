@@ -311,15 +311,26 @@ training:
       min_log_std: -5.0
       max_log_std: 0.5
       clip_range: 0.20
-      entropy_coef: 0.0
+      clip_range_low: 0.20
+      clip_range_high: 0.28
+      entropy_coef: 0.001
       action_l2: 0.0
       max_grad_norm: 1.0
-      grpo_group_size: 4
+      grpo_group_size: 8
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.10
+      grpo_dynamic_max_pass_rate: 0.90
+      grpo_trajectory_max_decisions: 128
+      grpo_target_records_per_update: 4096
+      grpo_max_groups_per_update: 64
+      grpo_all_success_sample_harder: true
+      grpo_shell0_retry_easiest: true
       rollout_steps: 2048
-      ppo_epochs: 2
+      ppo_epochs: 1
       batch_size: 4096
       minibatch_size: 4096
       microbatch_size: 2048

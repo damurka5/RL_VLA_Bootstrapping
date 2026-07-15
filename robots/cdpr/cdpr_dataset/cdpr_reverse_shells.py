@@ -165,6 +165,7 @@ def apply_cdpr_reverse_shell(
     shell_id: int,
     rng: np.random.Generator | None = None,
     profile: str | None = None,
+    target_policy_steps: int | None = None,
 ) -> dict[str, Any]:
     rng = rng or getattr(env, "np_random", np.random.default_rng())
     spec = getattr(env, "_instruction_spec", None)
@@ -187,7 +188,12 @@ def apply_cdpr_reverse_shell(
         "curriculum_target_grasped": False,
     }
     if profile == SMOLVLA_COMPLEX_PROFILE:
-        horizon = _shell_horizon_metadata(env, shell_id=shell_id, rng=rng)
+        horizon = _shell_horizon_metadata(
+            env,
+            shell_id=shell_id,
+            rng=rng,
+            target_policy_steps=target_policy_steps,
+        )
         info.update(horizon)
         info.update(
             _apply_smolvla_complex_shell(
@@ -228,10 +234,14 @@ def _shell_horizon_metadata(
     *,
     shell_id: int,
     rng: np.random.Generator,
+    target_policy_steps: int | None = None,
 ) -> dict[str, Any]:
     bounds = _policy_decision_bounds(env)
     low, high = bounds[clamp_shell_id(shell_id, len(bounds))]
-    target_policy_steps = int(rng.integers(int(low), int(high) + 1))
+    if target_policy_steps is None:
+        target_policy_steps = int(rng.integers(int(low), int(high) + 1))
+    else:
+        target_policy_steps = int(np.clip(int(target_policy_steps), int(low), int(high)))
     simulator_steps_per_action = max(1, 1 + int(getattr(env, "hold_steps", 0)))
     target_sim_steps = int(target_policy_steps * simulator_steps_per_action)
     return {

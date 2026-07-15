@@ -1916,6 +1916,11 @@ class CDPRLanguageRLEnv(_EnvBase):
                     self,
                     shell_id=int(self._curriculum_shell),
                     rng=self.np_random,
+                    target_policy_steps=(
+                        None
+                        if options.get("curriculum_target_policy_steps") is None
+                        else int(options["curriculum_target_policy_steps"])
+                    ),
                 )
             )
             hold_current_pose = getattr(self.sim, "hold_current_pose", None)

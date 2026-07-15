@@ -10,10 +10,14 @@ import numpy as np
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.lchol.smolvla_complex import SmolVLAComplexRuntime
 from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
-from rl_vla_bootstrapping.policy.smolvla_finetune_cdpr import DistributedContext
+from rl_vla_bootstrapping.policy.smolvla_finetune_cdpr import DistributedContext, EnvSlot
 from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
     SmolVLAGRPOTrainer,
+    _dynamic_frontier_retry_options,
+    _evaluate_trajectory_group,
     _resolve_checkpoint,
+    _trajectory_group_is_informative,
+    _trajectory_group_metric_scalars,
     parse_args,
     torch,
 )
@@ -68,6 +72,54 @@ class _MoveShellEnv:
         self._ee = np.asarray(xyz, dtype=np.float32).reshape(3).copy()
 
 
+class _TrajectoryTestEnv:
+    def __init__(self) -> None:
+        self.step_count = 0
+
+    def capture_state(self):
+        return {"step_count": int(self.step_count)}
+
+    def restore_state(self, snapshot):
+        self.step_count = int(snapshot["step_count"])
+
+    def step(self, action):
+        self.step_count += 1
+        success = bool(float(np.asarray(action).reshape(-1)[0]) > 0.0 and self.step_count >= 2)
+        truncated = bool(self.step_count >= 3 and not success)
+        obs = {"state": np.full((6,), float(self.step_count), dtype=np.float32)}
+        info = {
+            "success": success,
+            "instruction_type": "move_to_object",
+            "language_instruction": "move to apple",
+            "step": int(self.step_count),
+        }
+        return obs, float(success), success, truncated, info
+
+
+class _TrajectoryTestLayout:
+    @staticmethod
+    def flatten(obs):
+        return np.asarray(obs["state"], dtype=np.float32).copy()
+
+
+class _TrajectoryTestRuntime:
+    @staticmethod
+    def sample_cdpr_chunks_from_envs(*, envs, observations, infos, instructions):
+        return np.zeros((len(envs), 2, 5), dtype=np.float32)
+
+
+class _TrajectoryTestTrainer:
+    def __init__(self) -> None:
+        self.calls = 0
+
+    def sample_action_group(self, *, state, prior, action_index, group_size):
+        # Candidate 0 succeeds in two decisions; candidate 1 fails after three.
+        sign = 1.0 if self.calls < 2 else -1.0
+        self.calls += 1
+        action = np.full((1, 5), sign, dtype=np.float32)
+        return action, np.zeros((1,), dtype=np.float32), action[0].copy()
+
+
 class SmolVLAComplexGRPOTests(unittest.TestCase):
     def test_comparison_configs_build_distinct_grpo_plans(self):
         expected = {
@@ -90,6 +142,21 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 self.assertEqual(config.task.metadata["reward_mode"], "sparse_binary")
                 self.assertFalse(config.task.metadata["reward_output_normalization_enabled"])
                 if approach == "reverse_frontier":
+                    self.assertEqual(command[command.index("--grpo-group-size") + 1], "8")
+                    self.assertIn("--grpo-trajectory-groups", command)
+                    self.assertIn("--grpo-dynamic-sampling", command)
+                    self.assertEqual(
+                        command[command.index("--grpo-trajectory-max-decisions") + 1],
+                        "128",
+                    )
+                    self.assertEqual(
+                        command[command.index("--grpo-target-records-per-update") + 1],
+                        "4096",
+                    )
+                    self.assertEqual(command[command.index("--clip-range-low") + 1], "0.2")
+                    self.assertEqual(command[command.index("--clip-range-high") + 1], "0.28")
+                    self.assertEqual(command[command.index("--entropy-coef") + 1], "0.001")
+                    self.assertEqual(command[command.index("--ppo-epochs") + 1], "1")
                     self.assertEqual(config.task.metadata["move_to_object_xy_tolerance"], 0.02)
                     self.assertEqual(config.task.metadata["put_container_xy_tolerance"], 0.03)
                     self.assertEqual(config.task.metadata["move_relation_success_zone_size"], 0.03)
@@ -184,6 +251,160 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
             ) * env.action_step_xyz * 0.44
             self.assertAlmostEqual(info["curriculum_shell_distance_m"], expected_distance)
             self.assertEqual(info["curriculum_shell_profile"], SMOLVLA_COMPLEX_PROFILE)
+
+        easiest_env = _MoveShellEnv()
+        easiest = apply_cdpr_reverse_shell(
+            easiest_env,
+            shell_id=0,
+            rng=np.random.default_rng(999),
+            target_policy_steps=4,
+        )
+        self.assertEqual(easiest["curriculum_shell_target_policy_steps"], 4)
+
+    def test_dapo_dynamic_sampling_and_reverse_frontier_retries(self):
+        args = parse_args(
+            [
+                "--no-distributed",
+                "--grpo-group-size",
+                "8",
+                "--grpo-trajectory-groups",
+                "--grpo-dynamic-sampling",
+                "--grpo-dynamic-min-pass-rate",
+                "0.1",
+                "--grpo-dynamic-max-pass-rate",
+                "0.9",
+            ]
+        )
+        self.assertFalse(_trajectory_group_is_informative(np.zeros((8,)), args))
+        self.assertFalse(_trajectory_group_is_informative(np.ones((8,)), args))
+        mixed = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        self.assertTrue(_trajectory_group_is_informative(mixed, args))
+
+        base_stats = {
+            "group_size": 8,
+            "instruction_type": "put_into_plate",
+            "curriculum_shell_count": 7,
+            "informative_group": 0.0,
+            "candidate_success_count": 0.0,
+            "curriculum_shell_policy_steps_low": 4,
+        }
+        easier, retry_kind = _dynamic_frontier_retry_options(
+            {**base_stats, "curriculum_shell": 3}, args
+        )
+        self.assertEqual(retry_kind, "easier_shell")
+        self.assertEqual(easier["curriculum_shell"], 2)
+
+        shell0, retry_kind = _dynamic_frontier_retry_options(
+            {**base_stats, "curriculum_shell": 0}, args
+        )
+        self.assertEqual(retry_kind, "shell0_easiest")
+        self.assertEqual(shell0["curriculum_shell"], 0)
+        self.assertEqual(shell0["curriculum_target_policy_steps"], 4)
+
+        harder, retry_kind = _dynamic_frontier_retry_options(
+            {
+                **base_stats,
+                "curriculum_shell": 3,
+                "candidate_success_count": 8.0,
+            },
+            args,
+        )
+        self.assertEqual(retry_kind, "harder_shell")
+        self.assertEqual(harder["curriculum_shell"], 4)
+
+    def test_trajectory_group_metrics_include_histogram_lengths_and_shell_pass_rate(self):
+        stats = [
+            {
+                "candidate_success_count": 1.0,
+                "candidate_reward_mean": 0.125,
+                "informative_group": 1.0,
+                "all_fail_group": 0.0,
+                "all_success_group": 0.0,
+                "sampled_policy_decisions": 37.0,
+                "accepted_policy_records": 37.0,
+                "trajectory_length_mean": 4.625,
+                "trajectory_length_min": 3.0,
+                "trajectory_length_max": 7.0,
+                "instruction_type": "put_into_plate",
+                "curriculum_shell": 0,
+            },
+            {
+                "candidate_success_count": 0.0,
+                "candidate_reward_mean": 0.0,
+                "informative_group": 0.0,
+                "all_fail_group": 1.0,
+                "all_success_group": 0.0,
+                "sampled_policy_decisions": 64.0,
+                "accepted_policy_records": 0.0,
+                "trajectory_length_mean": 8.0,
+                "trajectory_length_min": 8.0,
+                "trajectory_length_max": 8.0,
+                "shell0_easiest_retry": 1.0,
+                "instruction_type": "put_into_plate",
+                "curriculum_shell": 0,
+            },
+        ]
+        metrics = _trajectory_group_metric_scalars(stats, group_size=8)
+        self.assertEqual(metrics["rollout/grpo_group_success_count_0_rate"], 0.5)
+        self.assertEqual(metrics["rollout/grpo_group_success_count_1_rate"], 0.5)
+        self.assertEqual(metrics["rollout/grpo_informative_group_rate"], 0.5)
+        self.assertEqual(metrics["rollout/grpo_trajectory_length_min"], 3.0)
+        self.assertEqual(metrics["rollout/grpo_trajectory_length_max"], 8.0)
+        self.assertAlmostEqual(
+            metrics["rollout/grpo_group_pass_rate/put_into_plate/shell_00"],
+            0.0625,
+        )
+
+    def test_trajectory_group_accepts_different_candidate_lengths(self):
+        args = parse_args(
+            [
+                "--no-distributed",
+                "--grpo-group-size",
+                "2",
+                "--grpo-trajectory-groups",
+                "--grpo-dynamic-sampling",
+                "--grpo-trajectory-max-decisions",
+                "3",
+                "--action-dim",
+                "5",
+            ]
+        )
+        env = _TrajectoryTestEnv()
+        obs = {"state": np.zeros((6,), dtype=np.float32)}
+        info = {
+            "instruction_type": "move_to_object",
+            "language_instruction": "move to apple",
+            "curriculum_shell": 0,
+            "curriculum_shell_count": 4,
+            "curriculum_shell_policy_steps_low": 2,
+        }
+        slot = EnvSlot(
+            env=env,
+            obs=obs,
+            info=info,
+            state=np.zeros((6,), dtype=np.float32),
+            instruction="move to apple",
+        )
+        records, _selected, stats, selected_state = _evaluate_trajectory_group(
+            trainer=_TrajectoryTestTrainer(),
+            runtime=_TrajectoryTestRuntime(),
+            slot=slot,
+            layout=_TrajectoryTestLayout(),
+            args=args,
+            progress_only=True,
+        )
+        self.assertEqual(len(records), 5)
+        self.assertEqual(stats["candidate_success_count"], 1.0)
+        self.assertEqual(stats["informative_group"], 1.0)
+        self.assertEqual(stats["trajectory_length_min"], 2.0)
+        self.assertEqual(stats["trajectory_length_max"], 3.0)
+        trajectory_advantages = {
+            int(record["trajectory_index"]): float(record["advantage"])
+            for record in records
+        }
+        self.assertGreater(trajectory_advantages[0], 0.0)
+        self.assertLess(trajectory_advantages[1], 0.0)
+        self.assertIn(int(selected_state["length"]), {2, 3})
 
     def test_lchol_put_stage_promotes_only_after_eighty_percent(self):
         args = SimpleNamespace(
