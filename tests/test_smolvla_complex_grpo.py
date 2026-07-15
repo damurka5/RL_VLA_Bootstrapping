@@ -124,6 +124,18 @@ class _TrajectoryTestTrainer:
         action = np.full((1, 5), sign, dtype=np.float32)
         return action, np.zeros((1,), dtype=np.float32), action[0].copy()
 
+    def sample_action_chunk(self, *, state, prior, action_count):
+        # Candidate 0 succeeds on its two-action chunk; candidate 1 fails.
+        del state, prior
+        sign = 1.0 if self.calls == 0 else -1.0
+        self.calls += 1
+        actions = np.full((int(action_count), 5), sign, dtype=np.float32)
+        return (
+            actions,
+            np.zeros((int(action_count),), dtype=np.float32),
+            actions.copy(),
+        )
+
 
 class _SnapshotSyncTestEnv:
     def __init__(self, value: float) -> None:
@@ -183,8 +195,9 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     self.assertIn("--grpo-dynamic-sampling", command)
                     self.assertEqual(
                         command[command.index("--grpo-trajectory-max-decisions") + 1],
-                        "128",
+                        "32",
                     )
+                    self.assertEqual(command[command.index("--replan-every") + 1], "4")
                     self.assertEqual(
                         command[command.index("--grpo-target-records-per-update") + 1],
                         "1024",
@@ -213,7 +226,7 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                         command[
                             command.index("--grpo-trajectory-horizon-grace-decisions") + 1
                         ],
-                        "8",
+                        "2",
                     )
                     self.assertEqual(command[command.index("--clip-range-low") + 1], "0.2")
                     self.assertEqual(command[command.index("--clip-range-high") + 1], "0.28")
@@ -227,6 +240,24 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     self.assertTrue(config.task.metadata["push_enforce_max_overshoot"])
                     self.assertEqual(
                         config.task.metadata["reverse_frontier_policy_decision_bounds"],
+                        [
+                            [1, 2],
+                            [2, 3],
+                            [3, 4],
+                            [5, 6],
+                            [7, 13],
+                            [14, 20],
+                            [21, 32],
+                        ],
+                    )
+                    self.assertEqual(
+                        config.task.metadata[
+                            "reverse_frontier_actions_per_policy_decision"
+                        ],
+                        4,
+                    )
+                    self.assertEqual(
+                        config.task.metadata["reverse_frontier_action_step_bounds"],
                         [
                             [4, 6],
                             [7, 10],
@@ -405,6 +436,68 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
         )
         self.assertEqual(easiest["curriculum_shell_target_policy_steps"], 4)
 
+    def test_replan_four_shells_preserve_physical_action_ranges(self):
+        policy_bounds = (
+            (1, 2),
+            (2, 3),
+            (3, 4),
+            (5, 6),
+            (7, 13),
+            (14, 20),
+            (21, 32),
+        )
+        action_bounds = (
+            (4, 6),
+            (7, 10),
+            (11, 16),
+            (17, 24),
+            (25, 52),
+            (53, 80),
+            (81, 128),
+        )
+        for shell_id in range(4):
+            with self.subTest(shell=shell_id):
+                env = _MoveShellEnv()
+                env._task_metadata.update(
+                    reverse_frontier_actions_per_policy_decision=4,
+                    reverse_frontier_policy_decision_bounds=policy_bounds,
+                    reverse_frontier_action_step_bounds=action_bounds,
+                )
+                info = apply_cdpr_reverse_shell(
+                    env,
+                    shell_id=shell_id,
+                    rng=np.random.default_rng(500 + shell_id),
+                )
+                self.assertEqual(
+                    (
+                        info["curriculum_shell_policy_steps_low"],
+                        info["curriculum_shell_policy_steps_high"],
+                    ),
+                    policy_bounds[shell_id],
+                )
+                self.assertEqual(
+                    (
+                        info["curriculum_shell_action_steps_low"],
+                        info["curriculum_shell_action_steps_high"],
+                    ),
+                    action_bounds[shell_id],
+                )
+                target_policy = info["curriculum_shell_target_policy_steps"]
+                target_actions = info["curriculum_shell_target_action_steps"]
+                self.assertEqual(info["curriculum_actions_per_policy_decision"], 4)
+                self.assertGreaterEqual(target_actions, action_bounds[shell_id][0])
+                self.assertLessEqual(target_actions, action_bounds[shell_id][1])
+                self.assertEqual(target_policy, int(np.ceil(target_actions / 4.0)))
+                self.assertEqual(
+                    info["curriculum_shell_target_sim_steps"], 7 * target_actions
+                )
+                expected_distance = 0.03 + (
+                    target_actions - 0.5
+                ) * env.action_step_xyz * 0.44
+                self.assertAlmostEqual(
+                    info["curriculum_shell_distance_m"], expected_distance
+                )
+
     def test_dapo_dynamic_sampling_and_reverse_frontier_retries(self):
         args = parse_args(
             [
@@ -491,6 +584,32 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
 
         self.assertEqual(_trajectory_decision_horizon({}, args), 128)
 
+        chunked_args = parse_args(
+            [
+                "--no-distributed",
+                "--replan-every",
+                "4",
+                "--grpo-trajectory-max-decisions",
+                "32",
+                "--grpo-trajectory-shell-aware-horizon",
+                "--grpo-trajectory-horizon-multiplier",
+                "1.5",
+                "--grpo-trajectory-horizon-grace-decisions",
+                "2",
+            ]
+        )
+        chunked_info = {
+            "curriculum_mode": "reverse_frontier",
+            "curriculum_shell_target_policy_steps": 2,
+            "curriculum_shell_policy_steps_high": 2,
+            "curriculum_shell_target_action_steps": 6,
+            "curriculum_shell_action_steps_high": 6,
+            "curriculum_actions_per_policy_decision": 4,
+        }
+        self.assertEqual(
+            _trajectory_decision_horizon(chunked_info, chunked_args), 14
+        )
+
     def test_trajectory_group_metrics_include_histogram_lengths_and_shell_pass_rate(self):
         stats = [
             {
@@ -553,6 +672,8 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 "--grpo-dynamic-sampling",
                 "--grpo-trajectory-max-decisions",
                 "3",
+                "--replan-every",
+                "2",
                 "--action-dim",
                 "5",
             ]
@@ -586,6 +707,17 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
         self.assertEqual(stats["informative_group"], 1.0)
         self.assertEqual(stats["trajectory_length_min"], 2.0)
         self.assertEqual(stats["trajectory_length_max"], 3.0)
+        self.assertEqual(stats["sampled_policy_decisions"], 3.0)
+        self.assertEqual(stats["sampled_environment_actions"], 5.0)
+        self.assertEqual(
+            [int(record["action_index"]) for record in records],
+            [0, 1, 0, 1, 0],
+        )
+        for record in records:
+            expected_state_value = 0.0 if int(record["trajectory_index"]) == 0 else (
+                0.0 if int(record["policy_decision_index"]) == 0 else 2.0
+            )
+            self.assertEqual(float(record["state"][0]), expected_state_value)
         trajectory_advantages = {
             int(record["trajectory_index"]): float(record["advantage"])
             for record in records

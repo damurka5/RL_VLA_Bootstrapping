@@ -1488,8 +1488,25 @@ def _apply_reverse_frontier_policy_gate(
     target_policy_steps = int(
         curriculum_reset_info.get("curriculum_shell_target_policy_steps", 0) or 0
     )
-    gate_active = str(curriculum_mode) == "reverse_frontier" and target_policy_steps > 0
-    gate_satisfied = not gate_active or int(policy_step) >= target_policy_steps
+    actions_per_policy_decision = max(
+        1,
+        int(
+            curriculum_reset_info.get(
+                "curriculum_actions_per_policy_decision", 1
+            )
+            or 1
+        ),
+    )
+    target_action_steps = int(
+        curriculum_reset_info.get(
+            "curriculum_shell_target_action_steps",
+            target_policy_steps * actions_per_policy_decision,
+        )
+        or 0
+    )
+    gate_active = str(curriculum_mode) == "reverse_frontier" and target_action_steps > 0
+    gate_satisfied = not gate_active or int(policy_step) >= target_action_steps
+    remaining_action_steps = max(0, target_action_steps - int(policy_step))
 
     info.update(
         {
@@ -1498,7 +1515,17 @@ def _apply_reverse_frontier_policy_gate(
             "reverse_frontier_policy_gate_satisfied": float(gate_satisfied),
             "reverse_frontier_policy_target_steps": int(target_policy_steps),
             "reverse_frontier_policy_steps_remaining": int(
-                max(0, target_policy_steps - int(policy_step)) if gate_active else 0
+                (remaining_action_steps + actions_per_policy_decision - 1)
+                // actions_per_policy_decision
+                if gate_active
+                else 0
+            ),
+            "reverse_frontier_action_target_steps": int(target_action_steps),
+            "reverse_frontier_action_steps_remaining": int(
+                remaining_action_steps if gate_active else 0
+            ),
+            "reverse_frontier_actions_per_policy_decision": int(
+                actions_per_policy_decision
             ),
         }
     )

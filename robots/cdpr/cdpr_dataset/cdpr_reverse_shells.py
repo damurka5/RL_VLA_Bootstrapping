@@ -199,7 +199,7 @@ def apply_cdpr_reverse_shell(
             _apply_smolvla_complex_shell(
                 env,
                 shell_id=shell_id,
-                target_policy_steps=int(horizon["curriculum_shell_target_policy_steps"]),
+                target_action_steps=int(horizon["curriculum_shell_target_action_steps"]),
                 rng=rng,
             )
         )
@@ -236,22 +236,46 @@ def _shell_horizon_metadata(
     rng: np.random.Generator,
     target_policy_steps: int | None = None,
 ) -> dict[str, Any]:
-    bounds = _policy_decision_bounds(env)
-    low, high = bounds[clamp_shell_id(shell_id, len(bounds))]
+    policy_bounds = _policy_decision_bounds(env)
+    action_bounds = _action_step_bounds(env, policy_bounds=policy_bounds)
+    bounds_index = clamp_shell_id(shell_id, len(policy_bounds))
+    low, high = policy_bounds[bounds_index]
+    action_low, action_high = action_bounds[bounds_index]
+    actions_per_policy_decision = _actions_per_policy_decision(env)
     if target_policy_steps is None:
         target_policy_steps = int(rng.integers(int(low), int(high) + 1))
     else:
         target_policy_steps = int(np.clip(int(target_policy_steps), int(low), int(high)))
+    target_action_low = max(
+        int(action_low),
+        (int(target_policy_steps) - 1) * actions_per_policy_decision + 1,
+    )
+    target_action_high = min(
+        int(action_high), int(target_policy_steps) * actions_per_policy_decision
+    )
+    if target_action_low > target_action_high:
+        # Invalid custom bounds should remain usable and visibly conservative.
+        target_action_low, target_action_high = int(action_low), int(action_high)
+    target_action_steps = int(
+        rng.integers(int(target_action_low), int(target_action_high) + 1)
+    )
     simulator_steps_per_action = max(1, 1 + int(getattr(env, "hold_steps", 0)))
-    target_sim_steps = int(target_policy_steps * simulator_steps_per_action)
+    target_sim_steps = int(target_action_steps * simulator_steps_per_action)
     return {
         "curriculum_shell_policy_steps_low": int(low),
         "curriculum_shell_policy_steps_high": int(high),
-        "curriculum_shell_sim_steps_low": int(low * simulator_steps_per_action),
-        "curriculum_shell_sim_steps_high": int(high * simulator_steps_per_action),
+        "curriculum_shell_action_steps_low": int(action_low),
+        "curriculum_shell_action_steps_high": int(action_high),
+        "curriculum_shell_sim_steps_low": int(action_low * simulator_steps_per_action),
+        "curriculum_shell_sim_steps_high": int(action_high * simulator_steps_per_action),
         "curriculum_shell_target_sim_steps": int(target_sim_steps),
         "curriculum_shell_target_policy_steps": int(target_policy_steps),
-        "curriculum_sim_steps_per_policy_action": int(simulator_steps_per_action),
+        "curriculum_shell_target_action_steps": int(target_action_steps),
+        "curriculum_actions_per_policy_decision": int(actions_per_policy_decision),
+        "curriculum_sim_steps_per_environment_action": int(simulator_steps_per_action),
+        "curriculum_sim_steps_per_policy_action": int(
+            simulator_steps_per_action * actions_per_policy_decision
+        ),
         "curriculum_shell_nominal_progress_fraction": float(
             np.clip(
                 _metadata_float(env, "reverse_frontier_nominal_progress_fraction", 0.44),
@@ -266,29 +290,29 @@ def _apply_smolvla_complex_shell(
     env: Any,
     *,
     shell_id: int,
-    target_policy_steps: int,
+    target_action_steps: int,
     rng: np.random.Generator,
 ) -> dict[str, Any]:
     instruction_type = str(getattr(getattr(env, "_instruction_spec", None), "instruction_type", ""))
     if instruction_type == "move_to_object":
         return _apply_complex_move_to_shell(
-            env, shell_id=shell_id, target_policy_steps=target_policy_steps, rng=rng
+            env, shell_id=shell_id, target_action_steps=target_action_steps, rng=rng
         )
     if instruction_type in {"push_left", "push_right"}:
         return _apply_complex_push_shell(
-            env, shell_id=shell_id, target_policy_steps=target_policy_steps, rng=rng
+            env, shell_id=shell_id, target_action_steps=target_action_steps, rng=rng
         )
     if instruction_type in {"put_into_plate", "put_into_bowl"}:
         return _apply_complex_put_shell(
-            env, shell_id=shell_id, target_policy_steps=target_policy_steps, rng=rng
+            env, shell_id=shell_id, target_action_steps=target_action_steps, rng=rng
         )
     if instruction_type in {"move_left_of_object", "move_right_of_object"}:
         return _apply_complex_binary_relation_shell(
-            env, shell_id=shell_id, target_policy_steps=target_policy_steps, rng=rng
+            env, shell_id=shell_id, target_action_steps=target_action_steps, rng=rng
         )
     if instruction_type == "move_between_objects":
         return _apply_complex_between_shell(
-            env, shell_id=shell_id, target_policy_steps=target_policy_steps, rng=rng
+            env, shell_id=shell_id, target_action_steps=target_action_steps, rng=rng
         )
     return {}
 
@@ -312,7 +336,47 @@ def _policy_decision_bounds(env: Any) -> tuple[tuple[int, int], ...]:
     return SMOLVLA_COMPLEX_POLICY_DECISION_BOUNDS
 
 
-def _policy_travel_distance(env: Any, target_policy_steps: int) -> float:
+def _actions_per_policy_decision(env: Any) -> int:
+    return max(
+        1,
+        int(
+            (getattr(env, "_task_metadata", {}) or {}).get(
+                "reverse_frontier_actions_per_policy_decision", 1
+            )
+            or 1
+        ),
+    )
+
+
+def _action_step_bounds(
+    env: Any,
+    *,
+    policy_bounds: Sequence[tuple[int, int]],
+) -> tuple[tuple[int, int], ...]:
+    raw = (getattr(env, "_task_metadata", {}) or {}).get(
+        "reverse_frontier_action_step_bounds"
+    )
+    if isinstance(raw, (list, tuple)) and len(raw) == len(policy_bounds):
+        parsed: list[tuple[int, int]] = []
+        try:
+            for item in raw:
+                lo, hi = int(item[0]), int(item[1])
+                parsed.append((max(1, min(lo, hi)), max(1, max(lo, hi))))
+        except (TypeError, ValueError, IndexError):
+            parsed = []
+        if len(parsed) == len(policy_bounds):
+            return tuple(parsed)
+    actions_per_policy_decision = _actions_per_policy_decision(env)
+    return tuple(
+        (
+            (int(low) - 1) * actions_per_policy_decision + 1,
+            int(high) * actions_per_policy_decision,
+        )
+        for low, high in policy_bounds
+    )
+
+
+def _action_travel_distance(env: Any, target_action_steps: int) -> float:
     step = max(0.005, float(getattr(env, "action_step_xyz", 0.015)))
     progress_fraction = float(
         np.clip(
@@ -322,8 +386,8 @@ def _policy_travel_distance(env: Any, target_policy_steps: int) -> float:
         )
     )
     # Half an action of margin makes an ideal max-magnitude controller enter
-    # the success boundary on the requested decision rather than one earlier.
-    return float(max(0.5, float(target_policy_steps) - 0.5) * step * progress_fraction)
+    # the success boundary on the requested environment action rather than one earlier.
+    return float(max(0.5, float(target_action_steps) - 0.5) * step * progress_fraction)
 
 
 def _direction_with_room(
@@ -357,7 +421,7 @@ def _direction_with_room(
 
 
 def _apply_complex_move_to_shell(
-    env: Any, *, shell_id: int, target_policy_steps: int, rng: np.random.Generator
+    env: Any, *, shell_id: int, target_action_steps: int, rng: np.random.Generator
 ) -> dict[str, Any]:
     target = _body_position(env, getattr(env, "_target_body_name", ""))
     if target is None:
@@ -370,7 +434,7 @@ def _apply_complex_move_to_shell(
             _metadata_float(env, "move_to_object_xy_window_high", 0.03),
         ),
     )
-    travel = _policy_travel_distance(env, target_policy_steps)
+    travel = _action_travel_distance(env, target_action_steps)
     distance = float(success_boundary + travel)
     direction = _direction_with_room(env, center=target, distance=distance, rng=rng)
     ee = np.asarray(target, dtype=np.float32).copy()
@@ -389,7 +453,7 @@ def _apply_complex_move_to_shell(
 
 
 def _apply_complex_push_shell(
-    env: Any, *, shell_id: int, target_policy_steps: int, rng: np.random.Generator
+    env: Any, *, shell_id: int, target_action_steps: int, rng: np.random.Generator
 ) -> dict[str, Any]:
     target = _body_position(env, getattr(env, "_target_body_name", ""))
     if target is None:
@@ -398,7 +462,7 @@ def _apply_complex_push_shell(
     sign = -1.0 if instruction_type == "push_left" else 1.0
     success_distance = max(_metadata_float(env, "push_success_displacement", 0.08), 0.01)
     effective_push_step = max(0.005, 0.5 * float(getattr(env, "action_step_xyz", 0.015)))
-    remaining = min(success_distance, float(target_policy_steps) * effective_push_step)
+    remaining = min(success_distance, float(target_action_steps) * effective_push_step)
     current_progress = max(0.0, success_distance - remaining)
     reward_initial = np.asarray(target, dtype=np.float32).copy()
     reward_initial[0] -= sign * current_progress
@@ -434,7 +498,7 @@ def _full_put_start(env: Any, *, target: np.ndarray, rng: np.random.Generator) -
 
 
 def _apply_complex_put_shell(
-    env: Any, *, shell_id: int, target_policy_steps: int, rng: np.random.Generator
+    env: Any, *, shell_id: int, target_action_steps: int, rng: np.random.Generator
 ) -> dict[str, Any]:
     reference = _reference_position(env)
     target = _body_position(env, getattr(env, "_target_body_name", ""))
@@ -449,7 +513,7 @@ def _apply_complex_put_shell(
             rng=rng,
         )
     success_boundary = max(0.0, _metadata_float(env, "put_container_xy_tolerance", 0.08))
-    travel = _policy_travel_distance(env, target_policy_steps)
+    travel = _action_travel_distance(env, target_action_steps)
     distance = float(success_boundary + travel)
     direction = _direction_with_room(env, center=reference, distance=distance, rng=rng)
     object_pos = np.asarray(reference, dtype=np.float32).copy()
@@ -471,7 +535,7 @@ def _apply_complex_put_shell(
 
 
 def _apply_complex_binary_relation_shell(
-    env: Any, *, shell_id: int, target_policy_steps: int, rng: np.random.Generator
+    env: Any, *, shell_id: int, target_action_steps: int, rng: np.random.Generator
 ) -> dict[str, Any]:
     reference = _reference_position(env)
     target = _body_position(env, getattr(env, "_target_body_name", ""))
@@ -489,7 +553,7 @@ def _apply_complex_binary_relation_shell(
     desired = np.asarray(reference, dtype=np.float32).copy()
     desired[axis] += sign * offset
     desired[2] = max(float(target[2]), float(reference[2] + 0.035))
-    travel = _policy_travel_distance(env, target_policy_steps)
+    travel = _action_travel_distance(env, target_action_steps)
     zone_half = 0.5 * max(
         1e-6, _metadata_float(env, "move_relation_success_zone_size", 0.06)
     )
@@ -517,7 +581,7 @@ def _apply_complex_binary_relation_shell(
 
 
 def _apply_complex_between_shell(
-    env: Any, *, shell_id: int, target_policy_steps: int, rng: np.random.Generator
+    env: Any, *, shell_id: int, target_action_steps: int, rng: np.random.Generator
 ) -> dict[str, Any]:
     ref_a = _reference_position(env, second=False)
     ref_b = _reference_position(env, second=True)
@@ -534,7 +598,7 @@ def _apply_complex_between_shell(
     midpoint = 0.5 * (np.asarray(ref_a, dtype=np.float32) + np.asarray(ref_b, dtype=np.float32))
     midpoint[2] = max(float(target[2]), float(midpoint[2] + 0.035))
     success_boundary = max(0.0, _metadata_float(env, "between_xy_tolerance", 0.06))
-    travel = _policy_travel_distance(env, target_policy_steps)
+    travel = _action_travel_distance(env, target_action_steps)
     distance = float(success_boundary + travel)
     direction = _direction_with_room(env, center=midpoint, distance=distance, rng=rng)
     object_pos = midpoint.copy()

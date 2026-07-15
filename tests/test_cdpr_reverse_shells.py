@@ -185,6 +185,41 @@ class CDPRReverseShellTests(unittest.TestCase):
         self.assertEqual(final_info["sparse_success"], 1.0)
         self.assertEqual(final_info["reverse_frontier_policy_gate_satisfied"], 1.0)
 
+    def test_policy_gate_uses_environment_actions_for_chunked_policy(self):
+        reset_info = {
+            "curriculum_shell_target_policy_steps": 2,
+            "curriculum_shell_target_action_steps": 6,
+            "curriculum_actions_per_policy_decision": 4,
+        }
+        metadata = {"reward_mode": "sparse_binary", "sparse_failure_reward": 0.0}
+
+        early_success, early_reward, early_info = _apply_reverse_frontier_policy_gate(
+            success=True,
+            reward=1.0,
+            reward_info={"sparse_success": 1.0},
+            curriculum_mode="reverse_frontier",
+            curriculum_reset_info=reset_info,
+            policy_step=5,
+            task_metadata=metadata,
+        )
+        self.assertFalse(early_success)
+        self.assertEqual(early_reward, 0.0)
+        self.assertEqual(early_info["reverse_frontier_action_steps_remaining"], 1)
+        self.assertEqual(early_info["reverse_frontier_policy_steps_remaining"], 1)
+
+        final_success, final_reward, final_info = _apply_reverse_frontier_policy_gate(
+            success=True,
+            reward=1.0,
+            reward_info={"sparse_success": 1.0},
+            curriculum_mode="reverse_frontier",
+            curriculum_reset_info=reset_info,
+            policy_step=6,
+            task_metadata=metadata,
+        )
+        self.assertTrue(final_success)
+        self.assertEqual(final_reward, 1.0)
+        self.assertEqual(final_info["reverse_frontier_action_steps_remaining"], 0)
+
     def test_put_plate_shell_zero_places_held_object_near_plate(self):
         env = _FakeEnv()
         info = apply_cdpr_reverse_shell(env, shell_id=0, rng=np.random.default_rng(4))

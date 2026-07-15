@@ -444,6 +444,37 @@ class SmolVLAGRPOTrainer:
             mean.detach().to(dtype=torch.float32).cpu().numpy()[0],
         )
 
+    def sample_action_chunk(
+        self,
+        *,
+        state: np.ndarray,
+        prior: np.ndarray,
+        action_count: int,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        """Sample one open-loop action chunk from a single policy decision."""
+        count = max(1, min(int(action_count), int(self.chunk_size)))
+        state_t = torch.as_tensor(
+            state, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
+        prior_t = torch.as_tensor(
+            prior, dtype=torch.float32, device=self.device
+        ).unsqueeze(0)
+        with torch.no_grad():
+            mean_chunk = self.actor(state_t, prior_t)[0, :count]
+            base = self._unwrap(self.actor)
+            log_std = base.clamped_log_std()[:count]
+            actions = torch.clamp(
+                mean_chunk + torch.randn_like(mean_chunk) * torch.exp(log_std),
+                -1.0,
+                1.0,
+            )
+            log_probs = _normal_log_prob(actions, mean_chunk, log_std)
+        return (
+            actions.detach().to(dtype=torch.float32).cpu().numpy(),
+            log_probs.detach().to(dtype=torch.float32).cpu().numpy(),
+            mean_chunk.detach().to(dtype=torch.float32).cpu().numpy(),
+        )
+
     def update(
         self,
         records: list[dict[str, Any]],
@@ -545,6 +576,19 @@ class SmolVLAGRPOTrainer:
             ),
             "train_records": float(n_items),
         }
+        for chunk_action_index in range(int(self.chunk_size)):
+            action_index_count = int(
+                (action_indices == int(chunk_action_index)).sum().detach().item()
+            )
+            metrics[
+                f"train_records_action_index_{chunk_action_index}"
+            ] = float(action_index_count)
+            metrics[
+                f"train_record_action_index_{chunk_action_index}_rate"
+            ] = float(action_index_count / max(1, n_items))
+            metrics[f"log_std_action_index_{chunk_action_index}"] = float(
+                base.clamped_log_std()[chunk_action_index].detach().mean().item()
+            )
 
         hindsight_losses: list[float] = []
         bc_coef = max(0.0, float(getattr(self.args, "lchol_hindsight_bc_coef", 0.0)))
@@ -782,6 +826,9 @@ def _observation_reset_signature(
         "curriculum_shell_target_policy_steps": int(
             info.get("curriculum_shell_target_policy_steps", 0) or 0
         ),
+        "curriculum_shell_target_action_steps": int(
+            info.get("curriculum_shell_target_action_steps", 0) or 0
+        ),
     }
 
 
@@ -955,6 +1002,9 @@ def _trajectory_group_metric_scalars(
     total_sampled_decisions = sum(
         float(item.get("sampled_policy_decisions", 0.0)) for item in stats
     )
+    total_sampled_actions = sum(
+        float(item.get("sampled_environment_actions", 0.0)) for item in stats
+    )
     total_accepted_records = sum(
         float(item.get("accepted_policy_records", 0.0)) for item in stats
     )
@@ -978,6 +1028,14 @@ def _trajectory_group_metric_scalars(
         "rollout/grpo_sampled_policy_decisions_per_group": float(
             np.mean([float(item.get("sampled_policy_decisions", 0.0)) for item in stats])
         ),
+        "rollout/grpo_sampled_environment_actions_total": float(
+            total_sampled_actions
+        ),
+        "rollout/grpo_sampled_environment_actions_per_group": float(
+            np.mean(
+                [float(item.get("sampled_environment_actions", 0.0)) for item in stats]
+            )
+        ),
         "rollout/grpo_accepted_policy_records": float(
             total_accepted_records
         ),
@@ -990,11 +1048,40 @@ def _trajectory_group_metric_scalars(
         "rollout/grpo_trajectory_length_max": float(
             max(float(item.get("trajectory_length_max", 0.0)) for item in stats)
         ),
+        "rollout/grpo_trajectory_policy_decisions_mean": float(
+            np.mean(
+                [
+                    float(item.get("trajectory_policy_decisions_mean", 0.0))
+                    for item in stats
+                ]
+            )
+        ),
+        "rollout/grpo_trajectory_policy_decisions_min": float(
+            min(
+                float(item.get("trajectory_policy_decisions_min", 0.0))
+                for item in stats
+            )
+        ),
+        "rollout/grpo_trajectory_policy_decisions_max": float(
+            max(
+                float(item.get("trajectory_policy_decisions_max", 0.0))
+                for item in stats
+            )
+        ),
+        "rollout/grpo_executed_actions_per_policy_decision": float(
+            total_sampled_actions / max(1.0, total_sampled_decisions)
+        ),
         "rollout/grpo_trajectory_decision_horizon_mean": float(
             np.mean([float(item.get("trajectory_decision_horizon", 0.0)) for item in stats])
         ),
         "rollout/grpo_trajectory_decision_horizon_max": float(
             max(float(item.get("trajectory_decision_horizon", 0.0)) for item in stats)
+        ),
+        "rollout/grpo_trajectory_action_horizon_mean": float(
+            np.mean([float(item.get("trajectory_action_horizon", 0.0)) for item in stats])
+        ),
+        "rollout/grpo_trajectory_action_horizon_max": float(
+            max(float(item.get("trajectory_action_horizon", 0.0)) for item in stats)
         ),
         "rollout/grpo_group_wall_time_s_mean": float(
             np.mean([float(item.get("group_wall_time_s", 0.0)) for item in stats])
@@ -1008,6 +1095,9 @@ def _trajectory_group_metric_scalars(
         ),
         "rollout/grpo_sampled_policy_decisions_per_second": float(
             total_sampled_decisions / total_group_wall_time_s
+        ),
+        "rollout/grpo_sampled_environment_actions_per_second": float(
+            total_sampled_actions / total_group_wall_time_s
         ),
         "rollout/grpo_accepted_policy_records_per_second": float(
             total_accepted_records / total_group_wall_time_s
@@ -1090,21 +1180,67 @@ def _trajectory_decision_horizon(
     info: Mapping[str, Any],
     args: argparse.Namespace,
 ) -> int:
+    actions_per_policy_decision = max(
+        1,
+        int(
+            info.get(
+                "curriculum_actions_per_policy_decision",
+                getattr(args, "replan_every", 1),
+            )
+            or 1
+        ),
+    )
     configured_cap = int(args.grpo_trajectory_max_decisions)
-    cap = configured_cap if configured_cap > 0 else int(args.max_env_steps)
+    cap = (
+        configured_cap * actions_per_policy_decision
+        if configured_cap > 0
+        else int(args.max_env_steps)
+    )
     cap = max(1, cap)
     if not bool(args.grpo_trajectory_shell_aware_horizon):
         return cap
     if str(info.get("curriculum_mode", "")) != "reverse_frontier":
         return cap
+    configured_actions_per_decision = int(
+        info.get("curriculum_actions_per_policy_decision", 0) or 0
+    )
+    if (
+        configured_actions_per_decision > 0
+        and configured_actions_per_decision != int(args.replan_every)
+    ):
+        raise RuntimeError(
+            "Reverse Frontier action-chunk mismatch: reset metadata expects "
+            f"{configured_actions_per_decision} actions per policy decision, but "
+            f"training uses replan_every={int(args.replan_every)}."
+        )
 
-    target = int(info.get("curriculum_shell_target_policy_steps", 0) or 0)
-    high = int(info.get("curriculum_shell_policy_steps_high", target) or target)
+    target_policy = int(info.get("curriculum_shell_target_policy_steps", 0) or 0)
+    high_policy = int(
+        info.get("curriculum_shell_policy_steps_high", target_policy)
+        or target_policy
+    )
+    target = int(
+        info.get(
+            "curriculum_shell_target_action_steps",
+            target_policy * actions_per_policy_decision,
+        )
+        or 0
+    )
+    high = int(
+        info.get(
+            "curriculum_shell_action_steps_high",
+            high_policy * actions_per_policy_decision,
+        )
+        or target
+    )
     if target <= 0 and high <= 0:
         return cap
     high = max(1, high, target)
     multiplier = max(1.0, float(args.grpo_trajectory_horizon_multiplier))
-    grace = max(0, int(args.grpo_trajectory_horizon_grace_decisions))
+    grace = (
+        max(0, int(args.grpo_trajectory_horizon_grace_decisions))
+        * actions_per_policy_decision
+    )
     shell_horizon = max(
         target,
         int(math.ceil(float(high) * multiplier)),
@@ -1126,7 +1262,7 @@ def _evaluate_trajectory_group(
     group_started = time.perf_counter()
     snapshot = slot.env.capture_state()
     group_size = max(2, int(args.grpo_group_size))
-    max_decisions = _trajectory_decision_horizon(slot.info, args)
+    max_action_steps = _trajectory_decision_horizon(slot.info, args)
     trajectories: list[list[dict[str, Any]]] = []
     outcomes: list[float] = []
     final_states: list[dict[str, Any]] = []
@@ -1143,7 +1279,8 @@ def _evaluate_trajectory_group(
         terminated = False
         truncated = False
         final_reward = 0.0
-        for trajectory_step in range(max_decisions):
+        policy_decision_count = 0
+        while len(trajectory) < max_action_steps:
             prior_started = time.perf_counter()
             prior = _sample_prior_for_observation(
                 runtime,
@@ -1154,38 +1291,56 @@ def _evaluate_trajectory_group(
                 progress_only=progress_only,
             )
             prior_inference_time_s += float(time.perf_counter() - prior_started)
-            actions, old_log_probs, mean = trainer.sample_action_group(
+            plan_state = state.copy()
+            action_count = min(
+                int(args.replan_every), max_action_steps - len(trajectory)
+            )
+            actions, old_log_probs, means = trainer.sample_action_chunk(
                 state=state,
                 prior=prior,
-                action_index=0,
-                group_size=1,
+                action_count=action_count,
             )
-            action = np.asarray(actions[0], dtype=np.float32)
-            env_step_started = time.perf_counter()
-            with _silence_output(bool(progress_only)):
-                next_obs, reward, terminated, truncated, next_info = slot.env.step(action)
-            env_step_time_s += float(time.perf_counter() - env_step_started)
-            trajectory.append(
-                {
-                    "state": state.copy(),
-                    "prior": prior.copy(),
-                    "action_index": 0,
-                    "action": action.copy(),
-                    "old_log_prob": float(old_log_probs[0]),
-                    "reward": 0.0,
-                    "selected": False,
-                    "candidate_success": False,
-                    "candidate_done": bool(terminated or truncated),
-                    "mean_action": np.asarray(mean, dtype=np.float32).copy(),
-                    "trajectory_index": int(candidate_idx),
-                    "trajectory_step": int(trajectory_step),
-                }
-            )
-            obs = next_obs
-            info = dict(next_info)
-            state = layout.flatten(next_obs)
-            instruction = _safe_instruction(info)
-            final_reward = float(reward)
+            current_policy_decision = int(policy_decision_count)
+            policy_decision_count += 1
+            for chunk_action_index in range(action_count):
+                action = np.asarray(
+                    actions[chunk_action_index], dtype=np.float32
+                )
+                env_step_started = time.perf_counter()
+                with _silence_output(bool(progress_only)):
+                    next_obs, reward, terminated, truncated, next_info = slot.env.step(
+                        action
+                    )
+                env_step_time_s += float(time.perf_counter() - env_step_started)
+                trajectory.append(
+                    {
+                        # Every action in an open-loop chunk is conditioned on the
+                        # observation at which that chunk was planned.
+                        "state": plan_state.copy(),
+                        "prior": prior.copy(),
+                        "action_index": int(chunk_action_index),
+                        "action": action.copy(),
+                        "old_log_prob": float(old_log_probs[chunk_action_index]),
+                        "reward": 0.0,
+                        "selected": False,
+                        "candidate_success": False,
+                        "candidate_done": bool(terminated or truncated),
+                        "mean_action": np.asarray(
+                            means[chunk_action_index], dtype=np.float32
+                        ).copy(),
+                        "trajectory_index": int(candidate_idx),
+                        "trajectory_step": int(len(trajectory) - 1),
+                        "policy_decision_index": current_policy_decision,
+                        "chunk_action_index": int(chunk_action_index),
+                    }
+                )
+                obs = next_obs
+                info = dict(next_info)
+                state = layout.flatten(next_obs)
+                instruction = _safe_instruction(info)
+                final_reward = float(reward)
+                if bool(terminated or truncated):
+                    break
             if bool(terminated or truncated):
                 break
 
@@ -1218,6 +1373,7 @@ def _evaluate_trajectory_group(
                 "terminated": bool(terminated),
                 "truncated": bool(truncated),
                 "length": int(len(trajectory)),
+                "policy_decisions": int(policy_decision_count),
                 "last_action": (
                     np.asarray(trajectory[-1]["action"], dtype=np.float32).copy()
                     if trajectory
@@ -1241,6 +1397,9 @@ def _evaluate_trajectory_group(
     selected_state = final_states[selected]
     slot.env.restore_state(selected_state["snapshot"])
     lengths = np.asarray([len(trajectory) for trajectory in trajectories], dtype=np.int64)
+    policy_decision_counts = np.asarray(
+        [int(item["policy_decisions"]) for item in final_states], dtype=np.int64
+    )
     success_count = int(outcome_arr.sum())
     group_wall_time_s = max(1e-9, float(time.perf_counter() - group_started))
     group_stats = {
@@ -1263,16 +1422,28 @@ def _evaluate_trajectory_group(
         "informative_group": float(informative),
         "all_fail_group": float(success_count == 0),
         "all_success_group": float(success_count == group_size),
-        "sampled_policy_decisions": float(lengths.sum()),
+        "sampled_policy_decisions": float(policy_decision_counts.sum()),
+        "sampled_environment_actions": float(lengths.sum()),
         "accepted_policy_records": float(len(records)),
         "trajectory_length_mean": float(lengths.mean()),
         "trajectory_length_min": float(lengths.min()),
         "trajectory_length_max": float(lengths.max()),
-        "trajectory_decision_horizon": float(max_decisions),
+        "trajectory_policy_decisions_mean": float(policy_decision_counts.mean()),
+        "trajectory_policy_decisions_min": float(policy_decision_counts.min()),
+        "trajectory_policy_decisions_max": float(policy_decision_counts.max()),
+        "executed_actions_per_policy_decision": float(
+            lengths.sum() / max(1, int(policy_decision_counts.sum()))
+        ),
+        "trajectory_decision_horizon": float(
+            math.ceil(max_action_steps / max(1, int(args.replan_every)))
+        ),
+        "trajectory_action_horizon": float(max_action_steps),
         "group_wall_time_s": float(group_wall_time_s),
         "prior_inference_time_s": float(prior_inference_time_s),
         "env_step_time_s": float(env_step_time_s),
-        "sampled_policy_decisions_per_second": float(lengths.sum() / group_wall_time_s),
+        "sampled_policy_decisions_per_second": float(
+            policy_decision_counts.sum() / group_wall_time_s
+        ),
         "trajectory_terminated_count": float(
             sum(bool(item["terminated"]) for item in final_states)
         ),
@@ -1283,8 +1454,8 @@ def _evaluate_trajectory_group(
         "candidates_per_rank_min": float(group_size),
         "candidates_per_rank_max": float(group_size),
         "candidate_load_imbalance": 0.0,
-        "decisions_per_rank_min": float(lengths.sum()),
-        "decisions_per_rank_max": float(lengths.sum()),
+        "decisions_per_rank_min": float(policy_decision_counts.sum()),
+        "decisions_per_rank_max": float(policy_decision_counts.sum()),
         "rank_rollout_time_s_min": float(group_wall_time_s),
         "rank_rollout_time_s_max": float(group_wall_time_s),
         "rank_straggler_ratio": 1.0,
@@ -1324,7 +1495,7 @@ def _evaluate_distributed_trajectory_group(
     group_started = time.perf_counter()
     snapshot = slot.env.capture_state()
     group_size = max(2, int(args.grpo_group_size))
-    max_decisions = _trajectory_decision_horizon(slot.info, args)
+    max_action_steps = _trajectory_decision_horizon(slot.info, args)
     candidate_indices = _distributed_candidate_indices(
         group_size, dist_ctx.world_size, dist_ctx.rank
     )
@@ -1343,7 +1514,8 @@ def _evaluate_distributed_trajectory_group(
         terminated = False
         truncated = False
         final_reward = 0.0
-        for trajectory_step in range(max_decisions):
+        policy_decision_count = 0
+        while len(trajectory) < max_action_steps:
             prior_started = time.perf_counter()
             prior = _sample_prior_for_observation(
                 runtime,
@@ -1354,38 +1526,54 @@ def _evaluate_distributed_trajectory_group(
                 progress_only=progress_only,
             )
             prior_inference_time_s += float(time.perf_counter() - prior_started)
-            actions, old_log_probs, mean = trainer.sample_action_group(
+            plan_state = state.copy()
+            action_count = min(
+                int(args.replan_every), max_action_steps - len(trajectory)
+            )
+            actions, old_log_probs, means = trainer.sample_action_chunk(
                 state=state,
                 prior=prior,
-                action_index=0,
-                group_size=1,
+                action_count=action_count,
             )
-            action = np.asarray(actions[0], dtype=np.float32)
-            env_step_started = time.perf_counter()
-            with _silence_output(bool(progress_only)):
-                next_obs, reward, terminated, truncated, next_info = slot.env.step(action)
-            env_step_time_s += float(time.perf_counter() - env_step_started)
-            trajectory.append(
-                {
-                    "state": state.copy(),
-                    "prior": prior.copy(),
-                    "action_index": 0,
-                    "action": action.copy(),
-                    "old_log_prob": float(old_log_probs[0]),
-                    "reward": 0.0,
-                    "selected": False,
-                    "candidate_success": False,
-                    "candidate_done": bool(terminated or truncated),
-                    "mean_action": np.asarray(mean, dtype=np.float32).copy(),
-                    "trajectory_index": int(candidate_idx),
-                    "trajectory_step": int(trajectory_step),
-                }
-            )
-            obs = next_obs
-            info = dict(next_info)
-            state = layout.flatten(next_obs)
-            instruction = _safe_instruction(info)
-            final_reward = float(reward)
+            current_policy_decision = int(policy_decision_count)
+            policy_decision_count += 1
+            for chunk_action_index in range(action_count):
+                action = np.asarray(
+                    actions[chunk_action_index], dtype=np.float32
+                )
+                env_step_started = time.perf_counter()
+                with _silence_output(bool(progress_only)):
+                    next_obs, reward, terminated, truncated, next_info = slot.env.step(
+                        action
+                    )
+                env_step_time_s += float(time.perf_counter() - env_step_started)
+                trajectory.append(
+                    {
+                        "state": plan_state.copy(),
+                        "prior": prior.copy(),
+                        "action_index": int(chunk_action_index),
+                        "action": action.copy(),
+                        "old_log_prob": float(old_log_probs[chunk_action_index]),
+                        "reward": 0.0,
+                        "selected": False,
+                        "candidate_success": False,
+                        "candidate_done": bool(terminated or truncated),
+                        "mean_action": np.asarray(
+                            means[chunk_action_index], dtype=np.float32
+                        ).copy(),
+                        "trajectory_index": int(candidate_idx),
+                        "trajectory_step": int(len(trajectory) - 1),
+                        "policy_decision_index": current_policy_decision,
+                        "chunk_action_index": int(chunk_action_index),
+                    }
+                )
+                obs = next_obs
+                info = dict(next_info)
+                state = layout.flatten(next_obs)
+                instruction = _safe_instruction(info)
+                final_reward = float(reward)
+                if bool(terminated or truncated):
+                    break
             if bool(terminated or truncated):
                 break
 
@@ -1415,6 +1603,7 @@ def _evaluate_distributed_trajectory_group(
                 "terminated": bool(terminated),
                 "truncated": bool(truncated),
                 "length": int(len(trajectory)),
+                "policy_decisions": int(policy_decision_count),
                 "last_action": (
                     np.asarray(trajectory[-1]["action"], dtype=np.float32).copy()
                     if trajectory
@@ -1431,6 +1620,9 @@ def _evaluate_distributed_trajectory_group(
         "env_step_time_s": float(env_step_time_s),
         "local_rollout_time_s": float(time.perf_counter() - group_started),
         "sampled_policy_decisions": int(
+            sum(int(item["policy_decisions"]) for item in local_summaries)
+        ),
+        "sampled_environment_actions": int(
             sum(int(item["length"]) for item in local_summaries)
         ),
     }
@@ -1475,6 +1667,9 @@ def _evaluate_distributed_trajectory_group(
         "state": np.asarray(slot.state, dtype=np.float32).copy(),
     }
     lengths = np.asarray([int(item["length"]) for item in summaries], dtype=np.int64)
+    policy_decision_counts = np.asarray(
+        [int(item["policy_decisions"]) for item in summaries], dtype=np.int64
+    )
     success_count = int(outcome_arr.sum())
     group_wall_times = _dist_all_gather_object(
         float(time.perf_counter() - group_started), dist_ctx
@@ -1509,12 +1704,22 @@ def _evaluate_distributed_trajectory_group(
         "informative_group": float(informative),
         "all_fail_group": float(success_count == 0),
         "all_success_group": float(success_count == group_size),
-        "sampled_policy_decisions": float(lengths.sum()),
+        "sampled_policy_decisions": float(policy_decision_counts.sum()),
+        "sampled_environment_actions": float(lengths.sum()),
         "accepted_policy_records": float(accepted_policy_records),
         "trajectory_length_mean": float(lengths.mean()),
         "trajectory_length_min": float(lengths.min()),
         "trajectory_length_max": float(lengths.max()),
-        "trajectory_decision_horizon": float(max_decisions),
+        "trajectory_policy_decisions_mean": float(policy_decision_counts.mean()),
+        "trajectory_policy_decisions_min": float(policy_decision_counts.min()),
+        "trajectory_policy_decisions_max": float(policy_decision_counts.max()),
+        "executed_actions_per_policy_decision": float(
+            lengths.sum() / max(1, int(policy_decision_counts.sum()))
+        ),
+        "trajectory_decision_horizon": float(
+            math.ceil(max_action_steps / max(1, int(args.replan_every)))
+        ),
+        "trajectory_action_horizon": float(max_action_steps),
         "group_wall_time_s": float(group_wall_time_s),
         "prior_inference_time_s": float(
             max(float(payload["prior_inference_time_s"]) for payload in rank_payloads)
@@ -1522,7 +1727,9 @@ def _evaluate_distributed_trajectory_group(
         "env_step_time_s": float(
             max(float(payload["env_step_time_s"]) for payload in rank_payloads)
         ),
-        "sampled_policy_decisions_per_second": float(lengths.sum() / group_wall_time_s),
+        "sampled_policy_decisions_per_second": float(
+            policy_decision_counts.sum() / group_wall_time_s
+        ),
         "trajectory_terminated_count": float(
             sum(bool(item["terminated"]) for item in summaries)
         ),
@@ -1814,6 +2021,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             "config": str(args.config or ""),
             "action_keys": ["x", "y", "z", "yaw", "gripper"],
             "chunk_size": int(args.chunk_size),
+            "replan_every": int(args.replan_every),
             "frozen_smolvla": True,
             "trainable_surface": "residual_chunk_head_and_log_std",
             "no_td3_critics": True,
