@@ -102,12 +102,17 @@ CDPR_EE_START_Y_BOUNDS_ENV = "RLVLA_CDPR_EE_START_Y_BOUNDS"
 CDPR_EE_START_Z_ENV = "RLVLA_CDPR_EE_START_Z"
 CDPR_RANDOMIZE_EE_YAW_ENV = "RLVLA_CDPR_RANDOMIZE_EE_YAW"
 CDPR_EE_YAW_BOUNDS_ENV = "RLVLA_CDPR_EE_YAW_BOUNDS"
+CDPR_RANDOMIZE_GRIPPER_SHADE_ENV = "RLVLA_CDPR_RANDOMIZE_GRIPPER_SHADE"
+CDPR_GRIPPER_SHADE_BOUNDS_ENV = "RLVLA_CDPR_GRIPPER_SHADE_BOUNDS"
 CDPR_RECORD_TRAJECTORY_ENV = "RLVLA_CDPR_RECORD_TRAJECTORY"
 CDPR_COMPILED_MODEL_CACHE_ENV = "RLVLA_CDPR_COMPILED_MODEL_CACHE"
 CDPR_ACTION_STEP_GRIPPER_ENV = "RLVLA_CDPR_ACTION_STEP_GRIPPER"
 DEFAULT_RANDOM_EE_START_X_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_START_Y_BOUNDS = (-0.25, 0.25)
 DEFAULT_RANDOM_EE_YAW_BOUNDS = (-np.pi, np.pi)
+DEFAULT_GRIPPER_SHADE = 0.94
+DEFAULT_GRIPPER_SHADE_BOUNDS = (0.55, 1.0)
+GRIPPER_SHADE_LEVEL_COUNT = 7
 DEFAULT_GOAL_CENTER_XY = (0.0, 0.0)
 DEFAULT_GOAL_HEIGHT_ABOVE_TABLE = 0.10
 DEFAULT_CAUGHT_OBJECT_START_INSTRUCTION_TYPES: tuple[str, ...] = (
@@ -1615,6 +1620,8 @@ class CDPRLanguageRLEnv(_EnvBase):
         use_compiled_model_cache: bool | None = None,
         wrapper_dir: Path | str | None = None,
         seed: Optional[int] = None,
+        randomize_gripper_shade: bool | None = None,
+        gripper_shade_bounds: Sequence[float] | None = None,
     ) -> None:
         super().__init__()
         self._env_instance_id = int(type(self)._next_env_instance_id)
@@ -1684,6 +1691,16 @@ class CDPRLanguageRLEnv(_EnvBase):
             record_trajectory = _load_bool_env(CDPR_RECORD_TRAJECTORY_ENV, default=False)
         if use_compiled_model_cache is None:
             use_compiled_model_cache = _load_bool_env(CDPR_COMPILED_MODEL_CACHE_ENV, default=True)
+        if randomize_gripper_shade is None:
+            randomize_gripper_shade = _load_bool_env(
+                CDPR_RANDOMIZE_GRIPPER_SHADE_ENV,
+                default=True,
+            )
+        if gripper_shade_bounds is None:
+            gripper_shade_bounds = _load_float_pair_env(
+                CDPR_GRIPPER_SHADE_BOUNDS_ENV,
+                default=DEFAULT_GRIPPER_SHADE_BOUNDS,
+            )
         self.lock_non_commanded_axes = bool(lock_non_commanded_axes)
         self.lock_non_commanded_axes_threshold = max(0.0, float(lock_non_commanded_axes_threshold))
         self.randomize_ee_start = bool(randomize_ee_start)
@@ -1701,6 +1718,15 @@ class CDPRLanguageRLEnv(_EnvBase):
         self.use_wrapper_cache = bool(use_wrapper_cache)
         self.reuse_existing_wrapper_variants = bool(reuse_existing_wrapper_variants)
         self.use_compiled_model_cache = bool(use_compiled_model_cache)
+        self.randomize_gripper_shade = bool(randomize_gripper_shade)
+        shade_low, shade_high = _normalize_float_pair(
+            gripper_shade_bounds,
+            name="gripper_shade_bounds",
+        )
+        self.gripper_shade_bounds = (
+            float(np.clip(shade_low, 0.0, 1.0)),
+            float(np.clip(shade_high, 0.0, 1.0)),
+        )
         self.desk_geom_regex = str(desk_geom_regex)
         texrepeat_vals = tuple(desk_texrepeat)
         if len(texrepeat_vals) != 2:
@@ -1819,6 +1845,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._locked_target_xyz = np.zeros((3,), dtype=np.float32)
         self._episode_ee_start = self._default_ee_start().astype(np.float32)
         self._episode_ee_yaw = 0.0
+        self._episode_gripper_shade = DEFAULT_GRIPPER_SHADE
         self._goal_position = np.zeros((3,), dtype=np.float32)
         self._goal_motion_direction = np.zeros((3,), dtype=np.float32)
         self._episode_index = -1
@@ -1978,6 +2005,8 @@ class CDPRLanguageRLEnv(_EnvBase):
             if callable(hold_current_pose):
                 hold_current_pose(warm_steps=0)
 
+        episode_gripper_shade = self._sample_episode_gripper_shade(options=options)
+        self._apply_episode_gripper_shade(episode_gripper_shade)
         self._initialize_direct_actuator_episode_state()
         state_valid, state_reason = self._simulation_state_health(check_acceleration=False)
         if not state_valid:
@@ -2211,6 +2240,7 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._current_wrapper_xml = None
         self._desk_texture_name = ""
         self._background_color = ""
+        self._episode_gripper_shade = DEFAULT_GRIPPER_SHADE
         self._prev_object_positions = {}
         self._inverse_catalog_to_body = {}
         self._reference_catalog_name = ""
@@ -2406,6 +2436,9 @@ class CDPRLanguageRLEnv(_EnvBase):
             "scene_catalog_objects": list(self._scene_catalog_objects),
             "desk_texture_name": str(self._desk_texture_name),
             "background_color": str(getattr(self, "_background_color", "")),
+            "episode_gripper_shade": float(
+                getattr(self, "_episode_gripper_shade", DEFAULT_GRIPPER_SHADE)
+            ),
             "current_wrapper_xml": (
                 str(self._current_wrapper_xml)
                 if self._current_wrapper_xml is not None
@@ -2495,6 +2528,9 @@ class CDPRLanguageRLEnv(_EnvBase):
         self._scene_catalog_objects = [str(name) for name in snapshot["scene_catalog_objects"]]
         self._desk_texture_name = str(snapshot["desk_texture_name"])
         self._background_color = str(snapshot.get("background_color", ""))
+        self._apply_episode_gripper_shade(
+            float(snapshot.get("episode_gripper_shade", DEFAULT_GRIPPER_SHADE))
+        )
         wrapper_xml = str(snapshot.get("current_wrapper_xml", "") or "").strip()
         self._current_wrapper_xml = Path(wrapper_xml) if wrapper_xml else None
         self._inverse_catalog_to_body = dict(snapshot["inverse_catalog_to_body"])
@@ -3458,6 +3494,37 @@ class CDPRLanguageRLEnv(_EnvBase):
         if not bool(getattr(self, "randomize_ee_yaw", False)):
             return None
         return float(self.np_random.uniform(*getattr(self, "ee_yaw_bounds", DEFAULT_RANDOM_EE_YAW_BOUNDS)))
+
+    def _sample_episode_gripper_shade(
+        self,
+        options: Optional[dict[str, Any]] = None,
+    ) -> float:
+        requested = (options or {}).get("gripper_shade")
+        if requested is not None:
+            return float(np.clip(float(requested), 0.0, 1.0))
+        if not bool(getattr(self, "randomize_gripper_shade", True)):
+            return DEFAULT_GRIPPER_SHADE
+
+        low, high = getattr(self, "gripper_shade_bounds", DEFAULT_GRIPPER_SHADE_BOUNDS)
+        levels = np.linspace(
+            float(np.clip(low, 0.0, 1.0)),
+            float(np.clip(high, 0.0, 1.0)),
+            num=GRIPPER_SHADE_LEVEL_COUNT,
+            dtype=np.float64,
+        )
+        level_idx = int(self.np_random.integers(0, len(levels)))
+        return float(levels[level_idx])
+
+    def _apply_episode_gripper_shade(self, shade: float) -> tuple[str, ...]:
+        normalized = float(np.clip(float(shade), 0.0, 1.0))
+        self._episode_gripper_shade = normalized
+        if self.sim is None:
+            return ()
+        setter = getattr(self.sim, "set_gripper_shade", None)
+        if not callable(setter):
+            return ()
+        updated = setter(normalized)
+        return tuple(str(name) for name in (updated or ()))
 
     def _initialize_direct_actuator_episode_state(self) -> None:
         instruction = getattr(getattr(self, "_instruction_spec", None), "instruction_type", "")
@@ -5013,6 +5080,28 @@ class CDPRLanguageRLEnv(_EnvBase):
             "gripper_target": float(self._get_gripper_target()),
             "desk_texture": self._desk_texture_name,
             "background_color": str(getattr(self, "_background_color", "")),
+            "randomize_gripper_shade": bool(
+                getattr(self, "randomize_gripper_shade", True)
+            ),
+            "gripper_shade_bounds": [
+                float(
+                    getattr(
+                        self,
+                        "gripper_shade_bounds",
+                        DEFAULT_GRIPPER_SHADE_BOUNDS,
+                    )[0]
+                ),
+                float(
+                    getattr(
+                        self,
+                        "gripper_shade_bounds",
+                        DEFAULT_GRIPPER_SHADE_BOUNDS,
+                    )[1]
+                ),
+            ],
+            "gripper_shade": float(
+                getattr(self, "_episode_gripper_shade", DEFAULT_GRIPPER_SHADE)
+            ),
             "wrapper_xml": str(self._current_wrapper_xml) if self._current_wrapper_xml else "",
             "ee_start": [float(x) for x in self._episode_ee_start.tolist()],
             "support_surface_z": float(self._support_surface_z),

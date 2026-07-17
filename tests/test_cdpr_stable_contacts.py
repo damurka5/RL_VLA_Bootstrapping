@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import numpy as np
@@ -88,6 +89,49 @@ class CDPRStableContactTests(unittest.TestCase):
             self.assertEqual(int(model.geom_group[gid]), 3)
             self.assertEqual(int(model.geom_condim[gid]), 4)
             self.assertGreater(float(model.geom_size[gid][0]), 0.0)
+
+    def test_gripper_shade_updates_surfaces_but_not_dark_edges(self):
+        _require_mujoco(self)
+        from robots.cdpr.cdpr_mujoco.headless_cdpr_egl import HeadlessCDPRSimulation
+
+        model = mj.MjModel.from_xml_path(str(CDPR_XML))
+        sim = HeadlessCDPRSimulation.__new__(HeadlessCDPRSimulation)
+        sim.model = model
+        sim.gripper_surface_shade = 0.94
+        edge_gid = _geom_id(model, "finger_l_edge_front_outer")
+        edge_before = np.asarray(model.geom_rgba[edge_gid], dtype=np.float64).copy()
+
+        updated = sim.set_gripper_shade(0.55)
+
+        self.assertIn("palm", updated)
+        self.assertIn("finger_l_link", updated)
+        self.assertIn("right_finger_pad", updated)
+        for name in updated:
+            gid = _geom_id(model, name)
+            np.testing.assert_allclose(model.geom_rgba[gid, :3], [0.55, 0.55, 0.55])
+        np.testing.assert_allclose(model.geom_rgba[edge_gid], edge_before)
+
+    def test_ee_override_rebases_real_gripper_mesh_path(self):
+        _require_mujoco(self)
+
+        with tempfile.TemporaryDirectory(prefix="cdpr_ee_override_test_") as tmp:
+            override_xml = Path(tmp) / "cdpr_ee_override.xml"
+            switcher.preprocess_cdpr_set_ee_start(
+                CDPR_XML,
+                np.array([0.1, -0.1, 0.5], dtype=float),
+                override_xml,
+            )
+
+            root = ET.parse(override_xml).getroot()
+            mesh = root.find("./asset/mesh[@name='real_gripper_base']")
+            self.assertIsNotNone(mesh)
+            resolved_mesh = (override_xml.parent / str(mesh.get("file"))).resolve()
+            self.assertTrue(resolved_mesh.is_file())
+            self.assertEqual(resolved_mesh, (CDPR_XML.parent / "meshes" / "base2.stl").resolve())
+
+            model = mj.MjModel.from_xml_path(str(override_xml))
+            ee_body = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "ee_base")
+            np.testing.assert_allclose(model.body_pos[ee_body], [0.1, -0.1, 0.5])
 
     def test_caught_object_grasp_center_uses_collision_pads_not_visual_tips(self):
         _require_mujoco(self)

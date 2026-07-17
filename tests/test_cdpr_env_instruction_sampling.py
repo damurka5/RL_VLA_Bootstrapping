@@ -44,6 +44,34 @@ class EnvInstructionSamplingTests(unittest.TestCase):
         self.assertGreaterEqual(yaw, -0.25)
         self.assertLessEqual(yaw, 0.25)
 
+    def test_episode_gripper_shade_randomization_spans_white_to_gray_levels(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        env.randomize_gripper_shade = True
+        env.gripper_shade_bounds = (0.55, 1.0)
+        env.np_random = np.random.default_rng(4)
+
+        shades = {env._sample_episode_gripper_shade() for _ in range(200)}
+        expected = set(np.linspace(0.55, 1.0, num=7).tolist())
+
+        self.assertEqual(shades, expected)
+        self.assertIn(0.55, shades)
+        self.assertIn(1.0, shades)
+
+    def test_episode_gripper_shade_override_is_applied_to_sim(self):
+        env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
+        calls: list[float] = []
+        env.sim = type(
+            "Sim",
+            (),
+            {"set_gripper_shade": lambda self, shade: calls.append(float(shade)) or ("palm",)},
+        )()
+
+        updated = env._apply_episode_gripper_shade(0.63)
+
+        self.assertEqual(updated, ("palm",))
+        self.assertEqual(calls, [0.63])
+        self.assertAlmostEqual(env._episode_gripper_shade, 0.63)
+
     def test_set_ee_yaw_updates_sim_qpos_immediately(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         data = type("Data", (), {"qpos": np.zeros(3, dtype=np.float32), "qvel": np.ones(3, dtype=np.float32)})()

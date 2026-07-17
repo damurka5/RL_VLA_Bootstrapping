@@ -315,34 +315,90 @@ class SmolVLACDPRTests(unittest.TestCase):
                 self.assertIn("configure_huggingface_public_models", script)
                 self.assertIn("huggingface_public_models_preflight", script)
 
-    def test_gripper_visuals_are_warm_off_white(self):
-        root = ET.parse(ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr.xml").getroot()
-        expected_names = {
+    def test_gripper_uses_real_base_mesh_randomizable_surfaces_and_dark_edges(self):
+        robot_xml = ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr.xml"
+        root = ET.parse(robot_xml).getroot()
+
+        mesh = root.find("./asset/mesh[@name='real_gripper_base']")
+        self.assertIsNotNone(mesh)
+        self.assertEqual(mesh.get("file"), "meshes/base2.stl")
+        np.testing.assert_allclose(
+            [float(value) for value in str(mesh.get("scale")).split()],
+            [0.00055, 0.00055, 0.00055],
+        )
+        mesh_file = robot_xml.parent / str(mesh.get("file"))
+        self.assertTrue(mesh_file.is_file())
+        self.assertGreater(mesh_file.stat().st_size, 100_000)
+
+        expected_surface_names = {
             "palm",
+            "finger_l_shoulder",
             "finger_l_link",
             "finger_l_tip",
+            "finger_r_shoulder",
             "finger_r_link",
             "finger_r_tip",
         }
         geoms = {
             str(geom.get("name")): geom
             for geom in root.iter("geom")
-            if str(geom.get("name")) in expected_names
+            if str(geom.get("name")) in expected_surface_names
         }
-        self.assertEqual(set(geoms), expected_names)
+        self.assertEqual(set(geoms), expected_surface_names)
         for name, geom in geoms.items():
             with self.subTest(geom=name):
-                rgba = np.asarray([float(value) for value in str(geom.get("rgba")).split()])
-                np.testing.assert_allclose(rgba, [0.96, 0.94, 0.88, 1.0])
-                self.assertFalse(np.allclose(rgba[:3], 1.0))
-                self.assertFalse(np.allclose(rgba[0], rgba[1:3]))
+                self.assertEqual(geom.get("class"), "gripper_surface")
+
+        palm = geoms["palm"]
+        self.assertEqual(palm.get("type"), "mesh")
+        self.assertEqual(palm.get("mesh"), "real_gripper_base")
+        self.assertEqual(palm.get("euler"), "-90 0 0")
+
+        surface_default = root.find("./default/default[@class='gripper_surface']/geom")
+        edge_default = root.find("./default/default[@class='gripper_edge']/geom")
+        self.assertIsNotNone(surface_default)
+        self.assertIsNotNone(edge_default)
+        np.testing.assert_allclose(
+            [float(value) for value in str(surface_default.get("rgba")).split()],
+            [0.94, 0.94, 0.94, 1.0],
+        )
+        np.testing.assert_allclose(
+            [float(value) for value in str(edge_default.get("rgba")).split()],
+            [0.10, 0.12, 0.14, 1.0],
+        )
+        self.assertGreaterEqual(
+            sum(geom.get("class") == "gripper_edge" for geom in root.iter("geom")),
+            12,
+        )
 
         pad = root.find("./default/default[@class='finger_pad_collision']/geom")
         self.assertIsNotNone(pad)
         np.testing.assert_allclose(
             [float(value) for value in str(pad.get("rgba")).split()],
-            [0.96, 0.94, 0.88, 1.0],
+            [0.94, 0.94, 0.94, 1.0],
         )
+
+        topcenter = root.find(".//site[@name='topcenter']")
+        self.assertIsNotNone(topcenter)
+        self.assertEqual(topcenter.get("pos"), "0 0 0.08")
+        self.assertEqual(topcenter.get("rgba"), "1 0 0 1")
+
+    def test_real_gripper_keeps_existing_finger_control_contract(self):
+        root = ET.parse(ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr.xml").getroot()
+        left_joint = root.find(".//joint[@name='finger_l']")
+        right_joint = root.find(".//joint[@name='finger_r']")
+        actuator = root.find("./actuator/position[@name='act_gripper']")
+        equality = root.find("./equality/joint")
+
+        self.assertEqual(left_joint.get("axis"), "1 0 0")
+        self.assertEqual(right_joint.get("axis"), "-1 0 0")
+        self.assertEqual(left_joint.get("range"), "0 0.03")
+        self.assertEqual(right_joint.get("range"), "0 0.03")
+        self.assertEqual(actuator.get("joint"), "finger_l")
+        self.assertEqual(actuator.get("ctrlrange"), "0 1")
+        self.assertEqual(actuator.get("gear"), "33.3333333333")
+        self.assertEqual(equality.get("joint1"), "finger_l")
+        self.assertEqual(equality.get("joint2"), "finger_r")
 
     def test_wrapper_cache_refreshes_once_per_robot_xml_version(self):
         refresh_script = ROOT / "scripts" / "refresh_cdpr_wrapper_cache.py"

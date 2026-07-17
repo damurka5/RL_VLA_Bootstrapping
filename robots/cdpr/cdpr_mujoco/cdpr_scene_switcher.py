@@ -272,7 +272,13 @@ def preprocess_scene_with_zoffset(scene_xml: Path, z_offset: float, out_xml: Pat
 def preprocess_cdpr_set_ee_start(cdpr_xml: Path, ee_xyz: np.ndarray, out_xml: Path):
     """
     Overwrite 'pos' of body name='ee_base' in cdpr.xml.
+
+    The override is written into a wrapper-cache directory, so relative mesh
+    and texture paths must remain relative to the source robot XML rather than
+    silently changing meaning beside the generated file.
     """
+    cdpr_xml = Path(cdpr_xml).expanduser().resolve()
+    out_xml = Path(out_xml).expanduser().resolve()
     tree = ET.parse(cdpr_xml)
     root = tree.getroot()
     found = False
@@ -288,6 +294,14 @@ def preprocess_cdpr_set_ee_start(cdpr_xml: Path, ee_xyz: np.ndarray, out_xml: Pa
             stack.extend(list(b.findall("body")))
     if not found:
         raise ValueError("Could not find body name='ee_base' in cdpr.xml.")
+    for element in root.iter():
+        file_attr = str(element.get("file") or "").strip()
+        if not file_attr:
+            continue
+        source_path = Path(file_attr).expanduser()
+        if not source_path.is_absolute():
+            source_path = (cdpr_xml.parent / source_path).resolve()
+        element.set("file", os.path.relpath(source_path, start=out_xml.parent))
     try:
         ET.indent(tree)
     except Exception:

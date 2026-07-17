@@ -39,6 +39,19 @@ _SHARED_EGL_CONTEXT_SIZE = (0, 0)
 _SHARED_EGL_CONTEXT_REGISTERED = False
 _OFFSCREEN_SAMPLES_FALLBACK = None
 
+DEFAULT_GRIPPER_SURFACE_SHADE = 0.94
+GRIPPER_SURFACE_GEOM_NAMES = (
+    "palm",
+    "finger_l_shoulder",
+    "finger_l_link",
+    "finger_l_tip",
+    "left_finger_pad",
+    "finger_r_shoulder",
+    "finger_r_link",
+    "finger_r_tip",
+    "right_finger_pad",
+)
+
 
 def _env_flag(name, default=True):
     raw = os.environ.get(name)
@@ -289,6 +302,7 @@ class HeadlessCDPRSimulation:
         self.yaw_min = -np.pi
         self.yaw_max = np.pi
         self.jnt_finger_l_qadr = None
+        self.gripper_surface_shade = DEFAULT_GRIPPER_SURFACE_SHADE
 
         # Recording
         self.overview_frames = []
@@ -303,6 +317,24 @@ class HeadlessCDPRSimulation:
         if frame is None:
             return None
         return np.asarray(frame).copy()
+
+    def _apply_gripper_surface_shade(self):
+        if self.model is None:
+            return ()
+        shade = float(np.clip(self.gripper_surface_shade, 0.0, 1.0))
+        updated = []
+        for name in GRIPPER_SURFACE_GEOM_NAMES:
+            geom_id = mj.mj_name2id(self.model, mj.mjtObj.mjOBJ_GEOM, name)
+            if geom_id == -1:
+                continue
+            self.model.geom_rgba[geom_id, :3] = shade
+            updated.append(name)
+        return tuple(updated)
+
+    def set_gripper_shade(self, shade):
+        """Set the neutral gripper shade without changing dark edge rails."""
+        self.gripper_surface_shade = float(np.clip(float(shade), 0.0, 1.0))
+        return self._apply_gripper_surface_shade()
 
     def initialize(self):
         if self.model is not None or self.data is not None or self.context is not None:
@@ -337,6 +369,9 @@ class HeadlessCDPRSimulation:
             }
         self.data = mj.MjData(self.model)
         self.model.opt.timestep = self.controller.dt
+        # Cached MjModel instances are shared, so always restore this simulation's
+        # requested appearance after loading and immediately before each render.
+        self._apply_gripper_surface_shade()
         if _env_flag("RLVLA_CDPR_MJMODEL_CACHE_LOG", default=False):
             status = "hit" if self.model_cache_event.get("hit") else "miss"
             if not self.model_cache_event.get("enabled"):
@@ -597,6 +632,7 @@ class HeadlessCDPRSimulation:
         try:
             if EGL_AVAILABLE and self.gl_context is not None:
                 self.gl_context.make_current()
+            self._apply_gripper_surface_shade()
             mj.mjr_setBuffer(mj.mjtFramebuffer.mjFB_OFFSCREEN, self.context)
             mj.mjv_updateScene(self.model, self.data, self.opt, None, camera,
                                mj.mjtCatBit.mjCAT_ALL.value, self.scene)
