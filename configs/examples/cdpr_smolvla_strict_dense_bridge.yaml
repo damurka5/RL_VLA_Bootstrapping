@@ -1,5 +1,5 @@
 project:
-  name: cdpr_smolvla_complex_reverse_frontier_grpo
+  name: cdpr_smolvla_strict_dense_bridge
   output_root: ../../runs
   python_executable: python3
 
@@ -21,10 +21,10 @@ remote:
     RLVLA_CDPR_QUIET: "true"
     RLVLA_CDPR_WRAPPER_LOG: "false"
   notes:
-    - Reverse Frontier comparison run using exact sparse binary GRPO rewards.
-    - Shell zero is a one-decision primitive; the former 4-6-action shell is now shell one.
-    - Plate and spatial-relation tasks add aligned-catch, approach-catch, and full-task shells.
-    - Each instruction advances one shell only after at least 80 percent held-out success.
+    - One-million-step dense TD3 bridge before exact sparse reverse-frontier GRPO.
+    - Uses the same eight language instructions and strict success predicates as the sparse phase.
+    - Dense shaping supplies progress; success remains the exact 2-3 cm / release / support predicate.
+    - Exploration is axis-aware and opens the gripper asymmetrically only after placement predicates are ready.
 
 assets:
   bundles:
@@ -99,43 +99,15 @@ task:
   metadata:
     zero_demo_first: true
     instruction_sampling: uniform_cycle
-    reward_mode: sparse_binary
+    reward_mode: dense
     sparse_success_reward: 1.0
     sparse_failure_reward: 0.0
-    reward_output_normalization_enabled: false
-    manipulation_dense_reward_enabled: false
-    simulation_instability_penalty: 0.0
-    reverse_frontier_profile: smolvla_complex_v1
-    # Exact success terminates immediately. The sampled horizon shapes reset
-    # distance only; it must not discard an early success and force overshoot.
-    reverse_frontier_min_action_gate_enabled: false
-    # One SmolVLA policy decision now executes four open-loop chunk actions.
-    # The separate action-step bounds preserve the previous physical shell
-    # distances while the policy-decision bounds count the fewer VLA calls.
-    reverse_frontier_actions_per_policy_decision: 4
-    reverse_frontier_policy_decision_bounds:
-      - [1, 1]
-      - [1, 2]
-      - [2, 3]
-      - [3, 4]
-      - [5, 6]
-      - [7, 13]
-      - [14, 20]
-      - [21, 32]
-    reverse_frontier_action_step_bounds:
-      - [1, 2]
-      - [4, 6]
-      - [7, 10]
-      - [11, 16]
-      - [17, 24]
-      - [25, 52]
-      - [53, 80]
-      - [81, 128]
-    # Effective Cartesian progress per environment action as a fraction of action_step_xyz.
-    # The imitation controller commands 0.60; cable dynamics realize about 0.44.
-    reverse_frontier_nominal_progress_fraction: 0.44
-    put_plate_language_use_on: true
-    put_relation_language: true
+    reward_output_normalization_enabled: true
+    reward_output_normalization: clip
+    reward_output_scale: 2.0
+    reward_output_min: -1.0
+    reward_output_max: 1.0
+    simulation_instability_penalty: -1.0
 
     target_object_pool: [ycb_apple, ycb_pear, ycb_peach, ycb_b_cups, ycb_baseball]
     catchable_object_pool: [ycb_apple, ycb_pear, ycb_peach, ycb_b_cups, ycb_baseball]
@@ -148,22 +120,36 @@ task:
     max_scene_objects: 4
     scene_variant_count: 256
 
+    # Strict navigation predicate: no former 10-15 cm annulus and no
+    # single-object shortcut.
     move_to_object_single_object_scene: false
+    move_to_object_xy_reward_scale: 0.05
+    move_to_object_distance_reward_weight: 1.0
     move_to_object_xy_tolerance: 0.02
     move_to_object_xy_window_low: 0.0
     move_to_object_xy_window_high: 0.02
     move_to_object_validation_distance_min: 0.0
     move_to_object_validation_distance_threshold: 0.02
-    # Longer policy-defined shells accumulate small passive cable Z drift even
-    # when the action keeps commanding the reset height.
+    move_to_object_excess_distance_penalty_weight: 0.50
+    move_to_object_too_close_penalty_weight: 0.0
+    move_to_object_success_bonus: 1.0
     move_to_object_max_z_excursion: 0.03
     move_to_object_require_z_window: false
+
+    # Dense progress is computed against the final sparse manipulation
+    # predicates, not the previous surface/downward proxies.
+    manipulation_dense_reward_enabled: true
+    manipulation_dense_error_scale: 0.04
+    manipulation_dense_error_weight: 0.55
+    manipulation_dense_motion_scale: 0.04
+    manipulation_dense_motion_weight: 0.20
+    manipulation_dense_grasp_weight: 0.10
+    manipulation_dense_release_weight: 0.15
+    manipulation_dense_success_bonus: 1.0
 
     push_surface_reward_enabled: false
     push_position_only_reward: true
     push_success_displacement: 0.08
-    # A directional displacement is not enough: the object must finish near
-    # the intended planar endpoint rather than drifting sideways or overshooting.
     push_enforce_orthogonal_tolerance: true
     push_orthogonal_tolerance: 0.02
     push_enforce_max_overshoot: true
@@ -176,11 +162,12 @@ task:
     target_at_gripper_start_probability: 0.0
     caught_object_start_instruction_types:
       [put_into_bowl, put_into_plate, move_left_of_object, move_right_of_object, move_between_objects]
-    force_caught_object_start_instruction_types: []
+    force_caught_object_start_instruction_types:
+      [put_into_bowl, put_into_plate, move_left_of_object, move_right_of_object, move_between_objects]
     caught_object_start_probability: 1.0
     caught_object_start_above_reference_instruction_types: [put_into_bowl, put_into_plate]
-    caught_object_start_above_reference_height: 0.16
-    caught_object_start_reference_xy_jitter: 0.010
+    caught_object_start_above_reference_height: 0.10
+    caught_object_start_reference_xy_jitter: 0.015
     caught_object_start_object_offset: [0.0, 0.0, 0.005]
     caught_object_start_xy_jitter: 0.010
     caught_object_start_z_jitter: 0.004
@@ -191,27 +178,9 @@ task:
     caught_object_start_min_height_above_table: 0.08
     caught_object_start_release_opening_threshold: 0.010
     caught_object_start_release_opening_margin: 0.04
-    # Wide YCB objects are physically caught with a large normalized opening;
-    # detect closure around the object, then require opening past its fitted
-    # width before a released placement can succeed.
     catch_gripper_closed_opening_threshold: 0.94
     grasp_history_release_use_fitted_opening: true
-    # Grasp-learning shells start with a free object. Once the policy has
-    # centered the gripper and actively closed to the fitted object width,
-    # engage the same stable carry constraint used by the held-object shells.
-    # This remains disabled at reset, so approach and closing are still
-    # required policy phases.
-    reverse_frontier_dynamic_grasp_latch: true
-    reverse_frontier_grasp_latch_xy_distance: 0.030
-    reverse_frontier_grasp_latch_z_distance: 0.060
-    reverse_frontier_grasp_latch_min_finger_contacts: 1
-    reverse_frontier_grasp_latch_contactless_xy_distance: 0.028
-    reverse_frontier_grasp_latch_contactless_z_distance: 0.030
-    reverse_frontier_grasp_latch_opening_margin: 0.012
-    reverse_frontier_grasp_latch_closing_command_threshold: 0.05
 
-    # Require the target center to be visibly inside/on the receptacle. The Z
-    # tolerance remains geometry-aware because bowl/plate body origins differ.
     put_container_xy_tolerance: 0.03
     put_container_z_tolerance: 0.12
     put_require_release: true
@@ -220,8 +189,8 @@ task:
     put_require_target_grasp_history: true
     put_downward_reward_enabled: false
     put_min_target_motion: 0.04
+
     relation_left_right_offset: 0.10
-    # Square zone side length: 0.03 means +/-1.5 cm on each planar axis.
     move_relation_success_zone_size: 0.03
     move_relation_min_target_motion: 0.04
     move_relation_require_target_grasp: false
@@ -233,16 +202,15 @@ task:
     relation_require_release: true
     between_xy_tolerance: 0.03
 
-    grab_require_caught: true
-    grab_xy_tolerance: 0.025
-    pick_lift_success_height: 0.05
-    lchol_direction_displacement_threshold: 0.05
-    lchol_near_reference_tolerance: 0.16
-    action_saturation_penalty_weight: 0.0
-    path_efficiency_penalty_weight: 0.0
-    sign_flip_penalty_weight: 0.0
-    action_delta_penalty_weight: 0.0
-    action_jerk_penalty_weight: 0.0
+    action_saturation_threshold: 0.80
+    action_saturation_penalty_weight: 0.05
+    path_efficiency_target: 0.90
+    path_efficiency_penalty_weight: 0.20
+    sign_flip_action_threshold: 0.05
+    sign_flip_action_dim_count: 5
+    sign_flip_penalty_weight: 0.10
+    action_delta_penalty_weight: 0.04
+    action_jerk_penalty_weight: 0.02
 
     ee_workspace_x_bounds: [-0.28, 0.28]
     ee_workspace_y_bounds: [-0.28, 0.28]
@@ -285,7 +253,7 @@ simulation:
 policy:
   type: smolvla_cdpr
   base_checkpoint: lerobot/smolvla_base
-  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_finetune_cdpr.py
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_finetune_cdpr.py
   num_images_in_input: 3
   action_codec:
     chunk_size: 8
@@ -300,25 +268,20 @@ training:
   preview_before_rl: false
   rl:
     enabled: true
-    algorithm: smolvla_residual_grpo_reverse_frontier
-    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_finetune_cdpr.py
+    algorithm: smolvla_residual_td3_strict_dense_bridge
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_finetune_cdpr.py
     launcher: torchrun
     launcher_args:
       standalone: true
       nproc_per_node: 1
     args:
       resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_to_10000000_20260710_193100/rl/step_6700000
-      max_train_steps: 10000000
-      max_env_steps: 128
-      num_envs_per_rank: 1
+      max_train_steps: 7700000
+      max_env_steps: 96
+      num_envs_per_rank: 4
       chunk_size: 8
       replan_every: 4
       image_size: 256
-      # LeRobot otherwise pads/resizes these frames back to the checkpoint's
-      # 512px default inside SmolVLA, quadrupling vision tokens versus 256px.
-      smolvla_model_image_size: 256
-      smolvla_compile_model: true
-      smolvla_compile_mode: max-autotune
       state_dim: 6
       include_wrist: true
       include_aux_camera: true
@@ -326,54 +289,26 @@ training:
       smolvla_action_normalization: tanh
       hidden_dim: 1024
       residual_scale: 0.30
-      learning_rate: 1.0e-4
-      adam_eps: 1.0e-5
-      weight_decay: 0.0
-      init_log_std: -1.2
-      min_log_std: -5.0
-      max_log_std: 0.5
-      clip_range: 0.20
-      clip_range_low: 0.20
-      clip_range_high: 0.28
-      entropy_coef: 0.002
-      action_l2: 0.0
-      max_grad_norm: 1.0
-      grpo_group_size: 8
-      grpo_group_selection: uniform
-      grpo_normalize_group_advantage: true
-      grpo_clip_advantage_abs: 6.0
-      grpo_trajectory_groups: true
-      grpo_dynamic_sampling: true
-      grpo_dynamic_min_pass_rate: 0.10
-      grpo_dynamic_max_pass_rate: 0.90
-      grpo_trajectory_max_decisions: 32
-      grpo_trajectory_shell_aware_horizon: true
-      grpo_trajectory_horizon_multiplier: 1.5
-      grpo_trajectory_horizon_grace_decisions: 2
-      # Each rank owns four candidates in the 8-way / 2-GPU group. Their
-      # observations are rendered serially but evaluated by SmolVLA together.
-      grpo_candidate_inference_batch_size: 0
-      grpo_target_records_per_update: 1024
-      # 16 groups produced only ~342 records on average in the plateaued run.
-      # Allow collection to continue until the 1024-record target is actually met.
-      grpo_max_groups_per_update: 64
-      grpo_max_collection_seconds_per_update: 600
-      grpo_all_success_sample_harder: true
-      grpo_shell0_retry_easiest: true
-      rollout_steps: 2048
-      # Four passes over 512-record minibatches create repeated clipped updates;
-      # the previous 1x4096 setting performed effectively one update per rollout.
-      ppo_epochs: 4
-      batch_size: 512
-      minibatch_size: 512
-      microbatch_size: 256
-      complex_training_approach: reverse_frontier
-      reverse_frontier_promotion_success: 0.80
-      reverse_frontier_demotion_success: -1.0
-      reverse_frontier_validation_episodes: 50
-      reverse_frontier_min_train_updates: 1
-      reverse_frontier_sample_probability: 0.80
-      reverse_frontier_rehearsal_probability: 0.20
+      actor_lr: 1.0e-4
+      critic_lr: 2.0e-4
+      gamma: 0.98
+      tau: 0.01
+      replay_size: 250000
+      batch_size: 8192
+      update_after: 2048
+      updates_per_step: 2
+      exploration_noise: 0.12
+      min_exploration_noise: 0.035
+      noise_decay_steps: 800000
+      noise_schedule_start_step: 6700000
+      task_aware_exploration: true
+      exploration_orthogonal_scale: 0.25
+      exploration_z_scale: 0.20
+      exploration_yaw_scale: 0.10
+      exploration_hold_gripper_scale: 0.04
+      exploration_release_gripper_scale: 1.00
+      exploration_release_error_threshold: 0.04
+      action_l2: 2.0e-3
       action_step_xyz: 0.015
       action_step_yaw: 0.08
       action_step_gripper: 0.05
@@ -389,9 +324,9 @@ training:
       log_every_steps: 250
       status_every_steps: 500
       metrics_window_episodes: 100
+      telemetry_window_steps: 2048
       validation_every_steps: 50000
-      validation_episodes_per_instruction: 50
-      comparison_validation_episodes_per_instruction: 20
+      validation_episodes_per_instruction: 10
       validation_seed: 1000000
       validation_video_count: 4
       validation_video_fps: 10.0
@@ -401,7 +336,6 @@ training:
       progress_only: true
       distributed: true
       distributed_backend: nccl
-      distributed_timeout_seconds: 21600
       wrapper_cleanup: false
       use_wrapper_cache: true
       reuse_existing_wrapper_variants: true

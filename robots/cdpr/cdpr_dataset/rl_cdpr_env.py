@@ -1482,7 +1482,7 @@ def _apply_reverse_frontier_policy_gate(
     policy_step: int,
     task_metadata: dict[str, Any],
 ) -> tuple[bool, float, dict[str, Any]]:
-    """Prevent a reverse-frontier episode from succeeding before its sampled horizon."""
+    """Optionally prevent reverse-frontier success before its sampled horizon."""
     info = dict(reward_info)
     raw_success = bool(success)
     target_policy_steps = int(
@@ -1504,13 +1504,23 @@ def _apply_reverse_frontier_policy_gate(
         )
         or 0
     )
-    gate_active = str(curriculum_mode) == "reverse_frontier" and target_action_steps > 0
+    gate_enabled = _metadata_bool(
+        task_metadata,
+        "reverse_frontier_min_action_gate_enabled",
+        True,
+    )
+    gate_active = (
+        gate_enabled
+        and str(curriculum_mode) == "reverse_frontier"
+        and target_action_steps > 0
+    )
     gate_satisfied = not gate_active or int(policy_step) >= target_action_steps
     remaining_action_steps = max(0, target_action_steps - int(policy_step))
 
     info.update(
         {
             "reverse_frontier_raw_success": float(raw_success),
+            "reverse_frontier_policy_gate_enabled": float(gate_enabled),
             "reverse_frontier_policy_gate_active": float(gate_active),
             "reverse_frontier_policy_gate_satisfied": float(gate_satisfied),
             "reverse_frontier_policy_target_steps": int(target_policy_steps),

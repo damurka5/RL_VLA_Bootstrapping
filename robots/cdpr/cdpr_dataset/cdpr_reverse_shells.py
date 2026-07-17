@@ -31,23 +31,24 @@ _SHELL_COUNTS: dict[str, int] = {
 
 SMOLVLA_COMPLEX_PROFILE = "smolvla_complex_v1"
 _SMOLVLA_COMPLEX_SHELL_COUNTS: dict[str, int] = {
-    "move_to_object": 4,
-    "push_left": 4,
-    "push_right": 4,
-    "put_into_plate": 7,
-    "put_into_bowl": 4,
-    "move_left_of_object": 7,
-    "move_right_of_object": 7,
-    "move_between_objects": 7,
+    "move_to_object": 5,
+    "push_left": 5,
+    "push_right": 5,
+    "put_into_plate": 8,
+    "put_into_bowl": 5,
+    "move_left_of_object": 8,
+    "move_right_of_object": 8,
+    "move_between_objects": 8,
 }
 SMOLVLA_COMPLEX_POLICY_DECISION_BOUNDS: tuple[tuple[int, int], ...] = (
-    (4, 6),
-    (7, 10),
-    (11, 16),
-    (17, 24),
-    (25, 52),
-    (53, 80),
-    (81, 128),
+    (1, 1),
+    (1, 2),
+    (2, 3),
+    (3, 4),
+    (5, 6),
+    (7, 13),
+    (14, 20),
+    (21, 32),
 )
 
 _TEMPLATES: dict[str, str] = {
@@ -466,7 +467,7 @@ def _apply_complex_push_shell(
     current_progress = max(0.0, success_distance - remaining)
     reward_initial = np.asarray(target, dtype=np.float32).copy()
     reward_initial[0] -= sign * current_progress
-    contact_gap = 0.018 + min(0.04, 0.4 * remaining)
+    contact_gap = 0.008 if shell_id == 0 else 0.018 + min(0.04, 0.4 * remaining)
     ee = np.asarray(target, dtype=np.float32).copy()
     ee[0] -= sign * contact_gap
     ee[1] += float(rng.uniform(-0.008, 0.008))
@@ -505,7 +506,7 @@ def _apply_complex_put_shell(
     if reference is None or target is None:
         return {}
     instruction_type = str(getattr(env._instruction_spec, "instruction_type", ""))
-    if instruction_type == "put_into_plate" and shell_id >= 4:
+    if instruction_type == "put_into_plate" and shell_id >= 5:
         return _apply_complex_grasp_learning_shell(
             env,
             shell_id=shell_id,
@@ -513,6 +514,26 @@ def _apply_complex_put_shell(
             rng=rng,
         )
     success_boundary = max(0.0, _metadata_float(env, "put_container_xy_tolerance", 0.08))
+    if shell_id == 0:
+        direction = _unit_xy(rng)
+        object_pos = np.asarray(reference, dtype=np.float32).copy()
+        object_pos[:2] += direction * float(rng.uniform(0.0, 0.35 * success_boundary))
+        object_pos[2] = float(reference[2] + 0.035)
+        held = _set_target_held_at(env, object_pos=object_pos)
+        return {
+            "curriculum_shell_distance_m": 0.0,
+            "curriculum_shell_success_boundary_m": float(success_boundary),
+            "curriculum_shell_required_travel_m": 0.0,
+            "curriculum_shell_height_m": float(object_pos[2] - reference[2]),
+            "curriculum_shell_relation": "held_object_in_receptacle_release_only",
+            "curriculum_target_grasped": True,
+            "curriculum_release_only": True,
+            "curriculum_put_start_stage": 0,
+            "curriculum_reward_initial_obj_pos": _reward_motion_baseline(
+                env, object_pos, direction
+            ).tolist(),
+            **held,
+        }
     travel = _action_travel_distance(env, target_action_steps)
     distance = float(success_boundary + travel)
     direction = _direction_with_room(env, center=reference, distance=distance, rng=rng)
@@ -541,7 +562,7 @@ def _apply_complex_binary_relation_shell(
     target = _body_position(env, getattr(env, "_target_body_name", ""))
     if reference is None or target is None:
         return {}
-    if shell_id >= 4:
+    if shell_id >= 5:
         return _apply_complex_grasp_learning_shell(
             env,
             shell_id=shell_id,
@@ -553,6 +574,30 @@ def _apply_complex_binary_relation_shell(
     desired = np.asarray(reference, dtype=np.float32).copy()
     desired[axis] += sign * offset
     desired[2] = max(float(target[2]), float(reference[2] + 0.035))
+    if shell_id == 0:
+        zone_half = 0.5 * max(
+            1e-6, _metadata_float(env, "move_relation_success_zone_size", 0.06)
+        )
+        jitter = rng.uniform(-0.35 * zone_half, 0.35 * zone_half, size=(2,)).astype(
+            np.float32
+        )
+        object_pos = desired.copy()
+        object_pos[:2] += jitter
+        direction = _unit_xy(rng)
+        held = _set_target_held_at(env, object_pos=object_pos)
+        return {
+            "curriculum_shell_distance_m": 0.0,
+            "curriculum_shell_success_boundary_m": float(zone_half),
+            "curriculum_shell_required_travel_m": 0.0,
+            "curriculum_shell_relation": "held_object_in_binary_region_release_only",
+            "curriculum_target_grasped": True,
+            "curriculum_release_only": True,
+            "curriculum_put_start_stage": 0,
+            "curriculum_reward_initial_obj_pos": _reward_motion_baseline(
+                env, object_pos, direction
+            ).tolist(),
+            **held,
+        }
     travel = _action_travel_distance(env, target_action_steps)
     zone_half = 0.5 * max(
         1e-6, _metadata_float(env, "move_relation_success_zone_size", 0.06)
@@ -588,7 +633,7 @@ def _apply_complex_between_shell(
     target = _body_position(env, getattr(env, "_target_body_name", ""))
     if ref_a is None or ref_b is None or target is None:
         return {}
-    if shell_id >= 4:
+    if shell_id >= 5:
         return _apply_complex_grasp_learning_shell(
             env,
             shell_id=shell_id,
@@ -598,6 +643,24 @@ def _apply_complex_between_shell(
     midpoint = 0.5 * (np.asarray(ref_a, dtype=np.float32) + np.asarray(ref_b, dtype=np.float32))
     midpoint[2] = max(float(target[2]), float(midpoint[2] + 0.035))
     success_boundary = max(0.0, _metadata_float(env, "between_xy_tolerance", 0.06))
+    if shell_id == 0:
+        direction = _unit_xy(rng)
+        object_pos = midpoint.copy()
+        object_pos[:2] += direction * float(rng.uniform(0.0, 0.35 * success_boundary))
+        held = _set_target_held_at(env, object_pos=object_pos)
+        return {
+            "curriculum_shell_distance_m": 0.0,
+            "curriculum_shell_success_boundary_m": float(success_boundary),
+            "curriculum_shell_required_travel_m": 0.0,
+            "curriculum_shell_relation": "held_object_in_between_region_release_only",
+            "curriculum_target_grasped": True,
+            "curriculum_release_only": True,
+            "curriculum_put_start_stage": 0,
+            "curriculum_reward_initial_obj_pos": _reward_motion_baseline(
+                env, object_pos, direction
+            ).tolist(),
+            **held,
+        }
     travel = _action_travel_distance(env, target_action_steps)
     distance = float(success_boundary + travel)
     direction = _direction_with_room(env, center=midpoint, distance=distance, rng=rng)
@@ -665,12 +728,12 @@ def _progressive_grasp_start(
     rng: np.random.Generator,
 ) -> tuple[np.ndarray, float]:
     """Place early grasp shells a controlled distance from the final region."""
-    if shell_id >= 6:
+    if shell_id >= 7:
         return np.asarray(target, dtype=np.float32).reshape(3).copy(), float("nan")
 
-    # Keep shell 4 outside the physical plate/reference footprint while still
+    # Keep the aligned shell outside the physical plate/reference footprint while still
     # making its post-catch carry much shorter than a normal random reset.
-    distance_range = (0.120, 0.145) if shell_id == 4 else (0.160, 0.200)
+    distance_range = (0.120, 0.145) if shell_id == 5 else (0.160, 0.200)
     distance = float(rng.uniform(*distance_range))
     goal = _grasp_learning_goal_position(env, target)
     direction = _direction_with_room(
@@ -694,7 +757,7 @@ def _apply_complex_grasp_learning_shell(
     target: np.ndarray,
     rng: np.random.Generator,
 ) -> dict[str, Any]:
-    """Add progressively harder real-grasp starts after the four held shells."""
+    """Add progressively harder real-grasp starts after release-only and four held shells."""
     reset_caught = getattr(env, "_reset_caught_object_start_state", None)
     if callable(reset_caught):
         reset_caught()
@@ -709,11 +772,11 @@ def _apply_complex_grasp_learning_shell(
         rng=rng,
     )
     grasp_pose = _grasp_ee_pose(env, target_arr)
-    if shell_id == 4:
+    if shell_id == 5:
         _move_ee(env, grasp_pose)
         relation = "aligned_open_gripper_catch_then_finish"
         required_phases = ("close_and_catch", "lift_clear", "carry", "release_at_goal")
-    elif shell_id == 5:
+    elif shell_id == 6:
         direction = _direction_with_room(
             env,
             center=grasp_pose,
@@ -749,11 +812,11 @@ def _apply_complex_grasp_learning_shell(
         "curriculum_shell_relation": relation,
         "curriculum_target_grasped": False,
         "curriculum_grasp_required": True,
-        "curriculum_grasp_start_phase": int(shell_id - 4),
+        "curriculum_grasp_start_phase": int(shell_id - 5),
         "curriculum_required_phases": list(required_phases),
         "curriculum_grasp_start_goal_distance_m": float(start_goal_distance),
-        "curriculum_put_start_stage": int(shell_id - 3),
-        "curriculum_shell_normal_reset": bool(shell_id >= 6),
+        "curriculum_put_start_stage": int(shell_id - 4),
+        "curriculum_shell_normal_reset": bool(shell_id >= 7),
         "curriculum_reward_initial_obj_pos": target_arr.tolist(),
     }
 

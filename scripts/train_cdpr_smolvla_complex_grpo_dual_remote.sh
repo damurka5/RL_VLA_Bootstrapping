@@ -4,6 +4,7 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
 ENV_NAME="${ENV_NAME:-smolvla}"
 CHECKPOINT="${CHECKPOINT:-/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_to_10000000_20260710_193100/rl/step_6700000}"
+START_STEP="${START_STEP:-6700000}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-10000000}"
 STAGE="${STAGE:-rl}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -15,8 +16,8 @@ LCHOL_GPU="${LCHOL_GPU:-1}"
 SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-2}"
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-REVERSE_RUN_NAME="${REVERSE_RUN_NAME:-cdpr_smolvla_complex_reverse_frontier_step_6700000_to_10000000_${timestamp}}"
-LCHOL_RUN_NAME="${LCHOL_RUN_NAME:-cdpr_smolvla_complex_lchol_hindsight_step_6700000_to_10000000_${timestamp}}"
+REVERSE_RUN_NAME="${REVERSE_RUN_NAME:-cdpr_smolvla_complex_reverse_frontier_step_${START_STEP}_to_${MAX_TRAIN_STEPS}_${timestamp}}"
+LCHOL_RUN_NAME="${LCHOL_RUN_NAME:-cdpr_smolvla_complex_lchol_hindsight_step_${START_STEP}_to_${MAX_TRAIN_STEPS}_${timestamp}}"
 REVERSE_CONFIG="${REVERSE_CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_complex_reverse_frontier_grpo.yaml}"
 LCHOL_CONFIG="${LCHOL_CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_complex_lchol_hindsight_grpo.yaml}"
 

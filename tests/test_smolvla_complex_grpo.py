@@ -214,13 +214,18 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                 command = plan.command
                 self.assertIn("rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr", command)
                 self.assertEqual(command[command.index("--complex-training-approach") + 1], approach)
-                self.assertEqual(command[command.index("--batch-size") + 1], "4096")
-                self.assertEqual(command[command.index("--minibatch-size") + 1], "4096")
-                self.assertEqual(command[command.index("--microbatch-size") + 1], "2048")
                 self.assertEqual(command[command.index("--resume-checkpoint") + 1], CHECKPOINT)
                 self.assertEqual(config.task.metadata["reward_mode"], "sparse_binary")
                 self.assertFalse(config.task.metadata["reward_output_normalization_enabled"])
                 if approach == "reverse_frontier":
+                    self.assertEqual(command[command.index("--batch-size") + 1], "512")
+                    self.assertEqual(command[command.index("--minibatch-size") + 1], "512")
+                    self.assertEqual(command[command.index("--microbatch-size") + 1], "256")
+                    self.assertEqual(command[command.index("--ppo-epochs") + 1], "4")
+                    self.assertEqual(
+                        command[command.index("--grpo-max-groups-per-update") + 1],
+                        "64",
+                    )
                     self.assertEqual(command[command.index("--grpo-group-size") + 1], "8")
                     self.assertEqual(command[command.index("--num-envs-per-rank") + 1], "1")
                     self.assertEqual(
@@ -257,10 +262,6 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                         "1024",
                     )
                     self.assertEqual(
-                        command[command.index("--grpo-max-groups-per-update") + 1],
-                        "16",
-                    )
-                    self.assertEqual(
                         command[
                             command.index(
                                 "--grpo-max-collection-seconds-per-update"
@@ -284,8 +285,7 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     )
                     self.assertEqual(command[command.index("--clip-range-low") + 1], "0.2")
                     self.assertEqual(command[command.index("--clip-range-high") + 1], "0.28")
-                    self.assertEqual(command[command.index("--entropy-coef") + 1], "0.001")
-                    self.assertEqual(command[command.index("--ppo-epochs") + 1], "1")
+                    self.assertEqual(command[command.index("--entropy-coef") + 1], "0.002")
                     self.assertEqual(config.task.metadata["move_to_object_xy_tolerance"], 0.02)
                     self.assertEqual(config.task.metadata["put_container_xy_tolerance"], 0.03)
                     self.assertEqual(config.task.metadata["move_relation_success_zone_size"], 0.03)
@@ -295,6 +295,7 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     self.assertEqual(
                         config.task.metadata["reverse_frontier_policy_decision_bounds"],
                         [
+                            [1, 1],
                             [1, 2],
                             [2, 3],
                             [3, 4],
@@ -313,6 +314,7 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                     self.assertEqual(
                         config.task.metadata["reverse_frontier_action_step_bounds"],
                         [
+                            [1, 2],
                             [4, 6],
                             [7, 10],
                             [11, 16],
@@ -321,6 +323,9 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                             [53, 80],
                             [81, 128],
                         ],
+                    )
+                    self.assertFalse(
+                        config.task.metadata["reverse_frontier_min_action_gate_enabled"]
                     )
                     self.assertTrue(config.task.metadata["put_require_target_grasp_history"])
                     self.assertTrue(
@@ -350,6 +355,11 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
                         command[command.index("--max-env-steps") + 1],
                         "128",
                     )
+                else:
+                    self.assertEqual(command[command.index("--batch-size") + 1], "4096")
+                    self.assertEqual(command[command.index("--minibatch-size") + 1], "4096")
+                    self.assertEqual(command[command.index("--microbatch-size") + 1], "2048")
+                    self.assertEqual(command[command.index("--replan-every") + 1], "1")
 
     def test_two_gpu_candidate_partition_is_balanced_and_complete(self):
         rank_zero = _distributed_candidate_indices(8, 2, 0)
@@ -437,19 +447,19 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
         specs = get_cdpr_reverse_shell_specs(profile=SMOLVLA_COMPLEX_PROFILE)
         self.assertEqual(len(specs), 8)
         shell_counts = {spec.instruction_id: spec.shell_count for spec in specs}
-        self.assertEqual(shell_counts["move_to_object"], 4)
-        self.assertEqual(shell_counts["push_left"], 4)
-        self.assertEqual(shell_counts["push_right"], 4)
-        self.assertEqual(shell_counts["put_into_bowl"], 4)
+        self.assertEqual(shell_counts["move_to_object"], 5)
+        self.assertEqual(shell_counts["push_left"], 5)
+        self.assertEqual(shell_counts["push_right"], 5)
+        self.assertEqual(shell_counts["put_into_bowl"], 5)
         for instruction in (
             "put_into_plate",
             "move_left_of_object",
             "move_right_of_object",
             "move_between_objects",
         ):
-            self.assertEqual(shell_counts[instruction], 7)
+            self.assertEqual(shell_counts[instruction], 8)
 
-        expected = ((4, 6), (7, 10), (11, 16), (17, 24))
+        expected = ((1, 1), (1, 2), (2, 3), (3, 4), (5, 6))
         for shell_id, bounds in enumerate(expected):
             env = _MoveShellEnv()
             info = apply_cdpr_reverse_shell(
@@ -486,12 +496,14 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
             easiest_env,
             shell_id=0,
             rng=np.random.default_rng(999),
-            target_policy_steps=4,
+            target_policy_steps=1,
         )
-        self.assertEqual(easiest["curriculum_shell_target_policy_steps"], 4)
+        self.assertEqual(easiest["curriculum_shell_target_policy_steps"], 1)
+        self.assertLess(easiest["curriculum_shell_required_travel_m"], 0.01)
 
     def test_replan_four_shells_preserve_physical_action_ranges(self):
         policy_bounds = (
+            (1, 1),
             (1, 2),
             (2, 3),
             (3, 4),
@@ -501,6 +513,7 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
             (21, 32),
         )
         action_bounds = (
+            (1, 2),
             (4, 6),
             (7, 10),
             (11, 16),
@@ -509,7 +522,7 @@ class SmolVLAComplexGRPOTests(unittest.TestCase):
             (53, 80),
             (81, 128),
         )
-        for shell_id in range(4):
+        for shell_id in range(5):
             with self.subTest(shell=shell_id):
                 env = _MoveShellEnv()
                 env._task_metadata.update(

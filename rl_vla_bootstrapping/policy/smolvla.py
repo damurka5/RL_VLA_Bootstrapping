@@ -109,6 +109,11 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     max_train_steps = os.environ.get("RLVLA_SMOLVLA_MAX_TRAIN_STEPS", "").strip()
     if max_train_steps:
         injected["max_train_steps"] = int(max_train_steps)
+    noise_schedule_start_step = os.environ.get(
+        "RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP", ""
+    ).strip()
+    if noise_schedule_start_step:
+        injected["noise_schedule_start_step"] = int(noise_schedule_start_step)
 
     dataset_root = config.resolve_path(config.repos.dataset_repo)
     if dataset_root is not None:

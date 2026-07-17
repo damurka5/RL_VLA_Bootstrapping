@@ -220,6 +220,24 @@ class CDPRReverseShellTests(unittest.TestCase):
         self.assertEqual(final_reward, 1.0)
         self.assertEqual(final_info["reverse_frontier_action_steps_remaining"], 0)
 
+    def test_policy_gate_can_be_disabled_for_exact_success_termination(self):
+        success, reward, info = _apply_reverse_frontier_policy_gate(
+            success=True,
+            reward=1.0,
+            reward_info={"sparse_success": 1.0},
+            curriculum_mode="reverse_frontier",
+            curriculum_reset_info={"curriculum_shell_target_action_steps": 6},
+            policy_step=1,
+            task_metadata={
+                "reward_mode": "sparse_binary",
+                "reverse_frontier_min_action_gate_enabled": False,
+            },
+        )
+        self.assertTrue(success)
+        self.assertEqual(reward, 1.0)
+        self.assertEqual(info["reverse_frontier_policy_gate_enabled"], 0.0)
+        self.assertEqual(info["reverse_frontier_policy_gate_active"], 0.0)
+
     def test_put_plate_shell_zero_places_held_object_near_plate(self):
         env = _FakeEnv()
         info = apply_cdpr_reverse_shell(env, shell_id=0, rng=np.random.default_rng(4))
@@ -291,21 +309,21 @@ class CDPRReverseShellTests(unittest.TestCase):
             0.50,
         )
 
-    def test_complex_shell_three_is_a_farther_held_continuation(self):
+    def test_complex_shell_four_is_the_shifted_farther_held_continuation(self):
         env = _FakeEnv()
         info = apply_cdpr_reverse_shell(
             env,
-            shell_id=3,
+            shell_id=4,
             rng=np.random.default_rng(17),
             profile=SMOLVLA_COMPLEX_PROFILE,
         )
 
         self.assertEqual(
             (info["curriculum_shell_policy_steps_low"], info["curriculum_shell_policy_steps_high"]),
-            (17, 24),
+            (5, 6),
         )
-        self.assertGreaterEqual(info["curriculum_shell_target_policy_steps"], 17)
-        self.assertLessEqual(info["curriculum_shell_target_policy_steps"], 24)
+        self.assertGreaterEqual(info["curriculum_shell_target_policy_steps"], 5)
+        self.assertLessEqual(info["curriculum_shell_target_policy_steps"], 6)
         self.assertTrue(info["curriculum_target_grasped"])
         self.assertTrue(env._caught_object_start_active)
         self.assertEqual(info["curriculum_put_start_stage"], 0)
@@ -314,9 +332,9 @@ class CDPRReverseShellTests(unittest.TestCase):
 
     def test_complex_plate_adds_aligned_approach_and_full_grasp_shells(self):
         expected = {
-            4: ("aligned_open_gripper_catch_then_finish", (25, 52), 0),
-            5: ("near_object_approach_catch_then_finish", (53, 80), 1),
-            6: ("full_randomized_approach_catch_then_finish", (81, 128), 2),
+            5: ("aligned_open_gripper_catch_then_finish", (7, 13), 0),
+            6: ("near_object_approach_catch_then_finish", (14, 20), 1),
+            7: ("full_randomized_approach_catch_then_finish", (21, 32), 2),
         }
         for shell_id, (relation, bounds, phase) in expected.items():
             with self.subTest(shell_id=shell_id):
@@ -330,7 +348,7 @@ class CDPRReverseShellTests(unittest.TestCase):
                     profile=SMOLVLA_COMPLEX_PROFILE,
                 )
 
-                self.assertEqual(info["curriculum_shell_count"], 7)
+                self.assertEqual(info["curriculum_shell_count"], 8)
                 self.assertEqual(info["curriculum_shell_relation"], relation)
                 self.assertEqual(
                     (
@@ -344,7 +362,7 @@ class CDPRReverseShellTests(unittest.TestCase):
                 self.assertFalse(info["curriculum_target_grasped"])
                 self.assertFalse(env._caught_object_start_active)
                 self.assertEqual(env._get_gripper_opening(), 1.0)
-                if shell_id == 6:
+                if shell_id == 7:
                     np.testing.assert_allclose(env._get_ee_position(), ee_before)
                     np.testing.assert_allclose(
                         env._get_body_position("apple_body"), apple_before
@@ -355,7 +373,7 @@ class CDPRReverseShellTests(unittest.TestCase):
                     self.assertTrue(info["curriculum_shell_normal_reset"])
                 else:
                     start_distance = info["curriculum_grasp_start_goal_distance_m"]
-                    expected_range = (0.120, 0.145) if shell_id == 4 else (0.160, 0.200)
+                    expected_range = (0.120, 0.145) if shell_id == 5 else (0.160, 0.200)
                     self.assertGreaterEqual(start_distance, expected_range[0])
                     self.assertLessEqual(start_distance, expected_range[1])
                     plate = env._get_body_position("plate_body")

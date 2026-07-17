@@ -26,6 +26,12 @@ from rl_vla_bootstrapping.policy.smolvla_cdpr import (
     cdpr_state_from_observation,
     torch,
 )
+from rl_vla_bootstrapping.policy.smolvla_finetune_cdpr import (
+    DenseRolloutTelemetry,
+    _exploration_noise,
+    _task_aware_exploration_scales,
+    parse_args as parse_dense_args,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -191,11 +197,97 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertIn("rate=1000.00 step/s", text)
         self.assertIn("eta=31m40s", text)
 
+    def test_strict_dense_bridge_matches_sparse_tasks_and_runs_one_million_steps(self):
+        config = load_project_config(
+            ROOT / "configs" / "examples" / "cdpr_smolvla_strict_dense_bridge.yaml"
+        )
+        plan = BootstrapPipeline(config).build_stage_plans(
+            ROOT / "runs" / "strict_dense_unit", ["rl"]
+        )[0]
+        command = plan.command
+
+        self.assertEqual(config.task.metadata["reward_mode"], "dense")
+        self.assertTrue(config.task.metadata["manipulation_dense_reward_enabled"])
+        self.assertEqual(config.task.metadata["move_to_object_xy_window_high"], 0.02)
+        self.assertTrue(config.task.metadata["put_require_release"])
+        self.assertEqual(len(config.task.instruction_types), 8)
+        self.assertEqual(command[command.index("--max-train-steps") + 1], "7700000")
+        self.assertEqual(command[command.index("--noise-schedule-start-step") + 1], "6700000")
+        self.assertIn("--task-aware-exploration", command)
+        self.assertEqual(command[command.index("--nproc-per-node") + 1], "1")
+
+    def test_task_aware_exploration_restarts_and_opens_only_near_release(self):
+        args = parse_dense_args(
+            [
+                "--task-aware-exploration",
+                "--exploration-noise",
+                "0.12",
+                "--min-exploration-noise",
+                "0.035",
+                "--noise-decay-steps",
+                "800000",
+                "--noise-schedule-start-step",
+                "6700000",
+            ]
+        )
+        self.assertAlmostEqual(_exploration_noise(args, 6_700_000), 0.12)
+        self.assertAlmostEqual(_exploration_noise(args, 7_500_000), 0.035)
+
+        far_scales, far_release = _task_aware_exploration_scales(
+            args,
+            instruction_type="put_into_plate",
+            info={"relation_error": 0.10, "relation_motion_ok": 1.0},
+            action_dim=5,
+        )
+        near_scales, near_release = _task_aware_exploration_scales(
+            args,
+            instruction_type="put_into_plate",
+            info={
+                "relation_error": 0.01,
+                "relation_motion_ok": 1.0,
+                "relation_grasp_history_ok": 1.0,
+                "put_container_z_error": 0.02,
+                "put_container_z_tolerance": 0.12,
+            },
+            action_dim=5,
+        )
+        self.assertFalse(far_release)
+        self.assertTrue(near_release)
+        self.assertLess(far_scales[4], near_scales[4])
+        self.assertGreater(near_scales[2], near_scales[0])
+
+    def test_dense_telemetry_aggregates_predicates_by_instruction(self):
+        telemetry = DenseRolloutTelemetry(step_window=8, episode_window=4, action_dim=5)
+        telemetry.record_step(
+            instruction="push_left",
+            reward=0.5,
+            action=np.array([-0.8, 0.1, 0.0, 0.0, 0.0], dtype=np.float32),
+            info={"push_support_ok": 1.0, "push_orthogonal_drift": 0.01},
+            noise_scales=np.array([1.0, 0.25, 0.1, 0.1, 0.04], dtype=np.float32),
+            release_exploration_active=False,
+        )
+        telemetry.record_episode(
+            instruction="push_left",
+            reward=3.0,
+            length=12,
+            success=True,
+        )
+        metrics = telemetry.snapshot()
+        self.assertEqual(metrics["dense_telemetry/push_left/push_support_ok_mean"], 1.0)
+        self.assertEqual(metrics["dense_telemetry/push_left/success_rate"], 1.0)
+        self.assertAlmostEqual(
+            metrics["dense_telemetry/push_left/action_abs_x_mean"],
+            0.8,
+            places=6,
+        )
+
     def test_new_remote_scripts_pass_bash_syntax(self):
         scripts = [
             ROOT / "scripts" / "setup_smolvla_remote.sh",
             ROOT / "scripts" / "train_cdpr_smolvla_dense_2gpu_remote.sh",
             ROOT / "scripts" / "train_cdpr_smolvla_stage2_dual_remote.sh",
+            ROOT / "scripts" / "train_cdpr_smolvla_strict_dense_bridge_remote.sh",
+            ROOT / "scripts" / "train_cdpr_smolvla_complex_grpo_dual_remote.sh",
             ROOT / "scripts" / "evaluate_cdpr_smolvla_dense_remote.sh",
         ]
         for script in scripts:

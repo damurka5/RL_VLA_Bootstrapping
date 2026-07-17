@@ -8,7 +8,7 @@ import os
 import random
 import sys
 import time
-from collections import deque
+from collections import defaultdict, deque
 from dataclasses import dataclass
 from datetime import timedelta
 from pathlib import Path
@@ -379,6 +379,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--exploration-noise", type=float, default=0.15)
     parser.add_argument("--noise-decay-steps", type=int, default=60000)
     parser.add_argument("--min-exploration-noise", type=float, default=0.03)
+    parser.add_argument(
+        "--noise-schedule-start-step",
+        type=int,
+        default=0,
+        help="Global step treated as t=0 for exploration decay (useful for resumed bridge stages).",
+    )
+    _bool_arg(
+        parser,
+        "task_aware_exploration",
+        default=False,
+        help_text="Scale exploration by instruction axis and enable release exploration only near placement success.",
+    )
+    parser.add_argument("--exploration-orthogonal-scale", type=float, default=0.25)
+    parser.add_argument("--exploration-z-scale", type=float, default=0.20)
+    parser.add_argument("--exploration-yaw-scale", type=float, default=0.10)
+    parser.add_argument("--exploration-hold-gripper-scale", type=float, default=0.05)
+    parser.add_argument("--exploration-release-gripper-scale", type=float, default=1.0)
+    parser.add_argument("--exploration-release-error-threshold", type=float, default=0.04)
     parser.add_argument("--action-l2", type=float, default=1.0e-3)
     parser.add_argument("--save-every-steps", type=int, default=5000)
     parser.add_argument("--log-every-steps", type=int, default=100)
@@ -388,6 +406,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         type=int,
         default=100,
         help="Number of completed episodes used for rolling reward/success TensorBoard metrics.",
+    )
+    parser.add_argument(
+        "--telemetry-window-steps",
+        type=int,
+        default=2048,
+        help="Rolling per-instruction step window for dense predicate and action telemetry.",
     )
     parser.add_argument(
         "--dense-stage-one-instruction-types",
@@ -599,8 +623,259 @@ def _exploration_noise(args: argparse.Namespace, global_step: int) -> float:
     start = float(args.exploration_noise)
     end = float(args.min_exploration_noise)
     decay_steps = max(1, int(args.noise_decay_steps))
-    alpha = min(1.0, max(0.0, float(global_step) / decay_steps))
+    schedule_start = int(getattr(args, "noise_schedule_start_step", 0) or 0)
+    schedule_step = max(0, int(global_step) - schedule_start)
+    alpha = min(1.0, max(0.0, float(schedule_step) / decay_steps))
     return float(start + alpha * (end - start))
+
+
+_PLACEMENT_INSTRUCTION_TYPES = frozenset(
+    {
+        "put_into_plate",
+        "put_into_bowl",
+        "move_left_of_object",
+        "move_right_of_object",
+        "move_in_front_of_object",
+        "move_behind_object",
+        "move_between_objects",
+    }
+)
+_PUSH_X_INSTRUCTION_TYPES = frozenset({"push_left", "push_right"})
+_PUSH_Y_INSTRUCTION_TYPES = frozenset({"push_forward", "push_backward"})
+_RELATION_X_INSTRUCTION_TYPES = frozenset({"move_left_of_object", "move_right_of_object"})
+_DENSE_TELEMETRY_INFO_KEYS = (
+    "distance_to_goal",
+    "distance_to_goal_xy",
+    "move_to_object_xy_window_error",
+    "move_to_object_inside_xy_window",
+    "relation_error",
+    "relation_axis_error",
+    "relation_orthogonal_error",
+    "relation_motion_ok",
+    "relation_grasp_ok",
+    "relation_grasp_history_ok",
+    "relation_release_ok",
+    "put_container_z_error",
+    "put_container_z_tolerance",
+    "put_release_ok",
+    "push_orthogonal_drift",
+    "push_axis_overshoot",
+    "push_support_ok",
+    "carried_object_caught_ok",
+    "manipulation_dense_error",
+    "manipulation_dense_relation_progress",
+    "manipulation_dense_motion_progress",
+    "manipulation_dense_release_progress",
+    "action_saturation_rate",
+)
+
+
+def _finite_info_float(info: Mapping[str, Any], key: str) -> float | None:
+    try:
+        value = float(info[key])
+    except (KeyError, TypeError, ValueError):
+        return None
+    return value if np.isfinite(value) else None
+
+
+def _dense_release_ready(
+    instruction_type: str,
+    info: Mapping[str, Any],
+    *,
+    error_threshold: float,
+) -> bool:
+    if str(instruction_type) not in _PLACEMENT_INSTRUCTION_TYPES:
+        return False
+    relation_error = _finite_info_float(info, "relation_error")
+    if relation_error is None or relation_error < 0.0 or relation_error > float(error_threshold):
+        return False
+    for predicate in ("relation_motion_ok", "relation_grasp_history_ok"):
+        value = _finite_info_float(info, predicate)
+        if value is not None and value < 0.5:
+            return False
+    if str(instruction_type) in {"put_into_plate", "put_into_bowl"}:
+        z_error = _finite_info_float(info, "put_container_z_error")
+        z_tolerance = _finite_info_float(info, "put_container_z_tolerance")
+        if (
+            z_error is not None
+            and z_error >= 0.0
+            and z_tolerance is not None
+            and z_error > z_tolerance
+        ):
+            return False
+    return True
+
+
+def _task_aware_exploration_scales(
+    args: argparse.Namespace,
+    *,
+    instruction_type: str,
+    info: Mapping[str, Any],
+    action_dim: int,
+) -> tuple[np.ndarray, bool]:
+    scales = np.ones((int(action_dim),), dtype=np.float32)
+    if not bool(getattr(args, "task_aware_exploration", False)) or int(action_dim) < 5:
+        return scales, False
+
+    orthogonal = max(0.0, float(args.exploration_orthogonal_scale))
+    z_scale = max(0.0, float(args.exploration_z_scale))
+    yaw_scale = max(0.0, float(args.exploration_yaw_scale))
+    hold_gripper = max(0.0, float(args.exploration_hold_gripper_scale))
+    release_gripper = max(0.0, float(args.exploration_release_gripper_scale))
+    name = str(instruction_type)
+
+    scales[3] = yaw_scale
+    scales[4] = hold_gripper
+    if name == "move_to_object":
+        scales[:3] = (1.0, 1.0, z_scale)
+    elif name in _PUSH_X_INSTRUCTION_TYPES:
+        scales[:3] = (1.0, orthogonal, 0.5 * z_scale)
+    elif name in _PUSH_Y_INSTRUCTION_TYPES:
+        scales[:3] = (orthogonal, 1.0, 0.5 * z_scale)
+    elif name in {"put_into_plate", "put_into_bowl"}:
+        scales[:3] = (orthogonal, orthogonal, 1.0)
+    elif name in _RELATION_X_INSTRUCTION_TYPES:
+        scales[:3] = (1.0, orthogonal, z_scale)
+    elif name == "move_between_objects":
+        scales[:3] = (1.0, 1.0, z_scale)
+
+    release_ready = _dense_release_ready(
+        name,
+        info,
+        error_threshold=max(0.0, float(args.exploration_release_error_threshold)),
+    )
+    if release_ready:
+        scales[4] = release_gripper
+    return scales, bool(release_ready)
+
+
+def _sample_task_aware_exploration(
+    args: argparse.Namespace,
+    *,
+    instruction_type: str,
+    info: Mapping[str, Any],
+    action_dim: int,
+    noise_std: float,
+) -> tuple[np.ndarray, np.ndarray, bool]:
+    scales, release_ready = _task_aware_exploration_scales(
+        args,
+        instruction_type=instruction_type,
+        info=info,
+        action_dim=action_dim,
+    )
+    noise = np.random.normal(0.0, float(noise_std), size=(int(action_dim),)).astype(np.float32)
+    noise *= scales
+    # Once all geometric predicates are ready, opening-only perturbations avoid
+    # wasting half of the release trials on a closing command.
+    if release_ready and int(action_dim) >= 5:
+        noise[4] = abs(float(noise[4]))
+    return noise, scales, release_ready
+
+
+class DenseRolloutTelemetry:
+    """Compact rolling per-instruction telemetry, emitted only at log intervals."""
+
+    def __init__(self, *, step_window: int, episode_window: int, action_dim: int) -> None:
+        self.step_window = max(1, int(step_window))
+        self.episode_window = max(1, int(episode_window))
+        self.action_dim = max(1, int(action_dim))
+        self._steps: dict[str, dict[str, deque[float]]] = defaultdict(dict)
+        self._episodes: dict[str, dict[str, deque[float]]] = defaultdict(dict)
+
+    @staticmethod
+    def _append(
+        store: dict[str, dict[str, deque[float]]],
+        instruction: str,
+        key: str,
+        value: float,
+        *,
+        maxlen: int,
+    ) -> None:
+        bucket = store[str(instruction)]
+        if key not in bucket:
+            bucket[key] = deque(maxlen=maxlen)
+        bucket[key].append(float(value))
+
+    def record_step(
+        self,
+        *,
+        instruction: str,
+        reward: float,
+        action: np.ndarray,
+        info: Mapping[str, Any],
+        noise_scales: np.ndarray,
+        release_exploration_active: bool,
+    ) -> None:
+        name = str(instruction)
+        self._append(self._steps, name, "reward", reward, maxlen=self.step_window)
+        action_arr = np.asarray(action, dtype=np.float32).reshape(-1)
+        scale_arr = np.asarray(noise_scales, dtype=np.float32).reshape(-1)
+        axis_names = ("x", "y", "z", "yaw", "gripper")
+        for index in range(min(self.action_dim, action_arr.size)):
+            axis = axis_names[index] if index < len(axis_names) else f"dim_{index}"
+            self._append(
+                self._steps,
+                name,
+                f"action_abs_{axis}",
+                abs(float(action_arr[index])),
+                maxlen=self.step_window,
+            )
+            if index < scale_arr.size:
+                self._append(
+                    self._steps,
+                    name,
+                    f"exploration_scale_{axis}",
+                    float(scale_arr[index]),
+                    maxlen=self.step_window,
+                )
+        self._append(
+            self._steps,
+            name,
+            "release_exploration_active",
+            float(bool(release_exploration_active)),
+            maxlen=self.step_window,
+        )
+        for key in _DENSE_TELEMETRY_INFO_KEYS:
+            value = _finite_info_float(info, key)
+            if value is not None:
+                self._append(self._steps, name, key, value, maxlen=self.step_window)
+
+    def record_episode(
+        self,
+        *,
+        instruction: str,
+        reward: float,
+        length: int,
+        success: bool,
+    ) -> None:
+        name = str(instruction)
+        for key, value in (
+            ("episode_reward", reward),
+            ("episode_length", float(length)),
+            ("success_rate", float(bool(success))),
+        ):
+            self._append(
+                self._episodes,
+                name,
+                key,
+                float(value),
+                maxlen=self.episode_window,
+            )
+
+    def snapshot(self) -> dict[str, float]:
+        metrics: dict[str, float] = {}
+        for name in sorted(set(self._steps) | set(self._episodes)):
+            prefix = f"dense_telemetry/{name}"
+            for key, values in self._steps.get(name, {}).items():
+                if values:
+                    metrics[f"{prefix}/{key}_mean"] = float(sum(values) / len(values))
+            for key, values in self._episodes.get(name, {}).items():
+                if values:
+                    metrics[f"{prefix}/{key}"] = float(sum(values) / len(values))
+            episode_successes = self._episodes.get(name, {}).get("success_rate")
+            if episode_successes is not None:
+                metrics[f"{prefix}/episode_window_count"] = float(len(episode_successes))
+        return metrics
 
 
 def _log_scalars(writer: Any, metrics: dict[str, float], step: int) -> None:
@@ -1096,6 +1371,27 @@ def main(argv: Sequence[str] | None = None) -> None:
             ),
             "materialized_optimizer_state": bool(args.materialize_optimizer_state),
             "online_dense_rl": True,
+            "exploration": {
+                "task_aware": bool(args.task_aware_exploration),
+                "noise_schedule_start_step": int(args.noise_schedule_start_step),
+                "noise_start": float(args.exploration_noise),
+                "noise_end": float(args.min_exploration_noise),
+                "noise_decay_steps": int(args.noise_decay_steps),
+                "orthogonal_scale": float(args.exploration_orthogonal_scale),
+                "z_scale": float(args.exploration_z_scale),
+                "yaw_scale": float(args.exploration_yaw_scale),
+                "hold_gripper_scale": float(args.exploration_hold_gripper_scale),
+                "release_gripper_scale": float(args.exploration_release_gripper_scale),
+                "release_error_threshold": float(args.exploration_release_error_threshold),
+            },
+            "dense_telemetry": {
+                "step_window": int(args.telemetry_window_steps),
+                "episode_window": int(metrics_window),
+                "emission_interval_steps": int(args.log_every_steps),
+                "optimizer_metrics_emission": "latest values at rollout log interval",
+                "episode_metrics_emission": "rolling values at rollout log interval",
+                "predicate_keys": list(_DENSE_TELEMETRY_INFO_KEYS),
+            },
             "num_envs_per_rank": int(env_count),
             "distributed_world_size": int(dist_ctx.world_size),
             "rank_device": str(dist_ctx.device),
@@ -1151,6 +1447,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         completed_episode_successes: deque[float] = deque(maxlen=metrics_window)
         completed_episode_count = 0
         completed_episode_success_count = 0
+        dense_telemetry = DenseRolloutTelemetry(
+            step_window=int(args.telemetry_window_steps),
+            episode_window=metrics_window,
+            action_dim=int(args.action_dim),
+        )
 
         _log(
             dist_ctx,
@@ -1198,8 +1499,18 @@ def main(argv: Sequence[str] | None = None) -> None:
                 action_index = int(slot.chunk_idx)
                 action = np.asarray(slot.action_chunk[action_index], dtype=np.float32).reshape(int(args.action_dim))
                 noise_std = _exploration_noise(args, global_step)
+                instruction_type = _info_instruction_type(slot.info, slot.instruction)
+                noise_scales = np.ones((int(args.action_dim),), dtype=np.float32)
+                release_exploration_active = False
                 if noise_std > 0.0:
-                    action = action + np.random.normal(0.0, noise_std, size=action.shape).astype(np.float32)
+                    noise, noise_scales, release_exploration_active = _sample_task_aware_exploration(
+                        args,
+                        instruction_type=instruction_type,
+                        info=slot.info,
+                        action_dim=int(args.action_dim),
+                        noise_std=noise_std,
+                    )
+                    action = action + noise
                 action = np.clip(action, -1.0, 1.0).astype(np.float32, copy=False)
 
                 with _silence_output(bool(args.progress_only) or not dist_ctx.is_main):
@@ -1224,6 +1535,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                 slot.episode_length += 1
                 slot.episode_reward += float(reward)
                 episode_success = bool(next_info.get("success", False)) if done else False
+                dense_telemetry.record_step(
+                    instruction=instruction_type,
+                    reward=float(reward),
+                    action=action,
+                    info=next_info,
+                    noise_scales=noise_scales,
+                    release_exploration_active=release_exploration_active,
+                )
+                if done:
+                    dense_telemetry.record_episode(
+                        instruction=instruction_type,
+                        reward=float(slot.episode_reward),
+                        length=int(slot.episode_length),
+                        success=episode_success,
+                    )
                 dense_stage_switched = False
                 if dense_curriculum_active:
                     count_for_dense_stage = done and int(slot.stage_index) == int(dense_stage_index)
@@ -1281,7 +1607,6 @@ def main(argv: Sequence[str] | None = None) -> None:
                     for _ in range(int(args.updates_per_step)):
                         batch = buffer.sample(int(args.batch_size), device=device)
                         last_metrics = trainer.update(batch)
-                        _log_scalars(writer, {f"train/{k}": v for k, v in last_metrics.items()}, trainer.gradient_step)
 
                 if dist_ctx.is_main and global_step % max(1, int(args.log_every_steps)) == 0:
                     episode_metrics = _episode_metric_snapshot(
@@ -1299,6 +1624,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         success_count=dense_stage_success_count,
                     )
                     mixed_curriculum_metrics = mixed_sampler.snapshot()
+                    dense_telemetry_metrics = dense_telemetry.snapshot()
                     row = {
                         "event": "rollout_step",
                         "global_step": int(global_step),
@@ -1316,6 +1642,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         **episode_metrics,
                         **dense_stage_metrics,
                         **mixed_curriculum_metrics,
+                        **dense_telemetry_metrics,
                         **last_metrics,
                         **_gpu_metrics(device),
                     }
@@ -1330,6 +1657,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     }
                     rollout_scalars.update(_episode_metric_scalars(episode_metrics))
                     rollout_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
+                    rollout_scalars.update(dense_telemetry_metrics)
+                    rollout_scalars.update(
+                        {f"train/{key}": float(value) for key, value in last_metrics.items()}
+                    )
                     _log_scalars(writer, rollout_scalars, global_step)
                     _log_mixed_curriculum_scalars(writer, mixed_curriculum_metrics, global_step)
 
@@ -1486,14 +1817,6 @@ def main(argv: Sequence[str] | None = None) -> None:
                                 )
                                 + "\n"
                             )
-                        done_scalars = {
-                            "rollout/episode_reward": float(slot.episode_reward),
-                            "rollout/success": 1.0 if episode_success else 0.0,
-                        }
-                        done_scalars.update(_episode_metric_scalars(episode_metrics))
-                        done_scalars.update(_dense_stage_metric_scalars(dense_stage_metrics))
-                        _log_scalars(writer, done_scalars, global_step)
-                        _log_mixed_curriculum_scalars(writer, mixed_curriculum_metrics, global_step)
                     slot.episode += 1
                     mixed_sampler.record(_info_instruction_type(next_info, slot.instruction), episode_success)
                     _reset_slot(
