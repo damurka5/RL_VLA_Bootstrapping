@@ -212,11 +212,46 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertTrue(config.task.metadata["manipulation_dense_reward_enabled"])
         self.assertEqual(config.task.metadata["move_to_object_xy_window_high"], 0.02)
         self.assertTrue(config.task.metadata["put_require_release"])
+        self.assertEqual(config.task.metadata["caught_object_start_above_reference_height"], 0.16)
+        np.testing.assert_allclose(
+            config.task.metadata["caught_object_start_object_offset"],
+            [0.0, 0.0, -0.045],
+        )
+        self.assertEqual(config.task.metadata["caught_object_start_xy_jitter"], 0.0)
+        self.assertEqual(config.task.metadata["caught_object_start_z_jitter"], 0.0)
+        self.assertAlmostEqual(
+            config.task.metadata["caught_object_start_gripper_clearance"],
+            0.0022,
+        )
+        self.assertEqual(config.task.metadata["caught_object_start_grip_compression"], 0.0)
+        self.assertEqual(config.task.metadata["caught_object_start_min_gripper_opening"], 0.90)
+        self.assertEqual(config.task.metadata["catch_gripper_closed_opening_threshold"], 0.96)
         self.assertEqual(len(config.task.instruction_types), 8)
+        self.assertEqual(
+            command[command.index("--resume-checkpoint") + 1],
+            (
+                "/root/repo/RL_VLA_Bootstrapping/runs/"
+                "cdpr_smolvla_strict_dense_bridge_step_6700000_to_7700000_20260717_165101/"
+                "rl/step_6900000/smolvla_cdpr_adapter.pt"
+            ),
+        )
         self.assertEqual(command[command.index("--max-train-steps") + 1], "7700000")
         self.assertEqual(command[command.index("--noise-schedule-start-step") + 1], "6700000")
         self.assertIn("--task-aware-exploration", command)
         self.assertEqual(command[command.index("--nproc-per-node") + 1], "1")
+
+    def test_strict_dense_remote_resumes_step_6900000_to_original_target(self):
+        script = (
+            ROOT / "scripts" / "train_cdpr_smolvla_strict_dense_bridge_remote.sh"
+        ).read_text()
+
+        self.assertIn("step_6900000/smolvla_cdpr_adapter.pt", script)
+        self.assertIn('START_STEP="${START_STEP:-6900000}"', script)
+        self.assertIn('TRAIN_STEPS="${TRAIN_STEPS:-800000}"', script)
+        self.assertIn(
+            'NOISE_SCHEDULE_START_STEP="${NOISE_SCHEDULE_START_STEP:-6700000}"',
+            script,
+        )
 
     def test_task_aware_exploration_restarts_and_opens_only_near_release(self):
         args = parse_dense_args(

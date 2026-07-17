@@ -166,19 +166,25 @@ task:
       [put_into_bowl, put_into_plate, move_left_of_object, move_right_of_object, move_between_objects]
     caught_object_start_probability: 1.0
     caught_object_start_above_reference_instruction_types: [put_into_bowl, put_into_plate]
-    caught_object_start_above_reference_height: 0.10
+    # Leave enough world-space height for the lower hold pose; otherwise the
+    # table-clearance clamp would push plate/bowl targets back into the base.
+    caught_object_start_above_reference_height: 0.16
     caught_object_start_reference_xy_jitter: 0.015
-    caught_object_start_object_offset: [0.0, 0.0, 0.005]
-    caught_object_start_xy_jitter: 0.010
-    caught_object_start_z_jitter: 0.004
+    # The real base mesh hangs below the legacy grasp center. Keep caught
+    # objects 5 cm below the old +5 mm offset and deterministic so no reset
+    # can place them inside the housing or either finger.
+    caught_object_start_object_offset: [0.0, 0.0, -0.045]
+    caught_object_start_xy_jitter: 0.0
+    caught_object_start_z_jitter: 0.0
     caught_object_start_fit_gripper: true
     caught_object_start_pin_object: true
-    caught_object_start_gripper_clearance: 0.0
-    caught_object_start_grip_compression: 0.001
+    caught_object_start_gripper_clearance: 0.0022
+    caught_object_start_grip_compression: 0.0
+    caught_object_start_min_gripper_opening: 0.90
     caught_object_start_min_height_above_table: 0.08
     caught_object_start_release_opening_threshold: 0.010
     caught_object_start_release_opening_margin: 0.04
-    catch_gripper_closed_opening_threshold: 0.94
+    catch_gripper_closed_opening_threshold: 0.96
     grasp_history_release_use_fitted_opening: true
 
     put_container_xy_tolerance: 0.03
@@ -275,7 +281,7 @@ training:
       standalone: true
       nproc_per_node: 1
     args:
-      resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_to_10000000_20260710_193100/rl/step_6700000
+      resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_strict_dense_bridge_step_6700000_to_7700000_20260717_165101/rl/step_6900000/smolvla_cdpr_adapter.pt
       max_train_steps: 7700000
       max_env_steps: 96
       num_envs_per_rank: 4

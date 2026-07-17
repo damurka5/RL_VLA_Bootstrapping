@@ -3,10 +3,11 @@ set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
 ENV_NAME="${ENV_NAME:-smolvla}"
-CHECKPOINT="${CHECKPOINT:-/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_stage3_object_dense_complex_resume_step_5000000_to_10000000_20260710_193100/rl/step_6700000}"
-START_STEP="${START_STEP:-6700000}"
-TRAIN_STEPS="${TRAIN_STEPS:-1000000}"
+CHECKPOINT="${CHECKPOINT:-/root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_strict_dense_bridge_step_6700000_to_7700000_20260717_165101/rl/step_6900000/smolvla_cdpr_adapter.pt}"
+START_STEP="${START_STEP:-6900000}"
+TRAIN_STEPS="${TRAIN_STEPS:-800000}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-$((START_STEP + TRAIN_STEPS))}"
+NOISE_SCHEDULE_START_STEP="${NOISE_SCHEDULE_START_STEP:-6700000}"
 GPU="${GPU:-0}"
 SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-1}"
 STAGE="${STAGE:-rl}"
@@ -62,6 +63,7 @@ cmd+=(
   printf '[strict-dense] checkpoint: %s\n' "$CHECKPOINT"
   printf '[strict-dense] requested env steps: %s\n' "$TRAIN_STEPS"
   printf '[strict-dense] global step range: %s -> %s\n' "$START_STEP" "$MAX_TRAIN_STEPS"
+  printf '[strict-dense] exploration schedule origin: %s\n' "$NOISE_SCHEDULE_START_STEP"
   printf '[strict-dense] wrapper cache refresh: %s\n' "$WRAPPER_CACHE_REFRESH_MODE"
   printf '[strict-dense] command:'
   printf ' %q' "${cmd[@]}"
@@ -88,14 +90,14 @@ cmd+=(
       RLVLA_SMOLVLA_NPROC_PER_NODE="$SMOLVLA_NPROC_PER_NODE" \
       RLVLA_SMOLVLA_RESUME_CHECKPOINT="$CHECKPOINT" \
       RLVLA_SMOLVLA_MAX_TRAIN_STEPS="$MAX_TRAIN_STEPS" \
-      RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP="$START_STEP" \
+      RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP="$NOISE_SCHEDULE_START_STEP" \
       timeout "$WALLTIME" "${cmd[@]}"
   else
     CUDA_VISIBLE_DEVICES="$GPU" \
       RLVLA_SMOLVLA_NPROC_PER_NODE="$SMOLVLA_NPROC_PER_NODE" \
       RLVLA_SMOLVLA_RESUME_CHECKPOINT="$CHECKPOINT" \
       RLVLA_SMOLVLA_MAX_TRAIN_STEPS="$MAX_TRAIN_STEPS" \
-      RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP="$START_STEP" \
+      RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP="$NOISE_SCHEDULE_START_STEP" \
       "${cmd[@]}"
   fi
 
