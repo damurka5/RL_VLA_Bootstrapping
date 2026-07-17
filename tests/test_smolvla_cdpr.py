@@ -215,7 +215,7 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertEqual(config.task.metadata["caught_object_start_above_reference_height"], 0.16)
         np.testing.assert_allclose(
             config.task.metadata["caught_object_start_object_offset"],
-            [0.0, 0.0, -0.045],
+            [0.0, 0.0, -0.050],
         )
         self.assertEqual(config.task.metadata["caught_object_start_xy_jitter"], 0.0)
         self.assertEqual(config.task.metadata["caught_object_start_z_jitter"], 0.0)
@@ -224,7 +224,7 @@ class SmolVLACDPRTests(unittest.TestCase):
             0.0022,
         )
         self.assertEqual(config.task.metadata["caught_object_start_grip_compression"], 0.0)
-        self.assertEqual(config.task.metadata["caught_object_start_min_gripper_opening"], 0.90)
+        self.assertEqual(config.task.metadata["caught_object_start_min_gripper_opening"], 0.94)
         self.assertEqual(config.task.metadata["catch_gripper_closed_opening_threshold"], 0.96)
         self.assertEqual(len(config.task.instruction_types), 8)
         self.assertEqual(

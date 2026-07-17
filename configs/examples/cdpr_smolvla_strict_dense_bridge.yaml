@@ -171,16 +171,16 @@ task:
     caught_object_start_above_reference_height: 0.16
     caught_object_start_reference_xy_jitter: 0.015
     # The real base mesh hangs below the legacy grasp center. Keep caught
-    # objects 5 cm below the old +5 mm offset and deterministic so no reset
-    # can place them inside the housing or either finger.
-    caught_object_start_object_offset: [0.0, 0.0, -0.045]
+    # objects 5 cm below the fitted finger-pad center and deterministic so no
+    # reset can place them inside the housing or any visible finger edge.
+    caught_object_start_object_offset: [0.0, 0.0, -0.050]
     caught_object_start_xy_jitter: 0.0
     caught_object_start_z_jitter: 0.0
     caught_object_start_fit_gripper: true
     caught_object_start_pin_object: true
     caught_object_start_gripper_clearance: 0.0022
     caught_object_start_grip_compression: 0.0
-    caught_object_start_min_gripper_opening: 0.90
+    caught_object_start_min_gripper_opening: 0.94
     caught_object_start_min_height_above_table: 0.08
     caught_object_start_release_opening_threshold: 0.010
     caught_object_start_release_opening_margin: 0.04
