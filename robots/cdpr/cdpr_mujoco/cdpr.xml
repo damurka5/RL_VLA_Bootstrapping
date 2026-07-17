@@ -143,8 +143,8 @@
           <inertial pos="0 0 0" mass="0.6" diaginertia="0.005 0.005 0.005"/>
           <joint name="ee_ball" type="ball" damping="6" stiffness="80" armature="0.02" limited="false"/>
 
-          <!-- Camera -->
-          <body name="camera_body" pos="0 0.05 0.07">
+          <!-- Camera follows the lowered mesh while retaining its clear downward view. -->
+          <body name="camera_body" pos="0 0.05 0.045">
             <camera name="ee_camera" mode="fixed" fovy="60"/>
           </body>
 
@@ -152,68 +152,68 @@
           <body name="ee_platform" pos="0 0 0.08">
             <inertial pos="0 0 0" mass="0.35" diaginertia="0.003 0.003 0.003"/>
 
-            <!-- The supplied base is rotated so topcenter lies on the circular
-                 housing and its camera mount points toward camera_body at +Y. -->
+            <!-- The supplied base is lowered so topcenter lies on top of the circular
+                 housing; its camera mount still points toward camera_body at +Y. -->
             <geom name="palm" class="gripper_surface" type="mesh" mesh="real_gripper_base"
-                  pos="0 0 0" euler="180 0 0"/>
+                  pos="0 0 -0.025" euler="180 0 0"/>
 
-            <!-- Original synchronized slide joints and pad collision geometry are unchanged. -->
+            <!-- The synchronized slide-joint control contract is unchanged. -->
             <body name="finger_left_car" pos="0.02 0 0">
               <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.00015"/>
               <joint name="finger_l" type="slide" axis="1 0 0" limited="true" range="0 0.03" damping="3.0"/>
               <geom name="finger_l_shoulder" class="gripper_surface" type="capsule"
-                    fromto="0.010 0 -0.030  0 0 -0.074" size="0.007"/>
+                    fromto="0.010 0 -0.055  0 0 -0.070" size="0.007"/>
               <geom name="finger_l_shoulder_edge_front" class="gripper_edge" type="capsule"
-                    fromto="0.014 -0.0065 -0.0315  0.004 -0.0065 -0.0755" size="0.0013"/>
+                    fromto="0.014 -0.0065 -0.0565  0.004 -0.0065 -0.0715" size="0.0013"/>
               <geom name="finger_l_shoulder_edge_back" class="gripper_edge" type="capsule"
-                    fromto="0.014 0.0065 -0.0315  0.004 0.0065 -0.0755" size="0.0013"/>
+                    fromto="0.014 0.0065 -0.0565  0.004 0.0065 -0.0715" size="0.0013"/>
               <geom name="finger_l_link" class="gripper_surface" type="box"
-                    size="0.0105 0.012 0.035" pos="0 0 -0.100"/>
+                    size="0.0105 0.012 0.0175" pos="0 0 -0.0875"/>
               <geom name="finger_l_tip" class="gripper_surface" type="box"
-                    size="0.0105 0.012 0.0115" pos="0 0 -0.1465"/>
+                    size="0.0105 0.012 0.007" pos="0 0 -0.112"/>
               <geom name="finger_l_edge_front_outer" class="gripper_edge" type="capsule"
-                    fromto="0.0105 -0.0125 -0.0665  0.0105 -0.0125 -0.1565" size="0.0015"/>
+                    fromto="0.0105 -0.0125 -0.0695  0.0105 -0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_l_edge_front_inner" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 -0.0125 -0.0665  -0.0105 -0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 -0.0125 -0.0695  -0.0105 -0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_l_edge_back_outer" class="gripper_edge" type="capsule"
-                    fromto="0.0105 0.0125 -0.0665  0.0105 0.0125 -0.1565" size="0.0015"/>
+                    fromto="0.0105 0.0125 -0.0695  0.0105 0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_l_edge_back_inner" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 0.0125 -0.0665  -0.0105 0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 0.0125 -0.0695  -0.0105 0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_l_edge_front_bottom" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 -0.0125 -0.1565  0.0105 -0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 -0.0125 -0.1195  0.0105 -0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_l_edge_back_bottom" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 0.0125 -0.1565  0.0105 0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 0.0125 -0.1195  0.0105 0.0125 -0.1195" size="0.0015"/>
               <geom name="left_finger_pad" class="finger_pad_collision" type="box"
-                    size="0.005 0.014 0.035" pos="-0.004 0 -0.100"/>
+                    size="0.005 0.014 0.0175" pos="-0.004 0 -0.0875"/>
             </body>
 
             <body name="finger_right_car" pos="-0.02 0 0">
               <inertial pos="0 0 0" mass="0.08" diaginertia="0.0002 0.0002 0.00015"/>
               <joint name="finger_r" type="slide" axis="-1 0 0" limited="true" range="0 0.03" damping="3.0"/>
               <geom name="finger_r_shoulder" class="gripper_surface" type="capsule"
-                    fromto="-0.010 0 -0.030  0 0 -0.074" size="0.007"/>
+                    fromto="-0.010 0 -0.055  0 0 -0.070" size="0.007"/>
               <geom name="finger_r_shoulder_edge_front" class="gripper_edge" type="capsule"
-                    fromto="-0.014 -0.0065 -0.0315  -0.004 -0.0065 -0.0755" size="0.0013"/>
+                    fromto="-0.014 -0.0065 -0.0565  -0.004 -0.0065 -0.0715" size="0.0013"/>
               <geom name="finger_r_shoulder_edge_back" class="gripper_edge" type="capsule"
-                    fromto="-0.014 0.0065 -0.0315  -0.004 0.0065 -0.0755" size="0.0013"/>
+                    fromto="-0.014 0.0065 -0.0565  -0.004 0.0065 -0.0715" size="0.0013"/>
               <geom name="finger_r_link" class="gripper_surface" type="box"
-                    size="0.0105 0.012 0.035" pos="0 0 -0.100"/>
+                    size="0.0105 0.012 0.0175" pos="0 0 -0.0875"/>
               <geom name="finger_r_tip" class="gripper_surface" type="box"
-                    size="0.0105 0.012 0.0115" pos="0 0 -0.1465"/>
+                    size="0.0105 0.012 0.007" pos="0 0 -0.112"/>
               <geom name="finger_r_edge_front_outer" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 -0.0125 -0.0665  -0.0105 -0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 -0.0125 -0.0695  -0.0105 -0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_r_edge_front_inner" class="gripper_edge" type="capsule"
-                    fromto="0.0105 -0.0125 -0.0665  0.0105 -0.0125 -0.1565" size="0.0015"/>
+                    fromto="0.0105 -0.0125 -0.0695  0.0105 -0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_r_edge_back_outer" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 0.0125 -0.0665  -0.0105 0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 0.0125 -0.0695  -0.0105 0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_r_edge_back_inner" class="gripper_edge" type="capsule"
-                    fromto="0.0105 0.0125 -0.0665  0.0105 0.0125 -0.1565" size="0.0015"/>
+                    fromto="0.0105 0.0125 -0.0695  0.0105 0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_r_edge_front_bottom" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 -0.0125 -0.1565  0.0105 -0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 -0.0125 -0.1195  0.0105 -0.0125 -0.1195" size="0.0015"/>
               <geom name="finger_r_edge_back_bottom" class="gripper_edge" type="capsule"
-                    fromto="-0.0105 0.0125 -0.1565  0.0105 0.0125 -0.1565" size="0.0015"/>
+                    fromto="-0.0105 0.0125 -0.1195  0.0105 0.0125 -0.1195" size="0.0015"/>
               <geom name="right_finger_pad" class="finger_pad_collision" type="box"
-                    size="0.005 0.014 0.035" pos="0.004 0 -0.100"/>
+                    size="0.005 0.014 0.0175" pos="0.004 0 -0.0875"/>
             </body>
           </body>
         </body>
