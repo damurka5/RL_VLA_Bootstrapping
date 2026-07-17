@@ -358,6 +358,10 @@ class MujocoOverviewRenderer:
         self.renderer.update_scene(data, camera=self.camera, scene_option=self.option)
         return np.asarray(self.renderer.render(), dtype=np.uint8).copy()
 
+    def capture_named_camera(self, data: mj.MjData, camera_name: str) -> np.ndarray:
+        self.renderer.update_scene(data, camera=str(camera_name), scene_option=self.option)
+        return np.asarray(self.renderer.render(), dtype=np.uint8).copy()
+
     def close(self) -> None:
         self.renderer.close()
 
@@ -534,6 +538,7 @@ def _run_phase(
         if step_index % max(1, int(capture_every)) == 0:
             if render_mode == "mujoco" and mujoco_renderer is not None:
                 overview_frames.append(mujoco_renderer.capture(sim.data))
+                wrist_frames.append(mujoco_renderer.capture_named_camera(sim.data, "ee_camera"))
             elif render_mode == "schematic":
                 overview_frames.append(_render_schematic_frame(sim, object_name=object_name, body_name=body_name, phase=phase))
                 wrist_frames.append(
@@ -583,6 +588,7 @@ def _run_phase_controlled(
         if step_index % max(1, int(capture_every)) == 0:
             if render_mode == "mujoco" and mujoco_renderer is not None:
                 overview_frames.append(mujoco_renderer.capture(sim.data))
+                wrist_frames.append(mujoco_renderer.capture_named_camera(sim.data, "ee_camera"))
             elif render_mode == "schematic":
                 overview_frames.append(_render_schematic_frame(sim, object_name=object_name, body_name=body_name, phase=phase))
                 wrist_frames.append(
@@ -735,7 +741,11 @@ def _run_object(args: argparse.Namespace, object_name: str) -> dict[str, Any]:
             "contact_preset": "stable_contact",
             "debug_render_collision_geoms": bool(args.debug_render_collision_geoms),
             "render_mode": str(args.render_mode),
-            "video_camera": "overview",
+            "video_camera": (
+                ["overview", "ee_camera"]
+                if str(args.render_mode) == "mujoco"
+                else ["overview", "wrist_schematic"]
+            ),
             "video_width": int(args.video_width),
             "video_height": int(args.video_height),
             "closed_opening": float(closed_opening),
@@ -753,9 +763,10 @@ def _run_object(args: argparse.Namespace, object_name: str) -> dict[str, Any]:
             _write_video(overview_frames, overview_path, fps=float(args.video_fps))
             videos["overview"] = overview_path.as_posix()
         if wrist_frames:
-            wrist_path = run_dir / "wrist.mp4"
+            is_mujoco = str(args.render_mode) == "mujoco"
+            wrist_path = run_dir / ("ee_camera.mp4" if is_mujoco else "wrist.mp4")
             _write_video(wrist_frames, wrist_path, fps=float(args.video_fps))
-            videos["wrist"] = wrist_path.as_posix()
+            videos["ee_camera" if is_mujoco else "wrist"] = wrist_path.as_posix()
         return {
             "object_name": object_name,
             "output_dir": run_dir.as_posix(),

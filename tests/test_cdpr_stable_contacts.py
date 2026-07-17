@@ -88,7 +88,19 @@ class CDPRStableContactTests(unittest.TestCase):
             gid = _geom_id(model, name)
             self.assertEqual(int(model.geom_group[gid]), 3)
             self.assertEqual(int(model.geom_condim[gid]), 4)
-            self.assertGreater(float(model.geom_size[gid][0]), 0.0)
+            np.testing.assert_allclose(model.geom_size[gid], [0.0025, 0.014, 0.0175])
+
+        data = mj.MjData(model)
+        mj.mj_forward(model, data)
+        left_gid = _geom_id(model, "left_finger_pad")
+        right_gid = _geom_id(model, "right_finger_pad")
+        closed_inner_gap = (
+            float(data.geom_xpos[left_gid][0])
+            - float(model.geom_size[left_gid][0])
+            - float(data.geom_xpos[right_gid][0])
+            - float(model.geom_size[right_gid][0])
+        )
+        self.assertAlmostEqual(closed_inner_gap, 0.035, places=7)
 
     def test_gripper_shade_updates_surfaces_but_not_dark_edges(self):
         _require_mujoco(self)
