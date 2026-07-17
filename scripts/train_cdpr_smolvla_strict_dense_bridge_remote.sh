@@ -14,6 +14,11 @@ DRY_RUN="${DRY_RUN:-0}"
 WALLTIME="${WALLTIME:-none}"
 CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_strict_dense_bridge.yaml}"
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/huggingface_public_models.sh
+source "$SCRIPT_DIR/huggingface_public_models.sh"
+configure_huggingface_public_models
+
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 RUN_NAME="${RUN_NAME:-cdpr_smolvla_strict_dense_bridge_step_${START_STEP}_to_${MAX_TRAIN_STEPS}_${timestamp}}"
 RUN_DIR="$REPO_ROOT/runs/$RUN_NAME"
@@ -63,6 +68,8 @@ cmd+=(
   if [[ "$DRY_RUN" == "1" ]]; then
     exit 0
   fi
+
+  huggingface_public_models_preflight "$ENV_NAME"
 
   if [[ -n "$WALLTIME" && "$WALLTIME" != "none" ]] && command -v timeout >/dev/null 2>&1; then
     CUDA_VISIBLE_DEVICES="$GPU" \

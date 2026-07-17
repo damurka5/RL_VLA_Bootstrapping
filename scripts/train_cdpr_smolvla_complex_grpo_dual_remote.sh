@@ -15,6 +15,11 @@ REVERSE_GPU="${REVERSE_GPU:-0,1}"
 LCHOL_GPU="${LCHOL_GPU:-1}"
 SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-2}"
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/huggingface_public_models.sh
+source "$SCRIPT_DIR/huggingface_public_models.sh"
+configure_huggingface_public_models
+
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 REVERSE_RUN_NAME="${REVERSE_RUN_NAME:-cdpr_smolvla_complex_reverse_frontier_step_${START_STEP}_to_${MAX_TRAIN_STEPS}_${timestamp}}"
 LCHOL_RUN_NAME="${LCHOL_RUN_NAME:-cdpr_smolvla_complex_lchol_hindsight_step_${START_STEP}_to_${MAX_TRAIN_STEPS}_${timestamp}}"
@@ -36,6 +41,10 @@ export RLVLA_CDPR_WRAPPER_LOG="${RLVLA_CDPR_WRAPPER_LOG:-0}"
 export PYTHONUNBUFFERED=1
 
 cd "$REPO_ROOT"
+
+if [[ "$DRY_RUN" != "1" ]]; then
+  huggingface_public_models_preflight "$ENV_NAME"
+fi
 
 python_command() {
   if [[ -z "$ENV_NAME" || "$ENV_NAME" == "none" ]]; then

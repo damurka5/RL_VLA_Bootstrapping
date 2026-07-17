@@ -10,6 +10,11 @@ INSTALL_APT_DEPS="${INSTALL_APT_DEPS:-1}"
 RUN_ASSET_STAGE="${RUN_ASSET_STAGE:-1}"
 RUN_DOCTOR="${RUN_DOCTOR:-0}"
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/huggingface_public_models.sh
+source "$SCRIPT_DIR/huggingface_public_models.sh"
+configure_huggingface_public_models
+
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Repo root does not exist: $REPO_ROOT" >&2
   exit 2
@@ -76,6 +81,8 @@ export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 
 cd "$REPO_ROOT"
+
+huggingface_public_models_preflight "$ENV_NAME"
 
 if [[ "$RUN_ASSET_STAGE" == "1" ]]; then
   conda run --no-capture-output -n "$ENV_NAME" \

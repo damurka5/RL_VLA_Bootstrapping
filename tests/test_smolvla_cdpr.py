@@ -283,6 +283,7 @@ class SmolVLACDPRTests(unittest.TestCase):
 
     def test_new_remote_scripts_pass_bash_syntax(self):
         scripts = [
+            ROOT / "scripts" / "huggingface_public_models.sh",
             ROOT / "scripts" / "setup_smolvla_remote.sh",
             ROOT / "scripts" / "train_cdpr_smolvla_dense_2gpu_remote.sh",
             ROOT / "scripts" / "train_cdpr_smolvla_stage2_dual_remote.sh",
@@ -294,6 +295,23 @@ class SmolVLACDPRTests(unittest.TestCase):
             with self.subTest(script=script.name):
                 result = subprocess.run(["bash", "-n", str(script)], check=False, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_remote_training_ignores_invalid_tokens_for_public_smolvla_models(self):
+        helper = (ROOT / "scripts" / "huggingface_public_models.sh").read_text()
+        self.assertIn("unset HF_TOKEN", helper)
+        self.assertIn("unset HUGGING_FACE_HUB_TOKEN", helper)
+        self.assertIn("HF_HUB_DISABLE_IMPLICIT_TOKEN=1", helper)
+        self.assertIn('model_info(repo_id, token=False)', helper)
+
+        for script_name in (
+            "setup_smolvla_remote.sh",
+            "train_cdpr_smolvla_strict_dense_bridge_remote.sh",
+            "train_cdpr_smolvla_complex_grpo_dual_remote.sh",
+        ):
+            with self.subTest(script=script_name):
+                script = (ROOT / "scripts" / script_name).read_text()
+                self.assertIn("configure_huggingface_public_models", script)
+                self.assertIn("huggingface_public_models_preflight", script)
 
 
 if __name__ == "__main__":
