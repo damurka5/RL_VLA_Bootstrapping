@@ -133,13 +133,17 @@ class CDPRStableContactTests(unittest.TestCase):
         upper = world_vertices.max(axis=0)
 
         topcenter_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, "topcenter")
+        camera_marker_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, "ee_camera_marker")
         camera_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "ee_camera")
         self.assertNotEqual(int(topcenter_id), -1)
+        self.assertNotEqual(int(camera_marker_id), -1)
         self.assertNotEqual(int(camera_id), -1)
         attachment = np.asarray(data.site_xpos[topcenter_id], dtype=np.float64)
+        camera_marker = np.asarray(data.site_xpos[camera_marker_id], dtype=np.float64)
         camera = np.asarray(data.cam_xpos[camera_id], dtype=np.float64)
 
         np.testing.assert_allclose(camera - attachment, [0.0, 0.05, -0.035], atol=1e-7)
+        np.testing.assert_allclose(camera_marker, camera, atol=1e-7)
         self.assertTrue(np.all(attachment >= lower - 1e-7))
         self.assertTrue(np.all(attachment <= upper + 1e-7))
         self.assertTrue(np.all(camera >= lower - 1e-7))
@@ -151,15 +155,21 @@ class CDPRStableContactTests(unittest.TestCase):
         self.assertGreater(forward_extent, 2.5 * rear_extent)
         self.assertGreater(float(camera[1]), float(attachment[1]))
 
-        target = np.array([0.0, 0.0, 0.30], dtype=np.float64)
         camera_rotation = np.asarray(data.cam_xmat[camera_id], dtype=np.float64).reshape(3, 3)
-        target_camera = camera_rotation.T @ (target - camera)
-        self.assertLess(float(target_camera[2]), 0.0)
-        half_vertical_fov = -float(target_camera[2]) * np.tan(
-            np.deg2rad(float(model.cam_fovy[camera_id])) / 2.0
-        )
-        self.assertLess(abs(float(target_camera[1])), half_vertical_fov)
-        self.assertLess(abs(float(target_camera[0])), half_vertical_fov * (4.0 / 3.0))
+        visible_points = {
+            "target": np.array([0.0, 0.0, 0.30], dtype=np.float64),
+            "left_pad": np.asarray(data.geom_xpos[_geom_id(model, "left_finger_pad")]),
+            "right_pad": np.asarray(data.geom_xpos[_geom_id(model, "right_finger_pad")]),
+        }
+        for label, point in visible_points.items():
+            with self.subTest(visible_point=label):
+                point_camera = camera_rotation.T @ (point - camera)
+                self.assertLess(float(point_camera[2]), 0.0)
+                half_vertical_fov = -float(point_camera[2]) * np.tan(
+                    np.deg2rad(float(model.cam_fovy[camera_id])) / 2.0
+                )
+                self.assertLess(abs(float(point_camera[1])), half_vertical_fov)
+                self.assertLess(abs(float(point_camera[0])), half_vertical_fov * (4.0 / 3.0))
 
     def test_ee_override_rebases_real_gripper_mesh_path(self):
         _require_mujoco(self)

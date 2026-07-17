@@ -357,15 +357,28 @@ class SmolVLACDPRTests(unittest.TestCase):
         for name in ("finger_l_link", "finger_r_link"):
             np.testing.assert_allclose(
                 [float(value) for value in str(geoms[name].get("size")).split()],
-                [0.0105, 0.012, 0.0175],
+                [0.0075, 0.012, 0.0175],
             )
 
         camera_body = root.find(".//body[@name='camera_body']")
         camera = root.find(".//camera[@name='ee_camera']")
+        camera_marker = root.find(".//site[@name='ee_camera_marker']")
         self.assertIsNotNone(camera_body)
         self.assertIsNotNone(camera)
+        self.assertIsNotNone(camera_marker)
         self.assertEqual(camera_body.get("pos"), "0 0.05 0.045")
         self.assertEqual(camera.get("fovy"), "60")
+        self.assertEqual(camera.get("euler"), "-15 0 0")
+        self.assertEqual(camera_marker.get("rgba"), "0 1 0 1")
+        self.assertEqual(camera_marker.get("size"), "0.005")
+
+        for name in ("left_finger_pad", "right_finger_pad"):
+            pad_geom = root.find(f".//geom[@name='{name}']")
+            self.assertIsNotNone(pad_geom)
+            np.testing.assert_allclose(
+                [float(value) for value in str(pad_geom.get("size")).split()],
+                [0.0035, 0.014, 0.0175],
+            )
 
         surface_default = root.find("./default/default[@class='gripper_surface']/geom")
         edge_default = root.find("./default/default[@class='gripper_edge']/geom")
