@@ -70,6 +70,16 @@ cmd+=(
   fi
 
   huggingface_public_models_preflight "$ENV_NAME"
+  if [[ -z "$ENV_NAME" || "$ENV_NAME" == "none" ]]; then
+    python3 scripts/refresh_cdpr_wrapper_cache.py \
+      --repo-root "$REPO_ROOT" \
+      --mode "${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-auto}"
+  else
+    conda run --no-capture-output -n "$ENV_NAME" \
+      python3 scripts/refresh_cdpr_wrapper_cache.py \
+      --repo-root "$REPO_ROOT" \
+      --mode "${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-auto}"
+  fi
 
   if [[ -n "$WALLTIME" && "$WALLTIME" != "none" ]] && command -v timeout >/dev/null 2>&1; then
     CUDA_VISIBLE_DEVICES="$GPU" \

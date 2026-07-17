@@ -83,6 +83,10 @@ export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 cd "$REPO_ROOT"
 
 huggingface_public_models_preflight "$ENV_NAME"
+conda run --no-capture-output -n "$ENV_NAME" \
+  python3 scripts/refresh_cdpr_wrapper_cache.py \
+  --repo-root "$REPO_ROOT" \
+  --mode "${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-auto}"
 
 if [[ "$RUN_ASSET_STAGE" == "1" ]]; then
   conda run --no-capture-output -n "$ENV_NAME" \

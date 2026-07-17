@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import subprocess
+import tempfile
 import unittest
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -312,6 +314,74 @@ class SmolVLACDPRTests(unittest.TestCase):
                 script = (ROOT / "scripts" / script_name).read_text()
                 self.assertIn("configure_huggingface_public_models", script)
                 self.assertIn("huggingface_public_models_preflight", script)
+
+    def test_gripper_visuals_are_warm_off_white(self):
+        root = ET.parse(ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr.xml").getroot()
+        expected_names = {
+            "palm",
+            "finger_l_link",
+            "finger_l_tip",
+            "finger_r_link",
+            "finger_r_tip",
+        }
+        geoms = {
+            str(geom.get("name")): geom
+            for geom in root.iter("geom")
+            if str(geom.get("name")) in expected_names
+        }
+        self.assertEqual(set(geoms), expected_names)
+        for name, geom in geoms.items():
+            with self.subTest(geom=name):
+                rgba = np.asarray([float(value) for value in str(geom.get("rgba")).split()])
+                np.testing.assert_allclose(rgba, [0.96, 0.94, 0.88, 1.0])
+                self.assertFalse(np.allclose(rgba[:3], 1.0))
+                self.assertFalse(np.allclose(rgba[0], rgba[1:3]))
+
+        pad = root.find("./default/default[@class='finger_pad_collision']/geom")
+        self.assertIsNotNone(pad)
+        np.testing.assert_allclose(
+            [float(value) for value in str(pad.get("rgba")).split()],
+            [0.96, 0.94, 0.88, 1.0],
+        )
+
+    def test_wrapper_cache_refreshes_once_per_robot_xml_version(self):
+        refresh_script = ROOT / "scripts" / "refresh_cdpr_wrapper_cache.py"
+        with tempfile.TemporaryDirectory() as tmp:
+            repo_root = Path(tmp)
+            robot_xml = repo_root / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr.xml"
+            wrapper_cache = repo_root / "robots" / "cdpr" / "cdpr_dataset" / "wrappers"
+            robot_xml.parent.mkdir(parents=True)
+            wrapper_cache.mkdir(parents=True)
+            robot_xml.write_text("<mujoco version='one'/>\n")
+            stale = wrapper_cache / "stale-wrapper.xml"
+            stale.write_text("<mujoco/>\n")
+
+            command = [
+                "python3",
+                str(refresh_script),
+                "--repo-root",
+                str(repo_root),
+            ]
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            self.assertFalse(stale.exists())
+
+            current = wrapper_cache / "current-wrapper.xml"
+            current.write_text("<mujoco/>\n")
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            self.assertTrue(current.exists())
+
+            robot_xml.write_text("<mujoco version='two'/>\n")
+            subprocess.run(command, check=True, capture_output=True, text=True)
+            self.assertFalse(current.exists())
+
+        for script_name in (
+            "setup_smolvla_remote.sh",
+            "train_cdpr_smolvla_strict_dense_bridge_remote.sh",
+            "train_cdpr_smolvla_complex_grpo_dual_remote.sh",
+        ):
+            with self.subTest(script=script_name):
+                script = (ROOT / "scripts" / script_name).read_text()
+                self.assertIn("refresh_cdpr_wrapper_cache.py", script)
 
 
 if __name__ == "__main__":

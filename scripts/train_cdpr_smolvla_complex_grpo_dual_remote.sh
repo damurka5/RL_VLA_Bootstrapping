@@ -42,10 +42,6 @@ export PYTHONUNBUFFERED=1
 
 cd "$REPO_ROOT"
 
-if [[ "$DRY_RUN" != "1" ]]; then
-  huggingface_public_models_preflight "$ENV_NAME"
-fi
-
 python_command() {
   if [[ -z "$ENV_NAME" || "$ENV_NAME" == "none" ]]; then
     printf '%s\0' python3
@@ -53,6 +49,17 @@ python_command() {
     printf '%s\0' conda run --no-capture-output -n "$ENV_NAME" python3
   fi
 }
+
+if [[ "$DRY_RUN" != "1" ]]; then
+  huggingface_public_models_preflight "$ENV_NAME"
+  refresh_cmd=()
+  while IFS= read -r -d '' part; do
+    refresh_cmd+=("$part")
+  done < <(python_command)
+  "${refresh_cmd[@]}" scripts/refresh_cdpr_wrapper_cache.py \
+    --repo-root "$REPO_ROOT" \
+    --mode "${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-auto}"
+fi
 
 run_experiment() {
   local label="$1"
