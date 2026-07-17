@@ -13,6 +13,7 @@ STAGE="${STAGE:-rl}"
 DRY_RUN="${DRY_RUN:-0}"
 WALLTIME="${WALLTIME:-none}"
 CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_strict_dense_bridge.yaml}"
+WRAPPER_CACHE_REFRESH_MODE="${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-force}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/huggingface_public_models.sh
@@ -61,6 +62,7 @@ cmd+=(
   printf '[strict-dense] checkpoint: %s\n' "$CHECKPOINT"
   printf '[strict-dense] requested env steps: %s\n' "$TRAIN_STEPS"
   printf '[strict-dense] global step range: %s -> %s\n' "$START_STEP" "$MAX_TRAIN_STEPS"
+  printf '[strict-dense] wrapper cache refresh: %s\n' "$WRAPPER_CACHE_REFRESH_MODE"
   printf '[strict-dense] command:'
   printf ' %q' "${cmd[@]}"
   printf '\n'
@@ -73,12 +75,12 @@ cmd+=(
   if [[ -z "$ENV_NAME" || "$ENV_NAME" == "none" ]]; then
     python3 scripts/refresh_cdpr_wrapper_cache.py \
       --repo-root "$REPO_ROOT" \
-      --mode "${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-auto}"
+      --mode "$WRAPPER_CACHE_REFRESH_MODE"
   else
     conda run --no-capture-output -n "$ENV_NAME" \
       python3 scripts/refresh_cdpr_wrapper_cache.py \
       --repo-root "$REPO_ROOT" \
-      --mode "${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-auto}"
+      --mode "$WRAPPER_CACHE_REFRESH_MODE"
   fi
 
   if [[ -n "$WALLTIME" && "$WALLTIME" != "none" ]] && command -v timeout >/dev/null 2>&1; then

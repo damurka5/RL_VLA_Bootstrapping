@@ -14,6 +14,7 @@ RUN_LCHOL="${RUN_LCHOL:-0}"
 REVERSE_GPU="${REVERSE_GPU:-0,1}"
 LCHOL_GPU="${LCHOL_GPU:-1}"
 SMOLVLA_NPROC_PER_NODE="${SMOLVLA_NPROC_PER_NODE:-2}"
+WRAPPER_CACHE_REFRESH_MODE="${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-force}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/huggingface_public_models.sh
@@ -52,13 +53,14 @@ python_command() {
 
 if [[ "$DRY_RUN" != "1" ]]; then
   huggingface_public_models_preflight "$ENV_NAME"
+  printf '[smolvla-grpo] wrapper cache refresh: %s\n' "$WRAPPER_CACHE_REFRESH_MODE"
   refresh_cmd=()
   while IFS= read -r -d '' part; do
     refresh_cmd+=("$part")
   done < <(python_command)
   "${refresh_cmd[@]}" scripts/refresh_cdpr_wrapper_cache.py \
     --repo-root "$REPO_ROOT" \
-    --mode "${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-auto}"
+    --mode "$WRAPPER_CACHE_REFRESH_MODE"
 fi
 
 run_experiment() {

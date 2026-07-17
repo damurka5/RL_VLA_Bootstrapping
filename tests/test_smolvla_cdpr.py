@@ -453,9 +453,19 @@ class SmolVLACDPRTests(unittest.TestCase):
             subprocess.run(command, check=True, capture_output=True, text=True)
             self.assertTrue(current.exists())
 
+            subprocess.run(
+                [*command, "--mode", "force"],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertFalse(current.exists())
+
+            changed = wrapper_cache / "changed-wrapper.xml"
+            changed.write_text("<mujoco/>\n")
             robot_xml.write_text("<mujoco version='two'/>\n")
             subprocess.run(command, check=True, capture_output=True, text=True)
-            self.assertFalse(current.exists())
+            self.assertFalse(changed.exists())
 
         for script_name in (
             "setup_smolvla_remote.sh",
@@ -465,6 +475,18 @@ class SmolVLACDPRTests(unittest.TestCase):
             with self.subTest(script=script_name):
                 script = (ROOT / "scripts" / script_name).read_text()
                 self.assertIn("refresh_cdpr_wrapper_cache.py", script)
+
+        for script_name in (
+            "train_cdpr_smolvla_strict_dense_bridge_remote.sh",
+            "train_cdpr_smolvla_complex_grpo_dual_remote.sh",
+        ):
+            with self.subTest(force_refresh_script=script_name):
+                script = (ROOT / "scripts" / script_name).read_text()
+                self.assertIn(
+                    'WRAPPER_CACHE_REFRESH_MODE="${RLVLA_CDPR_WRAPPER_CACHE_REFRESH:-force}"',
+                    script,
+                )
+                self.assertIn('--mode "$WRAPPER_CACHE_REFRESH_MODE"', script)
 
 
 if __name__ == "__main__":
