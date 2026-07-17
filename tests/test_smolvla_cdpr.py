@@ -352,7 +352,8 @@ class SmolVLACDPRTests(unittest.TestCase):
         palm = geoms["palm"]
         self.assertEqual(palm.get("type"), "mesh")
         self.assertEqual(palm.get("mesh"), "real_gripper_base")
-        self.assertEqual(palm.get("euler"), "-90 0 0")
+        self.assertEqual(palm.get("pos"), "0 0 0")
+        self.assertEqual(palm.get("euler"), "180 0 0")
 
         surface_default = root.find("./default/default[@class='gripper_surface']/geom")
         edge_default = root.find("./default/default[@class='gripper_edge']/geom")

@@ -111,6 +111,45 @@ class CDPRStableContactTests(unittest.TestCase):
             np.testing.assert_allclose(model.geom_rgba[gid, :3], [0.55, 0.55, 0.55])
         np.testing.assert_allclose(model.geom_rgba[edge_gid], edge_before)
 
+    def test_real_gripper_base_faces_existing_end_effector_camera(self):
+        _require_mujoco(self)
+
+        model = mj.MjModel.from_xml_path(str(CDPR_XML))
+        data = mj.MjData(model)
+        mj.mj_forward(model, data)
+
+        palm_gid = _geom_id(model, "palm")
+        mesh_id = int(model.geom_dataid[palm_gid])
+        vertex_adr = int(model.mesh_vertadr[mesh_id])
+        vertex_num = int(model.mesh_vertnum[mesh_id])
+        local_vertices = np.asarray(
+            model.mesh_vert[vertex_adr : vertex_adr + vertex_num],
+            dtype=np.float64,
+        )
+        palm_rotation = np.asarray(data.geom_xmat[palm_gid], dtype=np.float64).reshape(3, 3)
+        palm_position = np.asarray(data.geom_xpos[palm_gid], dtype=np.float64)
+        world_vertices = local_vertices @ palm_rotation.T + palm_position
+        lower = world_vertices.min(axis=0)
+        upper = world_vertices.max(axis=0)
+
+        topcenter_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_SITE, "topcenter")
+        camera_id = mj.mj_name2id(model, mj.mjtObj.mjOBJ_CAMERA, "ee_camera")
+        self.assertNotEqual(int(topcenter_id), -1)
+        self.assertNotEqual(int(camera_id), -1)
+        attachment = np.asarray(data.site_xpos[topcenter_id], dtype=np.float64)
+        camera = np.asarray(data.cam_xpos[camera_id], dtype=np.float64)
+
+        np.testing.assert_allclose(camera - attachment, [0.0, 0.05, -0.01], atol=1e-7)
+        self.assertTrue(np.all(attachment >= lower - 1e-7))
+        self.assertTrue(np.all(attachment <= upper + 1e-7))
+        self.assertTrue(np.all(camera >= lower - 1e-7))
+        self.assertTrue(np.all(camera <= upper + 1e-7))
+
+        forward_extent = float(upper[1] - attachment[1])
+        rear_extent = float(attachment[1] - lower[1])
+        self.assertGreater(forward_extent, 2.5 * rear_extent)
+        self.assertGreater(float(camera[1]), float(attachment[1]))
+
     def test_ee_override_rebases_real_gripper_mesh_path(self):
         _require_mujoco(self)
 
