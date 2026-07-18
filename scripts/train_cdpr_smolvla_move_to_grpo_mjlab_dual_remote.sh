@@ -12,6 +12,11 @@ ALLOW_LEGACY_SIMULATOR_CHECKPOINT="${ALLOW_LEGACY_SIMULATOR_CHECKPOINT:-0}"
 RUN_PREFLIGHT="${RUN_PREFLIGHT:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=scripts/huggingface_public_models.sh
+source "$SCRIPT_DIR/huggingface_public_models.sh"
+configure_huggingface_public_models
+
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 RUN_NAME="${RUN_NAME:-cdpr_smolvla_move_to_scratch_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
 RUN_DIR="$REPO_ROOT/runs/$RUN_NAME"
@@ -85,6 +90,7 @@ fi
 
 cd "$REPO_ROOT"
 if [[ "$RUN_PREFLIGHT" == "1" ]]; then
+  huggingface_public_models_preflight "$ENV_NAME"
   "${python_cmd[@]}" scripts/preflight_cdpr_mjlab.py \
     --config "$CONFIG" \
     --require-gpus 2 \

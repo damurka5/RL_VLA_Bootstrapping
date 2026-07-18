@@ -40,6 +40,21 @@ MOVE_TO_OBJECTS = (
 )
 
 
+def _configure_public_model_environment(
+    environment: dict[str, str],
+) -> None:
+    """Use anonymous access for the public SmolVLA checkpoints by default."""
+
+    public_only = environment.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1").strip()
+    if public_only == "1":
+        environment.pop("HF_TOKEN", None)
+        environment.pop("HUGGING_FACE_HUB_TOKEN", None)
+        environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+        return
+    if public_only != "0":
+        raise ValueError("RLVLA_HF_PUBLIC_MODELS_ONLY must be 0 or 1.")
+
+
 def _mean(values: list[float]) -> float:
     return float(statistics.fmean(values)) if values else 0.0
 
@@ -210,6 +225,7 @@ def _run_one(
     environment["PYTHONUNBUFFERED"] = "1"
     environment["TOKENIZERS_PARALLELISM"] = "false"
     environment["TORCH_NCCL_ASYNC_ERROR_HANDLING"] = "1"
+    _configure_public_model_environment(environment)
     environment.setdefault(
         "PYTORCH_CUDA_ALLOC_CONF",
         "expandable_segments:True,max_split_size_mb:128",
@@ -407,6 +423,11 @@ def main() -> int:
         "--output-dir", type=Path, default=Path("runs/cdpr_mjlab_benchmark")
     )
     args = parser.parse_args()
+    if os.environ.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1").strip() not in {
+        "0",
+        "1",
+    }:
+        parser.error("RLVLA_HF_PUBLIC_MODELS_ONLY must be 0 or 1")
     args.repo_root = args.repo_root.expanduser().resolve()
     if not args.xml.is_absolute():
         args.xml = args.repo_root / args.xml

@@ -344,6 +344,9 @@ class SmolVLACDPRTests(unittest.TestCase):
             "setup_smolvla_remote.sh",
             "train_cdpr_smolvla_strict_dense_bridge_remote.sh",
             "train_cdpr_smolvla_complex_grpo_dual_remote.sh",
+            "train_cdpr_smolvla_complex_grpo_mjlab_dual_remote.sh",
+            "train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh",
+            "smoke_cdpr_mjlab_two_gpu.sh",
         ):
             with self.subTest(script=script_name):
                 script = (ROOT / "scripts" / script_name).read_text()

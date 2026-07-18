@@ -178,6 +178,8 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertIn("MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-2000000}\"", source)
         self.assertIn("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT", source)
         self.assertIn("Scratch training refuses CHECKPOINT", source)
+        self.assertIn("configure_huggingface_public_models", source)
+        self.assertIn("huggingface_public_models_preflight", source)
 
     def test_mjspec_body_lookup_supports_current_and_legacy_apis(self):
         body = SimpleNamespace(name="mjwarp_object_slot_0")
@@ -932,7 +934,14 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertIn("profile=bool(args.mjwarp_profile_timers)", trainer_source)
         self.assertIn('"--mjwarp-profile-timers"', benchmark_source)
         self.assertIn('"--no-lock-non-commanded-axes"', benchmark_source)
+        self.assertIn('environment.pop("HF_TOKEN", None)', benchmark_source)
+        self.assertIn(
+            'environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"',
+            benchmark_source,
+        )
         self.assertIn("--no-lock-non-commanded-axes", smoke_source)
+        self.assertIn("configure_huggingface_public_models", smoke_source)
+        self.assertIn("huggingface_public_models_preflight", smoke_source)
 
     def test_pinned_stack_is_exact_and_cuda_12_8(self):
         self.assertEqual(PINNED_MJLAB_VERSION, "1.5.0")
