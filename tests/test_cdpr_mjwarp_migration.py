@@ -38,8 +38,11 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (
     numpy_group_advantages,
 )
 from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+    _end_to_end_time_metrics,
     _log_tensorboard_metrics,
+    _make_mjwarp_progress_bar,
     _synchronize_validation_rounds,
+    _update_mjwarp_progress_bar,
     _validation_due as _mjwarp_validation_due,
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
@@ -315,6 +318,78 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
                 metrics[f"validation/by_object/{label}/success_rate"],
                 0.5,
             )
+
+    def test_mjwarp_progress_uses_end_to_end_time_and_global_selected_steps(
+        self,
+    ):
+        time_metrics = _end_to_end_time_metrics(
+            start_step=0,
+            global_step=100,
+            max_train_steps=1_000,
+            elapsed_seconds=2.0,
+        )
+        self.assertEqual(
+            time_metrics[
+                "training/end_to_end_selected_actions_per_second"
+            ],
+            50.0,
+        )
+        self.assertEqual(
+            time_metrics["training/estimated_remaining_time_s"],
+            18.0,
+        )
+        self.assertEqual(
+            time_metrics["training/estimated_total_time_s"],
+            20.0,
+        )
+
+        progress = mock.Mock()
+        displayed = _update_mjwarp_progress_bar(
+            progress,
+            previous_display_step=9_984,
+            global_step=10_471,
+            max_train_steps=2_000_000,
+            update_index=21,
+            metrics={
+                "sampled_actions_per_second_global": 1246.1,
+                "selected_actions_per_second_global": 155.6,
+                "candidate_successes": 167.0,
+                "candidate_worlds": 1024.0,
+                "informative_records": 3948.0,
+            },
+        )
+        self.assertEqual(displayed, 10_471)
+        progress.update.assert_called_once_with(487)
+        postfix = progress.set_postfix.call_args.args[0]
+        self.assertEqual(postfix["update"], 21)
+        self.assertEqual(postfix["sampled/s"], "1246.1")
+        self.assertEqual(postfix["rollout-selected/s"], "155.6")
+        self.assertEqual(postfix["success"], "167/1024")
+        self.assertEqual(postfix["records"], "3948")
+        self.assertFalse(progress.set_postfix.call_args.kwargs["refresh"])
+
+    def test_mjwarp_progress_bar_is_enabled_through_remote_tee(self):
+        args = SimpleNamespace(
+            progress=True,
+            max_train_steps=2_000_000,
+            progress_refresh_seconds=10.0,
+        )
+        fake_bar = mock.Mock()
+        with mock.patch(
+            "rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr.tqdm",
+            return_value=fake_bar,
+        ) as tqdm_mock:
+            created = _make_mjwarp_progress_bar(
+                args=args,
+                is_main=True,
+                start_step=10_471,
+            )
+        self.assertIs(created, fake_bar)
+        kwargs = tqdm_mock.call_args.kwargs
+        self.assertEqual(kwargs["total"], 2_000_000)
+        self.assertEqual(kwargs["initial"], 10_471)
+        self.assertFalse(kwargs["disable"])
+        self.assertEqual(kwargs["unit"], " selected-step")
 
     def test_mjspec_body_lookup_supports_current_and_legacy_apis(self):
         body = SimpleNamespace(name="mjwarp_object_slot_0")

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import math
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -20,6 +21,11 @@ try:
     from torch.utils.tensorboard import SummaryWriter
 except Exception:  # pragma: no cover - the pinned MJLab env includes tensorboard.
     SummaryWriter = None
+
+try:
+    from tqdm.auto import tqdm
+except Exception:  # pragma: no cover - the pinned MJLab env includes tqdm.
+    tqdm = None
 
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
@@ -86,6 +92,98 @@ def _log_tensorboard_metrics(
         if math.isfinite(scalar):
             writer.add_scalar(str(key), scalar, int(step))
     writer.flush()
+
+
+def _make_mjwarp_progress_bar(
+    *,
+    args: Any,
+    is_main: bool,
+    start_step: int,
+) -> Any | None:
+    """Create a rank-zero bar even when the remote launcher pipes via tee."""
+
+    if not bool(args.progress) or not is_main or tqdm is None:
+        return None
+    total = max(0, int(args.max_train_steps))
+    initial = min(max(0, int(start_step)), total)
+    return tqdm(
+        total=total,
+        initial=initial,
+        desc="[smolvla-mjwarp]",
+        unit=" selected-step",
+        dynamic_ncols=True,
+        mininterval=max(0.1, float(args.progress_refresh_seconds)),
+        maxinterval=max(10.0, float(args.progress_refresh_seconds) * 2.0),
+        miniters=1,
+        smoothing=0.1,
+        leave=True,
+        disable=False,
+        file=sys.__stderr__,
+    )
+
+
+def _end_to_end_time_metrics(
+    *,
+    start_step: int,
+    global_step: int,
+    max_train_steps: int,
+    elapsed_seconds: float,
+) -> dict[str, float]:
+    """Estimate completion from full update wall time, including validation."""
+
+    elapsed = max(0.0, float(elapsed_seconds))
+    completed = max(
+        0,
+        min(int(global_step), int(max_train_steps)) - int(start_step),
+    )
+    remaining = max(0, int(max_train_steps) - int(global_step))
+    rate = float(completed) / max(elapsed, 1.0e-9)
+    eta = float(remaining) / max(rate, 1.0e-9)
+    return {
+        "training/elapsed_time_s": elapsed,
+        "training/end_to_end_selected_actions_per_second": rate,
+        "training/estimated_remaining_time_s": eta,
+        "training/estimated_total_time_s": elapsed + eta,
+    }
+
+
+def _update_mjwarp_progress_bar(
+    progress: Any | None,
+    *,
+    previous_display_step: int,
+    global_step: int,
+    max_train_steps: int,
+    update_index: int,
+    metrics: Mapping[str, Any],
+) -> int:
+    """Advance by global selected actions and retain rollout diagnostics."""
+
+    displayed_step = min(
+        max(0, int(global_step)), max(0, int(max_train_steps))
+    )
+    if progress is None:
+        return displayed_step
+    progress.set_postfix(
+        {
+            "update": int(update_index),
+            "sampled/s": (
+                f"{float(metrics.get('sampled_actions_per_second_global', 0.0)):.1f}"
+            ),
+            "rollout-selected/s": (
+                f"{float(metrics.get('selected_actions_per_second_global', 0.0)):.1f}"
+            ),
+            "success": (
+                f"{float(metrics.get('candidate_successes', 0.0)):.0f}/"
+                f"{float(metrics.get('candidate_worlds', 0.0)):.0f}"
+            ),
+            "records": (
+                f"{float(metrics.get('informative_records', 0.0)):.0f}"
+            ),
+        },
+        refresh=False,
+    )
+    progress.update(max(0, displayed_step - int(previous_display_step)))
+    return displayed_step
 
 
 def _validation_enabled(args: Any) -> bool:
@@ -410,6 +508,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     metrics_path = run_dir / "metrics.jsonl"
     validation_path = run_dir / "validation.jsonl"
     writer = None
+    progress = None
     if dist_ctx.is_main:
         _write_json(run_dir / "config.json", vars(args))
         if SummaryWriter is None:
@@ -633,6 +732,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         else:
             last_validation_step = int(global_step)
+        run_start_step = int(global_step)
+        training_started = time.perf_counter()
+        progress = _make_mjwarp_progress_bar(
+            args=args,
+            is_main=dist_ctx.is_main,
+            start_step=run_start_step,
+        )
+        progress_display_step = min(
+            run_start_step, int(args.max_train_steps)
+        )
         while (
             global_step < int(args.max_train_steps)
             and (
@@ -818,38 +927,6 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "profile/dominant_stage_time_s"
                 ] = dominant_seconds
 
-            if dist_ctx.is_main:
-                _append_jsonl(metrics_path, synchronized_metrics)
-                _log_tensorboard_metrics(
-                    writer, synchronized_metrics, global_step
-                )
-                if profile_this_update:
-                    _write_json(
-                        run_dir / "latest_profile.json",
-                        {
-                            key: value
-                            for key, value in synchronized_metrics.items()
-                            if key.startswith("profile/")
-                            or key
-                            in {
-                                "global_step",
-                                "update_index",
-                                "sampled_environment_actions",
-                                "selected_environment_actions",
-                            }
-                        },
-                    )
-                _log(
-                    dist_ctx,
-                    "[smolvla-mjwarp] "
-                    f"step={global_step} update={update_index} "
-                    f"sampled={synchronized_metrics['sampled_actions_per_second_global']:.1f} "
-                    f"selected={synchronized_metrics['selected_actions_per_second_global']:.1f} "
-                    f"success={synchronized_metrics['candidate_successes']:.0f}/"
-                    f"{synchronized_metrics['candidate_worlds']:.0f} "
-                    f"records={synchronized_metrics['informative_records']:.0f}",
-                )
-
             validation_due = _validation_due(
                 args,
                 global_step=global_step,
@@ -892,6 +969,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         f"success={validation_metrics['validation/success_rate']:.4f} "
                         f"reward={validation_metrics['validation/reward_mean']:.4f} "
                         f"episodes={validation_metrics['validation/episodes']:.0f}",
+                        progress=progress,
                     )
 
             save_due = (
@@ -923,11 +1001,72 @@ def main(argv: Sequence[str] | None = None) -> None:
                 _log(
                     dist_ctx,
                     f"[smolvla-mjwarp] checkpoint={checkpoint_path}",
+                    progress=progress,
                 )
             if checkpoint_due:
                 last_saved_step = int(global_step)
                 _distributed_barrier()
+
+            synchronized_metrics.update(
+                _end_to_end_time_metrics(
+                    start_step=run_start_step,
+                    global_step=global_step,
+                    max_train_steps=int(args.max_train_steps),
+                    elapsed_seconds=(
+                        time.perf_counter() - training_started
+                    ),
+                )
+            )
+            if dist_ctx.is_main:
+                _append_jsonl(metrics_path, synchronized_metrics)
+                _log_tensorboard_metrics(
+                    writer, synchronized_metrics, global_step
+                )
+                if profile_this_update:
+                    _write_json(
+                        run_dir / "latest_profile.json",
+                        {
+                            key: value
+                            for key, value in synchronized_metrics.items()
+                            if key.startswith("profile/")
+                            or key.startswith("training/")
+                            or key
+                            in {
+                                "global_step",
+                                "update_index",
+                                "sampled_environment_actions",
+                                "selected_environment_actions",
+                            }
+                        },
+                    )
+                progress_display_step = _update_mjwarp_progress_bar(
+                    progress,
+                    previous_display_step=progress_display_step,
+                    global_step=global_step,
+                    max_train_steps=int(args.max_train_steps),
+                    update_index=update_index,
+                    metrics=synchronized_metrics,
+                )
+                if progress is None:
+                    eta_seconds = synchronized_metrics[
+                        "training/estimated_remaining_time_s"
+                    ]
+                    _log(
+                        dist_ctx,
+                        "[smolvla-mjwarp] "
+                        f"step={global_step}/{int(args.max_train_steps)} "
+                        f"update={update_index} "
+                        f"sampled={synchronized_metrics['sampled_actions_per_second_global']:.1f} "
+                        f"selected={synchronized_metrics['selected_actions_per_second_global']:.1f} "
+                        f"e2e={synchronized_metrics['training/end_to_end_selected_actions_per_second']:.1f} "
+                        f"eta={eta_seconds / 3600.0:.2f}h "
+                        f"success={synchronized_metrics['candidate_successes']:.0f}/"
+                        f"{synchronized_metrics['candidate_worlds']:.0f} "
+                        f"records={synchronized_metrics['informative_records']:.0f}",
+                    )
     finally:
+        if progress is not None:
+            progress.close()
         if writer is not None:
             writer.close()
         if backend is not None:
