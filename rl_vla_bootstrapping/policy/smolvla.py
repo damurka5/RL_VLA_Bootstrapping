@@ -53,6 +53,8 @@ def _module_name_for_script(script_path: Path) -> str | None:
         return "rl_vla_bootstrapping.policy.smolvla_finetune_cdpr"
     if parts == ("rl_vla_bootstrapping", "policy", "smolvla_grpo_finetune_cdpr.py"):
         return "rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr"
+    if parts == ("rl_vla_bootstrapping", "policy", "smolvla_grpo_mjwarp_cdpr.py"):
+        return "rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr"
     return None
 
 
@@ -102,6 +104,20 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     injected.setdefault("chunk_size", config.policy.action_codec.chunk_size)
     injected.setdefault("action_dim", len(config.embodiment.action_adapter.common_action_keys))
     injected.setdefault("image_size", 256)
+    injected.setdefault("simulator_backend", config.simulator.backend)
+    injected.setdefault("worlds_per_rank", config.simulator.worlds_per_rank)
+    injected.setdefault("groups_per_rank", config.simulator.groups_per_rank)
+    injected.setdefault("mjwarp_nconmax", config.simulator.nconmax)
+    injected.setdefault("mjwarp_njmax", config.simulator.njmax)
+    if config.simulator.nccdmax is not None:
+        injected.setdefault("mjwarp_nccdmax", config.simulator.nccdmax)
+    injected.setdefault("render_width", config.simulator.render_width)
+    injected.setdefault("render_height", config.simulator.render_height)
+    injected.setdefault("object_slots", config.simulator.object_slots)
+    if config.simulator.fixed_scene_xml:
+        fixed_scene_xml = config.resolve_path(config.simulator.fixed_scene_xml)
+        if fixed_scene_xml is not None:
+            injected.setdefault("mjwarp_xml_path", fixed_scene_xml.as_posix())
 
     resume_checkpoint = os.environ.get("RLVLA_SMOLVLA_RESUME_CHECKPOINT", "").strip()
     if resume_checkpoint:
@@ -109,6 +125,36 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     max_train_steps = os.environ.get("RLVLA_SMOLVLA_MAX_TRAIN_STEPS", "").strip()
     if max_train_steps:
         injected["max_train_steps"] = int(max_train_steps)
+    mjwarp_worlds = os.environ.get("RLVLA_MJWARP_WORLDS_PER_RANK", "").strip()
+    if mjwarp_worlds:
+        worlds = int(mjwarp_worlds)
+        group_size = int(injected.get("grpo_group_size", 8))
+        if worlds < group_size or worlds % group_size:
+            raise ValueError(
+                "RLVLA_MJWARP_WORLDS_PER_RANK must be a positive multiple of "
+                f"grpo_group_size={group_size}."
+            )
+        injected["worlds_per_rank"] = worlds
+        injected["groups_per_rank"] = worlds // group_size
+    smolvla_microbatch = os.environ.get(
+        "RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE", ""
+    ).strip()
+    if smolvla_microbatch:
+        injected["smolvla_inference_microbatch_size"] = int(smolvla_microbatch)
+    allow_legacy = os.environ.get(
+        "RLVLA_SMOLVLA_ALLOW_LEGACY_SIMULATOR_CHECKPOINT", ""
+    ).strip()
+    if allow_legacy:
+        normalized = allow_legacy.lower()
+        if normalized in {"1", "true", "yes", "on"}:
+            injected["allow_legacy_simulator_checkpoint"] = True
+        elif normalized in {"0", "false", "no", "off"}:
+            injected["allow_legacy_simulator_checkpoint"] = False
+        else:
+            raise ValueError(
+                "RLVLA_SMOLVLA_ALLOW_LEGACY_SIMULATOR_CHECKPOINT must be "
+                "one of 0/1, false/true, no/yes, or off/on."
+            )
     noise_schedule_start_step = os.environ.get(
         "RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP", ""
     ).strip()
@@ -152,7 +198,15 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
 
     stage_env = _smolvla_env(config)
     stage_env.update(_task_hook_env(config))
-    stage_env.update(_extract_cdpr_env_overrides(injected))
+    # CPU environment construction historically consumes these values through
+    # process environment variables. The MJWarp backend owns the controller
+    # directly, so keep its CLI values as well as exporting provenance hooks.
+    env_source = (
+        dict(injected)
+        if config.simulator.backend == "mjlab_mjwarp"
+        else injected
+    )
+    stage_env.update(_extract_cdpr_env_overrides(env_source))
 
     for key, value in injected.items():
         _append_smolvla_script_arg(argv, key, value)
@@ -165,6 +219,17 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     ]
     if "grpo" in algorithm:
         notes.append("GRPO mode trains the residual policy with grouped relative advantages and no TD3 critics.")
+    if config.simulator.backend == "mjlab_mjwarp":
+        notes = [
+            (
+                "MJLab/MuJoCo Warp CDPR backend: every rank owns complete GRPO "
+                "groups in one GPU-resident batched simulator allocation."
+            ),
+            (
+                "Frozen SmolVLA is replicated per rank; DDP covers only the "
+                "trainable residual policy."
+            ),
+        ] + [note for note in notes if "MuJoCo stepping remains CPU-side" not in note]
     if desk_texture_note:
         notes.append(desk_texture_note)
     if config.task.reward is not None:

@@ -1,0 +1,307 @@
+#!/usr/bin/env python3
+"""Executable MJWarp backend smoke: reset, controller, contacts, and cameras."""
+
+from __future__ import annotations
+
+import argparse
+import json
+import sys
+import traceback
+from pathlib import Path
+from typing import Any
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
+from rl_vla_bootstrapping.core.config import load_project_config
+from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+    BatchedReverseFrontierResetter,
+    RankLocalCurriculum,
+)
+from rl_vla_bootstrapping.policy.rank_local_grpo import RankLocalGroupLayout
+from rl_vla_bootstrapping.simulation.cdpr_backend import (
+    CDPRBackendConfig,
+    create_cdpr_backend,
+)
+
+
+def _finite(torch: Any, *values: Any) -> bool:
+    return all(bool(torch.isfinite(value).all()) for value in values)
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=Path(
+            "configs/examples/"
+            "cdpr_smolvla_complex_reverse_frontier_grpo_mjlab.yaml"
+        ),
+    )
+    parser.add_argument("--worlds", type=int, default=8)
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--steps", type=int, default=8)
+    parser.add_argument("--seed", type=int, default=20260718)
+    parser.add_argument(
+        "--output", type=Path, default=Path("runs/mjlab_backend_smoke.json")
+    )
+    args = parser.parse_args()
+    report: dict[str, Any] = {"ok": False, "checks": {}, "errors": []}
+    backend = None
+    try:
+        import torch
+
+        if args.worlds < 8 or args.worlds % 8:
+            raise ValueError("--worlds must be a positive multiple of eight.")
+        project = load_project_config(args.config.resolve())
+        xml_path = project.resolve_path(project.simulator.fixed_scene_xml)
+        if xml_path is None:
+            raise ValueError("simulator.fixed_scene_xml is required.")
+        layout = RankLocalGroupLayout(
+            worlds_per_rank=args.worlds,
+            groups_per_rank=args.worlds // 8,
+            group_size=8,
+        )
+        backend = create_cdpr_backend(
+            CDPRBackendConfig(
+                backend="mjlab_mjwarp",
+                worlds_per_rank=args.worlds,
+                groups_per_rank=args.worlds // 8,
+                grpo_group_size=8,
+                hold_steps=6,
+                render_width=project.simulator.render_width,
+                render_height=project.simulator.render_height,
+                object_slots=4,
+                nconmax=project.simulator.nconmax,
+                njmax=project.simulator.njmax,
+                nccdmax=project.simulator.nccdmax,
+                device=args.device,
+                xml_path=xml_path,
+            )
+        )
+        curriculum = RankLocalCurriculum(device=backend.device)
+        resetter = BatchedReverseFrontierResetter(
+            backend=backend,
+            layout=layout,
+            curriculum=curriculum,
+            rank=0,
+            base_seed=args.seed,
+        )
+        reset = resetter.reset(update_index=0, round_index=0)
+        backend.configure_pinned_objects(
+            reset.task_state.target_slots,
+            reset.pin_offsets,
+            reset.pinned,
+            reset.task_state.release_threshold,
+        )
+        low_before = backend.low_dim_observations()
+        ee_position_before = low_before.ee_position.clone()
+        tendon_lengths_before = low_before.tendon_lengths.clone()
+        report["checks"]["reset_finite"] = _finite(
+            torch,
+            low_before.ee_position,
+            low_before.object_positions,
+            low_before.tendon_lengths,
+            low_before.gripper_opening,
+        )
+        qpos_before = backend.export_worlds([0, 1])
+        report["checks"]["group_state_broadcast_qpos"] = bool(
+            (qpos_before[0]["qpos"] == qpos_before[1]["qpos"]).all()
+        )
+
+        generator = torch.Generator(device=backend.device)
+        generator.manual_seed(args.seed + 17)
+        for step in range(max(1, int(args.steps))):
+            actions = torch.rand(
+                (args.worlds, 5),
+                generator=generator,
+                dtype=torch.float32,
+                device=backend.device,
+            ) * 2.0 - 1.0
+            # Exercise masked completed candidates without changing tensor shape.
+            active = torch.ones(
+                (args.worlds,), dtype=torch.bool, device=backend.device
+            )
+            active[(step + 1) % args.worlds] = False
+            backend.step(actions, active)
+        low_after = backend.low_dim_observations()
+        report["checks"]["seven_substep_controller_finite"] = _finite(
+            torch,
+            low_after.ee_position,
+            low_after.object_positions,
+            low_after.tendon_lengths,
+            low_after.gripper_opening,
+        )
+        report["checks"]["four_spatial_tendon_tensor"] = tuple(
+            low_after.tendon_lengths.shape
+        ) == (args.worlds, 4)
+        report["checks"]["spatial_tendons_evolve_under_control"] = bool(
+            (low_after.tendon_lengths - tendon_lengths_before)
+            .abs()
+            .max()
+            > 1.0e-7
+        )
+        report["checks"]["controller_moved_active_worlds"] = bool(
+            torch.linalg.vector_norm(
+                low_after.ee_position - ee_position_before, dim=-1
+            ).max()
+            > 1.0e-5
+        )
+        right_finger_id = int(
+            backend.mujoco.mj_name2id(
+                backend.host_model,
+                backend.mujoco.mjtObj.mjOBJ_JOINT,
+                "finger_r",
+            )
+        )
+        if right_finger_id < 0:
+            raise RuntimeError("The required finger_r equality joint is missing.")
+        right_finger_qadr = int(
+            backend.host_model.jnt_qposadr[right_finger_id]
+        )
+        equality_error = (
+            backend._qpos[:, backend.finger_qadr]
+            - backend._qpos[:, right_finger_qadr]
+        ).abs()
+        report["finger_equality_max_error"] = float(equality_error.max().item())
+        report["checks"]["finger_equality_active"] = bool(
+            backend._eq_active is not None
+            and tuple(backend._eq_active.shape)
+            == (args.worlds, int(backend.host_model.neq))
+            and bool(backend._eq_active[:, 0].all())
+            and report["finger_equality_max_error"] <= 5.0e-3
+        )
+        sensor_data = getattr(backend, "_sensordata", None)
+        report["checks"]["camera_frame_sensors_finite"] = bool(
+            sensor_data is not None
+            and tuple(sensor_data.shape)
+            == (args.worlds, int(backend.host_model.nsensordata))
+            and _finite(torch, sensor_data)
+        )
+
+        # The resetter places all object collision variants on the support.
+        # Querying the fixed first primitive against the desk exercises the
+        # global contact arrays and world-id scatter path after contact stepping.
+        desk = torch.full(
+            (args.worlds,),
+            int(backend.desk_geom_id),
+            dtype=torch.int64,
+            device=backend.device,
+        )
+        target_geom = torch.full(
+            (args.worlds,),
+            int(backend.slot_geom_ids_host[0][0]),
+            dtype=torch.int64,
+            device=backend.device,
+        )
+        contact = backend.contact_mask(target_geom, desk)
+        report["contact_world_count"] = int(contact.sum().item())
+        report["total_active_contacts"] = int(backend._nacon[0].item())
+        report["checks"]["contact_step_generated_contacts"] = (
+            report["total_active_contacts"] > 0
+        )
+        report["checks"]["contact_query_shape"] = tuple(contact.shape) == (
+            args.worlds,
+        )
+        finger_contact = backend.finger_object_contact_mask(
+            reset.task_state.target_slots
+        )
+        report["checks"]["finger_contact_query_shape"] = tuple(
+            finger_contact.shape
+        ) == (args.worlds,)
+
+        cameras = backend.render_policy_cameras()
+        expected = (
+            args.worlds,
+            3,
+            project.simulator.render_height,
+            project.simulator.render_width,
+        )
+        report["checks"]["camera_shapes"] = (
+            tuple(cameras.overview.shape) == expected
+            and tuple(cameras.wrist.shape) == expected
+        )
+        report["checks"]["camera_gpu_float_rgb"] = (
+            cameras.overview.device == backend.device
+            and cameras.wrist.device == backend.device
+            and cameras.overview.dtype == torch.float32
+            and cameras.wrist.dtype == torch.float32
+            and float(cameras.overview.min().item()) >= 0.0
+            and float(cameras.overview.max().item()) <= 1.0
+            and float(cameras.wrist.min().item()) >= 0.0
+            and float(cameras.wrist.max().item()) <= 1.0
+        )
+        report["checks"]["third_slot_exact_wrist_duplicate"] = (
+            cameras.aux.data_ptr() == cameras.wrist.data_ptr()
+        )
+        report["checks"]["physical_cameras_are_distinct"] = bool(
+            (cameras.overview - cameras.wrist).abs().mean() > 1.0e-4
+        )
+        report["camera"] = {
+            "overview_shape": list(cameras.overview.shape),
+            "wrist_shape": list(cameras.wrist.shape),
+            "overview_mean": float(cameras.overview.mean().item()),
+            "wrist_mean": float(cameras.wrist.mean().item()),
+            "overview_center_rgb": cameras.overview[
+                0,
+                :,
+                project.simulator.render_height // 2,
+                project.simulator.render_width // 2,
+            ]
+            .detach()
+            .cpu()
+            .tolist(),
+            "wrist_center_rgb": cameras.wrist[
+                0,
+                :,
+                project.simulator.render_height // 2,
+                project.simulator.render_width // 2,
+            ]
+            .detach()
+            .cpu()
+            .tolist(),
+        }
+
+        backend.reset_worlds(
+            torch.tensor([0, args.worlds - 1], device=backend.device)
+        )
+        partial = backend.low_dim_observations()
+        report["checks"]["partial_reset_finite"] = _finite(
+            torch, partial.ee_position, partial.tendon_lengths
+        )
+        report["checks"]["task_batch_complete_groups"] = tuple(
+            reset.group_ids.shape
+        ) == (args.worlds,)
+        report["capacity"] = backend.capacity_status()
+        report["checks"]["no_contact_capacity_overflow"] = (
+            not report["capacity"]["contact_overflow"]
+        )
+        report["checks"]["no_constraint_capacity_overflow"] = (
+            not report["capacity"]["constraint_overflow"]
+        )
+        report["metadata"] = backend.metadata()
+    except Exception as exc:
+        report["errors"].append(f"{type(exc).__name__}: {exc}")
+        report["traceback"] = traceback.format_exc()
+    finally:
+        if backend is not None:
+            backend.close()
+
+    failed = [name for name, value in report["checks"].items() if not bool(value)]
+    report["failed_checks"] = failed
+    report["ok"] = not report["errors"] and not failed
+    output = args.output.expanduser().resolve()
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(
+        json.dumps(report, indent=2, sort_keys=True, default=str) + "\n",
+        encoding="utf-8",
+    )
+    print(json.dumps(report, indent=2, sort_keys=True, default=str))
+    print(f"smoke_report={output}")
+    return 0 if report["ok"] else 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

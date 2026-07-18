@@ -1,0 +1,37 @@
+<mujoco model="cdpr_mjwarp_smoke">
+  <include file="cdpr.xml"/>
+  <include file="cdpr_mjwarp_object_slots.xml"/>
+  <asset>
+    <texture name="mjwarp_desk_tex_0" type="2d" builtin="checker"
+             rgb1="0.46 0.31 0.20" rgb2="0.63 0.45 0.29" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_1" type="2d" builtin="checker"
+             rgb1="0.25 0.25 0.25" rgb2="0.48 0.48 0.48" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_2" type="2d" builtin="checker"
+             rgb1="0.12 0.29 0.38" rgb2="0.24 0.48 0.56" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_3" type="2d" builtin="checker"
+             rgb1="0.47 0.44 0.34" rgb2="0.70 0.66 0.51" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_4" type="2d" builtin="checker"
+             rgb1="0.31 0.16 0.12" rgb2="0.55 0.28 0.20" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_5" type="2d" builtin="checker"
+             rgb1="0.22 0.33 0.20" rgb2="0.42 0.55 0.34" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_6" type="2d" builtin="checker"
+             rgb1="0.33 0.24 0.38" rgb2="0.54 0.42 0.60" width="128" height="128"/>
+    <material name="mjwarp_desk_mat_0" texture="mjwarp_desk_tex_0" texrepeat="20 20"/>
+    <material name="mjwarp_desk_mat_1" texture="mjwarp_desk_tex_1" texrepeat="20 20"/>
+    <material name="mjwarp_desk_mat_2" texture="mjwarp_desk_tex_2" texrepeat="20 20"/>
+    <material name="mjwarp_desk_mat_3" texture="mjwarp_desk_tex_3" texrepeat="20 20"/>
+    <material name="mjwarp_desk_mat_4" texture="mjwarp_desk_tex_4" texrepeat="20 20"/>
+    <material name="mjwarp_desk_mat_5" texture="mjwarp_desk_tex_5" texrepeat="20 20"/>
+    <material name="mjwarp_desk_mat_6" texture="mjwarp_desk_tex_6" texrepeat="20 20"/>
+  </asset>
+  <worldbody>
+    <!-- Portable physical desk top matching the active support height. -->
+    <geom name="mjwarp_desk_surface" type="box" pos="0 0 0.13"
+          size="0.48 0.68 0.02" material="mjwarp_desk_mat_0"
+          friction="0.95 0.3 0.1"/>
+    <!-- A visual-only backdrop enables per-world background colors. -->
+    <geom name="mjwarp_background" type="box" pos="0 0.82 0.65"
+          size="0.75 0.01 0.65" contype="0" conaffinity="0" group="1"
+          rgba="0.80 0.84 0.90 1"/>
+  </worldbody>
+</mujoco>

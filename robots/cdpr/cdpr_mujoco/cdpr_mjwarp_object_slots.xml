@@ -1,0 +1,77 @@
+<mujoco model="cdpr_mjwarp_object_slots">
+  <!--
+    Fixed topology for the MJWarp backend.  Every slot has the same primitive
+    superset.  Per-world model arrays choose catalog geometry, material, mass,
+    and inertia without recompiling MJCF.  The initial pose is intentionally
+    below the floor; reset activates only configured slots.
+  -->
+  <default>
+    <default class="mjwarp_object_slot">
+      <geom contype="1" conaffinity="7" group="3" condim="3"
+            friction="0.9 0.01 0.001" solref="0.008 1"
+            solimp="0.90 0.95 0.001" margin="0.001"/>
+    </default>
+  </default>
+  <worldbody>
+    <body name="mjwarp_object_slot_0" pos="0 0 -4" childclass="mjwarp_object_slot">
+      <freejoint name="mjwarp_object_slot_0_free"/>
+      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
+      <geom name="mjwarp_slot_0_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_0_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    </body>
+    <body name="mjwarp_object_slot_1" pos="0 0 -4" childclass="mjwarp_object_slot">
+      <freejoint name="mjwarp_object_slot_1_free"/>
+      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
+      <geom name="mjwarp_slot_1_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_1_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    </body>
+    <body name="mjwarp_object_slot_2" pos="0 0 -4" childclass="mjwarp_object_slot">
+      <freejoint name="mjwarp_object_slot_2_free"/>
+      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
+      <geom name="mjwarp_slot_2_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_2_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    </body>
+    <body name="mjwarp_object_slot_3" pos="0 0 -4" childclass="mjwarp_object_slot">
+      <freejoint name="mjwarp_object_slot_3_free"/>
+      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
+      <geom name="mjwarp_slot_3_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
+      <geom name="mjwarp_slot_3_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    </body>
+  </worldbody>
+</mujoco>

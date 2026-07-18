@@ -10,6 +10,8 @@ import numpy as np
 try:  # pragma: no cover - optional runtime dependency
     import torch
     import torch.nn.functional as F
+    if not hasattr(torch, "float32") or not hasattr(torch, "device"):
+        raise ImportError("Incomplete PyTorch compatibility stub")
 except Exception:  # pragma: no cover - optional runtime dependency
     torch = None
     F = None
@@ -236,6 +238,127 @@ def adapt_cdpr_observations_to_smolvla_batch(
     return batch
 
 
+def _normalize_gpu_image_batch(
+    images: Any,
+    *,
+    image_size: int,
+    device: Any,
+) -> Any:
+    """Normalize a GPU RGB batch without NumPy/PIL or host synchronization."""
+
+    if torch is None or F is None:
+        raise RuntimeError("Torch is required for GPU-resident SmolVLA inputs.")
+    if not isinstance(images, torch.Tensor):
+        raise TypeError(
+            "MJWarp camera inputs must already be torch.Tensor instances on GPU."
+        )
+    tensor = images
+    if tensor.ndim != 4:
+        raise ValueError(f"Expected a batched image tensor, got {tuple(tensor.shape)}.")
+    if tensor.shape[1] in {3, 4}:
+        tensor = tensor[:, :3]
+    elif tensor.shape[-1] in {3, 4}:
+        tensor = tensor[..., :3].permute(0, 3, 1, 2)
+    else:
+        raise ValueError(
+            f"Expected BCHW or BHWC RGB images, got {tuple(tensor.shape)}."
+        )
+    if tensor.device != device:
+        raise RuntimeError(
+            f"Camera tensor is on {tensor.device}, expected rank-local {device}."
+        )
+    if tensor.dtype == torch.uint8:
+        tensor = tensor.to(dtype=torch.float32).div_(255.0)
+    elif tensor.is_floating_point():
+        tensor = tensor.to(dtype=torch.float32)
+    else:
+        raise TypeError(f"Unsupported camera dtype {tensor.dtype}.")
+    tensor = tensor.clamp_(0.0, 1.0)
+    target = (int(image_size), int(image_size))
+    if tuple(tensor.shape[-2:]) != target:
+        tensor = F.interpolate(
+            tensor,
+            size=target,
+            mode="bilinear",
+            align_corners=False,
+        )
+    return tensor
+
+
+def adapt_cdpr_tensors_to_smolvla_batch(
+    *,
+    primary_images: Any,
+    wrist_images: Any,
+    states: Any,
+    instructions: Sequence[str],
+    aux_images: Any | None = None,
+    spec: SmolVLAObservationSpec | None = None,
+    device: Any | None = None,
+) -> dict[str, Any]:
+    """Build the active three-camera SmolVLA contract entirely on GPU.
+
+    Camera slot three exactly aliases the wrist input when no true auxiliary
+    camera is supplied, matching the established CPU path.
+    """
+
+    if torch is None:
+        raise RuntimeError("Torch is required for GPU-resident SmolVLA inputs.")
+    spec = spec or SmolVLAObservationSpec()
+    resolved_device = _resolve_torch_device(
+        device if device is not None else primary_images.device
+    )
+    primary = _normalize_gpu_image_batch(
+        primary_images,
+        image_size=int(spec.image_size),
+        device=resolved_device,
+    )
+    wrist = _normalize_gpu_image_batch(
+        wrist_images,
+        image_size=int(spec.image_size),
+        device=resolved_device,
+    )
+    auxiliary = (
+        _normalize_gpu_image_batch(
+            aux_images,
+            image_size=int(spec.image_size),
+            device=resolved_device,
+        )
+        if aux_images is not None
+        else wrist
+    )
+    state_tensor = torch.as_tensor(
+        states, dtype=torch.float32, device=resolved_device
+    )
+    if state_tensor.ndim != 2:
+        raise ValueError(
+            f"SmolVLA state tensor must have shape [B, D], got {tuple(state_tensor.shape)}."
+        )
+    batch_size = int(primary.shape[0])
+    if (
+        int(wrist.shape[0]) != batch_size
+        or int(auxiliary.shape[0]) != batch_size
+        or int(state_tensor.shape[0]) != batch_size
+        or len(instructions) != batch_size
+    ):
+        raise ValueError("All GPU SmolVLA inputs must have the same batch size.")
+    if int(state_tensor.shape[1]) != int(spec.state_dim):
+        if int(state_tensor.shape[1]) > int(spec.state_dim):
+            state_tensor = state_tensor[:, : int(spec.state_dim)]
+        else:
+            state_tensor = F.pad(
+                state_tensor, (0, int(spec.state_dim) - int(state_tensor.shape[1]))
+            )
+
+    sources = (primary, wrist, auxiliary)
+    batch: dict[str, Any] = {
+        spec.task_key: [_normalize_instruction(text) for text in instructions],
+        spec.state_key: state_tensor,
+    }
+    for index, key in enumerate(spec.image_feature_keys):
+        batch[key] = sources[index] if index < len(sources) else primary
+    return batch
+
+
 @dataclass(frozen=True)
 class SmolVLAActionAdapterSpec:
     action_dim: int = 5
@@ -301,6 +424,62 @@ def adapt_smolvla_actions_to_cdpr(
     elif out.shape[0] > target_horizon:
         out = out[:target_horizon]
     return np.clip(out, -1.0, 1.0).astype(np.float32, copy=False)
+
+
+def adapt_smolvla_action_tensors_to_cdpr(
+    actions: Any,
+    *,
+    spec: SmolVLAActionAdapterSpec | None = None,
+) -> Any:
+    """Vectorized GPU action adapter preserving ``[B, H, 5]``."""
+
+    if torch is None:
+        raise RuntimeError("Torch is required for GPU-resident SmolVLA actions.")
+    spec = spec or SmolVLAActionAdapterSpec()
+    if not isinstance(actions, torch.Tensor):
+        raise TypeError("SmolVLA GPU actions must be a torch.Tensor.")
+    tensor = actions
+    if tensor.ndim == 2:
+        tensor = tensor[:, None, :]
+    if tensor.ndim != 3:
+        raise ValueError(
+            f"Expected SmolVLA actions with shape [B, H, D], got {tuple(tensor.shape)}."
+        )
+    source_dim = int(tensor.shape[-1])
+    indices = _resolve_action_indices(source_dim, spec.action_indices)
+    index_tensor = torch.tensor(
+        indices, dtype=torch.int64, device=tensor.device
+    )
+    selected = tensor.index_select(-1, index_tensor).to(dtype=torch.float32)
+    action_dim = int(spec.action_dim)
+    if selected.shape[-1] < action_dim:
+        selected = F.pad(selected, (0, action_dim - int(selected.shape[-1])))
+    else:
+        selected = selected[..., :action_dim]
+
+    mode = str(spec.normalization or "clip").lower()
+    if mode == "tanh":
+        selected = torch.tanh(selected)
+    elif mode == "clip":
+        selected = selected.clamp(-1.0, 1.0)
+    elif mode not in {"none", "identity"}:
+        raise ValueError(
+            f"Unsupported SmolVLA action normalization mode: {spec.normalization!r}"
+        )
+
+    horizon = max(1, int(spec.chunk_size))
+    current_horizon = int(selected.shape[1])
+    if current_horizon < horizon:
+        selected = torch.cat(
+            (
+                selected,
+                selected[:, -1:].expand(-1, horizon - current_horizon, -1),
+            ),
+            dim=1,
+        )
+    elif current_horizon > horizon:
+        selected = selected[:, :horizon]
+    return selected.clamp(-1.0, 1.0)
 
 
 def _torch_dtype_from_name(name: str | None, *, device: Any) -> Any | None:
@@ -538,27 +717,13 @@ class SmolVLARuntime:
         batch[SMOLVLA_LANGUAGE_MASK_KEY] = attention_mask
         return batch
 
-    def sample_actions_from_images(
-        self,
-        *,
-        primary_images: Sequence[np.ndarray],
-        wrist_images: Sequence[np.ndarray | None] | None,
-        aux_images: Sequence[np.ndarray | None] | None,
-        observations: Sequence[dict[str, np.ndarray]],
-        infos: Sequence[dict[str, Any] | None],
-        instructions: Sequence[str],
-    ) -> np.ndarray:
+    def _predict_actions_tensor(self, batch: dict[str, Any]) -> Any:
         if torch is None:
             raise RuntimeError("Torch is required for SmolVLA inference.")
-        batch = self._prepare_batch(
-            primary_images=primary_images,
-            wrist_images=wrist_images,
-            aux_images=aux_images,
-            observations=observations,
-            infos=infos,
-            instructions=instructions,
-        )
-        autocast_enabled = self.device.type == "cuda" and self.dtype in {torch.bfloat16, torch.float16}
+        autocast_enabled = self.device.type == "cuda" and self.dtype in {
+            torch.bfloat16,
+            torch.float16,
+        }
 
         def predict() -> Any:
             with torch.inference_mode():
@@ -596,7 +761,104 @@ class SmolVLARuntime:
             actions = predict()
         if actions.ndim == 2:
             actions = actions[:, None, :]
-        return actions.detach().to(dtype=torch.float32).cpu().numpy()
+        if actions.ndim != 3:
+            raise RuntimeError(
+                f"SmolVLA emitted unexpected action shape {tuple(actions.shape)}."
+            )
+        if actions.device != self.device:
+            raise RuntimeError(
+                f"SmolVLA actions are on {actions.device}, expected {self.device}."
+            )
+        return actions.detach().to(dtype=torch.float32)
+
+    def sample_actions_from_images(
+        self,
+        *,
+        primary_images: Sequence[np.ndarray],
+        wrist_images: Sequence[np.ndarray | None] | None,
+        aux_images: Sequence[np.ndarray | None] | None,
+        observations: Sequence[dict[str, np.ndarray]],
+        infos: Sequence[dict[str, Any] | None],
+        instructions: Sequence[str],
+    ) -> np.ndarray:
+        if torch is None:
+            raise RuntimeError("Torch is required for SmolVLA inference.")
+        batch = self._prepare_batch(
+            primary_images=primary_images,
+            wrist_images=wrist_images,
+            aux_images=aux_images,
+            observations=observations,
+            infos=infos,
+            instructions=instructions,
+        )
+        return self._predict_actions_tensor(batch).cpu().numpy()
+
+    def sample_actions_from_tensors(
+        self,
+        *,
+        primary_images: Any,
+        wrist_images: Any,
+        states: Any,
+        instructions: Sequence[str],
+        aux_images: Any | None = None,
+        microbatch_size: int = 0,
+    ) -> Any:
+        """Run batched SmolVLA without leaving the rank-local GPU."""
+
+        if torch is None:
+            raise RuntimeError("Torch is required for SmolVLA inference.")
+        batch = adapt_cdpr_tensors_to_smolvla_batch(
+            primary_images=primary_images,
+            wrist_images=wrist_images,
+            aux_images=aux_images,
+            states=states,
+            instructions=instructions,
+            spec=self.obs_spec,
+            device=self.device,
+        )
+        input_ids, attention_mask = self._tokenize(instructions)
+        batch[SMOLVLA_LANGUAGE_TOKEN_KEY] = input_ids
+        batch[SMOLVLA_LANGUAGE_MASK_KEY] = attention_mask
+        batch_size = int(primary_images.shape[0])
+        microbatch = int(microbatch_size)
+        if microbatch <= 0 or microbatch >= batch_size:
+            return self._predict_actions_tensor(batch)
+
+        outputs: list[Any] = []
+        for start in range(0, batch_size, microbatch):
+            end = min(batch_size, start + microbatch)
+            sliced: dict[str, Any] = {}
+            for key, value in batch.items():
+                if isinstance(value, torch.Tensor) and value.ndim > 0:
+                    sliced[key] = value[start:end]
+                elif isinstance(value, list):
+                    sliced[key] = value[start:end]
+                else:
+                    sliced[key] = value
+            outputs.append(self._predict_actions_tensor(sliced))
+        return torch.cat(outputs, dim=0)
+
+    def sample_cdpr_chunks_from_tensors(
+        self,
+        *,
+        primary_images: Any,
+        wrist_images: Any,
+        states: Any,
+        instructions: Sequence[str],
+        aux_images: Any | None = None,
+        microbatch_size: int = 0,
+    ) -> Any:
+        raw = self.sample_actions_from_tensors(
+            primary_images=primary_images,
+            wrist_images=wrist_images,
+            aux_images=aux_images,
+            states=states,
+            instructions=instructions,
+            microbatch_size=microbatch_size,
+        )
+        return adapt_smolvla_action_tensors_to_cdpr(
+            raw, spec=self.action_spec
+        )
 
     def capture_cdpr_images(self, env: Any) -> tuple[np.ndarray, np.ndarray | None]:
         """Render the camera inputs for one CDPR environment state."""

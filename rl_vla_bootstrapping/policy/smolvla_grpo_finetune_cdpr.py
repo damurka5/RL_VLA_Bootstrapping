@@ -49,6 +49,10 @@ from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
     AdaptiveInstructionSampler,
 )
 from rl_vla_bootstrapping.policy.smolvla_cdpr import DEFAULT_SMOLVLA_CHECKPOINT, load_smolvla_runtime
+from rl_vla_bootstrapping.policy.rank_local_grpo import (
+    EqualDDPSchedule,
+    pad_tensor_records,
+)
 from rl_vla_bootstrapping.policy.smolvla_finetune_cdpr import (
     DistributedContext,
     EnvSlot,
@@ -155,6 +159,53 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--instruction-types", nargs="+", default=None)
     parser.add_argument("--max-objects", type=int, default=4)
     parser.add_argument("--num-envs-per-rank", "--num-parallel-envs", dest="num_envs_per_rank", type=int, default=2)
+    parser.add_argument(
+        "--simulator-backend",
+        choices=("mujoco_cpu", "mjlab_mjwarp"),
+        default="mujoco_cpu",
+    )
+    parser.add_argument("--worlds-per-rank", type=int, default=1)
+    parser.add_argument("--groups-per-rank", type=int, default=1)
+    parser.add_argument("--mjwarp-xml-path", default=None)
+    parser.add_argument("--mjwarp-nconmax", type=int, default=256)
+    parser.add_argument("--mjwarp-njmax", type=int, default=512)
+    parser.add_argument("--mjwarp-nccdmax", type=int, default=None)
+    parser.add_argument("--render-width", type=int, default=320)
+    parser.add_argument("--render-height", type=int, default=240)
+    parser.add_argument("--object-slots", type=int, default=4)
+    parser.add_argument(
+        "--smolvla-inference-microbatch-size",
+        type=int,
+        default=0,
+        help="Maximum GPU image batch per frozen SmolVLA forward; zero uses all local worlds.",
+    )
+    parser.add_argument(
+        "--mjwarp-max-updates",
+        type=int,
+        default=0,
+        help=(
+            "Optional MJWarp-only optimizer-update limit for smoke/benchmark "
+            "runs; zero trains to max_train_steps."
+        ),
+    )
+    _bool_arg(
+        parser,
+        "mjwarp_profile_timers",
+        default=False,
+        help_text=(
+            "Synchronize CUDA at MJWarp rollout timing boundaries. Enable for "
+            "benchmarks; leave disabled for production throughput."
+        ),
+    )
+    _bool_arg(
+        parser,
+        "allow_legacy_simulator_checkpoint",
+        default=False,
+        help_text=(
+            "Explicitly permit loading an older policy checkpoint that has no "
+            "simulator metadata; simulator/controller state is never restored."
+        ),
+    )
 
     parser.add_argument("--max-env-steps", type=int, default=64)
     parser.add_argument("--max-train-steps", type=int, default=250000)
@@ -373,6 +424,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         0.0, float(args.grpo_max_collection_seconds_per_update)
     )
     args.replan_every = max(1, min(int(args.replan_every), int(args.chunk_size)))
+    args.worlds_per_rank = max(1, int(args.worlds_per_rank))
+    args.groups_per_rank = max(1, int(args.groups_per_rank))
+    args.smolvla_inference_microbatch_size = max(
+        0, int(args.smolvla_inference_microbatch_size)
+    )
+    args.mjwarp_max_updates = max(0, int(args.mjwarp_max_updates))
+    if args.simulator_backend == "mjlab_mjwarp":
+        expected_worlds = int(args.groups_per_rank) * int(args.grpo_group_size)
+        if int(args.worlds_per_rank) != expected_worlds:
+            parser.error(
+                "--worlds-per-rank must equal --groups-per-rank * "
+                f"--grpo-group-size ({expected_worlds}) for mjlab_mjwarp"
+            )
+        if not args.mjwarp_xml_path:
+            parser.error("--mjwarp-xml-path is required for mjlab_mjwarp")
+        if int(args.object_slots) != 4:
+            parser.error("The active MJWarp CDPR topology requires --object-slots 4")
     return args
 
 
@@ -536,6 +604,261 @@ class SmolVLAGRPOTrainer:
             mean_chunk.detach().to(dtype=torch.float32).cpu().numpy(),
         )
 
+    def sample_action_chunks_tensor(
+        self,
+        *,
+        states: torch.Tensor,
+        priors: torch.Tensor,
+        action_count: int,
+        generator: torch.Generator | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        """GPU-resident stochastic sampling for every active local world."""
+
+        count = max(1, min(int(action_count), int(self.chunk_size)))
+        if states.device != self.device or priors.device != self.device:
+            raise RuntimeError("Rank-local GRPO sampling tensors must stay on the trainer GPU.")
+        if states.ndim != 2 or priors.ndim != 3:
+            raise ValueError(
+                f"Expected states [B,D] and priors [B,H,A], got "
+                f"{tuple(states.shape)} and {tuple(priors.shape)}."
+            )
+        if int(states.shape[0]) != int(priors.shape[0]):
+            raise ValueError("GRPO state and prior batch sizes differ.")
+        with torch.no_grad():
+            base = self._unwrap(self.actor)
+            mean_chunk = base(states, priors)[:, :count]
+            log_std = base.clamped_log_std()[:count].unsqueeze(0)
+            noise = torch.randn(
+                mean_chunk.shape,
+                dtype=mean_chunk.dtype,
+                device=mean_chunk.device,
+                generator=generator,
+            )
+            actions = torch.clamp(
+                mean_chunk + noise * torch.exp(log_std), -1.0, 1.0
+            )
+            log_probs = _normal_log_prob(actions, mean_chunk, log_std)
+        return actions, log_probs, mean_chunk
+
+    def update_tensor_records(
+        self,
+        records: Mapping[str, torch.Tensor],
+        *,
+        loss_mask: torch.Tensor,
+        schedule: EqualDDPSchedule,
+    ) -> dict[str, float]:
+        """DDP-safe PPO update with an identical collective schedule per rank."""
+
+        required = {
+            "state",
+            "prior",
+            "action",
+            "action_index",
+            "old_log_prob",
+            "advantage",
+        }
+        missing = sorted(required.difference(records))
+        if missing:
+            raise KeyError(f"Missing GPU GRPO record tensors: {missing}.")
+        input_lengths = {int(value.shape[0]) for value in records.values()}
+        if len(input_lengths) != 1:
+            raise ValueError(
+                f"GPU GRPO record tensor lengths differ: {sorted(input_lengths)}."
+            )
+        input_count = input_lengths.pop()
+        input_mask = torch.as_tensor(
+            loss_mask, dtype=torch.float32, device=self.device
+        ).reshape(-1)
+        if int(input_mask.numel()) != input_count:
+            raise ValueError(
+                f"loss_mask has {input_mask.numel()} rows for {input_count} records."
+            )
+        informative_indices = torch.nonzero(
+            input_mask > 0.0, as_tuple=False
+        ).reshape(-1)
+        if int(informative_indices.numel()) > 0:
+            compact = {
+                key: value.index_select(0, informative_indices)
+                for key, value in records.items()
+            }
+            compact_mask = torch.ones(
+                (int(informative_indices.numel()),),
+                dtype=torch.float32,
+                device=self.device,
+            )
+        else:
+            # Retain one graph-shaped placeholder. It receives zero loss, but
+            # lets an all-padding rank traverse the same DDP reducer graph.
+            compact = {key: value[:1] for key, value in records.items()}
+            compact_mask = torch.zeros(
+                (1,), dtype=torch.float32, device=self.device
+            )
+        target = int(schedule.padded_records_per_rank)
+        padded, default_mask = pad_tensor_records(
+            compact, target_records=target
+        )
+        actual_target = int(default_mask.numel())
+        if actual_target != target:
+            raise AssertionError(
+                "Synchronized DDP schedule is smaller than a rank's informative "
+                f"record count: schedule={target}, compact={actual_target}."
+            )
+        mask = compact_mask
+        if int(mask.numel()) < actual_target:
+            mask = torch.cat(
+                (
+                    mask,
+                    torch.zeros(
+                        (actual_target - int(mask.numel()),),
+                        dtype=torch.float32,
+                        device=self.device,
+                    ),
+                )
+            )
+        mask = mask * default_mask
+        if any(value.device != self.device for value in padded.values()):
+            raise RuntimeError("GPU record tensors left the rank-local device.")
+
+        states = padded["state"].to(dtype=torch.float32)
+        priors = padded["prior"].to(dtype=torch.float32)
+        actions = padded["action"].to(dtype=torch.float32)
+        action_indices = padded["action_index"].to(dtype=torch.long)
+        old_log_probs = padded["old_log_prob"].to(dtype=torch.float32)
+        advantages = padded["advantage"].to(dtype=torch.float32)
+        valid = mask > 0.0
+        valid_count = valid.sum().clamp_min(1)
+        valid_advantages = advantages[valid]
+        if int(valid_advantages.numel()) > 1:
+            adv_mean = valid_advantages.mean()
+            adv_std = valid_advantages.std(unbiased=False).clamp_min(1.0e-6)
+            advantages = torch.where(
+                valid, (advantages - adv_mean) / adv_std, advantages
+            )
+
+        minibatch = int(schedule.records_per_minibatch)
+        if target % minibatch:
+            raise AssertionError("Padded records must be a whole number of minibatches.")
+        microbatch = max(1, min(int(self.args.microbatch_size), minibatch))
+        if minibatch % microbatch:
+            raise ValueError(
+                "DDP-safe MJWarp updates require minibatch_size to be divisible "
+                "by microbatch_size so every rank executes the same backward count."
+            )
+
+        base = self._unwrap(self.actor)
+        initial_log_std = base.clamped_log_std().detach().clone()
+        policy_loss_total = torch.zeros((), dtype=torch.float32, device=self.device)
+        entropy_total = torch.zeros_like(policy_loss_total)
+        kl_total = torch.zeros_like(policy_loss_total)
+        clip_total = torch.zeros_like(policy_loss_total)
+        metric_weight = torch.zeros_like(policy_loss_total)
+        gradient_norms: list[float] = []
+        optimizer_steps = 0
+
+        for _epoch in range(int(schedule.ppo_epochs)):
+            order = torch.randperm(target, device=self.device)
+            for start in range(0, target, minibatch):
+                mb_idx = order[start : start + minibatch]
+                self.optimizer.zero_grad(set_to_none=True)
+                for micro_start in range(0, minibatch, microbatch):
+                    idx = mb_idx[micro_start : micro_start + microbatch]
+                    weight = mask[idx]
+                    denominator = weight.sum().clamp_min(1.0)
+                    mean, log_std = self._mean_and_log_std(
+                        states[idx], priors[idx], action_indices[idx]
+                    )
+                    log_prob = _normal_log_prob(actions[idx], mean, log_std)
+                    entropy = _normal_entropy(log_std)
+                    ratio = torch.exp(
+                        (log_prob - old_log_probs[idx]).clamp(-20.0, 20.0)
+                    )
+                    clipped = torch.clamp(
+                        ratio,
+                        1.0 - float(self.args.clip_range_low),
+                        1.0 + float(self.args.clip_range_high),
+                    )
+                    surrogate = torch.minimum(
+                        ratio * advantages[idx], clipped * advantages[idx]
+                    )
+                    policy_loss = -(surrogate * weight).sum() / denominator
+                    entropy_mean = (entropy * weight).sum() / denominator
+                    l2_per_row = mean.pow(2).mean(dim=-1)
+                    l2_mean = (l2_per_row * weight).sum() / denominator
+                    loss = (
+                        policy_loss
+                        - float(self.args.entropy_coef) * entropy_mean
+                        + float(self.args.action_l2) * l2_mean
+                    ) / (minibatch // microbatch)
+                    # Even an all-padding rank traverses the DDP graph and
+                    # participates in the same reducer collective with zero grads.
+                    loss.backward()
+                    with torch.no_grad():
+                        metric_weight += weight.sum()
+                        policy_loss_total += policy_loss * weight.sum()
+                        entropy_total += entropy_mean * weight.sum()
+                        kl_total += (
+                            ((old_log_probs[idx] - log_prob) * weight).sum()
+                        )
+                        outside = (
+                            (ratio < 1.0 - float(self.args.clip_range_low))
+                            | (ratio > 1.0 + float(self.args.clip_range_high))
+                        )
+                        clip_total += (outside.to(torch.float32) * weight).sum()
+                grad_limit = (
+                    float(self.args.max_grad_norm)
+                    if float(self.args.max_grad_norm) > 0.0
+                    else float("inf")
+                )
+                grad_norm = torch.nn.utils.clip_grad_norm_(
+                    self.actor.parameters(), grad_limit
+                )
+                gradient_norms.append(float(grad_norm.detach().item()))
+                self.optimizer.step()
+                self.gradient_step += 1
+                optimizer_steps += 1
+
+        metric_denominator = metric_weight.clamp_min(1.0)
+        valid_advantages = advantages[valid]
+        return {
+            "loss_policy_mean": float(
+                (policy_loss_total / metric_denominator).detach().item()
+            ),
+            "entropy_mean": float(
+                (entropy_total / metric_denominator).detach().item()
+            ),
+            "approx_kl_mean": float(
+                (kl_total / metric_denominator).detach().item()
+            ),
+            "clip_fraction_mean": float(
+                (clip_total / metric_denominator).detach().item()
+            ),
+            "gradient_norm_mean": float(np.mean(gradient_norms)),
+            "gradient_norm_max": float(np.max(gradient_norms)),
+            "optimizer_steps": float(optimizer_steps),
+            "backward_collectives": float(
+                schedule.backward_collectives * (minibatch // microbatch)
+            ),
+            "informative_records": float(valid.sum().detach().item()),
+            "padded_records": float(target),
+            "advantage_mean": float(
+                valid_advantages.mean().detach().item()
+                if int(valid_advantages.numel())
+                else 0.0
+            ),
+            "advantage_std": float(
+                valid_advantages.std(unbiased=False).detach().item()
+                if int(valid_advantages.numel()) > 1
+                else 0.0
+            ),
+            "log_std_mean": float(base.clamped_log_std().detach().mean().item()),
+            "log_std_update_abs_mean": float(
+                (base.clamped_log_std().detach() - initial_log_std)
+                .abs()
+                .mean()
+                .item()
+            ),
+        }
+
     def update(
         self,
         records: list[dict[str, Any]],
@@ -698,7 +1021,13 @@ class SmolVLAGRPOTrainer:
         )
         return metrics
 
-    def load(self, checkpoint_path: Path) -> int:
+    def load(
+        self,
+        checkpoint_path: Path,
+        *,
+        expected_simulator_metadata: Mapping[str, Any] | None = None,
+        allow_legacy_simulator_metadata: bool = False,
+    ) -> int:
         try:
             payload = torch.load(
                 Path(checkpoint_path),
@@ -707,6 +1036,55 @@ class SmolVLAGRPOTrainer:
             )
         except TypeError:  # PyTorch < 2.6 has no weights_only keyword.
             payload = torch.load(Path(checkpoint_path), map_location=self.device)
+        expected_metadata = dict(expected_simulator_metadata or {})
+        stored_metadata = dict(payload.get("simulator_metadata") or {})
+        if expected_metadata:
+            if not stored_metadata and not bool(allow_legacy_simulator_metadata):
+                raise RuntimeError(
+                    "Checkpoint predates simulator metadata. Pass the explicit "
+                    "legacy-checkpoint opt-in to load policy weights only; no "
+                    "simulator/controller state will be restored."
+                )
+            if stored_metadata:
+                compatibility_keys = (
+                    "backend",
+                    "versions",
+                    "worlds_per_rank",
+                    "groups_per_rank",
+                    "grpo_group_size",
+                    "physics_substeps_per_action",
+                    "physics_dtype",
+                    "controller_implementation",
+                    "action_step_xyz",
+                    "action_step_yaw",
+                    "action_step_gripper",
+                    "lock_non_commanded_axes",
+                    "lock_non_commanded_axes_threshold",
+                    "xml_sha256",
+                    "nconmax_per_world",
+                    "njmax_per_world",
+                    "nccdmax_per_world",
+                    "render_width",
+                    "render_height",
+                    "object_slots",
+                    "object_catalogs",
+                    "camera_order",
+                )
+                differences = {
+                    key: (stored_metadata.get(key), expected_metadata.get(key))
+                    for key in compatibility_keys
+                    if key in expected_metadata
+                    and stored_metadata.get(key) != expected_metadata.get(key)
+                }
+                if differences:
+                    details = ", ".join(
+                        f"{key}: checkpoint={old!r}, runtime={new!r}"
+                        for key, (old, new) in differences.items()
+                    )
+                    raise RuntimeError(
+                        "Checkpoint simulator assumptions are incompatible: "
+                        + details
+                    )
         base = self._unwrap(self.actor)
         if "policy" in payload:
             base.load_state_dict(payload["policy"])
@@ -733,6 +1111,7 @@ class SmolVLAGRPOTrainer:
         args: argparse.Namespace,
         latest: bool = False,
         extra_state: Mapping[str, Any] | None = None,
+        simulator_metadata: Mapping[str, Any] | None = None,
     ) -> Path:
         payload = {
             "policy_type": "smolvla_cdpr_grpo",
@@ -747,6 +1126,7 @@ class SmolVLAGRPOTrainer:
             "policy": self._unwrap(self.actor).state_dict(),
             "optimizer": self.optimizer.state_dict(),
             "extra_state": dict(extra_state or {}),
+            "simulator_metadata": dict(simulator_metadata or {}),
             "args": vars(args),
         }
         if latest:

@@ -291,12 +291,17 @@ def _checkpoint_state_dim(payload: dict[str, Any]) -> int | None:
 
 
 def _max_objects_from_state_dim(state_dim: int) -> int | None:
-    fixed_dim = 3 + 3 + len(INSTRUCTION_TYPES) + 3
-    variable_dim = int(state_dim) - fixed_dim
-    if variable_dim < 0 or variable_dim % 4 != 0:
-        return None
-    max_objects = variable_dim // 4
-    return max_objects if max_objects > 0 else None
+    # Older SmolVLA residual checkpoints were trained before five instruction
+    # families were appended to the one-hot catalog. Preserve their 32-wide
+    # state layout while also accepting the current catalog width.
+    for instruction_width in (len(INSTRUCTION_TYPES), 32):
+        fixed_dim = 3 + 3 + int(instruction_width) + 3
+        variable_dim = int(state_dim) - fixed_dim
+        if variable_dim >= 0 and variable_dim % 4 == 0:
+            max_objects = variable_dim // 4
+            if max_objects > 0:
+                return max_objects
+    return None
 
 
 def _configure_checkpoint_compatible_object_slots(

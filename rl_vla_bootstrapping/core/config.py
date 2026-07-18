@@ -14,6 +14,7 @@ from .specs import (
     ReposSpec,
     RemoteSpec,
     SceneBuilderSpec,
+    SimulatorSpec,
     TaskSpec,
     TrainingSpec,
 )
@@ -77,6 +78,7 @@ def load_project_config(config_path: str | Path) -> ProjectConfig:
         embodiment=EmbodimentSpec.from_mapping(raw.get("embodiment")),
         task=TaskSpec.from_mapping(raw.get("task")),
         simulation=SceneBuilderSpec.from_mapping(raw.get("simulation")),
+        simulator=SimulatorSpec.from_mapping(raw.get("simulator")),
         policy=PolicySpec.from_mapping(raw.get("policy")),
         training=TrainingSpec.from_mapping(raw.get("training")),
         evaluation=EvaluationSpec.from_mapping(raw.get("evaluation")),

@@ -1,0 +1,1328 @@
+from __future__ import annotations
+
+import time
+from dataclasses import dataclass
+from typing import Any, Mapping, Sequence
+
+from rl_vla_bootstrapping.policy.rank_local_grpo import (
+    RankLocalGroupLayout,
+    torch_group_advantages,
+)
+from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+    ACTIVE_INSTRUCTION_TYPES,
+    BatchedTaskState,
+    BatchedTaskThresholds,
+    build_smolvla_state_tensor,
+    evaluate_active_sparse_tasks,
+)
+from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+    ACTIVE_CDPR_CATALOGS,
+)
+
+
+_SHELL_COUNTS = (5, 5, 5, 5, 8, 8, 8, 8)
+_SHELL_HORIZON_LOW = (1, 1, 2, 3, 5, 7, 14, 21)
+_SHELL_HORIZON_HIGH = (1, 2, 3, 4, 6, 13, 20, 32)
+_SHELL_ACTION_LOW = (1, 4, 7, 11, 17, 25, 53, 81)
+_SHELL_ACTION_HIGH = (2, 6, 10, 16, 24, 52, 80, 128)
+_REST_HEIGHT = (0.038, 0.040, 0.034, 0.050, 0.036, 0.012, 0.024)
+_FITTED_GRIPPER = (0.8852, 0.7369, 0.6186, 0.90, 0.8337, 0.0, 0.0)
+
+
+@dataclass
+class RankLocalCurriculum:
+    device: Any
+    promotion_success: float = 0.80
+    demotion_success: float = -1.0
+    validation_rollouts_per_shell: int = 50
+    min_updates: int = 1
+    saturation_abort_threshold: float = 1.01
+    current_shell: Any | None = None
+    updates: int = 0
+
+    def __post_init__(self) -> None:
+        import torch
+
+        if self.current_shell is None:
+            self.current_shell = torch.zeros(
+                (len(ACTIVE_INSTRUCTION_TYPES),),
+                dtype=torch.int64,
+                device=self.device,
+            )
+        else:
+            self.current_shell = torch.as_tensor(
+                self.current_shell, dtype=torch.int64, device=self.device
+            ).reshape(len(ACTIVE_INSTRUCTION_TYPES))
+        self._shell_max = torch.tensor(
+            [count - 1 for count in _SHELL_COUNTS],
+            dtype=torch.int64,
+            device=self.device,
+        )
+        count = len(ACTIVE_INSTRUCTION_TYPES)
+        self.train_updates = torch.zeros(
+            (count,), dtype=torch.int64, device=self.device
+        )
+        self.last_promoted_update = torch.zeros_like(self.train_updates)
+        self.pending_success_sum = torch.zeros(
+            (count,), dtype=torch.float32, device=self.device
+        )
+        self.pending_rollouts = torch.zeros(
+            (count,), dtype=torch.int64, device=self.device
+        )
+        self.validation_success = torch.zeros_like(self.pending_success_sum)
+        self.validation_rollouts = torch.zeros_like(self.pending_rollouts)
+        self.action_saturation = torch.zeros_like(self.pending_success_sum)
+
+    def update_once_per_optimizer_update(
+        self,
+        *,
+        group_instruction_ids: Any,
+        group_shell_ids: Any,
+        candidate_success: Any,
+    ) -> dict[str, float]:
+        """Aggregate curriculum evidence once, then broadcast rank-0 state."""
+
+        import torch
+        import torch.distributed as dist
+
+        task_ids = group_instruction_ids.to(dtype=torch.int64).reshape(-1)
+        shell_ids = group_shell_ids.to(dtype=torch.int64).reshape(-1)
+        outcomes = candidate_success.to(dtype=torch.float32)
+        if outcomes.ndim != 2:
+            raise ValueError(
+                "candidate_success must have shape [groups, candidates]."
+            )
+        candidates_per_group = int(outcomes.shape[1])
+        group_successes = outcomes.sum(dim=1)
+        sums = torch.zeros(
+            (len(ACTIVE_INSTRUCTION_TYPES),),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        counts = torch.zeros(
+            sums.shape, dtype=torch.int64, device=self.device
+        )
+        train_presence = torch.zeros_like(counts)
+        frontier = self.current_shell.index_select(0, task_ids)
+        frontier_sample = shell_ids == frontier
+        sums.scatter_add_(
+            0,
+            task_ids,
+            group_successes
+            * frontier_sample.to(dtype=group_successes.dtype),
+        )
+        counts.scatter_add_(
+            0,
+            task_ids,
+            frontier_sample.to(dtype=torch.int64) * candidates_per_group,
+        )
+        train_presence.scatter_add_(
+            0, task_ids, frontier_sample.to(dtype=torch.int64)
+        )
+        packed = torch.cat(
+            (
+                sums,
+                counts.to(dtype=torch.float32),
+                train_presence.to(dtype=torch.float32),
+            ),
+            dim=0,
+        )
+        if dist.is_available() and dist.is_initialized():
+            dist.all_reduce(packed, op=dist.ReduceOp.SUM)
+        sums, count_values, presence_values = packed.chunk(3)
+        counts = count_values.to(dtype=torch.int64)
+        train_presence = presence_values.to(dtype=torch.int64)
+        self.pending_success_sum.add_(sums)
+        self.pending_rollouts.add_(counts)
+        self.train_updates.add_((train_presence > 0).to(dtype=torch.int64))
+        self.updates += 1
+        rank = dist.get_rank() if dist.is_available() and dist.is_initialized() else 0
+        if rank == 0:
+            required_rollouts = max(
+                1, int(self.validation_rollouts_per_shell)
+            )
+            for instruction_index in range(len(ACTIVE_INSTRUCTION_TYPES)):
+                rollouts = int(
+                    self.pending_rollouts[instruction_index].item()
+                )
+                if rollouts < required_rollouts:
+                    continue
+                success_rate = float(
+                    (
+                        self.pending_success_sum[instruction_index]
+                        / max(1, rollouts)
+                    ).item()
+                )
+                self.validation_success[instruction_index] = success_rate
+                self.validation_rollouts[instruction_index] = rollouts
+                self.pending_success_sum[instruction_index] = 0.0
+                self.pending_rollouts[instruction_index] = 0
+
+                shell = int(self.current_shell[instruction_index].item())
+                if (
+                    success_rate <= float(self.demotion_success)
+                    and shell > 0
+                ):
+                    self.current_shell[instruction_index] = shell - 1
+                    continue
+                can_validate = (
+                    int(self.train_updates[instruction_index].item())
+                    - int(self.last_promoted_update[instruction_index].item())
+                    >= max(1, int(self.min_updates))
+                )
+                saturation_ok = (
+                    float(self.action_saturation[instruction_index].item())
+                    < float(self.saturation_abort_threshold)
+                )
+                if (
+                    can_validate
+                    and saturation_ok
+                    and success_rate >= float(self.promotion_success)
+                    and shell < int(self._shell_max[instruction_index].item())
+                ):
+                    self.current_shell[instruction_index] = shell + 1
+                    self.last_promoted_update[instruction_index] = (
+                        self.train_updates[instruction_index]
+                    )
+        if dist.is_available() and dist.is_initialized():
+            canonical_tensors = (
+                self.current_shell,
+                self.train_updates,
+                self.last_promoted_update,
+                self.pending_success_sum,
+                self.pending_rollouts,
+                self.validation_success,
+                self.validation_rollouts,
+                self.action_saturation,
+            )
+            canonical = torch.cat(
+                [
+                    tensor.to(dtype=torch.float64).reshape(-1)
+                    for tensor in canonical_tensors
+                ],
+                dim=0,
+            )
+            dist.broadcast(canonical, src=0)
+            offset = 0
+            for tensor in canonical_tensors:
+                size = int(tensor.numel())
+                tensor.copy_(
+                    canonical[offset : offset + size]
+                    .reshape(tensor.shape)
+                    .to(dtype=tensor.dtype)
+                )
+                offset += size
+        output: dict[str, float] = {}
+        for index, name in enumerate(ACTIVE_INSTRUCTION_TYPES):
+            pending_rate = float(
+                (
+                    self.pending_success_sum[index]
+                    / self.pending_rollouts[index].clamp_min(1)
+                ).item()
+            )
+            output[f"curriculum/{name}/success_rate"] = float(
+                self.validation_success[index].item()
+            )
+            output[f"curriculum/{name}/rollouts"] = float(
+                self.validation_rollouts[index].item()
+            )
+            output[f"curriculum/{name}/pending_success_rate"] = pending_rate
+            output[f"curriculum/{name}/pending_rollouts"] = float(
+                self.pending_rollouts[index].item()
+            )
+            output[f"curriculum/{name}/train_updates"] = float(
+                self.train_updates[index].item()
+            )
+            output[f"curriculum/{name}/shell"] = float(
+                self.current_shell[index].item()
+            )
+        return output
+
+    def snapshot(self) -> dict[str, Any]:
+        state = {}
+        for index, name in enumerate(ACTIVE_INSTRUCTION_TYPES):
+            state[name] = {
+                "active_shell": int(self.current_shell[index].item()),
+                "validation_success": float(
+                    self.validation_success[index].item()
+                ),
+                "train_updates": int(self.train_updates[index].item()),
+                "last_promoted_update": int(
+                    self.last_promoted_update[index].item()
+                ),
+                "validation_rollouts": int(
+                    self.validation_rollouts[index].item()
+                ),
+                "action_saturation": float(
+                    self.action_saturation[index].item()
+                ),
+                "pending_success_sum": float(
+                    self.pending_success_sum[index].item()
+                ),
+                "pending_rollouts": int(
+                    self.pending_rollouts[index].item()
+                ),
+            }
+        return {
+            "profile": "smolvla_complex_v1_mjwarp",
+            "updates": int(self.updates),
+            "current_shell": {
+                name: int(value)
+                for name, value in zip(
+                    ACTIVE_INSTRUCTION_TYPES,
+                    self.current_shell.detach().cpu().tolist(),
+                )
+            },
+            "frontier": {
+                "config": {
+                    "promotion_success": float(self.promotion_success),
+                    "demotion_success": float(self.demotion_success),
+                    "validation_rollouts_per_shell": int(
+                        self.validation_rollouts_per_shell
+                    ),
+                    "min_train_updates_before_validation": int(
+                        self.min_updates
+                    ),
+                    "max_shell_jump": 1,
+                    "saturation_abort_threshold": float(
+                        self.saturation_abort_threshold
+                    ),
+                },
+                "state": state,
+            },
+        }
+
+    def restore(self, snapshot: Mapping[str, Any]) -> None:
+        raw_snapshot = dict(snapshot or {})
+        frontier = raw_snapshot.get("frontier")
+        frontier_state = (
+            dict(frontier.get("state") or {})
+            if isinstance(frontier, Mapping)
+            else {}
+        )
+        values = dict(raw_snapshot.get("current_shell") or {})
+        for index, name in enumerate(ACTIVE_INSTRUCTION_TYPES):
+            raw_state = dict(frontier_state.get(name) or {})
+            shell_value = raw_state.get(
+                "active_shell", values.get(name, None)
+            )
+            if shell_value is not None:
+                self.current_shell[index] = max(
+                    0, min(int(shell_value), _SHELL_COUNTS[index] - 1)
+                )
+            for key, target, dtype in (
+                ("train_updates", self.train_updates, int),
+                (
+                    "last_promoted_update",
+                    self.last_promoted_update,
+                    int,
+                ),
+                (
+                    "pending_success_sum",
+                    self.pending_success_sum,
+                    float,
+                ),
+                ("pending_rollouts", self.pending_rollouts, int),
+                (
+                    "validation_success",
+                    self.validation_success,
+                    float,
+                ),
+                (
+                    "validation_rollouts",
+                    self.validation_rollouts,
+                    int,
+                ),
+                (
+                    "action_saturation",
+                    self.action_saturation,
+                    float,
+                ),
+            ):
+                if key in raw_state:
+                    target[index] = dtype(raw_state[key])
+        self.updates = int(
+            raw_snapshot.get(
+                "updates",
+                int(self.train_updates.max().item()),
+            )
+        )
+
+
+@dataclass(frozen=True)
+class BatchedReset:
+    instructions: tuple[str, ...]
+    task_state: BatchedTaskState
+    group_instruction_ids: Any
+    group_shell_ids: Any
+    horizons: Any
+    pinned: Any
+    pin_offsets: Any
+    latch_eligible: Any
+    fitted_opening: Any
+    group_ids: Any
+
+
+class BatchedReverseFrontierResetter:
+    def __init__(
+        self,
+        *,
+        backend: Any,
+        layout: RankLocalGroupLayout,
+        curriculum: RankLocalCurriculum,
+        rank: int,
+        base_seed: int,
+        frontier_probability: float = 0.80,
+        rehearsal_probability: float = 0.20,
+        support_surface_z: float = 0.15,
+    ) -> None:
+        layout.validate()
+        self.backend = backend
+        self.layout = layout
+        self.curriculum = curriculum
+        self.rank = int(rank)
+        self.base_seed = int(base_seed)
+        self.frontier_probability = min(
+            1.0, max(0.0, float(frontier_probability))
+        )
+        self.rehearsal_probability = float(rehearsal_probability)
+        self.support_surface_z = float(support_surface_z)
+        self.torch = backend.torch
+        self.device = backend.device
+
+    def _generator(self, update_index: int, round_index: int) -> Any:
+        generator = self.torch.Generator(device=self.device)
+        seed = (
+            self.base_seed
+            + self.rank * 1_000_003
+            + int(update_index) * 10_000_019
+            + int(round_index) * 100_003
+        )
+        generator.manual_seed(int(seed))
+        return generator
+
+    def reset(self, *, update_index: int, round_index: int) -> BatchedReset:
+        torch = self.torch
+        generator = self._generator(update_index, round_index)
+        groups = int(self.layout.groups_per_rank)
+        group_size = int(self.layout.group_size)
+        worlds = int(self.layout.worlds_per_rank)
+        group_ids = torch.arange(
+            groups, dtype=torch.int64, device=self.device
+        )
+        eligible_tasks = torch.nonzero(
+            self.curriculum.current_shell < self.curriculum._shell_max,
+            as_tuple=False,
+        ).reshape(-1)
+        if int(eligible_tasks.numel()) == 0:
+            eligible_tasks = torch.arange(
+                len(ACTIVE_INSTRUCTION_TYPES),
+                dtype=torch.int64,
+                device=self.device,
+            )
+        sampled_task_index = torch.randint(
+            0,
+            int(eligible_tasks.numel()),
+            (groups,),
+            generator=generator,
+            device=self.device,
+        )
+        task_group = eligible_tasks.index_select(0, sampled_task_index)
+        frontier_shell = self.curriculum.current_shell.index_select(0, task_group)
+        rehearsal = (
+            torch.rand((groups,), generator=generator, device=self.device)
+            >= self.frontier_probability
+        ) & (self.rehearsal_probability > 0.0) & (frontier_shell > 0)
+        rehearsal_shell = torch.floor(
+            torch.rand((groups,), generator=generator, device=self.device)
+            * (frontier_shell.to(dtype=torch.float32) + 1.0)
+        ).to(dtype=torch.int64)
+        shell_group = torch.where(rehearsal, rehearsal_shell, frontier_shell)
+        horizon_low = torch.tensor(
+            _SHELL_HORIZON_LOW, dtype=torch.int64, device=self.device
+        ).index_select(0, shell_group)
+        horizon_high = torch.tensor(
+            _SHELL_HORIZON_HIGH, dtype=torch.int64, device=self.device
+        ).index_select(0, shell_group)
+        horizon_group = horizon_low + torch.floor(
+            torch.rand((groups,), generator=generator, device=self.device)
+            * (horizon_high - horizon_low + 1).to(dtype=torch.float32)
+        ).to(dtype=torch.int64)
+        action_low = torch.tensor(
+            _SHELL_ACTION_LOW, dtype=torch.int64, device=self.device
+        ).index_select(0, shell_group)
+        action_high = torch.tensor(
+            _SHELL_ACTION_HIGH, dtype=torch.int64, device=self.device
+        ).index_select(0, shell_group)
+        target_action_low = torch.maximum(
+            action_low, (horizon_group - 1) * 4 + 1
+        )
+        target_action_high = torch.minimum(action_high, horizon_group * 4)
+        target_action_steps = target_action_low + torch.floor(
+            torch.rand((groups,), generator=generator, device=self.device)
+            * (target_action_high - target_action_low + 1).to(
+                dtype=torch.float32
+            )
+        ).to(dtype=torch.int64)
+        travel_group = (
+            (target_action_steps.to(dtype=torch.float32) - 0.5)
+            .clamp_min(0.5)
+            * 0.015
+            * 0.44
+        )
+
+        target_catalog = torch.randint(
+            0, 5, (groups,), generator=generator, device=self.device
+        )
+        catalogs_group = torch.stack(
+            (
+                target_catalog,
+                (target_catalog + 1) % 5,
+                (target_catalog + 2) % 5,
+                (target_catalog + 3) % 5,
+            ),
+            dim=1,
+        )
+        is_bowl = task_group == ACTIVE_INSTRUCTION_TYPES.index("put_into_bowl")
+        is_plate = task_group == ACTIVE_INSTRUCTION_TYPES.index("put_into_plate")
+        is_container = is_bowl | is_plate
+        catalogs_group[:, 1] = torch.where(
+            is_bowl,
+            torch.full_like(target_catalog, 6),
+            torch.where(
+                is_plate,
+                torch.full_like(target_catalog, 5),
+                catalogs_group[:, 1],
+            ),
+        )
+        catalogs_group[:, 2] = torch.where(
+            is_bowl,
+            torch.full_like(target_catalog, 5),
+            torch.where(
+                is_plate,
+                torch.full_like(target_catalog, 6),
+                catalogs_group[:, 2],
+            ),
+        )
+        catalogs = catalogs_group.repeat_interleave(group_size, dim=0)
+
+        all_worlds = torch.arange(
+            worlds, dtype=torch.int64, device=self.device
+        )
+        self.backend.reset_worlds(all_worlds)
+        self.backend.set_object_catalogs(catalogs)
+
+        base_xy = torch.tensor(
+            (
+                (-0.12, -0.08),
+                (0.12, -0.08),
+                (-0.12, 0.10),
+                (0.12, 0.10),
+            ),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        scene_shift = (
+            torch.rand(
+                (groups, 1, 2), generator=generator, device=self.device
+            )
+            - 0.5
+        ) * 0.06
+        jitter = (
+            torch.rand(
+                (groups, 4, 2), generator=generator, device=self.device
+            )
+            - 0.5
+        ) * 0.016
+        object_xy_group = base_xy[None, :, :] + scene_shift + jitter
+        rest_height = torch.tensor(
+            _REST_HEIGHT, dtype=torch.float32, device=self.device
+        ).index_select(0, catalogs_group.reshape(-1)).reshape(groups, 4)
+        object_z_group = self.support_surface_z + rest_height
+        object_positions_group = torch.cat(
+            (object_xy_group, object_z_group[..., None]), dim=-1
+        )
+
+        target_slot_group = torch.zeros(
+            (groups,), dtype=torch.int64, device=self.device
+        )
+        reference_slot_group = torch.where(
+            is_container
+            | (task_group >= ACTIVE_INSTRUCTION_TYPES.index("move_left_of_object")),
+            torch.ones_like(target_slot_group),
+            torch.full_like(target_slot_group, -1),
+        )
+        second_reference_slot_group = torch.where(
+            task_group == ACTIVE_INSTRUCTION_TYPES.index("move_between_objects"),
+            torch.full_like(target_slot_group, 2),
+            torch.full_like(target_slot_group, -1),
+        )
+        rows = torch.arange(groups, dtype=torch.int64, device=self.device)
+        reference = object_positions_group[rows, reference_slot_group.clamp_min(0)]
+        ee_group = (
+            torch.rand(
+                (groups, 3), generator=generator, device=self.device
+            )
+            - 0.5
+        )
+        ee_group[:, 0:2] *= 0.40
+        ee_group[:, 2] = 0.40
+        random_angle = (
+            torch.rand((groups,), generator=generator, device=self.device)
+            * (2.0 * torch.pi)
+        )
+        random_direction = torch.stack(
+            (torch.cos(random_angle), torch.sin(random_angle)), dim=-1
+        )
+        target_position = object_positions_group[:, 0].clone()
+        initial_target_group = target_position.clone()
+        baseline_direction = random_direction.clone()
+
+        move_to_mask = (
+            task_group == ACTIVE_INSTRUCTION_TYPES.index("move_to_object")
+        )
+        move_to_distance = 0.02 + travel_group
+        move_to_ee = target_position.clone()
+        move_to_ee[:, :2] = (
+            target_position[:, :2]
+            + random_direction * move_to_distance[:, None]
+        )
+        move_to_ee[:, 2] = 0.40
+        ee_group = torch.where(move_to_mask[:, None], move_to_ee, ee_group)
+
+        push_left = task_group == ACTIVE_INSTRUCTION_TYPES.index("push_left")
+        push_right = task_group == ACTIVE_INSTRUCTION_TYPES.index("push_right")
+        is_push = push_left | push_right
+        push_sign = torch.where(
+            push_left,
+            torch.full((groups,), -1.0, device=self.device),
+            torch.ones((groups,), device=self.device),
+        )
+        push_remaining = torch.minimum(
+            torch.full((groups,), 0.08, device=self.device),
+            target_action_steps.to(dtype=torch.float32) * 0.0075,
+        )
+        push_progress = (0.08 - push_remaining).clamp_min(0.0)
+        push_initial = target_position.clone()
+        push_initial[:, 0] -= push_sign * push_progress
+        initial_target_group = torch.where(
+            is_push[:, None], push_initial, initial_target_group
+        )
+        push_gap = torch.where(
+            shell_group == 0,
+            torch.full((groups,), 0.008, device=self.device),
+            0.018 + (0.4 * push_remaining).clamp(max=0.04),
+        )
+        push_ee = target_position.clone()
+        push_ee[:, 0] -= push_sign * push_gap
+        push_ee[:, 1] += (
+            torch.rand((groups,), generator=generator, device=self.device)
+            - 0.5
+        ) * 0.016
+        push_ee[:, 2] = target_position[:, 2] + 0.045
+        ee_group = torch.where(is_push[:, None], push_ee, ee_group)
+
+        relation_left = (
+            task_group == ACTIVE_INSTRUCTION_TYPES.index("move_left_of_object")
+        )
+        relation_right = (
+            task_group == ACTIVE_INSTRUCTION_TYPES.index("move_right_of_object")
+        )
+        is_relation = relation_left | relation_right
+        relation_sign = torch.where(
+            relation_left,
+            torch.full((groups,), -1.0, device=self.device),
+            torch.ones((groups,), device=self.device),
+        )
+        between = (
+            task_group == ACTIVE_INSTRUCTION_TYPES.index("move_between_objects")
+        )
+        second_reference = object_positions_group[:, 2]
+        placement_task = is_container | is_relation | between
+        grasp_learning = (
+            (
+                task_group
+                == ACTIVE_INSTRUCTION_TYPES.index("put_into_plate")
+            )
+            | is_relation
+            | between
+        ) & (shell_group >= 5)
+        held_group = placement_task & ~grasp_learning
+        shell_zero = shell_group == 0
+
+        placement_goal = target_position.clone()
+        container_goal = reference.clone()
+        container_goal[:, 2] = reference[:, 2] + torch.where(
+            is_bowl,
+            torch.full((groups,), 0.035, device=self.device),
+            torch.full((groups,), 0.035, device=self.device),
+        )
+        placement_goal = torch.where(
+            is_container[:, None], container_goal, placement_goal
+        )
+        relation_goal = reference.clone()
+        relation_goal[:, 0] += relation_sign * 0.10
+        relation_goal[:, 2] = torch.maximum(
+            target_position[:, 2], reference[:, 2] + 0.035
+        )
+        placement_goal = torch.where(
+            is_relation[:, None], relation_goal, placement_goal
+        )
+        between_goal = 0.5 * (reference + second_reference)
+        between_goal[:, 2] = torch.maximum(
+            target_position[:, 2], between_goal[:, 2] + 0.035
+        )
+        placement_goal = torch.where(
+            between[:, None], between_goal, placement_goal
+        )
+
+        zone_half = torch.full((groups,), 0.015, device=self.device)
+        relation_boundary = zone_half / random_direction.abs().amax(
+            dim=-1
+        ).clamp_min(1.0e-6)
+        success_boundary = torch.where(
+            is_relation,
+            relation_boundary,
+            torch.full((groups,), 0.03, device=self.device),
+        )
+        held_position = placement_goal.clone()
+        held_position[:, :2] += random_direction * (
+            success_boundary + travel_group
+        )[:, None]
+        held_container_height = reference[:, 2] + torch.where(
+            is_bowl,
+            torch.full((groups,), 0.10, device=self.device),
+            torch.full((groups,), 0.045, device=self.device),
+        )
+        held_position[:, 2] = torch.where(
+            is_container, held_container_height, held_position[:, 2]
+        )
+        zero_radius = torch.where(
+            is_relation,
+            torch.full((groups,), 0.00525, device=self.device),
+            torch.full((groups,), 0.0105, device=self.device),
+        )
+        zero_position = placement_goal.clone()
+        zero_position[:, :2] += random_direction * (
+            torch.rand((groups,), generator=generator, device=self.device)
+            * zero_radius
+        )[:, None]
+        held_position = torch.where(
+            shell_zero[:, None], zero_position, held_position
+        )
+
+        grasp_distance = torch.where(
+            shell_group == 5,
+            0.120
+            + torch.rand((groups,), generator=generator, device=self.device)
+            * 0.025,
+            0.160
+            + torch.rand((groups,), generator=generator, device=self.device)
+            * 0.040,
+        )
+        grasp_position = placement_goal.clone()
+        grasp_position[:, :2] += random_direction * grasp_distance[:, None]
+        grasp_position = torch.where(
+            (shell_group >= 7)[:, None], target_position, grasp_position
+        )
+        placement_position = torch.where(
+            grasp_learning[:, None], grasp_position, held_position
+        )
+        object_positions_group[:, 0] = torch.where(
+            placement_task[:, None],
+            placement_position,
+            object_positions_group[:, 0],
+        )
+
+        caught_group = held_group
+        caught_object_position = object_positions_group[:, 0].clone()
+        caught_ee = caught_object_position.clone()
+        caught_ee[:, 2] += 0.08
+        ee_group = torch.where(caught_group[:, None], caught_ee, ee_group)
+        grasp_pose = caught_object_position.clone()
+        grasp_pose[:, 2] += 0.09
+        ee_group = torch.where(
+            (grasp_learning & (shell_group == 5))[:, None],
+            grasp_pose,
+            ee_group,
+        )
+        approach_direction_angle = (
+            torch.rand((groups,), generator=generator, device=self.device)
+            * (2.0 * torch.pi)
+        )
+        approach_direction = torch.stack(
+            (
+                torch.cos(approach_direction_angle),
+                torch.sin(approach_direction_angle),
+            ),
+            dim=-1,
+        )
+        approach_pose = grasp_pose.clone()
+        approach_pose[:, :2] += approach_direction * (
+            0.035
+            + torch.rand((groups,), generator=generator, device=self.device)
+            * 0.025
+        )[:, None]
+        approach_pose[:, 2] += (
+            0.015
+            + torch.rand((groups,), generator=generator, device=self.device)
+            * 0.020
+        )
+        ee_group = torch.where(
+            (grasp_learning & (shell_group == 6))[:, None],
+            approach_pose,
+            ee_group,
+        )
+
+        motion_baseline = object_positions_group[:, 0].clone()
+        motion_baseline[:, :2] += baseline_direction * 0.06
+        initial_target_group = torch.where(
+            held_group[:, None], motion_baseline, initial_target_group
+        )
+        initial_target_group = torch.where(
+            grasp_learning[:, None],
+            object_positions_group[:, 0],
+            initial_target_group,
+        )
+        yaw_group = (
+            torch.rand((groups,), generator=generator, device=self.device)
+            * (2.0 * torch.pi)
+            - torch.pi
+        )
+
+        object_positions = object_positions_group.repeat_interleave(
+            group_size, dim=0
+        )
+        object_yaw = (
+            torch.rand((groups, 4), generator=generator, device=self.device)
+            * (2.0 * torch.pi)
+            - torch.pi
+        )
+        object_quat_group = torch.zeros(
+            (groups, 4, 4), dtype=torch.float32, device=self.device
+        )
+        object_quat_group[..., 0] = torch.cos(0.5 * object_yaw)
+        object_quat_group[..., 3] = torch.sin(0.5 * object_yaw)
+        object_quaternions = object_quat_group.repeat_interleave(
+            group_size, dim=0
+        )
+        self.backend.set_free_body_poses(
+            self.backend.object_body_ids,
+            object_positions,
+            object_quaternions,
+        )
+        self.backend.set_end_effector_poses(
+            ee_group.repeat_interleave(group_size, dim=0),
+            yaw_group.repeat_interleave(group_size, dim=0),
+        )
+
+        fitted = torch.tensor(
+            _FITTED_GRIPPER, dtype=torch.float32, device=self.device
+        ).index_select(0, target_catalog)
+        opening_group = torch.where(
+            is_push,
+            torch.zeros_like(fitted),
+            torch.where(
+                caught_group,
+                (fitted - (0.001 / 0.03)).clamp(0.0, 1.0),
+                torch.ones_like(fitted),
+            ),
+        )
+        self.backend.set_gripper_openings(
+            opening_group.repeat_interleave(group_size, dim=0)
+        )
+        self.backend.set_free_body_poses(
+            self.backend.object_body_ids,
+            object_positions,
+            object_quaternions,
+        )
+
+        texture_group = torch.randint(
+            0, 7, (groups,), generator=generator, device=self.device
+        )
+        background_group = 0.65 + torch.rand(
+            (groups, 4), generator=generator, device=self.device
+        ) * 0.30
+        background_group[:, 3] = 1.0
+        shade_group = 0.55 + torch.rand(
+            (groups,), generator=generator, device=self.device
+        ) * 0.45
+        self.backend.set_visual_variants(
+            texture_group.repeat_interleave(group_size),
+            background_group.repeat_interleave(group_size, dim=0),
+            shade_group.repeat_interleave(group_size),
+        )
+        base_worlds = torch.arange(
+            0, worlds, group_size, dtype=torch.int64, device=self.device
+        )
+        self.backend.broadcast_group_state(base_worlds)
+
+        task_ids = task_group.repeat_interleave(group_size)
+        target_slots = target_slot_group.repeat_interleave(group_size)
+        reference_slots = reference_slot_group.repeat_interleave(group_size)
+        second_reference_slots = second_reference_slot_group.repeat_interleave(
+            group_size
+        )
+        caught = caught_group.repeat_interleave(group_size)
+        initial_target = initial_target_group.repeat_interleave(group_size, dim=0)
+        release_group = torch.maximum(
+            torch.full_like(fitted, 0.55), (fitted + 0.04).clamp(max=1.0)
+        )
+        task_state = BatchedTaskState(
+            instruction_ids=task_ids,
+            target_slots=target_slots,
+            reference_slots=reference_slots,
+            second_reference_slots=second_reference_slots,
+            initial_target_positions=initial_target,
+            ever_grasped=caught.clone(),
+            grasped=caught.clone(),
+            step_count=torch.zeros(
+                (worlds,), dtype=torch.int64, device=self.device
+            ),
+            release_threshold=release_group.repeat_interleave(group_size),
+            support_surface_z=torch.full(
+                (worlds,),
+                self.support_surface_z,
+                dtype=torch.float32,
+                device=self.device,
+            ),
+        )
+        pin_offsets = (
+            object_positions_group[:, 0] - ee_group
+        ).repeat_interleave(
+            group_size, dim=0
+        )
+        pin_offsets[:, 2] = -0.08
+
+        target_catalog_names = [
+            ACTIVE_CDPR_CATALOGS[index]
+            for index in target_catalog.detach().cpu().tolist()
+        ]
+        instruction_group: list[str] = []
+        for index, task_id in enumerate(task_group.detach().cpu().tolist()):
+            name = ACTIVE_INSTRUCTION_TYPES[task_id]
+            target_name = target_catalog_names[index].replace("ycb_", "").replace(
+                "_", " "
+            )
+            if name == "move_to_object":
+                text = f"move to {target_name}"
+            elif name == "push_left":
+                text = f"push {target_name} left"
+            elif name == "push_right":
+                text = f"push {target_name} right"
+            elif name == "put_into_bowl":
+                text = f"put {target_name} into bowl"
+            elif name == "put_into_plate":
+                text = f"put {target_name} on plate"
+            elif name == "move_left_of_object":
+                text = f"move {target_name} left of the reference object"
+            elif name == "move_right_of_object":
+                text = f"move {target_name} right of the reference object"
+            else:
+                text = f"move {target_name} between the two reference objects"
+            instruction_group.append(text)
+        instructions = tuple(
+            text
+            for text in instruction_group
+            for _ in range(group_size)
+        )
+        return BatchedReset(
+            instructions=instructions,
+            task_state=task_state,
+            group_instruction_ids=task_group,
+            group_shell_ids=shell_group,
+            horizons=horizon_group.repeat_interleave(group_size),
+            pinned=caught,
+            pin_offsets=pin_offsets,
+            latch_eligible=grasp_learning.repeat_interleave(group_size),
+            fitted_opening=fitted.repeat_interleave(group_size),
+            group_ids=group_ids.repeat_interleave(group_size),
+        )
+
+
+@dataclass(frozen=True)
+class CollectorRound:
+    records: dict[str, Any]
+    loss_mask: Any
+    candidate_success: Any
+    group_instruction_ids: Any
+    group_shell_ids: Any
+    metrics: dict[str, float]
+
+
+class RankLocalMJWarpGRPOCollector:
+    def __init__(
+        self,
+        *,
+        backend: Any,
+        smolvla_runtime: Any,
+        trainer: Any,
+        resetter: BatchedReverseFrontierResetter,
+        layout: RankLocalGroupLayout,
+        actions_per_policy_decision: int = 4,
+        smolvla_microbatch_size: int = 0,
+        normalize_advantage: bool = True,
+        advantage_clip_abs: float = 6.0,
+        dynamic_min_pass_rate: float = 0.10,
+        dynamic_max_pass_rate: float = 0.90,
+        group_selection: str = "uniform",
+        profile: bool = False,
+    ) -> None:
+        layout.validate()
+        self.backend = backend
+        self.runtime = smolvla_runtime
+        self.trainer = trainer
+        self.resetter = resetter
+        self.layout = layout
+        self.actions_per_policy_decision = max(
+            1,
+            min(
+                int(actions_per_policy_decision),
+                int(trainer.chunk_size),
+            ),
+        )
+        self.smolvla_microbatch_size = max(0, int(smolvla_microbatch_size))
+        self.normalize_advantage = bool(normalize_advantage)
+        self.advantage_clip_abs = float(advantage_clip_abs)
+        self.dynamic_min_pass_rate = float(dynamic_min_pass_rate)
+        self.dynamic_max_pass_rate = float(dynamic_max_pass_rate)
+        self.group_selection = str(group_selection).lower()
+        if self.group_selection not in {"uniform", "best", "softmax"}:
+            raise ValueError(
+                f"Unsupported rank-local GRPO selection: {group_selection!r}."
+            )
+        self.profile = bool(profile)
+        self.torch = backend.torch
+        self.device = backend.device
+        self._sample_generator = self.torch.Generator(device=self.device)
+
+    def _sync_for_profile(self) -> None:
+        if self.profile:
+            self.torch.cuda.synchronize(self.device)
+
+    def _maintain_pinned_objects(
+        self,
+        reset: BatchedReset,
+        low_dim: Any,
+        action: Any,
+        active_mask: Any,
+    ) -> tuple[Any, Any]:
+        # The backend releases against the controller target before stepping,
+        # matching the CPU environment's caught-object target check.
+        reset.pinned.copy_(self.backend.pinned_object_mask())
+        rows = self.torch.arange(
+            self.layout.worlds_per_rank,
+            dtype=self.torch.int64,
+            device=self.device,
+        )
+        target_slots = reset.task_state.target_slots
+        desired = low_dim.ee_position + reset.pin_offsets
+        current_target = low_dim.object_positions[rows, target_slots]
+        hold_error = current_target - desired
+        closing_gate = (
+            reset.latch_eligible
+            & active_mask
+            & ~reset.pinned
+            & (action[:, 4] <= -0.05)
+            & (
+                low_dim.gripper_opening
+                <= (reset.fitted_opening + 0.012).clamp(max=1.0)
+            )
+        )
+        xy_error = self.torch.linalg.vector_norm(hold_error[:, :2], dim=-1)
+        z_error = hold_error[:, 2].abs()
+        finger_contact = self.backend.finger_object_contact_mask(target_slots)
+        contact_gate = finger_contact & (xy_error <= 0.030) & (z_error <= 0.060)
+        centered_close_fallback = (xy_error <= 0.028) & (z_error <= 0.030)
+        latch = closing_gate & (contact_gate | centered_close_fallback)
+        reset.pinned.logical_or_(latch)
+        self.backend.configure_pinned_objects(
+            target_slots,
+            reset.pin_offsets,
+            reset.pinned,
+            reset.task_state.release_threshold,
+        )
+        self.backend.set_target_body_positions(
+            target_slots,
+            desired,
+            reset.pinned,
+        )
+        return self.backend.low_dim_observations(), reset.pinned
+
+    def collect_round(
+        self,
+        *,
+        update_index: int,
+        round_index: int,
+    ) -> CollectorRound:
+        torch = self.torch
+        reset_start = time.perf_counter()
+        reset = self.resetter.reset(
+            update_index=update_index, round_index=round_index
+        )
+        self.backend.configure_pinned_objects(
+            reset.task_state.target_slots,
+            reset.pin_offsets,
+            reset.pinned,
+            reset.task_state.release_threshold,
+        )
+        self._sample_generator.manual_seed(
+            self.resetter.base_seed
+            + self.resetter.rank * 1_000_003
+            + int(update_index) * 10_000_019
+            + int(round_index) * 100_003
+            + 71
+        )
+        self._sync_for_profile()
+        reset_time = time.perf_counter() - reset_start
+
+        worlds = int(self.layout.worlds_per_rank)
+        group_size = int(self.layout.group_size)
+        active = torch.ones(
+            (worlds,), dtype=torch.bool, device=self.device
+        )
+        candidate_success = torch.zeros_like(active)
+        sampled_actions = torch.zeros((), dtype=torch.int64, device=self.device)
+        actions_per_world = torch.zeros(
+            (worlds,), dtype=torch.int64, device=self.device
+        )
+        record_lists: dict[str, list[Any]] = {
+            "state": [],
+            "prior": [],
+            "action": [],
+            "action_index": [],
+            "old_log_prob": [],
+            "world_index": [],
+        }
+        valid_masks: list[Any] = []
+        timings = {
+            "render_time_s": 0.0,
+            "smolvla_time_s": 0.0,
+            "policy_time_s": 0.0,
+            "physics_time_s": 0.0,
+            "reward_time_s": 0.0,
+        }
+        max_decisions = int(reset.horizons.max().detach().cpu().item())
+
+        for decision in range(max_decisions):
+            self._sync_for_profile()
+            started = time.perf_counter()
+            cameras = self.backend.render_policy_cameras()
+            self._sync_for_profile()
+            timings["render_time_s"] += time.perf_counter() - started
+
+            low_dim = self.backend.low_dim_observations()
+            state_tensor = build_smolvla_state_tensor(
+                ee_position=low_dim.ee_position,
+                ee_yaw=low_dim.ee_yaw,
+                gripper_opening=low_dim.gripper_opening,
+                object_positions=low_dim.object_positions,
+                target_slots=reset.task_state.target_slots,
+                state_dim=int(self.trainer.state_dim),
+            )
+            self._sync_for_profile()
+            started = time.perf_counter()
+            prior = self.runtime.sample_cdpr_chunks_from_tensors(
+                primary_images=cameras.overview,
+                wrist_images=cameras.wrist,
+                states=state_tensor,
+                instructions=reset.instructions,
+                microbatch_size=self.smolvla_microbatch_size,
+            )
+            self._sync_for_profile()
+            timings["smolvla_time_s"] += time.perf_counter() - started
+
+            started = time.perf_counter()
+            actions, log_probs, _means = (
+                self.trainer.sample_action_chunks_tensor(
+                    states=state_tensor,
+                    priors=prior,
+                    action_count=self.actions_per_policy_decision,
+                    generator=self._sample_generator,
+                )
+            )
+            self._sync_for_profile()
+            timings["policy_time_s"] += time.perf_counter() - started
+
+            for action_index in range(self.actions_per_policy_decision):
+                step_active = active & (decision < reset.horizons)
+                record_lists["state"].append(state_tensor.detach())
+                record_lists["prior"].append(prior.detach())
+                record_lists["action"].append(actions[:, action_index].detach())
+                record_lists["action_index"].append(
+                    torch.full(
+                        (worlds,),
+                        action_index,
+                        dtype=torch.int64,
+                        device=self.device,
+                    )
+                )
+                record_lists["old_log_prob"].append(
+                    log_probs[:, action_index].detach()
+                )
+                record_lists["world_index"].append(
+                    torch.arange(
+                        worlds, dtype=torch.int64, device=self.device
+                    )
+                )
+                valid_masks.append(step_active)
+                sampled_actions += step_active.sum()
+                actions_per_world += step_active.to(dtype=torch.int64)
+
+                self._sync_for_profile()
+                started = time.perf_counter()
+                low_dim = self.backend.step(
+                    actions[:, action_index], step_active
+                )
+                low_dim, caught_target = self._maintain_pinned_objects(
+                    reset,
+                    low_dim,
+                    actions[:, action_index],
+                    step_active,
+                )
+                self._sync_for_profile()
+                timings["physics_time_s"] += time.perf_counter() - started
+
+                started = time.perf_counter()
+                result = evaluate_active_sparse_tasks(
+                    state=reset.task_state,
+                    ee_position=low_dim.ee_position,
+                    object_positions=low_dim.object_positions,
+                    gripper_opening=low_dim.gripper_opening,
+                    caught_target=caught_target,
+                    active_mask=step_active,
+                    max_steps=10_000,
+                    thresholds=BatchedTaskThresholds(),
+                )
+                candidate_success.logical_or_(result.success)
+                active.logical_and_(~result.terminated)
+                self._sync_for_profile()
+                timings["reward_time_s"] += time.perf_counter() - started
+            active.logical_and_((decision + 1) < reset.horizons)
+
+        success_by_group = candidate_success.reshape(
+            self.layout.groups_per_rank, group_size
+        )
+        action_counts_by_group = actions_per_world.reshape(
+            self.layout.groups_per_rank, group_size
+        )
+        if self.group_selection == "best":
+            selected_candidate = success_by_group.to(
+                dtype=torch.int64
+            ).argmax(dim=1)
+        elif self.group_selection == "softmax":
+            selected_candidate = torch.multinomial(
+                torch.softmax(success_by_group.to(dtype=torch.float32), dim=1),
+                num_samples=1,
+                replacement=True,
+                generator=self._sample_generator,
+            ).squeeze(1)
+        else:
+            selected_candidate = torch.randint(
+                0,
+                group_size,
+                (self.layout.groups_per_rank,),
+                generator=self._sample_generator,
+                device=self.device,
+            )
+        selected_actions = action_counts_by_group.gather(
+            1, selected_candidate[:, None]
+        ).sum()
+        advantages_by_group = torch_group_advantages(
+            success_by_group.to(dtype=torch.float32),
+            normalize=self.normalize_advantage,
+            clip_abs=self.advantage_clip_abs,
+        )
+        world_advantage = advantages_by_group.reshape(-1)
+        pass_rate = success_by_group.to(dtype=torch.float32).mean(dim=1)
+        informative_group = (
+            (pass_rate > self.dynamic_min_pass_rate)
+            & (pass_rate < self.dynamic_max_pass_rate)
+        )
+        informative_world = informative_group.repeat_interleave(group_size)
+
+        records = {
+            key: torch.cat(values, dim=0)
+            for key, values in record_lists.items()
+        }
+        record_valid = torch.cat(valid_masks, dim=0)
+        record_world = records.pop("world_index")
+        records["advantage"] = world_advantage.index_select(0, record_world)
+        loss_mask = record_valid & informative_world.index_select(
+            0, record_world
+        )
+        self._sync_for_profile()
+        total_time = reset_time + sum(timings.values())
+        metrics = {
+            **timings,
+            "reset_time_s": float(reset_time),
+            "rollout_time_s": float(total_time),
+            "sampled_environment_actions": float(sampled_actions.item()),
+            "selected_environment_actions": float(selected_actions.item()),
+            "trajectory_work_amplification": float(
+                sampled_actions.item() / max(1, selected_actions.item())
+            ),
+            "sampled_actions_per_second": float(
+                sampled_actions.item() / max(total_time, 1.0e-9)
+            ),
+            "selected_actions_per_second": float(
+                selected_actions.item() / max(total_time, 1.0e-9)
+            ),
+            "smolvla_batch_size": float(worlds),
+            "smolvla_inference_microbatch_size": float(
+                worlds
+                if self.smolvla_microbatch_size <= 0
+                else min(worlds, self.smolvla_microbatch_size)
+            ),
+            "timers_cuda_synchronized": float(self.profile),
+            "complete_groups_per_rank": float(self.layout.groups_per_rank),
+            "informative_groups": float(informative_group.sum().item()),
+            "group_pass_rate_mean": float(pass_rate.mean().item()),
+            "records_total": float(loss_mask.numel()),
+            "records_informative": float(loss_mask.sum().item()),
+        }
+        return CollectorRound(
+            records=records,
+            loss_mask=loss_mask.to(dtype=torch.float32),
+            candidate_success=success_by_group,
+            group_instruction_ids=reset.group_instruction_ids,
+            group_shell_ids=reset.group_shell_ids,
+            metrics=metrics,
+        )
+
+
+def concatenate_collector_rounds(
+    rounds: Sequence[CollectorRound],
+) -> tuple[dict[str, Any], Any, Any, Any, Any, dict[str, float]]:
+    if not rounds:
+        raise ValueError("At least one collector round is required.")
+    import torch
+
+    keys = tuple(rounds[0].records)
+    records = {
+        key: torch.cat([item.records[key] for item in rounds], dim=0)
+        for key in keys
+    }
+    mask = torch.cat([item.loss_mask for item in rounds], dim=0)
+    successes = torch.cat([item.candidate_success for item in rounds], dim=0)
+    task_ids = torch.cat([item.group_instruction_ids for item in rounds], dim=0)
+    shell_ids = torch.cat([item.group_shell_ids for item in rounds], dim=0)
+    metrics: dict[str, float] = {}
+    for key in rounds[0].metrics:
+        values = [float(item.metrics.get(key, 0.0)) for item in rounds]
+        if key.endswith("_time_s") or "actions" in key or "records" in key or key == "informative_groups":
+            metrics[key] = float(sum(values))
+        else:
+            metrics[key] = float(sum(values) / len(values))
+    rollout_time = max(metrics.get("rollout_time_s", 0.0), 1.0e-9)
+    metrics["sampled_actions_per_second"] = (
+        metrics.get("sampled_environment_actions", 0.0) / rollout_time
+    )
+    metrics["selected_actions_per_second"] = (
+        metrics.get("selected_environment_actions", 0.0) / rollout_time
+    )
+    metrics["trajectory_work_amplification"] = (
+        metrics.get("sampled_environment_actions", 0.0)
+        / max(1.0, metrics.get("selected_environment_actions", 0.0))
+    )
+    return records, mask, successes, task_ids, shell_ids, metrics

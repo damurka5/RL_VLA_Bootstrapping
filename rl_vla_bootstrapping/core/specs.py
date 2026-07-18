@@ -271,6 +271,59 @@ class SceneBuilderSpec:
 
 
 @dataclass(frozen=True)
+class SimulatorSpec:
+    """Runtime simulator selection.
+
+    `simulation` remains the scene-builder configuration for backward
+    compatibility.  This separate block selects the execution backend without
+    changing existing CPU MuJoCo configs.
+    """
+
+    backend: str = "mujoco_cpu"
+    worlds_per_rank: int = 1
+    groups_per_rank: int = 1
+    nconmax: int = 256
+    njmax: int = 512
+    nccdmax: int | None = None
+    render_width: int = 320
+    render_height: int = 240
+    object_slots: int = 4
+    fixed_scene_xml: str | None = None
+
+    @classmethod
+    def from_mapping(cls, data: dict[str, Any] | None) -> "SimulatorSpec":
+        data = data or {}
+        backend = str(data.get("backend") or "mujoco_cpu")
+        if backend not in {"mujoco_cpu", "mjlab_mjwarp"}:
+            raise ValueError(
+                f"Unsupported simulator backend {backend!r}; expected "
+                "'mujoco_cpu' or 'mjlab_mjwarp'."
+            )
+        worlds_per_rank = max(1, int(data.get("worlds_per_rank", 1)))
+        groups_per_rank = max(1, int(data.get("groups_per_rank", 1)))
+        return cls(
+            backend=backend,
+            worlds_per_rank=worlds_per_rank,
+            groups_per_rank=groups_per_rank,
+            nconmax=max(1, int(data.get("nconmax", 256))),
+            njmax=max(1, int(data.get("njmax", 512))),
+            nccdmax=(
+                None
+                if data.get("nccdmax") is None
+                else max(1, int(data["nccdmax"]))
+            ),
+            render_width=max(1, int(data.get("render_width", 320))),
+            render_height=max(1, int(data.get("render_height", 240))),
+            object_slots=max(1, int(data.get("object_slots", 4))),
+            fixed_scene_xml=(
+                str(data["fixed_scene_xml"])
+                if data.get("fixed_scene_xml")
+                else None
+            ),
+        )
+
+
+@dataclass(frozen=True)
 class ActionCodecSpec:
     chunk_size: int = 8
     normalized_low: float = -1.0
@@ -435,6 +488,7 @@ class ProjectConfig:
     embodiment: EmbodimentSpec
     task: TaskSpec
     simulation: SceneBuilderSpec
+    simulator: SimulatorSpec
     policy: PolicySpec
     training: TrainingSpec
     evaluation: EvaluationSpec

@@ -1,0 +1,98 @@
+{
+  "checks": {
+    "batched_camera_creation": false,
+    "camera_tensor_contract": false,
+    "driver_570_or_newer": false,
+    "exact_package_pins": false,
+    "gpu_count": false,
+    "mjlab_import": false,
+    "mjwarp_import": false,
+    "put_model": false,
+    "pytorch_cuda": false,
+    "pytorch_gpu_count": false,
+    "required_mjcf_features": false,
+    "static_required_mjcf_features": true,
+    "torch_cuda_12_8": false,
+    "two_a40s": false,
+    "warp_gpu_count": false,
+    "world_allocation": false
+  },
+  "config": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_complex_reverse_frontier_grpo_mjlab.yaml",
+  "errors": [
+    "Version lock mismatch: mjlab expected 1.5.0, found unavailable, mujoco expected 3.10.0, found 3.2.4, mujoco_warp expected 3.10.0.1, found unavailable, warp expected 1.14.0, found unavailable, torch expected 2.7.1, found unavailable",
+    "NVIDIA inventory failed: FileNotFoundError: [Errno 2] No such file or directory: 'nvidia-smi'",
+    "ModuleNotFoundError: No module named 'torch'"
+  ],
+  "failed_checks": [
+    "exact_package_pins",
+    "gpu_count",
+    "two_a40s",
+    "driver_570_or_newer",
+    "pytorch_cuda",
+    "pytorch_gpu_count",
+    "torch_cuda_12_8",
+    "warp_gpu_count",
+    "mjwarp_import",
+    "mjlab_import",
+    "put_model",
+    "world_allocation",
+    "batched_camera_creation",
+    "required_mjcf_features",
+    "camera_tensor_contract"
+  ],
+  "gpus": [],
+  "host": "MacBook-Pro-8.local",
+  "mjcf_static": {
+    "compatible": false,
+    "counts": {
+      "ball_joints": 1,
+      "cameras": 2,
+      "frame_sensors": 4,
+      "free_joints": 5,
+      "joint_equalities": 1,
+      "position_actuators": 6,
+      "spatial_tendons": 4,
+      "tendon_wrap_geoms": 8
+    },
+    "error": "",
+    "host_compile_ok": false,
+    "parse_ok": true,
+    "put_model_ok": false,
+    "render_context_ok": false,
+    "required_features": {
+      "ball_stabilizer": true,
+      "camera_frame_sensors": true,
+      "finger_joint_equality": true,
+      "four_spatial_tendons": true,
+      "free_end_effector": true,
+      "overview_camera": true,
+      "pulley_routing_sidesites": true,
+      "slider_yaw_gripper_actuators": true,
+      "wrist_camera": true
+    },
+    "unsupported": [],
+    "versions": {
+      "mjlab": "unavailable",
+      "mujoco": "3.2.4",
+      "mujoco_warp": "unavailable",
+      "torch": "unavailable",
+      "warp": "unavailable"
+    },
+    "warnings": [],
+    "world_allocation_ok": false,
+    "xml_path": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml"
+  },
+  "ok": false,
+  "platform": "macOS-10.16-x86_64-i386-64bit",
+  "python": "3.9.0 (v3.9.0:9cf6752276, Oct  5 2020, 11:29:23) \n[Clang 6.0 (clang-600.0.57)]",
+  "required_cuda_runtime": "12.8",
+  "traceback": "Traceback (most recent call last):\n  File \"/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/scripts/preflight_cdpr_mjlab.py\", line 156, in main\n    import torch\nModuleNotFoundError: No module named 'torch'\n",
+  "versions": {
+    "mjlab": "unavailable",
+    "mujoco": "3.2.4",
+    "mujoco_warp": "unavailable",
+    "torch": "unavailable",
+    "warp": "unavailable"
+  },
+  "xml_path": "/Users/damirnurtdinov/Desktop/My Courses/\u0414\u0438\u043f\u043b\u043e\u043c/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml"
+}

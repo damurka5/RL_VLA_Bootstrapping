@@ -1,0 +1,19 @@
+--extra-index-url https://download.pytorch.org/whl/cu128
+
+# Simulator/VLA compatibility lock for the A40 deployment.
+torch==2.7.1+cu128
+torchvision==0.22.1+cu128
+torchaudio==2.7.1+cu128
+warp-lang==1.14.0
+mujoco==3.10.0
+mujoco-warp==3.10.0.1
+mjlab==1.5.0
+lerobot[smolvla]==0.6.0
+numpy==2.2.6
+
+# Runtime and verification tools used by the checked-in scripts.
+PyYAML==6.0.2
+psutil==7.0.0
+pytest==8.4.1
+tensorboard==2.20.0
+tqdm==4.67.1
