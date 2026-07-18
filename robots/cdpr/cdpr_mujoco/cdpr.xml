@@ -54,7 +54,7 @@
       this view.  A named, fixed camera is required by the batched MJWarp
       renderer and also makes the policy camera contract explicit.
     -->
-    <camera name="overview" mode="fixed" pos="0 -1.299 0.85"
+    <camera name="overview" mode="fixed" pos="0 -1.0825 0.725"
             xyaxes="1 0 0 0 0.5 0.8660254" fovy="45"/>
 
     <body name="rotor_1_up" pos="-0.535 -0.755 1.309" euler="90 45 0">

@@ -483,6 +483,24 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         np.testing.assert_allclose(scene.camera[0].forward, legacy_forward, atol=1e-6)
         np.testing.assert_allclose(scene.camera[0].up, legacy_up, atol=1e-6)
+        overview_id = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_CAMERA, "overview"
+        )
+        np.testing.assert_allclose(
+            model.cam_pos[overview_id],
+            np.array([0.0, -1.0825, 0.725]),
+            atol=1e-7,
+        )
+        self.assertAlmostEqual(
+            float(
+                np.linalg.norm(
+                    model.cam_pos[overview_id]
+                    - np.array([0.0, 0.0, 0.10])
+                )
+            ),
+            1.25,
+            places=4,
+        )
 
     def test_four_object_slots_keep_fixed_real_mesh_topology(self):
         assets = validate_object_assets(XML)
