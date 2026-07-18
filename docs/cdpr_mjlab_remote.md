@@ -7,7 +7,8 @@ Commands below assume the checkout is
 
 The setup script creates a Python 3.12 Conda environment, installs the exact
 CUDA 12.8 lock, installs this repository editable without dependency drift,
-runs `pip check`, and executes the strict preflight:
+runs `pip check`, stages the curated RoboCasa subset at
+`assets/externals/robocasa`, and executes the strict preflight:
 
 ```bash
 cd /root/repo/RL_VLA_Bootstrapping
@@ -51,17 +52,80 @@ conda run --no-capture-output -n cdpr-mjlab python3 \
 
 The preflight is deliberately strict. A static XML pass is insufficient:
 `put_model`, world allocation, forward dynamics, renderer creation, BVH refit,
-both camera renders, and GPU tensor checks must execute.
+per-world real-mesh selection, both camera renders, GPU contact-force output,
+and GPU tensor checks must execute.
 
-Run the CPU regression and reward/group fixtures in the pinned environment:
+The following optional command runs unit/regression fixtures. It is not part of
+the production simulator hot path and does not enable CPU contact handling:
 
 ```bash
 conda run --no-capture-output -n cdpr-mjlab python3 -m pytest -q tests
 ```
 
-## CPU/MJWarp parity
+## Stage the RoboCasa object pack
 
-Run the identical-state scripted-action fixture on one GPU:
+The MJ-Lab scene no longer depends on YCB or LIBERO visuals. Stage and verify
+the curated RoboCasa subset before preflight:
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+conda run --no-capture-output -n cdpr-mjlab python3 \
+  scripts/stage_cdpr_robocasa_assets.py
+conda run --no-capture-output -n cdpr-mjlab python3 \
+  scripts/stage_cdpr_robocasa_assets.py --verify-only
+```
+
+Only the ten selected model/visual packs are transferred. RoboCasa collision
+meshes are omitted because the production backend uses fixed native primitive
+colliders.
+
+## GPU real-object grasp videos
+
+Run the strict pick/lift/transport/release probe. It uses eight simultaneous
+MJWarp worlds on CUDA, shows every active real-object catalog, and overlays
+bilateral contact, solved pad forces, relative-pose slip, lift, grasp, and
+release evidence:
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+conda run --no-capture-output -n cdpr-mjlab python3 \
+  scripts/render_cdpr_mjwarp_physical_grasp_videos.py \
+  --config configs/examples/cdpr_smolvla_complex_reverse_frontier_grpo_mjlab.yaml \
+  --device cuda:0 \
+  --output-dir runs/cdpr_mjwarp_physical_grasp_videos
+```
+
+The script has no CPU simulator fallback. Camera frames and compact scalar
+diagnostics leave the GPU only for MP4/CSV encoding. Its default strict mode
+exits nonzero unless all eight grippable RoboCasa types demonstrate physical
+grasp and release. Inspect `manifest.json`, the grid MP4, the overview/wrist
+MP4, and `physical_grasp_trace.csv`.
+
+## Training-camera episode videos
+
+Render the same overview/wrist camera contract and scripted manipulation
+episodes used to inspect training resets. On the CUDA host, force the
+production backend so the command cannot silently fall back to CPU MuJoCo:
+
+```bash
+conda run --no-capture-output -n cdpr-mjlab python3 \
+  scripts/render_cdpr_mjlab_camera_videos.py \
+  --backend mjlab-mjwarp \
+  --device cuda:0 \
+  --scenarios training_put_into_bowl training_put_on_plate \
+  --output-dir runs/cdpr_robocasa_training_videos \
+  --no-timestamped
+```
+
+Each scenario writes overview, wrist, and side-by-side MP4s; an action CSV; and
+one shared manifest/contact sheet. The manifest records whether the production
+MJLab/MJWarp backend or the local MuJoCo reference backend produced the files.
+
+## Optional CPU/MJWarp parity
+
+This offline fixture compares identical scripted states against CPU MuJoCo. It
+is useful for migration diagnosis, but production training does not import or
+call it. Skip it if GPU-only acceptance is your policy:
 
 ```bash
 cd /root/repo/RL_VLA_Bootstrapping
@@ -197,12 +261,12 @@ states; do not extrapolate a safe value from empty scenes.
 
 ### Contact/grasp mismatch
 
-Use the parity fixture and inspect contact agreement, target trajectories, and
-gripper opening together. Confirm the primitive catalog, friction, equality,
-seven substeps, fitted opening, and support height. Do not mask a mismatch with
-a larger success tolerance. The active latch accepts a finger-pad contact in
-the broad alignment window or the configured contactless centered-close
-fallback, exactly as the CPU path does.
+Use the GPU grasp-video trace and inspect bilateral contact, both solved pad
+forces, relative-position/orientation slip, target lift, and gripper opening
+together. Confirm the RoboCasa visual hash, native primitive sizes, friction,
+equality, seven substeps, fitted opening, and support height. Do not mask a
+mismatch with a larger success tolerance. There is no contactless fallback and
+no pose latch.
 
 The checked 16-world capacity is `nconmax=256` contacts/world and
 `njmax=1024` constraints/world. The latter includes headroom above the 789
@@ -232,7 +296,8 @@ other; inspect both rank logs for the first failure.
 
 Do not mix latest packages into the pinned environment. Re-run the setup script
 and `pip check`, then preflight. Explicit MJWarp selection has no silent CPU
-fallback. The existing CPU script remains available independently.
+fallback. The independent CPU trainer and optional parity script are separate
+entrypoints and are never called by MJWarp production training.
 
 ### Renderer/color/orientation mismatch
 

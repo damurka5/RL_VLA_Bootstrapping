@@ -90,12 +90,6 @@ def main() -> int:
             base_seed=args.seed,
         )
         reset = resetter.reset(update_index=0, round_index=0)
-        backend.configure_pinned_objects(
-            reset.task_state.target_slots,
-            reset.pin_offsets,
-            reset.pinned,
-            reset.task_state.release_threshold,
-        )
         low_before = backend.low_dim_observations()
         ee_position_before = low_before.ee_position.clone()
         tendon_lengths_before = low_before.tendon_lengths.clone()
@@ -238,8 +232,8 @@ def main() -> int:
         )
 
         # The resetter places all object collision variants on the support.
-        # Querying the fixed first primitive against the desk exercises the
-        # global contact arrays and world-id scatter path after contact stepping.
+        # Querying the first stable primitive collider against the desk exercises
+        # the global contact arrays and world-id scatter path after stepping.
         desk = torch.full(
             (args.worlds,),
             int(backend.desk_geom_id),
@@ -261,12 +255,45 @@ def main() -> int:
         report["checks"]["contact_query_shape"] = tuple(contact.shape) == (
             args.worlds,
         )
-        finger_contact = backend.finger_object_contact_mask(
+        finger_contact = backend.finger_object_contact_metrics(
             reset.task_state.target_slots
         )
-        report["checks"]["finger_contact_query_shape"] = tuple(
-            finger_contact.shape
-        ) == (args.worlds,)
+        report["checks"]["finger_contact_query_shape"] = all(
+            tuple(value.shape) == (args.worlds,)
+            for value in (
+                finger_contact.left_contact,
+                finger_contact.right_contact,
+                finger_contact.left_normal_force,
+                finger_contact.right_normal_force,
+            )
+        )
+        report["checks"]["gpu_contact_forces_finite"] = _finite(
+            torch,
+            finger_contact.left_normal_force,
+            finger_contact.right_normal_force,
+        )
+        report["gpu_contact_evidence"] = {
+            "left_contact_worlds": int(
+                finger_contact.left_contact.sum().item()
+            ),
+            "right_contact_worlds": int(
+                finger_contact.right_contact.sum().item()
+            ),
+            "bilateral_contact_worlds": int(
+                finger_contact.bilateral_contact.sum().item()
+            ),
+            "left_normal_force_max_n": float(
+                finger_contact.left_normal_force.max().item()
+            ),
+            "right_normal_force_max_n": float(
+                finger_contact.right_normal_force.max().item()
+            ),
+            "device": str(finger_contact.left_normal_force.device),
+        }
+        report["checks"]["objects_are_unpinned_free_bodies"] = (
+            "_pinned_mask" not in vars(backend)
+            and not hasattr(backend, "configure_pinned_objects")
+        )
 
         cameras = backend.render_policy_cameras()
         expected = (
@@ -331,6 +358,21 @@ def main() -> int:
             reset.group_ids.shape
         ) == (args.worlds,)
         report["capacity"] = backend.capacity_status()
+        report["simulator_metadata"] = backend.metadata()
+        report["checks"]["robocasa_mesh_assets_active"] = (
+            report["simulator_metadata"].get("object_geometry")
+            == "robocasa_visual_plus_cdpr_native_primitives_v1"
+            and len(
+                report["simulator_metadata"].get(
+                    "object_assets_sha256", ""
+                )
+            )
+            == 64
+        )
+        report["checks"]["contact_pipeline_is_gpu_resident"] = (
+            finger_contact.left_normal_force.is_cuda
+            and finger_contact.right_normal_force.is_cuda
+        )
         report["checks"]["no_contact_capacity_overflow"] = (
             not report["capacity"]["contact_overflow"]
         )

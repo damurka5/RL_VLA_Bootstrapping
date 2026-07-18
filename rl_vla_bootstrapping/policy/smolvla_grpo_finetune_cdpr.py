@@ -1061,6 +1061,8 @@ class SmolVLAGRPOTrainer:
                     "lock_non_commanded_axes",
                     "lock_non_commanded_axes_threshold",
                     "xml_sha256",
+                    "object_assets_sha256",
+                    "object_geometry",
                     "nconmax_per_world",
                     "njmax_per_world",
                     "nccdmax_per_world",

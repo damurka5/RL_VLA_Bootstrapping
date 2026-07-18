@@ -31,8 +31,12 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     evaluate_active_sparse_tasks,
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
-    PRIMITIVE_NAMES,
-    build_variant_arrays,
+    ACTIVE_CDPR_CATALOGS,
+    COLLISION_GEOM_SLOT_NAMES,
+    GEOM_SLOT_NAMES,
+    INACTIVE_CATALOG_ID,
+    compile_catalog_variant_models,
+    slot_geom_name,
 )
 
 
@@ -46,40 +50,58 @@ def _name_id(mujoco: Any, model: Any, objtype: Any, name: str) -> int:
 def _apply_cpu_catalog(sim: Any, catalog_ids: np.ndarray) -> None:
     import mujoco
 
-    variants = build_variant_arrays(np.asarray(catalog_ids).reshape(1, 4))
+    variants = compile_catalog_variant_models(
+        mujoco,
+        REPO_ROOT
+        / "robots"
+        / "cdpr"
+        / "cdpr_mujoco"
+        / "cdpr_mjwarp_smoke.xml",
+    )
+    ids = np.asarray(catalog_ids, dtype=np.int32).reshape(4)
     for slot in range(4):
-        for primitive_index, primitive in enumerate(PRIMITIVE_NAMES):
+        catalog_id = int(ids[slot])
+        reference = (
+            variants[ACTIVE_CDPR_CATALOGS[catalog_id]]
+            if catalog_id != INACTIVE_CATALOG_ID
+            else None
+        )
+        for mesh_slot in GEOM_SLOT_NAMES:
             geom = _name_id(
                 mujoco,
                 sim.model,
                 mujoco.mjtObj.mjOBJ_GEOM,
-                f"mjwarp_slot_{slot}_{primitive}",
+                slot_geom_name(slot, mesh_slot),
             )
-            sim.model.geom_size[geom] = variants["geom_size"][
-                0, slot, primitive_index
-            ]
-            sim.model.geom_pos[geom] = variants["geom_pos"][
-                0, slot, primitive_index
-            ]
-            sim.model.geom_quat[geom] = variants["geom_quat"][
-                0, slot, primitive_index
-            ]
-            sim.model.geom_rgba[geom] = variants["geom_rgba"][
-                0, slot, primitive_index
-            ]
+            if reference is None:
+                sim.model.geom_dataid[geom] = -1
+                sim.model.geom_rgba[geom] = 0.0
+                continue
+            sim.model.geom_dataid[geom] = reference.geom_dataid[geom]
+            sim.model.geom_size[geom] = reference.geom_size[geom]
+            sim.model.geom_pos[geom] = reference.geom_pos[geom]
+            sim.model.geom_quat[geom] = reference.geom_quat[geom]
+            sim.model.geom_rgba[geom] = reference.geom_rgba[geom]
+            sim.model.geom_matid[geom] = reference.geom_matid[geom]
+            sim.model.geom_aabb[geom] = reference.geom_aabb[geom]
+            sim.model.geom_rbound[geom] = reference.geom_rbound[geom]
         body = _name_id(
             mujoco,
             sim.model,
             mujoco.mjtObj.mjOBJ_BODY,
             f"mjwarp_object_slot_{slot}",
         )
-        sim.model.body_mass[body] = variants["body_mass"][0, slot]
-        sim.model.body_inertia[body] = variants["body_inertia"][0, slot]
+        if reference is None:
+            sim.model.body_mass[body] = 1.0e-4
+            sim.model.body_inertia[body] = 1.0e-8
+        else:
+            sim.model.body_mass[body] = reference.body_mass[body]
+            sim.model.body_inertia[body] = reference.body_inertia[body]
     mujoco.mj_setConst(sim.model, sim.data)
     mujoco.mj_forward(sim.model, sim.data)
 
 
-def _cpu_finger_contact(sim: Any, slot: int = 0) -> bool:
+def _cpu_finger_metrics(sim: Any, slot: int = 0) -> dict[str, float | bool]:
     import mujoco
 
     object_geoms = {
@@ -87,54 +109,60 @@ def _cpu_finger_contact(sim: Any, slot: int = 0) -> bool:
             mujoco,
             sim.model,
             mujoco.mjtObj.mjOBJ_GEOM,
-            f"mjwarp_slot_{slot}_{primitive}",
+            slot_geom_name(slot, mesh_slot),
         )
-        for primitive in PRIMITIVE_NAMES
+        for mesh_slot in COLLISION_GEOM_SLOT_NAMES
     }
-    finger_geoms = {
-        _name_id(mujoco, sim.model, mujoco.mjtObj.mjOBJ_GEOM, name)
-        for name in (
-            "finger_l_link",
-            "finger_r_link",
-            "finger_l_tip",
-            "finger_r_tip",
+    pad_geoms = {
+        "left": _name_id(
+            mujoco,
+            sim.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
             "left_finger_pad",
+        ),
+        "right": _name_id(
+            mujoco,
+            sim.model,
+            mujoco.mjtObj.mjOBJ_GEOM,
             "right_finger_pad",
-        )
+        ),
     }
+    forces = {"left": 0.0, "right": 0.0}
+    contacts = {"left": False, "right": False}
     for index in range(int(sim.data.ncon)):
         contact = sim.data.contact[index]
         pair = {int(contact.geom1), int(contact.geom2)}
-        if pair & object_geoms and pair & finger_geoms:
-            return True
-    return False
+        if not pair & object_geoms:
+            continue
+        for side, pad_geom in pad_geoms.items():
+            if pad_geom in pair:
+                wrench = np.zeros((6,), dtype=np.float64)
+                mujoco.mj_contactForce(sim.model, sim.data, index, wrench)
+                contacts[side] = True
+                forces[side] += abs(float(wrench[0]))
+    return {
+        "left_contact": contacts["left"],
+        "right_contact": contacts["right"],
+        "bilateral_contact": contacts["left"] and contacts["right"],
+        "left_force_n": forces["left"],
+        "right_force_n": forces["right"],
+    }
 
 
-def _gpu_finger_contact(backend: Any) -> bool:
-    import torch
-
-    result = torch.zeros(
+def _gpu_finger_metrics(backend: Any) -> dict[str, float | bool]:
+    target_slots = backend.torch.zeros(
         (backend.worlds_per_rank,),
-        dtype=torch.bool,
+        dtype=backend.torch.int64,
         device=backend.device,
     )
-    for target in backend.slot_geom_ids_host[0]:
-        for name in (
-            "finger_l_link",
-            "finger_r_link",
-            "finger_l_tip",
-            "finger_r_tip",
-            "left_finger_pad",
-            "right_finger_pad",
-        ):
-            finger = _name_id(
-                backend.mujoco,
-                backend.host_model,
-                backend.mujoco.mjtObj.mjOBJ_GEOM,
-                name,
-            )
-            result.logical_or_(backend.contact_mask(int(target), finger))
-    return bool(result[0].item())
+    metrics = backend.finger_object_contact_metrics(target_slots)
+    return {
+        "left_contact": bool(metrics.left_contact[0].item()),
+        "right_contact": bool(metrics.right_contact[0].item()),
+        "bilateral_contact": bool(metrics.bilateral_contact[0].item()),
+        "left_force_n": float(metrics.left_normal_force[0].item()),
+        "right_force_n": float(metrics.right_normal_force[0].item()),
+    }
 
 
 def _error(cpu: np.ndarray, gpu: np.ndarray) -> dict[str, float]:
@@ -331,7 +359,7 @@ def main() -> int:
             rank=0,
             base_seed=args.seed,
         )
-        resetter.reset(update_index=0, round_index=0)
+        reset = resetter.reset(update_index=0, round_index=0)
         initial = backend.export_worlds([0])[0]
 
         sim = HeadlessCDPRSimulation(
@@ -364,6 +392,10 @@ def main() -> int:
         cpu_tendon, gpu_tendon = [], []
         cpu_gripper, gpu_gripper = [], []
         contact_agreement = []
+        cpu_left_force, gpu_left_force = [], []
+        cpu_right_force, gpu_right_force = [], []
+        final_cpu_contact: dict[str, float | bool] = {}
+        final_gpu_contact: dict[str, float | bool] = {}
         active = torch.zeros((8,), dtype=torch.bool, device=backend.device)
         active[0] = True
         action_batch = torch.zeros(
@@ -408,9 +440,16 @@ def main() -> int:
             gpu_tendon.append(low.tendon_lengths[0].detach().cpu().numpy())
             cpu_gripper.append(sim.get_gripper_opening())
             gpu_gripper.append(float(low.gripper_opening[0].item()))
+            final_cpu_contact = _cpu_finger_metrics(sim)
+            final_gpu_contact = _gpu_finger_metrics(backend)
             contact_agreement.append(
-                _cpu_finger_contact(sim) == _gpu_finger_contact(backend)
+                final_cpu_contact["bilateral_contact"]
+                == final_gpu_contact["bilateral_contact"]
             )
+            cpu_left_force.append(float(final_cpu_contact["left_force_n"]))
+            gpu_left_force.append(float(final_gpu_contact["left_force_n"]))
+            cpu_right_force.append(float(final_cpu_contact["right_force_n"]))
+            gpu_right_force.append(float(final_gpu_contact["right_force_n"]))
 
         discrepancies = {
             "end_effector_position_m": _error(
@@ -425,14 +464,30 @@ def main() -> int:
             "gripper_opening_normalized": _error(
                 np.asarray(cpu_gripper), np.asarray(gpu_gripper)
             ),
+            "left_pad_normal_force_n": _error(
+                np.asarray(cpu_left_force), np.asarray(gpu_left_force)
+            ),
+            "right_pad_normal_force_n": _error(
+                np.asarray(cpu_right_force), np.asarray(gpu_right_force)
+            ),
         }
         report["discrepancies"] = discrepancies
         report["contact_boolean_agreement_rate"] = float(np.mean(contact_agreement))
+        report["physical_grasp_evidence"] = {
+            "cpu": final_cpu_contact,
+            "mjwarp": final_gpu_contact,
+            "object_lift_m": float(
+                low.object_positions[0, 0, 2].item()
+                - reset.task_state.support_surface_z[0].item()
+                - reset.target_rest_height[0].item()
+            ),
+            "objects_remained_free_bodies": True,
+        }
         sparse_active = torch.zeros(
             (8,), dtype=torch.bool, device=backend.device
         )
         sparse_active[0] = True
-        caught_target = backend.pinned_object_mask().clone()
+        caught_target = reset.physical_grasp.clone()
         sparse_result = evaluate_active_sparse_tasks(
             state=reset.task_state,
             ee_position=low.ee_position,

@@ -1,78 +1,226 @@
 <mujoco model="cdpr_mjwarp_object_slots">
   <!--
-    Fixed topology for the MJWarp backend.  Every slot has the same primitive
-    superset.  Per-world model arrays choose catalog geometry, material, mass,
-    and inertia without recompiling MJCF.  Initial poses are above the floor
-    and far outside the workspace.  A pose below an infinite plane would be a
-    deep penetration, not a collision-safe parking location.
+    Fixed hybrid topology for the MJWarp backend. Every free-body slot has one
+    curated RoboCasa visual mesh and the same eleven native primitive collider
+    slots. Per-world size/pose fields activate the CDPR collider set; unused
+    primitives remain tiny and far above their owning body. Initial slot poses
+    are above the floor and outside the workspace because MuJoCo planes are
+    infinite and a body parked below one would be deeply penetrating it.
   -->
+  <asset>
+    <mesh name="robocasa_apple_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/apple/apple_10/visual/model_normalized_0.obj"
+          scale="0.07 0.07 0.07"/>
+    <texture name="robocasa_apple_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/apple/apple_10/visual/image0.png"/>
+    <material name="robocasa_apple_material" texture="robocasa_apple_texture"
+              specular="0.5" shininess="0.25"/>
+
+    <mesh name="robocasa_banana_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/banana/banana_8/visual/model_normalized_0.obj"
+          scale="0.18 0.18 0.18"
+          refquat="0.27059805 0.27059805 0.65328148 0.65328148"/>
+    <texture name="robocasa_banana_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/banana/banana_8/visual/image0.png"/>
+    <material name="robocasa_banana_material" texture="robocasa_banana_texture"
+              specular="0.5" shininess="0.36"/>
+
+    <mesh name="robocasa_carrot_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/carrot/carrot_1/visual/model_normalized_0.obj"
+          scale="0.155 0.155 0.155"
+          refquat="0.65328148 0.65328148 0.27059805 -0.27059805"/>
+    <texture name="robocasa_carrot_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/carrot/carrot_1/visual/image0.png"/>
+    <material name="robocasa_carrot_material" texture="robocasa_carrot_texture"
+              specular="0.5" shininess="0.25"/>
+
+    <mesh name="robocasa_bell_pepper_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/bell_pepper/bell_pepper_0/visual/model_normalized_0.obj"
+          scale="0.11 0.11 0.11"
+          refquat="0.70710678 0.70710678 0 0"/>
+    <texture name="robocasa_bell_pepper_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/bell_pepper/bell_pepper_0/visual/image0.png"/>
+    <material name="robocasa_bell_pepper_material"
+              texture="robocasa_bell_pepper_texture"
+              specular="0.5" shininess="0.25"/>
+
+    <mesh name="robocasa_tomato_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/tomato/tomato_1/visual/model_normalized_0.obj"
+          scale="0.065 0.065 0.065"/>
+    <texture name="robocasa_tomato_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/tomato/tomato_1/visual/image0.png"/>
+    <material name="robocasa_tomato_material" texture="robocasa_tomato_texture"
+              specular="0.5" shininess="0.36"/>
+
+    <mesh name="robocasa_orange_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/orange/orange_2/visual/model_normalized_0.obj"
+          scale="0.07 0.07 0.07"/>
+    <texture name="robocasa_orange_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/orange/orange_2/visual/image0.png"/>
+    <material name="robocasa_orange_material" texture="robocasa_orange_texture"
+              specular="0.5" shininess="0.25"/>
+
+    <mesh name="robocasa_potato_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/potato/potato_13/visual/model_normalized_0.obj"
+          scale="0.11 0.11 0.11"
+          refquat="0.70710678 0 0 0.70710678"/>
+    <texture name="robocasa_potato_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/potato/potato_13/visual/image0.png"/>
+    <material name="robocasa_potato_material" texture="robocasa_potato_texture"
+              specular="0.5" shininess="0"/>
+
+    <mesh name="robocasa_mug_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/mug/mug_10/visual/model_normalized_0.obj"
+          scale="0.125 0.125 0.125"
+          refquat="0.70710678 0 0 0.70710678"/>
+    <texture name="robocasa_mug_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/mug/mug_10/visual/image0.png"/>
+    <material name="robocasa_mug_material" texture="robocasa_mug_texture"
+              specular="0.5" shininess="0.16334"/>
+
+    <mesh name="robocasa_plate_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/plate/plate_4/visual/model_normalized_0.obj"
+          scale="0.185 0.185 0.185"/>
+    <texture name="robocasa_plate_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/plate/plate_4/visual/image0.png"/>
+    <material name="robocasa_plate_material" texture="robocasa_plate_texture"
+              specular="0.5" shininess="0.908"/>
+
+    <mesh name="robocasa_bowl_visual_mesh"
+          file="../../../assets/externals/robocasa/objects/objaverse/bowl/bowl_0/visual/model_normalized_0.obj"
+          scale="0.13 0.13 0.13"/>
+    <texture name="robocasa_bowl_texture" type="2d"
+             file="../../../assets/externals/robocasa/objects/objaverse/bowl/bowl_0/visual/image0.png"/>
+    <material name="robocasa_bowl_material" texture="robocasa_bowl_texture"
+              specular="0.5" shininess="0.25"/>
+  </asset>
   <default>
-    <default class="mjwarp_object_slot">
+    <default class="mjwarp_object_collision">
       <geom contype="1" conaffinity="7" group="3" condim="3"
-            friction="0.9 0.01 0.001" solref="0.008 1"
-            solimp="0.90 0.95 0.001" margin="0.001"/>
+            friction="0.95 0.3 0.1" solref="0.008 1"
+            solimp="0.90 0.95 0.001" margin="0.001"
+            rgba="0 0 0 0"/>
+    </default>
+    <default class="mjwarp_object_visual">
+      <geom type="mesh" contype="0" conaffinity="0" group="1"/>
     </default>
   </default>
   <worldbody>
-    <body name="mjwarp_object_slot_0" pos="-4 -4 4" childclass="mjwarp_object_slot">
-      <freejoint name="mjwarp_object_slot_0_free"/>
-      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-      <geom name="mjwarp_slot_0_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_0_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    <body name="mjwarp_object_slot_0" pos="-4 -4 4">
+      <joint name="mjwarp_object_slot_0_free" type="free" damping="0.01"/>
+      <inertial pos="0 0 0" mass="0.11"
+                diaginertia="0.000064 0.000064 0.000064"/>
+      <geom name="mjwarp_slot_0_visual" class="mjwarp_object_visual"
+            mesh="robocasa_apple_visual_mesh" material="robocasa_apple_material"/>
+      <geom name="mjwarp_slot_0_sphere_0" class="mjwarp_object_collision"
+            type="sphere" size="0.038"/>
+      <geom name="mjwarp_slot_0_sphere_1" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_sphere_2" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_cylinder_0" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_cylinder_1" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_cylinder_2" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_box_0" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_box_1" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_box_2" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_box_3" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_0_capsule_0" class="mjwarp_object_collision"
+            type="capsule" size="0.0001 0.0001" pos="0 0 10"/>
     </body>
-    <body name="mjwarp_object_slot_1" pos="-4 4 4" childclass="mjwarp_object_slot">
-      <freejoint name="mjwarp_object_slot_1_free"/>
-      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-      <geom name="mjwarp_slot_1_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_1_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    <body name="mjwarp_object_slot_1" pos="-4 4 4">
+      <joint name="mjwarp_object_slot_1_free" type="free" damping="0.01"/>
+      <inertial pos="0 0 0" mass="0.11"
+                diaginertia="0.000064 0.000064 0.000064"/>
+      <geom name="mjwarp_slot_1_visual" class="mjwarp_object_visual"
+            mesh="robocasa_apple_visual_mesh" material="robocasa_apple_material"/>
+      <geom name="mjwarp_slot_1_sphere_0" class="mjwarp_object_collision"
+            type="sphere" size="0.038"/>
+      <geom name="mjwarp_slot_1_sphere_1" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_sphere_2" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_cylinder_0" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_cylinder_1" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_cylinder_2" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_box_0" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_box_1" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_box_2" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_box_3" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_1_capsule_0" class="mjwarp_object_collision"
+            type="capsule" size="0.0001 0.0001" pos="0 0 10"/>
     </body>
-    <body name="mjwarp_object_slot_2" pos="4 -4 4" childclass="mjwarp_object_slot">
-      <freejoint name="mjwarp_object_slot_2_free"/>
-      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-      <geom name="mjwarp_slot_2_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_2_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    <body name="mjwarp_object_slot_2" pos="4 -4 4">
+      <joint name="mjwarp_object_slot_2_free" type="free" damping="0.01"/>
+      <inertial pos="0 0 0" mass="0.11"
+                diaginertia="0.000064 0.000064 0.000064"/>
+      <geom name="mjwarp_slot_2_visual" class="mjwarp_object_visual"
+            mesh="robocasa_apple_visual_mesh" material="robocasa_apple_material"/>
+      <geom name="mjwarp_slot_2_sphere_0" class="mjwarp_object_collision"
+            type="sphere" size="0.038"/>
+      <geom name="mjwarp_slot_2_sphere_1" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_sphere_2" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_cylinder_0" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_cylinder_1" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_cylinder_2" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_box_0" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_box_1" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_box_2" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_box_3" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_2_capsule_0" class="mjwarp_object_collision"
+            type="capsule" size="0.0001 0.0001" pos="0 0 10"/>
     </body>
-    <body name="mjwarp_object_slot_3" pos="4 4 4" childclass="mjwarp_object_slot">
-      <freejoint name="mjwarp_object_slot_3_free"/>
-      <inertial pos="0 0 0" mass="0.1" diaginertia="0.0001 0.0001 0.0001"/>
-      <geom name="mjwarp_slot_3_sphere_0" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_sphere_1" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_sphere_2" type="sphere" size="0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_cylinder_0" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_cylinder_1" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_cylinder_2" type="cylinder" size="0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_box_0" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_box_1" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_box_2" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_box_3" type="box" size="0.001 0.001 0.001" rgba="0 0 0 0"/>
-      <geom name="mjwarp_slot_3_capsule_0" type="capsule" size="0.001 0.001" rgba="0 0 0 0"/>
+    <body name="mjwarp_object_slot_3" pos="4 4 4">
+      <joint name="mjwarp_object_slot_3_free" type="free" damping="0.01"/>
+      <inertial pos="0 0 0" mass="0.11"
+                diaginertia="0.000064 0.000064 0.000064"/>
+      <geom name="mjwarp_slot_3_visual" class="mjwarp_object_visual"
+            mesh="robocasa_apple_visual_mesh" material="robocasa_apple_material"/>
+      <geom name="mjwarp_slot_3_sphere_0" class="mjwarp_object_collision"
+            type="sphere" size="0.038"/>
+      <geom name="mjwarp_slot_3_sphere_1" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_sphere_2" class="mjwarp_object_collision"
+            type="sphere" size="0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_cylinder_0" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_cylinder_1" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_cylinder_2" class="mjwarp_object_collision"
+            type="cylinder" size="0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_box_0" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_box_1" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_box_2" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_box_3" class="mjwarp_object_collision"
+            type="box" size="0.0001 0.0001 0.0001" pos="0 0 10"/>
+      <geom name="mjwarp_slot_3_capsule_0" class="mjwarp_object_collision"
+            type="capsule" size="0.0001 0.0001" pos="0 0 10"/>
     </body>
   </worldbody>
 </mujoco>

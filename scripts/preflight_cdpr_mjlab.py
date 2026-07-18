@@ -21,6 +21,12 @@ from rl_vla_bootstrapping.simulation.cdpr_backend import (
     CDPRBackendConfig,
     create_cdpr_backend,
 )
+from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+    ACTIVE_CDPR_CATALOGS,
+    object_assets_sha256,
+    robocasa_asset_root,
+    validate_object_assets,
+)
 from rl_vla_bootstrapping.simulation.mjwarp_compat import (
     PINNED_CUDA_RUNTIME,
     execute_mjwarp_compatibility_spike,
@@ -95,6 +101,7 @@ def main() -> int:
         "checks": {
             "exact_package_pins": False,
             "static_required_mjcf_features": False,
+            "robocasa_assets": False,
             "gpu_count": False,
             "two_a40s": False,
             "driver_570_or_newer": False,
@@ -109,6 +116,9 @@ def main() -> int:
             "batched_camera_creation": False,
             "required_mjcf_features": False,
             "camera_tensor_contract": False,
+            "gpu_mesh_variant_tables": False,
+            "gpu_contact_force_pipeline": False,
+            "free_object_bodies": False,
         },
         "errors": [],
     }
@@ -123,6 +133,17 @@ def main() -> int:
             static_compatibility.parse_ok
             and not static_compatibility.unsupported
             and all(static_compatibility.required_features.values())
+        )
+        asset_paths = validate_object_assets(xml_path)
+        expected_asset_hash = object_assets_sha256(xml_path)
+        report["object_assets"] = {
+            "count": len(asset_paths),
+            "sha256": expected_asset_hash,
+            "root": str(robocasa_asset_root(xml_path)),
+        }
+        report["checks"]["robocasa_assets"] = (
+            len(asset_paths) == 50
+            and len(expected_asset_hash) == 64
         )
         report["versions"] = package_versions()
         mismatches = pinned_version_mismatches(report["versions"])
@@ -223,6 +244,61 @@ def main() -> int:
         )
         all_worlds = torch.arange(args.worlds, device="cuda:0")
         backend.reset_worlds(all_worlds)
+        catalog_ids = (
+            torch.arange(
+                int(args.worlds) * 4,
+                dtype=torch.int64,
+                device=backend.device,
+            ).reshape(int(args.worlds), 4)
+            % len(ACTIVE_CDPR_CATALOGS)
+        )
+        backend.set_object_catalogs(catalog_ids)
+        backend.step(
+            torch.zeros(
+                (int(args.worlds), 5),
+                dtype=torch.float32,
+                device=backend.device,
+            ),
+            torch.ones(
+                (int(args.worlds),),
+                dtype=torch.bool,
+                device=backend.device,
+            ),
+        )
+        contact_metrics = backend.finger_object_contact_metrics(
+            torch.zeros(
+                (int(args.worlds),),
+                dtype=torch.int64,
+                device=backend.device,
+            )
+        )
+        metadata = backend.metadata()
+        report["checks"]["gpu_mesh_variant_tables"] = bool(
+            backend._model_geom_dataid.is_cuda
+            and backend._catalog_geom_dataid.is_cuda
+            and metadata.get("object_geometry")
+            == "robocasa_visual_plus_cdpr_native_primitives_v1"
+            and metadata.get("object_assets_sha256") == expected_asset_hash
+        )
+        report["gpu_contact_force"] = {
+            "device": str(contact_metrics.left_normal_force.device),
+            "left_force_max_n": float(
+                contact_metrics.left_normal_force.max().item()
+            ),
+            "right_force_max_n": float(
+                contact_metrics.right_normal_force.max().item()
+            ),
+        }
+        report["checks"]["gpu_contact_force_pipeline"] = bool(
+            contact_metrics.left_normal_force.is_cuda
+            and contact_metrics.right_normal_force.is_cuda
+            and torch.isfinite(contact_metrics.left_normal_force).all()
+            and torch.isfinite(contact_metrics.right_normal_force).all()
+        )
+        report["checks"]["free_object_bodies"] = bool(
+            "_pinned_mask" not in vars(backend)
+            and not hasattr(backend, "configure_pinned_objects")
+        )
         cameras = backend.render_policy_cameras()
         expected = (
             int(args.worlds),

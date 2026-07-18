@@ -127,6 +127,27 @@ def _findall(roots: list[ET.Element], pattern: str) -> list[ET.Element]:
 
 
 def _local_name_counts(roots: list[ET.Element]) -> dict[str, int]:
+    mesh_geoms = [
+        geom
+        for geom in _findall(roots, ".//geom")
+        if bool(str(geom.get("mesh") or "").strip())
+    ]
+    visual_slots = [
+        geom
+        for geom in mesh_geoms
+        if str(geom.get("name") or "").startswith("mjwarp_slot_")
+        and str(geom.get("name") or "").endswith("_visual")
+    ]
+    collision_slots = [
+        geom
+        for geom in _findall(roots, ".//geom")
+        if str(geom.get("name") or "").startswith("mjwarp_slot_")
+        and any(
+            f"_{token}_" in str(geom.get("name") or "")
+            or str(geom.get("name") or "").endswith(f"_{token}_0")
+            for token in ("sphere", "cylinder", "box", "capsule")
+        )
+    ]
     return {
         "spatial_tendons": len(_findall(roots, ".//tendon/spatial")),
         "tendon_wrap_geoms": len(_findall(roots, ".//tendon/spatial/geom")),
@@ -138,6 +159,11 @@ def _local_name_counts(roots: list[ET.Element]) -> dict[str, int]:
         + len(_findall(roots, ".//joint[@type='free']")),
         "ball_joints": len(_findall(roots, ".//joint[@type='ball']")),
         "position_actuators": len(_findall(roots, ".//actuator/position")),
+        "mesh_assets": len(_findall(roots, ".//asset/mesh")),
+        "texture_assets": len(_findall(roots, ".//asset/texture")),
+        "mesh_geoms": len(mesh_geoms),
+        "object_visual_mesh_slots": len(visual_slots),
+        "object_collision_primitive_slots": len(collision_slots),
     }
 
 
@@ -179,6 +205,14 @@ def inspect_cdpr_mjcf(xml_path: str | Path) -> MJCFCompatibilityReport:
             item.get("name") == "ee_camera" for item in cameras
         ),
         "camera_frame_sensors": counts["frame_sensors"] >= 4,
+        "four_real_object_visual_mesh_slots": (
+            counts["object_visual_mesh_slots"] == 4
+        ),
+        "forty_four_stable_collision_primitive_slots": (
+            counts["object_collision_primitive_slots"] == 44
+        ),
+        "real_object_mesh_assets": counts["mesh_assets"] >= 8,
+        "real_object_texture_assets": counts["texture_assets"] >= 7,
     }
 
     option_nodes = _findall(roots, ".//option")

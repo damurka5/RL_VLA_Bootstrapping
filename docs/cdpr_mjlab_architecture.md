@@ -52,6 +52,7 @@ worlds. Torch views use Warp's zero-copy interop. There is no Python list of
 environments in rollout. The following remain on the rank-local GPU:
 
 - physics and controller state;
+- broad phase, narrow phase, contact solving, and solved contact forces;
 - actions and active/terminal masks;
 - robot, tendon, object, and gripper observations;
 - sparse rewards, outcomes, and GRPO advantages;
@@ -77,19 +78,31 @@ geometry, and length-to-slider conversion in reset/broadcast state. It retains
 the four spatial tendons and pulley sidesites, four slider position actuators,
 free end-effector, yaw, ball stabilizer, joint equality, and finger contacts.
 
-The fixed MJCF has four free-body object slots. Each slot contains an identical
-primitive superset. Per-world `geom_size`, `geom_pos`, `geom_quat`,
-`geom_rgba`, mass, inertia, material, and pose select one of:
-`ycb_apple`, `ycb_pear`, `ycb_peach`, `ycb_b_cups`, `ycb_baseball`, `plate`,
-or `bowl`. Inactive primitives are transparent and placed far above the
-object frame, safely away from the infinite floor plane. No reset recompiles
-the model.
+The fixed MJCF has four free-body object slots. Each slot contains one textured
+visual mesh geom and eleven native primitive collider geoms (three spheres,
+three cylinders, four boxes, and one capsule). Per-world
+`geom_dataid`, `geom_size`, `geom_pos`, `geom_quat`, `geom_aabb`,
+`geom_rbound`, `geom_rgba`, material, mass, and inertia select one of:
+`robocasa_apple`, `robocasa_banana`, `robocasa_carrot`,
+`robocasa_bell_pepper`, `robocasa_tomato`, `robocasa_orange`,
+`robocasa_potato`, `robocasa_mug`, `robocasa_plate`, or `robocasa_bowl`.
+Visual geoms use a staged, single-mesh RoboCasa Objaverse subset. Collision
+geoms are catalog-specific native primitives; unused primitives are made tiny
+and parked above the workspace. Initial slot bodies are also parked above and
+outside the active desk, avoiding contact with MuJoCo's infinite floor plane.
+No reset recompiles the model.
 
-The primitive representations preserve the checked-in stable collision
-dimensions and grasp widths. They intentionally do not reproduce unavailable
-high-polygon external YCB visual meshes; camera parity must therefore be
-validated against the actual remote dataset/checkpoint distribution before
-promotion.
+The complete RoboCasa catalog is compiled once on the host at backend
+startup to obtain MuJoCo's dependent mesh fields. During rollout, object
+selection and all physics remain rank-local GPU tensor operations.
+
+Objects are free bodies for grasp, lift, transport, and release. The backend
+does not expose a pin/latch API and the collector never rewrites object poses.
+A grasp becomes valid only after persistent bilateral finger-pad contacts,
+minimum solved normal force on both pads, bounded relative position and
+orientation slip, and a physical lift above the support surface. Opening the
+gripper releases the unconstrained object. Contacts, forces, slip metrics,
+lift checks, rewards, and success predicates are computed on CUDA.
 
 ## Cameras and SmolVLA
 
@@ -166,7 +179,7 @@ normalized-action threshold, but changing it is checkpoint-incompatible.
 New checkpoints store backend, exact dependency versions, world/group counts,
 group size, physics substeps and dtype, XML path, contact/constraint
 capacities, render dimensions, camera ordering, object catalogs, curriculum,
-and the global-step definition.
+the real-object asset content hash, and the global-step definition.
 
 Residual-head and existing SmolVLA checkpoints remain loadable. A legacy
 checkpoint without simulator metadata is rejected by default in the MJWarp

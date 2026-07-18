@@ -8,6 +8,7 @@ from typing import Any, Mapping, Sequence
 
 from .cdpr_backend import (
     CDPRBackendConfig,
+    CDPRFingerContactBatch,
     CDPRLowDimBatch,
     CDPRRenderBatch,
     CDPRSimulatorBackend,
@@ -15,9 +16,14 @@ from .cdpr_backend import (
 )
 from .cdpr_object_catalog import (
     ACTIVE_CDPR_CATALOGS,
+    COLLISION_GEOM_SLOT_NAMES,
+    GEOM_SLOT_NAMES,
     INACTIVE_CATALOG_ID,
-    PRIMITIVE_NAMES,
-    build_variant_arrays,
+    OBJECT_VARIANTS,
+    compile_catalog_variant_models,
+    object_assets_sha256,
+    slot_geom_name,
+    validate_object_assets,
 )
 from .mjwarp_compat import package_versions, require_pinned_versions
 
@@ -221,10 +227,16 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self.wp.set_device(str(self._device))
 
         xml_path = Path(config.xml_path or "").expanduser().resolve()
-        self.host_model = self.mujoco.MjModel.from_xml_path(xml_path.as_posix())
-        # Match the CPU CDPR model's 2 ms default. With hold_steps=6 this
-        # advances 14 ms per policy action. The former 1/60 s override advanced
-        # 116.7 ms over seven substeps and produced non-finite A40 rollouts.
+        validate_object_assets(xml_path)
+        self._object_assets_sha256 = object_assets_sha256(xml_path)
+        self._catalog_reference_models = compile_catalog_variant_models(
+            self.mujoco, xml_path
+        )
+        self._default_catalog = ACTIVE_CDPR_CATALOGS[0]
+        self.host_model = self._catalog_reference_models[self._default_catalog]
+        # Match the checked-in OpenVLA stable-contact preset. Seven default
+        # GPU substeps therefore advance 14 ms, rather than the unstable
+        # 116.7 ms produced by the former 1/60 s override.
         self.host_model.opt.timestep = 0.002
         self._calibration = _calibrate_host_cdpr(self.mujoco, self.host_model)
         self._resolve_host_ids()
@@ -372,20 +384,48 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self.object_dofadr = tuple(
             int(model.jnt_dofadr[joint_id]) for joint_id in self.object_joint_ids
         )
-        slot_geom_ids: list[list[int]] = []
+        slot_all_geom_ids: list[list[int]] = []
+        slot_collision_geom_ids: list[list[int]] = []
+        slot_visual_geom_ids: list[int] = []
         for slot in range(4):
-            slot_geom_ids.append(
+            all_ids = [
+                _host_name_id(
+                    mj,
+                    model,
+                    mj.mjtObj.mjOBJ_GEOM,
+                    slot_geom_name(slot, geom_slot),
+                )
+                for geom_slot in GEOM_SLOT_NAMES
+            ]
+            slot_all_geom_ids.append(all_ids)
+            slot_visual_geom_ids.append(all_ids[0])
+            slot_collision_geom_ids.append(
                 [
                     _host_name_id(
                         mj,
                         model,
                         mj.mjtObj.mjOBJ_GEOM,
-                        f"mjwarp_slot_{slot}_{primitive}",
+                        slot_geom_name(slot, mesh_slot),
                     )
-                    for primitive in PRIMITIVE_NAMES
+                    for mesh_slot in COLLISION_GEOM_SLOT_NAMES
                 ]
             )
-        self.slot_geom_ids_host = tuple(tuple(row) for row in slot_geom_ids)
+        self.slot_all_geom_ids_host = tuple(
+            tuple(row) for row in slot_all_geom_ids
+        )
+        self.slot_geom_ids_host = tuple(
+            tuple(row) for row in slot_collision_geom_ids
+        )
+        self.slot_visual_geom_ids_host = tuple(slot_visual_geom_ids)
+        self.object_material_ids = tuple(
+            _host_name_id(
+                mj,
+                model,
+                mj.mjtObj.mjOBJ_MATERIAL,
+                OBJECT_VARIANTS[catalog].material_name,
+            )
+            for catalog in ACTIVE_CDPR_CATALOGS
+        )
 
     def _wp_array(self, value: Any, dtype: Any) -> Any:
         return self.wp.array(value, dtype=dtype, device=str(self._device))
@@ -404,6 +444,9 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
 
         # Allocate every dependent field listed by the official per-world mesh
         # workflow before any optional CUDA graph capture.
+        self.model.geom_dataid = self._wp_array(
+            repeated(model.geom_dataid), self.wp.int32
+        )
         self.model.geom_size = self._wp_array(
             repeated(model.geom_size), self.wp.vec3
         )
@@ -473,6 +516,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self._nefc = to_torch(self.data.nefc)
 
         for name in (
+            "geom_dataid",
             "geom_size",
             "geom_pos",
             "geom_quat",
@@ -491,6 +535,16 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
 
         self._slot_geom_ids = self.torch.tensor(
             self.slot_geom_ids_host, dtype=self.torch.int64, device=self._device
+        )
+        self._slot_all_geom_ids = self.torch.tensor(
+            self.slot_all_geom_ids_host,
+            dtype=self.torch.int64,
+            device=self._device,
+        )
+        self._slot_visual_geom_ids = self.torch.tensor(
+            self.slot_visual_geom_ids_host,
+            dtype=self.torch.int64,
+            device=self._device,
         )
         self._object_body_ids_tensor = self.torch.tensor(
             self.object_body_ids, dtype=self.torch.int64, device=self._device
@@ -524,6 +578,44 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             self.finger_pad_geom_ids,
             dtype=self.torch.int64,
             device=self._device,
+        )
+        self._object_material_ids_tensor = self.torch.tensor(
+            self.object_material_ids,
+            dtype=self.torch.int32,
+            device=self._device,
+        )
+        import numpy as np
+
+        contact_capacity = int(self.data.naconmax)
+        self._contact_ids_wp = self._wp_array(
+            np.arange(contact_capacity, dtype=np.int32), self.wp.int32
+        )
+        self._contact_forces_wp = self.wp.zeros(
+            (contact_capacity,),
+            dtype=self.wp.spatial_vector,
+            device=str(self._device),
+        )
+        self._contact_indices = self.torch.arange(
+            contact_capacity,
+            dtype=self.torch.int64,
+            device=self._device,
+        )
+        self._contact_forces = to_torch(self._contact_forces_wp)
+        self._left_pad_force = self.torch.zeros(
+            (self.worlds_per_rank,),
+            dtype=self.torch.float32,
+            device=self._device,
+        )
+        self._right_pad_force = self.torch.zeros_like(
+            self._left_pad_force
+        )
+        self._left_pad_contact_count = self.torch.zeros(
+            (self.worlds_per_rank,),
+            dtype=self.torch.int32,
+            device=self._device,
+        )
+        self._right_pad_contact_count = self.torch.zeros_like(
+            self._left_pad_contact_count
         )
         self._base_qpos = self.torch.tensor(
             self._calibration["base_qpos"],
@@ -609,18 +701,6 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self._object_rest_height = torch.zeros(
             (nworld, 4), dtype=torch.float32, device=self._device
         )
-        self._pinned_target_slots = torch.zeros(
-            (nworld,), dtype=torch.int64, device=self._device
-        )
-        self._pinned_ee_offsets = torch.zeros(
-            (nworld, 3), dtype=torch.float32, device=self._device
-        )
-        self._pinned_mask = torch.zeros(
-            (nworld,), dtype=torch.bool, device=self._device
-        )
-        self._pinned_release_threshold = torch.ones(
-            (nworld,), dtype=torch.float32, device=self._device
-        )
         slider_limits = self.host_model.actuator_ctrlrange[
             list(self.slider_actuator_ids)
         ]
@@ -670,21 +750,98 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         import numpy as np
 
         rows: list[dict[str, Any]] = []
-        for object_id in (INACTIVE_CATALOG_ID, *range(len(ACTIVE_CDPR_CATALOGS))):
-            ids = np.full((1, 4), INACTIVE_CATALOG_ID, dtype=np.int32)
-            ids[0, 0] = object_id
-            rows.append(build_variant_arrays(ids))
-
-        def table(name: str) -> Any:
-            value = np.stack([row[name][0, 0] for row in rows], axis=0)
-            return self.torch.as_tensor(
-                value, dtype=self.torch.float32, device=self._device
+        reference_ids = np.asarray(self.slot_all_geom_ids_host[0], dtype=np.int64)
+        reference_body = int(self.object_body_ids[0])
+        for object_id in (
+            INACTIVE_CATALOG_ID,
+            *range(len(ACTIVE_CDPR_CATALOGS)),
+        ):
+            if object_id == INACTIVE_CATALOG_ID:
+                ref = self._catalog_reference_models[self._default_catalog]
+                count = len(GEOM_SLOT_NAMES)
+                dataid = np.full((count,), -1, dtype=np.int32)
+                size = np.full((count, 3), 1.0e-4, dtype=np.float32)
+                pos = np.zeros((count, 3), dtype=np.float32)
+                pos[:, 2] = 10.0
+                quat = np.zeros((count, 4), dtype=np.float32)
+                quat[:, 0] = 1.0
+                matid = np.full((count,), -1, dtype=np.int32)
+                rgba = np.zeros((count, 4), dtype=np.float32)
+                aabb = np.zeros((count, 2, 3), dtype=np.float32)
+                rbound = np.zeros((count,), dtype=np.float32)
+                mass = np.float32(1.0e-4)
+                inertia = np.full((3,), 1.0e-8, dtype=np.float32)
+                rest_height = np.float32(0.0)
+            else:
+                catalog = ACTIVE_CDPR_CATALOGS[object_id]
+                variant = OBJECT_VARIANTS[catalog]
+                ref = self._catalog_reference_models[catalog]
+                dataid = np.asarray(
+                    ref.geom_dataid[reference_ids], dtype=np.int32
+                )
+                size = np.asarray(
+                    ref.geom_size[reference_ids], dtype=np.float32
+                )
+                pos = np.asarray(
+                    ref.geom_pos[reference_ids], dtype=np.float32
+                )
+                quat = np.asarray(
+                    ref.geom_quat[reference_ids], dtype=np.float32
+                )
+                matid = np.asarray(
+                    ref.geom_matid[reference_ids], dtype=np.int32
+                )
+                rgba = np.asarray(
+                    ref.geom_rgba[reference_ids], dtype=np.float32
+                )
+                aabb = np.asarray(
+                    ref.geom_aabb[reference_ids].reshape(
+                        len(GEOM_SLOT_NAMES), 2, 3
+                    ),
+                    dtype=np.float32,
+                )
+                rbound = np.asarray(
+                    ref.geom_rbound[reference_ids], dtype=np.float32
+                )
+                mass = np.float32(variant.mass)
+                inertia = np.asarray(variant.inertia, dtype=np.float32)
+                rest_height = np.float32(variant.rest_height)
+            rows.append(
+                {
+                    "geom_dataid": dataid,
+                    "geom_size": size,
+                    "geom_pos": pos,
+                    "geom_quat": quat,
+                    "geom_rgba": rgba,
+                    "geom_matid": matid,
+                    "geom_aabb": aabb,
+                    "geom_rbound": rbound,
+                    "body_mass": mass,
+                    "body_inertia": inertia,
+                    "rest_height": rest_height,
+                }
             )
 
+        def table(name: str, *, dtype: Any = None) -> Any:
+            value = np.stack([row[name] for row in rows], axis=0)
+            return self.torch.as_tensor(
+                value,
+                dtype=dtype or self.torch.float32,
+                device=self._device,
+            )
+
+        self._catalog_geom_dataid = table(
+            "geom_dataid", dtype=self.torch.int32
+        )
         self._catalog_geom_size = table("geom_size")
         self._catalog_geom_pos = table("geom_pos")
         self._catalog_geom_quat = table("geom_quat")
         self._catalog_geom_rgba = table("geom_rgba")
+        self._catalog_geom_matid = table(
+            "geom_matid", dtype=self.torch.int32
+        )
+        self._catalog_geom_aabb = table("geom_aabb")
+        self._catalog_geom_rbound = table("geom_rbound")
         self._catalog_body_mass = table("body_mass")
         self._catalog_body_inertia = table("body_inertia")
         self._catalog_rest_height = table("rest_height")
@@ -803,7 +960,6 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             self._slider_q_per_length.index_select(0, indices).reciprocal(),
         )
         self._last_actions.index_fill_(0, indices, 0.0)
-        self._pinned_mask.index_fill_(0, indices, False)
 
     def broadcast_group_state(self, base_world_indices: Any) -> None:
         base = self._normalize_world_indices(base_world_indices)
@@ -844,14 +1000,11 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             self._last_actions,
             self._catalog_ids,
             self._object_rest_height,
-            self._pinned_target_slots,
-            self._pinned_ee_offsets,
-            self._pinned_mask,
-            self._pinned_release_threshold,
         ):
             target.index_copy_(0, destinations, target.index_select(0, sources))
 
         for name in (
+            "geom_dataid",
             "geom_size",
             "geom_pos",
             "geom_quat",
@@ -917,32 +1070,6 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             ctrl_min + self._controller_gripper * (ctrl_max - ctrl_min)
         )
 
-    def _write_configured_pinned_poses(self) -> None:
-        """Write pin constraints after a physics substep without a host branch."""
-        torch = self.torch
-        rows = torch.arange(
-            self.worlds_per_rank, dtype=torch.int64, device=self._device
-        )
-        qadr = self._object_qadr_tensor.index_select(
-            0, self._pinned_target_slots
-        )
-        dofadr = self._object_dofadr_tensor.index_select(
-            0, self._pinned_target_slots
-        )
-        desired = (
-            self._xpos[:, self.ee_body_id] + self._pinned_ee_offsets
-        )
-        for axis in range(3):
-            current = self._qpos[rows, qadr + axis]
-            self._qpos[rows, qadr + axis] = torch.where(
-                self._pinned_mask, desired[:, axis], current
-            )
-        for axis in range(6):
-            current = self._qvel[rows, dofadr + axis]
-            self._qvel[rows, dofadr + axis] = torch.where(
-                self._pinned_mask, torch.zeros_like(current), current
-            )
-
     def step(self, actions: Any, active_mask: Any) -> CDPRLowDimBatch:
         torch = self.torch
         action_tensor = torch.as_tensor(
@@ -1004,19 +1131,12 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self._controller_gripper = torch.where(
             active, proposed_gripper, self._controller_gripper
         )
-        self._pinned_mask.logical_and_(
-            self._controller_gripper <= self._pinned_release_threshold
-        )
         self._last_actions.copy_(masked_action)
 
         with self.wp.ScopedDevice(str(self._device)):
             for _ in range(self.config.physics_substeps):
                 self._write_controller_controls()
                 self.mjw.step(self.model, self.data)
-                self._write_configured_pinned_poses()
-            # The pin write happens after each substep. Refresh derived body,
-            # contact, tendon, and camera state after the final write.
-            self.mjw.forward(self.model, self.data)
         self._controller_prev_lengths.copy_(
             self._ten_length.index_select(1, self._tendon_ids_tensor)
         )
@@ -1127,9 +1247,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             raise ValueError("Contact geom ids must be scalar or one pair per world.")
 
         world = self._contact_worldid.to(dtype=torch.int64)
-        contact_index = torch.arange(
-            world.numel(), dtype=torch.int64, device=self._device
-        )
+        contact_index = self._contact_indices
         valid = (
             (contact_index < self._nacon.reshape(-1)[0].to(dtype=torch.int64))
             & (world >= 0)
@@ -1151,8 +1269,10 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         counts.scatter_add_(0, safe_world, matched.to(dtype=torch.int32))
         return counts > 0
 
-    def finger_object_contact_mask(self, target_slots: Any) -> Any:
-        """Tensorized equivalent of the CPU reverse-frontier pad-contact gate."""
+    def finger_object_contact_metrics(
+        self, target_slots: Any
+    ) -> CDPRFingerContactBatch:
+        """Return bilateral pad contacts and solved normal forces."""
         torch = self.torch
         slots = torch.as_tensor(
             target_slots, dtype=torch.int64, device=self._device
@@ -1161,9 +1281,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             raise ValueError("One target object slot is required per world.")
 
         world = self._contact_worldid.to(dtype=torch.int64)
-        contact_index = torch.arange(
-            world.numel(), dtype=torch.int64, device=self._device
-        )
+        contact_index = self._contact_indices
         valid = (
             (contact_index < self._nacon.reshape(-1)[0].to(dtype=torch.int64))
             & (world >= 0)
@@ -1178,58 +1296,49 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         )
         first_is_target = (first[:, None] == target_geoms).any(dim=1)
         second_is_target = (second[:, None] == target_geoms).any(dim=1)
-        first_is_pad = (
-            first[:, None] == self._finger_pad_geom_ids_tensor[None, :]
-        ).any(dim=1)
-        second_is_pad = (
-            second[:, None] == self._finger_pad_geom_ids_tensor[None, :]
-        ).any(dim=1)
-        matched = valid & (
-            (first_is_target & second_is_pad)
-            | (second_is_target & first_is_pad)
+        left_pad, right_pad = self._finger_pad_geom_ids_tensor
+        left_matched = valid & (
+            (first_is_target & (second == left_pad))
+            | (second_is_target & (first == left_pad))
         )
-        counts = torch.zeros(
-            (self.worlds_per_rank,), dtype=torch.int32, device=self._device
+        right_matched = valid & (
+            (first_is_target & (second == right_pad))
+            | (second_is_target & (first == right_pad))
         )
-        counts.scatter_add_(0, safe_world, matched.to(dtype=torch.int32))
-        return counts >= 1
-
-    def configure_pinned_objects(
-        self,
-        target_slots: Any,
-        ee_offsets: Any,
-        pinned_mask: Any,
-        release_threshold: Any,
-    ) -> None:
-        torch = self.torch
-        slots = torch.as_tensor(
-            target_slots, dtype=torch.int64, device=self._device
-        ).reshape(-1)
-        offsets = torch.as_tensor(
-            ee_offsets, dtype=torch.float32, device=self._device
+        with self.wp.ScopedDevice(str(self._device)):
+            self.mjw.contact_force(
+                self.model,
+                self.data,
+                self._contact_ids_wp,
+                False,
+                self._contact_forces_wp,
+            )
+        # contact_force returns [normal, tangent1, tangent2, torque...] in the
+        # contact frame.  Normal force is non-negative for solved contacts; abs
+        # also makes the diagnostic robust to solver sign convention changes.
+        normal_force = self._contact_forces[:, 0].abs()
+        left_force = self._left_pad_force.zero_()
+        right_force = self._right_pad_force.zero_()
+        left_force.scatter_add_(
+            0, safe_world, normal_force * left_matched.to(dtype=torch.float32)
         )
-        mask = torch.as_tensor(
-            pinned_mask, dtype=torch.bool, device=self._device
-        ).reshape(-1)
-        threshold = torch.as_tensor(
-            release_threshold, dtype=torch.float32, device=self._device
-        ).reshape(-1)
-        expected = self.worlds_per_rank
-        if tuple(slots.shape) != (expected,):
-            raise ValueError("One pinned target slot is required per world.")
-        if tuple(offsets.shape) != (expected, 3):
-            raise ValueError(f"ee_offsets must have shape ({expected}, 3).")
-        if tuple(mask.shape) != (expected,):
-            raise ValueError("pinned_mask must contain one boolean per world.")
-        if tuple(threshold.shape) != (expected,):
-            raise ValueError("release_threshold must contain one value per world.")
-        self._pinned_target_slots.copy_(slots)
-        self._pinned_ee_offsets.copy_(offsets)
-        self._pinned_mask.copy_(mask)
-        self._pinned_release_threshold.copy_(threshold)
-
-    def pinned_object_mask(self) -> Any:
-        return self._pinned_mask
+        right_force.scatter_add_(
+            0, safe_world, normal_force * right_matched.to(dtype=torch.float32)
+        )
+        left_counts = self._left_pad_contact_count.zero_()
+        right_counts = self._right_pad_contact_count.zero_()
+        left_counts.scatter_add_(
+            0, safe_world, left_matched.to(dtype=torch.int32)
+        )
+        right_counts.scatter_add_(
+            0, safe_world, right_matched.to(dtype=torch.int32)
+        )
+        return CDPRFingerContactBatch(
+            left_contact=left_counts > 0,
+            right_contact=right_counts > 0,
+            left_normal_force=left_force,
+            right_normal_force=right_force,
+        )
 
     def set_object_catalogs(self, catalog_ids: Any) -> None:
         torch = self.torch
@@ -1248,7 +1357,10 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
                 f"Catalog ids must be -1 or [0, {len(ACTIVE_CDPR_CATALOGS)})."
             )
         table_index = ids + 1
-        flat_geoms = self._slot_geom_ids.reshape(-1)
+        flat_geoms = self._slot_all_geom_ids.reshape(-1)
+        self._model_geom_dataid[:, flat_geoms] = self._catalog_geom_dataid[
+            table_index
+        ].reshape(self.worlds_per_rank, -1)
         self._model_geom_size[:, flat_geoms] = self._catalog_geom_size[
             table_index
         ].reshape(self.worlds_per_rank, -1, 3)
@@ -1261,25 +1373,15 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self._model_geom_rgba[:, flat_geoms] = self._catalog_geom_rgba[
             table_index
         ].reshape(self.worlds_per_rank, -1, 4)
-
-        size = self._model_geom_size[:, flat_geoms]
-        position = self._model_geom_pos[:, flat_geoms]
-        rbound = torch.linalg.vector_norm(size, dim=-1)
-        capsule_index = PRIMITIVE_NAMES.index("capsule_0")
-        local_capsule_columns = (
-            torch.arange(4, dtype=torch.int64, device=self._device)
-            * len(PRIMITIVE_NAMES)
-            + capsule_index
-        )
-        rbound[:, local_capsule_columns] = (
-            size[:, local_capsule_columns, 0]
-            + size[:, local_capsule_columns, 1]
-        )
-        self._model_geom_rbound[:, flat_geoms] = rbound
-        self._model_geom_aabb[:, flat_geoms, 0] = position
-        self._model_geom_aabb[:, flat_geoms, 1] = rbound[..., None].expand(
-            -1, -1, 3
-        )
+        self._model_geom_matid[:, flat_geoms] = self._catalog_geom_matid[
+            table_index
+        ].reshape(self.worlds_per_rank, -1)
+        self._model_geom_aabb[:, flat_geoms] = self._catalog_geom_aabb[
+            table_index
+        ].reshape(self.worlds_per_rank, -1, 2, 3)
+        self._model_geom_rbound[:, flat_geoms] = self._catalog_geom_rbound[
+            table_index
+        ].reshape(self.worlds_per_rank, -1)
 
         self._model_body_mass[:, self._object_body_ids_tensor] = (
             self._catalog_body_mass[table_index]
@@ -1467,50 +1569,6 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         with self.wp.ScopedDevice(str(self._device)):
             self.mjw.forward(self.model, self.data)
 
-    def set_target_body_positions(
-        self,
-        target_slots: Any,
-        positions: Any,
-        world_mask: Any,
-        *,
-        zero_velocity: bool = True,
-    ) -> None:
-        """Move only selected target bodies, leaving every other free body untouched."""
-        torch = self.torch
-        slots = torch.as_tensor(
-            target_slots, dtype=torch.int64, device=self._device
-        ).reshape(-1)
-        pos = torch.as_tensor(
-            positions, dtype=torch.float32, device=self._device
-        )
-        mask = torch.as_tensor(
-            world_mask, dtype=torch.bool, device=self._device
-        ).reshape(-1)
-        expected = self.worlds_per_rank
-        if tuple(slots.shape) != (expected,):
-            raise ValueError("One target object slot is required per world.")
-        if tuple(pos.shape) != (expected, 3):
-            raise ValueError(f"positions must have shape ({expected}, 3).")
-        if tuple(mask.shape) != (expected,):
-            raise ValueError("world_mask must contain one boolean per world.")
-
-        rows = torch.arange(expected, dtype=torch.int64, device=self._device)
-        qadr = self._object_qadr_tensor.index_select(0, slots)
-        for axis in range(3):
-            current = self._qpos[rows, qadr + axis]
-            self._qpos[rows, qadr + axis] = torch.where(
-                mask, pos[:, axis], current
-            )
-        if zero_velocity:
-            dofadr = self._object_dofadr_tensor.index_select(0, slots)
-            for axis in range(6):
-                current = self._qvel[rows, dofadr + axis]
-                self._qvel[rows, dofadr + axis] = torch.where(
-                    mask, torch.zeros_like(current), current
-                )
-        with self.wp.ScopedDevice(str(self._device)):
-            self.mjw.forward(self.model, self.data)
-
     def export_worlds(self, world_indices: Sequence[int]) -> list[dict[str, Any]]:
         observations = self.low_dim_observations()
         output: list[dict[str, Any]] = []
@@ -1589,6 +1647,10 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             "device": str(self._device),
             "xml_path": str(xml_path),
             "xml_sha256": _mjcf_tree_sha256(xml_path),
+            "object_assets_sha256": self._object_assets_sha256,
+            "object_geometry": (
+                "robocasa_visual_plus_cdpr_native_primitives_v1"
+            ),
             "nconmax_per_world": int(self.config.nconmax),
             "njmax_per_world": int(self.config.njmax),
             "nccdmax_per_world": self.config.nccdmax,
@@ -1604,3 +1666,5 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self.render_context = None
         self._overview_rgb_wp = None
         self._wrist_rgb_wp = None
+        self._contact_ids_wp = None
+        self._contact_forces_wp = None

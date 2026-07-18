@@ -11,6 +11,7 @@ import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 import numpy as np
@@ -18,6 +19,7 @@ import numpy as np
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+    RankLocalMJWarpGRPOCollector,
     _SHELL_ACTION_HIGH,
     _SHELL_ACTION_LOW,
     _SHELL_COUNTS,
@@ -37,16 +39,22 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
 )
 from rl_vla_bootstrapping.simulation.cdpr_backend import (
     CDPRBackendConfig,
+    CDPRFingerContactBatch,
     CDPRRenderBatch,
     SimulatorDependencyError,
     create_cdpr_backend,
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     ACTIVE_CDPR_CATALOGS,
+    COLLISION_GEOM_SLOT_NAMES,
+    GEOM_SLOT_NAMES,
     INACTIVE_CATALOG_ID,
-    PRIMITIVE_NAMES,
-    build_variant_arrays,
+    OBJECT_VARIANTS,
     catalog_id,
+    compile_catalog_variant_models,
+    object_assets_sha256,
+    slot_geom_name,
+    validate_object_assets,
 )
 from rl_vla_bootstrapping.simulation.mjwarp_compat import (
     PINNED_CUDA_RUNTIME,
@@ -331,6 +339,12 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(report.counts["spatial_tendons"], 4)
         self.assertGreaterEqual(report.counts["tendon_wrap_geoms"], 8)
         self.assertEqual(report.counts["cameras"], 2)
+        self.assertEqual(report.counts["object_visual_mesh_slots"], 4)
+        self.assertEqual(
+            report.counts["object_collision_primitive_slots"], 44
+        )
+        self.assertGreaterEqual(report.counts["mesh_assets"], 8)
+        self.assertGreaterEqual(report.counts["texture_assets"], 7)
         self.assertEqual(len(_mjcf_tree_sha256(XML)), 64)
 
     def test_mjwarp_mjcf_uses_compatible_ccd_and_safe_reset_poses(self):
@@ -453,102 +467,98 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         np.testing.assert_allclose(scene.camera[0].forward, legacy_forward, atol=1e-6)
         np.testing.assert_allclose(scene.camera[0].up, legacy_up, atol=1e-6)
 
-    def test_four_object_slots_keep_fixed_primitive_topology(self):
-        ids = np.array(
-            [
-                [0, 1, 5, 6],
-                [4, INACTIVE_CATALOG_ID, 2, 3],
-            ],
-            dtype=np.int32,
-        )
-        arrays = build_variant_arrays(ids)
-        self.assertEqual(
-            arrays["geom_size"].shape, (2, 4, len(PRIMITIVE_NAMES), 3)
-        )
-        self.assertEqual(arrays["body_mass"].shape, (2, 4))
-        self.assertEqual(arrays["catalog_ids"].shape, (2, 4))
-        self.assertAlmostEqual(float(arrays["body_mass"][1, 1]), 1.0e-4)
+    def test_four_object_slots_keep_fixed_real_mesh_topology(self):
+        assets = validate_object_assets(XML)
+        self.assertEqual(len(assets), 50)
+        self.assertTrue(all(path.is_file() for path in assets))
+        self.assertEqual(len(object_assets_sha256(XML)), 64)
         self.assertEqual(catalog_id("apple"), 0)
-        self.assertEqual(catalog_id("bowl"), len(ACTIVE_CDPR_CATALOGS) - 1)
-
-        inactive_position = arrays["geom_pos"][1, 1]
-        self.assertTrue(np.all(inactive_position[:, 2] > 0.0))
-        inactive_primitive = PRIMITIVE_NAMES.index("box_0")
-        self.assertGreater(
-            float(arrays["geom_pos"][0, 0, inactive_primitive, 2]),
-            0.0,
-        )
-        active_primitive = PRIMITIVE_NAMES.index("sphere_0")
         self.assertEqual(
-            float(arrays["geom_pos"][0, 0, active_primitive, 2]),
-            0.0,
+            catalog_id("bell_pepper"),
+            ACTIVE_CDPR_CATALOGS.index("robocasa_bell_pepper"),
         )
+        self.assertEqual(catalog_id("bowl"), len(ACTIVE_CDPR_CATALOGS) - 1)
+        self.assertTrue(
+            all(name.startswith("robocasa_") for name in ACTIVE_CDPR_CATALOGS)
+        )
+        if importlib.util.find_spec("mujoco") is None:
+            self.skipTest("mujoco is not installed")
+        import mujoco
+
+        variants = compile_catalog_variant_models(mujoco, XML)
+        for catalog, model in variants.items():
+            expected_collision_count = len(
+                OBJECT_VARIANTS[catalog].primitives
+            )
+            for slot in range(4):
+                dataids = []
+                active_colliders = 0
+                for mesh_slot in GEOM_SLOT_NAMES:
+                    geom_id = mujoco.mj_name2id(
+                        model,
+                        mujoco.mjtObj.mjOBJ_GEOM,
+                        slot_geom_name(slot, mesh_slot),
+                    )
+                    self.assertGreaterEqual(geom_id, 0)
+                    dataids.append(int(model.geom_dataid[geom_id]))
+                    if mesh_slot in COLLISION_GEOM_SLOT_NAMES:
+                        if float(model.geom_size[geom_id, 0]) > 1.0e-3:
+                            active_colliders += 1
+                        else:
+                            self.assertGreater(
+                                float(model.geom_pos[geom_id, 2]), 0.0
+                            )
+                self.assertGreaterEqual(dataids[0], 0)
+                self.assertTrue(all(value == -1 for value in dataids[1:]))
+                self.assertEqual(active_colliders, expected_collision_count)
+                body_id = mujoco.mj_name2id(
+                    model,
+                    mujoco.mjtObj.mjOBJ_BODY,
+                    f"mjwarp_object_slot_{slot}",
+                )
+                self.assertGreater(float(model.body_pos[body_id, 2]), 0.0)
+                self.assertGreater(
+                    float(np.linalg.norm(model.body_pos[body_id, :2])),
+                    1.0,
+                )
 
     def test_inactive_primitives_do_not_penetrate_infinite_floor(self):
         if importlib.util.find_spec("mujoco") is None:
             self.skipTest("mujoco is not installed")
         import mujoco
 
-        ids = np.array([[0, 1, 2, 3]], dtype=np.int32)
-        arrays = build_variant_arrays(ids)
-        model = mujoco.MjModel.from_xml_path(str(XML))
-        data = mujoco.MjData(model)
-        object_qadrs = []
-        for slot in range(4):
-            for primitive_index, primitive in enumerate(PRIMITIVE_NAMES):
-                geom_id = mujoco.mj_name2id(
-                    model,
-                    mujoco.mjtObj.mjOBJ_GEOM,
-                    f"mjwarp_slot_{slot}_{primitive}",
-                )
-                self.assertGreaterEqual(geom_id, 0)
-                model.geom_size[geom_id] = arrays["geom_size"][
-                    0, slot, primitive_index
-                ]
-                model.geom_pos[geom_id] = arrays["geom_pos"][
-                    0, slot, primitive_index
-                ]
-                model.geom_quat[geom_id] = arrays["geom_quat"][
-                    0, slot, primitive_index
-                ]
-
-            body_id = mujoco.mj_name2id(
-                model,
-                mujoco.mjtObj.mjOBJ_BODY,
-                f"mjwarp_object_slot_{slot}",
-            )
-            joint_id = mujoco.mj_name2id(
-                model,
-                mujoco.mjtObj.mjOBJ_JOINT,
-                f"mjwarp_object_slot_{slot}_free",
-            )
-            model.body_mass[body_id] = arrays["body_mass"][0, slot]
-            model.body_inertia[body_id] = arrays["body_inertia"][0, slot]
-            qadr = int(model.jnt_qposadr[joint_id])
-            object_qadrs.append(qadr)
-
-        mujoco.mj_setConst(model, data)
-        for slot, qadr in enumerate(object_qadrs):
-            xy = (
-                (-0.12, -0.08),
-                (0.12, -0.08),
-                (-0.12, 0.10),
-                (0.12, 0.10),
-            )[slot]
-            data.qpos[qadr : qadr + 3] = (
-                xy[0],
-                xy[1],
-                0.15 + arrays["rest_height"][0, slot],
-            )
-            data.qpos[qadr + 3 : qadr + 7] = (1.0, 0.0, 0.0, 0.0)
-
-        mujoco.mj_forward(model, data)
-        contact_distances = np.asarray(
-            [data.contact[index].dist for index in range(data.ncon)]
+        variants = compile_catalog_variant_models(mujoco, XML)
+        xy_positions = (
+            (-0.12, -0.08),
+            (0.12, -0.08),
+            (-0.12, 0.10),
+            (0.12, 0.10),
         )
-        self.assertTrue(np.isfinite(contact_distances).all())
-        if contact_distances.size:
-            self.assertGreaterEqual(float(contact_distances.min()), -0.05)
+        for catalog, model in variants.items():
+            data = mujoco.MjData(model)
+            for slot, xy in enumerate(xy_positions):
+                joint_id = mujoco.mj_name2id(
+                    model,
+                    mujoco.mjtObj.mjOBJ_JOINT,
+                    f"mjwarp_object_slot_{slot}_free",
+                )
+                qadr = int(model.jnt_qposadr[joint_id])
+                data.qpos[qadr : qadr + 3] = (
+                    xy[0],
+                    xy[1],
+                    0.15 + OBJECT_VARIANTS[catalog].rest_height,
+                )
+                data.qpos[qadr + 3 : qadr + 7] = (1.0, 0.0, 0.0, 0.0)
+
+            mujoco.mj_forward(model, data)
+            contact_distances = np.asarray(
+                [data.contact[index].dist for index in range(data.ncon)]
+            )
+            self.assertTrue(np.isfinite(contact_distances).all())
+            if contact_distances.size:
+                self.assertGreaterEqual(
+                    float(contact_distances.min()), -0.05
+                )
 
     def test_camera_aux_slot_is_exact_wrist_object(self):
         overview = object()
@@ -593,7 +603,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertIn("dist.broadcast(canonical, src=0)", source)
         self.assertIn("success_rate <= float(self.demotion_success)", source)
 
-    def test_pinned_object_hot_path_preserves_unpinned_free_bodies(self):
+    def test_physical_grasp_hot_path_never_pins_free_bodies(self):
         collector_path = (
             ROOT
             / "rl_vla_bootstrapping"
@@ -608,16 +618,109 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         collector_source = collector_path.read_text(encoding="utf-8")
         backend_source = backend_path.read_text(encoding="utf-8")
-        self.assertIn("finger_object_contact_mask(target_slots)", collector_source)
-        self.assertIn("set_target_body_positions(", collector_source)
-        self.assertNotIn(
-            "self.backend.set_free_body_poses(\n"
-            "            self.backend.object_body_ids,\n"
-            "            positions,",
-            collector_source,
+        self.assertIn(
+            "finger_object_contact_metrics(target_slots)", collector_source
         )
-        self.assertIn("_write_configured_pinned_poses()", backend_source)
-        self.assertIn("self._pinned_mask, torch.zeros_like(current), current", backend_source)
+        self.assertIn("contacts.bilateral_contact", collector_source)
+        self.assertIn("left_normal_force", collector_source)
+        self.assertIn("relative_position_slip", collector_source)
+        self.assertIn("physically_lifted", collector_source)
+        self.assertNotIn("centered_close_fallback", collector_source)
+        self.assertNotIn("set_target_body_positions(", collector_source)
+        self.assertNotIn("configure_pinned_objects(", collector_source)
+        self.assertNotIn("_write_configured_pinned_poses", backend_source)
+        self.assertNotIn("_pinned_mask", backend_source)
+        self.assertIn("self.model.geom_dataid", backend_source)
+        self.assertIn("self.mjw.contact_force(", backend_source)
+
+    def test_checkpoint_compatibility_includes_real_object_asset_hash(self):
+        source = (
+            ROOT
+            / "rl_vla_bootstrapping"
+            / "policy"
+            / "smolvla_grpo_finetune_cdpr.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"object_assets_sha256"', source)
+        self.assertIn('"object_geometry"', source)
+
+    def test_gpu_video_probe_has_no_cpu_simulator_fallback(self):
+        source = (
+            ROOT
+            / "scripts"
+            / "render_cdpr_mjwarp_physical_grasp_videos.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn('backend="mjlab_mjwarp"', source)
+        self.assertIn("finger_object_contact_metrics", source)
+        self.assertIn('"cpu_contact_fallback": False', source)
+        self.assertNotIn("mujoco_cpu", source)
+        self.assertNotIn("MujocoCPUReferenceBackend", source)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "physical grasp predicate fixture requires PyTorch",
+    )
+    def test_physical_grasp_requires_persistent_bilateral_force_and_lift(self):
+        import torch
+
+        contact = CDPRFingerContactBatch(
+            left_contact=torch.tensor([True]),
+            right_contact=torch.tensor([True]),
+            left_normal_force=torch.tensor([0.2]),
+            right_normal_force=torch.tensor([0.2]),
+        )
+        backend = SimpleNamespace(
+            finger_object_contact_metrics=lambda target_slots: contact
+        )
+        collector = object.__new__(RankLocalMJWarpGRPOCollector)
+        collector.torch = torch
+        collector.device = torch.device("cpu")
+        collector.layout = RankLocalGroupLayout(
+            worlds_per_rank=1, groups_per_rank=1, group_size=1
+        )
+        collector._world_rows = torch.arange(1, dtype=torch.int64)
+        identity = torch.tensor([[1.0, 0.0, 0.0, 0.0]])
+        low_dim = SimpleNamespace(
+            ee_position=torch.tensor([[0.0, 0.0, 0.30]]),
+            ee_quaternion=identity.clone(),
+            gripper_opening=torch.tensor([0.5]),
+            object_positions=torch.tensor([[[0.0, 0.0, 0.25]]]),
+            object_quaternions=identity[:, None, :].clone(),
+        )
+        task_state = SimpleNamespace(
+            target_slots=torch.tensor([0]),
+            support_surface_z=torch.tensor([0.15]),
+            release_threshold=torch.tensor([0.55]),
+            ever_grasped=torch.tensor([False]),
+        )
+        reset = SimpleNamespace(
+            task_state=task_state,
+            grasp_eligible=torch.tensor([True]),
+            bilateral_contact_steps=torch.zeros(1, dtype=torch.int64),
+            previous_relative_position=torch.tensor([[0.0, 0.0, -0.05]]),
+            previous_relative_quaternion=identity.clone(),
+            target_rest_height=torch.tensor([0.04]),
+            physical_grasp=torch.tensor([False]),
+        )
+        collector.backend = backend
+        active = torch.tensor([True])
+
+        _, first, _ = collector._update_physical_grasp(
+            reset, low_dim, active
+        )
+        self.assertFalse(bool(first.item()))
+        _, second, diagnostics = collector._update_physical_grasp(
+            reset, low_dim, active
+        )
+        self.assertTrue(bool(second.item()))
+        self.assertTrue(bool(diagnostics["physically_lifted"].item()))
+
+        task_state.ever_grasped.fill_(True)
+        low_dim.gripper_opening.fill_(0.8)
+        _, released, diagnostics = collector._update_physical_grasp(
+            reset, low_dim, active
+        )
+        self.assertFalse(bool(released.item()))
+        self.assertTrue(bool(diagnostics["physical_release"].item()))
 
     def test_throughput_accounting_preserves_one_selected_candidate_per_group(self):
         source = (

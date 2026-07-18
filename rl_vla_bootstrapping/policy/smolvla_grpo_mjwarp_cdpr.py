@@ -92,6 +92,8 @@ def _synchronize_update_metrics_once(
             key.endswith("_time_s")
             or key.endswith("_mean")
             or key.endswith("_max")
+            or key.endswith("_rate")
+            or "_mean_" in key
             or key.startswith("loss_")
             or key
             in {

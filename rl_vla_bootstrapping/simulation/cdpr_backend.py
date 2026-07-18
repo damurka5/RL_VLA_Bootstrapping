@@ -108,6 +108,20 @@ class CDPRLowDimBatch:
     object_quaternions: Any
 
 
+@dataclass(frozen=True)
+class CDPRFingerContactBatch:
+    """Per-world physical contact evidence for a selected free-body object."""
+
+    left_contact: Any
+    right_contact: Any
+    left_normal_force: Any
+    right_normal_force: Any
+
+    @property
+    def bilateral_contact(self) -> Any:
+        return self.left_contact & self.right_contact
+
+
 class CDPRSimulatorBackend(abc.ABC):
     """Backend boundary used by rollout code.
 
@@ -169,24 +183,10 @@ class CDPRSimulatorBackend(abc.ABC):
         raise NotImplementedError
 
     @abc.abstractmethod
-    def finger_object_contact_mask(self, target_slots: Any) -> Any:
-        """Return one boolean per world for contact with either finger pad."""
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def configure_pinned_objects(
-        self,
-        target_slots: Any,
-        ee_offsets: Any,
-        pinned_mask: Any,
-        release_threshold: Any,
-    ) -> None:
-        """Configure objects that must follow the end effector each substep."""
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def pinned_object_mask(self) -> Any:
-        """Return the current fixed-shape pin mask on the backend device."""
+    def finger_object_contact_metrics(
+        self, target_slots: Any
+    ) -> CDPRFingerContactBatch:
+        """Return bilateral pad contacts and solved normal forces per world."""
         raise NotImplementedError
 
     @abc.abstractmethod
@@ -229,18 +229,6 @@ class CDPRSimulatorBackend(abc.ABC):
         *,
         zero_velocity: bool = True,
     ) -> None:
-        raise NotImplementedError
-
-    @abc.abstractmethod
-    def set_target_body_positions(
-        self,
-        target_slots: Any,
-        positions: Any,
-        world_mask: Any,
-        *,
-        zero_velocity: bool = True,
-    ) -> None:
-        """Move one selected fixed object slot in each masked world."""
         raise NotImplementedError
 
     @abc.abstractmethod

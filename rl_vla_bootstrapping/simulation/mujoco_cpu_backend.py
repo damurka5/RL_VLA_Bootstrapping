@@ -4,6 +4,7 @@ from typing import Any, Mapping, Sequence
 
 from .cdpr_backend import (
     CDPRBackendConfig,
+    CDPRFingerContactBatch,
     CDPRLowDimBatch,
     CDPRRenderBatch,
     CDPRSimulatorBackend,
@@ -108,22 +109,11 @@ class MujocoCPUReferenceBackend(CDPRSimulatorBackend):
         del geom_a_ids, geom_b_ids
         raise NotImplementedError("Use the CPU environment contact summary in parity fixtures.")
 
-    def finger_object_contact_mask(self, target_slots: Any) -> Any:
+    def finger_object_contact_metrics(
+        self, target_slots: Any
+    ) -> CDPRFingerContactBatch:
         del target_slots
         raise NotImplementedError("Use the CPU environment contact summary in parity fixtures.")
-
-    def configure_pinned_objects(
-        self,
-        target_slots: Any,
-        ee_offsets: Any,
-        pinned_mask: Any,
-        release_threshold: Any,
-    ) -> None:
-        del target_slots, ee_offsets, pinned_mask, release_threshold
-        raise NotImplementedError("Caught-object pinning remains owned by CDPRLanguageRLEnv.")
-
-    def pinned_object_mask(self) -> Any:
-        raise NotImplementedError("Caught-object pinning remains owned by CDPRLanguageRLEnv.")
 
     def set_object_catalogs(self, catalog_ids: Any) -> None:
         del catalog_ids
@@ -167,17 +157,6 @@ class MujocoCPUReferenceBackend(CDPRSimulatorBackend):
         zero_velocity: bool = True,
     ) -> None:
         del body_ids, positions, quaternions, zero_velocity
-        raise NotImplementedError("Use CDPRLanguageRLEnv.set_object_pose for the CPU backend.")
-
-    def set_target_body_positions(
-        self,
-        target_slots: Any,
-        positions: Any,
-        world_mask: Any,
-        *,
-        zero_velocity: bool = True,
-    ) -> None:
-        del target_slots, positions, world_mask, zero_velocity
         raise NotImplementedError("Use CDPRLanguageRLEnv.set_object_pose for the CPU backend.")
 
     def export_worlds(self, world_indices: Sequence[int]) -> list[dict[str, Any]]:

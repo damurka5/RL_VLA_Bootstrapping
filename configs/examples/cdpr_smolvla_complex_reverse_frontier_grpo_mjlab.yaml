@@ -19,6 +19,7 @@ remote:
     - Pinned MJLab 1.5.0 / MuJoCo Warp 3.10.0.1 CUDA 12.8 path.
     - Each rank owns complete eight-candidate groups and one frozen SmolVLA replica.
     - Global step is selected environment actions summed across all ranks.
+    - Curated RoboCasa visuals are staged with scripts/stage_cdpr_robocasa_assets.py.
 
 embodiment:
   name: cdpr_5dof_mjwarp
@@ -74,7 +75,18 @@ task:
     - move_right_of_object
     - move_between_objects
   target_objects:
-    [ycb_apple, ycb_pear, ycb_peach, ycb_b_cups, ycb_baseball, plate, bowl]
+    [
+      robocasa_apple,
+      robocasa_banana,
+      robocasa_carrot,
+      robocasa_bell_pepper,
+      robocasa_tomato,
+      robocasa_orange,
+      robocasa_potato,
+      robocasa_mug,
+      robocasa_plate,
+      robocasa_bowl,
+    ]
   reward:
     file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
     function: compute_instruction_reward
@@ -115,7 +127,7 @@ task:
     move_relation_require_target_grasp_history: true
     move_relation_require_release: true
     between_xy_tolerance: 0.03
-    caught_object_start_pin_object: true
+    caught_object_start_pin_object: false
     caught_object_start_release_opening_margin: 0.04
     catch_gripper_closed_opening_threshold: 0.94
     ee_workspace_x_bounds: [-0.28, 0.28]
@@ -128,7 +140,7 @@ simulation:
     file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
     function: build_wrapper_if_needed
   preview_scene: desk
-  preview_objects: [ycb_apple, plate, bowl]
+  preview_objects: [robocasa_apple, robocasa_plate, robocasa_bowl]
   catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
   build_kwargs:
     table_z: 0.15

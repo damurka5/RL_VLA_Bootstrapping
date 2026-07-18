@@ -17,6 +17,11 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     ACTIVE_CDPR_CATALOGS,
+    BOWL_CATALOG,
+    CATALOG_TO_ID,
+    GRASPABLE_CDPR_CATALOGS,
+    OBJECT_VARIANTS,
+    PLATE_CATALOG,
 )
 
 
@@ -25,8 +30,46 @@ _SHELL_HORIZON_LOW = (1, 1, 2, 3, 5, 7, 14, 21)
 _SHELL_HORIZON_HIGH = (1, 2, 3, 4, 6, 13, 20, 32)
 _SHELL_ACTION_LOW = (1, 4, 7, 11, 17, 25, 53, 81)
 _SHELL_ACTION_HIGH = (2, 6, 10, 16, 24, 52, 80, 128)
-_REST_HEIGHT = (0.038, 0.040, 0.034, 0.050, 0.036, 0.012, 0.024)
-_FITTED_GRIPPER = (0.8852, 0.7369, 0.6186, 0.90, 0.8337, 0.0, 0.0)
+_REST_HEIGHT = tuple(
+    OBJECT_VARIANTS[catalog].rest_height for catalog in ACTIVE_CDPR_CATALOGS
+)
+_FITTED_GRIPPER = tuple(
+    OBJECT_VARIANTS[catalog].fitted_gripper_opening
+    for catalog in ACTIVE_CDPR_CATALOGS
+)
+_TARGET_CATALOG_COUNT = len(GRASPABLE_CDPR_CATALOGS)
+_PLATE_CATALOG_ID = CATALOG_TO_ID[PLATE_CATALOG]
+_BOWL_CATALOG_ID = CATALOG_TO_ID[BOWL_CATALOG]
+_GRASP_MIN_PAD_FORCE_N = 0.05
+_GRASP_PERSISTENCE_STEPS = 2
+_GRASP_MAX_RELATIVE_POSITION_SLIP_M = 0.008
+_GRASP_MAX_RELATIVE_ORIENTATION_SLIP_RAD = 0.15
+_GRASP_MIN_LIFT_M = 0.015
+
+
+def _quaternion_multiply(left: Any, right: Any) -> Any:
+    """Hamilton product for batched MuJoCo wxyz quaternions."""
+
+    import torch
+
+    lw, lx, ly, lz = left.unbind(dim=-1)
+    rw, rx, ry, rz = right.unbind(dim=-1)
+    return torch.stack(
+        (
+            lw * rw - lx * rx - ly * ry - lz * rz,
+            lw * rx + lx * rw + ly * rz - lz * ry,
+            lw * ry - lx * rz + ly * rw + lz * rx,
+            lw * rz + lx * ry - ly * rx + lz * rw,
+        ),
+        dim=-1,
+    )
+
+
+def _relative_quaternion(parent: Any, child: Any) -> Any:
+    conjugate = parent.clone()
+    conjugate[..., 1:] *= -1.0
+    result = _quaternion_multiply(conjugate, child)
+    return result / result.norm(dim=-1, keepdim=True).clamp_min(1.0e-8)
 
 
 @dataclass
@@ -356,10 +399,12 @@ class BatchedReset:
     group_instruction_ids: Any
     group_shell_ids: Any
     horizons: Any
-    pinned: Any
-    pin_offsets: Any
-    latch_eligible: Any
-    fitted_opening: Any
+    physical_grasp: Any
+    grasp_eligible: Any
+    bilateral_contact_steps: Any
+    previous_relative_position: Any
+    previous_relative_quaternion: Any
+    target_rest_height: Any
     group_ids: Any
 
 
@@ -472,14 +517,18 @@ class BatchedReverseFrontierResetter:
         )
 
         target_catalog = torch.randint(
-            0, 5, (groups,), generator=generator, device=self.device
+            0,
+            _TARGET_CATALOG_COUNT,
+            (groups,),
+            generator=generator,
+            device=self.device,
         )
         catalogs_group = torch.stack(
             (
                 target_catalog,
-                (target_catalog + 1) % 5,
-                (target_catalog + 2) % 5,
-                (target_catalog + 3) % 5,
+                (target_catalog + 1) % _TARGET_CATALOG_COUNT,
+                (target_catalog + 2) % _TARGET_CATALOG_COUNT,
+                (target_catalog + 3) % _TARGET_CATALOG_COUNT,
             ),
             dim=1,
         )
@@ -488,19 +537,19 @@ class BatchedReverseFrontierResetter:
         is_container = is_bowl | is_plate
         catalogs_group[:, 1] = torch.where(
             is_bowl,
-            torch.full_like(target_catalog, 6),
+            torch.full_like(target_catalog, _BOWL_CATALOG_ID),
             torch.where(
                 is_plate,
-                torch.full_like(target_catalog, 5),
+                torch.full_like(target_catalog, _PLATE_CATALOG_ID),
                 catalogs_group[:, 1],
             ),
         )
         catalogs_group[:, 2] = torch.where(
             is_bowl,
-            torch.full_like(target_catalog, 5),
+            torch.full_like(target_catalog, _PLATE_CATALOG_ID),
             torch.where(
                 is_plate,
-                torch.full_like(target_catalog, 6),
+                torch.full_like(target_catalog, _BOWL_CATALOG_ID),
                 catalogs_group[:, 2],
             ),
         )
@@ -874,8 +923,8 @@ class BatchedReverseFrontierResetter:
             reference_slots=reference_slots,
             second_reference_slots=second_reference_slots,
             initial_target_positions=initial_target,
-            ever_grasped=caught.clone(),
-            grasped=caught.clone(),
+            ever_grasped=torch.zeros_like(caught),
+            grasped=torch.zeros_like(caught),
             step_count=torch.zeros(
                 (worlds,), dtype=torch.int64, device=self.device
             ),
@@ -887,13 +936,6 @@ class BatchedReverseFrontierResetter:
                 device=self.device,
             ),
         )
-        pin_offsets = (
-            object_positions_group[:, 0] - ee_group
-        ).repeat_interleave(
-            group_size, dim=0
-        )
-        pin_offsets[:, 2] = -0.08
-
         target_catalog_names = [
             ACTIVE_CDPR_CATALOGS[index]
             for index in target_catalog.detach().cpu().tolist()
@@ -901,9 +943,7 @@ class BatchedReverseFrontierResetter:
         instruction_group: list[str] = []
         for index, task_id in enumerate(task_group.detach().cpu().tolist()):
             name = ACTIVE_INSTRUCTION_TYPES[task_id]
-            target_name = target_catalog_names[index].replace("ycb_", "").replace(
-                "_", " "
-            )
+            target_name = OBJECT_VARIANTS[target_catalog_names[index]].label
             if name == "move_to_object":
                 text = f"move to {target_name}"
             elif name == "push_left":
@@ -926,16 +966,41 @@ class BatchedReverseFrontierResetter:
             for text in instruction_group
             for _ in range(group_size)
         )
+        reset_low_dim = self.backend.low_dim_observations()
+        world_rows = torch.arange(
+            worlds, dtype=torch.int64, device=self.device
+        )
+        target_position_reset = reset_low_dim.object_positions[
+            world_rows, target_slots
+        ]
+        target_quaternion_reset = reset_low_dim.object_quaternions[
+            world_rows, target_slots
+        ]
+        previous_relative_position = (
+            target_position_reset - reset_low_dim.ee_position
+        )
+        previous_relative_quaternion = _relative_quaternion(
+            reset_low_dim.ee_quaternion, target_quaternion_reset
+        )
+        target_rest_height = (
+            rest_height.repeat_interleave(group_size, dim=0)[
+                world_rows, target_slots
+            ]
+        )
         return BatchedReset(
             instructions=instructions,
             task_state=task_state,
             group_instruction_ids=task_group,
             group_shell_ids=shell_group,
             horizons=horizon_group.repeat_interleave(group_size),
-            pinned=caught,
-            pin_offsets=pin_offsets,
-            latch_eligible=grasp_learning.repeat_interleave(group_size),
-            fitted_opening=fitted.repeat_interleave(group_size),
+            physical_grasp=torch.zeros_like(caught),
+            grasp_eligible=placement_task.repeat_interleave(group_size),
+            bilateral_contact_steps=torch.zeros(
+                (worlds,), dtype=torch.int64, device=self.device
+            ),
+            previous_relative_position=previous_relative_position,
+            previous_relative_quaternion=previous_relative_quaternion,
+            target_rest_height=target_rest_height,
             group_ids=group_ids.repeat_interleave(group_size),
         )
 
@@ -995,59 +1060,100 @@ class RankLocalMJWarpGRPOCollector:
         self.torch = backend.torch
         self.device = backend.device
         self._sample_generator = self.torch.Generator(device=self.device)
+        self._world_rows = self.torch.arange(
+            self.layout.worlds_per_rank,
+            dtype=self.torch.int64,
+            device=self.device,
+        )
 
     def _sync_for_profile(self) -> None:
         if self.profile:
             self.torch.cuda.synchronize(self.device)
 
-    def _maintain_pinned_objects(
+    def _update_physical_grasp(
         self,
         reset: BatchedReset,
         low_dim: Any,
-        action: Any,
         active_mask: Any,
-    ) -> tuple[Any, Any]:
-        # The backend releases against the controller target before stepping,
-        # matching the CPU environment's caught-object target check.
-        reset.pinned.copy_(self.backend.pinned_object_mask())
-        rows = self.torch.arange(
-            self.layout.worlds_per_rank,
-            dtype=self.torch.int64,
-            device=self.device,
-        )
+    ) -> tuple[Any, Any, dict[str, Any]]:
+        """Evaluate a free-body grasp from persistent bilateral contact physics."""
+
+        rows = self._world_rows
         target_slots = reset.task_state.target_slots
-        desired = low_dim.ee_position + reset.pin_offsets
-        current_target = low_dim.object_positions[rows, target_slots]
-        hold_error = current_target - desired
-        closing_gate = (
-            reset.latch_eligible
+        target_position = low_dim.object_positions[rows, target_slots]
+        target_quaternion = low_dim.object_quaternions[rows, target_slots]
+        relative_position = target_position - low_dim.ee_position
+        relative_quaternion = _relative_quaternion(
+            low_dim.ee_quaternion, target_quaternion
+        )
+        relative_position_slip = self.torch.linalg.vector_norm(
+            relative_position - reset.previous_relative_position, dim=-1
+        )
+        quaternion_dot = (
+            relative_quaternion * reset.previous_relative_quaternion
+        ).sum(dim=-1).abs().clamp(max=1.0)
+        relative_orientation_slip = 2.0 * self.torch.acos(quaternion_dot)
+        stable_relative_pose = (
+            relative_position_slip
+            <= float(_GRASP_MAX_RELATIVE_POSITION_SLIP_M)
+        ) & (
+            relative_orientation_slip
+            <= float(_GRASP_MAX_RELATIVE_ORIENTATION_SLIP_RAD)
+        )
+        contacts = self.backend.finger_object_contact_metrics(target_slots)
+        force_ok = (
+            contacts.left_normal_force >= float(_GRASP_MIN_PAD_FORCE_N)
+        ) & (
+            contacts.right_normal_force >= float(_GRASP_MIN_PAD_FORCE_N)
+        )
+        persistent_candidate = (
+            reset.grasp_eligible
             & active_mask
-            & ~reset.pinned
-            & (action[:, 4] <= -0.05)
-            & (
-                low_dim.gripper_opening
-                <= (reset.fitted_opening + 0.012).clamp(max=1.0)
+            & contacts.bilateral_contact
+            & force_ok
+            & stable_relative_pose
+        )
+        reset.bilateral_contact_steps.copy_(
+            self.torch.where(
+                persistent_candidate,
+                reset.bilateral_contact_steps + 1,
+                self.torch.zeros_like(reset.bilateral_contact_steps),
             )
         )
-        xy_error = self.torch.linalg.vector_norm(hold_error[:, :2], dim=-1)
-        z_error = hold_error[:, 2].abs()
-        finger_contact = self.backend.finger_object_contact_mask(target_slots)
-        contact_gate = finger_contact & (xy_error <= 0.030) & (z_error <= 0.060)
-        centered_close_fallback = (xy_error <= 0.028) & (z_error <= 0.030)
-        latch = closing_gate & (contact_gate | centered_close_fallback)
-        reset.pinned.logical_or_(latch)
-        self.backend.configure_pinned_objects(
-            target_slots,
-            reset.pin_offsets,
-            reset.pinned,
-            reset.task_state.release_threshold,
+        lifted = target_position[:, 2] >= (
+            reset.task_state.support_surface_z
+            + reset.target_rest_height
+            + float(_GRASP_MIN_LIFT_M)
         )
-        self.backend.set_target_body_positions(
-            target_slots,
-            desired,
-            reset.pinned,
+        release_open = (
+            low_dim.gripper_opening >= reset.task_state.release_threshold
         )
-        return self.backend.low_dim_observations(), reset.pinned
+        physical_grasp = (
+            persistent_candidate
+            & (
+                reset.bilateral_contact_steps
+                >= int(_GRASP_PERSISTENCE_STEPS)
+            )
+            & lifted
+            & ~release_open
+        )
+        reset.physical_grasp.copy_(physical_grasp)
+        reset.previous_relative_position.copy_(relative_position)
+        reset.previous_relative_quaternion.copy_(relative_quaternion)
+        diagnostics = {
+            "bilateral_contact": contacts.bilateral_contact,
+            "left_pad_force_n": contacts.left_normal_force,
+            "right_pad_force_n": contacts.right_normal_force,
+            "relative_position_slip_m": relative_position_slip,
+            "relative_orientation_slip_rad": relative_orientation_slip,
+            "stable_relative_pose": stable_relative_pose,
+            "physically_lifted": lifted,
+            "physical_grasp": physical_grasp,
+            "physical_release": reset.task_state.ever_grasped
+            & ~physical_grasp
+            & release_open,
+        }
+        return low_dim, physical_grasp, diagnostics
 
     def collect_round(
         self,
@@ -1059,12 +1165,6 @@ class RankLocalMJWarpGRPOCollector:
         reset_start = time.perf_counter()
         reset = self.resetter.reset(
             update_index=update_index, round_index=round_index
-        )
-        self.backend.configure_pinned_objects(
-            reset.task_state.target_slots,
-            reset.pin_offsets,
-            reset.pinned,
-            reset.task_state.release_threshold,
         )
         self._sample_generator.manual_seed(
             self.resetter.base_seed
@@ -1101,6 +1201,23 @@ class RankLocalMJWarpGRPOCollector:
             "policy_time_s": 0.0,
             "physics_time_s": 0.0,
             "reward_time_s": 0.0,
+        }
+        grasp_diagnostic_totals = {
+            name: torch.zeros(
+                (), dtype=torch.float32, device=self.device
+            )
+            for name in (
+                "observations",
+                "bilateral_contact",
+                "left_pad_force_n",
+                "right_pad_force_n",
+                "relative_position_slip_m",
+                "relative_orientation_slip_rad",
+                "stable_relative_pose",
+                "physically_lifted",
+                "physical_grasp",
+                "physical_release",
+            )
         }
         max_decisions = int(reset.horizons.max().detach().cpu().item())
 
@@ -1174,12 +1291,23 @@ class RankLocalMJWarpGRPOCollector:
                 low_dim = self.backend.step(
                     actions[:, action_index], step_active
                 )
-                low_dim, caught_target = self._maintain_pinned_objects(
-                    reset,
-                    low_dim,
-                    actions[:, action_index],
-                    step_active,
+                low_dim, caught_target, grasp_diagnostics = (
+                    self._update_physical_grasp(
+                        reset,
+                        low_dim,
+                        step_active,
+                    )
                 )
+                diagnostic_mask = (
+                    step_active & reset.grasp_eligible
+                ).to(dtype=torch.float32)
+                grasp_diagnostic_totals["observations"] += (
+                    diagnostic_mask.sum()
+                )
+                for name, values in grasp_diagnostics.items():
+                    grasp_diagnostic_totals[name] += (
+                        values.to(dtype=torch.float32) * diagnostic_mask
+                    ).sum()
                 self._sync_for_profile()
                 timings["physics_time_s"] += time.perf_counter() - started
 
@@ -1253,6 +1381,10 @@ class RankLocalMJWarpGRPOCollector:
         )
         self._sync_for_profile()
         total_time = reset_time + sum(timings.values())
+        grasp_observations = float(
+            grasp_diagnostic_totals["observations"].item()
+        )
+        grasp_denominator = max(1.0, grasp_observations)
         metrics = {
             **timings,
             "reset_time_s": float(reset_time),
@@ -1280,6 +1412,47 @@ class RankLocalMJWarpGRPOCollector:
             "group_pass_rate_mean": float(pass_rate.mean().item()),
             "records_total": float(loss_mask.numel()),
             "records_informative": float(loss_mask.sum().item()),
+            "grasp_diagnostic_observations": grasp_observations,
+            "bilateral_pad_contact_rate": float(
+                grasp_diagnostic_totals["bilateral_contact"].item()
+                / grasp_denominator
+            ),
+            "left_pad_normal_force_mean_n": float(
+                grasp_diagnostic_totals["left_pad_force_n"].item()
+                / grasp_denominator
+            ),
+            "right_pad_normal_force_mean_n": float(
+                grasp_diagnostic_totals["right_pad_force_n"].item()
+                / grasp_denominator
+            ),
+            "relative_position_slip_mean_m": float(
+                grasp_diagnostic_totals[
+                    "relative_position_slip_m"
+                ].item()
+                / grasp_denominator
+            ),
+            "relative_orientation_slip_mean_rad": float(
+                grasp_diagnostic_totals[
+                    "relative_orientation_slip_rad"
+                ].item()
+                / grasp_denominator
+            ),
+            "stable_relative_pose_rate": float(
+                grasp_diagnostic_totals["stable_relative_pose"].item()
+                / grasp_denominator
+            ),
+            "physical_lift_rate": float(
+                grasp_diagnostic_totals["physically_lifted"].item()
+                / grasp_denominator
+            ),
+            "physical_grasp_rate": float(
+                grasp_diagnostic_totals["physical_grasp"].item()
+                / grasp_denominator
+            ),
+            "physical_release_rate": float(
+                grasp_diagnostic_totals["physical_release"].item()
+                / grasp_denominator
+            ),
         }
         return CollectorRound(
             records=records,
