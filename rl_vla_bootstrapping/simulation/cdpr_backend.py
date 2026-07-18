@@ -29,7 +29,7 @@ class CDPRBackendConfig:
     render_height: int = 240
     object_slots: int = 4
     nconmax: int = 256
-    njmax: int = 512
+    njmax: int = 1024
     nccdmax: int | None = None
     device: str = "cuda:0"
     xml_path: Path | None = None

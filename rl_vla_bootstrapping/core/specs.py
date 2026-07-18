@@ -283,7 +283,7 @@ class SimulatorSpec:
     worlds_per_rank: int = 1
     groups_per_rank: int = 1
     nconmax: int = 256
-    njmax: int = 512
+    njmax: int = 1024
     nccdmax: int | None = None
     render_width: int = 320
     render_height: int = 240
@@ -306,7 +306,7 @@ class SimulatorSpec:
             worlds_per_rank=worlds_per_rank,
             groups_per_rank=groups_per_rank,
             nconmax=max(1, int(data.get("nconmax", 256))),
-            njmax=max(1, int(data.get("njmax", 512))),
+            njmax=max(1, int(data.get("njmax", 1024))),
             nccdmax=(
                 None
                 if data.get("nccdmax") is None

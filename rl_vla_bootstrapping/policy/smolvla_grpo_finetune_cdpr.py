@@ -168,7 +168,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--groups-per-rank", type=int, default=1)
     parser.add_argument("--mjwarp-xml-path", default=None)
     parser.add_argument("--mjwarp-nconmax", type=int, default=256)
-    parser.add_argument("--mjwarp-njmax", type=int, default=512)
+    parser.add_argument("--mjwarp-njmax", type=int, default=1024)
     parser.add_argument("--mjwarp-nccdmax", type=int, default=None)
     parser.add_argument("--render-width", type=int, default=320)
     parser.add_argument("--render-height", type=int, default=240)

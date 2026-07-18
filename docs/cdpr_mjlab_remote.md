@@ -204,6 +204,11 @@ a larger success tolerance. The active latch accepts a finger-pad contact in
 the broad alignment window or the configured contactless centered-close
 fallback, exactly as the CPU path does.
 
+The checked 16-world capacity is `nconmax=256` contacts/world and
+`njmax=1024` constraints/world. The latter includes headroom above the 789
+constraints/world observed during the first A40 partial-reset smoke. Do not
+lower it to the former value of 512.
+
 ### Camera memory or OOM
 
 Rendering memory scales with worlds, pixels, and camera count. Reduce

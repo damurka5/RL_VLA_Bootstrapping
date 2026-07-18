@@ -1,4 +1,13 @@
 <mujoco model="cdpr_mjwarp_smoke">
+  <!--
+    MuJoCo 3.8+ enables MULTICCD by default, while MJWarp 3.10.0.1 rejects
+    non-zero contact margins with MULTICCD and box-box NATIVECCD. Preserve the
+    established 1 mm contact margins by selecting the compatible CCD path in
+    this MJWarp-only wrapper.
+  -->
+  <option>
+    <flag multiccd="disable" nativeccd="disable"/>
+  </option>
   <include file="cdpr.xml"/>
   <include file="cdpr_mjwarp_object_slots.xml"/>
   <asset>

@@ -223,7 +223,10 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
 
         xml_path = Path(config.xml_path or "").expanduser().resolve()
         self.host_model = self.mujoco.MjModel.from_xml_path(xml_path.as_posix())
-        self.host_model.opt.timestep = 1.0 / 60.0
+        # Match the CPU CDPR model's 2 ms default. With hold_steps=6 this
+        # advances 14 ms per policy action. The former 1/60 s override advanced
+        # 116.7 ms over seven substeps and produced non-finite A40 rollouts.
+        self.host_model.opt.timestep = 0.002
         self._calibration = _calibrate_host_cdpr(self.mujoco, self.host_model)
         self._resolve_host_ids()
 
@@ -1534,6 +1537,10 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             "groups_per_rank": int(self.config.groups_per_rank),
             "grpo_group_size": int(self.config.grpo_group_size),
             "physics_substeps_per_action": self.config.physics_substeps,
+            "physics_timestep_seconds": float(self.host_model.opt.timestep),
+            "simulated_seconds_per_action": float(
+                self.host_model.opt.timestep * self.config.physics_substeps
+            ),
             "physics_dtype": "float32",
             "controller_implementation": "batched_torch_cdpr_v1",
             "action_step_xyz": float(self.config.action_step_xyz),

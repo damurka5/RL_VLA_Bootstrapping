@@ -24,7 +24,7 @@ simulator:
   worlds_per_rank: 16
   groups_per_rank: 2
   nconmax: 256
-  njmax: 512
+  njmax: 1024
   render_width: 320
   render_height: 240
   object_slots: 4

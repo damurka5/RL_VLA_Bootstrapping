@@ -110,6 +110,7 @@ def main() -> int:
         report["checks"]["group_state_broadcast_qpos"] = bool(
             (qpos_before[0]["qpos"] == qpos_before[1]["qpos"]).all()
         )
+        report["capacity_after_reset"] = backend.capacity_status()
 
         generator = torch.Generator(device=backend.device)
         generator.manual_seed(args.seed + 17)
@@ -127,6 +128,7 @@ def main() -> int:
             active[(step + 1) % args.worlds] = False
             backend.step(actions, active)
         low_after = backend.low_dim_observations()
+        report["capacity_after_rollout"] = backend.capacity_status()
         report["checks"]["seven_substep_controller_finite"] = _finite(
             torch,
             low_after.ee_position,

@@ -112,12 +112,14 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(config.simulator.backend, "mjlab_mjwarp")
         self.assertEqual(config.simulator.worlds_per_rank, 16)
         self.assertEqual(config.simulator.groups_per_rank, 2)
+        self.assertEqual(config.simulator.njmax, 1024)
         self.assertEqual(command[command.index("--nproc-per-node") + 1], "2")
         self.assertIn(
             "rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr", command
         )
         self.assertEqual(command[command.index("--worlds-per-rank") + 1], "16")
         self.assertEqual(command[command.index("--groups-per-rank") + 1], "2")
+        self.assertEqual(command[command.index("--mjwarp-njmax") + 1], "1024")
         self.assertEqual(command[command.index("--grpo-group-size") + 1], "8")
         self.assertEqual(command[command.index("--hold-steps") + 1], "6")
         self.assertEqual(
@@ -307,6 +309,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         config.validate()
         self.assertEqual(config.physics_substeps, 7)
+        self.assertEqual(config.njmax, 1024)
         self.assertFalse(config.lock_non_commanded_axes)
         with self.assertRaisesRegex(ValueError, "groups_per_rank"):
             CDPRBackendConfig(
@@ -329,12 +332,47 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(report.counts["cameras"], 2)
         self.assertEqual(len(_mjcf_tree_sha256(XML)), 64)
 
+    def test_mjwarp_mjcf_uses_compatible_ccd_and_safe_reset_poses(self):
+        root = ET.parse(XML).getroot()
+        flag = root.find("./option/flag")
+        self.assertIsNotNone(flag)
+        self.assertEqual(flag.get("multiccd"), "disable")
+        self.assertEqual(flag.get("nativeccd"), "disable")
+
+        slots = ET.parse(
+            XML.parent / "cdpr_mjwarp_object_slots.xml"
+        ).getroot()
+        positions = {
+            tuple(float(value) for value in body.get("pos").split())
+            for body in slots.findall("./worldbody/body")
+            if str(body.get("name") or "").startswith("mjwarp_object_slot_")
+        }
+        self.assertEqual(len(positions), 4)
+        self.assertTrue(
+            all(
+                abs(x) >= 4.0 and abs(y) >= 4.0 and z <= -4.0
+                for x, y, z in positions
+            )
+        )
+
+        backend_source = (
+            ROOT
+            / "rl_vla_bootstrapping"
+            / "simulation"
+            / "mjlab_mjwarp_backend.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("self.host_model.opt.timestep = 0.002", backend_source)
+        self.assertNotIn(
+            "self.host_model.opt.timestep = 1.0 / 60.0", backend_source
+        )
+
     def test_fixed_mjcf_compiles_in_reference_mujoco_when_available(self):
         if importlib.util.find_spec("mujoco") is None:
             self.skipTest("mujoco is not installed")
         import mujoco
 
         model = mujoco.MjModel.from_xml_path(str(XML))
+        self.assertAlmostEqual(float(model.opt.timestep), 0.002)
         self.assertEqual(model.ncam, 2)
         self.assertEqual(model.ntendon, 4)
         self.assertGreaterEqual(model.neq, 1)

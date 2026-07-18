@@ -69,18 +69,20 @@ Local MuJoCo 3.2.4 compilation of both the original robot MJCF and the fixed
 scene passes. The fixed scene dimensions are `nq=46`, `nv=40`, `nu=6`,
 `nbody=24`, `ngeom=84`, `ncam=2`, `nmat=8`, and `ntex=7`.
 
-This is not an A40 compatibility claim. The default local verification
+An A40 preflight on 2026-07-18 verified the exact package lock, two visible
+44 GiB A40s, `mujoco_warp.put_model`, 16-world allocation, required MJCF
+features, and both 320×240 batched cameras. MuJoCo 3.10 enables MULTICCD by
+default, so the MJWarp-only wrapper explicitly disables MULTICCD and NATIVECCD
+to retain the existing non-zero contact margins. The first backend smoke also
+measured 789 constraints/world after partial reset; the checked capacity is
+therefore 1024 rather than the insufficient original value of 512.
+
+Full controller/contact smoke, the 8–128-world capacity sweep, parity, two-rank
+checkpoint/resume, and end-to-end benchmarks remain unverified until new remote
+artifacts pass with these corrections. The default local verification
 interpreter has no CUDA, Warp, MJWarp, MJLab, or Torch installation. A separate
 existing CPU-only PyTorch 2.0.1 environment was used only for tensor predicate
-and Gloo/DDP tests; it is not the pinned deployment stack. Consequently the
-following remain explicitly unverified until the remote preflight artifact
-says otherwise:
-
-- `mujoco_warp.put_model` for the CDPR model;
-- allocation of 8–128 worlds with the chosen contact/constraint capacities;
-- spatial-tendon, equality, and contact stepping on A40;
-- the 320×240 two-camera batched renderer;
-- Torch/Warp zero-copy tensors and per-world model mutations.
+and Gloo/DDP tests; it is not the pinned deployment stack.
 
 `scripts/preflight_cdpr_mjlab.py` performs those operations, not only imports.
 It creates a render context, refits the BVH, renders both cameras, extracts
