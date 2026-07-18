@@ -20,6 +20,7 @@ from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     RankLocalMJWarpGRPOCollector,
+    ValidationRound,
     _SHELL_ACTION_HIGH,
     _SHELL_ACTION_LOW,
     _SHELL_COUNTS,
@@ -35,6 +36,11 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (
     deterministic_candidate_seeds,
     deterministic_group_seeds,
     numpy_group_advantages,
+)
+from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+    _log_tensorboard_metrics,
+    _synchronize_validation_rounds,
+    _validation_due as _mjwarp_validation_due,
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     ACTIVE_INSTRUCTION_TYPES,
@@ -129,6 +135,24 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--mjwarp-profile-updates") + 1], "4"
         )
+        self.assertEqual(
+            command[command.index("--validation-every-steps") + 1],
+            "200000",
+        )
+        self.assertEqual(
+            command[
+                command.index("--validation-episodes-per-instruction") + 1
+            ],
+            "1024",
+        )
+        self.assertEqual(
+            command[command.index("--validation-seed") + 1],
+            "1000000",
+        )
+        self.assertEqual(
+            command[command.index("--save-every-steps") + 1],
+            "200000",
+        )
         self.assertNotIn("--resume-checkpoint", command)
         allowed_index = command.index("--allowed-objects") + 1
         self.assertEqual(
@@ -184,6 +208,113 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertIn("Scratch training refuses CHECKPOINT", source)
         self.assertIn("configure_huggingface_public_models", source)
         self.assertIn("huggingface_public_models_preflight", source)
+        self.assertIn(
+            'printf \'tensorboard_dir=%s\\n\' "$RUN_DIR/rl/tensorboard"',
+            source,
+        )
+
+    def test_mjwarp_validation_crosses_cadence_and_filters_tensorboard_values(
+        self,
+    ):
+        args = SimpleNamespace(
+            validation_every_steps=200_000,
+            validation_episodes_per_instruction=1024,
+        )
+        self.assertFalse(
+            _mjwarp_validation_due(
+                args,
+                global_step=199_999,
+                last_validation_step=0,
+            )
+        )
+        self.assertTrue(
+            _mjwarp_validation_due(
+                args,
+                global_step=200_064,
+                last_validation_step=0,
+            )
+        )
+        self.assertFalse(
+            _mjwarp_validation_due(
+                args,
+                global_step=399_999,
+                last_validation_step=200_064,
+            )
+        )
+        self.assertTrue(
+            _mjwarp_validation_due(
+                args,
+                global_step=400_128,
+                last_validation_step=200_064,
+            )
+        )
+
+        writer = mock.Mock()
+        _log_tensorboard_metrics(
+            writer,
+            {
+                "loss": 1.25,
+                "profile/dominant_stage": "smolvla_inference",
+                "not_finite": float("nan"),
+            },
+            200_064,
+        )
+        writer.add_scalar.assert_called_once_with(
+            "loss", 1.25, 200_064
+        )
+        writer.flush.assert_called_once_with()
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "validation aggregation requires PyTorch",
+    )
+    def test_mjwarp_validation_reports_each_object(self):
+        import torch
+
+        catalog_count = len(ACTIVE_CDPR_CATALOGS)
+        successes = torch.tensor(
+            [[False, True]] * catalog_count,
+            dtype=torch.bool,
+        )
+        validation_round = ValidationRound(
+            candidate_rewards=torch.full(
+                (catalog_count, 2), 0.75, dtype=torch.float32
+            ),
+            candidate_success=successes,
+            final_xy_distance=torch.full(
+                (catalog_count, 2), 0.03, dtype=torch.float32
+            ),
+            group_target_catalog_ids=torch.arange(
+                catalog_count, dtype=torch.int64
+            ),
+            group_shell_ids=torch.zeros(
+                (catalog_count,), dtype=torch.int64
+            ),
+            metrics={
+                "validation/time_s": 2.0,
+                "validation/environment_actions": 64.0,
+            },
+        )
+        metrics = _synchronize_validation_rounds(
+            [validation_round],
+            device=torch.device("cpu"),
+        )
+        self.assertEqual(
+            metrics["validation/episodes"],
+            float(catalog_count * 2),
+        )
+        self.assertEqual(metrics["validation/success_rate"], 0.5)
+        self.assertAlmostEqual(metrics["validation/reward_mean"], 0.75)
+        for catalog_name in ACTIVE_CDPR_CATALOGS:
+            label = OBJECT_VARIANTS[catalog_name].label.replace(" ", "_")
+            self.assertEqual(
+                metrics[f"validation/by_object/{label}/episodes"],
+                2.0,
+            )
+            self.assertEqual(
+                metrics[f"validation/by_object/{label}/success_rate"],
+                0.5,
+            )
 
     def test_mjspec_body_lookup_supports_current_and_legacy_apis(self):
         body = SimpleNamespace(name="mjwarp_object_slot_0")

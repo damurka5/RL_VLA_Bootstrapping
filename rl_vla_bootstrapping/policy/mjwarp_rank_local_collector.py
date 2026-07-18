@@ -446,6 +446,7 @@ class BatchedReset:
     previous_relative_quaternion: Any
     target_rest_height: Any
     group_ids: Any
+    group_target_catalog_ids: Any | None = None
 
 
 class BatchedReverseFrontierResetter:
@@ -462,6 +463,7 @@ class BatchedReverseFrontierResetter:
         frontier_probability: float = 0.80,
         rehearsal_probability: float = 0.20,
         support_surface_z: float = 0.15,
+        balanced_target_catalogs: bool = False,
     ) -> None:
         layout.validate()
         self.backend = backend
@@ -474,6 +476,7 @@ class BatchedReverseFrontierResetter:
         )
         self.rehearsal_probability = float(rehearsal_probability)
         self.support_surface_z = float(support_surface_z)
+        self.balanced_target_catalogs = bool(balanced_target_catalogs)
         self.torch = backend.torch
         self.device = backend.device
         instruction_ids = resolve_mjwarp_instruction_ids(instruction_types)
@@ -582,16 +585,23 @@ class BatchedReverseFrontierResetter:
         )
 
         target_pool = self.target_catalog_ids
-        move_target_catalog = target_pool.index_select(
-            0,
-            torch.randint(
+        if self.balanced_target_catalogs:
+            target_positions = (
+                torch.arange(
+                    groups, dtype=torch.int64, device=self.device
+                )
+                + self.rank * groups
+                + int(round_index) * groups
+            ) % int(target_pool.numel())
+        else:
+            target_positions = torch.randint(
                 0,
                 int(target_pool.numel()),
                 (groups,),
                 generator=generator,
                 device=self.device,
-            ),
-        )
+            )
+        move_target_catalog = target_pool.index_select(0, target_positions)
         graspable_pool = self.graspable_target_catalog_ids
         graspable_target_catalog = graspable_pool.index_select(
             0,
@@ -1091,6 +1101,7 @@ class BatchedReverseFrontierResetter:
             previous_relative_quaternion=previous_relative_quaternion,
             target_rest_height=target_rest_height,
             group_ids=group_ids.repeat_interleave(group_size),
+            group_target_catalog_ids=target_catalog,
         )
 
 
@@ -1101,6 +1112,16 @@ class CollectorRound:
     candidate_rewards: Any
     candidate_success: Any
     group_instruction_ids: Any
+    group_shell_ids: Any
+    metrics: dict[str, float]
+
+
+@dataclass(frozen=True)
+class ValidationRound:
+    candidate_rewards: Any
+    candidate_success: Any
+    final_xy_distance: Any
+    group_target_catalog_ids: Any
     group_shell_ids: Any
     metrics: dict[str, float]
 
@@ -1598,6 +1619,185 @@ class RankLocalMJWarpGRPOCollector:
             group_instruction_ids=reset.group_instruction_ids,
             group_shell_ids=reset.group_shell_ids,
             metrics=metrics,
+        )
+
+    def validate_round(
+        self,
+        *,
+        round_index: int,
+    ) -> ValidationRound:
+        """Run one fixed-seed, inference-only validation batch on this GPU."""
+
+        torch = self.torch
+        if tuple(
+            int(value)
+            for value in self.resetter.instruction_ids.detach().cpu().tolist()
+        ) != (INSTRUCTION_TO_ID["move_to_object"],):
+            raise RuntimeError(
+                "MJWarp held-out validation currently supports the configured "
+                "move_to_object scratch task only."
+            )
+        if self.move_to_distance_reward is None:
+            raise RuntimeError(
+                "MJWarp held-out move-to validation requires the tensorized "
+                "distance reward."
+            )
+
+        validation_started = time.perf_counter()
+        reset = self.resetter.reset(update_index=0, round_index=round_index)
+        if reset.group_target_catalog_ids is None:
+            raise RuntimeError("Validation reset did not expose target catalogs.")
+
+        worlds = int(self.layout.worlds_per_rank)
+        group_size = int(self.layout.group_size)
+        active = torch.ones(
+            (worlds,), dtype=torch.bool, device=self.device
+        )
+        candidate_success = torch.zeros_like(active)
+        candidate_rewards = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
+        final_xy_distance = torch.full(
+            (worlds,),
+            float("nan"),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        sampled_actions = torch.zeros(
+            (), dtype=torch.int64, device=self.device
+        )
+        timings = {
+            "validation/render_time_s": 0.0,
+            "validation/smolvla_time_s": 0.0,
+            "validation/policy_time_s": 0.0,
+            "validation/physics_time_s": 0.0,
+            "validation/reward_time_s": 0.0,
+        }
+        max_decisions = int(reset.horizons.max().detach().cpu().item())
+
+        with torch.inference_mode():
+            for decision in range(max_decisions):
+                self._sync_for_profile()
+                started = time.perf_counter()
+                cameras = self.backend.render_policy_cameras()
+                self._sync_for_profile()
+                timings["validation/render_time_s"] += (
+                    time.perf_counter() - started
+                )
+
+                low_dim = self.backend.low_dim_observations()
+                state_tensor = build_smolvla_state_tensor(
+                    ee_position=low_dim.ee_position,
+                    ee_yaw=low_dim.ee_yaw,
+                    gripper_opening=low_dim.gripper_opening,
+                    object_positions=low_dim.object_positions,
+                    target_slots=reset.task_state.target_slots,
+                    state_dim=int(self.trainer.state_dim),
+                )
+                self._sync_for_profile()
+                started = time.perf_counter()
+                prior = self.runtime.sample_cdpr_chunks_from_tensors(
+                    primary_images=cameras.overview,
+                    wrist_images=cameras.wrist,
+                    states=state_tensor,
+                    instructions=reset.instructions,
+                    microbatch_size=self.smolvla_microbatch_size,
+                )
+                self._sync_for_profile()
+                timings["validation/smolvla_time_s"] += (
+                    time.perf_counter() - started
+                )
+
+                started = time.perf_counter()
+                actions = self.trainer.deterministic_action_chunks_tensor(
+                    states=state_tensor,
+                    priors=prior,
+                    action_count=self.actions_per_policy_decision,
+                )
+                self._sync_for_profile()
+                timings["validation/policy_time_s"] += (
+                    time.perf_counter() - started
+                )
+
+                for action_index in range(self.actions_per_policy_decision):
+                    step_active = active & (decision < reset.horizons)
+                    sampled_actions += step_active.sum()
+
+                    self._sync_for_profile()
+                    started = time.perf_counter()
+                    low_dim = self.backend.step(
+                        actions[:, action_index], step_active
+                    )
+                    self._sync_for_profile()
+                    timings["validation/physics_time_s"] += (
+                        time.perf_counter() - started
+                    )
+
+                    started = time.perf_counter()
+                    result = evaluate_active_sparse_tasks(
+                        state=reset.task_state,
+                        ee_position=low_dim.ee_position,
+                        object_positions=low_dim.object_positions,
+                        gripper_opening=low_dim.gripper_opening,
+                        caught_target=torch.zeros_like(active),
+                        active_mask=step_active,
+                        max_steps=10_000,
+                        thresholds=BatchedTaskThresholds(
+                            move_to_xy_low=float(
+                                self.move_to_distance_reward.xy_window_low
+                            ),
+                            move_to_xy=float(
+                                self.move_to_distance_reward.xy_window_high
+                            ),
+                        ),
+                        move_to_distance_reward=self.move_to_distance_reward,
+                    )
+                    candidate_rewards.copy_(
+                        torch.where(
+                            step_active,
+                            result.rewards.to(dtype=torch.float32),
+                            candidate_rewards,
+                        )
+                    )
+                    final_xy_distance.copy_(
+                        torch.where(
+                            step_active,
+                            result.diagnostics["ee_xy_distance"].to(
+                                dtype=torch.float32
+                            ),
+                            final_xy_distance,
+                        )
+                    )
+                    candidate_success.logical_or_(result.success)
+                    active.logical_and_(~result.terminated)
+                    self._sync_for_profile()
+                    timings["validation/reward_time_s"] += (
+                        time.perf_counter() - started
+                    )
+                active.logical_and_((decision + 1) < reset.horizons)
+
+        self._sync_for_profile()
+        validation_time = time.perf_counter() - validation_started
+        return ValidationRound(
+            candidate_rewards=candidate_rewards.reshape(
+                self.layout.groups_per_rank, group_size
+            ),
+            candidate_success=candidate_success.reshape(
+                self.layout.groups_per_rank, group_size
+            ),
+            final_xy_distance=final_xy_distance.reshape(
+                self.layout.groups_per_rank, group_size
+            ),
+            group_target_catalog_ids=reset.group_target_catalog_ids,
+            group_shell_ids=reset.group_shell_ids,
+            metrics={
+                **timings,
+                "validation/time_s": float(validation_time),
+                "validation/environment_actions": float(
+                    sampled_actions.item()
+                ),
+                "validation/episodes_per_rank": float(worlds),
+            },
         )
 
 

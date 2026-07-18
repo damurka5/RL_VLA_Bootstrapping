@@ -651,6 +651,31 @@ class SmolVLAGRPOTrainer:
             log_probs = _normal_log_prob(actions, mean_chunk, log_std)
         return actions, log_probs, mean_chunk
 
+    def deterministic_action_chunks_tensor(
+        self,
+        *,
+        states: torch.Tensor,
+        priors: torch.Tensor,
+        action_count: int,
+    ) -> torch.Tensor:
+        """Return the residual-policy mean for CUDA-resident validation."""
+
+        count = max(1, min(int(action_count), int(self.chunk_size)))
+        if states.device != self.device or priors.device != self.device:
+            raise RuntimeError(
+                "Rank-local GRPO validation tensors must stay on the trainer GPU."
+            )
+        if states.ndim != 2 or priors.ndim != 3:
+            raise ValueError(
+                f"Expected states [B,D] and priors [B,H,A], got "
+                f"{tuple(states.shape)} and {tuple(priors.shape)}."
+            )
+        if int(states.shape[0]) != int(priors.shape[0]):
+            raise ValueError("GRPO state and prior batch sizes differ.")
+        with torch.inference_mode():
+            base = self._unwrap(self.actor)
+            return torch.clamp(base(states, priors)[:, :count], -1.0, 1.0)
+
     def update_tensor_records(
         self,
         records: Mapping[str, torch.Tensor],

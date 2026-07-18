@@ -10,16 +10,23 @@ schedule, curriculum, metric, and DDP gradient synchronization.
 from __future__ import annotations
 
 import json
+import math
 import os
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
+
+try:
+    from torch.utils.tensorboard import SummaryWriter
+except Exception:  # pragma: no cover - the pinned MJLab env includes tensorboard.
+    SummaryWriter = None
 
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     BatchedReverseFrontierResetter,
     RankLocalCurriculum,
     RankLocalMJWarpGRPOCollector,
+    ValidationRound,
     concatenate_collector_rounds,
 )
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
@@ -50,12 +57,213 @@ from rl_vla_bootstrapping.simulation.cdpr_backend import (
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     BatchedMoveToDistanceReward,
 )
+from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+    ACTIVE_CDPR_CATALOGS,
+    OBJECT_VARIANTS,
+)
 
 
 def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(dict(payload), sort_keys=True, default=str))
         stream.write("\n")
+
+
+def _log_tensorboard_metrics(
+    writer: Any,
+    metrics: Mapping[str, Any],
+    step: int,
+) -> None:
+    """Mirror every finite numeric metric without failing on JSON labels."""
+
+    if writer is None:
+        return
+    for key, value in metrics.items():
+        try:
+            scalar = float(value)
+        except (TypeError, ValueError):
+            continue
+        if math.isfinite(scalar):
+            writer.add_scalar(str(key), scalar, int(step))
+    writer.flush()
+
+
+def _validation_enabled(args: Any) -> bool:
+    return (
+        int(getattr(args, "validation_every_steps", 0)) > 0
+        and int(getattr(args, "validation_episodes_per_instruction", 0)) > 0
+    )
+
+
+def _validation_due(
+    args: Any,
+    *,
+    global_step: int,
+    last_validation_step: int,
+) -> bool:
+    if not _validation_enabled(args) or int(global_step) <= 0:
+        return False
+    every = max(1, int(args.validation_every_steps))
+    return (
+        int(global_step) // every
+        > int(last_validation_step) // every
+    )
+
+
+def _distributed_barrier() -> None:
+    import torch.distributed as dist
+
+    if dist.is_available() and dist.is_initialized():
+        dist.barrier()
+
+
+def _synchronize_validation_rounds(
+    rounds: Sequence[ValidationRound],
+    *,
+    device: Any,
+) -> dict[str, float]:
+    """Aggregate held-out candidate results once across all GPU ranks."""
+
+    if not rounds:
+        raise ValueError("At least one validation round is required.")
+    import torch
+    import torch.distributed as dist
+
+    catalog_count = len(ACTIVE_CDPR_CATALOGS)
+    counts = torch.zeros(
+        (catalog_count,), dtype=torch.float64, device=device
+    )
+    successes = torch.zeros_like(counts)
+    rewards = torch.zeros_like(counts)
+    distances = torch.zeros_like(counts)
+    environment_actions = torch.zeros(
+        (), dtype=torch.float64, device=device
+    )
+    timing_keys = tuple(
+        sorted(
+            {
+                key
+                for item in rounds
+                for key in item.metrics
+                if key.endswith("_time_s") or key == "validation/time_s"
+            }
+        )
+    )
+    timing_values = torch.tensor(
+        [
+            sum(float(item.metrics.get(key, 0.0)) for item in rounds)
+            for key in timing_keys
+        ],
+        dtype=torch.float64,
+        device=device,
+    )
+    group_size = int(rounds[0].candidate_success.shape[1])
+    for item in rounds:
+        catalog_ids = item.group_target_catalog_ids.repeat_interleave(
+            group_size
+        )
+        flat_success = item.candidate_success.reshape(-1).to(
+            dtype=torch.float64
+        )
+        flat_rewards = item.candidate_rewards.reshape(-1).to(
+            dtype=torch.float64
+        )
+        flat_distances = item.final_xy_distance.reshape(-1).to(
+            dtype=torch.float64
+        )
+        one = torch.ones_like(flat_success)
+        counts.index_add_(0, catalog_ids, one)
+        successes.index_add_(0, catalog_ids, flat_success)
+        rewards.index_add_(0, catalog_ids, flat_rewards)
+        distances.index_add_(0, catalog_ids, flat_distances)
+        environment_actions += float(
+            item.metrics.get("validation/environment_actions", 0.0)
+        )
+
+    if dist.is_available() and dist.is_initialized():
+        for tensor in (counts, successes, rewards, distances):
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
+        dist.all_reduce(environment_actions, op=dist.ReduceOp.SUM)
+        if timing_values.numel() > 0:
+            dist.all_reduce(timing_values, op=dist.ReduceOp.MAX)
+
+    total_count = counts.sum().clamp_min(1.0)
+    metrics = {
+        "validation/episodes": float(counts.sum().item()),
+        "validation/success_rate": float(
+            (successes.sum() / total_count).item()
+        ),
+        "validation/reward_mean": float(
+            (rewards.sum() / total_count).item()
+        ),
+        "validation/final_xy_distance_mean_m": float(
+            (distances.sum() / total_count).item()
+        ),
+        "validation/environment_actions": float(environment_actions.item()),
+        "validation/rounds_per_rank": float(len(rounds)),
+    }
+    for key, value in zip(
+        timing_keys, timing_values.detach().cpu().tolist()
+    ):
+        metrics[key] = float(value)
+    for catalog_index, catalog_name in enumerate(ACTIVE_CDPR_CATALOGS):
+        count = float(counts[catalog_index].item())
+        if count <= 0.0:
+            continue
+        label = OBJECT_VARIANTS[catalog_name].label.replace(" ", "_")
+        prefix = f"validation/by_object/{label}"
+        metrics[f"{prefix}/episodes"] = count
+        metrics[f"{prefix}/success_rate"] = float(
+            successes[catalog_index].item() / count
+        )
+        metrics[f"{prefix}/reward_mean"] = float(
+            rewards[catalog_index].item() / count
+        )
+        metrics[f"{prefix}/final_xy_distance_mean_m"] = float(
+            distances[catalog_index].item() / count
+        )
+    return metrics
+
+
+def _run_gpu_validation(
+    *,
+    args: Any,
+    collector: RankLocalMJWarpGRPOCollector,
+    trainer: Any,
+    device: Any,
+    rank: int,
+    world_size: int,
+) -> dict[str, float]:
+    """Evaluate fixed held-out scenes while preserving the training RNG."""
+
+    import torch
+
+    requested = int(args.validation_episodes_per_instruction)
+    global_worlds_per_round = (
+        int(collector.layout.worlds_per_rank) * int(world_size)
+    )
+    round_count = max(
+        1,
+        int(math.ceil(requested / max(1, global_worlds_per_round))),
+    )
+    device_index = int(device.index or torch.cuda.current_device())
+    validation_seed = int(args.validation_seed) + int(rank) * 1_000_003
+    was_training = bool(trainer.actor.training)
+    trainer.actor.eval()
+    try:
+        with torch.random.fork_rng(devices=[device_index]):
+            torch.manual_seed(validation_seed)
+            torch.cuda.manual_seed(validation_seed)
+            rounds = [
+                collector.validate_round(round_index=round_index)
+                for round_index in range(round_count)
+            ]
+    finally:
+        trainer.actor.train(was_training)
+    metrics = _synchronize_validation_rounds(rounds, device=device)
+    metrics["validation/requested_episodes"] = float(requested)
+    metrics["validation/seed"] = float(args.validation_seed)
+    return metrics
 
 
 def _task_metadata(args: Any) -> dict[str, Any]:
@@ -200,8 +408,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     layout.assert_no_cross_rank_group(dist_ctx.rank, dist_ctx.world_size)
     run_dir = _make_run_dir(args.run_root_dir, args.run_id)
     metrics_path = run_dir / "metrics.jsonl"
+    validation_path = run_dir / "validation.jsonl"
+    writer = None
     if dist_ctx.is_main:
         _write_json(run_dir / "config.json", vars(args))
+        if SummaryWriter is None:
+            _log(
+                dist_ctx,
+                "[smolvla-mjwarp] TensorBoard is unavailable; install the "
+                "pinned cdpr-mjlab requirements.",
+            )
+        else:
+            writer = SummaryWriter(log_dir=str(run_dir / "tensorboard"))
 
     backend = None
     runtime = None
@@ -365,10 +583,56 @@ def main(argv: Sequence[str] | None = None) -> None:
             move_to_distance_reward=move_to_distance_reward,
             profile=bool(args.mjwarp_profile_timers),
         )
+        validation_collector = None
+        if _validation_enabled(args):
+            validation_resetter = BatchedReverseFrontierResetter(
+                backend=backend,
+                layout=layout,
+                curriculum=curriculum,
+                rank=dist_ctx.rank,
+                base_seed=int(args.validation_seed),
+                instruction_types=args.instruction_types,
+                allowed_objects=args.allowed_objects,
+                frontier_probability=1.0,
+                rehearsal_probability=0.0,
+                balanced_target_catalogs=True,
+            )
+            validation_collector = RankLocalMJWarpGRPOCollector(
+                backend=backend,
+                smolvla_runtime=runtime,
+                trainer=trainer,
+                resetter=validation_resetter,
+                layout=layout,
+                actions_per_policy_decision=int(args.replan_every),
+                smolvla_microbatch_size=int(
+                    args.smolvla_inference_microbatch_size
+                ),
+                normalize_advantage=bool(
+                    args.grpo_normalize_group_advantage
+                ),
+                advantage_clip_abs=float(args.grpo_clip_advantage_abs),
+                dynamic_min_pass_rate=float(
+                    args.grpo_dynamic_min_pass_rate
+                ),
+                dynamic_max_pass_rate=float(
+                    args.grpo_dynamic_max_pass_rate
+                ),
+                dynamic_sampling=False,
+                group_selection="uniform",
+                move_to_distance_reward=move_to_distance_reward,
+                profile=bool(args.mjwarp_profile_timers),
+            )
 
         update_index = int(curriculum.updates)
         start_update_index = int(update_index)
         last_saved_step = int(global_step)
+        validation_state = trainer.loaded_extra_state.get("validation")
+        if isinstance(validation_state, Mapping):
+            last_validation_step = int(
+                validation_state.get("last_step", global_step)
+            )
+        else:
+            last_validation_step = int(global_step)
         while (
             global_step < int(args.max_train_steps)
             and (
@@ -556,6 +820,9 @@ def main(argv: Sequence[str] | None = None) -> None:
 
             if dist_ctx.is_main:
                 _append_jsonl(metrics_path, synchronized_metrics)
+                _log_tensorboard_metrics(
+                    writer, synchronized_metrics, global_step
+                )
                 if profile_this_update:
                     _write_json(
                         run_dir / "latest_profile.json",
@@ -583,6 +850,50 @@ def main(argv: Sequence[str] | None = None) -> None:
                     f"records={synchronized_metrics['informative_records']:.0f}",
                 )
 
+            validation_due = _validation_due(
+                args,
+                global_step=global_step,
+                last_validation_step=last_validation_step,
+            )
+            if validation_due:
+                if validation_collector is None:
+                    raise RuntimeError(
+                        "Validation became due without a GPU validation collector."
+                    )
+                validation_metrics = _run_gpu_validation(
+                    args=args,
+                    collector=validation_collector,
+                    trainer=trainer,
+                    device=device,
+                    rank=dist_ctx.rank,
+                    world_size=dist_ctx.world_size,
+                )
+                validation_metrics.update(
+                    {
+                        "global_step": float(global_step),
+                        "update_index": float(update_index),
+                        "validation/current_move_to_shell": float(
+                            curriculum.current_shell[
+                                0
+                            ].detach().item()
+                        ),
+                    }
+                )
+                last_validation_step = int(global_step)
+                if dist_ctx.is_main:
+                    _append_jsonl(validation_path, validation_metrics)
+                    _log_tensorboard_metrics(
+                        writer, validation_metrics, global_step
+                    )
+                    _log(
+                        dist_ctx,
+                        "[smolvla-mjwarp] validation "
+                        f"step={global_step} "
+                        f"success={validation_metrics['validation/success_rate']:.4f} "
+                        f"reward={validation_metrics['validation/reward_mean']:.4f} "
+                        f"episodes={validation_metrics['validation/episodes']:.0f}",
+                    )
+
             save_due = (
                 int(args.save_every_steps) > 0
                 and global_step - last_saved_step >= int(args.save_every_steps)
@@ -593,16 +904,32 @@ def main(argv: Sequence[str] | None = None) -> None:
                 and update_index - start_update_index
                 >= int(args.mjwarp_max_updates)
             )
-            if dist_ctx.is_main and (save_due or final_update):
-                trainer.save(
+            checkpoint_due = bool(
+                save_due or validation_due or final_update
+            )
+            if dist_ctx.is_main and checkpoint_due:
+                checkpoint_path = trainer.save(
                     global_step=global_step,
                     args=args,
                     latest=False,
-                    extra_state={"curriculum": curriculum.snapshot()},
+                    extra_state={
+                        "curriculum": curriculum.snapshot(),
+                        "validation": {
+                            "last_step": int(last_validation_step),
+                        },
+                    },
                     simulator_metadata=simulator_metadata,
                 )
+                _log(
+                    dist_ctx,
+                    f"[smolvla-mjwarp] checkpoint={checkpoint_path}",
+                )
+            if checkpoint_due:
                 last_saved_step = int(global_step)
+                _distributed_barrier()
     finally:
+        if writer is not None:
+            writer.close()
         if backend is not None:
             backend.close()
         runtime = None

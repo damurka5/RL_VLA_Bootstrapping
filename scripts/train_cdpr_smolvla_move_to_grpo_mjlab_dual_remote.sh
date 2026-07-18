@@ -75,6 +75,8 @@ train_cmd=(
 
 printf 'mode=fresh_step_0\n'
 printf 'run_dir=%s\n' "$RUN_DIR"
+printf 'tensorboard_dir=%s\n' "$RUN_DIR/rl/tensorboard"
+printf 'validation_metrics=%s\n' "$RUN_DIR/rl/validation.jsonl"
 printf 'config=%s\n' "$CONFIG"
 printf 'max_train_steps=%s\n' "$MAX_TRAIN_STEPS"
 printf 'cuda_visible_devices=%s ranks=2\n' "$CUDA_VISIBLE_DEVICES"
