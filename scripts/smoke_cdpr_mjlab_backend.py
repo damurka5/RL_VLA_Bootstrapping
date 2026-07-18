@@ -10,6 +10,8 @@ import traceback
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
@@ -24,10 +26,187 @@ from rl_vla_bootstrapping.simulation.cdpr_backend import (
     CDPRBackendConfig,
     create_cdpr_backend,
 )
+from rl_vla_bootstrapping.simulation.cdpr_object_catalog import CATALOG_TO_ID
+from scripts.render_cdpr_mjlab_camera_videos import (
+    SCENARIOS,
+    _phase_complete,
+    _policy_action,
+    _scenario_metrics,
+    _yaw_quaternions,
+)
 
 
 def _finite(torch: Any, *values: Any) -> bool:
     return all(bool(torch.isfinite(value).all()) for value in values)
+
+
+def _scenario_state(backend: Any) -> dict[str, Any]:
+    low = backend.low_dim_observations()
+    object_positions = low.object_positions[0].detach().cpu().numpy().copy()
+    return {
+        "ee_position": low.ee_position[0].detach().cpu().numpy().copy(),
+        "ee_yaw": float(low.ee_yaw[0].item()),
+        "gripper_opening": float(low.gripper_opening[0].item()),
+        "gripper_target": float(backend._controller_gripper[0].item()),
+        "target_position": (
+            low.target_position[0].detach().cpu().numpy().copy()
+        ),
+        "tendon_lengths": (
+            low.tendon_lengths[0].detach().cpu().numpy().copy()
+        ),
+        "object_position": object_positions[0],
+        "reference_position": object_positions[1],
+        "object_positions": object_positions,
+        "pinned": False,
+    }
+
+
+def _run_training_scenario(
+    backend: Any,
+    scenario_name: str,
+) -> dict[str, Any]:
+    torch = backend.torch
+    scenario = SCENARIOS[scenario_name]
+    worlds = backend.worlds_per_rank
+
+    def repeat(value: Any, *, dtype: Any) -> Any:
+        tensor = torch.as_tensor(value, dtype=dtype, device=backend.device)
+        return tensor.unsqueeze(0).repeat(worlds, *([1] * tensor.ndim))
+
+    all_worlds = torch.arange(
+        worlds, dtype=torch.int64, device=backend.device
+    )
+    backend.reset_worlds(all_worlds)
+    backend.set_object_catalogs(
+        repeat(
+            [CATALOG_TO_ID[name] for name in scenario.catalogs],
+            dtype=torch.int64,
+        )
+    )
+    positions = repeat(scenario.object_positions, dtype=torch.float32)
+    quaternions = repeat(
+        _yaw_quaternions(scenario.object_yaws), dtype=torch.float32
+    )
+    backend.set_free_body_poses(
+        backend.object_body_ids, positions, quaternions
+    )
+    backend.set_end_effector_poses(
+        repeat(scenario.ee_start, dtype=torch.float32),
+        torch.full(
+            (worlds,),
+            float(scenario.ee_yaw),
+            dtype=torch.float32,
+            device=backend.device,
+        ),
+    )
+    backend.set_gripper_openings(
+        torch.full(
+            (worlds,),
+            float(scenario.gripper_opening),
+            dtype=torch.float32,
+            device=backend.device,
+        )
+    )
+    # The second write guarantees the caught object remains at the calibrated
+    # pad center after controller-preload forward passes.
+    backend.set_free_body_poses(
+        backend.object_body_ids, positions, quaternions
+    )
+    backend.set_visual_variants(
+        torch.full(
+            (worlds,),
+            int(scenario.texture_variant),
+            dtype=torch.int64,
+            device=backend.device,
+        ),
+        repeat(scenario.background_rgba, dtype=torch.float32),
+        torch.full(
+            (worlds,),
+            float(scenario.gripper_shade),
+            dtype=torch.float32,
+            device=backend.device,
+        ),
+    )
+
+    state = _scenario_state(backend)
+    initial_grasp_offset = (
+        np.asarray(state["object_position"], dtype=np.float64)
+        - np.asarray(state["ee_position"], dtype=np.float64)
+    )
+    phase_steps: dict[str, int] = {}
+    phase_completed: dict[str, bool] = {}
+    held_openings: list[float] = []
+    held_slips: list[float] = []
+    active = torch.ones(
+        (worlds,), dtype=torch.bool, device=backend.device
+    )
+    for phase in scenario.phases:
+        completed = False
+        for used in range(1, int(phase.max_steps) + 1):
+            action = _policy_action(state, phase)
+            backend.step(repeat(action, dtype=torch.float32), active)
+            state = _scenario_state(backend)
+            if phase.target_gripper < 0.55:
+                held_openings.append(float(state["gripper_opening"]))
+                held_slips.append(
+                    float(
+                        np.linalg.norm(
+                            np.asarray(
+                                state["object_position"], dtype=np.float64
+                            )
+                            - np.asarray(
+                                state["ee_position"], dtype=np.float64
+                            )
+                            - initial_grasp_offset
+                        )
+                    )
+                )
+            if _phase_complete(state, phase, used):
+                completed = True
+                break
+        phase_steps[phase.name] = used
+        phase_completed[phase.name] = completed
+
+    metrics = _scenario_metrics(scenario, state)
+    stable_openings = np.asarray(held_openings[5:], dtype=np.float64)
+    max_gripper_step = (
+        float(np.max(np.abs(np.diff(stable_openings))))
+        if stable_openings.size >= 2
+        else 0.0
+    )
+    gripper_steady_max_error = (
+        float(
+            np.max(
+                np.abs(
+                    stable_openings - float(scenario.gripper_opening)
+                )
+            )
+        )
+        if stable_openings.size
+        else 0.0
+    )
+    before_hold = np.asarray(state["ee_position"], dtype=np.float64)
+    zero_actions = torch.zeros(
+        (worlds, 5), dtype=torch.float32, device=backend.device
+    )
+    for _ in range(12):
+        backend.step(zero_actions, active)
+    hold_state = _scenario_state(backend)
+    hold_drift = float(
+        np.linalg.norm(
+            np.asarray(hold_state["ee_position"], dtype=np.float64)
+            - before_hold
+        )
+    )
+    return {
+        "phase_steps": phase_steps,
+        "phase_completed": phase_completed,
+        "placement": metrics,
+        "held_object_max_slip": max(held_slips, default=0.0),
+        "gripper_steady_max_error": gripper_steady_max_error,
+        "gripper_max_step_after_settle": max_gripper_step,
+        "controller_hold_drift": hold_drift,
+    }
 
 
 def main() -> int:
@@ -346,6 +525,42 @@ def main() -> int:
             .cpu()
             .tolist(),
         }
+
+        training_scenarios = {
+            name: _run_training_scenario(backend, name)
+            for name in (
+                "training_put_into_bowl",
+                "training_put_on_plate",
+            )
+        }
+        report["training_scenarios"] = training_scenarios
+        report["checks"]["controller_reaches_xyz_targets"] = all(
+            all(result["phase_completed"].values())
+            for result in training_scenarios.values()
+        )
+        report["checks"]["controller_holds_xyz_target"] = all(
+            float(result["controller_hold_drift"]) <= 0.02
+            for result in training_scenarios.values()
+        )
+        report["checks"]["gripper_holds_command_without_jitter"] = all(
+            float(result["gripper_steady_max_error"]) <= 0.05
+            and float(result["gripper_max_step_after_settle"]) <= 0.02
+            for result in training_scenarios.values()
+        )
+        report["checks"]["caught_object_remains_in_gripper"] = all(
+            float(result["held_object_max_slip"]) <= 0.03
+            for result in training_scenarios.values()
+        )
+        report["checks"]["training_put_into_bowl_succeeds"] = bool(
+            training_scenarios["training_put_into_bowl"]["placement"][
+                "success"
+            ]
+        )
+        report["checks"]["training_put_on_plate_succeeds"] = bool(
+            training_scenarios["training_put_on_plate"]["placement"][
+                "success"
+            ]
+        )
 
         backend.reset_worlds(
             torch.tensor([0, args.worlds - 1], device=backend.device)

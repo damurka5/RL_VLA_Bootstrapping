@@ -585,7 +585,9 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         renderer_source = (
             ROOT / "scripts" / "render_cdpr_mjlab_camera_videos.py"
         ).read_text(encoding="utf-8")
-        self.assertIn("enabled_geom_groups=[0, 1, 2]", backend_source)
+        self.assertIn(
+            "enabled_geom_groups=[0, 1, 2, 4]", backend_source
+        )
         self.assertNotIn(
             "enabled_geom_groups=[0, 1, 2, 3]", backend_source
         )
@@ -878,6 +880,13 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertIn('"finger_equality_active"', smoke_source)
         self.assertIn('"spatial_tendons_evolve_under_control"', smoke_source)
         self.assertIn('"contact_step_generated_contacts"', smoke_source)
+        self.assertIn('"controller_reaches_xyz_targets"', smoke_source)
+        self.assertIn(
+            '"training_put_into_bowl_succeeds"', smoke_source
+        )
+        self.assertIn(
+            '"training_put_on_plate_succeeds"', smoke_source
+        )
 
 
 if __name__ == "__main__":

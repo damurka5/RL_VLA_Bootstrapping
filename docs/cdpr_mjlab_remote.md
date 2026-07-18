@@ -53,7 +53,9 @@ conda run --no-capture-output -n cdpr-mjlab python3 \
 The preflight is deliberately strict. A static XML pass is insufficient:
 `put_model`, world allocation, forward dynamics, renderer creation, BVH refit,
 per-world real-mesh selection, both camera renders, GPU contact-force output,
-and GPU tensor checks must execute.
+GPU tensor checks, deterministic XYZ target tracking, gripper hold stability,
+and the complete `training_put_into_bowl` / `training_put_on_plate` trajectories
+must execute.
 
 The following optional command runs unit/regression fixtures. It is not part of
 the production simulator hot path and does not enable CPU contact handling:
@@ -117,9 +119,14 @@ conda run --no-capture-output -n cdpr-mjlab python3 \
   --no-timestamped
 ```
 
-Each scenario writes overview, wrist, and side-by-side MP4s; an action CSV; and
-one shared manifest/contact sheet. The manifest records whether the production
-MJLab/MJWarp backend or the local MuJoCo reference backend produced the files.
+Each scenario writes overview, wrist, and side-by-side MP4s with VLA-like
+normalized actions, executed deltas, controller targets/errors, gripper state,
+object/receptacle telemetry, and cable lengths. The expanded action CSV carries
+the same telemetry, and the shared manifest/contact sheet records whether the
+production MJLab/MJWarp backend or the local MuJoCo reference backend produced
+the files. Scenario verification is enabled by default: the command exits
+nonzero if a phase does not reach its target, the caught object slips out, the
+gripper jitters, or the final placement misses the 3 cm success tolerance.
 
 ## Optional CPU/MJWarp parity
 

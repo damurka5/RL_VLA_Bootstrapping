@@ -318,8 +318,17 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self.desk_geom_id = _host_name_id(
             mj, model, mj.mjtObj.mjOBJ_GEOM, "mjwarp_desk_surface"
         )
-        self.background_geom_id = _host_name_id(
-            mj, model, mj.mjtObj.mjOBJ_GEOM, "mjwarp_background"
+        self.desk_visual_geom_id = _host_name_id(
+            mj, model, mj.mjtObj.mjOBJ_GEOM, "mjwarp_desk_surface_visual"
+        )
+        self.cable_visual_geom_ids = tuple(
+            _host_name_id(
+                mj,
+                model,
+                mj.mjtObj.mjOBJ_GEOM,
+                f"mjwarp_cable_visual_{index}",
+            )
+            for index in range(1, 5)
         )
         self.desk_material_ids = tuple(
             _host_name_id(
@@ -501,6 +510,8 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             "eq_active",
             "xpos",
             "xquat",
+            "geom_xpos",
+            "geom_xmat",
             "site_xpos",
             "ten_length",
             "cvel",
@@ -568,6 +579,11 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         )
         self._desk_material_ids_tensor = self.torch.tensor(
             self.desk_material_ids, dtype=self.torch.int32, device=self._device
+        )
+        self._cable_visual_geom_ids_tensor = self.torch.tensor(
+            self.cable_visual_geom_ids,
+            dtype=self.torch.int64,
+            device=self._device,
         )
         self._gripper_surface_geom_ids_tensor = self.torch.tensor(
             self.gripper_surface_geom_ids,
@@ -858,10 +874,14 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
                 render_depth=False,
                 use_textures=True,
                 use_shadows=False,
+                render_skybox=True,
+                background_color=(0.035, 0.050, 0.075, 1.0),
                 # Group 3 contains contact-only primitives. MJWarp does not
                 # consistently honor their alpha-zero RGBA, so rendering that
                 # group produces opaque black proxy shapes in policy images.
-                enabled_geom_groups=[0, 1, 2],
+                # Group 4 contains the visual-only cable capsules because the
+                # ray renderer does not rasterize native tendon paths.
+                enabled_geom_groups=[0, 1, 2, 4],
             )
             self._overview_rgb_wp = self.wp.zeros(
                 (self.worlds_per_rank, height, width),
@@ -1173,9 +1193,50 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
                 self.render_context, rgb_data=output, cam_id=camera_id
             )
 
+    def _update_cable_visuals(self) -> None:
+        """Place four visual capsules on anchor-to-platform cable segments."""
+
+        torch = self.torch
+        anchors = self._frame_anchors[None, :, :]
+        endpoint = self._site_xpos[:, self.topcenter_site_id][:, None, :]
+        direction = endpoint - anchors
+        lengths = torch.linalg.vector_norm(direction, dim=-1).clamp_min(1.0e-6)
+        z_axis = direction / lengths[:, :, None]
+
+        vertical_reference = torch.zeros_like(z_axis)
+        vertical_reference[..., 2] = 1.0
+        side_reference = torch.zeros_like(z_axis)
+        side_reference[..., 1] = 1.0
+        reference = torch.where(
+            (z_axis[..., 2].abs() > 0.90)[..., None],
+            side_reference,
+            vertical_reference,
+        )
+        x_axis = torch.linalg.cross(reference, z_axis, dim=-1)
+        x_axis = x_axis / torch.linalg.vector_norm(
+            x_axis, dim=-1, keepdim=True
+        ).clamp_min(1.0e-6)
+        y_axis = torch.linalg.cross(z_axis, x_axis, dim=-1)
+        rotation = torch.stack((x_axis, y_axis, z_axis), dim=-1)
+
+        self._geom_xpos[:, self._cable_visual_geom_ids_tensor] = (
+            anchors + endpoint
+        ) * 0.5
+        geom_xmat = self._geom_xmat.reshape(
+            self.worlds_per_rank, int(self.host_model.ngeom), 3, 3
+        )
+        geom_xmat[:, self._cable_visual_geom_ids_tensor] = rotation
+        cable_size = self._model_geom_size[
+            :, self._cable_visual_geom_ids_tensor
+        ]
+        cable_size[..., 0] = 0.002
+        cable_size[..., 1] = 0.5 * lengths
+        cable_size[..., 2] = 0.0
+
     def render_policy_cameras(self) -> CDPRRenderBatch:
         if self.render_context is None:
             raise RuntimeError("The MJWarp renderer was disabled at backend creation.")
+        self._update_cable_visuals()
         with self.wp.ScopedDevice(str(self._device)):
             self.mjw.refit_bvh(self.model, self.data, self.render_context)
             self.mjw.render(self.model, self.data, self.render_context)
@@ -1422,12 +1483,13 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             raise ValueError("One gripper shade is required per world.")
         if bool((variants < 0).any()) or bool((variants >= 7).any()):
             raise ValueError("Desk texture variants must be in [0, 7).")
-        self._model_geom_matid[:, self.desk_geom_id] = (
+        self._model_geom_matid[:, self.desk_visual_geom_id] = (
             self._desk_material_ids_tensor.index_select(0, variants)
         )
-        self._model_geom_rgba[:, self.background_geom_id] = background.clamp(
-            0.0, 1.0
-        )
+        # The removed wall used this per-world color. Retain shape/range
+        # validation for API compatibility; missed rays now use the fixed dark
+        # gradient skybox shared by the render context.
+        _ = background.clamp(0.0, 1.0)
         shade_rgb = shade.clamp(0.0, 1.0)[:, None, None].expand(
             -1, len(self.gripper_surface_geom_ids), 3
         )
@@ -1654,8 +1716,9 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             "object_geometry": (
                 "robocasa_visual_plus_cdpr_native_primitives_v1"
             ),
-            "rendered_geom_groups": [0, 1, 2],
+            "rendered_geom_groups": [0, 1, 2, 4],
             "collision_geom_group": 3,
+            "cable_visual_geom_group": 4,
             "nconmax_per_world": int(self.config.nconmax),
             "njmax_per_world": int(self.config.njmax),
             "nccdmax_per_world": self.config.nccdmax,

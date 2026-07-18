@@ -11,6 +11,9 @@
   <include file="cdpr.xml"/>
   <include file="cdpr_mjwarp_object_slots.xml"/>
   <asset>
+    <texture name="mjwarp_skybox" type="skybox" builtin="gradient"
+             rgb1="0.16 0.25 0.34" rgb2="0.012 0.018 0.030"
+             width="256" height="1536"/>
     <texture name="mjwarp_desk_tex_0" type="2d" builtin="checker"
              rgb1="0.46 0.31 0.20" rgb2="0.63 0.45 0.29" width="128" height="128"/>
     <texture name="mjwarp_desk_tex_1" type="2d" builtin="checker"
@@ -25,24 +28,40 @@
              rgb1="0.22 0.33 0.20" rgb2="0.42 0.55 0.34" width="128" height="128"/>
     <texture name="mjwarp_desk_tex_6" type="2d" builtin="checker"
              rgb1="0.33 0.24 0.38" rgb2="0.54 0.42 0.60" width="128" height="128"/>
-    <material name="mjwarp_desk_mat_0" texture="mjwarp_desk_tex_0" texrepeat="20 20"/>
-    <material name="mjwarp_desk_mat_1" texture="mjwarp_desk_tex_1" texrepeat="20 20"/>
-    <material name="mjwarp_desk_mat_2" texture="mjwarp_desk_tex_2" texrepeat="20 20"/>
-    <material name="mjwarp_desk_mat_3" texture="mjwarp_desk_tex_3" texrepeat="20 20"/>
-    <material name="mjwarp_desk_mat_4" texture="mjwarp_desk_tex_4" texrepeat="20 20"/>
-    <material name="mjwarp_desk_mat_5" texture="mjwarp_desk_tex_5" texrepeat="20 20"/>
-    <material name="mjwarp_desk_mat_6" texture="mjwarp_desk_tex_6" texrepeat="20 20"/>
+    <material name="mjwarp_desk_mat_0" texture="mjwarp_desk_tex_0" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_1" texture="mjwarp_desk_tex_1" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_2" texture="mjwarp_desk_tex_2" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_3" texture="mjwarp_desk_tex_3" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_4" texture="mjwarp_desk_tex_4" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_5" texture="mjwarp_desk_tex_5" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_6" texture="mjwarp_desk_tex_6" texrepeat="12 12" texuniform="true"/>
   </asset>
   <worldbody>
+    <!-- The finite plane is the textured render surface. MJWarp 3.10 samples
+         UVs for planes but not boxes, so the physical box stays collision-only. -->
+    <geom name="mjwarp_desk_surface_visual" type="plane" pos="0 0 0.1502"
+          size="0.48 0.68 0.001" material="mjwarp_desk_mat_0"
+          contype="0" conaffinity="0" group="2"/>
     <!-- Portable physical desk top matching the active support height. -->
     <geom name="mjwarp_desk_surface" type="box" pos="0 0 0.13"
           size="0.48 0.68 0.02" material="mjwarp_desk_mat_0"
-          contype="4" conaffinity="1" condim="3"
+          contype="4" conaffinity="1" condim="3" group="3"
           friction="0.9 0.01 0.001" solref="0.008 1"
           solimp="0.90 0.95 0.001" margin="0.001"/>
-    <!-- A visual-only backdrop enables per-world background colors. -->
-    <geom name="mjwarp_background" type="box" pos="0 0.82 0.65"
-          size="0.75 0.01 0.65" contype="0" conaffinity="0" group="1"
-          rgba="0.80 0.84 0.90 1"/>
+    <!-- MJWarp's ray renderer does not draw tendon paths. These group-4
+         capsules are moved onto the four anchor-to-platform cable segments
+         immediately before each render; they are visual-only. -->
+    <geom name="mjwarp_cable_visual_1" type="capsule"
+          fromto="-0.535 -0.755 1.309  0 0 0.48" size="0.002"
+          rgba="0.22 0.24 0.27 0.90" contype="0" conaffinity="0" group="4"/>
+    <geom name="mjwarp_cable_visual_2" type="capsule"
+          fromto="0.755 -0.525 1.309  0 0 0.48" size="0.002"
+          rgba="0.22 0.24 0.27 0.90" contype="0" conaffinity="0" group="4"/>
+    <geom name="mjwarp_cable_visual_3" type="capsule"
+          fromto="0.535 0.755 1.309  0 0 0.48" size="0.002"
+          rgba="0.22 0.24 0.27 0.90" contype="0" conaffinity="0" group="4"/>
+    <geom name="mjwarp_cable_visual_4" type="capsule"
+          fromto="-0.755 0.525 1.309  0 0 0.48" size="0.002"
+          rgba="0.22 0.24 0.27 0.90" contype="0" conaffinity="0" group="4"/>
   </worldbody>
 </mujoco>

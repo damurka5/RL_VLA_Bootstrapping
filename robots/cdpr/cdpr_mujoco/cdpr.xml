@@ -2,7 +2,7 @@
   <compiler autolimits="true"/>
   <default>
     <site type="sphere" rgba="1 0 0 1" size="0.005"/>
-    <tendon rgba="0.4 0.4 0.4 0.35" width="0.001"/>
+    <tendon rgba="0.22 0.24 0.27 0.90" width="0.002"/>
     <default class="gripper_surface">
       <geom contype="0" conaffinity="0" group="1" material="gripper_surface_material"
             rgba="0.94 0.94 0.94 1"/>
@@ -18,9 +18,10 @@
     </default>
   </default>
   <visual>
-    <headlight ambient=".30 .30 .30"
-               diffuse=".75 .75 .75"
-               specular=".10 .10 .10"/>
+    <headlight ambient=".16 .16 .16"
+               diffuse=".62 .62 .62"
+               specular=".08 .08 .08"/>
+    <rgba haze=".035 .050 .075 1"/>
   </visual>
 
   <asset>
@@ -35,16 +36,16 @@
     <light name="side_light"
          pos="1.0 -1.0 2.0"
          dir="-1 1 -1"
-         ambient="0.08 0.08 0.08"
-         diffuse="0.55 0.55 0.55"
+         ambient="0.04 0.04 0.04"
+         diffuse="0.42 0.42 0.42"
          specular="0.06 0.06 0.06"
          directional="true"
          castshadow="false"/>
     <light name="fill_light"
          pos="-1.0 -0.8 1.7"
          dir="1 0.8 -1"
-         ambient="0.10 0.10 0.10"
-         diffuse="0.40 0.40 0.40"
+         ambient="0.05 0.05 0.05"
+         diffuse="0.32 0.32 0.32"
          specular="0.03 0.03 0.03"
          directional="true"
          castshadow="false"/>
@@ -286,14 +287,17 @@
   </tendon>
 
   <actuator>
-    <position name="slider_1_pos" joint="slider_1" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
-    <position name="slider_2_pos" joint="slider_2" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
-    <position name="slider_3_pos" joint="slider_3" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
-    <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="2400" kv="300"/>
+    <!-- Tuned for the 2 ms MJWarp timestep: the previous kv=300 setting was
+         heavily overdamped and left the platform far behind policy targets. -->
+    <position name="slider_1_pos" joint="slider_1" ctrlrange="-4.5 4.5" kp="6000" kv="100"/>
+    <position name="slider_2_pos" joint="slider_2" ctrlrange="-4.5 4.5" kp="6000" kv="100"/>
+    <position name="slider_3_pos" joint="slider_3" ctrlrange="-4.5 4.5" kp="6000" kv="100"/>
+    <position name="slider_4_pos" joint="slider_4" ctrlrange="-4.5 4.5" kp="6000" kv="100"/>
     <!-- Tool yaw and gripper -->
     <position name="act_ee_yaw" joint="ee_yaw" kp="30" ctrlrange="-180 180"/>
     <!-- Normalized gripper target: ctrl=0 is closed, ctrl=1 maps to 0.03 m finger travel. -->
-    <position name="act_gripper" joint="finger_l" kp="2.0" gear="33.3333333333" ctrlrange="0 1"/>
+    <position name="act_gripper" joint="finger_l" kp="5.0" kv="0.1"
+              gear="33.3333333333" ctrlrange="0 1"/>
   </actuator>
 
 

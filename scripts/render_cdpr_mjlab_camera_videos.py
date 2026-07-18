@@ -24,6 +24,7 @@ import os
 import shutil
 import subprocess
 import sys
+import textwrap
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -58,6 +59,14 @@ WORKSPACE_MAX = np.array((0.28, 0.28, 1.20), dtype=np.float64)
 ACTION_STEP = np.array((0.015, 0.015, 0.015, 0.08, 0.05), dtype=np.float64)
 PHYSICS_SUBSTEPS = 7
 SUPPORT_SURFACE_Z = 0.15
+CAUGHT_OBJECT_OFFSET_Z = -0.0025
+
+# Normalized finger positions calibrated for caught objects used by these
+# scripted scenarios. These are physical grip targets, not visual-mesh
+# bounding-box estimates.
+CAUGHT_GRIPPER_OPENINGS = {
+    "robocasa_apple": 0.46,
+}
 
 
 @dataclass(frozen=True)
@@ -69,6 +78,7 @@ class Phase:
     max_steps: int
     position_tolerance: float = 0.018
     minimum_steps: int = 3
+    translation_action_limit: float = 0.72
 
 
 @dataclass(frozen=True)
@@ -97,9 +107,21 @@ def _rest_z(catalog: str) -> float:
     return SUPPORT_SURFACE_Z + float(OBJECT_VARIANTS[catalog].rest_height)
 
 
-def _held_opening(catalog: str) -> float:
-    fitted = float(OBJECT_VARIANTS[catalog].fitted_gripper_opening)
-    return max(0.0, fitted - (0.001 / 0.03))
+def _caught_opening(catalog: str) -> float:
+    try:
+        return float(CAUGHT_GRIPPER_OPENINGS[catalog])
+    except KeyError as exc:
+        raise KeyError(f"No caught-object finger target for {catalog!r}.") from exc
+
+
+def _caught_position(
+    ee_position: Sequence[float],
+) -> tuple[float, float, float]:
+    return (
+        float(ee_position[0]),
+        float(ee_position[1]),
+        float(ee_position[2]) + CAUGHT_OBJECT_OFFSET_Z,
+    )
 
 
 SCENARIOS: dict[str, Scenario] = {
@@ -114,7 +136,7 @@ SCENARIOS: dict[str, Scenario] = {
             "robocasa_mug",
         ),
         object_positions=(
-            (-0.16, -0.12, 0.30),
+            _caught_position((-0.16, -0.12, 0.38)),
             (0.12, 0.09, _rest_z("robocasa_bowl")),
             (-0.13, 0.12, _rest_z("robocasa_carrot")),
             (0.16, -0.12, _rest_z("robocasa_mug")),
@@ -122,37 +144,50 @@ SCENARIOS: dict[str, Scenario] = {
         object_yaws=(0.0, 0.25, -0.5, 0.0),
         ee_start=(-0.16, -0.12, 0.38),
         ee_yaw=-0.35,
-        # Reverse-frontier caught reset uses the catalog's fitted width minus
-        # the production 1 mm normalized closing margin.
-        gripper_opening=_held_opening("robocasa_apple"),
+        gripper_opening=_caught_opening("robocasa_apple"),
         texture_variant=2,
-        background_rgba=(0.73, 0.85, 0.91, 1.0),
+        background_rgba=(0.035, 0.050, 0.075, 1.0),
         gripper_shade=0.70,
         phases=(
             Phase(
                 "carry_at_safe_height",
                 (0.12, 0.09, 0.38),
                 0.35,
-                _held_opening("robocasa_apple"),
-                44,
+                _caught_opening("robocasa_apple"),
+                64,
             ),
             Phase(
                 "position_above_bowl",
                 (0.12, 0.09, 0.36),
                 0.35,
-                _held_opening("robocasa_apple"),
-                12,
+                _caught_opening("robocasa_apple"),
+                40,
+                position_tolerance=0.009,
+                minimum_steps=6,
+                translation_action_limit=0.25,
             ),
             Phase(
                 "lower_into_bowl",
-                (0.12, 0.09, 0.275),
+                (0.12, 0.09, 0.30),
                 0.35,
-                _held_opening("robocasa_apple"),
-                22,
+                _caught_opening("robocasa_apple"),
+                40,
+                position_tolerance=0.009,
+                minimum_steps=6,
+                translation_action_limit=0.25,
             ),
-            Phase("release", (0.12, 0.09, 0.275), 0.35, 1.0, 14, minimum_steps=12),
-            Phase("lift_clear", (0.12, 0.09, 0.43), 0.0, 1.0, 24),
-            Phase("retreat", (0.02, -0.02, 0.43), 0.0, 1.0, 24),
+            Phase(
+                "release",
+                (0.12, 0.09, 0.30),
+                0.35,
+                1.0,
+                28,
+                position_tolerance=0.012,
+                minimum_steps=18,
+                translation_action_limit=0.10,
+            ),
+            Phase("lift_clear", (0.12, 0.09, 0.43), 0.0, 1.0, 40),
+            Phase("retreat", (0.02, -0.02, 0.43), 0.0, 1.0, 40),
         ),
     ),
     "training_put_on_plate": Scenario(
@@ -166,7 +201,7 @@ SCENARIOS: dict[str, Scenario] = {
             "robocasa_orange",
         ),
         object_positions=(
-            (0.16, -0.12, 0.30),
+            _caught_position((0.16, -0.12, 0.38)),
             (-0.12, 0.09, _rest_z("robocasa_plate")),
             (0.13, 0.12, _rest_z("robocasa_bell_pepper")),
             (-0.16, -0.13, _rest_z("robocasa_orange")),
@@ -174,35 +209,50 @@ SCENARIOS: dict[str, Scenario] = {
         object_yaws=(0.0, 0.2, 0.0, -0.3),
         ee_start=(0.16, -0.12, 0.38),
         ee_yaw=0.25,
-        gripper_opening=_held_opening("robocasa_apple"),
+        gripper_opening=_caught_opening("robocasa_apple"),
         texture_variant=6,
-        background_rgba=(0.88, 0.76, 0.90, 1.0),
+        background_rgba=(0.035, 0.050, 0.075, 1.0),
         gripper_shade=0.86,
         phases=(
             Phase(
                 "carry_at_safe_height",
                 (-0.12, 0.09, 0.38),
                 -0.25,
-                _held_opening("robocasa_apple"),
-                44,
+                _caught_opening("robocasa_apple"),
+                64,
             ),
             Phase(
                 "position_over_plate",
                 (-0.12, 0.09, 0.34),
                 -0.25,
-                _held_opening("robocasa_apple"),
-                14,
+                _caught_opening("robocasa_apple"),
+                40,
+                position_tolerance=0.009,
+                minimum_steps=6,
+                translation_action_limit=0.25,
             ),
             Phase(
                 "lower_onto_plate",
-                (-0.12, 0.09, 0.28),
+                (-0.12, 0.09, 0.30),
                 -0.25,
-                _held_opening("robocasa_apple"),
-                18,
+                _caught_opening("robocasa_apple"),
+                40,
+                position_tolerance=0.009,
+                minimum_steps=6,
+                translation_action_limit=0.25,
             ),
-            Phase("release", (-0.12, 0.09, 0.28), -0.25, 1.0, 14, minimum_steps=12),
-            Phase("lift_clear", (-0.12, 0.09, 0.43), 0.0, 1.0, 24),
-            Phase("retreat", (0.0, -0.08, 0.43), 0.0, 1.0, 28),
+            Phase(
+                "release",
+                (-0.12, 0.09, 0.30),
+                -0.25,
+                1.0,
+                28,
+                position_tolerance=0.012,
+                minimum_steps=18,
+                translation_action_limit=0.10,
+            ),
+            Phase("lift_clear", (-0.12, 0.09, 0.43), 0.0, 1.0, 40),
+            Phase("retreat", (0.0, -0.08, 0.43), 0.0, 1.0, 40),
         ),
     ),
     "validation_move_to_apple": Scenario(
@@ -226,7 +276,7 @@ SCENARIOS: dict[str, Scenario] = {
         ee_yaw=0.0,
         gripper_opening=1.0,
         texture_variant=0,
-        background_rgba=(0.80, 0.84, 0.90, 1.0),
+        background_rgba=(0.035, 0.050, 0.075, 1.0),
         gripper_shade=0.94,
         phases=(
             Phase("move_above_target", (-0.12, 0.08, 0.40), 0.35, 1.0, 46),
@@ -256,7 +306,7 @@ SCENARIOS: dict[str, Scenario] = {
         ee_yaw=-0.5,
         gripper_opening=1.0,
         texture_variant=0,
-        background_rgba=(0.80, 0.84, 0.90, 1.0),
+        background_rgba=(0.035, 0.050, 0.075, 1.0),
         gripper_shade=0.94,
         phases=(
             Phase("move_above_target", (0.10, -0.08, 0.40), 0.45, 1.0, 44),
@@ -478,11 +528,11 @@ class MuJoCoReferenceRunner(PreviewRunner):
         self.sim.set_gripper(normalized)
         self._set_object_poses(scenario.object_positions, scenario.object_yaws)
 
-        desk = _name_id(
+        desk_visual = _name_id(
             self.mj,
             self.sim.model,
             self.mj.mjtObj.mjOBJ_GEOM,
-            "mjwarp_desk_surface",
+            "mjwarp_desk_surface_visual",
         )
         material = _name_id(
             self.mj,
@@ -490,14 +540,7 @@ class MuJoCoReferenceRunner(PreviewRunner):
             self.mj.mjtObj.mjOBJ_MATERIAL,
             f"mjwarp_desk_mat_{scenario.texture_variant}",
         )
-        self.sim.model.geom_matid[desk] = material
-        background = _name_id(
-            self.mj,
-            self.sim.model,
-            self.mj.mjtObj.mjOBJ_GEOM,
-            "mjwarp_background",
-        )
-        self.sim.model.geom_rgba[background] = scenario.background_rgba
+        self.sim.model.geom_matid[desk_visual] = material
         for name in (
             "palm",
             "finger_l_shoulder",
@@ -544,7 +587,11 @@ class MuJoCoReferenceRunner(PreviewRunner):
             "ee_position": self.sim.get_end_effector_position().copy(),
             "ee_yaw": float(self.sim.get_yaw()),
             "gripper_opening": float(self.sim.get_gripper_opening()),
+            "gripper_target": float(self.sim.get_gripper_target()),
+            "target_position": self.sim.get_target_position().copy(),
+            "tendon_lengths": self.sim.get_cable_lengths().copy(),
             "object_position": object_positions[0],
+            "reference_position": object_positions[1],
             "object_positions": object_positions,
             "object_quaternions": object_quaternions,
             "pinned": False,
@@ -586,6 +633,9 @@ class MuJoCoReferenceRunner(PreviewRunner):
                 camera=camera,
                 scene_option=self.scene_option,
             )
+            self.renderer.scene.flags[
+                self.mj.mjtRndFlag.mjRND_SKYBOX
+            ] = 1
             output[camera] = np.asarray(
                 self.renderer.render(), dtype=np.uint8
             ).copy()
@@ -712,7 +762,15 @@ class MJLabMJWarpRunner(PreviewRunner):
             "ee_position": state.ee_position[0].detach().cpu().numpy().copy(),
             "ee_yaw": float(state.ee_yaw[0].item()),
             "gripper_opening": float(state.gripper_opening[0].item()),
+            "gripper_target": float(self._gripper_target),
+            "target_position": (
+                state.target_position[0].detach().cpu().numpy().copy()
+            ),
+            "tendon_lengths": (
+                state.tendon_lengths[0].detach().cpu().numpy().copy()
+            ),
             "object_position": object_positions[0],
+            "reference_position": object_positions[1],
             "object_positions": object_positions,
             "object_quaternions": object_quaternions,
             "pinned": False,
@@ -786,7 +844,10 @@ def _policy_action(state: dict[str, Any], phase: Phase) -> np.ndarray:
     action = np.zeros(5, dtype=np.float32)
     ee = np.asarray(state["ee_position"], dtype=np.float64)
     delta = np.asarray(phase.target_position, dtype=np.float64) - ee
-    action[:3] = np.clip(delta / ACTION_STEP[:3], -0.72, 0.72)
+    translation_limit = float(phase.translation_action_limit)
+    action[:3] = np.clip(
+        delta / ACTION_STEP[:3], -translation_limit, translation_limit
+    )
     action[3] = float(
         np.clip(
             _angle_delta(phase.target_yaw, float(state["ee_yaw"]))
@@ -821,6 +882,116 @@ def _phase_complete(state: dict[str, Any], phase: Phase, steps: int) -> bool:
     return position_error <= float(phase.position_tolerance) and gripper_error <= 0.06
 
 
+def _scenario_metrics(
+    scenario: Scenario,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    target = np.asarray(state["object_position"], dtype=np.float64)
+    reference = np.asarray(state["reference_position"], dtype=np.float64)
+    xy_error = float(np.linalg.norm(target[:2] - reference[:2]))
+    z_offset = float(target[2] - reference[2])
+    is_put = scenario.name in {
+        "training_put_into_bowl",
+        "training_put_on_plate",
+    }
+    released = float(state["gripper_opening"]) >= 0.55
+    success = bool(
+        is_put
+        and released
+        and xy_error <= 0.03
+        and -0.01 <= z_offset <= 0.12
+    )
+    return {
+        "xy_error": xy_error,
+        "z_offset": z_offset,
+        "released": released,
+        "success": success,
+    }
+
+
+def _telemetry_lines(
+    *,
+    camera_label: str,
+    scenario: Scenario,
+    phase: str,
+    step: int,
+    action: np.ndarray,
+    state: dict[str, Any],
+) -> list[str]:
+    action = np.asarray(action, dtype=np.float64).reshape(5)
+    applied = action * ACTION_STEP
+    ee = np.asarray(state["ee_position"], dtype=np.float64)
+    target = np.asarray(state["target_position"], dtype=np.float64)
+    obj = np.asarray(state["object_position"], dtype=np.float64)
+    reference = np.asarray(state["reference_position"], dtype=np.float64)
+    cables = np.asarray(state["tendon_lengths"], dtype=np.float64).reshape(4)
+    metrics = _scenario_metrics(scenario, state)
+
+    def vector(values: np.ndarray, digits: int = 2) -> str:
+        return " ".join(f"{float(value):+.{digits}f}" for value in values)
+
+    return [
+        f"{camera_label} | {scenario.mode.upper()} | {scenario.instruction}",
+        f"phase={phase}  policy_step={step}",
+        f"VLA-like normalized action [{vector(action, 2)}]",
+        f"executed delta [{vector(applied[:3], 3)} m | "
+        f"yaw={applied[3]:+.3f} rad grip={applied[4]:+.3f}]",
+        f"ee_xyz=[{vector(ee, 3)}] controller_target=[{vector(target, 3)}]",
+        f"controller_error={np.linalg.norm(target - ee):.4f} m  "
+        f"gripper={float(state['gripper_opening']):.3f}->"
+        f"{float(state['gripper_target']):.3f}",
+        f"object_xyz=[{vector(obj, 3)}] receptacle_xyz=[{vector(reference, 3)}]",
+        f"receptacle_xy_error={metrics['xy_error']:.4f} m  "
+        f"z_offset={metrics['z_offset']:+.4f} m  success={metrics['success']}",
+        f"cable_lengths_m=[{vector(cables, 3)}]",
+    ]
+
+
+def _annotated_frame(
+    frame: np.ndarray,
+    *,
+    camera_label: str,
+    scenario: Scenario,
+    phase: str,
+    step: int,
+    action: np.ndarray,
+    state: dict[str, Any],
+) -> np.ndarray:
+    frame = np.asarray(frame, dtype=np.uint8)
+    height, width = frame.shape[:2]
+    panel_height = 210 if width < 480 else 134
+    image = Image.new("RGB", (width, height + panel_height), (14, 17, 23))
+    image.paste(Image.fromarray(frame), (0, 0))
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    max_chars = max(24, int((width - 14) // 6))
+    wrapped: list[str] = []
+    for line in _telemetry_lines(
+        camera_label=camera_label,
+        scenario=scenario,
+        phase=phase,
+        step=step,
+        action=action,
+        state=state,
+    ):
+        wrapped.extend(
+            textwrap.wrap(
+                line,
+                width=max_chars,
+                break_long_words=False,
+                break_on_hyphens=False,
+            )
+            or [""]
+        )
+    for index, line in enumerate(wrapped):
+        y = height + 6 + 11 * index
+        if y + 10 > height + panel_height:
+            break
+        color = (174, 210, 255) if "VLA-like" in line else (238, 241, 245)
+        draw.text((7, y), line, fill=color, font=font)
+    return np.asarray(image)
+
+
 def _composite_frame(
     overview: np.ndarray,
     wrist: np.ndarray,
@@ -828,18 +999,19 @@ def _composite_frame(
     scenario: Scenario,
     phase: str,
     step: int,
+    action: np.ndarray,
+    state: dict[str, Any],
 ) -> np.ndarray:
-    height, width = overview.shape[:2]
-    banner = 36
-    image = Image.new("RGB", (2 * width, height + banner), (14, 17, 23))
-    image.paste(Image.fromarray(overview), (0, banner))
-    image.paste(Image.fromarray(wrist), (width, banner))
-    draw = ImageDraw.Draw(image)
-    font = ImageFont.load_default()
-    draw.text((7, 5), f"overview | {scenario.mode}: {scenario.instruction}", fill=(245, 245, 245), font=font)
-    draw.text((width + 7, 5), "ee_camera (wrist)", fill=(245, 245, 245), font=font)
-    draw.text((7, 20), f"phase={phase}  action_step={step}", fill=(174, 210, 255), font=font)
-    return np.asarray(image)
+    combined = np.concatenate((overview, wrist), axis=1)
+    return _annotated_frame(
+        combined,
+        camera_label="overview | ee_camera (wrist)",
+        scenario=scenario,
+        phase=phase,
+        step=step,
+        action=action,
+        state=state,
+    )
 
 
 def _write_video(
@@ -907,7 +1079,13 @@ def _trace_row(
     state: dict[str, Any],
 ) -> dict[str, Any]:
     ee = np.asarray(state["ee_position"], dtype=np.float64)
+    controller_target = np.asarray(state["target_position"], dtype=np.float64)
     obj = np.asarray(state["object_position"], dtype=np.float64)
+    reference = np.asarray(state["reference_position"], dtype=np.float64)
+    tendon_lengths = np.asarray(
+        state["tendon_lengths"], dtype=np.float64
+    ).reshape(4)
+    metrics = _scenario_metrics(scenario, state)
     row: dict[str, Any] = {
         "mode": scenario.mode,
         "scenario": scenario.name,
@@ -917,16 +1095,34 @@ def _trace_row(
     }
     for index, name in enumerate(ACTION_NAMES):
         row[f"action_{name}"] = float(action[index])
+        row[f"executed_delta_{name}"] = float(action[index] * ACTION_STEP[index])
     row.update(
         {
             "ee_x": float(ee[0]),
             "ee_y": float(ee[1]),
             "ee_z": float(ee[2]),
             "ee_yaw": float(state["ee_yaw"]),
+            "controller_target_x": float(controller_target[0]),
+            "controller_target_y": float(controller_target[1]),
+            "controller_target_z": float(controller_target[2]),
+            "controller_error": float(
+                np.linalg.norm(controller_target - ee)
+            ),
             "gripper_opening": float(state["gripper_opening"]),
+            "gripper_target": float(state["gripper_target"]),
             "object_x": float(obj[0]),
             "object_y": float(obj[1]),
             "object_z": float(obj[2]),
+            "reference_x": float(reference[0]),
+            "reference_y": float(reference[1]),
+            "reference_z": float(reference[2]),
+            "receptacle_xy_error": float(metrics["xy_error"]),
+            "receptacle_z_offset": float(metrics["z_offset"]),
+            "scenario_success": int(bool(metrics["success"])),
+            "cable_1_length": float(tendon_lengths[0]),
+            "cable_2_length": float(tendon_lengths[1]),
+            "cable_3_length": float(tendon_lengths[2]),
+            "cable_4_length": float(tendon_lengths[3]),
             "object_pinned": int(bool(state["pinned"])),
         }
     )
@@ -948,11 +1144,26 @@ def _render_scenario(
     composite: list[np.ndarray] = []
     trace: list[dict[str, Any]] = []
     state = runner.observe()
+    initial_grasp_offset = (
+        np.asarray(state["object_position"], dtype=np.float64)
+        - np.asarray(state["ee_position"], dtype=np.float64)
+    )
     initial = runner.render()
+    zero_action = np.zeros(5, dtype=np.float32)
     initial_hold = max(2, int(round(0.6 * fps)))
     for _ in range(initial_hold):
         for camera in CAMERA_NAMES:
-            frames[camera].append(initial[camera].copy())
+            frames[camera].append(
+                _annotated_frame(
+                    initial[camera],
+                    camera_label=camera,
+                    scenario=scenario,
+                    phase="reset",
+                    step=0,
+                    action=zero_action,
+                    state=state,
+                )
+            )
         if write_composite:
             composite.append(
                 _composite_frame(
@@ -961,13 +1172,19 @@ def _render_scenario(
                     scenario=scenario,
                     phase="reset",
                     step=0,
+                    action=zero_action,
+                    state=state,
                 )
             )
 
     total_steps = 0
     phase_counts: dict[str, int] = {}
+    phase_completed: dict[str, bool] = {}
+    held_gripper_openings: list[float] = []
+    held_object_slips: list[float] = []
     for phase in scenario.phases:
         used = 0
+        completed = False
         for _ in range(int(phase.max_steps)):
             action = _policy_action(state, phase)
             state = runner.step(action)
@@ -975,7 +1192,17 @@ def _render_scenario(
             used += 1
             rendered = runner.render()
             for camera in CAMERA_NAMES:
-                frames[camera].append(rendered[camera])
+                frames[camera].append(
+                    _annotated_frame(
+                        rendered[camera],
+                        camera_label=camera,
+                        scenario=scenario,
+                        phase=phase.name,
+                        step=total_steps,
+                        action=action,
+                        state=state,
+                    )
+                )
             if write_composite:
                 composite.append(
                     _composite_frame(
@@ -984,6 +1211,8 @@ def _render_scenario(
                         scenario=scenario,
                         phase=phase.name,
                         step=total_steps,
+                        action=action,
+                        state=state,
                     )
                 )
             trace.append(
@@ -995,9 +1224,28 @@ def _render_scenario(
                     state=state,
                 )
             )
+            if phase.target_gripper < 0.55:
+                held_gripper_openings.append(
+                    float(state["gripper_opening"])
+                )
+                held_object_slips.append(
+                    float(
+                        np.linalg.norm(
+                            np.asarray(
+                                state["object_position"], dtype=np.float64
+                            )
+                            - np.asarray(
+                                state["ee_position"], dtype=np.float64
+                            )
+                            - initial_grasp_offset
+                        )
+                    )
+                )
             if _phase_complete(state, phase, used):
+                completed = True
                 break
         phase_counts[phase.name] = used
+        phase_completed[phase.name] = completed
 
     hold = max(2, int(round(float(terminal_hold_seconds) * fps)))
     for _ in range(hold):
@@ -1022,6 +1270,22 @@ def _render_scenario(
     initial_object = np.asarray(
         scenario.object_positions[0], dtype=np.float64
     )
+    metrics = _scenario_metrics(scenario, state)
+    settled_openings = held_gripper_openings[5:]
+    held_error = (
+        max(
+            abs(value - float(scenario.gripper_opening))
+            for value in settled_openings
+        )
+        if settled_openings
+        else 0.0
+    )
+    held_max_step = (
+        float(np.max(np.abs(np.diff(settled_openings))))
+        if len(settled_openings) >= 2
+        else 0.0
+    )
+    held_object_max_slip = max(held_object_slips, default=0.0)
     return {
         "scenario": scenario.name,
         "mode": scenario.mode,
@@ -1029,6 +1293,7 @@ def _render_scenario(
         "frames": len(frames["overview"]),
         "action_steps": total_steps,
         "phase_action_steps": phase_counts,
+        "phase_completed": phase_completed,
         "duration_seconds": len(frames["overview"]) / float(fps),
         "videos": video_paths,
         "action_trace": trace_path.as_posix(),
@@ -1040,7 +1305,13 @@ def _render_scenario(
             float(value) for value in (final_object - initial_object)
         ],
         "final_gripper_opening": float(state["gripper_opening"]),
+        "held_gripper_steady_max_error": float(held_error),
+        "held_gripper_max_step_after_settle": held_max_step,
+        "held_object_max_slip": float(held_object_max_slip),
         "final_object_pinned": bool(state["pinned"]),
+        "receptacle_xy_error": float(metrics["xy_error"]),
+        "receptacle_z_offset": float(metrics["z_offset"]),
+        "scenario_success": bool(metrics["success"]),
     }
 
 
@@ -1114,6 +1385,15 @@ def main() -> int:
         default=True,
         help="Create a timestamped child directory under --output-dir.",
     )
+    parser.add_argument(
+        "--verify-scenarios",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Exit nonzero when a selected training put scenario misses a "
+            "phase, drops the caught object, or fails the 3 cm placement test."
+        ),
+    )
     args = parser.parse_args()
     if args.width < 32 or args.height < 32:
         parser.error("Video dimensions must be at least 32x32.")
@@ -1167,7 +1447,8 @@ def main() -> int:
             print(
                 f"  {result['action_steps']} actions, "
                 f"{result['duration_seconds']:.1f}s, "
-                f"object_delta={result['object_displacement']}",
+                f"object_delta={result['object_displacement']}, "
+                f"success={result['scenario_success']}",
                 flush=True,
             )
         contact_sheet = output_dir / "camera_contact_sheet.png"
@@ -1175,6 +1456,18 @@ def main() -> int:
     finally:
         runner.close()
 
+    failed_training_scenarios = [
+        result["scenario"]
+        for result in results
+        if result["scenario"].startswith("training_put_")
+        and (
+            not bool(result["scenario_success"])
+            or not all(result["phase_completed"].values())
+            or float(result["held_gripper_steady_max_error"]) > 0.05
+            or float(result["held_gripper_max_step_after_settle"]) > 0.02
+            or float(result["held_object_max_slip"]) > 0.03
+        )
+    ]
     manifest = {
         "created_at": datetime.now().isoformat(),
         "renderer_backend": runner.backend_name,
@@ -1182,9 +1475,14 @@ def main() -> int:
         "physics_dtype": runner.physics_dtype,
         "production_backend": "mjlab_mjwarp",
         "exact_robocasa_visual_assets": True,
-        "rendered_geom_groups": [0, 1, 2],
+        "rendered_geom_groups": [0, 1, 2, 4],
         "collision_geom_group": 3,
+        "cable_visual_geom_group": 4,
         "preview_type": "deterministic_scripted_policy",
+        "videos_include_vla_action_telemetry": True,
+        "scenario_verification_enabled": bool(args.verify_scenarios),
+        "scenario_verification_passed": not failed_training_scenarios,
+        "failed_training_scenarios": failed_training_scenarios,
         "learned_checkpoint_evaluation": False,
         "xml": xml_path.as_posix(),
         "camera_order": ["overview", "ee_camera", "ee_camera"],
@@ -1221,6 +1519,14 @@ def main() -> int:
         json.dumps(manifest, indent=2, sort_keys=True), encoding="utf-8"
     )
     print(manifest_path, flush=True)
+    if args.verify_scenarios and failed_training_scenarios:
+        print(
+            "Training scenario verification failed: "
+            + ", ".join(failed_training_scenarios),
+            file=sys.stderr,
+            flush=True,
+        )
+        return 2
     return 0
 
 
