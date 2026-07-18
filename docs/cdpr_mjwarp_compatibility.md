@@ -145,6 +145,9 @@ evidence.
 - The fixed object slots use staged RoboCasa visual meshes and eleven native
   primitive collider slots. The preflight hashes all 50 required asset files,
   so missing or changed visuals cannot pass silently.
+- Policy RGB renders geom groups 0--2 only. Group 3 remains active for physics
+  contacts but is hidden from both MJWarp and MuJoCo-reference cameras because
+  MJWarp can render alpha-zero contact proxies as opaque black geometry.
 - Unused fixed-topology primitive slots are tiny and parked above the
   workspace; inactive object bodies use the null visual-mesh entry rather than
   changing topology.

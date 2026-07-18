@@ -84,9 +84,11 @@ def _fetch_range(url: str, start: int, end: int, *, retries: int = 3) -> bytes:
     raise RuntimeError(f"Failed to fetch archive bytes {start}-{end}: {error}") from error
 
 
-def _read_zip_index(url: str) -> dict[str, ZipMember]:
-    tail_start = ARCHIVE_SIZE - EOCD_SEARCH_BYTES
-    tail = _fetch_range(url, tail_start, ARCHIVE_SIZE - 1)
+def _read_zip_index(
+    url: str, *, archive_size: int = ARCHIVE_SIZE
+) -> dict[str, ZipMember]:
+    tail_start = archive_size - EOCD_SEARCH_BYTES
+    tail = _fetch_range(url, tail_start, archive_size - 1)
     eocd = tail.rfind(b"PK\x05\x06")
     if eocd < 0:
         raise RuntimeError("ZIP end-of-central-directory record was not found.")
@@ -100,14 +102,46 @@ def _read_zip_index(url: str) -> dict[str, ZipMember]:
         central_offset,
         comment_size,
     ) = struct.unpack_from("<4s4H2LH", tail, eocd)
-    if (
-        signature != b"PK\x05\x06"
-        or disk != 0
-        or central_disk != 0
-        or entries_on_disk != entries_total
-        or comment_size != 0
-    ):
+    if signature != b"PK\x05\x06" or comment_size != 0:
         raise RuntimeError("Unsupported multi-disk or commented ZIP archive.")
+    if (
+        entries_total == 0xFFFF
+        or central_size == 0xFFFFFFFF
+        or central_offset == 0xFFFFFFFF
+    ):
+        locator_offset = eocd - 20
+        if locator_offset < 0:
+            raise RuntimeError("ZIP64 end-of-directory locator was not found.")
+        locator = tail[locator_offset:eocd]
+        (
+            locator_signature,
+            zip64_disk,
+            zip64_offset,
+            zip64_disks,
+        ) = struct.unpack("<4sLQL", locator)
+        if (
+            locator_signature != b"PK\x06\x07"
+            or zip64_disk != 0
+            or zip64_disks != 1
+        ):
+            raise RuntimeError("Unsupported multi-disk ZIP64 archive.")
+        zip64 = _fetch_range(url, zip64_offset, zip64_offset + 55)
+        (
+            zip64_signature,
+            _record_size,
+            _version_made,
+            _version_needed,
+            disk,
+            central_disk,
+            entries_on_disk,
+            entries_total,
+            central_size,
+            central_offset,
+        ) = struct.unpack("<4sQ2H2L4Q", zip64)
+        if zip64_signature != b"PK\x06\x06":
+            raise RuntimeError("Invalid ZIP64 end-of-directory record.")
+    if disk != 0 or central_disk != 0 or entries_on_disk != entries_total:
+        raise RuntimeError("Unsupported multi-disk ZIP archive.")
     central = _fetch_range(
         url, central_offset, central_offset + central_size - 1
     )
@@ -119,13 +153,61 @@ def _read_zip_index(url: str) -> dict[str, ZipMember]:
         fields = struct.unpack_from("<4s6H3L5H2L", central, cursor)
         name_size, extra_size, member_comment_size = fields[10:13]
         name = central[cursor + 46 : cursor + 46 + name_size].decode("utf-8")
+        extra_start = cursor + 46 + name_size
+        extra = central[extra_start : extra_start + extra_size]
+        compressed_size = fields[8]
+        size = fields[9]
+        local_header_offset = fields[16]
+        if (
+            compressed_size == 0xFFFFFFFF
+            or size == 0xFFFFFFFF
+            or local_header_offset == 0xFFFFFFFF
+        ):
+            zip64_extra: bytes | None = None
+            extra_cursor = 0
+            while extra_cursor + 4 <= len(extra):
+                extra_id, field_size = struct.unpack_from(
+                    "<HH", extra, extra_cursor
+                )
+                field_start = extra_cursor + 4
+                field_end = field_start + field_size
+                if field_end > len(extra):
+                    raise RuntimeError(
+                        f"Invalid extra field for ZIP member {name!r}."
+                    )
+                if extra_id == 0x0001:
+                    zip64_extra = extra[field_start:field_end]
+                    break
+                extra_cursor = field_end
+            if zip64_extra is None:
+                raise RuntimeError(
+                    f"ZIP64 sizes are missing for member {name!r}."
+                )
+            zip64_cursor = 0
+
+            def read_zip64_value() -> int:
+                nonlocal zip64_cursor
+                if zip64_cursor + 8 > len(zip64_extra):
+                    raise RuntimeError(
+                        f"Truncated ZIP64 sizes for member {name!r}."
+                    )
+                value = struct.unpack_from("<Q", zip64_extra, zip64_cursor)[0]
+                zip64_cursor += 8
+                return value
+
+            if size == 0xFFFFFFFF:
+                size = read_zip64_value()
+            if compressed_size == 0xFFFFFFFF:
+                compressed_size = read_zip64_value()
+            if local_header_offset == 0xFFFFFFFF:
+                local_header_offset = read_zip64_value()
         members[name] = ZipMember(
             name=name,
             compression=fields[4],
             crc32=fields[7],
-            compressed_size=fields[8],
-            size=fields[9],
-            local_header_offset=fields[16],
+            compressed_size=compressed_size,
+            size=size,
+            local_header_offset=local_header_offset,
         )
         cursor += 46 + name_size + extra_size + member_comment_size
     return members

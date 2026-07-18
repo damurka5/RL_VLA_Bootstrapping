@@ -858,7 +858,10 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
                 render_depth=False,
                 use_textures=True,
                 use_shadows=False,
-                enabled_geom_groups=[0, 1, 2, 3],
+                # Group 3 contains contact-only primitives. MJWarp does not
+                # consistently honor their alpha-zero RGBA, so rendering that
+                # group produces opaque black proxy shapes in policy images.
+                enabled_geom_groups=[0, 1, 2],
             )
             self._overview_rgb_wp = self.wp.zeros(
                 (self.worlds_per_rank, height, width),
@@ -1651,6 +1654,8 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             "object_geometry": (
                 "robocasa_visual_plus_cdpr_native_primitives_v1"
             ),
+            "rendered_geom_groups": [0, 1, 2],
+            "collision_geom_group": 3,
             "nconmax_per_world": int(self.config.nconmax),
             "njmax_per_world": int(self.config.njmax),
             "nccdmax_per_world": self.config.nccdmax,

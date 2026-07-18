@@ -75,16 +75,17 @@ class ObjectVariant:
         return f"{self.name}_material"
 
 
-# Visuals are a deliberately small RoboCasa Objaverse subset. The selected
-# variants have one visual OBJ each, so per-world mesh switching remains
-# compatible with MJWarp's fixed topology. Contact stays on native primitives:
-# RoboCasa's large convex decompositions are intentionally not placed in the
-# hot path.
+# Visuals are a deliberately small, manually screened RoboCasa Objaverse
+# subset. The variants below avoid photographic backgrounds and branding while
+# keeping the complete ten-object visual set below 20k triangles. Each has one
+# visual OBJ, so per-world mesh switching remains compatible with MJWarp's
+# fixed topology. Contact stays on native primitives: RoboCasa's large convex
+# decompositions are intentionally not placed in the hot path.
 OBJECT_VARIANTS: dict[str, ObjectVariant] = {
     "robocasa_apple": ObjectVariant(
         name="robocasa_apple",
         label="apple",
-        asset_directory="objects/objaverse/apple/apple_10",
+        asset_directory="objects/objaverse/apple/apple_20",
         asset_files=(
             "model.xml",
             "visual/model_normalized_0.obj",
@@ -101,30 +102,30 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
     "robocasa_banana": ObjectVariant(
         name="robocasa_banana",
         label="banana",
-        asset_directory="objects/objaverse/banana/banana_8",
+        asset_directory="objects/objaverse/banana/banana_19",
         asset_files=(
             "model.xml",
             "visual/model_normalized_0.obj",
             "visual/material.mtl",
-            "visual/material_0.jpeg",
+            "visual/material_0.png",
             "visual/image0.png",
         ),
         mass=0.12,
-        inertia=(0.000368, 0.000090, 0.000370),
-        rest_height=0.03328,
+        inertia=(0.000090, 0.000368, 0.000370),
+        rest_height=0.03908,
         fitted_gripper_opening=0.368,
         primitives=(
             PrimitiveSpec(
                 "box_0",
-                (0.018, 0.045, 0.028),
-                (0.006, -0.035, 0.004),
-                (0.9959527, 0.0, 0.0, -0.0898785),
+                (0.045, 0.014, 0.030),
+                (-0.035, 0.0, 0.004),
+                (0.9978589, 0.0, -0.0654031, 0.0),
             ),
             PrimitiveSpec(
                 "box_1",
-                (0.018, 0.045, 0.028),
-                (-0.006, 0.035, -0.004),
-                (0.9959527, 0.0, 0.0, 0.0898785),
+                (0.045, 0.014, 0.030),
+                (0.035, 0.0, -0.004),
+                (0.9978589, 0.0, 0.0654031, 0.0),
             ),
         ),
     ),
@@ -175,7 +176,24 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
     "robocasa_tomato": ObjectVariant(
         name="robocasa_tomato",
         label="tomato",
-        asset_directory="objects/objaverse/tomato/tomato_1",
+        asset_directory="objects/objaverse/tomato/tomato_8",
+        asset_files=(
+            "model.xml",
+            "visual/model_normalized_0.obj",
+            "visual/material.mtl",
+            "visual/material_0.png",
+            "visual/image0.png",
+        ),
+        mass=0.10,
+        inertia=(0.000040, 0.000040, 0.000040),
+        rest_height=0.02814,
+        fitted_gripper_opening=0.685,
+        primitives=(PrimitiveSpec("sphere_0", (0.029, 0.0, 0.0)),),
+    ),
+    "robocasa_orange": ObjectVariant(
+        name="robocasa_orange",
+        label="orange",
+        asset_directory="objects/objaverse/orange/orange_4",
         asset_files=(
             "model.xml",
             "visual/model_normalized_0.obj",
@@ -183,38 +201,21 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
             "visual/material_0.jpeg",
             "visual/image0.png",
         ),
-        mass=0.10,
-        inertia=(0.0000622, 0.0000622, 0.0000683),
-        rest_height=0.02885,
-        fitted_gripper_opening=0.685,
-        primitives=(PrimitiveSpec("sphere_0", (0.0315, 0.0, 0.0)),),
-    ),
-    "robocasa_orange": ObjectVariant(
-        name="robocasa_orange",
-        label="orange",
-        asset_directory="objects/objaverse/orange/orange_2",
-        asset_files=(
-            "model.xml",
-            "visual/model_normalized_0.obj",
-            "visual/material.mtl",
-            "visual/material_0.png",
-            "visual/image0.png",
-        ),
         mass=0.13,
-        inertia=(0.0000973, 0.0000973, 0.000100),
-        rest_height=0.03285,
+        inertia=(0.000050, 0.000050, 0.000050),
+        rest_height=0.02783,
         fitted_gripper_opening=0.768,
-        primitives=(PrimitiveSpec("sphere_0", (0.034, 0.0, 0.0)),),
+        primitives=(PrimitiveSpec("sphere_0", (0.029, 0.0, 0.0)),),
     ),
     "robocasa_potato": ObjectVariant(
         name="robocasa_potato",
         label="potato",
-        asset_directory="objects/objaverse/potato/potato_13",
+        asset_directory="objects/objaverse/potato/potato_3",
         asset_files=(
             "model.xml",
             "visual/model_normalized_0.obj",
             "visual/material.mtl",
-            "visual/material_0.png",
+            "visual/material_0.jpeg",
             "visual/image0.png",
         ),
         mass=0.15,
@@ -232,7 +233,7 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
     "robocasa_mug": ObjectVariant(
         name="robocasa_mug",
         label="mug",
-        asset_directory="objects/objaverse/mug/mug_10",
+        asset_directory="objects/objaverse/mug/mug_1",
         asset_files=(
             "model.xml",
             "visual/model_normalized_0.obj",
@@ -242,17 +243,17 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         ),
         mass=0.22,
         inertia=(0.000343, 0.000269, 0.000471),
-        rest_height=0.03073,
-        fitted_gripper_opening=0.768,
+        rest_height=0.04520,
+        fitted_gripper_opening=0.80,
         primitives=(
-            PrimitiveSpec("cylinder_0", (0.034, 0.031, 0.0)),
-            PrimitiveSpec("capsule_0", (0.006, 0.018, 0.0), (0.045, 0.0, 0.0)),
+            PrimitiveSpec("cylinder_0", (0.038, 0.045, 0.0)),
+            PrimitiveSpec("capsule_0", (0.006, 0.018, 0.0), (0.047, 0.0, 0.0)),
         ),
     ),
     "robocasa_plate": ObjectVariant(
         name="robocasa_plate",
         label="plate",
-        asset_directory="objects/objaverse/plate/plate_4",
+        asset_directory="objects/objaverse/plate/plate_12",
         asset_files=(
             "model.xml",
             "visual/model_normalized_0.obj",
@@ -262,14 +263,14 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         ),
         mass=0.22,
         inertia=(0.000622, 0.000622, 0.001215),
-        rest_height=0.01426,
+        rest_height=0.0100,
         fitted_gripper_opening=0.0,
-        primitives=(PrimitiveSpec("cylinder_0", (0.091, 0.0143, 0.0)),),
+        primitives=(PrimitiveSpec("cylinder_0", (0.091, 0.010, 0.0)),),
     ),
     "robocasa_bowl": ObjectVariant(
         name="robocasa_bowl",
         label="bowl",
-        asset_directory="objects/objaverse/bowl/bowl_0",
+        asset_directory="objects/objaverse/bowl/bowl_1",
         asset_files=(
             "model.xml",
             "visual/model_normalized_0.obj",
@@ -279,14 +280,14 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         ),
         mass=0.20,
         inertia=(0.000296, 0.000296, 0.000546),
-        rest_height=0.01840,
+        rest_height=0.02630,
         fitted_gripper_opening=0.0,
         primitives=(
-            PrimitiveSpec("cylinder_0", (0.064, 0.009, 0.0), (0.0, 0.0, -0.009)),
-            PrimitiveSpec("box_0", (0.005, 0.057, 0.015), (0.061, 0.0, 0.003)),
-            PrimitiveSpec("box_1", (0.005, 0.057, 0.015), (-0.061, 0.0, 0.003)),
-            PrimitiveSpec("box_2", (0.057, 0.005, 0.015), (0.0, 0.061, 0.003)),
-            PrimitiveSpec("box_3", (0.057, 0.005, 0.015), (0.0, -0.061, 0.003)),
+            PrimitiveSpec("cylinder_0", (0.057, 0.010, 0.0), (0.0, 0.0, -0.016)),
+            PrimitiveSpec("box_0", (0.005, 0.052, 0.019), (0.055, 0.0, -0.003)),
+            PrimitiveSpec("box_1", (0.005, 0.052, 0.019), (-0.055, 0.0, -0.003)),
+            PrimitiveSpec("box_2", (0.052, 0.005, 0.019), (0.0, 0.055, -0.003)),
+            PrimitiveSpec("box_3", (0.052, 0.005, 0.019), (0.0, -0.055, -0.003)),
         ),
     ),
 }

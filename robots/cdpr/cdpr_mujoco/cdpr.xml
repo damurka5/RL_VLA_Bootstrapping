@@ -18,7 +18,9 @@
     </default>
   </default>
   <visual>
-    <headlight diffuse=".7 .7 .7"/>
+    <headlight ambient=".30 .30 .30"
+               diffuse=".75 .75 .75"
+               specular=".10 .10 .10"/>
   </visual>
 
   <asset>
@@ -33,8 +35,17 @@
     <light name="side_light"
          pos="1.0 -1.0 2.0"
          dir="-1 1 -1"
-         diffuse="0.6 0.6 0.6"
-         specular="0.1 0.1 0.1"
+         ambient="0.08 0.08 0.08"
+         diffuse="0.55 0.55 0.55"
+         specular="0.06 0.06 0.06"
+         directional="true"
+         castshadow="false"/>
+    <light name="fill_light"
+         pos="-1.0 -0.8 1.7"
+         dir="1 0.8 -1"
+         ambient="0.10 0.10 0.10"
+         diffuse="0.40 0.40 0.40"
+         specular="0.03 0.03 0.03"
          directional="true"
          castshadow="false"/>
     <!--

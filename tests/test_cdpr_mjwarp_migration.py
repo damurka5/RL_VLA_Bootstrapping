@@ -489,6 +489,42 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(len(assets), 50)
         self.assertTrue(all(path.is_file() for path in assets))
         self.assertEqual(len(object_assets_sha256(XML)), 64)
+        self.assertEqual(
+            {
+                catalog: Path(variant.asset_directory).name
+                for catalog, variant in OBJECT_VARIANTS.items()
+            },
+            {
+                "robocasa_apple": "apple_20",
+                "robocasa_banana": "banana_19",
+                "robocasa_carrot": "carrot_1",
+                "robocasa_bell_pepper": "bell_pepper_0",
+                "robocasa_tomato": "tomato_8",
+                "robocasa_orange": "orange_4",
+                "robocasa_potato": "potato_3",
+                "robocasa_mug": "mug_1",
+                "robocasa_plate": "plate_12",
+                "robocasa_bowl": "bowl_1",
+            },
+        )
+        self.assertTrue(
+            all(
+                "visual/image0.png" in variant.asset_files
+                for variant in OBJECT_VARIANTS.values()
+            )
+        )
+        total_faces = 0
+        for path in assets:
+            if path.suffix == ".obj":
+                faces = sum(
+                    line.startswith("f ")
+                    for line in path.read_text(
+                        encoding="utf-8", errors="replace"
+                    ).splitlines()
+                )
+                self.assertLessEqual(faces, 6_000)
+                total_faces += faces
+        self.assertLessEqual(total_faces, 20_000)
         self.assertEqual(catalog_id("apple"), 0)
         self.assertEqual(
             catalog_id("bell_pepper"),
@@ -538,6 +574,24 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
                     float(np.linalg.norm(model.body_pos[body_id, :2])),
                     1.0,
                 )
+
+    def test_policy_rgb_excludes_collision_geom_group(self):
+        backend_source = (
+            ROOT
+            / "rl_vla_bootstrapping"
+            / "simulation"
+            / "mjlab_mjwarp_backend.py"
+        ).read_text(encoding="utf-8")
+        renderer_source = (
+            ROOT / "scripts" / "render_cdpr_mjlab_camera_videos.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("enabled_geom_groups=[0, 1, 2]", backend_source)
+        self.assertNotIn(
+            "enabled_geom_groups=[0, 1, 2, 3]", backend_source
+        )
+        self.assertIn(
+            "self.scene_option.geomgroup[:3] = 1", renderer_source
+        )
 
     def test_inactive_primitives_do_not_penetrate_infinite_floor(self):
         if importlib.util.find_spec("mujoco") is None:

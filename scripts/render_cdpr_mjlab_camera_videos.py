@@ -349,7 +349,9 @@ class MuJoCoReferenceRunner(PreviewRunner):
         self.scene_option = self.mj.MjvOption()
         self.mj.mjv_defaultOption(self.scene_option)
         self.scene_option.geomgroup[:] = 0
-        self.scene_option.geomgroup[:4] = 1
+        # Group 3 is collision-only. Keeping it out of the preview matches the
+        # production MJWarp policy-camera contract and prevents black proxies.
+        self.scene_option.geomgroup[:3] = 1
         self._scenario: Scenario | None = None
         self._yaw_target = 0.0
         self._gripper_target = 1.0
@@ -1180,6 +1182,8 @@ def main() -> int:
         "physics_dtype": runner.physics_dtype,
         "production_backend": "mjlab_mjwarp",
         "exact_robocasa_visual_assets": True,
+        "rendered_geom_groups": [0, 1, 2],
+        "collision_geom_group": 3,
         "preview_type": "deterministic_scripted_policy",
         "learned_checkpoint_evaluation": False,
         "xml": xml_path.as_posix(),

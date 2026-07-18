@@ -53,7 +53,7 @@ python_cmd=(conda run --no-capture-output -n "$ENV_NAME" python3)
   --requirement "$REPO_ROOT/requirements/cdpr-mjlab-cu128.lock.txt"
 "${python_cmd[@]}" -m pip install --no-deps -e "$REPO_ROOT"
 "${python_cmd[@]}" -m pip check
-if [[ ! -f "$REPO_ROOT/assets/externals/robocasa/objects/objaverse/apple/apple_10/visual/model_normalized_0.obj" ]]; then
+if [[ ! -f "$REPO_ROOT/assets/externals/robocasa/objects/objaverse/apple/apple_20/visual/model_normalized_0.obj" ]]; then
   "${python_cmd[@]}" "$REPO_ROOT/scripts/stage_cdpr_robocasa_assets.py"
 fi
 

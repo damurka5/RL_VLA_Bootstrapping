@@ -28,16 +28,20 @@ python scripts/stage_cdpr_robocasa_assets.py
 python scripts/stage_cdpr_robocasa_assets.py --verify-only
 ```
 
-The downloader reads the remote ZIP directory and fetches only 50 files
-(approximately 3.5 MB installed) for ten catalogs: apple, banana, carrot,
-bell pepper, tomato, orange, potato, mug, plate, and bowl. It stages the
-official RoboCasa model XML plus each selected visual OBJ/MTL/texture set under
+The downloader reads the remote ZIP directory and fetches only 50 files for
+ten catalogs: apple, banana, carrot, bell pepper, tomato, orange, potato, mug,
+plate, and bowl. The variants were visually screened to exclude photographic
+backgrounds, branding, and malformed geometry, with a total visual budget
+below 20k triangles. It stages the official RoboCasa model XML plus each
+selected visual OBJ/MTL/texture set under
 `assets/externals/robocasa/objects/objaverse`.
 
 RoboCasa collision decompositions are intentionally not downloaded. The
 MJ-Lab/MJWarp backend uses eleven fixed native primitive slots per object,
 with catalog-specific sizes and local poses, so topology and contact cost stay
-constant across worlds.
+constant across worlds. These contact-only primitives use geom group 3, which
+is deliberately excluded from policy-camera RGB so MJWarp cannot expose their
+alpha-zero proxies as opaque black artifacts.
 
 The backend validates and content-hashes all required files before CUDA world
 allocation. RoboCasa assets are licensed CC BY 4.0; the staged manifest records
