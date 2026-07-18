@@ -128,7 +128,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             command[command.index("--nproc-per-node") + 1], "2"
         )
         self.assertEqual(
-            command[command.index("--max-train-steps") + 1], "2000000"
+            command[command.index("--max-train-steps") + 1], "5000000"
         )
         self.assertEqual(command[command.index("--hidden-dim") + 1], "1024")
         self.assertEqual(
@@ -206,7 +206,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             / "scripts"
             / "train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh"
         ).read_text(encoding="utf-8")
-        self.assertIn("MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-2000000}\"", source)
+        self.assertIn("MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-5000000}\"", source)
         self.assertIn("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT", source)
         self.assertIn("Scratch training refuses CHECKPOINT", source)
         self.assertIn("configure_huggingface_public_models", source)
@@ -348,7 +348,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             progress,
             previous_display_step=9_984,
             global_step=10_471,
-            max_train_steps=2_000_000,
+            max_train_steps=5_000_000,
             update_index=21,
             metrics={
                 "sampled_actions_per_second_global": 1246.1,
@@ -371,7 +371,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
     def test_mjwarp_progress_bar_is_enabled_through_remote_tee(self):
         args = SimpleNamespace(
             progress=True,
-            max_train_steps=2_000_000,
+            max_train_steps=5_000_000,
             progress_refresh_seconds=10.0,
         )
         fake_bar = mock.Mock()
@@ -386,7 +386,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             )
         self.assertIs(created, fake_bar)
         kwargs = tqdm_mock.call_args.kwargs
-        self.assertEqual(kwargs["total"], 2_000_000)
+        self.assertEqual(kwargs["total"], 5_000_000)
         self.assertEqual(kwargs["initial"], 10_471)
         self.assertFalse(kwargs["disable"])
         self.assertEqual(kwargs["unit"], " selected-step")
