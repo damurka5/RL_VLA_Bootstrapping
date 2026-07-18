@@ -123,6 +123,10 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         self.assertEqual(command[command.index("--hidden-dim") + 1], "1024")
         self.assertEqual(
+            command[command.index("--smolvla-compile-mode") + 1],
+            "max-autotune-no-cudagraphs",
+        )
+        self.assertEqual(
             command[command.index("--mjwarp-profile-updates") + 1], "4"
         )
         self.assertNotIn("--resume-checkpoint", command)
@@ -934,6 +938,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertIn("profile=bool(args.mjwarp_profile_timers)", trainer_source)
         self.assertIn('"--mjwarp-profile-timers"', benchmark_source)
         self.assertIn('"--no-lock-non-commanded-axes"', benchmark_source)
+        self.assertIn('"max-autotune-no-cudagraphs"', benchmark_source)
         self.assertIn('environment.pop("HF_TOKEN", None)', benchmark_source)
         self.assertIn(
             'environment["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"',

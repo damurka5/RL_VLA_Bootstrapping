@@ -197,7 +197,12 @@ def _command(
         if args.compile_model
         else "--no-smolvla-compile-model"
     )
-    result.extend(["--smolvla-compile-mode", "max-autotune"])
+    # SmolVLA sampling contains dynamic index_put_ and CUDA RNG operations.
+    # PyTorch 2.7 Inductor can compile them, but CUDA graph capture fails and
+    # leaves the generator/stream state unusable for an eager fallback.
+    result.extend(
+        ["--smolvla-compile-mode", "max-autotune-no-cudagraphs"]
+    )
     return result
 
 
