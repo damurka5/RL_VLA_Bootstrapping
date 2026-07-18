@@ -197,6 +197,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "benchmarks; leave disabled for production throughput."
         ),
     )
+    parser.add_argument(
+        "--mjwarp-profile-updates",
+        type=int,
+        default=0,
+        help=(
+            "When synchronized MJWarp timers are enabled, profile only this "
+            "many optimizer updates; zero profiles every update."
+        ),
+    )
     _bool_arg(
         parser,
         "allow_legacy_simulator_checkpoint",
@@ -430,6 +439,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         0, int(args.smolvla_inference_microbatch_size)
     )
     args.mjwarp_max_updates = max(0, int(args.mjwarp_max_updates))
+    args.mjwarp_profile_updates = max(0, int(args.mjwarp_profile_updates))
     if args.simulator_backend == "mjlab_mjwarp":
         expected_worlds = int(args.groups_per_rank) * int(args.grpo_group_size)
         if int(args.worlds_per_rank) != expected_worlds:
@@ -510,6 +520,7 @@ class SmolVLAGRPOTrainer:
         self.gradient_step = 0
         self.loaded_extra_state: dict[str, Any] = {}
         self.bootstrap_source = "fresh_grpo"
+        self.profile_update = bool(args.mjwarp_profile_timers)
 
     @staticmethod
     def _unwrap(module: nn.Module) -> nn.Module:
@@ -754,6 +765,13 @@ class SmolVLAGRPOTrainer:
         metric_weight = torch.zeros_like(policy_loss_total)
         gradient_norms: list[float] = []
         optimizer_steps = 0
+        update_forward_time_s = 0.0
+        backpropagation_time_s = 0.0
+        optimizer_time_s = 0.0
+
+        def synchronize_profile() -> None:
+            if self.profile_update and self.device.type == "cuda":
+                torch.cuda.synchronize(self.device)
 
         for _epoch in range(int(schedule.ppo_epochs)):
             order = torch.randperm(target, device=self.device)
@@ -762,6 +780,8 @@ class SmolVLAGRPOTrainer:
                 self.optimizer.zero_grad(set_to_none=True)
                 for micro_start in range(0, minibatch, microbatch):
                     idx = mb_idx[micro_start : micro_start + microbatch]
+                    synchronize_profile()
+                    forward_started = time.perf_counter()
                     weight = mask[idx]
                     denominator = weight.sum().clamp_min(1.0)
                     mean, log_std = self._mean_and_log_std(
@@ -789,9 +809,20 @@ class SmolVLAGRPOTrainer:
                         - float(self.args.entropy_coef) * entropy_mean
                         + float(self.args.action_l2) * l2_mean
                     ) / (minibatch // microbatch)
+                    synchronize_profile()
+                    if self.profile_update:
+                        update_forward_time_s += (
+                            time.perf_counter() - forward_started
+                        )
                     # Even an all-padding rank traverses the DDP graph and
                     # participates in the same reducer collective with zero grads.
+                    backward_started = time.perf_counter()
                     loss.backward()
+                    synchronize_profile()
+                    if self.profile_update:
+                        backpropagation_time_s += (
+                            time.perf_counter() - backward_started
+                        )
                     with torch.no_grad():
                         metric_weight += weight.sum()
                         policy_loss_total += policy_loss * weight.sum()
@@ -804,6 +835,7 @@ class SmolVLAGRPOTrainer:
                             | (ratio > 1.0 + float(self.args.clip_range_high))
                         )
                         clip_total += (outside.to(torch.float32) * weight).sum()
+                optimizer_started = time.perf_counter()
                 grad_limit = (
                     float(self.args.max_grad_norm)
                     if float(self.args.max_grad_norm) > 0.0
@@ -814,6 +846,11 @@ class SmolVLAGRPOTrainer:
                 )
                 gradient_norms.append(float(grad_norm.detach().item()))
                 self.optimizer.step()
+                synchronize_profile()
+                if self.profile_update:
+                    optimizer_time_s += (
+                        time.perf_counter() - optimizer_started
+                    )
                 self.gradient_step += 1
                 optimizer_steps += 1
 
@@ -835,6 +872,9 @@ class SmolVLAGRPOTrainer:
             "gradient_norm_mean": float(np.mean(gradient_norms)),
             "gradient_norm_max": float(np.max(gradient_norms)),
             "optimizer_steps": float(optimizer_steps),
+            "update_forward_time_s": float(update_forward_time_s),
+            "backpropagation_time_s": float(backpropagation_time_s),
+            "optimizer_time_s": float(optimizer_time_s),
             "backward_collectives": float(
                 schedule.backward_collectives * (minibatch // microbatch)
             ),

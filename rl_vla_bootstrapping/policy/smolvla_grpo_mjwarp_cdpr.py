@@ -10,10 +10,12 @@ schedule, curriculum, metric, and DDP gradient synchronization.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
+from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     BatchedReverseFrontierResetter,
     RankLocalCurriculum,
@@ -45,12 +47,28 @@ from rl_vla_bootstrapping.simulation.cdpr_backend import (
     CDPRBackendConfig,
     create_cdpr_backend,
 )
+from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+    BatchedMoveToDistanceReward,
+)
 
 
 def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(dict(payload), sort_keys=True, default=str))
         stream.write("\n")
+
+
+def _task_metadata(args: Any) -> dict[str, Any]:
+    raw = os.environ.get("RLVLA_TASK_METADATA_JSON", "").strip()
+    if raw:
+        payload = json.loads(raw)
+        if not isinstance(payload, dict):
+            raise ValueError("RLVLA_TASK_METADATA_JSON must encode an object.")
+        return dict(payload)
+    if args.config:
+        config = load_project_config(Path(args.config).expanduser().resolve())
+        return dict(config.task.metadata or {})
+    return {}
 
 
 def _synchronize_update_metrics_once(
@@ -92,6 +110,7 @@ def _synchronize_update_metrics_once(
             key.endswith("_time_s")
             or key.endswith("_mean")
             or key.endswith("_max")
+            or key.endswith("_std")
             or key.endswith("_rate")
             or "_mean_" in key
             or key.startswith("loss_")
@@ -107,6 +126,9 @@ def _synchronize_update_metrics_once(
                 "padded_records",
                 "backward_collectives",
                 "optimizer_steps",
+                "timers_cuda_synchronized",
+                "profiled_update",
+                "dense_move_to_distance_reward",
             }
         ):
             summed[key] /= float(world_size)
@@ -295,12 +317,30 @@ def main(argv: Sequence[str] | None = None) -> None:
                 curriculum_state = legacy_complex
         if isinstance(curriculum_state, Mapping):
             curriculum.restore(curriculum_state)
+        task_metadata = _task_metadata(args)
+        reward_mode = str(
+            task_metadata.get("reward_mode", "sparse_binary")
+        ).strip().lower()
+        move_to_distance_reward = None
+        if reward_mode == "dense":
+            configured_instructions = tuple(args.instruction_types or ())
+            if configured_instructions != ("move_to_object",):
+                raise RuntimeError(
+                    "The MJWarp dense reward path currently supports exactly "
+                    "--instruction-types move_to_object; received "
+                    f"{configured_instructions!r}."
+                )
+            move_to_distance_reward = (
+                BatchedMoveToDistanceReward.from_metadata(task_metadata)
+            )
         resetter = BatchedReverseFrontierResetter(
             backend=backend,
             layout=layout,
             curriculum=curriculum,
             rank=dist_ctx.rank,
             base_seed=int(args.seed),
+            instruction_types=args.instruction_types,
+            allowed_objects=args.allowed_objects,
             frontier_probability=float(
                 args.reverse_frontier_sample_probability
             ),
@@ -320,7 +360,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             advantage_clip_abs=float(args.grpo_clip_advantage_abs),
             dynamic_min_pass_rate=float(args.grpo_dynamic_min_pass_rate),
             dynamic_max_pass_rate=float(args.grpo_dynamic_max_pass_rate),
+            dynamic_sampling=bool(args.grpo_dynamic_sampling),
             group_selection=str(args.grpo_group_selection),
+            move_to_distance_reward=move_to_distance_reward,
             profile=bool(args.mjwarp_profile_timers),
         )
 
@@ -335,6 +377,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 < int(args.mjwarp_max_updates)
             )
         ):
+            profile_limit = int(args.mjwarp_profile_updates)
+            profile_this_update = bool(args.mjwarp_profile_timers) and (
+                profile_limit <= 0
+                or update_index - start_update_index < profile_limit
+            )
+            collector.profile = profile_this_update
+            trainer.profile_update = profile_this_update
             update_started = time.perf_counter()
             rounds = []
             local_informative = 0
@@ -370,6 +419,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             (
                 records,
                 loss_mask,
+                candidate_rewards,
                 successes,
                 task_ids,
                 shell_ids,
@@ -412,6 +462,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 **update_metrics,
                 "candidate_successes": float(successes.sum().item()),
                 "candidate_worlds": float(successes.numel()),
+                "candidate_reward_sum": float(candidate_rewards.sum().item()),
+                "candidate_reward_count": float(candidate_rewards.numel()),
                 "groups_collected": float(successes.shape[0]),
                 "contacts_rank_sum": float(capacity["contacts"]),
                 "max_constraints_per_world_rank_sum": float(
@@ -464,11 +516,62 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "constraint_capacity_per_world": float(
                         capacity["constraint_capacity_per_world"]
                     ),
+                    "profiled_update": float(profile_this_update),
                 }
             )
+            if profile_this_update:
+                profiled_components = {
+                    "smolvla_inference": float(
+                        synchronized_metrics.get("smolvla_time_s", 0.0)
+                    ),
+                    "environment_step": float(
+                        synchronized_metrics.get("physics_time_s", 0.0)
+                    ),
+                    "scene_reset": float(
+                        synchronized_metrics.get("reset_time_s", 0.0)
+                    ),
+                    "backpropagation": float(
+                        synchronized_metrics.get(
+                            "backpropagation_time_s", 0.0
+                        )
+                    ),
+                }
+                selected_denominator = max(1.0, float(global_selected))
+                for name, seconds in profiled_components.items():
+                    synchronized_metrics[
+                        f"profile/{name}_time_s"
+                    ] = seconds
+                    synchronized_metrics[
+                        f"profile/{name}_ms_per_selected_action"
+                    ] = 1000.0 * seconds / selected_denominator
+                dominant_name, dominant_seconds = max(
+                    profiled_components.items(), key=lambda item: item[1]
+                )
+                synchronized_metrics[
+                    "profile/dominant_stage"
+                ] = dominant_name
+                synchronized_metrics[
+                    "profile/dominant_stage_time_s"
+                ] = dominant_seconds
 
             if dist_ctx.is_main:
                 _append_jsonl(metrics_path, synchronized_metrics)
+                if profile_this_update:
+                    _write_json(
+                        run_dir / "latest_profile.json",
+                        {
+                            key: value
+                            for key, value in synchronized_metrics.items()
+                            if key.startswith("profile/")
+                            or key
+                            in {
+                                "global_step",
+                                "update_index",
+                                "sampled_environment_actions",
+                                "selected_environment_actions",
+                            }
+                        },
+                    )
                 _log(
                     dist_ctx,
                     "[smolvla-mjwarp] "

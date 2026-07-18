@@ -21,6 +21,7 @@ INSTRUCTION_TO_ID = {
 
 @dataclass(frozen=True)
 class BatchedTaskThresholds:
+    move_to_xy_low: float = 0.0
     move_to_xy: float = 0.02
     push_displacement: float = 0.08
     push_orthogonal_tolerance: float = 0.02
@@ -36,6 +37,81 @@ class BatchedTaskThresholds:
     release_opening: float = 0.55
     sparse_success_reward: float = 1.0
     sparse_failure_reward: float = 0.0
+
+
+@dataclass(frozen=True)
+class BatchedMoveToDistanceReward:
+    """GPU form of the established CPU ``move to`` distance reward.
+
+    The CPU hook in ``rl_instruction_tasks._compute_move_to_object_reward``
+    computes an inverse-polynomial reward from the distance to an XY success
+    window.  MJWarp cannot call that NumPy/Python hook per world without
+    transferring simulator state back to the host, so this dataclass carries
+    the same distance-term parameters for the tensorized hot path.
+    """
+
+    xy_window_low: float = 0.0
+    xy_window_high: float = 0.02
+    xy_reward_scale: float = 0.08
+    distance_reward_weight: float = 1.0
+    distance_reward_exponent: float = 2.0
+    success_bonus: float = 0.0
+    excess_distance_penalty_weight: float = 0.0
+    too_close_penalty_weight: float = 0.0
+
+    @classmethod
+    def from_metadata(
+        cls, metadata: dict[str, Any] | None
+    ) -> "BatchedMoveToDistanceReward":
+        values = dict(metadata or {})
+
+        def number(key: str, default: float) -> float:
+            raw = values.get(key, default)
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return float(default)
+
+        default_tolerance = number("success_distance", 0.02)
+        high = max(
+            number(
+                "move_to_object_xy_window_high",
+                number("move_to_object_xy_tolerance", default_tolerance),
+            ),
+            1.0e-6,
+        )
+        low = max(number("move_to_object_xy_window_low", 0.0), 0.0)
+        if low > high:
+            low, high = high, low
+        scale = max(
+            number(
+                "move_to_object_xy_reward_scale",
+                max(4.0 * high, 0.08),
+            ),
+            1.0e-6,
+        )
+        return cls(
+            xy_window_low=low,
+            xy_window_high=high,
+            xy_reward_scale=scale,
+            distance_reward_weight=number(
+                "move_to_object_distance_reward_weight",
+                number("move_to_object_proximity_weight", 1.0),
+            ),
+            distance_reward_exponent=max(
+                number("distance_reward_exponent", 2.0), 1.0e-6
+            ),
+            success_bonus=number(
+                "move_to_object_success_bonus",
+                number("success_bonus", 0.0),
+            ),
+            excess_distance_penalty_weight=number(
+                "move_to_object_excess_distance_penalty_weight", 0.0
+            ),
+            too_close_penalty_weight=number(
+                "move_to_object_too_close_penalty_weight", 0.0
+            ),
+        )
 
 
 @dataclass
@@ -88,6 +164,41 @@ class BatchedTaskResult:
     success: Any
     terminated: Any
     diagnostics: dict[str, Any]
+
+
+def move_to_distance_rewards(
+    xy_distance: Any,
+    success: Any,
+    *,
+    config: BatchedMoveToDistanceReward,
+) -> Any:
+    """Evaluate the existing inverse-polynomial move-to reward on GPU."""
+
+    import torch
+
+    low_error = (
+        torch.full_like(xy_distance, float(config.xy_window_low)) - xy_distance
+    ).clamp_min(0.0)
+    high_error = (
+        xy_distance
+        - torch.full_like(xy_distance, float(config.xy_window_high))
+    ).clamp_min(0.0)
+    window_error = torch.maximum(low_error, high_error)
+    normalized = window_error / max(float(config.xy_reward_scale), 1.0e-6)
+    distance_reward = float(config.distance_reward_weight) / (
+        1.0
+        + normalized.pow(max(float(config.distance_reward_exponent), 1.0e-6))
+    )
+    reward = distance_reward + success.to(dtype=xy_distance.dtype) * float(
+        config.success_bonus
+    )
+    reward = reward - float(
+        config.excess_distance_penalty_weight
+    ) * torch.tanh(high_error / max(float(config.xy_reward_scale), 1.0e-6))
+    reward = reward - float(config.too_close_penalty_weight) * torch.tanh(
+        low_error / max(float(config.xy_reward_scale), 1.0e-6)
+    )
+    return reward
 
 
 def gather_world_slots(values: Any, slots: Any) -> Any:
@@ -145,8 +256,9 @@ def evaluate_active_sparse_tasks(
     active_mask: Any,
     max_steps: int,
     thresholds: BatchedTaskThresholds | None = None,
+    move_to_distance_reward: BatchedMoveToDistanceReward | None = None,
 ) -> BatchedTaskResult:
-    """Tensorized sparse predicates for all instruction families in production."""
+    """Tensorized task predicates plus optional dense move-to rewards."""
 
     import torch
 
@@ -179,8 +291,11 @@ def evaluate_active_sparse_tasks(
     )
     instruction = state.instruction_ids.to(dtype=torch.int64)
 
-    move_to = ee_xy_distance <= float(cfg.move_to_xy)
-    success |= (instruction == INSTRUCTION_TO_ID["move_to_object"]) & move_to
+    is_move_to = instruction == INSTRUCTION_TO_ID["move_to_object"]
+    move_to = (ee_xy_distance >= float(cfg.move_to_xy_low)) & (
+        ee_xy_distance <= float(cfg.move_to_xy)
+    )
+    success |= is_move_to & move_to
 
     push_sign = torch.where(
         instruction == INSTRUCTION_TO_ID["push_left"],
@@ -270,12 +385,20 @@ def evaluate_active_sparse_tasks(
         torch.full_like(gripper_opening, float(cfg.sparse_success_reward)),
         torch.full_like(gripper_opening, float(cfg.sparse_failure_reward)),
     )
+    if move_to_distance_reward is not None:
+        dense_move_to = move_to_distance_rewards(
+            ee_xy_distance,
+            success,
+            config=move_to_distance_reward,
+        )
+        rewards = torch.where(is_move_to, dense_move_to, rewards)
     return BatchedTaskResult(
         rewards=rewards,
         success=success,
         terminated=terminated,
         diagnostics={
             "ee_xy_distance": ee_xy_distance,
+            "move_to_distance_reward": rewards,
             "target_motion_xy": target_motion_xy,
             "push_motion": push_motion,
             "container_xy_error": container_xy,

@@ -1,0 +1,271 @@
+project:
+  name: cdpr_smolvla_move_to_distance_grpo_mjlab_scratch
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  env_vars:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_VERBOSITY: error
+    HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    NCCL_DEBUG: WARN
+  notes:
+    - Fresh GRPO residual/readout initialization at global step zero; no adapter checkpoint is loaded.
+    - One torchrun rank owns one A40, a frozen SmolVLA replica, and complete rank-local GRPO groups.
+    - Only move_to_object is sampled; prompts use semantic object labels without RoboCasa variant numbers.
+    - The established move-to inverse-polynomial XY distance reward is evaluated as GPU tensors.
+
+embodiment:
+  name: cdpr_5dof_mjwarp
+  kind: mjlab_mjwarp
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+  dof: 5
+  extra_python_paths: [../../robots/cdpr]
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs: {}
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 1.0]
+
+task:
+  instruction_types: [move_to_object]
+  target_objects:
+    [
+      robocasa_apple,
+      robocasa_banana,
+      robocasa_tomato,
+      robocasa_orange,
+      robocasa_potato,
+      robocasa_mug,
+      robocasa_plate,
+      robocasa_bowl,
+    ]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    instruction_sampling: uniform_cycle
+    reward_mode: dense
+    target_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    distractor_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    scene_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    min_scene_objects: 4
+    max_scene_objects: 4
+    distance_reward_exponent: 2.0
+    success_distance: 0.02
+    success_bonus: 0.0
+    move_to_object_xy_reward_scale: 0.08
+    move_to_object_distance_reward_weight: 1.0
+    move_to_object_xy_tolerance: 0.02
+    move_to_object_xy_window_low: 0.0
+    move_to_object_xy_window_high: 0.02
+    move_to_object_excess_distance_penalty_weight: 0.0
+    move_to_object_too_close_penalty_weight: 0.0
+    move_to_object_success_bonus: 0.0
+    move_to_object_require_z_window: false
+    move_to_object_z_penalty_weight: 0.0
+    action_saturation_penalty_weight: 0.0
+    move_to_object_validation_distance_min: 0.0
+    move_to_object_validation_distance_threshold: 0.02
+    reverse_frontier_profile: smolvla_complex_v1
+    reverse_frontier_actions_per_policy_decision: 4
+    reverse_frontier_policy_decision_bounds:
+      - [1, 1]
+      - [1, 2]
+      - [2, 3]
+      - [3, 4]
+      - [5, 6]
+      - [7, 13]
+      - [14, 20]
+      - [21, 32]
+    reverse_frontier_nominal_progress_fraction: 0.44
+    ee_workspace_x_bounds: [-0.28, 0.28]
+    ee_workspace_y_bounds: [-0.28, 0.28]
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [robocasa_apple, robocasa_plate, robocasa_bowl]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  build_kwargs:
+    table_z: 0.15
+    ee_start: [0.0, 0.0, 0.40]
+  randomization:
+    random_scene_count: 256
+    max_objects: 4
+    use_domain_randomization: true
+
+simulator:
+  backend: mjlab_mjwarp
+  worlds_per_rank: 16
+  groups_per_rank: 2
+  nconmax: 256
+  njmax: 1024
+  render_width: 320
+  render_height: 240
+  object_slots: 4
+  fixed_scene_xml: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+
+policy:
+  type: smolvla_cdpr
+  base_checkpoint: lerobot/smolvla_base
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+  num_images_in_input: 3
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: false
+      bins: 256
+    export_filename: smolvla_action_codec.json
+
+training:
+  preview_before_rl: false
+  rl:
+    enabled: true
+    algorithm: smolvla_residual_grpo_reverse_frontier_mjwarp
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
+    args:
+      max_train_steps: 2000000
+      max_env_steps: 128
+      chunk_size: 8
+      replan_every: 4
+      image_size: 256
+      smolvla_model_image_size: 256
+      smolvla_compile_model: true
+      smolvla_compile_mode: max-autotune
+      smolvla_inference_microbatch_size: 16
+      state_dim: 6
+      include_wrist: true
+      include_aux_camera: true
+      mixed_precision: bf16
+      smolvla_action_normalization: tanh
+      hidden_dim: 1024
+      residual_scale: 0.30
+      learning_rate: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      init_log_std: -1.2
+      min_log_std: -5.0
+      max_log_std: 0.5
+      clip_range_low: 0.20
+      clip_range_high: 0.28
+      entropy_coef: 0.002
+      max_grad_norm: 1.0
+      grpo_group_size: 8
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.10
+      grpo_dynamic_max_pass_rate: 0.90
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 64
+      grpo_max_collection_seconds_per_update: 600
+      ppo_epochs: 4
+      minibatch_size: 512
+      microbatch_size: 512
+      complex_training_approach: reverse_frontier
+      reverse_frontier_promotion_success: 0.80
+      reverse_frontier_demotion_success: -1.0
+      reverse_frontier_validation_episodes: 50
+      reverse_frontier_min_train_updates: 1
+      reverse_frontier_saturation_abort_threshold: 1.01
+      reverse_frontier_sample_probability: 0.80
+      reverse_frontier_rehearsal_probability: 0.20
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      hold_steps: 6
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      save_every_steps: 100000
+      mjwarp_profile_timers: true
+      mjwarp_profile_updates: 4
+      distributed: true
+      distributed_backend: nccl
+      distributed_timeout_seconds: 21600
+      progress: true
+      progress_only: true
+      device: cuda
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks: []

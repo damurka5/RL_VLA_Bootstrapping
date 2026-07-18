@@ -25,6 +25,8 @@ from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     _SHELL_COUNTS,
     _SHELL_HORIZON_HIGH,
     _SHELL_HORIZON_LOW,
+    resolve_mjwarp_catalog_ids,
+    resolve_mjwarp_instruction_ids,
 )
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     EqualDDPSchedule,
@@ -36,6 +38,7 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     ACTIVE_INSTRUCTION_TYPES,
+    BatchedMoveToDistanceReward,
 )
 from rl_vla_bootstrapping.simulation.cdpr_backend import (
     CDPRBackendConfig,
@@ -83,10 +86,99 @@ CONFIG = (
     / "examples"
     / "cdpr_smolvla_complex_reverse_frontier_grpo_mjlab.yaml"
 )
+SCRATCH_MOVE_TO_CONFIG = (
+    ROOT
+    / "configs"
+    / "examples"
+    / "cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml"
+)
 XML = ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr_mjwarp_smoke.xml"
 
 
 class CDPRMJWarpMigrationTests(unittest.TestCase):
+    def test_scratch_move_to_config_is_step_zero_two_rank_distance_grpo(self):
+        config = load_project_config(SCRATCH_MOVE_TO_CONFIG)
+        plan = BootstrapPipeline(config).build_stage_plans(
+            ROOT / "runs" / "mjwarp_move_to_unit", ["rl"]
+        )[0]
+        command = plan.command
+        expected_objects = (
+            "robocasa_apple",
+            "robocasa_banana",
+            "robocasa_tomato",
+            "robocasa_orange",
+            "robocasa_potato",
+            "robocasa_mug",
+            "robocasa_plate",
+            "robocasa_bowl",
+        )
+        self.assertEqual(config.task.instruction_types, ("move_to_object",))
+        self.assertEqual(config.task.target_objects, expected_objects)
+        self.assertEqual(config.task.metadata["reward_mode"], "dense")
+        self.assertEqual(
+            command[command.index("--nproc-per-node") + 1], "2"
+        )
+        self.assertEqual(
+            command[command.index("--max-train-steps") + 1], "2000000"
+        )
+        self.assertEqual(command[command.index("--hidden-dim") + 1], "1024")
+        self.assertEqual(
+            command[command.index("--mjwarp-profile-updates") + 1], "4"
+        )
+        self.assertNotIn("--resume-checkpoint", command)
+        allowed_index = command.index("--allowed-objects") + 1
+        self.assertEqual(
+            tuple(command[allowed_index : allowed_index + len(expected_objects)]),
+            expected_objects,
+        )
+        self.assertEqual(
+            tuple(
+                ACTIVE_CDPR_CATALOGS[index]
+                for index in resolve_mjwarp_catalog_ids(expected_objects)
+            ),
+            expected_objects,
+        )
+        self.assertEqual(resolve_mjwarp_instruction_ids(("move_to_object",)), (0,))
+        self.assertEqual(
+            tuple(OBJECT_VARIANTS[name].label for name in expected_objects),
+            (
+                "apple",
+                "banana",
+                "tomato",
+                "orange",
+                "potato",
+                "mug",
+                "plate",
+                "bowl",
+            ),
+        )
+
+    def test_tensorized_move_to_reward_reads_existing_distance_parameters(self):
+        reward = BatchedMoveToDistanceReward.from_metadata(
+            {
+                "move_to_object_xy_window_low": 0.0,
+                "move_to_object_xy_window_high": 0.02,
+                "move_to_object_xy_reward_scale": 0.08,
+                "move_to_object_distance_reward_weight": 1.0,
+                "distance_reward_exponent": 2.0,
+            }
+        )
+        self.assertEqual(reward.xy_window_low, 0.0)
+        self.assertEqual(reward.xy_window_high, 0.02)
+        self.assertEqual(reward.xy_reward_scale, 0.08)
+        self.assertEqual(reward.distance_reward_weight, 1.0)
+        self.assertEqual(reward.distance_reward_exponent, 2.0)
+
+    def test_scratch_launcher_rejects_resume_state(self):
+        source = (
+            ROOT
+            / "scripts"
+            / "train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-2000000}\"", source)
+        self.assertIn("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT", source)
+        self.assertIn("Scratch training refuses CHECKPOINT", source)
+
     def test_mjspec_body_lookup_supports_current_and_legacy_apis(self):
         body = SimpleNamespace(name="mjwarp_object_slot_0")
         modern = SimpleNamespace(

@@ -212,6 +212,58 @@ never presented as training speedup.
 
 ## Training
 
+### Step-zero SmolVLA move-to-object run
+
+The dedicated scratch configuration is
+`configs/examples/cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml`.
+It samples only `move_to_object`, targets the selected RoboCasa apple, banana,
+tomato, orange, potato, mug, plate, and bowl variants, and converts their
+catalog names to prompts such as `move to apple` and `move to plate`. Variant
+suffixes such as `_20` and `_12` never enter the language prompt.
+
+The run starts a new 1024-hidden-unit GRPO residual/readout head at global step
+zero on top of the frozen `lerobot/smolvla_base` prior. The scratch launcher
+rejects both checkpoint environment variables so a stale remote-shell setting
+cannot silently turn the run into a resume.
+
+Before a long run, sweep complete rank-local group counts on the actual two A40
+cards:
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 \
+  conda run --no-capture-output -n cdpr-mjlab python3 \
+  scripts/benchmark_cdpr_mjlab_grpo.py \
+  --repo-root "$PWD" \
+  --worlds 16 32 64 128 \
+  --updates 3 \
+  --microbatch 16 32 64 \
+  --compile-model \
+  --output-dir runs/cdpr_mjlab_move_to_a40_sweep
+```
+
+`benchmark.json` records the fastest successful
+`recommended_worlds_per_rank`, the largest allocation that fit, GPU
+utilization/power/VRAM, and synchronized scene-reset, environment-step,
+SmolVLA-inference, and backpropagation times. Select the fastest end-to-end
+setting; allocating the most VRAM is not useful if selected actions/s falls.
+
+The conservative checked launch is:
+
+```bash
+REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab \
+  CUDA_VISIBLE_DEVICES=0,1 \
+  WORLDS_PER_RANK=16 \
+  SMOLVLA_MICROBATCH_SIZE=16 \
+  MAX_TRAIN_STEPS=2000000 \
+  bash scripts/train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh
+```
+
+Replace both `WORLDS_PER_RANK=16` and `SMOLVLA_MICROBATCH_SIZE=16` with the
+benchmark recommendation. The first four production updates emit
+`rl/latest_profile.json` with synchronized component times. Timing barriers
+then disable automatically, leaving the remainder of the 2M-step run on the
+unsynchronized throughput path.
+
 Start conservatively at 16 worlds/rank:
 
 ```bash

@@ -10,6 +10,8 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     ACTIVE_INSTRUCTION_TYPES,
+    INSTRUCTION_TO_ID,
+    BatchedMoveToDistanceReward,
     BatchedTaskState,
     BatchedTaskThresholds,
     build_smolvla_state_tensor,
@@ -22,6 +24,7 @@ from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     GRASPABLE_CDPR_CATALOGS,
     OBJECT_VARIANTS,
     PLATE_CATALOG,
+    catalog_id,
 )
 
 
@@ -37,7 +40,6 @@ _FITTED_GRIPPER = tuple(
     OBJECT_VARIANTS[catalog].fitted_gripper_opening
     for catalog in ACTIVE_CDPR_CATALOGS
 )
-_TARGET_CATALOG_COUNT = len(GRASPABLE_CDPR_CATALOGS)
 _PLATE_CATALOG_ID = CATALOG_TO_ID[PLATE_CATALOG]
 _BOWL_CATALOG_ID = CATALOG_TO_ID[BOWL_CATALOG]
 _GRASP_MIN_PAD_FORCE_N = 0.05
@@ -45,6 +47,44 @@ _GRASP_PERSISTENCE_STEPS = 2
 _GRASP_MAX_RELATIVE_POSITION_SLIP_M = 0.008
 _GRASP_MAX_RELATIVE_ORIENTATION_SLIP_RAD = 0.15
 _GRASP_MIN_LIFT_M = 0.015
+
+
+def resolve_mjwarp_instruction_ids(
+    instruction_types: Sequence[str] | None,
+) -> tuple[int, ...]:
+    names = tuple(instruction_types or ACTIVE_INSTRUCTION_TYPES)
+    if not names:
+        raise ValueError("At least one MJWarp instruction type is required.")
+    resolved: list[int] = []
+    seen: set[int] = set()
+    for raw_name in names:
+        name = str(raw_name).strip().lower().replace("-", "_")
+        if name not in INSTRUCTION_TO_ID:
+            raise ValueError(
+                f"Unsupported MJWarp instruction type {raw_name!r}; supported "
+                f"values are {', '.join(ACTIVE_INSTRUCTION_TYPES)}."
+            )
+        task_id = int(INSTRUCTION_TO_ID[name])
+        if task_id not in seen:
+            seen.add(task_id)
+            resolved.append(task_id)
+    return tuple(resolved)
+
+
+def resolve_mjwarp_catalog_ids(
+    allowed_objects: Sequence[str] | None,
+) -> tuple[int, ...]:
+    names = tuple(allowed_objects or ACTIVE_CDPR_CATALOGS)
+    if not names:
+        raise ValueError("At least one MJWarp object catalog is required.")
+    resolved: list[int] = []
+    seen: set[int] = set()
+    for name in names:
+        object_id = int(catalog_id(name))
+        if object_id not in seen:
+            seen.add(object_id)
+            resolved.append(object_id)
+    return tuple(resolved)
 
 
 def _quaternion_multiply(left: Any, right: Any) -> Any:
@@ -417,6 +457,8 @@ class BatchedReverseFrontierResetter:
         curriculum: RankLocalCurriculum,
         rank: int,
         base_seed: int,
+        instruction_types: Sequence[str] | None = None,
+        allowed_objects: Sequence[str] | None = None,
         frontier_probability: float = 0.80,
         rehearsal_probability: float = 0.20,
         support_surface_z: float = 0.15,
@@ -434,6 +476,32 @@ class BatchedReverseFrontierResetter:
         self.support_surface_z = float(support_surface_z)
         self.torch = backend.torch
         self.device = backend.device
+        instruction_ids = resolve_mjwarp_instruction_ids(instruction_types)
+        catalog_ids = resolve_mjwarp_catalog_ids(allowed_objects)
+        graspable_ids = tuple(
+            value
+            for value in catalog_ids
+            if ACTIVE_CDPR_CATALOGS[value] in GRASPABLE_CDPR_CATALOGS
+        )
+        if not graspable_ids:
+            move_to_id = INSTRUCTION_TO_ID["move_to_object"]
+            if any(task_id != move_to_id for task_id in instruction_ids):
+                raise ValueError(
+                    "Non-move MJWarp tasks require at least one graspable "
+                    "catalog in --allowed-objects."
+                )
+            # The tensor is still sampled before the task-specific torch.where;
+            # for a move-only run its value is never selected.
+            graspable_ids = catalog_ids
+        self.instruction_ids = self.torch.tensor(
+            instruction_ids, dtype=self.torch.int64, device=self.device
+        )
+        self.target_catalog_ids = self.torch.tensor(
+            catalog_ids, dtype=self.torch.int64, device=self.device
+        )
+        self.graspable_target_catalog_ids = self.torch.tensor(
+            graspable_ids, dtype=self.torch.int64, device=self.device
+        )
 
     def _generator(self, update_index: int, round_index: int) -> Any:
         generator = self.torch.Generator(device=self.device)
@@ -455,16 +523,13 @@ class BatchedReverseFrontierResetter:
         group_ids = torch.arange(
             groups, dtype=torch.int64, device=self.device
         )
-        eligible_tasks = torch.nonzero(
-            self.curriculum.current_shell < self.curriculum._shell_max,
-            as_tuple=False,
-        ).reshape(-1)
+        configured_tasks = self.instruction_ids
+        eligible_tasks = configured_tasks[
+            self.curriculum.current_shell.index_select(0, configured_tasks)
+            < self.curriculum._shell_max.index_select(0, configured_tasks)
+        ]
         if int(eligible_tasks.numel()) == 0:
-            eligible_tasks = torch.arange(
-                len(ACTIVE_INSTRUCTION_TYPES),
-                dtype=torch.int64,
-                device=self.device,
-            )
+            eligible_tasks = configured_tasks
         sampled_task_index = torch.randint(
             0,
             int(eligible_tasks.numel()),
@@ -516,22 +581,46 @@ class BatchedReverseFrontierResetter:
             * 0.44
         )
 
-        target_catalog = torch.randint(
+        target_pool = self.target_catalog_ids
+        move_target_catalog = target_pool.index_select(
             0,
-            _TARGET_CATALOG_COUNT,
-            (groups,),
-            generator=generator,
-            device=self.device,
-        )
-        catalogs_group = torch.stack(
-            (
-                target_catalog,
-                (target_catalog + 1) % _TARGET_CATALOG_COUNT,
-                (target_catalog + 2) % _TARGET_CATALOG_COUNT,
-                (target_catalog + 3) % _TARGET_CATALOG_COUNT,
+            torch.randint(
+                0,
+                int(target_pool.numel()),
+                (groups,),
+                generator=generator,
+                device=self.device,
             ),
-            dim=1,
         )
+        graspable_pool = self.graspable_target_catalog_ids
+        graspable_target_catalog = graspable_pool.index_select(
+            0,
+            torch.randint(
+                0,
+                int(graspable_pool.numel()),
+                (groups,),
+                generator=generator,
+                device=self.device,
+            ),
+        )
+        move_to_task = task_group == INSTRUCTION_TO_ID["move_to_object"]
+        target_catalog = torch.where(
+            move_to_task, move_target_catalog, graspable_target_catalog
+        )
+        target_pool_positions = (
+            target_catalog[:, None] == target_pool[None, :]
+        ).to(dtype=torch.int64).argmax(dim=1)
+        distractor_offsets = torch.arange(
+            4, dtype=torch.int64, device=self.device
+        )
+        catalog_positions = (
+            target_pool_positions[:, None] + distractor_offsets[None, :]
+        ) % int(target_pool.numel())
+        catalogs_group = target_pool.index_select(
+            0,
+            catalog_positions.reshape(-1),
+        ).reshape(groups, 4)
+        catalogs_group[:, 0] = target_catalog
         is_bowl = task_group == ACTIVE_INSTRUCTION_TYPES.index("put_into_bowl")
         is_plate = task_group == ACTIVE_INSTRUCTION_TYPES.index("put_into_plate")
         is_container = is_bowl | is_plate
@@ -1009,6 +1098,7 @@ class BatchedReverseFrontierResetter:
 class CollectorRound:
     records: dict[str, Any]
     loss_mask: Any
+    candidate_rewards: Any
     candidate_success: Any
     group_instruction_ids: Any
     group_shell_ids: Any
@@ -1030,7 +1120,9 @@ class RankLocalMJWarpGRPOCollector:
         advantage_clip_abs: float = 6.0,
         dynamic_min_pass_rate: float = 0.10,
         dynamic_max_pass_rate: float = 0.90,
+        dynamic_sampling: bool = True,
         group_selection: str = "uniform",
+        move_to_distance_reward: BatchedMoveToDistanceReward | None = None,
         profile: bool = False,
     ) -> None:
         layout.validate()
@@ -1051,6 +1143,8 @@ class RankLocalMJWarpGRPOCollector:
         self.advantage_clip_abs = float(advantage_clip_abs)
         self.dynamic_min_pass_rate = float(dynamic_min_pass_rate)
         self.dynamic_max_pass_rate = float(dynamic_max_pass_rate)
+        self.dynamic_sampling = bool(dynamic_sampling)
+        self.move_to_distance_reward = move_to_distance_reward
         self.group_selection = str(group_selection).lower()
         if self.group_selection not in {"uniform", "best", "softmax"}:
             raise ValueError(
@@ -1182,6 +1276,9 @@ class RankLocalMJWarpGRPOCollector:
             (worlds,), dtype=torch.bool, device=self.device
         )
         candidate_success = torch.zeros_like(active)
+        candidate_rewards = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
         sampled_actions = torch.zeros((), dtype=torch.int64, device=self.device)
         actions_per_world = torch.zeros(
             (worlds,), dtype=torch.int64, device=self.device
@@ -1320,7 +1417,30 @@ class RankLocalMJWarpGRPOCollector:
                     caught_target=caught_target,
                     active_mask=step_active,
                     max_steps=10_000,
-                    thresholds=BatchedTaskThresholds(),
+                    thresholds=BatchedTaskThresholds(
+                        move_to_xy_low=(
+                            0.0
+                            if self.move_to_distance_reward is None
+                            else float(
+                                self.move_to_distance_reward.xy_window_low
+                            )
+                        ),
+                        move_to_xy=(
+                            0.02
+                            if self.move_to_distance_reward is None
+                            else float(
+                                self.move_to_distance_reward.xy_window_high
+                            )
+                        ),
+                    ),
+                    move_to_distance_reward=self.move_to_distance_reward,
+                )
+                candidate_rewards.copy_(
+                    torch.where(
+                        step_active,
+                        result.rewards.to(dtype=torch.float32),
+                        candidate_rewards,
+                    )
                 )
                 candidate_success.logical_or_(result.success)
                 active.logical_and_(~result.terminated)
@@ -1331,16 +1451,17 @@ class RankLocalMJWarpGRPOCollector:
         success_by_group = candidate_success.reshape(
             self.layout.groups_per_rank, group_size
         )
+        rewards_by_group = candidate_rewards.reshape(
+            self.layout.groups_per_rank, group_size
+        )
         action_counts_by_group = actions_per_world.reshape(
             self.layout.groups_per_rank, group_size
         )
         if self.group_selection == "best":
-            selected_candidate = success_by_group.to(
-                dtype=torch.int64
-            ).argmax(dim=1)
+            selected_candidate = rewards_by_group.argmax(dim=1)
         elif self.group_selection == "softmax":
             selected_candidate = torch.multinomial(
-                torch.softmax(success_by_group.to(dtype=torch.float32), dim=1),
+                torch.softmax(rewards_by_group, dim=1),
                 num_samples=1,
                 replacement=True,
                 generator=self._sample_generator,
@@ -1357,16 +1478,24 @@ class RankLocalMJWarpGRPOCollector:
             1, selected_candidate[:, None]
         ).sum()
         advantages_by_group = torch_group_advantages(
-            success_by_group.to(dtype=torch.float32),
+            rewards_by_group,
             normalize=self.normalize_advantage,
             clip_abs=self.advantage_clip_abs,
         )
         world_advantage = advantages_by_group.reshape(-1)
         pass_rate = success_by_group.to(dtype=torch.float32).mean(dim=1)
-        informative_group = (
-            (pass_rate > self.dynamic_min_pass_rate)
-            & (pass_rate < self.dynamic_max_pass_rate)
-        )
+        if not self.dynamic_sampling:
+            informative_group = torch.ones_like(pass_rate, dtype=torch.bool)
+        elif self.move_to_distance_reward is not None:
+            reward_span = rewards_by_group.amax(dim=1) - rewards_by_group.amin(
+                dim=1
+            )
+            informative_group = reward_span > 1.0e-6
+        else:
+            informative_group = (
+                (pass_rate > self.dynamic_min_pass_rate)
+                & (pass_rate < self.dynamic_max_pass_rate)
+            )
         informative_world = informative_group.repeat_interleave(group_size)
 
         records = {
@@ -1410,6 +1539,13 @@ class RankLocalMJWarpGRPOCollector:
             "complete_groups_per_rank": float(self.layout.groups_per_rank),
             "informative_groups": float(informative_group.sum().item()),
             "group_pass_rate_mean": float(pass_rate.mean().item()),
+            "candidate_reward_mean": float(rewards_by_group.mean().item()),
+            "candidate_reward_std": float(
+                rewards_by_group.std(unbiased=False).item()
+            ),
+            "dense_move_to_distance_reward": float(
+                self.move_to_distance_reward is not None
+            ),
             "records_total": float(loss_mask.numel()),
             "records_informative": float(loss_mask.sum().item()),
             "grasp_diagnostic_observations": grasp_observations,
@@ -1457,6 +1593,7 @@ class RankLocalMJWarpGRPOCollector:
         return CollectorRound(
             records=records,
             loss_mask=loss_mask.to(dtype=torch.float32),
+            candidate_rewards=rewards_by_group,
             candidate_success=success_by_group,
             group_instruction_ids=reset.group_instruction_ids,
             group_shell_ids=reset.group_shell_ids,
@@ -1466,7 +1603,7 @@ class RankLocalMJWarpGRPOCollector:
 
 def concatenate_collector_rounds(
     rounds: Sequence[CollectorRound],
-) -> tuple[dict[str, Any], Any, Any, Any, Any, dict[str, float]]:
+) -> tuple[dict[str, Any], Any, Any, Any, Any, Any, dict[str, float]]:
     if not rounds:
         raise ValueError("At least one collector round is required.")
     import torch
@@ -1477,6 +1614,7 @@ def concatenate_collector_rounds(
         for key in keys
     }
     mask = torch.cat([item.loss_mask for item in rounds], dim=0)
+    rewards = torch.cat([item.candidate_rewards for item in rounds], dim=0)
     successes = torch.cat([item.candidate_success for item in rounds], dim=0)
     task_ids = torch.cat([item.group_instruction_ids for item in rounds], dim=0)
     shell_ids = torch.cat([item.group_shell_ids for item in rounds], dim=0)
@@ -1498,4 +1636,4 @@ def concatenate_collector_rounds(
         metrics.get("sampled_environment_actions", 0.0)
         / max(1.0, metrics.get("selected_environment_actions", 0.0))
     )
-    return records, mask, successes, task_ids, shell_ids, metrics
+    return records, mask, rewards, successes, task_ids, shell_ids, metrics
