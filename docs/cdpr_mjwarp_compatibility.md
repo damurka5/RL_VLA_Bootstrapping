@@ -76,6 +76,11 @@ default, so the MJWarp-only wrapper explicitly disables MULTICCD and NATIVECCD
 to retain the existing non-zero contact margins. The first backend smoke also
 measured 789 constraints/world after partial reset; the checked capacity is
 therefore 1024 rather than the insufficient original value of 512.
+That smoke exposed a separate preload reset defect: copying calibrated slider
+coordinates into `qpos0` redefined the slide-joint reference and left all four
+tendons roughly 0.4 m beyond their upper limits. The backend now keeps the
+compiled reference pose unchanged and restores calibrated dynamic
+`qpos`/`qvel`/`ctrl` tensors after each full or partial reset.
 
 Full controller/contact smoke, the 8–128-world capacity sweep, parity, two-rank
 checkpoint/resume, and end-to-end benchmarks remain unverified until new remote

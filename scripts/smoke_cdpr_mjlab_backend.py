@@ -106,6 +106,20 @@ def main() -> int:
             low_before.tendon_lengths,
             low_before.gripper_opening,
         )
+        tendon_upper = torch.as_tensor(
+            backend.host_model.tendon_range[list(backend.tendon_ids), 1],
+            dtype=torch.float32,
+            device=backend.device,
+        )
+        preload_error = (
+            low_before.tendon_lengths - tendon_upper[None, :]
+        ).abs()
+        report["preload_tendon_max_error"] = float(
+            preload_error.max().item()
+        )
+        report["checks"]["calibrated_tendon_preload_active"] = (
+            report["preload_tendon_max_error"] <= 5.0e-4
+        )
         qpos_before = backend.export_worlds([0, 1])
         report["checks"]["group_state_broadcast_qpos"] = bool(
             (qpos_before[0]["qpos"] == qpos_before[1]["qpos"]).all()
@@ -114,6 +128,7 @@ def main() -> int:
 
         generator = torch.Generator(device=backend.device)
         generator.manual_seed(args.seed + 17)
+        rollout_step_diagnostics = []
         for step in range(max(1, int(args.steps))):
             actions = torch.rand(
                 (args.worlds, 5),
@@ -126,7 +141,29 @@ def main() -> int:
                 (args.worlds,), dtype=torch.bool, device=backend.device
             )
             active[(step + 1) % args.worlds] = False
-            backend.step(actions, active)
+            step_observation = backend.step(actions, active)
+            step_capacity = backend.capacity_status()
+            rollout_step_diagnostics.append(
+                {
+                    "step": step,
+                    "finite": _finite(
+                        torch,
+                        step_observation.ee_position,
+                        step_observation.object_positions,
+                        step_observation.tendon_lengths,
+                        step_observation.gripper_opening,
+                    ),
+                    "contacts": step_capacity["contacts"],
+                    "max_constraints_per_world": step_capacity[
+                        "max_constraints_per_world"
+                    ],
+                    "contact_overflow": step_capacity["contact_overflow"],
+                    "constraint_overflow": step_capacity[
+                        "constraint_overflow"
+                    ],
+                }
+            )
+        report["rollout_step_diagnostics"] = rollout_step_diagnostics
         low_after = backend.low_dim_observations()
         report["capacity_after_rollout"] = backend.capacity_status()
         report["checks"]["seven_substep_controller_finite"] = _finite(

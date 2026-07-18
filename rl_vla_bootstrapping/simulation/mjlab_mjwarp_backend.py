@@ -152,10 +152,6 @@ def _calibrate_host_cdpr(mujoco: Any, model: Any) -> dict[str, Any]:
     attach_offset = (
         data.site_xpos[topcenter_site_id] - data.xpos[ee_body_id]
     ).astype(np.float32)
-    model.qpos0[:] = data.qpos
-    if hasattr(mujoco, "mj_setConst"):
-        mujoco.mj_setConst(model, data)
-        mujoco.mj_forward(model, data)
     return {
         "slider_joint_ids": slider_joint_ids,
         "slider_qadr": slider_qadr,
@@ -168,6 +164,9 @@ def _calibrate_host_cdpr(mujoco: Any, model: Any) -> dict[str, Any]:
         "base_qpos": data.qpos.astype(np.float32).copy(),
         "base_qvel": data.qvel.astype(np.float32).copy(),
         "base_ctrl": data.ctrl.astype(np.float32).copy(),
+        "base_tendon_lengths": (
+            data.ten_length[tendon_ids].astype(np.float32).copy()
+        ),
     }
 
 
@@ -244,6 +243,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             self._bind_torch_views()
             self.mjw.reset_data(self.model, self.data)
             self.mjw.set_const(self.model, self.data)
+            self._restore_calibrated_base_state()
             self.mjw.forward(self.model, self.data)
 
         self._initialize_controller_state()
@@ -525,6 +525,39 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             dtype=self.torch.int64,
             device=self._device,
         )
+        self._base_qpos = self.torch.tensor(
+            self._calibration["base_qpos"],
+            dtype=self.torch.float32,
+            device=self._device,
+        ).expand(self.worlds_per_rank, -1).clone()
+        self._base_qvel = self.torch.tensor(
+            self._calibration["base_qvel"],
+            dtype=self.torch.float32,
+            device=self._device,
+        ).expand(self.worlds_per_rank, -1).clone()
+        self._base_ctrl = self.torch.tensor(
+            self._calibration["base_ctrl"],
+            dtype=self.torch.float32,
+            device=self._device,
+        ).expand(self.worlds_per_rank, -1).clone()
+
+    def _restore_calibrated_base_state(self, indices: Any | None = None) -> None:
+        """Restore dynamic preload state without redefining model.qpos0."""
+
+        if indices is None:
+            self._qpos.copy_(self._base_qpos)
+            self._qvel.copy_(self._base_qvel)
+            self._ctrl.copy_(self._base_ctrl)
+            return
+        self._qpos.index_copy_(
+            0, indices, self._base_qpos.index_select(0, indices)
+        )
+        self._qvel.index_copy_(
+            0, indices, self._base_qvel.index_select(0, indices)
+        )
+        self._ctrl.index_copy_(
+            0, indices, self._base_ctrl.index_select(0, indices)
+        )
 
     def _initialize_controller_state(self) -> None:
         torch = self.torch
@@ -727,6 +760,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             self.mjw.reset_data(
                 self.model, self.data, self.wp.from_torch(reset_mask)
             )
+        self._restore_calibrated_base_state(indices)
         if qpos is not None:
             self._copy_subset_value(self._qpos, indices, qpos)
         if qvel is not None:

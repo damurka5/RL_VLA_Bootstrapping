@@ -58,6 +58,7 @@ from rl_vla_bootstrapping.simulation.mjwarp_compat import (
     inspect_cdpr_mjcf,
 )
 from rl_vla_bootstrapping.simulation.mjlab_mjwarp_backend import (
+    _calibrate_host_cdpr,
     _mjcf_tree_sha256,
 )
 from robots.cdpr.cdpr_dataset.cdpr_reverse_shells import (
@@ -385,6 +386,29 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
                 ),
                 0,
             )
+
+    def test_preload_calibration_preserves_model_reference_pose(self):
+        if importlib.util.find_spec("mujoco") is None:
+            self.skipTest("mujoco is not installed")
+        import mujoco
+
+        model = mujoco.MjModel.from_xml_path(str(XML))
+        qpos0 = np.asarray(model.qpos0).copy()
+        calibration = _calibrate_host_cdpr(mujoco, model)
+        np.testing.assert_array_equal(model.qpos0, qpos0)
+
+        data = mujoco.MjData(model)
+        data.qpos[:] = calibration["base_qpos"]
+        data.qvel[:] = calibration["base_qvel"]
+        data.ctrl[:] = calibration["base_ctrl"]
+        mujoco.mj_forward(model, data)
+        tendon_ids = np.asarray(calibration["tendon_ids"], dtype=np.int64)
+        np.testing.assert_allclose(
+            data.ten_length[tendon_ids],
+            model.tendon_range[tendon_ids, 1],
+            atol=5.0e-5,
+        )
+        self.assertTrue(np.isfinite(data.qpos).all())
 
     def test_named_overview_camera_matches_legacy_free_camera_orientation(self):
         if importlib.util.find_spec("mujoco") is None:
