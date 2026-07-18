@@ -50,6 +50,7 @@ from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     GEOM_SLOT_NAMES,
     INACTIVE_CATALOG_ID,
     OBJECT_VARIANTS,
+    _spec_body,
     catalog_id,
     compile_catalog_variant_models,
     object_assets_sha256,
@@ -86,6 +87,22 @@ XML = ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr_mjwarp_smoke.xml"
 
 
 class CDPRMJWarpMigrationTests(unittest.TestCase):
+    def test_mjspec_body_lookup_supports_current_and_legacy_apis(self):
+        body = SimpleNamespace(name="mjwarp_object_slot_0")
+        modern = SimpleNamespace(
+            body=lambda name: body if name == body.name else None
+        )
+        legacy = SimpleNamespace(
+            find_body=lambda name: body if name == body.name else None
+        )
+        plural_only = SimpleNamespace(bodies=[body])
+
+        self.assertIs(_spec_body(modern, body.name), body)
+        self.assertIs(_spec_body(legacy, body.name), body)
+        self.assertIs(_spec_body(plural_only, body.name), body)
+        with self.assertRaises(KeyError):
+            _spec_body(SimpleNamespace(bodies=[]), body.name)
+
     def test_rank_local_reset_shell_constants_match_cpu_reference(self):
         self.assertEqual(
             _SHELL_COUNTS,

@@ -374,6 +374,27 @@ def object_assets_sha256(xml_path: Path) -> str:
     return hasher.hexdigest()
 
 
+def _spec_body(spec: object, name: str) -> object:
+    """Look up a body across the old and current MuJoCo MjSpec APIs."""
+
+    named_access = getattr(spec, "body", None)
+    if callable(named_access):
+        body = named_access(name)
+        if body is not None:
+            return body
+
+    legacy_access = getattr(spec, "find_body", None)
+    if callable(legacy_access):
+        body = legacy_access(name)
+        if body is not None:
+            return body
+
+    for body in getattr(spec, "bodies", ()):
+        if getattr(body, "name", None) == name:
+            return body
+    raise KeyError(f"MjSpec body {name!r} was not found.")
+
+
 def _configure_variant_spec(spec: object, variant: ObjectVariant) -> None:
     primitive_by_name = {
         primitive.primitive: primitive for primitive in variant.primitives
@@ -404,7 +425,7 @@ def _configure_variant_spec(spec: object, variant: ObjectVariant) -> None:
                 geom.size = primitive.size
                 geom.pos = primitive.pos
                 geom.quat = primitive.quat
-        body = spec.find_body(f"mjwarp_object_slot_{slot}")
+        body = _spec_body(spec, f"mjwarp_object_slot_{slot}")
         body.mass = variant.mass
         body.inertia = variant.inertia
         body.explicitinertial = True
