@@ -125,6 +125,23 @@ def main() -> int:
             (qpos_before[0]["qpos"] == qpos_before[1]["qpos"]).all()
         )
         report["capacity_after_reset"] = backend.capacity_status()
+        reset_contact_count = int(backend._nacon.reshape(-1)[0].item())
+        if reset_contact_count:
+            reset_contact_distances = backend._contact_dist[
+                :reset_contact_count
+            ]
+            report["reset_contact_min_distance"] = float(
+                reset_contact_distances.min().item()
+            )
+        else:
+            report["reset_contact_min_distance"] = None
+        report["checks"]["no_deep_reset_contacts"] = bool(
+            report["reset_contact_min_distance"] is None
+            or (
+                torch.isfinite(reset_contact_distances).all()
+                and report["reset_contact_min_distance"] >= -0.05
+            )
+        )
 
         generator = torch.Generator(device=backend.device)
         generator.manual_seed(args.seed + 17)

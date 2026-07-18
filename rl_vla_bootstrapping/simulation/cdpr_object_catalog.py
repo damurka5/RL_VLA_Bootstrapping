@@ -160,7 +160,9 @@ def build_variant_arrays(ids: object) -> dict[str, object]:
 
     `ids` has shape ``[world, 4]``.  The primitive topology is fixed and the
     arrays only change sizes, local transforms, colors, mass, and inertia.
-    Inactive primitives are tiny and placed far below their owning body.
+    Inactive primitives are tiny and placed above their owning body.  Moving
+    them below the workspace is unsafe because MuJoCo planes are infinite:
+    a geom below the floor is deeply penetrating it, not collision-disabled.
     """
 
     import numpy as np
@@ -174,7 +176,7 @@ def build_variant_arrays(ids: object) -> dict[str, object]:
     nprimitive = len(PRIMITIVE_NAMES)
     sizes = np.full((nworld, nslot, nprimitive, 3), 1.0e-4, dtype=np.float32)
     positions = np.zeros_like(sizes)
-    positions[..., 2] = -10.0
+    positions[..., 2] = 10.0
     quaternions = np.zeros((nworld, nslot, nprimitive, 4), dtype=np.float32)
     quaternions[..., 0] = 1.0
     rgba = np.zeros((nworld, nslot, nprimitive, 4), dtype=np.float32)

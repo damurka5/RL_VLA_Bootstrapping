@@ -351,7 +351,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(len(positions), 4)
         self.assertTrue(
             all(
-                abs(x) >= 4.0 and abs(y) >= 4.0 and z <= -4.0
+                abs(x) >= 4.0 and abs(y) >= 4.0 and z >= 4.0
                 for x, y, z in positions
             )
         )
@@ -470,6 +470,85 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertAlmostEqual(float(arrays["body_mass"][1, 1]), 1.0e-4)
         self.assertEqual(catalog_id("apple"), 0)
         self.assertEqual(catalog_id("bowl"), len(ACTIVE_CDPR_CATALOGS) - 1)
+
+        inactive_position = arrays["geom_pos"][1, 1]
+        self.assertTrue(np.all(inactive_position[:, 2] > 0.0))
+        inactive_primitive = PRIMITIVE_NAMES.index("box_0")
+        self.assertGreater(
+            float(arrays["geom_pos"][0, 0, inactive_primitive, 2]),
+            0.0,
+        )
+        active_primitive = PRIMITIVE_NAMES.index("sphere_0")
+        self.assertEqual(
+            float(arrays["geom_pos"][0, 0, active_primitive, 2]),
+            0.0,
+        )
+
+    def test_inactive_primitives_do_not_penetrate_infinite_floor(self):
+        if importlib.util.find_spec("mujoco") is None:
+            self.skipTest("mujoco is not installed")
+        import mujoco
+
+        ids = np.array([[0, 1, 2, 3]], dtype=np.int32)
+        arrays = build_variant_arrays(ids)
+        model = mujoco.MjModel.from_xml_path(str(XML))
+        data = mujoco.MjData(model)
+        object_qadrs = []
+        for slot in range(4):
+            for primitive_index, primitive in enumerate(PRIMITIVE_NAMES):
+                geom_id = mujoco.mj_name2id(
+                    model,
+                    mujoco.mjtObj.mjOBJ_GEOM,
+                    f"mjwarp_slot_{slot}_{primitive}",
+                )
+                self.assertGreaterEqual(geom_id, 0)
+                model.geom_size[geom_id] = arrays["geom_size"][
+                    0, slot, primitive_index
+                ]
+                model.geom_pos[geom_id] = arrays["geom_pos"][
+                    0, slot, primitive_index
+                ]
+                model.geom_quat[geom_id] = arrays["geom_quat"][
+                    0, slot, primitive_index
+                ]
+
+            body_id = mujoco.mj_name2id(
+                model,
+                mujoco.mjtObj.mjOBJ_BODY,
+                f"mjwarp_object_slot_{slot}",
+            )
+            joint_id = mujoco.mj_name2id(
+                model,
+                mujoco.mjtObj.mjOBJ_JOINT,
+                f"mjwarp_object_slot_{slot}_free",
+            )
+            model.body_mass[body_id] = arrays["body_mass"][0, slot]
+            model.body_inertia[body_id] = arrays["body_inertia"][0, slot]
+            qadr = int(model.jnt_qposadr[joint_id])
+            object_qadrs.append(qadr)
+
+        mujoco.mj_setConst(model, data)
+        for slot, qadr in enumerate(object_qadrs):
+            xy = (
+                (-0.12, -0.08),
+                (0.12, -0.08),
+                (-0.12, 0.10),
+                (0.12, 0.10),
+            )[slot]
+            data.qpos[qadr : qadr + 3] = (
+                xy[0],
+                xy[1],
+                0.15 + arrays["rest_height"][0, slot],
+            )
+            data.qpos[qadr + 3 : qadr + 7] = (1.0, 0.0, 0.0, 0.0)
+
+        mujoco.mj_forward(model, data)
+        contact_distances = np.asarray(
+            [data.contact[index].dist for index in range(data.ncon)]
+        )
+        self.assertTrue(np.isfinite(contact_distances).all())
+        if contact_distances.size:
+            self.assertGreaterEqual(float(contact_distances.min()), -0.05)
 
     def test_camera_aux_slot_is_exact_wrist_object(self):
         overview = object()

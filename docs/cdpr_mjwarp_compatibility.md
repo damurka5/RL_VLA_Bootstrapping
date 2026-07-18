@@ -81,6 +81,12 @@ coordinates into `qpos0` redefined the slide-joint reference and left all four
 tendons roughly 0.4 m beyond their upper limits. The backend now keeps the
 compiled reference pose unchanged and restores calibrated dynamic
 `qpos`/`qvel`/`ctrl` tensors after each full or partial reset.
+The follow-up smoke showed the preload was correct to `4.8e-7`, but reported
+exactly 156 contacts/world and diverged during the first step. Unused fixed-slot
+primitives had been placed at local `z=-10`; because the floor is an infinite
+plane, this created deep penetrations rather than disabling collisions. Unused
+primitives are now transparent, tiny, and placed above the workspace. The
+backend smoke explicitly rejects reset contacts deeper than 5 cm.
 
 Full controller/contact smoke, the 8–128-world capacity sweep, parity, two-rank
 checkpoint/resume, and end-to-end benchmarks remain unverified until new remote

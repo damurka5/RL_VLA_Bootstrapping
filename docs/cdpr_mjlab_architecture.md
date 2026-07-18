@@ -81,8 +81,9 @@ The fixed MJCF has four free-body object slots. Each slot contains an identical
 primitive superset. Per-world `geom_size`, `geom_pos`, `geom_quat`,
 `geom_rgba`, mass, inertia, material, and pose select one of:
 `ycb_apple`, `ycb_pear`, `ycb_peach`, `ycb_b_cups`, `ycb_baseball`, `plate`,
-or `bowl`. Inactive primitives are transparent and placed far below the
-object frame. No reset recompiles the model.
+or `bowl`. Inactive primitives are transparent and placed far above the
+object frame, safely away from the infinite floor plane. No reset recompiles
+the model.
 
 The primitive representations preserve the checked-in stable collision
 dimensions and grasp widths. They intentionally do not reproduce unavailable
