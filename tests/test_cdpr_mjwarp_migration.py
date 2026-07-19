@@ -79,6 +79,7 @@ from rl_vla_bootstrapping.simulation.mjwarp_compat import (
     inspect_cdpr_mjcf,
 )
 from rl_vla_bootstrapping.simulation.mjlab_mjwarp_backend import (
+    MJLabMJWarpCDPRBackend,
     _calibrate_host_cdpr,
     _mjcf_tree_sha256,
 )
@@ -700,6 +701,69 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertIn("self.host_model.opt.timestep = 0.002", backend_source)
         self.assertNotIn(
             "self.host_model.opt.timestep = 1.0 / 60.0", backend_source
+        )
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "the inference tensor regression requires PyTorch",
+    )
+    def test_inference_step_preserves_persistent_controller_buffers(self):
+        import torch
+
+        backend = MJLabMJWarpCDPRBackend.__new__(MJLabMJWarpCDPRBackend)
+        backend.torch = torch
+        backend._device = torch.device("cpu")
+        backend.config = SimpleNamespace(
+            worlds_per_rank=2,
+            action_step_xyz=0.1,
+            action_step_yaw=0.1,
+            action_step_gripper=0.1,
+            lock_non_commanded_axes=False,
+            physics_substeps=0,
+        )
+        backend._xpos = torch.zeros((2, 1, 3), dtype=torch.float32)
+        backend.ee_body_id = 0
+        backend._workspace_min = torch.full((3,), -1.0)
+        backend._workspace_max = torch.full((3,), 1.0)
+        backend._yaw_limits = torch.tensor((-1.0, 1.0))
+        backend._controller_target = torch.zeros((2, 3))
+        backend._controller_yaw = torch.zeros((2,))
+        backend._controller_gripper = torch.zeros((2,))
+        backend._last_actions = torch.zeros((2, 5))
+        backend._controller_prev_lengths = torch.zeros((2, 1))
+        backend._ten_length = torch.zeros((2, 1))
+        backend._tendon_ids_tensor = torch.tensor((0,), dtype=torch.int64)
+        backend.wp = SimpleNamespace(
+            ScopedDevice=lambda _device: mock.MagicMock()
+        )
+        backend.low_dim_observations = lambda: None
+        buffers = (
+            backend._controller_target,
+            backend._controller_yaw,
+            backend._controller_gripper,
+        )
+
+        with torch.inference_mode():
+            backend.step(
+                torch.ones((2, 5), dtype=torch.float32),
+                torch.ones((2,), dtype=torch.bool),
+            )
+
+        self.assertIs(backend._controller_target, buffers[0])
+        self.assertIs(backend._controller_yaw, buffers[1])
+        self.assertIs(backend._controller_gripper, buffers[2])
+        self.assertTrue(
+            all(not torch.is_inference(tensor) for tensor in buffers)
+        )
+        indices = torch.tensor((0,), dtype=torch.int64)
+        backend._copy_subset_value(
+            backend._controller_target, indices, torch.zeros((1, 3))
+        )
+        backend._copy_subset_value(
+            backend._controller_yaw, indices, torch.zeros((1,))
+        )
+        backend._copy_subset_value(
+            backend._controller_gripper, indices, torch.zeros((1,))
         )
 
     def test_fixed_mjcf_compiles_in_reference_mujoco_when_available(self):

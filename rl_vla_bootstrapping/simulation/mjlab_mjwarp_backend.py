@@ -1137,22 +1137,24 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             torch.minimum(proposed_target, self._workspace_max),
             self._workspace_min,
         )
-        self._controller_target = torch.where(
-            active[:, None], proposed_target, self._controller_target
+        self._controller_target.copy_(
+            torch.where(
+                active[:, None], proposed_target, self._controller_target
+            )
         )
         proposed_yaw = (
             self._controller_yaw
             + masked_action[:, 3] * float(self.config.action_step_yaw)
         ).clamp(self._yaw_limits[0], self._yaw_limits[1])
-        self._controller_yaw = torch.where(
-            active, proposed_yaw, self._controller_yaw
+        self._controller_yaw.copy_(
+            torch.where(active, proposed_yaw, self._controller_yaw)
         )
         proposed_gripper = (
             self._controller_gripper
             + masked_action[:, 4] * float(self.config.action_step_gripper)
         ).clamp(0.0, 1.0)
-        self._controller_gripper = torch.where(
-            active, proposed_gripper, self._controller_gripper
+        self._controller_gripper.copy_(
+            torch.where(active, proposed_gripper, self._controller_gripper)
         )
         self._last_actions.copy_(masked_action)
 
