@@ -15,6 +15,13 @@ DEVICE="${DEVICE:-cuda:0}"
 SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-8}"
 VIDEO_FPS="${VIDEO_FPS:-10}"
 TERMINAL_HOLD_SECONDS="${TERMINAL_HOLD_SECONDS:-1}"
+MIN_POLICY_INFERENCES="${MIN_POLICY_INFERENCES:-10}"
+MIN_VIDEO_SECONDS="${MIN_VIDEO_SECONDS:-5}"
+RANDOM_START="${RANDOM_START:-1}"
+RANDOM_START_X_BOUNDS="${RANDOM_START_X_BOUNDS:--0.24 0.24}"
+RANDOM_START_Y_BOUNDS="${RANDOM_START_Y_BOUNDS:--0.24 0.24}"
+RANDOM_START_Z_BOUNDS="${RANDOM_START_Z_BOUNDS:-0.32 0.52}"
+RANDOM_START_MIN_XY_DISTANCE="${RANDOM_START_MIN_XY_DISTANCE:-0.12}"
 CURRICULUM_SHELL="${CURRICULUM_SHELL:-}"
 DRY_RUN="${DRY_RUN:-0}"
 
@@ -37,6 +44,14 @@ if [[ "$EPISODES_PER_TARGET" -lt 1 ]]; then
 fi
 if [[ "$SMOLVLA_MICROBATCH_SIZE" -lt 1 || "$SMOLVLA_MICROBATCH_SIZE" -gt 8 ]]; then
   echo "SMOLVLA_MICROBATCH_SIZE must be in [1, 8]." >&2
+  exit 2
+fi
+if [[ "$MIN_POLICY_INFERENCES" -lt 10 ]]; then
+  echo "MIN_POLICY_INFERENCES must be at least 10." >&2
+  exit 2
+fi
+if [[ "$RANDOM_START" != "0" && "$RANDOM_START" != "1" ]]; then
+  echo "RANDOM_START must be 0 or 1." >&2
   exit 2
 fi
 
@@ -67,10 +82,24 @@ cmd=(
   --smolvla-microbatch-size "$SMOLVLA_MICROBATCH_SIZE"
   --fps "$VIDEO_FPS"
   --terminal-hold-seconds "$TERMINAL_HOLD_SECONDS"
+  --min-policy-inferences "$MIN_POLICY_INFERENCES"
+  --min-video-seconds "$MIN_VIDEO_SECONDS"
+  --random-start-min-xy-distance "$RANDOM_START_MIN_XY_DISTANCE"
 )
 
 read -r -a tolerance_values <<< "$TOLERANCES"
+read -r -a random_start_x_values <<< "$RANDOM_START_X_BOUNDS"
+read -r -a random_start_y_values <<< "$RANDOM_START_Y_BOUNDS"
+read -r -a random_start_z_values <<< "$RANDOM_START_Z_BOUNDS"
 cmd+=(--tolerances "${tolerance_values[@]}")
+cmd+=(--random-start-x-bounds "${random_start_x_values[@]}")
+cmd+=(--random-start-y-bounds "${random_start_y_values[@]}")
+cmd+=(--random-start-z-bounds "${random_start_z_values[@]}")
+if [[ "$RANDOM_START" == "1" ]]; then
+  cmd+=(--random-start)
+else
+  cmd+=(--no-random-start)
+fi
 if [[ -n "$CURRICULUM_SHELL" ]]; then
   cmd+=(--curriculum-shell "$CURRICULUM_SHELL")
 fi
@@ -89,6 +118,11 @@ printf 'cuda_visible_devices=%s device=%s worlds=8 groups=1 group_size=8\n' \
   "$CUDA_VISIBLE_DEVICES" "$DEVICE"
 printf 'smolvla_microbatch_size=%s video_fps=%s\n' \
   "$SMOLVLA_MICROBATCH_SIZE" "$VIDEO_FPS"
+printf 'random_start=%s x_bounds=%s y_bounds=%s z_bounds=%s min_target_xy_distance=%s\n' \
+  "$RANDOM_START" "$RANDOM_START_X_BOUNDS" "$RANDOM_START_Y_BOUNDS" \
+  "$RANDOM_START_Z_BOUNDS" "$RANDOM_START_MIN_XY_DISTANCE"
+printf 'min_policy_inferences=%s min_video_seconds=%s continue_after_success=true\n' \
+  "$MIN_POLICY_INFERENCES" "$MIN_VIDEO_SECONDS"
 printf 'command:'
 printf ' %q' "${cmd[@]}"
 printf '\n'

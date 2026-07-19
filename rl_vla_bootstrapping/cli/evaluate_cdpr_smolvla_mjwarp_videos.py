@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """Record reproducible SmolVLA GRPO rollouts on the production MJWarp backend.
 
-This evaluator intentionally mirrors the held-out validation path used by
-``smolvla_grpo_mjwarp_cdpr``.  It restores the checkpoint's residual policy and
-Reverse Frontier curriculum, uses the same fixed four-slot RoboCasa scene,
-frozen SmolVLA runtime, compact state, action chunking, controller, reward, and
-success predicate, and records one representative world from each reproducibly
-seeded GRPO group.
+This evaluator reuses the held-out validation backend used by
+``smolvla_grpo_mjwarp_cdpr`` while deliberately replacing its near-target
+Reverse Frontier EE reset with a random-workspace qualitative audit. It
+restores the checkpoint's residual policy and uses the same fixed four-slot
+RoboCasa scene, frozen SmolVLA runtime, compact state, action chunking,
+controller, reward, and success predicate.
 """
 
 from __future__ import annotations
@@ -35,8 +35,8 @@ GROUP_SIZE = 8
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
-            "Evaluate a SmolVLA GRPO checkpoint on its exact MJWarp move-to "
-            "validation distribution and record telemetry MP4s."
+            "Evaluate a SmolVLA GRPO checkpoint from random workspace starts "
+            "on the exact MJWarp backend and record telemetry MP4s."
         )
     )
     parser.add_argument("--config", type=Path, required=True)
@@ -57,12 +57,57 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--fps", type=float, default=10.0)
     parser.add_argument("--terminal-hold-seconds", type=float, default=1.0)
     parser.add_argument(
+        "--min-policy-inferences",
+        type=int,
+        default=10,
+        help="Minimum fresh SmolVLA plus GRPO policy calls per episode.",
+    )
+    parser.add_argument(
+        "--min-video-seconds",
+        type=float,
+        default=5.0,
+        help="Pad the final annotated frame until every MP4 reaches this duration.",
+    )
+    parser.add_argument(
+        "--random-start",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Replace the Reverse Frontier near-target EE reset with a seeded "
+            "random workspace pose shared by the eight candidate worlds."
+        ),
+    )
+    parser.add_argument(
+        "--random-start-x-bounds",
+        nargs=2,
+        type=float,
+        default=(-0.24, 0.24),
+    )
+    parser.add_argument(
+        "--random-start-y-bounds",
+        nargs=2,
+        type=float,
+        default=(-0.24, 0.24),
+    )
+    parser.add_argument(
+        "--random-start-z-bounds",
+        nargs=2,
+        type=float,
+        default=(0.32, 0.52),
+    )
+    parser.add_argument(
+        "--random-start-min-xy-distance",
+        type=float,
+        default=0.12,
+        help="Reject random EE starts closer than this to the target in XY.",
+    )
+    parser.add_argument(
         "--curriculum-shell",
         type=int,
         default=None,
         help=(
-            "Optional move-to shell override. By default the shell saved in "
-            "the checkpoint is restored, exactly as training validation does."
+            "Optional checkpoint-shell provenance override. The qualitative "
+            "audit still enforces its minimum policy-call horizon."
         ),
     )
     return parser
@@ -176,6 +221,101 @@ def _validate_simulator_compatibility(
         )
 
 
+def _sample_random_start_xy(
+    *,
+    target_xy: Sequence[float],
+    x_bounds: Sequence[float],
+    y_bounds: Sequence[float],
+    min_distance: float,
+    seed: int,
+    attempts: int = 256,
+) -> np.ndarray:
+    """Choose a reproducible workspace start that is not already near target."""
+
+    target = np.asarray(target_xy, dtype=np.float64).reshape(2)
+    x_low, x_high = (float(x_bounds[0]), float(x_bounds[1]))
+    y_low, y_high = (float(y_bounds[0]), float(y_bounds[1]))
+    if x_low >= x_high or y_low >= y_high:
+        raise ValueError("Random-start workspace bounds must be increasing.")
+    required = max(0.0, float(min_distance))
+    rng = np.random.default_rng(int(seed))
+    candidates = np.column_stack(
+        (
+            rng.uniform(x_low, x_high, size=max(1, int(attempts))),
+            rng.uniform(y_low, y_high, size=max(1, int(attempts))),
+        )
+    )
+    distances = np.linalg.norm(candidates - target[None, :], axis=1)
+    valid = np.flatnonzero(distances >= required)
+    if valid.size:
+        return candidates[int(valid[0])].astype(np.float32)
+    farthest = int(np.argmax(distances))
+    raise ValueError(
+        "Could not sample an EE start at least "
+        f"{required:.3f} m from target {target.tolist()} inside "
+        f"x=[{x_low}, {x_high}], y=[{y_low}, {y_high}]. "
+        f"Farthest sampled distance was {distances[farthest]:.3f} m."
+    )
+
+
+def _apply_random_ee_start(
+    *,
+    backend: Any,
+    reset: Any,
+    round_index: int,
+    validation_seed: int,
+    x_bounds: Sequence[float],
+    y_bounds: Sequence[float],
+    z_bounds: Sequence[float],
+    min_xy_distance: float,
+) -> dict[str, Any]:
+    """Override only the EE pose; object scene, cameras, and task stay intact."""
+
+    import torch
+
+    low_dim = backend.low_dim_observations()
+    target_slot = int(reset.task_state.target_slots[0].item())
+    target = (
+        low_dim.object_positions[0, target_slot].detach().cpu().numpy()
+    )
+    sample_seed = int(validation_seed) + int(round_index) * 100_003 + 70_001
+    xy = _sample_random_start_xy(
+        target_xy=target[:2],
+        x_bounds=x_bounds,
+        y_bounds=y_bounds,
+        min_distance=min_xy_distance,
+        seed=sample_seed,
+    )
+    rng = np.random.default_rng(sample_seed + 1)
+    z_low, z_high = (float(z_bounds[0]), float(z_bounds[1]))
+    if z_low >= z_high:
+        raise ValueError("Random-start Z bounds must be increasing.")
+    z = float(rng.uniform(z_low, z_high))
+    yaw = float(rng.uniform(-math.pi, math.pi))
+    position = torch.tensor(
+        (float(xy[0]), float(xy[1]), z),
+        dtype=torch.float32,
+        device=backend.device,
+    )
+    backend.set_end_effector_poses(
+        position[None, :].repeat(GROUP_SIZE, 1),
+        torch.full(
+            (GROUP_SIZE,), yaw, dtype=torch.float32, device=backend.device
+        ),
+    )
+    backend.set_gripper_openings(
+        torch.ones(
+            (GROUP_SIZE,), dtype=torch.float32, device=backend.device
+        )
+    )
+    return {
+        "seed": sample_seed,
+        "position": position.detach().cpu().numpy(),
+        "yaw": yaw,
+        "target": target,
+    }
+
+
 def _camera_frame(value: Any, world_index: int = 0) -> np.ndarray:
     array = (
         value[int(world_index)]
@@ -209,8 +349,13 @@ def _telemetry_lines(telemetry: Mapping[str, Any]) -> list[str]:
             f"episode={int(telemetry['episode'])}"
         ),
         (
-            f"shell={int(telemetry['shell'])} decision="
-            f"{int(telemetry['decision'])}/{int(telemetry['horizon'])} "
+            f"reset={telemetry['initialization_mode']} shell="
+            f"{int(telemetry['shell'])} training_horizon="
+            f"{int(telemetry['training_horizon'])}"
+        ),
+        (
+            f"policy_call={int(telemetry['policy_call'])}/"
+            f"{int(telemetry['evaluation_horizon'])} "
             f"chunk_action={int(telemetry['chunk_action'])} "
             f"env_action={int(telemetry['action_step'])}"
         ),
@@ -417,6 +562,9 @@ def _summary_markdown(
     checkpoint: Path,
     shell: int,
     success_distance: float,
+    initialization_mode: str,
+    min_policy_inferences: int,
+    min_video_seconds: float,
     episodes: Sequence[Mapping[str, Any]],
     threshold_rows: Sequence[Mapping[str, Any]],
 ) -> str:
@@ -426,15 +574,29 @@ def _summary_markdown(
         "# SmolVLA MJWarp qualitative move-to evaluation",
         "",
         f"- Checkpoint: `{checkpoint}`",
-        "- Backend: exact `mjlab_mjwarp` training/validation backend",
-        f"- Restored move-to Reverse Frontier shell: `{shell}`",
+        "- Backend: exact `mjlab_mjwarp` training backend",
+        f"- EE initialization: `{initialization_mode}`",
+        f"- Checkpoint move-to Reverse Frontier shell (provenance): `{shell}`",
+        f"- Minimum policy inferences per episode: `{min_policy_inferences}`",
+        f"- Minimum video duration: `{min_video_seconds:.1f} s`",
         f"- Strict XY success threshold: `{success_distance:.4f} m`",
         f"- Strict successes: `{strict}/{total}` ({strict / max(total, 1):.1%})",
         "",
         "Each MP4 shows the exact overview and wrist observations plus policy, "
-        "controller, geometry, reward, and strict-predicate telemetry. One "
-        "representative is recorded from each eight-candidate deterministic "
-        "GRPO group; the other seven candidates start identically.",
+        "controller, geometry, reward, and strict-predicate telemetry. The "
+        "recorder continues after first success so later closed-loop behavior "
+        "remains visible.",
+        "",
+        (
+            "Random workspace initialization and the extended minimum horizon "
+            "are a qualitative generalization audit. They are intentionally "
+            "harder than the checkpoint's Reverse Frontier validation reset "
+            "and must not be reported as the original validation metric."
+            if initialization_mode == "random_workspace"
+            else
+            "This run retains the Reverse Frontier initialization but extends "
+            "the rollout horizon for qualitative inspection."
+        ),
         "",
         "## Per-object results",
         "",
@@ -496,6 +658,14 @@ def _run_episode(
     round_index: int,
     episode_index: int,
     success_distance: float,
+    validation_seed: int,
+    random_start: bool,
+    random_start_x_bounds: Sequence[float],
+    random_start_y_bounds: Sequence[float],
+    random_start_z_bounds: Sequence[float],
+    random_start_min_xy_distance: float,
+    min_policy_inferences: int,
+    min_video_seconds: float,
     fps: float,
     terminal_hold_seconds: float,
     video_path: Path,
@@ -518,14 +688,34 @@ def _run_episode(
     target_label = OBJECT_VARIANTS[target_catalog].label
     instruction = str(reset.instructions[0])
     shell = int(reset.group_shell_ids[0].item())
-    horizon = int(reset.horizons[0].item())
+    training_horizon = int(reset.horizons[0].item())
+    evaluation_horizon = max(
+        training_horizon, int(min_policy_inferences)
+    )
     target_slot = int(reset.task_state.target_slots[0].item())
 
+    random_start_state: dict[str, Any] | None = None
+    if random_start:
+        random_start_state = _apply_random_ee_start(
+            backend=backend,
+            reset=reset,
+            round_index=round_index,
+            validation_seed=validation_seed,
+            x_bounds=random_start_x_bounds,
+            y_bounds=random_start_y_bounds,
+            z_bounds=random_start_z_bounds,
+            min_xy_distance=random_start_min_xy_distance,
+        )
+    initialization_mode = (
+        "random_workspace" if random_start else "reverse_frontier"
+    )
     active = torch.ones(
         (GROUP_SIZE,), dtype=torch.bool, device=backend.device
     )
     initial_low = backend.low_dim_observations()
     initial_target = initial_low.object_positions[0, target_slot]
+    initial_ee_np = initial_low.ee_position[0].detach().cpu().numpy()
+    initial_target_np = initial_target.detach().cpu().numpy()
     start_distance = float(
         torch.linalg.vector_norm(
             initial_target[:2] - initial_low.ee_position[0, :2]
@@ -536,8 +726,10 @@ def _run_episode(
     best_reward = float("-inf")
     final_reward = 0.0
     strict_success = False
+    first_success_action_step: int | None = None
     action_rows: list[dict[str, Any]] = []
     action_step = 0
+    policy_inference_count = 0
 
     cameras = backend.render_policy_cameras()
     base_telemetry = {
@@ -545,14 +737,16 @@ def _run_episode(
         "catalog": target_catalog,
         "episode": episode_index,
         "shell": shell,
-        "decision": 0,
-        "horizon": horizon,
+        "initialization_mode": initialization_mode,
+        "training_horizon": training_horizon,
+        "evaluation_horizon": evaluation_horizon,
+        "policy_call": 0,
         "chunk_action": -1,
         "action_step": 0,
         "action": np.zeros(5),
         "applied": np.zeros(5),
-        "ee": initial_low.ee_position[0].detach().cpu().numpy(),
-        "target": initial_target.detach().cpu().numpy(),
+        "ee": initial_ee_np,
+        "target": initial_target_np,
         "distance": start_distance,
         "start_distance": start_distance,
         "best_distance": best_distance,
@@ -570,10 +764,10 @@ def _run_episode(
     writer = _FFmpegWriter(video_path, fps=fps, shape=frame.shape)
     writer.write(frame)
     last_frame = frame
+    frame_count = 1
     try:
-        max_decisions = int(reset.horizons.max().item())
         with torch.inference_mode():
-            for decision in range(max_decisions):
+            for decision in range(evaluation_horizon):
                 if decision > 0:
                     cameras = backend.render_policy_cameras()
                 low_dim = backend.low_dim_observations()
@@ -599,10 +793,9 @@ def _run_episode(
                     priors=prior,
                     action_count=int(trainer.args.replan_every),
                 )
+                policy_inference_count += 1
                 for chunk_action in range(int(actions.shape[1])):
-                    step_active = active & (decision < reset.horizons)
-                    if not bool(step_active.any().item()):
-                        break
+                    step_active = active
                     normalized = actions[:, chunk_action]
                     low_dim = backend.step(normalized, step_active)
                     result = evaluate_active_sparse_tasks(
@@ -626,8 +819,11 @@ def _run_episode(
                     best_distance = min(best_distance, final_distance)
                     final_reward = float(result.rewards[0].item())
                     best_reward = max(best_reward, final_reward)
+                    success_this_step = bool(result.success[0].item())
+                    if success_this_step and first_success_action_step is None:
+                        first_success_action_step = action_step
                     strict_success = bool(
-                        strict_success or result.success[0].item()
+                        strict_success or success_this_step
                     )
                     action_np = normalized[0].detach().cpu().numpy()
                     applied_np = action_np * np.asarray(
@@ -654,8 +850,10 @@ def _run_episode(
                             "target_label": target_label,
                             "instruction": instruction,
                             "shell": shell,
-                            "horizon_policy_decisions": horizon,
-                            "decision": decision,
+                            "initialization_mode": initialization_mode,
+                            "training_horizon_policy_inferences": training_horizon,
+                            "evaluation_horizon_policy_inferences": evaluation_horizon,
+                            "policy_inference": policy_inference_count,
                             "chunk_action": chunk_action,
                             "action_step": action_step,
                             **{
@@ -675,12 +873,13 @@ def _run_episode(
                             "xy_distance_m": final_distance,
                             "best_xy_distance_m": best_distance,
                             "dense_reward": final_reward,
+                            "strict_success_this_step": success_this_step,
                             "strict_success": strict_success,
                         }
                     )
                     telemetry = {
                         **base_telemetry,
-                        "decision": decision + 1,
+                        "policy_call": policy_inference_count,
                         "chunk_action": chunk_action,
                         "action_step": action_step,
                         "action": action_np,
@@ -701,14 +900,22 @@ def _run_episode(
                         telemetry,
                     )
                     writer.write(last_frame)
-                    active.logical_and_(~result.terminated)
-                    if not bool(active.any().item()):
-                        break
-                active.logical_and_((decision + 1) < reset.horizons)
-                if not bool(active.any().item()):
-                    break
-        for _ in range(max(0, int(round(fps * terminal_hold_seconds)))):
+                    frame_count += 1
+                    # This qualitative audit deliberately continues after the
+                    # first strict success so every clip contains the requested
+                    # number of fresh closed-loop policy calls.
+        terminal_hold_frames = max(
+            0, int(round(fps * terminal_hold_seconds))
+        )
+        minimum_total_frames = max(
+            1, int(math.ceil(fps * min_video_seconds))
+        )
+        hold_frames = max(
+            terminal_hold_frames, minimum_total_frames - frame_count
+        )
+        for _ in range(hold_frames):
             writer.write(last_frame)
+            frame_count += 1
     finally:
         writer.close()
 
@@ -719,17 +926,35 @@ def _run_episode(
         "target_label": target_label,
         "instruction": instruction,
         "curriculum_shell": shell,
-        "horizon_policy_decisions": horizon,
+        "initialization_mode": initialization_mode,
+        "random_start_seed": (
+            None if random_start_state is None else random_start_state["seed"]
+        ),
+        "initial_ee_yaw": (
+            None if random_start_state is None else random_start_state["yaw"]
+        ),
+        "training_horizon_policy_inferences": training_horizon,
+        "evaluation_horizon_policy_inferences": evaluation_horizon,
+        "executed_policy_inferences": policy_inference_count,
         "executed_environment_actions": action_step,
+        "initial_ee_x": float(initial_ee_np[0]),
+        "initial_ee_y": float(initial_ee_np[1]),
+        "initial_ee_z": float(initial_ee_np[2]),
+        "initial_target_x": float(initial_target_np[0]),
+        "initial_target_y": float(initial_target_np[1]),
+        "initial_target_z": float(initial_target_np[2]),
         "initial_xy_distance_m": start_distance,
         "final_xy_distance_m": final_distance,
         "best_xy_distance_m": best_distance,
         "strict_success_distance_m": success_distance,
         "strict_success": strict_success,
+        "first_success_action_step": first_success_action_step,
         "final_dense_reward": final_reward,
         "best_dense_reward": (
             best_reward if math.isfinite(best_reward) else final_reward
         ),
+        "video_frames": frame_count,
+        "video_duration_seconds": frame_count / float(fps),
         "video": str(video_path),
     }
     return episode, action_rows
@@ -746,6 +971,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--fps must be positive.")
     if args.terminal_hold_seconds < 0.0:
         parser.error("--terminal-hold-seconds cannot be negative.")
+    if args.min_policy_inferences < 10:
+        parser.error("--min-policy-inferences must be at least 10.")
+    if args.min_video_seconds < 5.0:
+        parser.error("--min-video-seconds must be at least 5.")
+    if args.random_start_min_xy_distance < 0.0:
+        parser.error("--random-start-min-xy-distance cannot be negative.")
+    if not (
+        float(args.random_start_x_bounds[0])
+        < float(args.random_start_x_bounds[1])
+    ):
+        parser.error("--random-start-x-bounds must be increasing.")
+    if not (
+        float(args.random_start_y_bounds[0])
+        < float(args.random_start_y_bounds[1])
+    ):
+        parser.error("--random-start-y-bounds must be increasing.")
+    if not (
+        float(args.random_start_z_bounds[0])
+        < float(args.random_start_z_bounds[1])
+    ):
+        parser.error("--random-start-z-bounds must be increasing.")
 
     config_path = args.config.expanduser().resolve()
     checkpoint_path = args.checkpoint.expanduser().resolve()
@@ -845,7 +1091,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     print(
         "[smolvla-mjwarp-video] allocating 8 worlds / 1 complete "
-        f"deterministic group on {device}",
+            f"reproducibly seeded group on {device}",
         flush=True,
     )
     backend = create_cdpr_backend(backend_config)
@@ -958,10 +1204,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         action_rows: list[dict[str, Any]] = []
         counts: defaultdict[str, int] = defaultdict(int)
         total_requested = len(allowed_objects) * int(args.episodes_per_target)
+        audit_initialization_mode = (
+            "random_workspace"
+            if bool(args.random_start)
+            else "reverse_frontier"
+        )
         print(
-            "[smolvla-mjwarp-video] exact held-out distribution: "
-            f"{total_requested} unique reset(s), move-to shell={move_shell}, "
-            f"strict_xy<={args.success_distance:.4f}m",
+            "[smolvla-mjwarp-video] qualitative "
+            f"{audit_initialization_mode} audit: "
+            f"{total_requested} reset(s), checkpoint move-to shell="
+            f"{move_shell}, min_policy_inferences="
+            f"{args.min_policy_inferences}, min_video="
+            f"{args.min_video_seconds:.1f}s, strict_xy<="
+            f"{args.success_distance:.4f}m",
             flush=True,
         )
         # Match the training validator: reset sampling has its own generator,
@@ -987,6 +1242,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 round_index=round_index,
                 episode_index=round_index + 1,
                 success_distance=float(args.success_distance),
+                validation_seed=int(args.validation_seed),
+                random_start=bool(args.random_start),
+                random_start_x_bounds=tuple(args.random_start_x_bounds),
+                random_start_y_bounds=tuple(args.random_start_y_bounds),
+                random_start_z_bounds=tuple(args.random_start_z_bounds),
+                random_start_min_xy_distance=float(
+                    args.random_start_min_xy_distance
+                ),
+                min_policy_inferences=int(args.min_policy_inferences),
+                min_video_seconds=float(args.min_video_seconds),
                 fps=float(args.fps),
                 terminal_hold_seconds=float(args.terminal_hold_seconds),
                 video_path=video_path,
@@ -1004,7 +1269,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{episode['instruction']}: success={episode['strict_success']} "
                 f"start={episode['initial_xy_distance_m']:.4f}m "
                 f"best={episode['best_xy_distance_m']:.4f}m "
+                f"policy_calls={episode['executed_policy_inferences']} "
                 f"actions={episode['executed_environment_actions']} "
+                f"duration={episode['video_duration_seconds']:.1f}s "
                 f"video={episode['video']}",
                 flush=True,
             )
@@ -1025,6 +1292,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             checkpoint=checkpoint_path,
             shell=move_shell,
             success_distance=float(args.success_distance),
+            initialization_mode=audit_initialization_mode,
+            min_policy_inferences=int(args.min_policy_inferences),
+            min_video_seconds=float(args.min_video_seconds),
             episodes=episode_rows,
             threshold_rows=threshold_rows,
         )
@@ -1037,9 +1307,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "config": str(config_path),
             "backend": "mjlab_mjwarp",
             "exact_training_backend": True,
+            "training_validation_distribution": False,
             "policy_mode": (
                 "seeded_smolvla_flow_plus_deterministic_residual_mean"
             ),
+            "initialization_mode": audit_initialization_mode,
+            "random_start_x_bounds": list(args.random_start_x_bounds),
+            "random_start_y_bounds": list(args.random_start_y_bounds),
+            "random_start_z_bounds": list(args.random_start_z_bounds),
+            "random_start_min_xy_distance_m": float(
+                args.random_start_min_xy_distance
+            ),
+            "minimum_policy_inferences": int(args.min_policy_inferences),
+            "minimum_video_seconds": float(args.min_video_seconds),
+            "continue_after_strict_success": True,
             "frozen_smolvla_checkpoint": str(training_args.base_checkpoint),
             "restored_move_to_curriculum_shell": move_shell,
             "validation_seed": int(args.validation_seed),

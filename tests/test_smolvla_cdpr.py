@@ -11,6 +11,7 @@ import numpy as np
 
 from rl_vla_bootstrapping.cli.evaluate_cdpr_smolvla_mjwarp_videos import (
     _evaluation_training_args,
+    _sample_random_start_xy,
     _telemetry_lines as _mjwarp_video_telemetry_lines,
     _tolerance_rows,
     _validate_simulator_compatibility,
@@ -392,6 +393,10 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertIn("--success-distance", script)
         self.assertIn("--validation-seed", script)
         self.assertIn("--smolvla-microbatch-size", script)
+        self.assertIn("--min-policy-inferences", script)
+        self.assertIn("--min-video-seconds", script)
+        self.assertIn("--random-start-min-xy-distance", script)
+        self.assertIn("continue_after_success=true", script)
         self.assertIn("backend=mjlab_mjwarp exact_training_backend=true", script)
 
     def test_mjwarp_video_eval_only_shrinks_independent_grpo_batch(self):
@@ -429,8 +434,10 @@ class SmolVLACDPRTests(unittest.TestCase):
                 "catalog": "robocasa_apple",
                 "episode": 1,
                 "shell": 7,
-                "decision": 2,
-                "horizon": 12,
+                "initialization_mode": "random_workspace",
+                "training_horizon": 2,
+                "evaluation_horizon": 10,
+                "policy_call": 2,
                 "chunk_action": 1,
                 "action_step": 6,
                 "action": np.array([1.0, -0.5, 0.0, 0.2, 0.0]),
@@ -449,10 +456,36 @@ class SmolVLACDPRTests(unittest.TestCase):
         )
 
         text = "\n".join(lines)
+        self.assertIn("reset=random_workspace", text)
+        self.assertIn("policy_call=2/10", text)
         self.assertIn("normalized action", text)
         self.assertIn("xy_distance=0.0140 m", text)
         self.assertIn("strict<=0.0200 m: PASS", text)
         self.assertIn("dense_reward=1.000000", text)
+
+    def test_mjwarp_video_random_start_is_seeded_and_away_from_target(self):
+        first = _sample_random_start_xy(
+            target_xy=(0.10, -0.05),
+            x_bounds=(-0.24, 0.24),
+            y_bounds=(-0.24, 0.24),
+            min_distance=0.12,
+            seed=1234,
+        )
+        second = _sample_random_start_xy(
+            target_xy=(0.10, -0.05),
+            x_bounds=(-0.24, 0.24),
+            y_bounds=(-0.24, 0.24),
+            min_distance=0.12,
+            seed=1234,
+        )
+
+        np.testing.assert_array_equal(first, second)
+        self.assertGreaterEqual(
+            float(np.linalg.norm(first - np.array((0.10, -0.05)))),
+            0.12,
+        )
+        self.assertTrue(-0.24 <= float(first[0]) <= 0.24)
+        self.assertTrue(-0.24 <= float(first[1]) <= 0.24)
 
     def test_mjwarp_video_eval_rejects_simulator_mismatch_but_not_batch_size(self):
         stored = {

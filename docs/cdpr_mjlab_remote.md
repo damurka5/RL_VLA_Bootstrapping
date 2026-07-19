@@ -277,20 +277,37 @@ REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab CUDA_VISIBLE_DEVICES=0 \
 The launcher defaults to the completed
 `cdpr_smolvla_move_to_scratch_mjwarp_w512_20260719_081705/rl/step_5000081`
 adapter. Override `CHECKPOINT`, `EPISODES_PER_TARGET`, `SUCCESS_DISTANCE`,
-`VALIDATION_SEED`, `SMOLVLA_MICROBATCH_SIZE`, `CURRICULUM_SHELL`, or `RUN_DIR`
-as needed. Every target attempt is recorded. Each MP4 burns in the instruction,
-normalized and applied action, end-effector and target positions,
-current/start/best XY distance, strict threshold status, and dense reward.
+`VALIDATION_SEED`, `SMOLVLA_MICROBATCH_SIZE`, `MIN_POLICY_INFERENCES`,
+`MIN_VIDEO_SECONDS`, or `RUN_DIR` as needed. Every target attempt is recorded.
+Each MP4 burns in the instruction, policy-call count, normalized and applied
+action, end-effector and target positions, current/start/best XY distance,
+strict threshold status, and dense reward.
 
 Video capture now uses the exact `mjlab_mjwarp` backend, fixed four-slot
 RoboCasa scene, compact six-dimensional state, frozen SmolVLA camera/prompt
 path, deterministic GRPO residual mean, action chunking, controller scales,
 distance reward, and success predicate used by held-out training validation.
-The checkpoint's saved move-to Reverse Frontier shell is restored by default.
 Eight worlds are allocated because a GRPO group has eight identical reset
 states; one representative world is recorded from each reproducibly seeded
 group. The frozen SmolVLA flow sampler can produce different priors for the
 other seven candidates, just as it does during held-out training validation.
+
+The qualitative launcher intentionally replaces the Reverse Frontier
+near-target end-effector pose with a reproducible random XYZ/yaw workspace pose
+at least 12 cm from the target in XY. It runs at least 10 fresh policy
+inferences, continues after the first strict success, and pads every video to
+at least five seconds. With the configured four actions per inference, the
+default audit executes at least 40 environment actions.
+
+This random-start audit is harder than the training validation distribution.
+In the original Reverse Frontier curriculum, shell 0 starts only about
+2.3–3.0 cm from the target in XY and permits one policy inference; with
+`replan_every=4`, that produces four environment actions. Harder shells
+progressively increase both starting distance and horizon. The move-to success
+predicate is XY-only, so an end effector at `z=0.40` can appear vertically above
+the target while already being close to success. Near-target starts therefore
+were present in training by design, but the new videos are meant to expose
+whether that competence generalizes to random starts.
 
 The output directory also contains `action_telemetry.csv`,
 `episode_results.csv`, `move_to_object_threshold_sweep.csv` (the same
