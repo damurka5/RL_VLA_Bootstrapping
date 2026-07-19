@@ -109,6 +109,14 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
             source,
         )
         self.assertIn(
+            'MOVE_TO_SMOLVLA_MICROBATCH_SIZE="${MOVE_TO_SMOLVLA_MICROBATCH_SIZE:-${SMOLVLA_MICROBATCH_SIZE:-512}}"',
+            source,
+        )
+        self.assertIn(
+            'CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE="${CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE:-${SMOLVLA_MICROBATCH_SIZE:-16}}"',
+            source,
+        )
+        self.assertIn(
             'curriculum=none lchol=disabled checkpoint_handoff=full_grpo_state',
             source,
         )

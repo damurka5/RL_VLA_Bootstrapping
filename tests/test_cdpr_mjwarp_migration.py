@@ -153,6 +153,20 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(
             command[command.index("--nproc-per-node") + 1], "2"
         )
+        self.assertEqual(config.simulator.worlds_per_rank, 512)
+        self.assertEqual(config.simulator.groups_per_rank, 64)
+        self.assertEqual(
+            command[command.index("--worlds-per-rank") + 1], "512"
+        )
+        self.assertEqual(
+            command[command.index("--groups-per-rank") + 1], "64"
+        )
+        self.assertEqual(
+            command[
+                command.index("--smolvla-inference-microbatch-size") + 1
+            ],
+            "512",
+        )
         self.assertEqual(
             command[command.index("--max-train-steps") + 1], "5000000"
         )
@@ -338,6 +352,13 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             / "train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh"
         ).read_text(encoding="utf-8")
         self.assertIn("MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-5000000}\"", source)
+        self.assertIn(
+            'WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"', source
+        )
+        self.assertIn(
+            'SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-512}"',
+            source,
+        )
         self.assertIn("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT", source)
         self.assertIn("Scratch training refuses CHECKPOINT", source)
         self.assertIn("configure_huggingface_public_models", source)
