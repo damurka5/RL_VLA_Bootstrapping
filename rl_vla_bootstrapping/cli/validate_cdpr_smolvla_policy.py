@@ -59,6 +59,7 @@ from rl_vla_bootstrapping.policy.octo_cdpr_adapter import CDPRStateLayout
 from rl_vla_bootstrapping.policy.octo_finetune_cdpr import ResidualChunkActor
 from rl_vla_bootstrapping.policy.smolvla_cdpr import (
     DEFAULT_SMOLVLA_CHECKPOINT,
+    cdpr_state_from_observation,
     load_smolvla_runtime,
 )
 from robots.cdpr.cdpr_dataset.rl_instruction_tasks import INSTRUCTION_TEXT, INSTRUCTION_TYPES
@@ -122,9 +123,11 @@ class SmolVLACDPREvalRuntime:
         print(f"[smolvla-eval] Loading residual adapter checkpoint on CPU: {checkpoint_path}", flush=True)
         self.payload = torch.load(checkpoint_path, map_location="cpu")
         self.actor_state_dim = _checkpoint_state_dim(self.payload)
+        self.actor_state = _checkpoint_actor_state(self.payload)
+        self.checkpoint_format = "grpo_policy" if "policy" in self.payload else "residual_actor"
         print(
             f"[smolvla-eval] Loaded residual adapter in {time.perf_counter() - ckpt_t0:.1f}s; "
-            f"actor_state_dim={self.actor_state_dim}",
+            f"format={self.checkpoint_format}; actor_state_dim={self.actor_state_dim}",
             flush=True,
         )
 
@@ -148,7 +151,7 @@ class SmolVLACDPREvalRuntime:
             f"(state_dim={actor_state_dim}, chunk_size={chunk_size}, action_dim={action_dim})",
             flush=True,
         )
-        actor.load_state_dict(self.payload["actor"])
+        actor.load_state_dict(self.actor_state)
         actor.eval()
         self.actor = actor
         self.actor_state_dim = actor_state_dim
@@ -170,9 +173,17 @@ class SmolVLACDPREvalRuntime:
             instructions=[instruction],
         )
         prior = priors[0]
-        self.ensure_actor(layout.state_dim)
+        actor_state_dim = int(self.actor_state_dim or layout.state_dim)
+        if actor_state_dim == int(layout.state_dim):
+            state = layout.flatten(obs)
+        else:
+            state = cdpr_state_from_observation(
+                obs,
+                info,
+                state_dim=actor_state_dim,
+            )
+        self.ensure_actor(int(state.shape[0]))
         assert self.actor is not None
-        state = layout.flatten(obs)
         if self.actor_state_dim is not None and int(state.shape[0]) != int(self.actor_state_dim):
             expected_max_objects = _max_objects_from_state_dim(int(self.actor_state_dim))
             hint = (
@@ -240,6 +251,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--record-success-videos", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--record-failure-videos", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--record-all-success-videos", action=argparse.BooleanOptionalAction, default=False)
+    parser.add_argument("--record-all-failure-videos", action=argparse.BooleanOptionalAction, default=False)
     parser.add_argument("--video-coverage", choices=("instruction", "case"), default="instruction")
     parser.add_argument("--video-action-overlay", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--strict-video-validation", action=argparse.BooleanOptionalAction, default=False)
@@ -275,9 +287,13 @@ def _checkpoint_state_dim(payload: dict[str, Any]) -> int | None:
             pass
 
     actor = payload.get("actor")
+    first_weight_key = "net.net.0.weight"
+    if not isinstance(actor, dict):
+        actor = payload.get("policy")
+        first_weight_key = "actor.net.net.0.weight"
     if not isinstance(actor, dict):
         return None
-    first_weight = actor.get("net.net.0.weight")
+    first_weight = actor.get(first_weight_key)
     if first_weight is None or not hasattr(first_weight, "shape"):
         return None
     try:
@@ -288,6 +304,26 @@ def _checkpoint_state_dim(payload: dict[str, Any]) -> int | None:
         return None
     state_dim = input_dim - chunk_size * action_dim
     return state_dim if state_dim > 0 else None
+
+
+def _checkpoint_actor_state(payload: dict[str, Any]) -> dict[str, Any]:
+    actor = payload.get("actor")
+    if isinstance(actor, dict):
+        return dict(actor)
+
+    policy = payload.get("policy")
+    if isinstance(policy, dict):
+        actor_state = {
+            str(key)[len("actor.") :]: value
+            for key, value in policy.items()
+            if str(key).startswith("actor.")
+        }
+        if actor_state:
+            return actor_state
+    raise KeyError(
+        "Unsupported SmolVLA adapter checkpoint: expected TD3 `actor` weights "
+        "or GRPO `policy` weights containing the residual `actor.*` module."
+    )
 
 
 def _max_objects_from_state_dim(state_dim: int) -> int | None:
@@ -323,7 +359,7 @@ def _resolve_checkpoint(raw_path: str | Path) -> Path:
     path = Path(raw_path).expanduser().resolve()
     if path.is_file():
         return path
-    for name in ("smolvla_cdpr_adapter.pt", "latest.pt"):
+    for name in ("smolvla_grpo_adapter.pt", "smolvla_cdpr_adapter.pt", "latest.pt"):
         candidate = path / name
         if candidate.is_file():
             return candidate.resolve()
@@ -369,8 +405,24 @@ def _episode_result_from_final(
     policy_output_calls: int,
     action_steps: int,
     reset_attempts: int,
+    initial_move_to_object_distance_xy: float,
     min_move_to_object_distance_xy: float,
 ) -> EpisodeResult:
+    initial_distance = (
+        None
+        if not np.isfinite(initial_move_to_object_distance_xy)
+        else float(initial_move_to_object_distance_xy)
+    )
+    final_distance = (
+        None
+        if final_info.get("move_to_object_validation_distance_xy") is None
+        else float(final_info["move_to_object_validation_distance_xy"])
+    )
+    min_distance = (
+        None
+        if not np.isfinite(min_move_to_object_distance_xy)
+        else float(min_move_to_object_distance_xy)
+    )
     return EpisodeResult(
         episode_index=int(episode_index),
         seed=seed,
@@ -409,13 +461,18 @@ def _episode_result_from_final(
         final_ee_yaw=float(final_info.get("ee_yaw", 0.0)),
         final_gripper_opening=float(final_info.get("gripper_opening", 0.0)),
         final_gripper_target=float(final_info.get("gripper_target", 0.0)),
-        final_move_to_object_distance_xy=(
+        initial_move_to_object_distance_xy=initial_distance,
+        final_move_to_object_distance_xy=final_distance,
+        min_move_to_object_distance_xy=min_distance,
+        final_move_to_object_distance_reduction_xy=(
             None
-            if final_info.get("move_to_object_validation_distance_xy") is None
-            else float(final_info["move_to_object_validation_distance_xy"])
+            if initial_distance is None or final_distance is None
+            else float(initial_distance - final_distance)
         ),
-        min_move_to_object_distance_xy=(
-            None if not np.isfinite(min_move_to_object_distance_xy) else float(min_move_to_object_distance_xy)
+        best_move_to_object_distance_reduction_xy=(
+            None
+            if initial_distance is None or min_distance is None
+            else float(initial_distance - min_distance)
         ),
         move_to_object_distance_threshold=(
             None
@@ -436,6 +493,23 @@ def _progress_message(progress: Any | None, message: str) -> None:
         progress.write(message)
     else:
         print(message, flush=True)
+
+
+def _move_to_object_distance_xy(info: dict[str, Any]) -> float:
+    raw_distance = info.get("move_to_object_validation_distance_xy")
+    if raw_distance is not None:
+        try:
+            return float(raw_distance)
+        except (TypeError, ValueError):
+            pass
+    ee = np.asarray(info.get("ee_position", ()), dtype=np.float32).reshape(-1)
+    target = np.asarray(
+        info.get("goal_position", info.get("target_object_position_actual", ())),
+        dtype=np.float32,
+    ).reshape(-1)
+    if ee.size >= 2 and target.size >= 2:
+        return float(np.linalg.norm(target[:2] - ee[:2]))
+    return float("inf")
 
 
 def _run_bucket(
@@ -460,6 +534,7 @@ def _run_bucket(
         args.record_success_videos
         or args.record_failure_videos
         or args.record_all_success_videos
+        or args.record_all_failure_videos
         or bucket.force_video
     )
     with _temporary_env_vars(bucket.env_vars):
@@ -490,8 +565,11 @@ def _run_bucket(
                     and (args.record_all_success_videos or coverage_entry.get("success") is None)
                 )
                 needs_failure_video = bool(
-                    (args.record_failure_videos or bucket.force_video)
-                    and coverage_entry.get("failure") is None
+                    (args.record_failure_videos or args.record_all_failure_videos or bucket.force_video)
+                    and (
+                        args.record_all_failure_videos
+                        or coverage_entry.get("failure") is None
+                    )
                 )
                 env.capture_frames = bool(bucket.force_video or needs_success_video or needs_failure_video)
                 seed = _episode_seed(base_seed, instruction_index, episode_index)
@@ -522,7 +600,8 @@ def _run_bucket(
                 policy_output_calls = 0
                 action_steps = 0
                 action_trace: list[dict[str, Any]] = []
-                min_move_to_object_distance_xy = float("inf")
+                initial_move_to_object_distance_xy = _move_to_object_distance_xy(reset_info)
+                min_move_to_object_distance_xy = initial_move_to_object_distance_xy
                 replan_every = max(1, min(int(args.replan_every), int(runtime.smolvla.action_spec.chunk_size)))
 
                 while not (terminated or truncated):
@@ -548,12 +627,28 @@ def _run_bucket(
                     obs, reward, terminated, truncated, final_info = env.step(action)
                     reward_total += float(reward)
                     action_steps += 1
+                    distance_xy = _move_to_object_distance_xy(final_info)
+                    min_move_to_object_distance_xy = min(
+                        min_move_to_object_distance_xy,
+                        distance_xy,
+                    )
                     scaled_action = _scaled_action_vector(action, config, args.hold_steps)
                     ee_pos = final_info.get("ee_position", ())
                     ee_xyz = (
                         np.asarray(ee_pos, dtype=np.float32).reshape(-1)[:3]
                         if ee_pos is not None
                         else np.zeros((0,))
+                    )
+                    target_pos = np.asarray(
+                        final_info.get(
+                            "goal_position",
+                            final_info.get("target_object_position_actual", ()),
+                        ),
+                        dtype=np.float32,
+                    ).reshape(-1)
+                    distance_threshold = final_info.get(
+                        "move_to_object_validation_distance_threshold",
+                        "",
                     )
                     action_trace.append(
                         {
@@ -578,6 +673,31 @@ def _run_bucket(
                             "ee_yaw": final_info.get("ee_yaw", ""),
                             "gripper_opening": final_info.get("gripper_opening", ""),
                             "gripper_target": final_info.get("gripper_target", ""),
+                            "reward": float(reward),
+                            "reward_total": float(reward_total),
+                            "target_x": float(target_pos[0]) if target_pos.size >= 1 else "",
+                            "target_y": float(target_pos[1]) if target_pos.size >= 2 else "",
+                            "target_z": float(target_pos[2]) if target_pos.size >= 3 else "",
+                            "move_to_object_distance_xy": (
+                                float(distance_xy) if np.isfinite(distance_xy) else ""
+                            ),
+                            "move_to_object_min_distance_xy": (
+                                float(min_move_to_object_distance_xy)
+                                if np.isfinite(min_move_to_object_distance_xy)
+                                else ""
+                            ),
+                            "move_to_object_initial_distance_xy": (
+                                float(initial_move_to_object_distance_xy)
+                                if np.isfinite(initial_move_to_object_distance_xy)
+                                else ""
+                            ),
+                            "move_to_object_distance_reduction_xy": (
+                                float(initial_move_to_object_distance_xy - distance_xy)
+                                if np.isfinite(initial_move_to_object_distance_xy)
+                                and np.isfinite(distance_xy)
+                                else ""
+                            ),
+                            "move_to_object_distance_threshold": distance_threshold,
                             "success": int(bool(final_info.get("success", False))),
                             "simulation_state_valid": int(bool(final_info.get("simulation_state_valid", True))),
                         }
@@ -594,13 +714,19 @@ def _run_bucket(
                             action=action,
                             scaled_action=scaled_action,
                             info=dict(final_info),
+                            reward=float(reward),
+                            reward_total=float(reward_total),
+                            initial_move_to_object_distance_xy=(
+                                None
+                                if not np.isfinite(initial_move_to_object_distance_xy)
+                                else float(initial_move_to_object_distance_xy)
+                            ),
+                            min_move_to_object_distance_xy=(
+                                None
+                                if not np.isfinite(min_move_to_object_distance_xy)
+                                else float(min_move_to_object_distance_xy)
+                            ),
                         )
-                    distance_xy_raw = final_info.get("move_to_object_validation_distance_xy")
-                    if distance_xy_raw is not None:
-                        try:
-                            min_move_to_object_distance_xy = min(min_move_to_object_distance_xy, float(distance_xy_raw))
-                        except (TypeError, ValueError):
-                            pass
 
                 result = _episode_result_from_final(
                     episode_index=episode_index,
@@ -616,6 +742,7 @@ def _run_bucket(
                     policy_output_calls=policy_output_calls,
                     action_steps=action_steps,
                     reset_attempts=reset_attempts,
+                    initial_move_to_object_distance_xy=initial_move_to_object_distance_xy,
                     min_move_to_object_distance_xy=min_move_to_object_distance_xy,
                 )
                 saved_video_path: str | None = None
@@ -864,7 +991,20 @@ def main() -> int:
         group_fields=("instruction_type", "target_object_catalog"),
     )
     text_summaries = _summarize_instruction_text_results(metric_results)
-    move_to_object_threshold_rows = _move_to_object_threshold_sweep(metric_results)
+    move_to_object_threshold_rows = _move_to_object_threshold_sweep(
+        metric_results,
+        thresholds=tuple(
+            sorted(
+                {
+                    float(args.move_to_object_success_distance),
+                    0.025,
+                    0.05,
+                    0.10,
+                    0.15,
+                }
+            )
+        ),
+    )
 
     _write_episode_results_csv(run_dir / "episode_results.csv", all_results)
     _write_success_rate_csv(run_dir / "instruction_success_rates.csv", instruction_summaries)
@@ -919,6 +1059,7 @@ def main() -> int:
         "record_success_videos": bool(args.record_success_videos),
         "record_failure_videos": bool(args.record_failure_videos),
         "record_all_success_videos": bool(args.record_all_success_videos),
+        "record_all_failure_videos": bool(args.record_all_failure_videos),
         "video_coverage_level": str(args.video_coverage),
         "recorded_videos": int(len(video_probes)),
         "video_registry": video_registry,

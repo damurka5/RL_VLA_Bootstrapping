@@ -264,6 +264,39 @@ benchmark recommendation. The first four production updates emit
 then disable automatically, leaving the remainder of the 2M-step run on the
 unsynchronized throughput path.
 
+### Qualitative move-to-object checkpoint review
+
+After training, render several held-out multi-object episodes for every
+configured `move to <object>` target:
+
+```bash
+REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab CUDA_VISIBLE_DEVICES=0 \
+  bash scripts/evaluate_cdpr_smolvla_move_to_videos_remote.sh
+```
+
+The launcher defaults to the completed
+`cdpr_smolvla_move_to_scratch_mjwarp_w512_20260719_081705/rl/step_5000081`
+adapter. Override `CHECKPOINT`, `EPISODES_PER_TARGET`, `SUCCESS_DISTANCE`,
+`SEED`, or `RUN_DIR` as needed. Every attempt is recorded, not only the first
+success or failure. Each MP4 burns in the instruction, normalized and applied
+action, end-effector and target positions, current/start/best XY distance,
+strict threshold status, step reward, and cumulative reward.
+
+Video capture uses the single-environment EGL MuJoCo validation wrapper because
+the batched MJWarp training validator does not retain host video frames. The
+loader preserves the GRPO checkpoint's compact six-dimensional state encoding,
+SmolVLA camera/prompt path, action chunking, controller scales, object catalog,
+and task metadata. Treat this as a visual generalization check alongside—not a
+replacement for—the batched MJWarp validation metric.
+
+The output directory also contains per-step `*_actions.csv` traces,
+`episode_results.csv`, `move_to_object_threshold_sweep.csv` (the same
+trajectories rescored at the strict 2 cm threshold plus 2.5, 5, 10, and 15
+cm), a video decode audit, and
+`validation_report.md`. This makes it possible to distinguish a useful policy
+that usually approaches the named object from one that exploits the dense
+reward without reliably moving toward the correct target.
+
 Start conservatively at 16 worlds/rank:
 
 ```bash

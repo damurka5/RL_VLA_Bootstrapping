@@ -10,9 +10,11 @@ from types import SimpleNamespace
 import numpy as np
 
 from rl_vla_bootstrapping.cli.validate_cdpr_smolvla_policy import (
+    _checkpoint_actor_state,
     _checkpoint_state_dim,
     _configure_checkpoint_compatible_object_slots,
     _max_objects_from_state_dim,
+    _move_to_object_distance_xy,
 )
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
@@ -133,6 +135,45 @@ class SmolVLACDPRTests(unittest.TestCase):
         _configure_checkpoint_compatible_object_slots(args, payload)
 
         self.assertEqual(args.max_objects, 4)
+
+    def test_validation_extracts_compact_actor_from_grpo_policy_checkpoint(self):
+        first_weight = np.zeros((1024, 46), dtype=np.float32)
+        payload = {
+            "chunk_size": 8,
+            "action_dim": 5,
+            "policy": {
+                "actor.net.net.0.weight": first_weight,
+                "actor.net.net.0.bias": np.zeros((1024,), dtype=np.float32),
+                "log_std": np.zeros((8, 5), dtype=np.float32),
+            },
+        }
+
+        self.assertEqual(_checkpoint_state_dim(payload), 6)
+        actor = _checkpoint_actor_state(payload)
+        self.assertIs(actor["net.net.0.weight"], first_weight)
+        self.assertNotIn("log_std", actor)
+
+    def test_qualitative_distance_telemetry_uses_validation_metric_or_geometry(self):
+        self.assertAlmostEqual(
+            _move_to_object_distance_xy(
+                {
+                    "move_to_object_validation_distance_xy": 0.037,
+                    "ee_position": [0.0, 0.0, 0.4],
+                    "goal_position": [1.0, 1.0, 0.15],
+                }
+            ),
+            0.037,
+        )
+        self.assertAlmostEqual(
+            _move_to_object_distance_xy(
+                {
+                    "ee_position": [0.1, -0.1, 0.4],
+                    "goal_position": [0.4, 0.3, 0.15],
+                }
+            ),
+            0.5,
+            places=6,
+        )
 
     @unittest.skipIf(torch is None, "torch is not installed")
     def test_tokenizer_attention_mask_is_bool_for_lerobot_attention(self):
@@ -327,11 +368,25 @@ class SmolVLACDPRTests(unittest.TestCase):
             ROOT / "scripts" / "train_cdpr_smolvla_strict_dense_bridge_remote.sh",
             ROOT / "scripts" / "train_cdpr_smolvla_complex_grpo_dual_remote.sh",
             ROOT / "scripts" / "evaluate_cdpr_smolvla_dense_remote.sh",
+            ROOT / "scripts" / "evaluate_cdpr_smolvla_move_to_videos_remote.sh",
         ]
         for script in scripts:
             with self.subTest(script=script.name):
                 result = subprocess.run(["bash", "-n", str(script)], check=False, capture_output=True, text=True)
                 self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_move_to_qualitative_launcher_records_every_target_attempt(self):
+        script = (
+            ROOT / "scripts" / "evaluate_cdpr_smolvla_move_to_videos_remote.sh"
+        ).read_text()
+
+        self.assertIn("step_5000081/smolvla_grpo_adapter.pt", script)
+        self.assertIn("--instruction-types move_to_object", script)
+        self.assertIn("--stratify-move-to-object-targets", script)
+        self.assertIn("--record-all-success-videos", script)
+        self.assertIn("--record-all-failure-videos", script)
+        self.assertIn("--video-action-overlay", script)
+        self.assertIn("--strict-video-validation", script)
 
     def test_remote_training_ignores_invalid_tokens_for_public_smolvla_models(self):
         helper = (ROOT / "scripts" / "huggingface_public_models.sh").read_text()

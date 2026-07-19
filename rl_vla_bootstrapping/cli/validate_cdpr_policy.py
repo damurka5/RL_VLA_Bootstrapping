@@ -101,8 +101,11 @@ class EpisodeResult:
     final_ee_yaw: float | None = None
     final_gripper_opening: float | None = None
     final_gripper_target: float | None = None
+    initial_move_to_object_distance_xy: float | None = None
     final_move_to_object_distance_xy: float | None = None
     min_move_to_object_distance_xy: float | None = None
+    final_move_to_object_distance_reduction_xy: float | None = None
+    best_move_to_object_distance_reduction_xy: float | None = None
     move_to_object_distance_threshold: float | None = None
     action_trace_path: str | None = None
     video_path: str | None = None
@@ -1360,6 +1363,11 @@ def _format_action_vector(values: Any) -> str:
     return "[" + ", ".join(f"{float(value):+.3f}" for value in arr[:5]) + "]"
 
 
+def _format_compact_vector(values: Any, *, limit: int) -> str:
+    arr = np.asarray(values, dtype=np.float32).reshape(-1)
+    return "[" + ",".join(f"{float(value):+.3f}" for value in arr[:limit]) + "]"
+
+
 def _annotate_latest_validation_frame(
     *,
     sim: Any,
@@ -1372,6 +1380,10 @@ def _annotate_latest_validation_frame(
     action: np.ndarray,
     scaled_action: np.ndarray,
     info: dict[str, Any],
+    reward: float | None = None,
+    reward_total: float | None = None,
+    initial_move_to_object_distance_xy: float | None = None,
+    min_move_to_object_distance_xy: float | None = None,
 ) -> None:
     if Image is None or ImageDraw is None:
         return
@@ -1386,20 +1398,47 @@ def _annotate_latest_validation_frame(
     draw = ImageDraw.Draw(image, "RGBA")
     font = ImageFont.load_default() if ImageFont is not None else None
     ee = info.get("ee_position", ())
-    state_line = (
-        f"EE={_format_action_vector(list(ee)[:3])} "
-        f"yaw={float(info.get('ee_yaw', 0.0)):+.3f} "
-        f"grip={float(info.get('gripper_opening', 0.0)):.3f}"
-        f"->{float(info.get('gripper_target', 0.0)):.3f}"
-    )
+    goal = info.get("goal_position", info.get("target_object_position_actual", ()))
+    normalized = np.asarray(action, dtype=np.float32).reshape(-1)
+    applied = np.asarray(scaled_action, dtype=np.float32).reshape(-1)
     source = "NEW VLA OUTPUT" if new_policy_output else "cached VLA chunk"
     lines = [
         f"{source} | call #{int(policy_call)} | action {int(chunk_action_index) + 1}/{int(chunk_length)}",
         f"step {int(step)} | {instruction}",
-        f"normalized [x y z yaw grip] = {_format_action_vector(action)}",
-        f"applied    [m m m rad open] = {_format_action_vector(scaled_action)}",
-        state_line,
+        f"norm xyz={_format_compact_vector(normalized[:3], limit=3)} "
+        f"yaw={normalized[3]:+.3f} grip={normalized[4]:+.3f}",
+        f"apply dxyz={_format_compact_vector(applied[:3], limit=3)} "
+        f"dyaw={applied[3]:+.3f} dgrip={applied[4]:+.3f}",
+        f"EE={_format_compact_vector(list(ee)[:3], limit=3)} "
+        f"yaw={float(info.get('ee_yaw', 0.0)):+.3f}",
+        f"target={_format_compact_vector(list(goal)[:3], limit=3)} "
+        f"grip={float(info.get('gripper_opening', 0.0)):.3f}"
+        f"->{float(info.get('gripper_target', 0.0)):.3f}",
     ]
+    distance_raw = info.get("move_to_object_validation_distance_xy")
+    threshold_raw = info.get("move_to_object_validation_distance_threshold")
+    if distance_raw is not None:
+        distance = float(distance_raw)
+        initial = (
+            distance
+            if initial_move_to_object_distance_xy is None
+            else float(initial_move_to_object_distance_xy)
+        )
+        best = (
+            distance
+            if min_move_to_object_distance_xy is None
+            else float(min_move_to_object_distance_xy)
+        )
+        threshold = float(threshold_raw) if threshold_raw is not None else float("nan")
+        status = "PASS" if bool(info.get("success", False)) else "not yet"
+        lines.append(
+            f"XY={distance:.4f} m | start={initial:.4f} | best={best:.4f} | limit<={threshold:.4f}"
+        )
+        lines.append(f"progress={initial - distance:+.4f} m | strict status={status}")
+    if reward is not None or reward_total is not None:
+        lines.append(
+            f"reward={float(reward or 0.0):+.6f} | cumulative={float(reward_total or 0.0):+.6f}"
+        )
     line_height = 15
     box_height = line_height * len(lines) + 10
     draw.rectangle((0, 0, image.width, box_height), fill=(0, 0, 0, 190))
@@ -1447,6 +1486,16 @@ def _write_action_trace_csv(output_path: Path, action_trace: list[dict[str, Any]
         "ee_yaw",
         "gripper_opening",
         "gripper_target",
+        "reward",
+        "reward_total",
+        "target_x",
+        "target_y",
+        "target_z",
+        "move_to_object_distance_xy",
+        "move_to_object_min_distance_xy",
+        "move_to_object_initial_distance_xy",
+        "move_to_object_distance_reduction_xy",
+        "move_to_object_distance_threshold",
         "success",
         "simulation_state_valid",
     ]
@@ -1852,8 +1901,11 @@ def _write_episode_results_csv(output_path: Path, episode_results: list[EpisodeR
         "final_ee_yaw",
         "final_gripper_opening",
         "final_gripper_target",
+        "initial_move_to_object_distance_xy",
         "final_move_to_object_distance_xy",
         "min_move_to_object_distance_xy",
+        "final_move_to_object_distance_reduction_xy",
+        "best_move_to_object_distance_reduction_xy",
         "move_to_object_distance_threshold",
         "video_kind",
         "video_path",
