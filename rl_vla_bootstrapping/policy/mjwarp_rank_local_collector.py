@@ -11,6 +11,7 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     ACTIVE_INSTRUCTION_TYPES,
     INSTRUCTION_TO_ID,
+    BatchedCatchReleaseDenseReward,
     BatchedMoveToDistanceReward,
     BatchedTaskState,
     BatchedTaskThresholds,
@@ -28,7 +29,7 @@ from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
 )
 
 
-_SHELL_COUNTS = (5, 5, 5, 5, 8, 8, 8, 8)
+_SHELL_COUNTS = (5, 5, 5, 5, 8, 8, 8, 8, 5)
 _SHELL_HORIZON_LOW = (1, 1, 2, 3, 5, 7, 14, 21)
 _SHELL_HORIZON_HIGH = (1, 2, 3, 4, 6, 13, 20, 32)
 _SHELL_ACTION_LOW = (1, 4, 7, 11, 17, 25, 53, 81)
@@ -464,6 +465,7 @@ class BatchedReverseFrontierResetter:
         rehearsal_probability: float = 0.20,
         support_surface_z: float = 0.15,
         balanced_target_catalogs: bool = False,
+        task_metadata: Mapping[str, Any] | None = None,
     ) -> None:
         layout.validate()
         self.backend = backend
@@ -477,6 +479,55 @@ class BatchedReverseFrontierResetter:
         self.rehearsal_probability = float(rehearsal_probability)
         self.support_surface_z = float(support_surface_z)
         self.balanced_target_catalogs = bool(balanced_target_catalogs)
+        metadata = dict(task_metadata or {})
+
+        def flag(key: str, default: bool = False) -> bool:
+            value = metadata.get(key, default)
+            if isinstance(value, str):
+                return value.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(value)
+
+        def number(key: str, default: float) -> float:
+            try:
+                return float(metadata.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        def bounds(
+            key: str, default: tuple[float, float]
+        ) -> tuple[float, float]:
+            raw = metadata.get(key, default)
+            try:
+                low, high = tuple(float(value) for value in raw)
+            except (TypeError, ValueError):
+                low, high = default
+            return (min(low, high), max(low, high))
+
+        self.random_workspace_gripper_start = flag(
+            "random_workspace_gripper_start", False
+        )
+        self.force_caught_container_start = flag(
+            "placement_start_with_caught_object", False
+        )
+        self.workspace_x_bounds = bounds(
+            "ee_workspace_x_bounds", (-0.28, 0.28)
+        )
+        self.workspace_y_bounds = bounds(
+            "ee_workspace_y_bounds", (-0.28, 0.28)
+        )
+        self.workspace_z_bounds = bounds(
+            "ee_workspace_z_bounds", (0.30, 0.48)
+        )
+        self.random_start_min_goal_distance = max(
+            number("random_workspace_min_goal_xy_distance", 0.10), 0.0
+        )
+        self.random_start_horizon_low = max(
+            1, int(round(number("random_workspace_horizon_low", 21)))
+        )
+        self.random_start_horizon_high = max(
+            self.random_start_horizon_low,
+            int(round(number("random_workspace_horizon_high", 32))),
+        )
         self.torch = backend.torch
         self.device = backend.device
         instruction_ids = resolve_mjwarp_instruction_ids(instruction_types)
@@ -527,10 +578,18 @@ class BatchedReverseFrontierResetter:
             groups, dtype=torch.int64, device=self.device
         )
         configured_tasks = self.instruction_ids
-        eligible_tasks = configured_tasks[
-            self.curriculum.current_shell.index_select(0, configured_tasks)
-            < self.curriculum._shell_max.index_select(0, configured_tasks)
-        ]
+        eligible_tasks = (
+            configured_tasks
+            if self.random_workspace_gripper_start
+            else configured_tasks[
+                self.curriculum.current_shell.index_select(
+                    0, configured_tasks
+                )
+                < self.curriculum._shell_max.index_select(
+                    0, configured_tasks
+                )
+            ]
+        )
         if int(eligible_tasks.numel()) == 0:
             eligible_tasks = configured_tasks
         sampled_task_index = torch.randint(
@@ -541,7 +600,11 @@ class BatchedReverseFrontierResetter:
             device=self.device,
         )
         task_group = eligible_tasks.index_select(0, sampled_task_index)
-        frontier_shell = self.curriculum.current_shell.index_select(0, task_group)
+        frontier_shell = (
+            torch.zeros_like(task_group)
+            if self.random_workspace_gripper_start
+            else self.curriculum.current_shell.index_select(0, task_group)
+        )
         rehearsal = (
             torch.rand((groups,), generator=generator, device=self.device)
             >= self.frontier_probability
@@ -577,6 +640,18 @@ class BatchedReverseFrontierResetter:
                 dtype=torch.float32
             )
         ).to(dtype=torch.int64)
+        if self.random_workspace_gripper_start:
+            horizon_group = torch.randint(
+                self.random_start_horizon_low,
+                self.random_start_horizon_high + 1,
+                (groups,),
+                generator=generator,
+                device=self.device,
+                dtype=torch.int64,
+            )
+            target_action_steps = (
+                horizon_group * 4
+            )
         travel_group = (
             (target_action_steps.to(dtype=torch.float32) - 0.5)
             .clamp_min(0.5)
@@ -603,17 +678,28 @@ class BatchedReverseFrontierResetter:
             )
         move_target_catalog = target_pool.index_select(0, target_positions)
         graspable_pool = self.graspable_target_catalog_ids
-        graspable_target_catalog = graspable_pool.index_select(
-            0,
-            torch.randint(
+        if self.balanced_target_catalogs:
+            graspable_positions = (
+                torch.arange(
+                    groups, dtype=torch.int64, device=self.device
+                )
+                + self.rank * groups
+                + int(round_index) * groups
+            ) % int(graspable_pool.numel())
+        else:
+            graspable_positions = torch.randint(
                 0,
                 int(graspable_pool.numel()),
                 (groups,),
                 generator=generator,
                 device=self.device,
-            ),
+            )
+        graspable_target_catalog = graspable_pool.index_select(
+            0,
+            graspable_positions,
         )
         move_to_task = task_group == INSTRUCTION_TO_ID["move_to_object"]
+        pick_up_task = task_group == INSTRUCTION_TO_ID["pick_up"]
         target_catalog = torch.where(
             move_to_task, move_target_catalog, graspable_target_catalog
         )
@@ -696,7 +782,10 @@ class BatchedReverseFrontierResetter:
         )
         reference_slot_group = torch.where(
             is_container
-            | (task_group >= ACTIVE_INSTRUCTION_TYPES.index("move_left_of_object")),
+            | (
+                (task_group >= ACTIVE_INSTRUCTION_TYPES.index("move_left_of_object"))
+                & ~pick_up_task
+            ),
             torch.ones_like(target_slot_group),
             torch.full_like(target_slot_group, -1),
         )
@@ -715,6 +804,31 @@ class BatchedReverseFrontierResetter:
         )
         ee_group[:, 0:2] *= 0.40
         ee_group[:, 2] = 0.40
+        if self.random_workspace_gripper_start:
+            random_unit = torch.rand(
+                (groups, 3), generator=generator, device=self.device
+            )
+            workspace_low = torch.tensor(
+                (
+                    self.workspace_x_bounds[0],
+                    self.workspace_y_bounds[0],
+                    self.workspace_z_bounds[0],
+                ),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            workspace_high = torch.tensor(
+                (
+                    self.workspace_x_bounds[1],
+                    self.workspace_y_bounds[1],
+                    self.workspace_z_bounds[1],
+                ),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            ee_group = workspace_low + random_unit * (
+                workspace_high - workspace_low
+            )
         random_angle = (
             torch.rand((groups,), generator=generator, device=self.device)
             * (2.0 * torch.pi)
@@ -736,7 +850,10 @@ class BatchedReverseFrontierResetter:
             + random_direction * move_to_distance[:, None]
         )
         move_to_ee[:, 2] = 0.40
-        ee_group = torch.where(move_to_mask[:, None], move_to_ee, ee_group)
+        if not self.random_workspace_gripper_start:
+            ee_group = torch.where(
+                move_to_mask[:, None], move_to_ee, ee_group
+            )
 
         push_left = task_group == ACTIVE_INSTRUCTION_TYPES.index("push_left")
         push_right = task_group == ACTIVE_INSTRUCTION_TYPES.index("push_right")
@@ -795,6 +912,8 @@ class BatchedReverseFrontierResetter:
             | is_relation
             | between
         ) & (shell_group >= 5)
+        if self.force_caught_container_start:
+            grasp_learning &= ~is_container
         held_group = placement_task & ~grasp_learning
         shell_zero = shell_group == 0
 
@@ -823,6 +942,89 @@ class BatchedReverseFrontierResetter:
         placement_goal = torch.where(
             between[:, None], between_goal, placement_goal
         )
+        if self.random_workspace_gripper_start:
+            random_goal = torch.where(
+                is_container[:, None], reference, target_position
+            )
+            for _ in range(6):
+                too_close = (
+                    torch.linalg.vector_norm(
+                        ee_group[:, :2] - random_goal[:, :2], dim=-1
+                    )
+                    < self.random_start_min_goal_distance
+                )
+                replacement = torch.rand(
+                    (groups, 2), generator=generator, device=self.device
+                )
+                replacement[:, 0] = (
+                    self.workspace_x_bounds[0]
+                    + replacement[:, 0]
+                    * (
+                        self.workspace_x_bounds[1]
+                        - self.workspace_x_bounds[0]
+                    )
+                )
+                replacement[:, 1] = (
+                    self.workspace_y_bounds[0]
+                    + replacement[:, 1]
+                    * (
+                        self.workspace_y_bounds[1]
+                        - self.workspace_y_bounds[0]
+                    )
+                )
+                ee_group[:, :2] = torch.where(
+                    too_close[:, None], replacement, ee_group[:, :2]
+                )
+            too_close = (
+                torch.linalg.vector_norm(
+                    ee_group[:, :2] - random_goal[:, :2], dim=-1
+                )
+                < self.random_start_min_goal_distance
+            )
+            if bool(too_close.any().item()):
+                corners = torch.tensor(
+                    (
+                        (
+                            self.workspace_x_bounds[0],
+                            self.workspace_y_bounds[0],
+                        ),
+                        (
+                            self.workspace_x_bounds[0],
+                            self.workspace_y_bounds[1],
+                        ),
+                        (
+                            self.workspace_x_bounds[1],
+                            self.workspace_y_bounds[0],
+                        ),
+                        (
+                            self.workspace_x_bounds[1],
+                            self.workspace_y_bounds[1],
+                        ),
+                    ),
+                    dtype=torch.float32,
+                    device=self.device,
+                )
+                corner_distance = torch.linalg.vector_norm(
+                    corners[None, :, :] - random_goal[:, None, :2],
+                    dim=-1,
+                )
+                farthest_corner = corners.index_select(
+                    0, corner_distance.argmax(dim=1)
+                )
+                ee_group[:, :2] = torch.where(
+                    too_close[:, None], farthest_corner, ee_group[:, :2]
+                )
+                remaining_too_close = (
+                    torch.linalg.vector_norm(
+                        ee_group[:, :2] - random_goal[:, :2], dim=-1
+                    )
+                    < self.random_start_min_goal_distance
+                )
+                if bool(remaining_too_close.any().item()):
+                    raise ValueError(
+                        "The configured EE workspace cannot satisfy "
+                        "random_workspace_min_goal_xy_distance."
+                    )
 
         zone_half = torch.full((groups,), 0.015, device=self.device)
         relation_boundary = zone_half / random_direction.abs().amax(
@@ -883,6 +1085,14 @@ class BatchedReverseFrontierResetter:
         )
 
         caught_group = held_group
+        if self.random_workspace_gripper_start:
+            random_caught_position = ee_group.clone()
+            random_caught_position[:, 2] -= 0.08
+            object_positions_group[:, 0] = torch.where(
+                caught_group[:, None],
+                random_caught_position,
+                object_positions_group[:, 0],
+            )
         caught_object_position = object_positions_group[:, 0].clone()
         caught_ee = caught_object_position.clone()
         caught_ee[:, 2] += 0.08
@@ -945,6 +1155,9 @@ class BatchedReverseFrontierResetter:
             torch.rand((groups, 4), generator=generator, device=self.device)
             * (2.0 * torch.pi)
             - torch.pi
+        )
+        object_yaw[:, 0] = torch.where(
+            caught_group, yaw_group, object_yaw[:, 0]
         )
         object_quat_group = torch.zeros(
             (groups, 4, 4), dtype=torch.float32, device=self.device
@@ -1022,8 +1235,8 @@ class BatchedReverseFrontierResetter:
             reference_slots=reference_slots,
             second_reference_slots=second_reference_slots,
             initial_target_positions=initial_target,
-            ever_grasped=torch.zeros_like(caught),
-            grasped=torch.zeros_like(caught),
+            ever_grasped=caught.clone(),
+            grasped=caught.clone(),
             step_count=torch.zeros(
                 (worlds,), dtype=torch.int64, device=self.device
             ),
@@ -1033,6 +1246,14 @@ class BatchedReverseFrontierResetter:
                 self.support_surface_z,
                 dtype=torch.float32,
                 device=self.device,
+            ),
+            target_rest_height=(
+                rest_height.repeat_interleave(group_size, dim=0)[
+                    torch.arange(
+                        worlds, dtype=torch.int64, device=self.device
+                    ),
+                    target_slots,
+                ]
             ),
         )
         target_catalog_names = [
@@ -1052,7 +1273,9 @@ class BatchedReverseFrontierResetter:
             elif name == "put_into_bowl":
                 text = f"put {target_name} into bowl"
             elif name == "put_into_plate":
-                text = f"put {target_name} on plate"
+                text = f"put {target_name} on the plate"
+            elif name == "pick_up":
+                text = f"pick up {target_name}"
             elif name == "move_left_of_object":
                 text = f"move {target_name} left of the reference object"
             elif name == "move_right_of_object":
@@ -1092,8 +1315,10 @@ class BatchedReverseFrontierResetter:
             group_instruction_ids=task_group,
             group_shell_ids=shell_group,
             horizons=horizon_group.repeat_interleave(group_size),
-            physical_grasp=torch.zeros_like(caught),
-            grasp_eligible=placement_task.repeat_interleave(group_size),
+            physical_grasp=caught.clone(),
+            grasp_eligible=(placement_task | pick_up_task).repeat_interleave(
+                group_size
+            ),
             bilateral_contact_steps=torch.zeros(
                 (worlds,), dtype=torch.int64, device=self.device
             ),
@@ -1144,6 +1369,9 @@ class RankLocalMJWarpGRPOCollector:
         dynamic_sampling: bool = True,
         group_selection: str = "uniform",
         move_to_distance_reward: BatchedMoveToDistanceReward | None = None,
+        catch_release_dense_reward: (
+            BatchedCatchReleaseDenseReward | None
+        ) = None,
         profile: bool = False,
     ) -> None:
         layout.validate()
@@ -1166,6 +1394,7 @@ class RankLocalMJWarpGRPOCollector:
         self.dynamic_max_pass_rate = float(dynamic_max_pass_rate)
         self.dynamic_sampling = bool(dynamic_sampling)
         self.move_to_distance_reward = move_to_distance_reward
+        self.catch_release_dense_reward = catch_release_dense_reward
         self.group_selection = str(group_selection).lower()
         if self.group_selection not in {"uniform", "best", "softmax"}:
             raise ValueError(
@@ -1179,6 +1408,34 @@ class RankLocalMJWarpGRPOCollector:
             self.layout.worlds_per_rank,
             dtype=self.torch.int64,
             device=self.device,
+        )
+
+    def _task_thresholds(self) -> BatchedTaskThresholds:
+        move_to = self.move_to_distance_reward
+        catch_release = self.catch_release_dense_reward
+        return BatchedTaskThresholds(
+            move_to_xy_low=(
+                0.0 if move_to is None else float(move_to.xy_window_low)
+            ),
+            move_to_xy=(
+                0.02 if move_to is None else float(move_to.xy_window_high)
+            ),
+            container_xy=(
+                0.03
+                if catch_release is None
+                else max(
+                    float(catch_release.plate_radius),
+                    float(catch_release.bowl_radius),
+                )
+            ),
+            container_z=(
+                0.12
+                if catch_release is None
+                else float(catch_release.container_z_tolerance)
+            ),
+            minimum_target_motion=(
+                0.04 if catch_release is None else 0.0
+            ),
         )
 
     def _sync_for_profile(self) -> None:
@@ -1249,7 +1506,6 @@ class RankLocalMJWarpGRPOCollector:
                 reset.bilateral_contact_steps
                 >= int(_GRASP_PERSISTENCE_STEPS)
             )
-            & lifted
             & ~release_open
         )
         reset.physical_grasp.copy_(physical_grasp)
@@ -1438,23 +1694,11 @@ class RankLocalMJWarpGRPOCollector:
                     caught_target=caught_target,
                     active_mask=step_active,
                     max_steps=10_000,
-                    thresholds=BatchedTaskThresholds(
-                        move_to_xy_low=(
-                            0.0
-                            if self.move_to_distance_reward is None
-                            else float(
-                                self.move_to_distance_reward.xy_window_low
-                            )
-                        ),
-                        move_to_xy=(
-                            0.02
-                            if self.move_to_distance_reward is None
-                            else float(
-                                self.move_to_distance_reward.xy_window_high
-                            )
-                        ),
-                    ),
+                    thresholds=self._task_thresholds(),
                     move_to_distance_reward=self.move_to_distance_reward,
+                    catch_release_dense_reward=(
+                        self.catch_release_dense_reward
+                    ),
                 )
                 candidate_rewards.copy_(
                     torch.where(
@@ -1507,7 +1751,10 @@ class RankLocalMJWarpGRPOCollector:
         pass_rate = success_by_group.to(dtype=torch.float32).mean(dim=1)
         if not self.dynamic_sampling:
             informative_group = torch.ones_like(pass_rate, dtype=torch.bool)
-        elif self.move_to_distance_reward is not None:
+        elif (
+            self.move_to_distance_reward is not None
+            or self.catch_release_dense_reward is not None
+        ):
             reward_span = rewards_by_group.amax(dim=1) - rewards_by_group.amin(
                 dim=1
             )
@@ -1566,6 +1813,9 @@ class RankLocalMJWarpGRPOCollector:
             ),
             "dense_move_to_distance_reward": float(
                 self.move_to_distance_reward is not None
+            ),
+            "dense_catch_release_reward": float(
+                self.catch_release_dense_reward is not None
             ),
             "records_total": float(loss_mask.numel()),
             "records_informative": float(loss_mask.sum().item()),
@@ -1629,18 +1879,12 @@ class RankLocalMJWarpGRPOCollector:
         """Run one fixed-seed, inference-only validation batch on this GPU."""
 
         torch = self.torch
-        if tuple(
-            int(value)
-            for value in self.resetter.instruction_ids.detach().cpu().tolist()
-        ) != (INSTRUCTION_TO_ID["move_to_object"],):
+        if (
+            self.move_to_distance_reward is None
+            and self.catch_release_dense_reward is None
+        ):
             raise RuntimeError(
-                "MJWarp held-out validation currently supports the configured "
-                "move_to_object scratch task only."
-            )
-        if self.move_to_distance_reward is None:
-            raise RuntimeError(
-                "MJWarp held-out move-to validation requires the tensorized "
-                "distance reward."
+                "MJWarp held-out dense validation requires a tensorized reward."
             )
 
         validation_started = time.perf_counter()
@@ -1728,6 +1972,13 @@ class RankLocalMJWarpGRPOCollector:
                     low_dim = self.backend.step(
                         actions[:, action_index], step_active
                     )
+                    low_dim, caught_target, _grasp_diagnostics = (
+                        self._update_physical_grasp(
+                            reset,
+                            low_dim,
+                            step_active,
+                        )
+                    )
                     self._sync_for_profile()
                     timings["validation/physics_time_s"] += (
                         time.perf_counter() - started
@@ -1739,18 +1990,14 @@ class RankLocalMJWarpGRPOCollector:
                         ee_position=low_dim.ee_position,
                         object_positions=low_dim.object_positions,
                         gripper_opening=low_dim.gripper_opening,
-                        caught_target=torch.zeros_like(active),
+                        caught_target=caught_target,
                         active_mask=step_active,
                         max_steps=10_000,
-                        thresholds=BatchedTaskThresholds(
-                            move_to_xy_low=float(
-                                self.move_to_distance_reward.xy_window_low
-                            ),
-                            move_to_xy=float(
-                                self.move_to_distance_reward.xy_window_high
-                            ),
-                        ),
+                        thresholds=self._task_thresholds(),
                         move_to_distance_reward=self.move_to_distance_reward,
+                        catch_release_dense_reward=(
+                            self.catch_release_dense_reward
+                        ),
                     )
                     candidate_rewards.copy_(
                         torch.where(
@@ -1762,7 +2009,7 @@ class RankLocalMJWarpGRPOCollector:
                     final_xy_distance.copy_(
                         torch.where(
                             step_active,
-                            result.diagnostics["ee_xy_distance"].to(
+                            result.diagnostics["dense_target_distance"].to(
                                 dtype=torch.float32
                             ),
                             final_xy_distance,

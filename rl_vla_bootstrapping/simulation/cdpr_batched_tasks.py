@@ -13,6 +13,7 @@ ACTIVE_INSTRUCTION_TYPES: tuple[str, ...] = (
     "move_left_of_object",
     "move_right_of_object",
     "move_between_objects",
+    "pick_up",
 )
 INSTRUCTION_TO_ID = {
     name: index for index, name in enumerate(ACTIVE_INSTRUCTION_TYPES)
@@ -142,6 +143,96 @@ class BatchedMoveToDistanceReward:
         )
 
 
+@dataclass(frozen=True)
+class BatchedCatchReleaseDenseReward:
+    """Dense GPU reward parameters for caught-object placement and pick-up."""
+
+    distance_reward_scale: float = 0.08
+    distance_reward_weight: float = 1.0
+    distance_reward_exponent: float = 2.0
+    placement_success_bonus: float = 2.0
+    placement_failure_penalty: float = 1.0
+    plate_radius: float = 0.091
+    bowl_radius: float = 0.057
+    container_z_tolerance: float = 0.12
+    wrong_place_settle_margin: float = 0.025
+    pick_grasp_height_offset: float = 0.08
+    pick_distance_window: float = 0.02
+    pick_grasp_bonus: float = 1.0
+    pick_lift_reward_weight: float = 1.0
+    pick_lift_reward_scale: float = 0.05
+    pick_lift_success_height: float = 0.05
+    pick_success_bonus: float = 2.0
+
+    @classmethod
+    def from_metadata(
+        cls, metadata: dict[str, Any] | None
+    ) -> "BatchedCatchReleaseDenseReward":
+        values = dict(metadata or {})
+
+        def number(key: str, default: float) -> float:
+            raw = values.get(key, default)
+            try:
+                return float(raw)
+            except (TypeError, ValueError):
+                return float(default)
+
+        default_scale = number("move_to_object_xy_reward_scale", 0.08)
+        default_weight = number(
+            "move_to_object_distance_reward_weight", 1.0
+        )
+        default_success_bonus = number("success_bonus", 2.0)
+        return cls(
+            distance_reward_scale=max(
+                number("catch_release_distance_reward_scale", default_scale),
+                1.0e-6,
+            ),
+            distance_reward_weight=number(
+                "catch_release_distance_reward_weight", default_weight
+            ),
+            distance_reward_exponent=max(
+                number("distance_reward_exponent", 2.0), 1.0e-6
+            ),
+            placement_success_bonus=number(
+                "placement_release_success_bonus", default_success_bonus
+            ),
+            placement_failure_penalty=max(
+                number("placement_wrong_drop_penalty", 1.0), 0.0
+            ),
+            plate_radius=max(
+                number("put_plate_xy_tolerance", 0.091), 1.0e-6
+            ),
+            bowl_radius=max(
+                number("put_bowl_xy_tolerance", 0.057), 1.0e-6
+            ),
+            container_z_tolerance=max(
+                number("put_container_z_tolerance", 0.12), 0.0
+            ),
+            wrong_place_settle_margin=max(
+                number("placement_wrong_drop_settle_margin", 0.025), 0.0
+            ),
+            pick_grasp_height_offset=number(
+                "pick_grasp_height_offset", 0.08
+            ),
+            pick_distance_window=max(
+                number("pick_distance_window", 0.02), 0.0
+            ),
+            pick_grasp_bonus=number("pick_grasp_bonus", 1.0),
+            pick_lift_reward_weight=number(
+                "pick_lift_reward_weight", 1.0
+            ),
+            pick_lift_reward_scale=max(
+                number("pick_lift_reward_scale", 0.05), 1.0e-6
+            ),
+            pick_lift_success_height=max(
+                number("pick_lift_success_height", 0.05), 1.0e-6
+            ),
+            pick_success_bonus=number(
+                "pick_success_bonus", default_success_bonus
+            ),
+        )
+
+
 @dataclass
 class BatchedTaskState:
     instruction_ids: Any
@@ -154,6 +245,7 @@ class BatchedTaskState:
     step_count: Any
     release_threshold: Any
     support_surface_z: Any
+    target_rest_height: Any | None = None
 
     def validate(self, batch_size: int, device: Any) -> None:
         import torch
@@ -184,6 +276,15 @@ class BatchedTaskState:
             raise ValueError(
                 f"initial_target_positions must have shape ({batch_size}, 3) on {device}."
             )
+        if self.target_rest_height is not None:
+            if (
+                not isinstance(self.target_rest_height, torch.Tensor)
+                or tuple(self.target_rest_height.shape) != (batch_size,)
+                or self.target_rest_height.device != device
+            ):
+                raise ValueError(
+                    f"target_rest_height must have shape ({batch_size},) on {device}."
+                )
 
 
 @dataclass(frozen=True)
@@ -239,6 +340,28 @@ def move_to_distance_rewards(
             z_outside_distance / max(float(config.z_penalty_scale), 1.0e-6)
         )
     return reward
+
+
+def inverse_polynomial_distance_reward(
+    distance: Any,
+    *,
+    window_high: Any,
+    scale: float,
+    weight: float,
+    exponent: float,
+) -> Any:
+    """Dense reward used by move-to, placement, and pick-up GPU tasks."""
+
+    import torch
+
+    high = torch.as_tensor(
+        window_high, dtype=distance.dtype, device=distance.device
+    )
+    error = (distance - high).clamp_min(0.0)
+    normalized = error / max(float(scale), 1.0e-6)
+    return float(weight) / (
+        1.0 + normalized.pow(max(float(exponent), 1.0e-6))
+    )
 
 
 def gather_world_slots(values: Any, slots: Any) -> Any:
@@ -297,8 +420,9 @@ def evaluate_active_sparse_tasks(
     max_steps: int,
     thresholds: BatchedTaskThresholds | None = None,
     move_to_distance_reward: BatchedMoveToDistanceReward | None = None,
+    catch_release_dense_reward: BatchedCatchReleaseDenseReward | None = None,
 ) -> BatchedTaskResult:
-    """Tensorized task predicates plus optional dense move-to rewards."""
+    """Tensorized task predicates plus optional dense manipulation rewards."""
 
     import torch
 
@@ -315,6 +439,9 @@ def evaluate_active_sparse_tasks(
     target_motion_xy = torch.linalg.vector_norm(delta[:, :2], dim=-1)
     ee_xy_distance = torch.linalg.vector_norm(
         target[:, :2] - ee_position[:, :2], dim=-1
+    )
+    ee_reference_xy_distance = torch.linalg.vector_norm(
+        reference[:, :2] - ee_position[:, :2], dim=-1
     )
 
     state.ever_grasped.logical_or_(caught_target.to(dtype=torch.bool))
@@ -373,17 +500,73 @@ def evaluate_active_sparse_tasks(
         target[:, :2] - reference[:, :2], dim=-1
     )
     container_z = (target[:, 2] - reference[:, 2]).abs()
+    is_bowl = instruction == INSTRUCTION_TO_ID["put_into_bowl"]
+    is_plate = instruction == INSTRUCTION_TO_ID["put_into_plate"]
+    is_container = is_bowl | is_plate
+    target_rest_height = (
+        state.target_rest_height
+        if state.target_rest_height is not None
+        else torch.zeros_like(state.support_surface_z)
+    )
+    target_has_settled = torch.zeros_like(is_container)
+    if catch_release_dense_reward is None:
+        container_radius = torch.full_like(
+            container_xy, float(cfg.container_xy)
+        )
+        container_z_tolerance = float(cfg.container_z)
+        minimum_target_motion = float(cfg.minimum_target_motion)
+    else:
+        container_radius = torch.where(
+            is_plate,
+            torch.full_like(
+                container_xy,
+                float(catch_release_dense_reward.plate_radius),
+            ),
+            torch.full_like(
+                container_xy,
+                float(catch_release_dense_reward.bowl_radius),
+            ),
+        )
+        container_z_tolerance = float(
+            catch_release_dense_reward.container_z_tolerance
+        )
+        minimum_target_motion = 0.0
+        target_has_settled = target[:, 2] <= (
+            state.support_surface_z
+            + target_rest_height
+            + float(catch_release_dense_reward.wrong_place_settle_margin)
+        )
     container_ok = (
-        (container_xy <= float(cfg.container_xy))
+        (container_xy <= container_radius)
         & (container_z <= float(cfg.container_z))
-        & (target_motion_xy >= float(cfg.minimum_target_motion))
+        & (container_z <= container_z_tolerance)
+        & (target_motion_xy >= minimum_target_motion)
         & state.ever_grasped
         & released
-    )
-    is_container = (instruction == INSTRUCTION_TO_ID["put_into_bowl"]) | (
-        instruction == INSTRUCTION_TO_ID["put_into_plate"]
+        & (
+            target_has_settled
+            if catch_release_dense_reward is not None
+            else torch.ones_like(is_container)
+        )
     )
     success |= is_container & container_ok
+
+    target_lift = (
+        target[:, 2] - state.initial_target_positions[:, 2]
+    ).clamp_min(0.0)
+    is_pick_up = instruction == INSTRUCTION_TO_ID["pick_up"]
+    pick_success = (
+        state.grasped
+        & (
+            target_lift
+            >= float(
+                catch_release_dense_reward.pick_lift_success_height
+                if catch_release_dense_reward is not None
+                else 0.05
+            )
+        )
+    )
+    success |= is_pick_up & pick_success
 
     relation_sign = torch.where(
         instruction == INSTRUCTION_TO_ID["move_left_of_object"],
@@ -430,7 +613,16 @@ def evaluate_active_sparse_tasks(
     success &= active
     state.step_count.add_(active.to(dtype=state.step_count.dtype))
     timeout = state.step_count >= max(1, int(max_steps))
-    terminated = success | timeout
+    wrong_place_settled = torch.zeros_like(success)
+    if catch_release_dense_reward is not None:
+        wrong_place_settled = (
+            is_container
+            & state.ever_grasped
+            & ~state.grasped
+            & target_has_settled
+            & ~container_ok
+        )
+    terminated = success | wrong_place_settled | timeout
     rewards = torch.where(
         success,
         torch.full_like(gripper_opening, float(cfg.sparse_success_reward)),
@@ -444,21 +636,86 @@ def evaluate_active_sparse_tasks(
             ee_z=ee_position[:, 2],
         )
         rewards = torch.where(is_move_to, dense_move_to, rewards)
+    dense_target_distance = ee_xy_distance
+    pick_grasp_point = target.clone()
+    if catch_release_dense_reward is not None:
+        pick_grasp_point[:, 2] += float(
+            catch_release_dense_reward.pick_grasp_height_offset
+        )
+        pick_grasp_distance = torch.linalg.vector_norm(
+            pick_grasp_point - ee_position, dim=-1
+        )
+        placement_distance_reward = inverse_polynomial_distance_reward(
+            ee_reference_xy_distance,
+            window_high=container_radius,
+            scale=catch_release_dense_reward.distance_reward_scale,
+            weight=catch_release_dense_reward.distance_reward_weight,
+            exponent=catch_release_dense_reward.distance_reward_exponent,
+        )
+        placement_reward = (
+            placement_distance_reward
+            + success.to(dtype=ee_position.dtype)
+            * float(catch_release_dense_reward.placement_success_bonus)
+            - wrong_place_settled.to(dtype=ee_position.dtype)
+            * float(catch_release_dense_reward.placement_failure_penalty)
+        )
+        rewards = torch.where(is_container, placement_reward, rewards)
+
+        pick_distance_reward = inverse_polynomial_distance_reward(
+            pick_grasp_distance,
+            window_high=float(
+                catch_release_dense_reward.pick_distance_window
+            ),
+            scale=catch_release_dense_reward.distance_reward_scale,
+            weight=catch_release_dense_reward.distance_reward_weight,
+            exponent=catch_release_dense_reward.distance_reward_exponent,
+        )
+        normalized_lift = (
+            target_lift
+            / float(catch_release_dense_reward.pick_lift_reward_scale)
+        ).clamp(0.0, 1.0)
+        pick_reward = (
+            pick_distance_reward
+            + state.grasped.to(dtype=ee_position.dtype)
+            * float(catch_release_dense_reward.pick_grasp_bonus)
+            + normalized_lift
+            * state.grasped.to(dtype=ee_position.dtype)
+            * float(catch_release_dense_reward.pick_lift_reward_weight)
+            + success.to(dtype=ee_position.dtype)
+            * float(catch_release_dense_reward.pick_success_bonus)
+        )
+        rewards = torch.where(is_pick_up, pick_reward, rewards)
+        dense_target_distance = torch.where(
+            is_container,
+            ee_reference_xy_distance,
+            torch.where(is_pick_up, pick_grasp_distance, ee_xy_distance),
+        )
+    else:
+        pick_grasp_distance = torch.linalg.vector_norm(
+            target - ee_position, dim=-1
+        )
     return BatchedTaskResult(
         rewards=rewards,
         success=success,
         terminated=terminated,
         diagnostics={
             "ee_xy_distance": ee_xy_distance,
+            "ee_reference_xy_distance": ee_reference_xy_distance,
+            "dense_target_distance": dense_target_distance,
             "move_to_distance_reward": rewards,
             "move_to_z": ee_position[:, 2],
             "move_to_z_in_window": move_to_z_in_window,
             "target_motion_xy": target_motion_xy,
+            "target_lift": target_lift,
+            "pick_grasp_distance": pick_grasp_distance,
             "push_motion": push_motion,
             "container_xy_error": container_xy,
+            "container_xy_radius": container_radius,
             "container_z_error": container_z,
+            "target_has_settled": target_has_settled,
             "projection_between": projection,
             "released": released,
             "ever_grasped": state.ever_grasped,
+            "wrong_place_drop": wrong_place_settled,
         },
     )

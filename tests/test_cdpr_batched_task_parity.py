@@ -327,7 +327,9 @@ class CDPRBatchedTaskParityTests(unittest.TestCase):
 
         def cpu_evaluate(objects_value, initial_value, ee_value):
             cpu_success = []
-            for index, instruction_type in enumerate(ACTIVE_INSTRUCTION_TYPES):
+            for index, instruction_type in enumerate(
+                ACTIVE_INSTRUCTION_TYPES[:8]
+            ):
                 positions = {
                     "target": objects_value[index, 0].numpy(),
                     "reference": objects_value[index, 1].numpy(),

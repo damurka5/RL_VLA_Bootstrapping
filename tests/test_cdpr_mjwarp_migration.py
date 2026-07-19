@@ -540,12 +540,13 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
 
     def test_rank_local_reset_shell_constants_match_cpu_reference(self):
         self.assertEqual(
-            _SHELL_COUNTS,
+            _SHELL_COUNTS[:-1],
             tuple(
                 _SMOLVLA_COMPLEX_SHELL_COUNTS[name]
-                for name in ACTIVE_INSTRUCTION_TYPES
+                for name in ACTIVE_INSTRUCTION_TYPES[:-1]
             ),
         )
+        self.assertEqual(_SHELL_COUNTS[-1], 5)
         self.assertEqual(
             tuple(zip(_SHELL_HORIZON_LOW, _SHELL_HORIZON_HIGH)),
             SMOLVLA_COMPLEX_POLICY_DECISION_BOUNDS,

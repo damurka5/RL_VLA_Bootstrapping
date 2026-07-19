@@ -1,5 +1,5 @@
 project:
-  name: cdpr_smolvla_move_to_distance_grpo_mjlab_scratch
+  name: cdpr_smolvla_catch_release_dense_grpo_mjlab_resume
   output_root: ../../runs
   python_executable: python3
 
@@ -16,12 +16,12 @@ remote:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
     NCCL_DEBUG: WARN
   notes:
-    - Fresh GRPO residual/readout initialization at global step zero; no adapter checkpoint is loaded.
-    - One torchrun rank owns one A40, a frozen SmolVLA replica, and complete rank-local GRPO groups.
-    - Only move_to_object is sampled; prompts use semantic object labels without RoboCasa variant numbers.
-    - Every GRPO group starts the gripper at a seeded random XY workspace position at Z=0.27 m, at least 0.12 m from its target; Reverse Frontier shells are disabled.
-    - The GPU reward combines the established inverse-polynomial XY distance term with a penalty outside the 0.265-0.275 m Z band.
-    - Rank zero writes TensorBoard metrics; every 200k selected actions both ranks evaluate fixed held-out GPU scenes balanced across all eight objects and save the same policy checkpoint.
+    - Resume the successful 5,000,081-step MJWarp move-to adapter and train 15,000,000 additional selected environment actions.
+    - Plain GRPO only; Reverse Frontier shells and LC-HOL are disabled, and the new phase is started in a fresh torchrun process.
+    - Only catchable objects seen by the move-to checkpoint are language targets; plate and bowl are receptacles/distractors.
+    - Every episode starts the gripper at a workspace-random pose at least 0.10 m from the requested target.
+    - Plate/bowl episodes start with the named object physically caught between the fingers.
+    - Placement failures terminate as soon as the released/lost object settles outside the requested receptacle radius.
 
 embodiment:
   name: cdpr_5dof_mjwarp
@@ -65,7 +65,7 @@ embodiment:
       gripper: [0.0, 1.0]
 
 task:
-  instruction_types: [move_to_object]
+  instruction_types: [put_into_plate, put_into_bowl, pick_up]
   target_objects:
     [
       robocasa_apple,
@@ -94,9 +94,18 @@ task:
         robocasa_orange,
         robocasa_potato,
         robocasa_mug,
-        robocasa_plate,
-        robocasa_bowl,
       ]
+    catchable_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    container_object_pool: [robocasa_plate, robocasa_bowl]
+    required_scene_object_pool: [robocasa_plate, robocasa_bowl]
     distractor_object_pool:
       [
         robocasa_apple,
@@ -121,33 +130,45 @@ task:
       ]
     min_scene_objects: 4
     max_scene_objects: 4
+
+    # The new phase never uses the near-goal shell-0 spawn.
+    random_workspace_gripper_start: true
+    placement_start_with_caught_object: true
+    ee_workspace_x_bounds: [-0.28, 0.28]
+    ee_workspace_y_bounds: [-0.28, 0.28]
+    ee_workspace_z_bounds: [0.30, 0.48]
+    random_workspace_min_goal_xy_distance: 0.10
+    random_workspace_horizon_low: 21
+    random_workspace_horizon_high: 32
+
+    # Shared inverse-polynomial distance shaping, matching move-to.
     distance_reward_exponent: 2.0
-    success_distance: 0.02
-    success_bonus: 0.0
     move_to_object_xy_reward_scale: 0.08
     move_to_object_distance_reward_weight: 1.0
-    move_to_object_xy_tolerance: 0.02
-    move_to_object_xy_window_low: 0.0
-    move_to_object_xy_window_high: 0.02
-    move_to_object_excess_distance_penalty_weight: 0.0
-    move_to_object_too_close_penalty_weight: 0.0
-    move_to_object_success_bonus: 0.0
-    move_to_object_require_z_window: true
-    move_to_object_z_window_low: 0.265
-    move_to_object_z_window_high: 0.275
-    move_to_object_z_penalty_scale: 0.03
-    move_to_object_z_penalty_weight: 1.0
-    action_saturation_penalty_weight: 0.0
-    move_to_object_validation_distance_min: 0.0
-    move_to_object_validation_distance_threshold: 0.02
-    random_workspace_gripper_start: true
-    random_workspace_min_goal_xy_distance: 0.12
-    random_workspace_horizon_low: 32
-    random_workspace_horizon_high: 32
-    ee_workspace_x_bounds: [-0.24, 0.24]
-    ee_workspace_y_bounds: [-0.24, 0.24]
-    # Desk top is at world Z=0.15 m, so 0.27 m is 12 cm above it.
-    ee_workspace_z_bounds: [0.27, 0.27]
+    catch_release_distance_reward_scale: 0.08
+    catch_release_distance_reward_weight: 1.0
+
+    # Placement: distance is gripper-to-receptacle XY distance. Success also
+    # requires release and the object center to fall within the real radius.
+    put_plate_xy_tolerance: 0.091
+    put_bowl_xy_tolerance: 0.057
+    put_container_z_tolerance: 0.12
+    placement_release_success_bonus: 2.0
+    placement_wrong_drop_penalty: 1.0
+    placement_wrong_drop_settle_margin: 0.025
+    put_require_release: true
+    put_require_target_grasp_history: true
+    caught_object_start_release_opening_margin: 0.04
+
+    # Pick-up: approach the physical between-fingers grasp point, reward a
+    # persistent bilateral grasp, then reward lift only while grasp is kept.
+    pick_grasp_height_offset: 0.08
+    pick_distance_window: 0.02
+    pick_grasp_bonus: 1.0
+    pick_lift_reward_weight: 1.0
+    pick_lift_reward_scale: 0.05
+    pick_lift_success_height: 0.05
+    pick_success_bonus: 2.0
 
 simulation:
   entrypoint:
@@ -166,8 +187,8 @@ simulation:
 
 simulator:
   backend: mjlab_mjwarp
-  worlds_per_rank: 16
-  groups_per_rank: 2
+  worlds_per_rank: 512
+  groups_per_rank: 64
   nconmax: 256
   njmax: 1024
   render_width: 320
@@ -200,7 +221,8 @@ training:
       standalone: true
       nproc_per_node: 2
     args:
-      max_train_steps: 5000000
+      resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_move_to_scratch_mjwarp_w512_20260719_081705/rl/step_5000081/smolvla_grpo_adapter.pt
+      max_train_steps: 20000081
       max_env_steps: 128
       chunk_size: 8
       replan_every: 4
@@ -247,11 +269,11 @@ training:
       hold_steps: 6
       lock_non_commanded_axes: false
       lock_non_commanded_axes_threshold: 0.05
-      validation_every_steps: 200000
-      validation_episodes_per_instruction: 1024
-      validation_seed: 1000000
+      validation_every_steps: 250000
+      validation_episodes_per_instruction: 256
+      validation_seed: 2000000
       validation_video_count: 0
-      save_every_steps: 200000
+      save_every_steps: 250000
       mjwarp_profile_timers: true
       mjwarp_profile_updates: 4
       distributed: true

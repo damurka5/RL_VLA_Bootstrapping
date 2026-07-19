@@ -61,6 +61,7 @@ from rl_vla_bootstrapping.simulation.cdpr_backend import (
     create_cdpr_backend,
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+    BatchedCatchReleaseDenseReward,
     BatchedMoveToDistanceReward,
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
@@ -665,6 +666,7 @@ def _synchronize_update_metrics_once(
                 "timers_cuda_synchronized",
                 "profiled_update",
                 "dense_move_to_distance_reward",
+                "dense_catch_release_reward",
             }
         ):
             summed[key] /= float(world_size)
@@ -872,17 +874,40 @@ def main(argv: Sequence[str] | None = None) -> None:
             task_metadata.get("reward_mode", "sparse_binary")
         ).strip().lower()
         move_to_distance_reward = None
+        catch_release_dense_reward = None
         if reward_mode == "dense":
             configured_instructions = tuple(args.instruction_types or ())
-            if configured_instructions != ("move_to_object",):
-                raise RuntimeError(
-                    "The MJWarp dense reward path currently supports exactly "
-                    "--instruction-types move_to_object; received "
-                    f"{configured_instructions!r}."
-                )
-            move_to_distance_reward = (
-                BatchedMoveToDistanceReward.from_metadata(task_metadata)
+            supported_dense_instructions = {
+                "move_to_object",
+                "put_into_plate",
+                "put_into_bowl",
+                "pick_up",
+            }
+            unsupported = tuple(
+                name
+                for name in configured_instructions
+                if name not in supported_dense_instructions
             )
+            if unsupported:
+                raise RuntimeError(
+                    "The MJWarp dense reward path supports move_to_object, "
+                    "put_into_plate, put_into_bowl, and pick_up; received "
+                    f"unsupported values {unsupported!r}."
+                )
+            if "move_to_object" in configured_instructions:
+                move_to_distance_reward = (
+                    BatchedMoveToDistanceReward.from_metadata(task_metadata)
+                )
+            if {
+                "put_into_plate",
+                "put_into_bowl",
+                "pick_up",
+            }.intersection(configured_instructions):
+                catch_release_dense_reward = (
+                    BatchedCatchReleaseDenseReward.from_metadata(
+                        task_metadata
+                    )
+                )
         resetter_kwargs = {
             "backend": backend,
             "layout": layout,
@@ -908,7 +933,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                 task_metadata=task_metadata,
             )
         else:
-            resetter = BatchedReverseFrontierResetter(**resetter_kwargs)
+            resetter = BatchedReverseFrontierResetter(
+                **resetter_kwargs,
+                task_metadata=task_metadata,
+            )
         collector = RankLocalMJWarpGRPOCollector(
             backend=backend,
             smolvla_runtime=runtime,
@@ -924,6 +952,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             dynamic_sampling=bool(args.grpo_dynamic_sampling),
             group_selection=str(args.grpo_group_selection),
             move_to_distance_reward=move_to_distance_reward,
+            catch_release_dense_reward=catch_release_dense_reward,
             profile=bool(args.mjwarp_profile_timers),
         )
         validation_collector = None
@@ -944,7 +973,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 )
             else:
                 validation_resetter = BatchedReverseFrontierResetter(
-                    **validation_resetter_kwargs
+                    **validation_resetter_kwargs,
+                    task_metadata=task_metadata,
                 )
             validation_collector = RankLocalMJWarpGRPOCollector(
                 backend=backend,
@@ -969,6 +999,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 dynamic_sampling=False,
                 group_selection="uniform",
                 move_to_distance_reward=move_to_distance_reward,
+                catch_release_dense_reward=catch_release_dense_reward,
                 profile=bool(args.mjwarp_profile_timers),
             )
 
