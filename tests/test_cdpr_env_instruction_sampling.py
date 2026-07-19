@@ -1,13 +1,36 @@
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
+from unittest import mock
 
 import numpy as np
 
-from robots.cdpr.cdpr_dataset.rl_cdpr_env import CDPRLanguageRLEnv, SceneSpec
+from robots.cdpr.cdpr_dataset.rl_cdpr_env import (
+    CDPRLanguageRLEnv,
+    SceneSpec,
+    _import_gym_api,
+)
 
 
 class EnvInstructionSamplingTests(unittest.TestCase):
+    def test_gym_api_falls_back_to_lerobot_gymnasium_dependency(self):
+        fake_spaces = object()
+        fake_gymnasium = SimpleNamespace(spaces=fake_spaces)
+        with mock.patch(
+            "robots.cdpr.cdpr_dataset.rl_cdpr_env.importlib.import_module",
+            side_effect=(ModuleNotFoundError("gym"), fake_gymnasium),
+        ) as import_module:
+            module, spaces, backend = _import_gym_api()
+
+        self.assertIs(module, fake_gymnasium)
+        self.assertIs(spaces, fake_spaces)
+        self.assertEqual(backend, "gymnasium")
+        self.assertEqual(
+            [call.args[0] for call in import_module.call_args_list],
+            ["gym", "gymnasium"],
+        )
+
     def test_uniform_cycle_sampling_covers_each_instruction_once_per_cycle(self):
         env = CDPRLanguageRLEnv.__new__(CDPRLanguageRLEnv)
         env.instruction_types = ("move_up", "move_down", "move_left")

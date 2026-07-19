@@ -30,12 +30,21 @@ try:
 except Exception:  # pragma: no cover - optional runtime dependency
     mj = None
 
-try:
-    import gym
-    from gym import spaces
-except Exception:  # pragma: no cover - optional runtime dependency
-    gym = None
-    spaces = None
+def _import_gym_api():
+    """Prefer legacy Gym, then use the Gymnasium API shipped with LeRobot."""
+
+    for module_name in ("gym", "gymnasium"):
+        try:
+            module = importlib.import_module(module_name)
+        except Exception:  # pragma: no cover - optional runtime dependency
+            continue
+        spaces_api = getattr(module, "spaces", None)
+        if spaces_api is not None:
+            return module, spaces_api, module_name
+    return None, None, None
+
+
+gym, spaces, GYM_BACKEND = _import_gym_api()
 
 try:
     from PIL import Image
@@ -1629,8 +1638,8 @@ class CDPRLanguageRLEnv(_EnvBase):
 
         if gym is None or spaces is None:
             raise ImportError(
-                "CDPRLanguageRLEnv requires gym (tested with gym==0.26.2). "
-                "Install it before creating this env."
+                "CDPRLanguageRLEnv requires Gym or Gymnasium. Install "
+                "`gymnasium>=1.1.1,<2.0.0` before creating this env."
             )
         if mj is None:
             raise ImportError("CDPRLanguageRLEnv requires mujoco. Install it before creating this env.")
