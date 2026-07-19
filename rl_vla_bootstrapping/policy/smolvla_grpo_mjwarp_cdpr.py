@@ -69,6 +69,236 @@ from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
 )
 
 
+def _metadata_flag(
+    metadata: Mapping[str, Any], key: str, default: bool = False
+) -> bool:
+    value = metadata.get(key, default)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def _metadata_bounds(
+    metadata: Mapping[str, Any],
+    key: str,
+    default: tuple[float, float],
+    *,
+    allow_equal: bool = False,
+) -> tuple[float, float]:
+    raw = metadata.get(key, default)
+    try:
+        values = tuple(float(value) for value in raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must contain exactly two numbers.") from exc
+    if len(values) != 2:
+        raise ValueError(f"{key} must contain exactly two numbers.")
+    low, high = values
+    if low > high or (low == high and not allow_equal):
+        relation = "nondecreasing" if allow_equal else "increasing"
+        raise ValueError(f"{key} bounds must be {relation}.")
+    return low, high
+
+
+def _sample_random_workspace_ee_group(
+    *,
+    torch: Any,
+    device: Any,
+    generator: Any,
+    target_xy: Any,
+    x_bounds: tuple[float, float],
+    y_bounds: tuple[float, float],
+    z_bounds: tuple[float, float],
+    min_target_xy_distance: float,
+    attempts: int = 64,
+) -> Any:
+    """Sample one guaranteed non-near-target pose per GRPO group."""
+
+    group_count = int(target_xy.shape[0])
+    candidate_count = max(1, int(attempts))
+    random_values = torch.rand(
+        (group_count, candidate_count, 3),
+        generator=generator,
+        device=device,
+    )
+    low = torch.tensor(
+        (x_bounds[0], y_bounds[0], z_bounds[0]),
+        dtype=torch.float32,
+        device=device,
+    )
+    high = torch.tensor(
+        (x_bounds[1], y_bounds[1], z_bounds[1]),
+        dtype=torch.float32,
+        device=device,
+    )
+    candidates = low + random_values * (high - low)
+    distances = torch.linalg.vector_norm(
+        candidates[:, :, :2] - target_xy[:, None, :], dim=-1
+    )
+    valid = distances >= max(0.0, float(min_target_xy_distance))
+    first_valid = valid.to(dtype=torch.int64).argmax(dim=1)
+    rows = torch.arange(
+        group_count, dtype=torch.int64, device=device
+    )
+    sampled = candidates[rows, first_valid]
+
+    missing = ~valid.any(dim=1)
+    if bool(missing.any().item()):
+        corners = torch.tensor(
+            (
+                (x_bounds[0], y_bounds[0]),
+                (x_bounds[0], y_bounds[1]),
+                (x_bounds[1], y_bounds[0]),
+                (x_bounds[1], y_bounds[1]),
+            ),
+            dtype=torch.float32,
+            device=device,
+        )
+        corner_distances = torch.linalg.vector_norm(
+            corners[None, :, :] - target_xy[:, None, :], dim=-1
+        )
+        farthest = corners.index_select(0, corner_distances.argmax(dim=1))
+        sampled[:, :2] = torch.where(
+            missing[:, None], farthest, sampled[:, :2]
+        )
+        final_distances = torch.linalg.vector_norm(
+            sampled[:, :2] - target_xy, dim=-1
+        )
+        impossible = final_distances < max(
+            0.0, float(min_target_xy_distance)
+        )
+        if bool(impossible.any().item()):
+            raise ValueError(
+                "The configured EE workspace cannot satisfy "
+                "random_workspace_min_goal_xy_distance."
+            )
+    return sampled
+
+
+class BatchedRandomWorkspaceMoveToResetter(BatchedReverseFrontierResetter):
+    """Replace Reverse Frontier poses with full-workspace move-to starts."""
+
+    def __init__(
+        self,
+        *,
+        task_metadata: Mapping[str, Any],
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(**kwargs)
+        metadata = dict(task_metadata or {})
+        if not _metadata_flag(
+            metadata, "random_workspace_gripper_start", False
+        ):
+            raise ValueError(
+                "Random workspace move-to reset requires "
+                "random_workspace_gripper_start=true."
+            )
+        instruction_ids = tuple(
+            int(value) for value in self.instruction_ids.detach().cpu().tolist()
+        )
+        if instruction_ids != (0,):
+            raise ValueError(
+                "Random workspace move-to reset supports only "
+                "instruction_types=[move_to_object]."
+            )
+        self.workspace_x_bounds = _metadata_bounds(
+            metadata, "ee_workspace_x_bounds", (-0.24, 0.24)
+        )
+        self.workspace_y_bounds = _metadata_bounds(
+            metadata, "ee_workspace_y_bounds", (-0.24, 0.24)
+        )
+        self.workspace_z_bounds = _metadata_bounds(
+            metadata,
+            "ee_workspace_z_bounds",
+            (0.27, 0.27),
+            allow_equal=True,
+        )
+        self.min_target_xy_distance = max(
+            0.0,
+            float(
+                metadata.get(
+                    "random_workspace_min_goal_xy_distance", 0.12
+                )
+            ),
+        )
+        low = max(
+            1, int(metadata.get("random_workspace_horizon_low", 32))
+        )
+        high = max(
+            low, int(metadata.get("random_workspace_horizon_high", 32))
+        )
+        self.random_horizon_bounds = (low, high)
+
+    def reset(self, *, update_index: int, round_index: int) -> Any:
+        reset = super().reset(
+            update_index=update_index, round_index=round_index
+        )
+        torch = self.torch
+        groups = int(self.layout.groups_per_rank)
+        group_size = int(self.layout.group_size)
+        base_worlds = torch.arange(
+            0,
+            int(self.layout.worlds_per_rank),
+            group_size,
+            dtype=torch.int64,
+            device=self.device,
+        )
+        low_dim = self.backend.low_dim_observations()
+        target_slots = reset.task_state.target_slots.index_select(
+            0, base_worlds
+        )
+        target_xy = low_dim.object_positions[
+            base_worlds, target_slots, :2
+        ]
+        generator = torch.Generator(device=self.device)
+        generator.manual_seed(
+            self.base_seed
+            + self.rank * 1_000_003
+            + int(update_index) * 10_000_019
+            + int(round_index) * 100_003
+            + 70_001
+        )
+        ee_group = _sample_random_workspace_ee_group(
+            torch=torch,
+            device=self.device,
+            generator=generator,
+            target_xy=target_xy,
+            x_bounds=self.workspace_x_bounds,
+            y_bounds=self.workspace_y_bounds,
+            z_bounds=self.workspace_z_bounds,
+            min_target_xy_distance=self.min_target_xy_distance,
+        )
+        yaw_group = (
+            torch.rand((groups,), generator=generator, device=self.device)
+            * (2.0 * torch.pi)
+            - torch.pi
+        )
+        self.backend.set_end_effector_poses(
+            ee_group.repeat_interleave(group_size, dim=0),
+            yaw_group.repeat_interleave(group_size),
+        )
+        self.backend.set_gripper_openings(
+            torch.ones(
+                (int(self.layout.worlds_per_rank),),
+                dtype=torch.float32,
+                device=self.device,
+            )
+        )
+        horizon_low, horizon_high = self.random_horizon_bounds
+        group_horizons = torch.randint(
+            horizon_low,
+            horizon_high + 1,
+            (groups,),
+            generator=generator,
+            dtype=torch.int64,
+            device=self.device,
+        )
+        reset.horizons.copy_(
+            group_horizons.repeat_interleave(group_size)
+        )
+        reset.group_shell_ids.fill_(-1)
+        return reset
+
+
 def _append_jsonl(path: Path, payload: Mapping[str, Any]) -> None:
     with path.open("a", encoding="utf-8") as stream:
         stream.write(json.dumps(dict(payload), sort_keys=True, default=str))
@@ -635,6 +865,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         if isinstance(curriculum_state, Mapping):
             curriculum.restore(curriculum_state)
         task_metadata = _task_metadata(args)
+        reverse_frontier_active = (
+            str(args.complex_training_approach) == "reverse_frontier"
+        )
         reward_mode = str(
             task_metadata.get("reward_mode", "sparse_binary")
         ).strip().lower()
@@ -650,21 +883,32 @@ def main(argv: Sequence[str] | None = None) -> None:
             move_to_distance_reward = (
                 BatchedMoveToDistanceReward.from_metadata(task_metadata)
             )
-        resetter = BatchedReverseFrontierResetter(
-            backend=backend,
-            layout=layout,
-            curriculum=curriculum,
-            rank=dist_ctx.rank,
-            base_seed=int(args.seed),
-            instruction_types=args.instruction_types,
-            allowed_objects=args.allowed_objects,
-            frontier_probability=float(
+        resetter_kwargs = {
+            "backend": backend,
+            "layout": layout,
+            "curriculum": curriculum,
+            "rank": dist_ctx.rank,
+            "base_seed": int(args.seed),
+            "instruction_types": args.instruction_types,
+            "allowed_objects": args.allowed_objects,
+            "frontier_probability": float(
                 args.reverse_frontier_sample_probability
             ),
-            rehearsal_probability=float(
+            "rehearsal_probability": float(
                 args.reverse_frontier_rehearsal_probability
             ),
+        }
+        random_workspace_move_to = (
+            not reverse_frontier_active
+            and tuple(args.instruction_types or ()) == ("move_to_object",)
         )
+        if random_workspace_move_to:
+            resetter = BatchedRandomWorkspaceMoveToResetter(
+                **resetter_kwargs,
+                task_metadata=task_metadata,
+            )
+        else:
+            resetter = BatchedReverseFrontierResetter(**resetter_kwargs)
         collector = RankLocalMJWarpGRPOCollector(
             backend=backend,
             smolvla_runtime=runtime,
@@ -684,18 +928,24 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         validation_collector = None
         if _validation_enabled(args):
-            validation_resetter = BatchedReverseFrontierResetter(
-                backend=backend,
-                layout=layout,
-                curriculum=curriculum,
-                rank=dist_ctx.rank,
-                base_seed=int(args.validation_seed),
-                instruction_types=args.instruction_types,
-                allowed_objects=args.allowed_objects,
-                frontier_probability=1.0,
-                rehearsal_probability=0.0,
-                balanced_target_catalogs=True,
-            )
+            validation_resetter_kwargs = {
+                **resetter_kwargs,
+                "base_seed": int(args.validation_seed),
+                "frontier_probability": 1.0,
+                "rehearsal_probability": 0.0,
+                "balanced_target_catalogs": True,
+            }
+            if random_workspace_move_to:
+                validation_resetter = (
+                    BatchedRandomWorkspaceMoveToResetter(
+                        **validation_resetter_kwargs,
+                        task_metadata=task_metadata,
+                    )
+                )
+            else:
+                validation_resetter = BatchedReverseFrontierResetter(
+                    **validation_resetter_kwargs
+                )
             validation_collector = RankLocalMJWarpGRPOCollector(
                 backend=backend,
                 smolvla_runtime=runtime,
@@ -821,11 +1071,19 @@ def main(argv: Sequence[str] | None = None) -> None:
             update_metrics["update_time_s"] = time.perf_counter() - update_timer
 
             synchronization_started = time.perf_counter()
-            curriculum_metrics = curriculum.update_once_per_optimizer_update(
-                group_instruction_ids=task_ids,
-                group_shell_ids=shell_ids,
-                candidate_success=successes,
-            )
+            if reverse_frontier_active:
+                curriculum_metrics = (
+                    curriculum.update_once_per_optimizer_update(
+                        group_instruction_ids=task_ids,
+                        group_shell_ids=shell_ids,
+                        candidate_success=successes,
+                    )
+                )
+            else:
+                curriculum_metrics = {
+                    "curriculum/enabled": 0.0,
+                    "curriculum/random_workspace_reset": 1.0,
+                }
             synchronization_time += (
                 time.perf_counter() - synchronization_started
             )
@@ -950,9 +1208,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                         "global_step": float(global_step),
                         "update_index": float(update_index),
                         "validation/current_move_to_shell": float(
-                            curriculum.current_shell[
-                                0
-                            ].detach().item()
+                            curriculum.current_shell[0].detach().item()
+                            if reverse_frontier_active
+                            else -1
+                        ),
+                        "validation/random_workspace_reset": float(
+                            not reverse_frontier_active
                         ),
                     }
                 )

@@ -19,7 +19,8 @@ remote:
     - Fresh GRPO residual/readout initialization at global step zero; no adapter checkpoint is loaded.
     - One torchrun rank owns one A40, a frozen SmolVLA replica, and complete rank-local GRPO groups.
     - Only move_to_object is sampled; prompts use semantic object labels without RoboCasa variant numbers.
-    - The established move-to inverse-polynomial XY distance reward is evaluated as GPU tensors.
+    - Every GRPO group starts the gripper at a seeded random XY workspace position at Z=0.27 m, at least 0.12 m from its target; Reverse Frontier shells are disabled.
+    - The GPU reward combines the established inverse-polynomial XY distance term with a penalty outside the 0.265-0.275 m Z band.
     - Rank zero writes TensorBoard metrics; every 200k selected actions both ranks evaluate fixed held-out GPU scenes balanced across all eight objects and save the same policy checkpoint.
 
 embodiment:
@@ -131,25 +132,22 @@ task:
     move_to_object_excess_distance_penalty_weight: 0.0
     move_to_object_too_close_penalty_weight: 0.0
     move_to_object_success_bonus: 0.0
-    move_to_object_require_z_window: false
-    move_to_object_z_penalty_weight: 0.0
+    move_to_object_require_z_window: true
+    move_to_object_z_window_low: 0.265
+    move_to_object_z_window_high: 0.275
+    move_to_object_z_penalty_scale: 0.03
+    move_to_object_z_penalty_weight: 1.0
     action_saturation_penalty_weight: 0.0
     move_to_object_validation_distance_min: 0.0
     move_to_object_validation_distance_threshold: 0.02
-    reverse_frontier_profile: smolvla_complex_v1
-    reverse_frontier_actions_per_policy_decision: 4
-    reverse_frontier_policy_decision_bounds:
-      - [1, 1]
-      - [1, 2]
-      - [2, 3]
-      - [3, 4]
-      - [5, 6]
-      - [7, 13]
-      - [14, 20]
-      - [21, 32]
-    reverse_frontier_nominal_progress_fraction: 0.44
-    ee_workspace_x_bounds: [-0.28, 0.28]
-    ee_workspace_y_bounds: [-0.28, 0.28]
+    random_workspace_gripper_start: true
+    random_workspace_min_goal_xy_distance: 0.12
+    random_workspace_horizon_low: 32
+    random_workspace_horizon_high: 32
+    ee_workspace_x_bounds: [-0.24, 0.24]
+    ee_workspace_y_bounds: [-0.24, 0.24]
+    # Desk top is at world Z=0.15 m, so 0.27 m is 12 cm above it.
+    ee_workspace_z_bounds: [0.27, 0.27]
 
 simulation:
   entrypoint:
@@ -242,14 +240,7 @@ training:
       ppo_epochs: 4
       minibatch_size: 512
       microbatch_size: 512
-      complex_training_approach: reverse_frontier
-      reverse_frontier_promotion_success: 0.80
-      reverse_frontier_demotion_success: -1.0
-      reverse_frontier_validation_episodes: 50
-      reverse_frontier_min_train_updates: 1
-      reverse_frontier_saturation_abort_threshold: 1.01
-      reverse_frontier_sample_probability: 0.80
-      reverse_frontier_rehearsal_probability: 0.20
+      complex_training_approach: none
       action_step_xyz: 0.015
       action_step_yaw: 0.08
       action_step_gripper: 0.05

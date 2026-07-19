@@ -58,6 +58,11 @@ class BatchedMoveToDistanceReward:
     success_bonus: float = 0.0
     excess_distance_penalty_weight: float = 0.0
     too_close_penalty_weight: float = 0.0
+    z_window_low: float = 0.10
+    z_window_high: float = 0.20
+    z_penalty_scale: float = 0.05
+    z_penalty_weight: float = 0.20
+    require_z_window: bool = False
 
     @classmethod
     def from_metadata(
@@ -71,6 +76,12 @@ class BatchedMoveToDistanceReward:
                 return float(raw)
             except (TypeError, ValueError):
                 return float(default)
+
+        def flag(key: str, default: bool) -> bool:
+            raw = values.get(key, default)
+            if isinstance(raw, str):
+                return raw.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(raw)
 
         default_tolerance = number("success_distance", 0.02)
         high = max(
@@ -89,6 +100,12 @@ class BatchedMoveToDistanceReward:
                 max(4.0 * high, 0.08),
             ),
             1.0e-6,
+        )
+        z_low, z_high = sorted(
+            (
+                number("move_to_object_z_window_low", 0.10),
+                number("move_to_object_z_window_high", 0.20),
+            )
         )
         return cls(
             xy_window_low=low,
@@ -110,6 +127,17 @@ class BatchedMoveToDistanceReward:
             ),
             too_close_penalty_weight=number(
                 "move_to_object_too_close_penalty_weight", 0.0
+            ),
+            z_window_low=z_low,
+            z_window_high=z_high,
+            z_penalty_scale=max(
+                number("move_to_object_z_penalty_scale", 0.05), 1.0e-6
+            ),
+            z_penalty_weight=number(
+                "move_to_object_z_penalty_weight", 0.20
+            ),
+            require_z_window=flag(
+                "move_to_object_require_z_window", False
             ),
         )
 
@@ -171,6 +199,7 @@ def move_to_distance_rewards(
     success: Any,
     *,
     config: BatchedMoveToDistanceReward,
+    ee_z: Any | None = None,
 ) -> Any:
     """Evaluate the existing inverse-polynomial move-to reward on GPU."""
 
@@ -198,6 +227,17 @@ def move_to_distance_rewards(
     reward = reward - float(config.too_close_penalty_weight) * torch.tanh(
         low_error / max(float(config.xy_reward_scale), 1.0e-6)
     )
+    if ee_z is not None:
+        z_low_error = (
+            torch.full_like(ee_z, float(config.z_window_low)) - ee_z
+        ).clamp_min(0.0)
+        z_high_error = (
+            ee_z - torch.full_like(ee_z, float(config.z_window_high))
+        ).clamp_min(0.0)
+        z_outside_distance = torch.maximum(z_low_error, z_high_error)
+        reward = reward - float(config.z_penalty_weight) * (
+            z_outside_distance / max(float(config.z_penalty_scale), 1.0e-6)
+        )
     return reward
 
 
@@ -292,9 +332,20 @@ def evaluate_active_sparse_tasks(
     instruction = state.instruction_ids.to(dtype=torch.int64)
 
     is_move_to = instruction == INSTRUCTION_TO_ID["move_to_object"]
+    move_to_z_in_window = (
+        (ee_position[:, 2] >= float(move_to_distance_reward.z_window_low))
+        & (ee_position[:, 2] <= float(move_to_distance_reward.z_window_high))
+        if move_to_distance_reward is not None
+        else torch.ones_like(is_move_to)
+    )
     move_to = (ee_xy_distance >= float(cfg.move_to_xy_low)) & (
         ee_xy_distance <= float(cfg.move_to_xy)
     )
+    if (
+        move_to_distance_reward is not None
+        and move_to_distance_reward.require_z_window
+    ):
+        move_to &= move_to_z_in_window
     success |= is_move_to & move_to
 
     push_sign = torch.where(
@@ -390,6 +441,7 @@ def evaluate_active_sparse_tasks(
             ee_xy_distance,
             success,
             config=move_to_distance_reward,
+            ee_z=ee_position[:, 2],
         )
         rewards = torch.where(is_move_to, dense_move_to, rewards)
     return BatchedTaskResult(
@@ -399,6 +451,8 @@ def evaluate_active_sparse_tasks(
         diagnostics={
             "ee_xy_distance": ee_xy_distance,
             "move_to_distance_reward": rewards,
+            "move_to_z": ee_position[:, 2],
+            "move_to_z_in_window": move_to_z_in_window,
             "target_motion_xy": target_motion_xy,
             "push_motion": push_motion,
             "container_xy_error": container_xy,

@@ -19,6 +19,7 @@ import numpy as np
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+    RankLocalCurriculum,
     RankLocalMJWarpGRPOCollector,
     ValidationRound,
     _SHELL_ACTION_HIGH,
@@ -38,6 +39,7 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (
     numpy_group_advantages,
 )
 from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+    BatchedRandomWorkspaceMoveToResetter,
     _end_to_end_time_metrics,
     _log_tensorboard_metrics,
     _make_mjwarp_progress_bar,
@@ -125,6 +127,29 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(config.task.instruction_types, ("move_to_object",))
         self.assertEqual(config.task.target_objects, expected_objects)
         self.assertEqual(config.task.metadata["reward_mode"], "dense")
+        self.assertTrue(
+            config.task.metadata["random_workspace_gripper_start"]
+        )
+        self.assertEqual(
+            config.task.metadata["random_workspace_min_goal_xy_distance"],
+            0.12,
+        )
+        self.assertEqual(
+            config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.27]
+        )
+        self.assertTrue(
+            config.task.metadata["move_to_object_require_z_window"]
+        )
+        self.assertEqual(
+            config.task.metadata["move_to_object_z_window_low"], 0.265
+        )
+        self.assertEqual(
+            config.task.metadata["move_to_object_z_window_high"], 0.275
+        )
+        self.assertEqual(
+            command[command.index("--complex-training-approach") + 1],
+            "none",
+        )
         self.assertEqual(
             command[command.index("--nproc-per-node") + 1], "2"
         )
@@ -193,6 +218,11 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
                 "move_to_object_xy_reward_scale": 0.08,
                 "move_to_object_distance_reward_weight": 1.0,
                 "distance_reward_exponent": 2.0,
+                "move_to_object_z_window_low": 0.265,
+                "move_to_object_z_window_high": 0.275,
+                "move_to_object_z_penalty_scale": 0.03,
+                "move_to_object_z_penalty_weight": 1.0,
+                "move_to_object_require_z_window": True,
             }
         )
         self.assertEqual(reward.xy_window_low, 0.0)
@@ -200,6 +230,106 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(reward.xy_reward_scale, 0.08)
         self.assertEqual(reward.distance_reward_weight, 1.0)
         self.assertEqual(reward.distance_reward_exponent, 2.0)
+        self.assertEqual(reward.z_window_low, 0.265)
+        self.assertEqual(reward.z_window_high, 0.275)
+        self.assertEqual(reward.z_penalty_scale, 0.03)
+        self.assertEqual(reward.z_penalty_weight, 1.0)
+        self.assertTrue(reward.require_z_window)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "random workspace reset fixture requires PyTorch",
+    )
+    def test_move_to_random_workspace_reset_is_not_overwritten_by_shell(self):
+        import torch
+
+        class FakeBackend:
+            def __init__(self) -> None:
+                self.torch = torch
+                self.device = torch.device("cpu")
+                self.object_body_ids = torch.arange(4, dtype=torch.int64)
+                self.object_positions = None
+                self.object_quaternions = None
+                self.ee_positions = None
+                self.ee_yaw = None
+                self.gripper_openings = None
+
+            def reset_worlds(self, _worlds):
+                return None
+
+            def set_object_catalogs(self, _catalogs):
+                return None
+
+            def set_free_body_poses(
+                self, _body_ids, positions, quaternions
+            ):
+                self.object_positions = positions.clone()
+                self.object_quaternions = quaternions.clone()
+
+            def set_end_effector_poses(self, positions, yaw):
+                self.ee_positions = positions.clone()
+                self.ee_yaw = yaw.clone()
+
+            def set_gripper_openings(self, openings):
+                self.gripper_openings = openings.clone()
+
+            def set_visual_variants(self, *_args):
+                return None
+
+            def broadcast_group_state(self, _base_worlds):
+                return None
+
+            def low_dim_observations(self):
+                ee_quaternion = torch.zeros(
+                    (self.ee_positions.shape[0], 4), dtype=torch.float32
+                )
+                ee_quaternion[:, 0] = torch.cos(0.5 * self.ee_yaw)
+                ee_quaternion[:, 3] = torch.sin(0.5 * self.ee_yaw)
+                return SimpleNamespace(
+                    ee_position=self.ee_positions,
+                    ee_quaternion=ee_quaternion,
+                    object_positions=self.object_positions,
+                    object_quaternions=self.object_quaternions,
+                )
+
+        layout = RankLocalGroupLayout(
+            worlds_per_rank=16,
+            groups_per_rank=2,
+            group_size=8,
+        )
+        backend = FakeBackend()
+        curriculum = RankLocalCurriculum(device=backend.device)
+        resetter = BatchedRandomWorkspaceMoveToResetter(
+            backend=backend,
+            layout=layout,
+            curriculum=curriculum,
+            rank=0,
+            base_seed=123,
+            instruction_types=("move_to_object",),
+            allowed_objects=("robocasa_apple", "robocasa_banana"),
+            task_metadata={
+                "random_workspace_gripper_start": True,
+                "random_workspace_min_goal_xy_distance": 0.12,
+                "random_workspace_horizon_low": 32,
+                "random_workspace_horizon_high": 32,
+                "ee_workspace_x_bounds": [-0.24, 0.24],
+                "ee_workspace_y_bounds": [-0.24, 0.24],
+                "ee_workspace_z_bounds": [0.27, 0.27],
+            },
+        )
+
+        reset = resetter.reset(update_index=0, round_index=0)
+        ee = backend.ee_positions.reshape(2, 8, 3)
+        targets = backend.object_positions[:, 0].reshape(2, 8, 3)
+        distances = torch.linalg.vector_norm(
+            ee[:, 0, :2] - targets[:, 0, :2], dim=-1
+        )
+
+        self.assertTrue(torch.allclose(ee, ee[:, :1].expand_as(ee)))
+        self.assertTrue(torch.allclose(ee[:, :, 2], torch.full((2, 8), 0.27)))
+        self.assertTrue(bool((distances >= 0.12).all().item()))
+        self.assertTrue(bool((reset.horizons == 32).all().item()))
+        self.assertFalse(torch.allclose(ee[0, 0], ee[1, 0]))
 
     def test_scratch_launcher_rejects_resume_state(self):
         source = (

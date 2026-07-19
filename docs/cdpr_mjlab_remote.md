@@ -226,6 +226,13 @@ zero on top of the frozen `lerobot/smolvla_base` prior. The scratch launcher
 rejects both checkpoint environment variables so a stale remote-shell setting
 cannot silently turn the run into a resume.
 
+Reverse Frontier is disabled for this task. Each eight-candidate GRPO group
+shares a seeded random start in the `[-0.24, 0.24] m` XY workspace, rejects
+starts closer than 12 cm to its target, and receives the full 32-policy-call
+(128 action) horizon. The gripper starts at world `Z=0.27 m`, which is 12 cm
+above the `Z=0.15 m` desk. Dense reward and strict success both enforce the
+`0.265-0.275 m` height band in addition to the 2 cm XY target distance.
+
 Before a long run, sweep complete rank-local group counts on the actual two A40
 cards:
 
@@ -254,14 +261,14 @@ REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab \
   CUDA_VISIBLE_DEVICES=0,1 \
   WORLDS_PER_RANK=16 \
   SMOLVLA_MICROBATCH_SIZE=16 \
-  MAX_TRAIN_STEPS=2000000 \
+  MAX_TRAIN_STEPS=5000000 \
   bash scripts/train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh
 ```
 
 Replace both `WORLDS_PER_RANK=16` and `SMOLVLA_MICROBATCH_SIZE=16` with the
 benchmark recommendation. The first four production updates emit
 `rl/latest_profile.json` with synchronized component times. Timing barriers
-then disable automatically, leaving the remainder of the 2M-step run on the
+then disable automatically, leaving the remainder of the 5M-step run on the
 unsynchronized throughput path.
 
 ### Qualitative move-to-object checkpoint review
@@ -292,22 +299,14 @@ states; one representative world is recorded from each reproducibly seeded
 group. The frozen SmolVLA flow sampler can produce different priors for the
 other seven candidates, just as it does during held-out training validation.
 
-The qualitative launcher intentionally replaces the Reverse Frontier
-near-target end-effector pose with a reproducible random XYZ/yaw workspace pose
-at least 12 cm from the target in XY. It runs at least 10 fresh policy
-inferences, continues after the first strict success, and pads every video to
-at least five seconds. With the configured four actions per inference, the
-default audit executes at least 40 environment actions.
-
-This random-start audit is harder than the training validation distribution.
-In the original Reverse Frontier curriculum, shell 0 starts only about
-2.3–3.0 cm from the target in XY and permits one policy inference; with
-`replan_every=4`, that produces four environment actions. Harder shells
-progressively increase both starting distance and horizon. The move-to success
-predicate is XY-only, so an end effector at `z=0.40` can appear vertically above
-the target while already being close to success. Near-target starts therefore
-were present in training by design, but the new videos are meant to expose
-whether that competence generalizes to random starts.
+The qualitative launcher uses a reproducible random workspace pose at least
+12 cm from the target in XY. It runs at least 10 fresh policy inferences,
+continues after the first strict success, and pads every video to at least five
+seconds. For checkpoints produced by the corrected scratch configuration,
+random XY workspace starts are the training and held-out validation
+distribution, not an out-of-distribution replacement for Reverse Frontier
+shell 0. The evaluator's default randomized Z remains a height-recovery stress
+test; set `RANDOM_START_Z_BOUNDS="0.2699 0.2701"` to closely match training Z.
 
 The output directory also contains `action_telemetry.csv`,
 `episode_results.csv`, `move_to_object_threshold_sweep.csv` (the same

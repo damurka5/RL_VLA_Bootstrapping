@@ -108,6 +108,106 @@ class CDPRBatchedTaskParityTests(unittest.TestCase):
         )
         self.assertEqual(result.success.tolist(), cpu_success)
 
+    def test_dense_move_to_z_reward_and_success_match_cpu_hook(self):
+        import torch
+
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            BatchedMoveToDistanceReward,
+            BatchedTaskState,
+            BatchedTaskThresholds,
+            evaluate_active_sparse_tasks,
+        )
+        from robots.cdpr.cdpr_dataset.rl_instruction_tasks import (
+            InstructionSpec,
+            compute_instruction_reward,
+            init_reward_state,
+        )
+
+        metadata = {
+            "reward_mode": "dense",
+            "success_distance": 0.02,
+            "success_bonus": 0.0,
+            "move_to_object_xy_window_low": 0.0,
+            "move_to_object_xy_window_high": 0.02,
+            "move_to_object_xy_reward_scale": 0.08,
+            "move_to_object_distance_reward_weight": 1.0,
+            "move_to_object_success_bonus": 0.0,
+            "move_to_object_require_z_window": True,
+            "move_to_object_z_window_low": 0.265,
+            "move_to_object_z_window_high": 0.275,
+            "move_to_object_z_penalty_scale": 0.03,
+            "move_to_object_z_penalty_weight": 1.0,
+            "action_saturation_penalty_weight": 0.0,
+        }
+        heights = torch.tensor([0.27, 0.25, 0.29], dtype=torch.float32)
+        count = int(heights.numel())
+        objects = torch.zeros((count, 4, 3), dtype=torch.float32)
+        objects[:, 0, 2] = 0.18
+        ee = torch.zeros((count, 3), dtype=torch.float32)
+        ee[:, 0] = 0.01
+        ee[:, 2] = heights
+        state = BatchedTaskState(
+            instruction_ids=torch.zeros((count,), dtype=torch.int64),
+            target_slots=torch.zeros((count,), dtype=torch.int64),
+            reference_slots=torch.full((count,), -1, dtype=torch.int64),
+            second_reference_slots=torch.full(
+                (count,), -1, dtype=torch.int64
+            ),
+            initial_target_positions=objects[:, 0].clone(),
+            ever_grasped=torch.zeros((count,), dtype=torch.bool),
+            grasped=torch.zeros((count,), dtype=torch.bool),
+            step_count=torch.zeros((count,), dtype=torch.int64),
+            release_threshold=torch.full((count,), 0.55),
+            support_surface_z=torch.full((count,), 0.15),
+        )
+        reward_config = BatchedMoveToDistanceReward.from_metadata(metadata)
+        result = evaluate_active_sparse_tasks(
+            state=state,
+            ee_position=ee,
+            object_positions=objects,
+            gripper_opening=torch.ones((count,), dtype=torch.float32),
+            caught_target=torch.zeros((count,), dtype=torch.bool),
+            active_mask=torch.ones((count,), dtype=torch.bool),
+            max_steps=128,
+            thresholds=BatchedTaskThresholds(
+                move_to_xy_low=reward_config.xy_window_low,
+                move_to_xy=reward_config.xy_window_high,
+            ),
+            move_to_distance_reward=reward_config,
+        )
+        spec = InstructionSpec(
+            instruction_type="move_to_object",
+            text="move to apple",
+            target_object="target",
+            direction=np.zeros((3,), dtype=np.float32),
+            target_displacement=0.0,
+            lift_target=0.0,
+        )
+        cpu_rewards = []
+        cpu_success = []
+        for index in range(count):
+            ee_value = ee[index].numpy()
+            object_value = objects[index, 0].numpy()
+            reward, success, _ = compute_instruction_reward(
+                spec=spec,
+                ee_pos=ee_value,
+                obj_pos=object_value,
+                reward_state=init_reward_state(ee_value, object_value),
+                action=np.zeros((5,), dtype=np.float32),
+                task_metadata=metadata,
+            )
+            cpu_rewards.append(reward)
+            cpu_success.append(success)
+
+        np.testing.assert_allclose(
+            result.rewards.numpy(),
+            np.asarray(cpu_rewards, dtype=np.float32),
+            rtol=1.0e-6,
+            atol=1.0e-6,
+        )
+        self.assertEqual(result.success.tolist(), cpu_success)
+        self.assertEqual(result.success.tolist(), [True, False, False])
+
     def test_active_success_predicates_match_cpu_reference_fixtures(self):
         import torch
 
