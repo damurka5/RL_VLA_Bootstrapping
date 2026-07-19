@@ -277,22 +277,25 @@ REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab CUDA_VISIBLE_DEVICES=0 \
 The launcher defaults to the completed
 `cdpr_smolvla_move_to_scratch_mjwarp_w512_20260719_081705/rl/step_5000081`
 adapter. Override `CHECKPOINT`, `EPISODES_PER_TARGET`, `SUCCESS_DISTANCE`,
-`SEED`, or `RUN_DIR` as needed. Every attempt is recorded, not only the first
-success or failure. Each MP4 burns in the instruction, normalized and applied
-action, end-effector and target positions, current/start/best XY distance,
-strict threshold status, step reward, and cumulative reward.
+`VALIDATION_SEED`, `SMOLVLA_MICROBATCH_SIZE`, `CURRICULUM_SHELL`, or `RUN_DIR`
+as needed. Every target attempt is recorded. Each MP4 burns in the instruction,
+normalized and applied action, end-effector and target positions,
+current/start/best XY distance, strict threshold status, and dense reward.
 
-Video capture uses the single-environment EGL MuJoCo validation wrapper because
-the batched MJWarp training validator does not retain host video frames. The
-loader preserves the GRPO checkpoint's compact six-dimensional state encoding,
-SmolVLA camera/prompt path, action chunking, controller scales, object catalog,
-and task metadata. Treat this as a visual generalization check alongside—not a
-replacement for—the batched MJWarp validation metric.
+Video capture now uses the exact `mjlab_mjwarp` backend, fixed four-slot
+RoboCasa scene, compact six-dimensional state, frozen SmolVLA camera/prompt
+path, deterministic GRPO residual mean, action chunking, controller scales,
+distance reward, and success predicate used by held-out training validation.
+The checkpoint's saved move-to Reverse Frontier shell is restored by default.
+Eight worlds are allocated because a GRPO group has eight identical reset
+states; one representative world is recorded from each reproducibly seeded
+group. The frozen SmolVLA flow sampler can produce different priors for the
+other seven candidates, just as it does during held-out training validation.
 
-The output directory also contains per-step `*_actions.csv` traces,
+The output directory also contains `action_telemetry.csv`,
 `episode_results.csv`, `move_to_object_threshold_sweep.csv` (the same
 trajectories rescored at the strict 2 cm threshold plus 2.5, 5, 10, and 15
-cm), a video decode audit, and
+cm), `manifest.json`, and
 `validation_report.md`. This makes it possible to distinguish a useful policy
 that usually approaches the named object from one that exploits the dense
 reward without reliably moving toward the correct target.

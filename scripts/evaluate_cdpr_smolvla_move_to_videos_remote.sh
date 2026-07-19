@@ -8,12 +8,14 @@ CHECKPOINT="${CHECKPOINT:-$REPO_ROOT/runs/cdpr_smolvla_move_to_scratch_mjwarp_w5
 EVAL_OUTPUT_ROOT="${EVAL_OUTPUT_ROOT:-$REPO_ROOT/runs/cdpr_smolvla_move_to_qualitative}"
 EPISODES_PER_TARGET="${EPISODES_PER_TARGET:-3}"
 SUCCESS_DISTANCE="${SUCCESS_DISTANCE:-0.02}"
-MIN_SCENE_OBJECTS="${MIN_SCENE_OBJECTS:-4}"
-MAX_SCENE_OBJECTS="${MAX_SCENE_OBJECTS:-4}"
-MAX_RESET_ATTEMPTS="${MAX_RESET_ATTEMPTS:-10}"
-SEED="${SEED:-1000000}"
+TOLERANCES="${TOLERANCES:-0.02 0.025 0.05 0.10 0.15}"
+VALIDATION_SEED="${VALIDATION_SEED:-1000000}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
-PROGRESS_ONLY="${PROGRESS_ONLY:-1}"
+DEVICE="${DEVICE:-cuda:0}"
+SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-8}"
+VIDEO_FPS="${VIDEO_FPS:-10}"
+TERMINAL_HOLD_SECONDS="${TERMINAL_HOLD_SECONDS:-1}"
+CURRICULUM_SHELL="${CURRICULUM_SHELL:-}"
 DRY_RUN="${DRY_RUN:-0}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -33,8 +35,8 @@ if [[ "$EPISODES_PER_TARGET" -lt 1 ]]; then
   echo "EPISODES_PER_TARGET must be positive." >&2
   exit 2
 fi
-if [[ "$MIN_SCENE_OBJECTS" -lt 2 || "$MAX_SCENE_OBJECTS" -lt "$MIN_SCENE_OBJECTS" ]]; then
-  echo "MIN_SCENE_OBJECTS/MAX_SCENE_OBJECTS define an invalid multi-object range." >&2
+if [[ "$SMOLVLA_MICROBATCH_SIZE" -lt 1 || "$SMOLVLA_MICROBATCH_SIZE" -gt 8 ]]; then
+  echo "SMOLVLA_MICROBATCH_SIZE must be in [1, 8]." >&2
   exit 2
 fi
 
@@ -44,8 +46,6 @@ timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 RUN_DIR="${RUN_DIR:-$EVAL_OUTPUT_ROOT/${training_run}_${checkpoint_step}_${timestamp}}"
 
 export CUDA_VISIBLE_DEVICES
-export MUJOCO_GL="${MUJOCO_GL:-egl}"
-export PYOPENGL_PLATFORM="${PYOPENGL_PLATFORM:-egl}"
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:128}"
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export TRANSFORMERS_VERBOSITY="${TRANSFORMERS_VERBOSITY:-error}"
@@ -56,35 +56,23 @@ export PYTHONUNBUFFERED=1
 
 cmd=(
   conda run --no-capture-output -n "$ENV_NAME"
-  python3 -m rl_vla_bootstrapping.cli.validate_cdpr_smolvla_policy
+  python3 -m rl_vla_bootstrapping.cli.evaluate_cdpr_smolvla_mjwarp_videos
   --config "$CONFIG_PATH"
-  --checkpoint-dir "$CHECKPOINT"
+  --checkpoint "$CHECKPOINT"
   --run-dir "$RUN_DIR"
-  --instruction-types move_to_object
-  --episodes-per-instruction "$EPISODES_PER_TARGET"
-  --move-to-object-episodes-per-target "$EPISODES_PER_TARGET"
-  --move-to-object-success-distance "$SUCCESS_DISTANCE"
-  --multi-object-scenes
-  --min-scene-objects "$MIN_SCENE_OBJECTS"
-  --max-scene-objects "$MAX_SCENE_OBJECTS"
-  --stratify-move-to-object-targets
-  --record-success-videos
-  --record-failure-videos
-  --record-all-success-videos
-  --record-all-failure-videos
-  --video-coverage case
-  --video-action-overlay
-  --strict-video-validation
-  --no-require-complete-video-coverage
-  --max-reset-attempts "$MAX_RESET_ATTEMPTS"
-  --seed "$SEED"
-  --progress
+  --episodes-per-target "$EPISODES_PER_TARGET"
+  --success-distance "$SUCCESS_DISTANCE"
+  --validation-seed "$VALIDATION_SEED"
+  --device "$DEVICE"
+  --smolvla-microbatch-size "$SMOLVLA_MICROBATCH_SIZE"
+  --fps "$VIDEO_FPS"
+  --terminal-hold-seconds "$TERMINAL_HOLD_SECONDS"
 )
 
-if [[ "$PROGRESS_ONLY" == "1" ]]; then
-  cmd+=(--progress-only)
-else
-  cmd+=(--no-progress-only)
+read -r -a tolerance_values <<< "$TOLERANCES"
+cmd+=(--tolerances "${tolerance_values[@]}")
+if [[ -n "$CURRICULUM_SHELL" ]]; then
+  cmd+=(--curriculum-shell "$CURRICULUM_SHELL")
 fi
 cmd+=("$@")
 
@@ -92,10 +80,15 @@ printf 'mode=qualitative_move_to_object_video_review\n'
 printf 'checkpoint=%s\n' "$CHECKPOINT"
 printf 'config=%s\n' "$CONFIG_PATH"
 printf 'output=%s\n' "$RUN_DIR"
-printf 'targets=all_configured episodes_per_target=%s scene_objects=%s..%s\n' \
-  "$EPISODES_PER_TARGET" "$MIN_SCENE_OBJECTS" "$MAX_SCENE_OBJECTS"
+printf 'backend=mjlab_mjwarp exact_training_backend=true\n'
+printf 'targets=all_configured episodes_per_target=%s\n' "$EPISODES_PER_TARGET"
 printf 'strict_success_xy_distance_m=%s\n' "$SUCCESS_DISTANCE"
-printf 'cuda_visible_devices=%s\n' "$CUDA_VISIBLE_DEVICES"
+printf 'validation_seed=%s curriculum_shell=%s\n' \
+  "$VALIDATION_SEED" "${CURRICULUM_SHELL:-checkpoint}"
+printf 'cuda_visible_devices=%s device=%s worlds=8 groups=1 group_size=8\n' \
+  "$CUDA_VISIBLE_DEVICES" "$DEVICE"
+printf 'smolvla_microbatch_size=%s video_fps=%s\n' \
+  "$SMOLVLA_MICROBATCH_SIZE" "$VIDEO_FPS"
 printf 'command:'
 printf ' %q' "${cmd[@]}"
 printf '\n'
@@ -110,6 +103,7 @@ cd "$REPO_ROOT"
   "${cmd[@]}"
   printf '\nReview videos: %s/videos\n' "$RUN_DIR"
   printf 'Per-episode telemetry: %s/episode_results.csv\n' "$RUN_DIR"
+  printf 'Per-action telemetry: %s/action_telemetry.csv\n' "$RUN_DIR"
   printf 'Tolerance sweep: %s/move_to_object_threshold_sweep.csv\n' "$RUN_DIR"
   printf 'Summary report: %s/validation_report.md\n' "$RUN_DIR"
 } 2>&1 | tee "$RUN_DIR/evaluation.log"

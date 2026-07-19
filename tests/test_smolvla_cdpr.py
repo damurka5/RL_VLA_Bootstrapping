@@ -9,6 +9,12 @@ from types import SimpleNamespace
 
 import numpy as np
 
+from rl_vla_bootstrapping.cli.evaluate_cdpr_smolvla_mjwarp_videos import (
+    _evaluation_training_args,
+    _telemetry_lines as _mjwarp_video_telemetry_lines,
+    _tolerance_rows,
+    _validate_simulator_compatibility,
+)
 from rl_vla_bootstrapping.cli.validate_cdpr_smolvla_policy import (
     _checkpoint_actor_state,
     _checkpoint_state_dim,
@@ -381,12 +387,117 @@ class SmolVLACDPRTests(unittest.TestCase):
         ).read_text()
 
         self.assertIn("step_5000081/smolvla_grpo_adapter.pt", script)
-        self.assertIn("--instruction-types move_to_object", script)
-        self.assertIn("--stratify-move-to-object-targets", script)
-        self.assertIn("--record-all-success-videos", script)
-        self.assertIn("--record-all-failure-videos", script)
-        self.assertIn("--video-action-overlay", script)
-        self.assertIn("--strict-video-validation", script)
+        self.assertIn("evaluate_cdpr_smolvla_mjwarp_videos", script)
+        self.assertIn("--episodes-per-target", script)
+        self.assertIn("--success-distance", script)
+        self.assertIn("--validation-seed", script)
+        self.assertIn("--smolvla-microbatch-size", script)
+        self.assertIn("backend=mjlab_mjwarp exact_training_backend=true", script)
+
+    def test_mjwarp_video_eval_only_shrinks_independent_grpo_batch(self):
+        payload = {
+            "args": {
+                "worlds_per_rank": 512,
+                "groups_per_rank": 64,
+                "grpo_group_size": 8,
+                "smolvla_compile_model": True,
+                "base_checkpoint": "lerobot/smolvla_base",
+            }
+        }
+        args = _evaluation_training_args(
+            payload,
+            config_path=Path("/repo/config.yaml"),
+            xml_path=Path("/repo/cdpr.xml"),
+            device="cuda:0",
+            render_width=320,
+            render_height=240,
+            allowed_objects=("robocasa_apple", "robocasa_mug"),
+            microbatch_size=32,
+        )
+
+        self.assertEqual(args.worlds_per_rank, 8)
+        self.assertEqual(args.groups_per_rank, 1)
+        self.assertEqual(args.grpo_group_size, 8)
+        self.assertEqual(args.smolvla_inference_microbatch_size, 8)
+        self.assertFalse(args.smolvla_compile_model)
+        self.assertEqual(args.instruction_types, ["move_to_object"])
+
+    def test_mjwarp_video_telemetry_exposes_strict_geometry_and_action(self):
+        lines = _mjwarp_video_telemetry_lines(
+            {
+                "instruction": "move to apple",
+                "catalog": "robocasa_apple",
+                "episode": 1,
+                "shell": 7,
+                "decision": 2,
+                "horizon": 12,
+                "chunk_action": 1,
+                "action_step": 6,
+                "action": np.array([1.0, -0.5, 0.0, 0.2, 0.0]),
+                "applied": np.array([0.015, -0.0075, 0.0, 0.016, 0.0]),
+                "ee": np.array([0.1, 0.2, 0.4]),
+                "target": np.array([0.11, 0.21, 0.18]),
+                "distance": 0.014,
+                "start_distance": 0.18,
+                "best_distance": 0.014,
+                "success_distance": 0.02,
+                "strict_success": True,
+                "reward": 1.0,
+                "best_reward": 1.0,
+                "gripper": 0.8,
+            }
+        )
+
+        text = "\n".join(lines)
+        self.assertIn("normalized action", text)
+        self.assertIn("xy_distance=0.0140 m", text)
+        self.assertIn("strict<=0.0200 m: PASS", text)
+        self.assertIn("dense_reward=1.000000", text)
+
+    def test_mjwarp_video_eval_rejects_simulator_mismatch_but_not_batch_size(self):
+        stored = {
+            "backend": "mjlab_mjwarp",
+            "versions": {"mujoco": "3.3.7"},
+            "worlds_per_rank": 512,
+            "groups_per_rank": 64,
+            "physics_substeps_per_action": 7,
+            "xml_sha256": "same",
+        }
+        runtime = {
+            **stored,
+            "worlds_per_rank": 8,
+            "groups_per_rank": 1,
+        }
+        _validate_simulator_compatibility(
+            {"simulator_metadata": stored}, runtime
+        )
+        runtime["xml_sha256"] = "different"
+        with self.assertRaisesRegex(RuntimeError, "xml_sha256"):
+            _validate_simulator_compatibility(
+                {"simulator_metadata": stored}, runtime
+            )
+
+    def test_mjwarp_video_tolerance_sweep_uses_best_distance(self):
+        rows = _tolerance_rows(
+            [
+                {
+                    "target_catalog": "robocasa_apple",
+                    "best_xy_distance_m": 0.019,
+                },
+                {
+                    "target_catalog": "robocasa_apple",
+                    "best_xy_distance_m": 0.041,
+                },
+            ],
+            (0.02, 0.05),
+        )
+        overall = {
+            float(row["tolerance_m"]): row
+            for row in rows
+            if row["target_catalog"] == "all"
+        }
+        self.assertEqual(overall[0.02]["successes"], 1)
+        self.assertEqual(overall[0.05]["successes"], 2)
 
     def test_remote_training_ignores_invalid_tokens_for_public_smolvla_models(self):
         helper = (ROOT / "scripts" / "huggingface_public_models.sh").read_text()
