@@ -1427,6 +1427,9 @@ class CollectorRound:
     group_instruction_ids: Any
     group_shell_ids: Any
     metrics: dict[str, float]
+    # Capped decision-0 subsample of SmolVLA inputs for the LoRA grad-through-VLA
+    # update (None unless the collector was asked to store it).
+    vla_records: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -1461,6 +1464,8 @@ class RankLocalMJWarpGRPOCollector:
             BatchedCatchReleaseDenseReward | None
         ) = None,
         include_relative_target: bool = False,
+        store_vla_records: bool = False,
+        vla_update_max_records: int = 128,
         profile: bool = False,
     ) -> None:
         layout.validate()
@@ -1470,6 +1475,8 @@ class RankLocalMJWarpGRPOCollector:
         self.resetter = resetter
         self.layout = layout
         self.include_relative_target = bool(include_relative_target)
+        self.store_vla_records = bool(store_vla_records)
+        self.vla_update_max_records = max(0, int(vla_update_max_records))
         self.actions_per_policy_decision = max(
             1,
             min(
@@ -1690,6 +1697,7 @@ class RankLocalMJWarpGRPOCollector:
         policy_target_cosine_first = torch.zeros_like(
             prior_target_cosine_first
         )
+        vla_capture: dict[str, Any] | None = None
 
         for decision in range(max_decisions):
             self._sync_for_profile()
@@ -1746,6 +1754,30 @@ class RankLocalMJWarpGRPOCollector:
                 policy_target_cosine_first = _cosine_2d(
                     actions[:, 0, :2], rel_xy0
                 )
+                if self.store_vla_records and self.vla_update_max_records > 0:
+                    # Capped subsample of whole groups for the LoRA update:
+                    # store the SmolVLA inputs + taken first action + behaviour
+                    # log-prob + detached prior (KL reference). Images as fp16
+                    # to bound memory; advantages are filled in after the round.
+                    cap = min(self.vla_update_max_records, worlds)
+                    cap -= cap % group_size
+                    cap = max(group_size, cap)
+                    idx = torch.arange(cap, device=self.device)
+                    vla_capture = {
+                        "world_index": idx,
+                        "overview": cameras.overview[idx].to(torch.float16),
+                        "wrist": cameras.wrist[idx].to(torch.float16),
+                        "state": state_tensor[idx].detach(),
+                        "instruction": [
+                            reset.instructions[int(i)] for i in idx.tolist()
+                        ],
+                        "action": actions[idx, 0].detach(),
+                        "action_index": torch.zeros(
+                            (cap,), dtype=torch.int64, device=self.device
+                        ),
+                        "old_log_prob": log_probs[idx, 0].detach(),
+                        "prior_ref": prior[idx].detach(),
+                    }
             self._sync_for_profile()
             timings["policy_time_s"] += time.perf_counter() - started
 
@@ -1890,6 +1922,13 @@ class RankLocalMJWarpGRPOCollector:
         loss_mask = record_valid & informative_world.index_select(
             0, record_world
         )
+        vla_records = None
+        if vla_capture is not None:
+            world_idx = vla_capture.pop("world_index")
+            vla_capture["advantage"] = world_advantage.index_select(
+                0, world_idx
+            )
+            vla_records = vla_capture
         self._sync_for_profile()
         total_time = reset_time + sum(timings.values())
         grasp_observations = float(
@@ -1998,6 +2037,7 @@ class RankLocalMJWarpGRPOCollector:
             group_instruction_ids=reset.group_instruction_ids,
             group_shell_ids=reset.group_shell_ids,
             metrics=metrics,
+            vla_records=vla_records,
         )
 
     def validate_round(

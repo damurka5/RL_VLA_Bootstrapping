@@ -848,7 +848,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                     if int(args.smolvla_model_image_size) <= 0
                     else int(args.smolvla_model_image_size)
                 ),
-                compile_model=bool(args.smolvla_compile_model),
+                compile_model=bool(args.smolvla_compile_model)
+                and not bool(getattr(args, "train_vla_lora", False)),
                 compile_mode=str(args.smolvla_compile_mode),
             )
 
@@ -869,6 +870,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             device=device,
             distributed=dist_ctx,
         )
+        train_vla_lora = bool(getattr(args, "train_vla_lora", False))
+        if train_vla_lora:
+            lora_info = trainer.attach_vla_lora(runtime)
+            _log(
+                dist_ctx,
+                "[smolvla-mjwarp] LoRA on action expert: "
+                f"{lora_info['vla_lora/modules']:.0f} modules, "
+                f"{lora_info['vla_lora/trainable_params']:.0f} trainable params",
+            )
         simulator_metadata = _runtime_metadata(args, backend)
         global_step = 0
         if args.resume_checkpoint:
@@ -993,6 +1003,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             move_to_distance_reward=move_to_distance_reward,
             catch_release_dense_reward=catch_release_dense_reward,
             include_relative_target=include_relative_target,
+            store_vla_records=train_vla_lora,
+            vla_update_max_records=int(
+                getattr(args, "vla_update_max_records", 128)
+            ),
             profile=bool(args.mjwarp_profile_timers),
         )
         validation_collector = None
@@ -1147,6 +1161,45 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             torch.cuda.synchronize(device)
             update_metrics["update_time_s"] = time.perf_counter() - update_timer
+
+            if train_vla_lora:
+                # Every rank must call update_vla_lora (it issues a collective to
+                # sync LoRA grads), even with an empty batch, to stay in lockstep.
+                vla_batches = [
+                    item.vla_records
+                    for item in rounds
+                    if item.vla_records is not None
+                ]
+                merged_vla: dict[str, Any] = {}
+                if vla_batches:
+                    tensor_keys = (
+                        "overview",
+                        "wrist",
+                        "state",
+                        "action",
+                        "action_index",
+                        "old_log_prob",
+                        "prior_ref",
+                        "advantage",
+                    )
+                    for key in tensor_keys:
+                        merged_vla[key] = torch.cat(
+                            [batch[key] for batch in vla_batches], dim=0
+                        )
+                    instructions: list[str] = []
+                    for batch in vla_batches:
+                        instructions.extend(batch["instruction"])
+                    merged_vla["instruction"] = instructions
+                    cap = int(getattr(args, "vla_update_max_records", 128))
+                    if cap > 0 and int(merged_vla["advantage"].shape[0]) > cap:
+                        for key in tensor_keys:
+                            merged_vla[key] = merged_vla[key][:cap]
+                        merged_vla["instruction"] = merged_vla["instruction"][
+                            :cap
+                        ]
+                vla_metrics = trainer.update_vla_lora(merged_vla)
+                torch.cuda.synchronize(device)
+                update_metrics.update(vla_metrics)
 
             synchronization_started = time.perf_counter()
             if reverse_frontier_active:

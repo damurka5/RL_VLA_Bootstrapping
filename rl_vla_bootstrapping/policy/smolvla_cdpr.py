@@ -753,7 +753,9 @@ class SmolVLARuntime:
         batch[SMOLVLA_LANGUAGE_MASK_KEY] = attention_mask
         return batch
 
-    def _predict_actions_tensor(self, batch: dict[str, Any]) -> Any:
+    def _predict_actions_tensor(
+        self, batch: dict[str, Any], *, enable_grad: bool = False
+    ) -> Any:
         if torch is None:
             raise RuntimeError("Torch is required for SmolVLA inference.")
         autocast_enabled = self.device.type == "cuda" and self.dtype in {
@@ -762,7 +764,16 @@ class SmolVLARuntime:
         }
 
         def predict() -> Any:
-            with torch.inference_mode():
+            # LoRA fine-tuning needs gradients through the action expert, so
+            # skip inference_mode (its tensors cannot participate in autograd).
+            # A compiled sample_actions path is inference-only; the caller
+            # disables compilation when it needs grad.
+            grad_ctx = (
+                torch.enable_grad()
+                if enable_grad
+                else torch.inference_mode()
+            )
+            with grad_ctx:
                 with torch.autocast(
                     device_type=self.device.type,
                     dtype=self.dtype,
@@ -805,6 +816,8 @@ class SmolVLARuntime:
             raise RuntimeError(
                 f"SmolVLA actions are on {actions.device}, expected {self.device}."
             )
+        if enable_grad:
+            return actions.to(dtype=torch.float32)
         return actions.detach().to(dtype=torch.float32)
 
     def sample_actions_from_images(
@@ -838,6 +851,7 @@ class SmolVLARuntime:
         instructions: Sequence[str],
         aux_images: Any | None = None,
         microbatch_size: int = 0,
+        enable_grad: bool = False,
     ) -> Any:
         """Run batched SmolVLA without leaving the rank-local GPU."""
 
@@ -858,7 +872,7 @@ class SmolVLARuntime:
         batch_size = int(primary_images.shape[0])
         microbatch = int(microbatch_size)
         if microbatch <= 0 or microbatch >= batch_size:
-            return self._predict_actions_tensor(batch)
+            return self._predict_actions_tensor(batch, enable_grad=enable_grad)
 
         outputs: list[Any] = []
         for start in range(0, batch_size, microbatch):
@@ -871,7 +885,9 @@ class SmolVLARuntime:
                     sliced[key] = value[start:end]
                 else:
                     sliced[key] = value
-            outputs.append(self._predict_actions_tensor(sliced))
+            outputs.append(
+                self._predict_actions_tensor(sliced, enable_grad=enable_grad)
+            )
         return torch.cat(outputs, dim=0)
 
     def sample_cdpr_chunks_from_tensors(
@@ -883,6 +899,7 @@ class SmolVLARuntime:
         instructions: Sequence[str],
         aux_images: Any | None = None,
         microbatch_size: int = 0,
+        enable_grad: bool = False,
     ) -> Any:
         raw = self.sample_actions_from_tensors(
             primary_images=primary_images,
@@ -891,6 +908,7 @@ class SmolVLARuntime:
             states=states,
             instructions=instructions,
             microbatch_size=microbatch_size,
+            enable_grad=enable_grad,
         )
         return adapt_smolvla_action_tensors_to_cdpr(
             raw, spec=self.action_spec

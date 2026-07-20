@@ -239,6 +239,19 @@ training:
       # cannot bring action_z <= 0, so the EE can never descend/hold and
       # move-to is impossible; 1.0 gives the residual full per-axis authority.
       residual_scale: 1.0
+      # SmolVLA action-expert LoRA (off by default; flip train_vla_lora to true
+      # to let RL gradients reach model.vlm_with_expert.lm_expert, vision + VLM
+      # frozen). See SMOLVLA_LORA_FINETUNE_PLAN.md before enabling.
+      train_vla_lora: false
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      lora_include_mlp: false
+      lora_expert_name_contains: lm_expert
+      vla_lr: 1.0e-5
+      vla_kl_coef: 0.1
+      vla_microbatch_size: 16
+      vla_update_max_records: 128
       learning_rate: 1.0e-4
       adam_eps: 1.0e-5
       weight_decay: 0.0

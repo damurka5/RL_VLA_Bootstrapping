@@ -275,6 +275,34 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "state). Gives the residual an explicit direction to the object."
         ),
     )
+    # --- SmolVLA action-expert LoRA fine-tune (off by default) ---
+    _bool_arg(
+        parser,
+        "train_vla_lora",
+        default=False,
+        help_text=(
+            "Attach LoRA to SmolVLA's action-expert attention and train it with "
+            "a grad-through-VLA GRPO pass (vision + VLM stay frozen)."
+        ),
+    )
+    parser.add_argument("--lora-rank", type=int, default=16)
+    parser.add_argument("--lora-alpha", type=float, default=32.0)
+    parser.add_argument("--lora-dropout", type=float, default=0.0)
+    _bool_arg(
+        parser,
+        "lora_include_mlp",
+        default=False,
+        help_text="Also LoRA the action-expert MLP (gate/up/down_proj).",
+    )
+    parser.add_argument(
+        "--lora-expert-name-contains",
+        default="lm_expert",
+        help="Qualified-path substring selecting the action expert (not the VLM).",
+    )
+    parser.add_argument("--vla-lr", type=float, default=1.0e-5)
+    parser.add_argument("--vla-kl-coef", type=float, default=0.1)
+    parser.add_argument("--vla-microbatch-size", type=int, default=16)
+    parser.add_argument("--vla-update-max-records", type=int, default=128)
     parser.add_argument("--image-feature-keys", nargs="+", default=None)
     _bool_arg(parser, "include_wrist", default=True, help_text="Include the CDPR wrist camera.")
     _bool_arg(parser, "include_aux_camera", default=True, help_text="Fill SmolVLA's third camera input.")
@@ -1104,6 +1132,154 @@ class SmolVLAGRPOTrainer:
             }
         )
         return metrics
+
+    def attach_vla_lora(self, runtime: Any) -> dict[str, float]:
+        """Attach LoRA to the frozen SmolVLA action expert and register it.
+
+        Vision encoder and VLM stay frozen; only the action-expert attention
+        (and optionally its MLP) get trainable low-rank adapters, optimized by a
+        separate AdamW at ``--vla-lr``. The residual actor and its optimizer are
+        untouched.
+        """
+
+        from rl_vla_bootstrapping.policy.lora import (
+            attach_lora,
+            count_trainable,
+            freeze_all_but_lora,
+            lora_parameters,
+        )
+
+        args = self.args
+        leaves = ["q_proj", "k_proj", "v_proj", "o_proj"]
+        if bool(getattr(args, "lora_include_mlp", False)):
+            leaves += ["gate_proj", "up_proj", "down_proj"]
+        replaced = attach_lora(
+            runtime.policy,
+            target_leaf_names=tuple(leaves),
+            name_contains=(str(args.lora_expert_name_contains),),
+            rank=int(args.lora_rank),
+            alpha=float(args.lora_alpha),
+            dropout=float(args.lora_dropout),
+        )
+        if not replaced:
+            raise RuntimeError(
+                "LoRA attach matched no action-expert linears; check "
+                "--lora-expert-name-contains against the SmolVLA module names."
+            )
+        freeze_all_but_lora(runtime.policy)
+        runtime.policy.to(self.device)
+        self.vla_runtime = runtime
+        self.vla_lora_params = lora_parameters(runtime.policy)
+        self.vla_optimizer = torch.optim.AdamW(
+            self.vla_lora_params,
+            lr=float(args.vla_lr),
+            eps=float(args.adam_eps),
+            weight_decay=0.0,
+        )
+        return {
+            "vla_lora/modules": float(len(replaced)),
+            "vla_lora/trainable_params": float(count_trainable(runtime.policy)),
+        }
+
+    def update_vla_lora(self, records: Mapping[str, Any]) -> dict[str, float]:
+        """Grad-through-VLA PPO+KL step on the action-expert LoRA.
+
+        ``records`` are a capped decision-0 subsample carrying the SmolVLA inputs
+        (images/state/instruction), the taken action + behaviour log-prob, the
+        GRPO advantage, and the detached rollout prior as the KL reference.
+        """
+
+        import torch.distributed as dist
+
+        runtime = getattr(self, "vla_runtime", None)
+        if runtime is None:
+            raise RuntimeError("attach_vla_lora must run before update_vla_lora.")
+        distributed = dist.is_available() and dist.is_initialized()
+        world_size = dist.get_world_size() if distributed else 1
+
+        advantages = records.get("advantage") if records else None
+        n = 0 if advantages is None else int(advantages.shape[0])
+        base = self._unwrap(self.actor)
+        self.vla_optimizer.zero_grad(set_to_none=True)
+        base.zero_grad(set_to_none=True)
+
+        ppo_sum = 0.0
+        kl_sum = 0.0
+        counted = 0
+        if n > 0:
+            overview = records["overview"]
+            wrist = records["wrist"]
+            states = records["state"].to(dtype=torch.float32)
+            instructions = list(records["instruction"])
+            actions = records["action"].to(dtype=torch.float32)
+            action_indices = records["action_index"].to(dtype=torch.long)
+            old_log_probs = records["old_log_prob"].to(dtype=torch.float32)
+            advantages = advantages.to(dtype=torch.float32)
+            prior_ref = records["prior_ref"].to(dtype=torch.float32)
+            if n > 1:
+                advantages = (
+                    advantages - advantages.mean()
+                ) / advantages.std(unbiased=False).clamp_min(1.0e-6)
+
+            micro = max(1, min(int(self.args.vla_microbatch_size), n))
+            clip_low = float(self.args.clip_range_low)
+            clip_high = float(self.args.clip_range_high)
+            kl_coef = float(self.args.vla_kl_coef)
+            for start in range(0, n, micro):
+                end = min(n, start + micro)
+                sl = slice(start, end)
+                prior_grad = runtime.sample_cdpr_chunks_from_tensors(
+                    primary_images=overview[sl].to(dtype=torch.float32),
+                    wrist_images=wrist[sl].to(dtype=torch.float32),
+                    states=states[sl],
+                    instructions=instructions[start:end],
+                    microbatch_size=0,
+                    enable_grad=True,
+                )
+                mean_chunk = base(states[sl], prior_grad)
+                mean = _gather_chunk_values(mean_chunk, action_indices[sl])
+                log_std = base.clamped_log_std()[
+                    action_indices[sl].clamp(0, self.chunk_size - 1)
+                ]
+                log_prob = _normal_log_prob(actions[sl], mean, log_std)
+                ratio = torch.exp(
+                    (log_prob - old_log_probs[sl]).clamp(-20.0, 20.0)
+                )
+                adv = advantages[sl]
+                unclipped = ratio * adv
+                clipped = (
+                    torch.clamp(ratio, 1.0 - clip_low, 1.0 + clip_high) * adv
+                )
+                ppo = -torch.min(unclipped, clipped).mean()
+                kl = ((prior_grad - prior_ref[sl]) ** 2).mean()
+                weight = float(end - start) / float(n)
+                (weight * (ppo + kl_coef * kl)).backward()
+                ppo_sum += float(ppo.detach().item()) * (end - start)
+                kl_sum += float(kl.detach().item()) * (end - start)
+                counted += end - start
+
+        # LoRA params live on the frozen runtime, outside the residual's DDP
+        # wrapper, so sync their grads manually. Zero-fill missing grads first
+        # so every rank issues the identical collective schedule.
+        if distributed:
+            for param in self.vla_lora_params:
+                if param.grad is None:
+                    param.grad = torch.zeros_like(param)
+                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
+                param.grad /= float(world_size)
+        grad_norm = torch.nn.utils.clip_grad_norm_(
+            self.vla_lora_params, float(self.args.max_grad_norm)
+        )
+        self.vla_optimizer.step()
+        self.vla_optimizer.zero_grad(set_to_none=True)
+        base.zero_grad(set_to_none=True)
+        denom = max(1, counted)
+        return {
+            "vla_lora/records": float(n),
+            "vla_lora/ppo_loss": ppo_sum / denom,
+            "vla_lora/kl": kl_sum / denom,
+            "vla_lora/grad_norm": float(grad_norm),
+        }
 
     def load(
         self,

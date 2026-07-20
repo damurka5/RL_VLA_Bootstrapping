@@ -7,10 +7,38 @@ the frozen prior cannot do (diagnostic: `lang spread ~0.15`, `mean prior_z
 adapters on the action-expert attention train, with a KL/trust-region leash to
 the frozen prior.
 
-Status: LoRA core (`rl_vla_bootstrapping/policy/lora.py`, tested) and the
-target-discovery tool (`scripts/count_smolvla_parameters.py --dump-linear-names`)
-are done. The trainer/update wiring below is specified but **needs the module-name
-dump + a GPU smoke test before it is trustworthy**.
+Status: **implemented end-to-end, off by default, pending a GPU smoke test.**
+Confirmed targets from the module dump: the action expert is
+`model.vlm_with_expert.lm_expert` (16 layers, `q/k/v/o_proj` + `gate/up/down_proj`)
+and the frozen VLM is `model.vlm_with_expert.vlm` — so `lora_expert_name_contains:
+lm_expert` selects the expert and excludes the VLM. LoRA r=16 attention-only ≈
+1.3M trainable; +MLP ≈ 3.4M.
+
+Implemented pieces:
+- `rl_vla_bootstrapping/policy/lora.py` (tested) — LoRALinear + attach_lora.
+- Runtime grad-forward: `SmolVLARuntime.sample_cdpr_chunks_from_tensors(...,
+  enable_grad=True)` (skips inference_mode; compile auto-disabled when training).
+- Trainer: `attach_vla_lora(runtime)` (separate AdamW at `--vla-lr`) and
+  `update_vla_lora(records)` (grad-through-VLA PPO clip + KL-to-frozen-prior,
+  manual LoRA-grad all-reduce for DDP).
+- Collector: capped decision-0 subsample of SmolVLA inputs (`store_vla_records`,
+  `vla_update_max_records`, fp16 images) on `CollectorRound.vla_records`.
+- `main()` wires attach + the per-update `update_vla_lora` call; config knobs in
+  the move-to YAML (`train_vla_lora: false`).
+
+### Smoke test (run this first, 1 GPU is fine)
+
+```
+# LoRA core
+conda run -n cdpr-mjlab python -m unittest tests.test_lora
+# 3-update integration: edit the config to train_vla_lora: true, then
+CONFIG=configs/examples/cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml
+RLVLA_MJWARP_WORLDS_PER_RANK=64 \
+  conda run -n cdpr-mjlab python -m rl_vla_bootstrapping.cli.train \
+  --config "$CONFIG" --stage rl --run-name lora_smoke --execute
+# (add mjwarp_max_updates: 3, validation_every_steps: 0 to the config args for
+#  the smoke run; watch vla_lora/modules>0, vla_lora/grad_norm finite, no OOM)
+```
 
 ## Step 0 — resolve LoRA targets (blocking input)
 
