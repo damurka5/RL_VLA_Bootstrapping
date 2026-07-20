@@ -47,6 +47,15 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--lora-ranks", nargs="+", type=int, default=[16, 32]
     )
+    parser.add_argument(
+        "--dump-linear-names",
+        action="store_true",
+        help=(
+            "Print the qualified names of all nn.Linear modules plus unique "
+            "leaf names and expert/vlm prefixes -- use these to set LoRA "
+            "target_modules and the action-expert prefix."
+        ),
+    )
     return parser.parse_args(argv)
 
 
@@ -135,6 +144,28 @@ def main(argv: list[str] | None = None) -> None:
         " above for the authoritative split, and grep the printed names to pick"
         " exact LoRA targets."
     )
+
+    if args.dump_linear_names:
+        print("\n=== nn.Linear leaf names (unique) with counts ===")
+        leaf_counts: dict[str, int] = collections.defaultdict(int)
+        prefix_counts: dict[str, int] = collections.defaultdict(int)
+        for name, _module in linears:
+            parts = name.split(".")
+            leaf_counts[parts[-1]] += 1
+            prefix_counts[".".join(parts[:3])] += 1
+        for leaf, count in sorted(leaf_counts.items(), key=lambda kv: -kv[1]):
+            print(f"    {count:4d}x  {leaf}")
+        print(
+            "\n=== Linear parent prefixes (first 3 components) -- find the "
+            "action-expert vs VLM split ==="
+        )
+        for prefix, count in sorted(prefix_counts.items(), key=lambda kv: -kv[1]):
+            print(f"    {count:4d}x  {prefix}")
+        print("\n=== full qualified Linear names ===")
+        for name, module in linears:
+            print(
+                f"    [{module.in_features:>5}->{module.out_features:<5}]  {name}"
+            )
 
 
 if __name__ == "__main__":
