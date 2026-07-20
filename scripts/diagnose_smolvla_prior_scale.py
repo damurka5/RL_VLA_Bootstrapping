@@ -26,8 +26,18 @@ Example:
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
+
+# Mirror scripts/huggingface_public_models.sh: SmolVLA and its SmolVLM2 backbone
+# are public, so drop any stale credential inherited from the remote shell that
+# would otherwise turn an anonymous download into a 401. Must run before any
+# huggingface_hub import triggers implicit-token auth.
+if os.environ.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1") == "1":
+    os.environ.pop("HF_TOKEN", None)
+    os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+    os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 if str(REPO_ROOT) not in sys.path:
