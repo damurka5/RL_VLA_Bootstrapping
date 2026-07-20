@@ -17,6 +17,7 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     BatchedTaskThresholds,
     build_smolvla_state_tensor,
     evaluate_active_sparse_tasks,
+    gather_world_slots,
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     ACTIVE_CDPR_CATALOGS,
@@ -112,6 +113,17 @@ def _relative_quaternion(parent: Any, child: Any) -> Any:
     conjugate[..., 1:] *= -1.0
     result = _quaternion_multiply(conjugate, child)
     return result / result.norm(dim=-1, keepdim=True).clamp_min(1.0e-8)
+
+
+def _cosine_2d(vector: Any, reference: Any) -> Any:
+    """Per-row cosine between two 2-D vectors; 0 when either is ~zero."""
+
+    numerator = (vector * reference).sum(dim=-1)
+    denominator = (
+        vector.norm(dim=-1).clamp_min(1.0e-8)
+        * reference.norm(dim=-1).clamp_min(1.0e-8)
+    )
+    return numerator / denominator
 
 
 @dataclass
@@ -1672,6 +1684,12 @@ class RankLocalMJWarpGRPOCollector:
             )
         }
         max_decisions = int(reset.horizons.max().detach().cpu().item())
+        prior_target_cosine_first = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
+        policy_target_cosine_first = torch.zeros_like(
+            prior_target_cosine_first
+        )
 
         for decision in range(max_decisions):
             self._sync_for_profile()
@@ -1711,6 +1729,23 @@ class RankLocalMJWarpGRPOCollector:
                     generator=self._sample_generator,
                 )
             )
+
+            if decision == 0:
+                # Real-scene goal-direction probe: does the first-step XY action
+                # point toward the true target? cosine ~ +1 goal-directed,
+                # ~0 task-blind, <0 anti-directed. Measured for the frozen VLA
+                # prior and for the composed prior+residual policy so we can see
+                # whether the residual is learning direction the prior lacks.
+                target0 = gather_world_slots(
+                    low_dim.object_positions, reset.task_state.target_slots
+                )
+                rel_xy0 = (target0 - low_dim.ee_position)[:, :2]
+                prior_target_cosine_first = _cosine_2d(
+                    prior[:, 0, :2], rel_xy0
+                )
+                policy_target_cosine_first = _cosine_2d(
+                    actions[:, 0, :2], rel_xy0
+                )
             self._sync_for_profile()
             timings["policy_time_s"] += time.perf_counter() - started
 
@@ -1889,6 +1924,21 @@ class RankLocalMJWarpGRPOCollector:
             "candidate_reward_mean": float(rewards_by_group.mean().item()),
             "candidate_reward_std": float(
                 rewards_by_group.std(unbiased=False).item()
+            ),
+            # Real-scene goal-direction probe (first decision). cosine ~ +1
+            # means the action points at the target, ~0 task-blind, <0 away.
+            # prior_* is the frozen VLA; policy_* is prior+residual.
+            "prior_target_cosine_mean": float(
+                prior_target_cosine_first.mean().item()
+            ),
+            "prior_target_alignment_rate": float(
+                (prior_target_cosine_first > 0.0).float().mean().item()
+            ),
+            "policy_target_cosine_mean": float(
+                policy_target_cosine_first.mean().item()
+            ),
+            "policy_target_alignment_rate": float(
+                (policy_target_cosine_first > 0.0).float().mean().item()
             ),
             "dense_move_to_distance_reward": float(
                 self.move_to_distance_reward is not None
