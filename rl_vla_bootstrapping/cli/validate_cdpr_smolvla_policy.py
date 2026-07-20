@@ -90,6 +90,7 @@ class SmolVLACDPREvalRuntime:
         include_aux_camera: bool,
         mixed_precision: str,
         device: Any,
+        mask_empty_aux_camera: bool = False,
     ) -> None:
         _require_torch()
         load_t0 = time.perf_counter()
@@ -106,6 +107,7 @@ class SmolVLACDPREvalRuntime:
             state_dim=int(state_dim),
             include_wrist=bool(include_wrist),
             include_aux_camera=bool(include_aux_camera),
+            mask_empty_aux_camera=bool(mask_empty_aux_camera),
             chunk_size=int(chunk_size),
             action_dim=int(action_dim),
             action_indices=action_indices,
@@ -260,6 +262,7 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--progress-only", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-wrist", action=argparse.BooleanOptionalAction, default=True)
     parser.add_argument("--include-aux-camera", action=argparse.BooleanOptionalAction, default=True)
+    parser.add_argument("--mask-empty-aux-camera", action=argparse.BooleanOptionalAction, default=False)
     return parser
 
 
@@ -906,6 +909,7 @@ def main() -> int:
         action_normalization=str(args.smolvla_action_normalization),
         include_wrist=bool(args.include_wrist),
         include_aux_camera=bool(args.include_aux_camera),
+        mask_empty_aux_camera=bool(args.mask_empty_aux_camera),
         mixed_precision=str(args.mixed_precision),
         device=torch.device(args.device),
     )

@@ -20,7 +20,9 @@ remote:
     - One torchrun rank owns one A40, a frozen SmolVLA replica, and complete rank-local GRPO groups.
     - Only move_to_object is sampled; prompts use semantic object labels without RoboCasa variant numbers.
     - Every GRPO group starts the gripper at a seeded random XY workspace position at Z=0.27 m, at least 0.12 m from its target; Reverse Frontier shells are disabled.
-    - The GPU reward combines the established inverse-polynomial XY distance term with a penalty outside the 0.265-0.275 m Z band.
+    - The GPU reward combines the established inverse-polynomial XY distance term with a moderate penalty outside the 0.26-0.28 m Z band, keeping the XY term dominant in group advantages.
+    - Scenes start with a single object and add a second and third scene object at the configured curriculum steps; the fourth MJWarp slot is never used.
+    - SmolVLA camera slot three is a masked empty camera (zeroed image plus padding mask) instead of a duplicated wrist view.
     - Rank zero writes TensorBoard metrics; every 200k selected actions both ranks evaluate fixed held-out GPU scenes balanced across all eight objects and save the same policy checkpoint.
 
 embodiment:
@@ -119,8 +121,11 @@ task:
         robocasa_plate,
         robocasa_bowl,
       ]
-    min_scene_objects: 4
-    max_scene_objects: 4
+    # Object-count curriculum: 1 object until the first threshold, then up to
+    # 2, then up to 3 (sampled uniformly per group). Slot four stays inactive.
+    min_scene_objects: 1
+    max_scene_objects: 3
+    scene_object_curriculum_steps: [1500000, 3000000]
     distance_reward_exponent: 2.0
     success_distance: 0.02
     success_bonus: 0.0
@@ -132,11 +137,14 @@ task:
     move_to_object_excess_distance_penalty_weight: 0.0
     move_to_object_too_close_penalty_weight: 0.0
     move_to_object_success_bonus: 0.0
+    # A 2 cm Z band with a bounded-magnitude slope: the previous 1 cm band at
+    # weight 1.0 / scale 0.03 produced penalties of 1-2 that drowned the 0-1 XY
+    # distance term in every group advantage and stalled XY learning.
     move_to_object_require_z_window: true
-    move_to_object_z_window_low: 0.265
-    move_to_object_z_window_high: 0.275
-    move_to_object_z_penalty_scale: 0.03
-    move_to_object_z_penalty_weight: 1.0
+    move_to_object_z_window_low: 0.26
+    move_to_object_z_window_high: 0.28
+    move_to_object_z_penalty_scale: 0.05
+    move_to_object_z_penalty_weight: 0.5
     action_saturation_penalty_weight: 0.0
     move_to_object_validation_distance_min: 0.0
     move_to_object_validation_distance_threshold: 0.02
@@ -212,6 +220,7 @@ training:
       state_dim: 6
       include_wrist: true
       include_aux_camera: true
+      mask_empty_aux_camera: true
       mixed_precision: bf16
       smolvla_action_normalization: tanh
       hidden_dim: 1024

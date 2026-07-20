@@ -184,7 +184,7 @@ class BatchedRandomWorkspaceMoveToResetter(BatchedReverseFrontierResetter):
         task_metadata: Mapping[str, Any],
         **kwargs: Any,
     ) -> None:
-        super().__init__(**kwargs)
+        super().__init__(task_metadata=task_metadata, **kwargs)
         metadata = dict(task_metadata or {})
         if not _metadata_flag(
             metadata, "random_workspace_gripper_start", False
@@ -595,6 +595,36 @@ def _run_gpu_validation(
     return metrics
 
 
+def _scene_object_curriculum_steps(
+    metadata: Mapping[str, Any]
+) -> tuple[int, ...]:
+    """Global steps at which one more scene object becomes available."""
+
+    raw = metadata.get("scene_object_curriculum_steps") or ()
+    if isinstance(raw, (str, bytes)):
+        raise ValueError(
+            "scene_object_curriculum_steps must be a list of global steps."
+        )
+    return tuple(sorted(int(value) for value in raw))
+
+
+def _apply_scene_object_curriculum(
+    resetter: Any,
+    *,
+    curriculum_steps: tuple[int, ...],
+    global_step: int,
+) -> tuple[int, int]:
+    """Unlock one additional scene object per passed threshold."""
+
+    scene_min, scene_max = resetter.scene_object_bounds
+    if curriculum_steps:
+        unlocked = sum(
+            1 for threshold in curriculum_steps if global_step >= threshold
+        )
+        resetter.set_scene_object_range(scene_min, scene_min + unlocked)
+    return resetter.scene_object_range
+
+
 def _task_metadata(args: Any) -> dict[str, Any]:
     raw = os.environ.get("RLVLA_TASK_METADATA_JSON", "").strip()
     if raw:
@@ -804,6 +834,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 ),
                 include_wrist=bool(args.include_wrist),
                 include_aux_camera=bool(args.include_aux_camera),
+                mask_empty_aux_camera=bool(args.mask_empty_aux_camera),
                 chunk_size=int(args.chunk_size),
                 action_dim=int(args.action_dim),
                 action_indices=(
@@ -1003,6 +1034,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 profile=bool(args.mjwarp_profile_timers),
             )
 
+        scene_curriculum_steps = _scene_object_curriculum_steps(task_metadata)
         update_index = int(curriculum.updates)
         start_update_index = int(update_index)
         last_saved_step = int(global_step)
@@ -1031,6 +1063,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                 < int(args.mjwarp_max_updates)
             )
         ):
+            scene_object_range = _apply_scene_object_curriculum(
+                resetter,
+                curriculum_steps=scene_curriculum_steps,
+                global_step=global_step,
+            )
             profile_limit = int(args.mjwarp_profile_updates)
             profile_this_update = bool(args.mjwarp_profile_timers) and (
                 profile_limit <= 0
@@ -1165,6 +1202,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             synchronized_metrics.update(curriculum_metrics)
             synchronized_metrics.update(
                 {
+                    "curriculum/scene_objects_min": float(
+                        scene_object_range[0]
+                    ),
+                    "curriculum/scene_objects_max": float(
+                        scene_object_range[1]
+                    ),
                     "global_step": float(global_step),
                     "update_index": float(update_index),
                     "global_step_increment": float(global_selected),

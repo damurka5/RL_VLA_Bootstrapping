@@ -116,6 +116,10 @@ class SmolVLAObservationSpec:
     task_key: str = SMOLVLA_TASK_KEY
     include_wrist: bool = True
     include_aux_camera: bool = True
+    # When no true auxiliary camera exists, feed camera slot three as a black
+    # frame with a zero padding mask (LeRobot's native empty-camera encoding)
+    # instead of aliasing the wrist view.
+    mask_empty_aux_camera: bool = False
 
 
 def _image_sources_for_keys(
@@ -126,7 +130,12 @@ def _image_sources_for_keys(
     spec: SmolVLAObservationSpec,
 ) -> list[np.ndarray]:
     fallback_wrist = wrist_image if wrist_image is not None and spec.include_wrist else primary_image
-    fallback_aux = aux_image if aux_image is not None and spec.include_aux_camera else fallback_wrist
+    if aux_image is not None and spec.include_aux_camera:
+        fallback_aux = aux_image
+    elif spec.mask_empty_aux_camera:
+        fallback_aux = np.zeros_like(_as_uint8_rgb(primary_image))
+    else:
+        fallback_aux = fallback_wrist
     sources = [primary_image, fallback_wrist, fallback_aux]
     while len(sources) < len(spec.image_feature_keys):
         sources.append(primary_image)
@@ -211,6 +220,17 @@ def adapt_cdpr_observations_to_smolvla_batch(
     batch: dict[str, Any] = {
         spec.task_key: [_normalize_instruction(text) for text in instructions],
     }
+    aux_padding_key = None
+    aux_padding_np = None
+    if spec.mask_empty_aux_camera and len(spec.image_feature_keys) >= 3:
+        aux_padding_key = f"{spec.image_feature_keys[2]}_padding_mask"
+        aux_padding_np = np.array(
+            [
+                image is not None and spec.include_aux_camera
+                for image in aux_images
+            ],
+            dtype=bool,
+        )
 
     states = [
         cdpr_state_from_observation(obs, info, state_dim=spec.state_dim)
@@ -231,10 +251,16 @@ def adapt_cdpr_observations_to_smolvla_batch(
                 dtype=dtype,
                 non_blocking=non_blocking,
             )
+        if aux_padding_key is not None:
+            batch[aux_padding_key] = torch.as_tensor(
+                aux_padding_np, device="cpu"
+            ).to(device=device, non_blocking=bool(non_blocking))
     else:
         batch[spec.state_key] = state_np
         for key, images in image_columns.items():
             batch[key] = _numpy_image_batch(images, int(spec.image_size))
+        if aux_padding_key is not None:
+            batch[aux_padding_key] = aux_padding_np
     return batch
 
 
@@ -297,8 +323,9 @@ def adapt_cdpr_tensors_to_smolvla_batch(
 ) -> dict[str, Any]:
     """Build the active three-camera SmolVLA contract entirely on GPU.
 
-    Camera slot three exactly aliases the wrist input when no true auxiliary
-    camera is supplied, matching the established CPU path.
+    Without a true auxiliary camera, slot three either aliases the wrist input
+    (the established CPU path) or, with ``spec.mask_empty_aux_camera``, becomes
+    a black frame plus a zero ``*_padding_mask`` so LeRobot masks its tokens.
     """
 
     if torch is None:
@@ -317,15 +344,18 @@ def adapt_cdpr_tensors_to_smolvla_batch(
         image_size=int(spec.image_size),
         device=resolved_device,
     )
-    auxiliary = (
-        _normalize_gpu_image_batch(
+    aux_masked_empty = False
+    if aux_images is not None:
+        auxiliary = _normalize_gpu_image_batch(
             aux_images,
             image_size=int(spec.image_size),
             device=resolved_device,
         )
-        if aux_images is not None
-        else wrist
-    )
+    elif spec.mask_empty_aux_camera:
+        auxiliary = torch.zeros_like(primary)
+        aux_masked_empty = True
+    else:
+        auxiliary = wrist
     state_tensor = torch.as_tensor(
         states, dtype=torch.float32, device=resolved_device
     )
@@ -356,6 +386,10 @@ def adapt_cdpr_tensors_to_smolvla_batch(
     }
     for index, key in enumerate(spec.image_feature_keys):
         batch[key] = sources[index] if index < len(sources) else primary
+    if aux_masked_empty and len(spec.image_feature_keys) >= 3:
+        batch[f"{spec.image_feature_keys[2]}_padding_mask"] = torch.zeros(
+            (batch_size,), dtype=torch.bool, device=resolved_device
+        )
     return batch
 
 
@@ -544,6 +578,7 @@ class SmolVLARuntime:
         image_feature_keys: Sequence[str] | None = None,
         include_wrist: bool = True,
         include_aux_camera: bool = True,
+        mask_empty_aux_camera: bool = False,
         chunk_size: int = 8,
         action_dim: int = 5,
         action_indices: tuple[int, ...] | None = None,
@@ -628,6 +663,7 @@ class SmolVLARuntime:
             image_feature_keys=tuple(image_feature_keys or cfg_image_keys or DEFAULT_SMOLVLA_IMAGE_KEYS),
             include_wrist=bool(include_wrist),
             include_aux_camera=bool(include_aux_camera),
+            mask_empty_aux_camera=bool(mask_empty_aux_camera),
         )
         action_spec = SmolVLAActionAdapterSpec(
             action_dim=int(action_dim),

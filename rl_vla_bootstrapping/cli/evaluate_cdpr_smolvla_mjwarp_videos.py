@@ -1116,6 +1116,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             include_wrist=bool(training_args.include_wrist),
             include_aux_camera=bool(training_args.include_aux_camera),
+            mask_empty_aux_camera=bool(
+                getattr(training_args, "mask_empty_aux_camera", False)
+            ),
             chunk_size=int(training_args.chunk_size),
             action_dim=int(training_args.action_dim),
             action_indices=(

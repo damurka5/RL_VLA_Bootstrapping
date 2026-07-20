@@ -141,10 +141,16 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             config.task.metadata["move_to_object_require_z_window"]
         )
         self.assertEqual(
-            config.task.metadata["move_to_object_z_window_low"], 0.265
+            config.task.metadata["move_to_object_z_window_low"], 0.26
         )
         self.assertEqual(
-            config.task.metadata["move_to_object_z_window_high"], 0.275
+            config.task.metadata["move_to_object_z_window_high"], 0.28
+        )
+        self.assertEqual(config.task.metadata["min_scene_objects"], 1)
+        self.assertEqual(config.task.metadata["max_scene_objects"], 3)
+        self.assertEqual(
+            config.task.metadata["scene_object_curriculum_steps"],
+            [1500000, 3000000],
         )
         self.assertEqual(
             command[command.index("--complex-training-approach") + 1],

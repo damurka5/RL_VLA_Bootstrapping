@@ -23,6 +23,7 @@ from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     BOWL_CATALOG,
     CATALOG_TO_ID,
     GRASPABLE_CDPR_CATALOGS,
+    INACTIVE_CATALOG_ID,
     OBJECT_VARIANTS,
     PLATE_CATALOG,
     catalog_id,
@@ -528,6 +529,10 @@ class BatchedReverseFrontierResetter:
             self.random_start_horizon_low,
             int(round(number("random_workspace_horizon_high", 32))),
         )
+        scene_min = min(4, max(1, int(number("min_scene_objects", 4))))
+        scene_max = min(4, max(scene_min, int(number("max_scene_objects", 4))))
+        self.scene_object_bounds = (scene_min, scene_max)
+        self.scene_object_range = (scene_min, scene_max)
         self.torch = backend.torch
         self.device = backend.device
         instruction_ids = resolve_mjwarp_instruction_ids(instruction_types)
@@ -556,6 +561,14 @@ class BatchedReverseFrontierResetter:
         self.graspable_target_catalog_ids = self.torch.tensor(
             graspable_ids, dtype=self.torch.int64, device=self.device
         )
+
+    def set_scene_object_range(self, low: int, high: int) -> None:
+        """Clamp the per-group active object count for curriculum schedules."""
+
+        scene_min, scene_max = self.scene_object_bounds
+        low = min(scene_max, max(scene_min, int(low)))
+        high = min(scene_max, max(low, int(high)))
+        self.scene_object_range = (low, high)
 
     def _generator(self, update_index: int, round_index: int) -> Any:
         generator = self.torch.Generator(device=self.device)
@@ -738,6 +751,47 @@ class BatchedReverseFrontierResetter:
                 catalogs_group[:, 2],
             ),
         )
+
+        is_relation_task = (
+            task_group
+            == ACTIVE_INSTRUCTION_TYPES.index("move_left_of_object")
+        ) | (
+            task_group
+            == ACTIVE_INSTRUCTION_TYPES.index("move_right_of_object")
+        )
+        is_between_task = task_group == ACTIVE_INSTRUCTION_TYPES.index(
+            "move_between_objects"
+        )
+        required_slots = torch.ones_like(task_group)
+        required_slots = torch.where(
+            is_relation_task, torch.full_like(task_group, 2), required_slots
+        )
+        required_slots = torch.where(
+            is_container | is_between_task,
+            torch.full_like(task_group, 3),
+            required_slots,
+        )
+        scene_low, scene_high = self.scene_object_range
+        active_object_counts = torch.randint(
+            int(scene_low),
+            int(scene_high) + 1,
+            (groups,),
+            generator=generator,
+            dtype=torch.int64,
+            device=self.device,
+        )
+        active_object_counts = torch.maximum(
+            active_object_counts, required_slots
+        )
+        active_slots = (
+            torch.arange(4, dtype=torch.int64, device=self.device)[None, :]
+            < active_object_counts[:, None]
+        )
+        catalogs_group = torch.where(
+            active_slots,
+            catalogs_group,
+            torch.full_like(catalogs_group, INACTIVE_CATALOG_ID),
+        )
         catalogs = catalogs_group.repeat_interleave(group_size, dim=0)
 
         all_worlds = torch.arange(
@@ -771,10 +825,32 @@ class BatchedReverseFrontierResetter:
         object_xy_group = base_xy[None, :, :] + scene_shift + jitter
         rest_height = torch.tensor(
             _REST_HEIGHT, dtype=torch.float32, device=self.device
-        ).index_select(0, catalogs_group.reshape(-1)).reshape(groups, 4)
+        ).index_select(
+            0, catalogs_group.clamp_min(0).reshape(-1)
+        ).reshape(groups, 4)
+        rest_height = torch.where(
+            active_slots, rest_height, torch.zeros_like(rest_height)
+        )
         object_z_group = self.support_surface_z + rest_height
         object_positions_group = torch.cat(
             (object_xy_group, object_z_group[..., None]), dim=-1
+        )
+        # Inactive slots return to the XML park poses far outside the desk and
+        # every camera frustum; their collision geoms are already disabled.
+        parked_positions = torch.tensor(
+            (
+                (-4.0, -4.0, 4.0),
+                (-4.0, 4.0, 4.0),
+                (4.0, -4.0, 4.0),
+                (4.0, 4.0, 4.0),
+            ),
+            dtype=torch.float32,
+            device=self.device,
+        )
+        object_positions_group = torch.where(
+            active_slots[:, :, None],
+            object_positions_group,
+            parked_positions[None, :, :],
         )
 
         target_slot_group = torch.zeros(

@@ -268,6 +268,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--image-feature-keys", nargs="+", default=None)
     _bool_arg(parser, "include_wrist", default=True, help_text="Include the CDPR wrist camera.")
     _bool_arg(parser, "include_aux_camera", default=True, help_text="Fill SmolVLA's third camera input.")
+    _bool_arg(
+        parser,
+        "mask_empty_aux_camera",
+        default=False,
+        help_text=(
+            "Without a real auxiliary camera, feed slot three as a black frame "
+            "with a zero padding mask instead of duplicating the wrist view."
+        ),
+    )
     parser.add_argument("--chunk-size", type=int, default=8)
     parser.add_argument("--replan-every", type=int, default=1)
     parser.add_argument("--action-dim", type=int, default=5)
@@ -2854,6 +2863,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             image_feature_keys=None if args.image_feature_keys is None else tuple(args.image_feature_keys),
             include_wrist=bool(args.include_wrist),
             include_aux_camera=bool(args.include_aux_camera),
+            mask_empty_aux_camera=bool(
+                getattr(args, "mask_empty_aux_camera", False)
+            ),
             chunk_size=int(args.chunk_size),
             action_dim=int(args.action_dim),
             action_indices=None

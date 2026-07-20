@@ -1233,6 +1233,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             image_feature_keys=None if args.image_feature_keys is None else tuple(args.image_feature_keys),
             include_wrist=bool(args.include_wrist),
             include_aux_camera=bool(args.include_aux_camera),
+            mask_empty_aux_camera=bool(
+                getattr(args, "mask_empty_aux_camera", False)
+            ),
             chunk_size=int(args.chunk_size),
             action_dim=int(args.action_dim),
             action_indices=None

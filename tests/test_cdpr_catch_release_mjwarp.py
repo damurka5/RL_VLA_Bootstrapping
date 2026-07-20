@@ -113,7 +113,7 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            'CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE="${CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE:-${SMOLVLA_MICROBATCH_SIZE:-16}}"',
+            'CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE="${CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE:-${SMOLVLA_MICROBATCH_SIZE:-512}}"',
             source,
         )
         self.assertIn(

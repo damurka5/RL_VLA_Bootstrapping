@@ -128,8 +128,9 @@ task:
         robocasa_plate,
         robocasa_bowl,
       ]
-    min_scene_objects: 4
-    max_scene_objects: 4
+    # Exactly target + plate + bowl; the fourth MJWarp slot stays inactive.
+    min_scene_objects: 3
+    max_scene_objects: 3
 
     # The new phase never uses the near-goal shell-0 spawn.
     random_workspace_gripper_start: true
@@ -230,10 +231,11 @@ training:
       smolvla_model_image_size: 256
       smolvla_compile_model: true
       smolvla_compile_mode: max-autotune-no-cudagraphs
-      smolvla_inference_microbatch_size: 16
+      smolvla_inference_microbatch_size: 512
       state_dim: 6
       include_wrist: true
       include_aux_camera: true
+      mask_empty_aux_camera: true
       mixed_precision: bf16
       smolvla_action_normalization: tanh
       hidden_dim: 1024
