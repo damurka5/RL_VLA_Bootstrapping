@@ -143,6 +143,13 @@ task:
     move_to_object_require_z_window: true
     move_to_object_z_window_low: 0.26
     move_to_object_z_window_high: 0.28
+    # Bounded 3-D shaping: a single inverse-polynomial term on the distance to
+    # the hover point (target XY, approach_z) replaces the XY term + linear
+    # Z-band penalty. Magnitude stays in [0, weight], which conditions the GRPO
+    # group-relative advantage far better. The z_penalty_* keys below are the
+    # inactive legacy fallback (used only when distance_include_z is false).
+    move_to_object_distance_include_z: true
+    move_to_object_approach_z: 0.27
     move_to_object_z_penalty_scale: 0.05
     move_to_object_z_penalty_weight: 0.5
     action_saturation_penalty_weight: 0.0
@@ -218,6 +225,9 @@ training:
       smolvla_compile_mode: max-autotune-no-cudagraphs
       smolvla_inference_microbatch_size: 512
       state_dim: 6
+      # Widen ONLY the trainable residual's state with the 3-D EE->target
+      # vector; the frozen SmolVLA replica still gets the truncated 6-dim state.
+      residual_relative_target: true
       include_wrist: true
       include_aux_camera: true
       mask_empty_aux_camera: true

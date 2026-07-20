@@ -233,6 +233,9 @@ training:
       smolvla_compile_mode: max-autotune-no-cudagraphs
       smolvla_inference_microbatch_size: 512
       state_dim: 6
+      # Must match the move-to phase: the residual actor was widened by the
+      # 3-D EE->target vector, so the resumed checkpoint's state dim is 9.
+      residual_relative_target: true
       include_wrist: true
       include_aux_camera: true
       mask_empty_aux_camera: true

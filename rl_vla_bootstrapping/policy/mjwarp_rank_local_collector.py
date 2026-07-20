@@ -1448,6 +1448,7 @@ class RankLocalMJWarpGRPOCollector:
         catch_release_dense_reward: (
             BatchedCatchReleaseDenseReward | None
         ) = None,
+        include_relative_target: bool = False,
         profile: bool = False,
     ) -> None:
         layout.validate()
@@ -1456,6 +1457,7 @@ class RankLocalMJWarpGRPOCollector:
         self.trainer = trainer
         self.resetter = resetter
         self.layout = layout
+        self.include_relative_target = bool(include_relative_target)
         self.actions_per_policy_decision = max(
             1,
             min(
@@ -1686,6 +1688,7 @@ class RankLocalMJWarpGRPOCollector:
                 object_positions=low_dim.object_positions,
                 target_slots=reset.task_state.target_slots,
                 state_dim=int(self.trainer.state_dim),
+                include_relative_target=self.include_relative_target,
             )
             self._sync_for_profile()
             started = time.perf_counter()
@@ -2013,6 +2016,7 @@ class RankLocalMJWarpGRPOCollector:
                     object_positions=low_dim.object_positions,
                     target_slots=reset.task_state.target_slots,
                     state_dim=int(self.trainer.state_dim),
+                    include_relative_target=self.include_relative_target,
                 )
                 self._sync_for_profile()
                 started = time.perf_counter()

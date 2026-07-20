@@ -265,6 +265,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="max-autotune",
     )
     parser.add_argument("--state-dim", type=int, default=6)
+    _bool_arg(
+        parser,
+        "residual_relative_target",
+        default=False,
+        help_text=(
+            "Append the 3-D end-effector->target vector to the trainable "
+            "residual's state (SmolVLA still receives the truncated 6-dim "
+            "state). Gives the residual an explicit direction to the object."
+        ),
+    )
     parser.add_argument("--image-feature-keys", nargs="+", default=None)
     _bool_arg(parser, "include_wrist", default=True, help_text="Include the CDPR wrist camera.")
     _bool_arg(parser, "include_aux_camera", default=True, help_text="Fill SmolVLA's third camera input.")

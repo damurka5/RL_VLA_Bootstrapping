@@ -54,7 +54,13 @@
       this view.  A named, fixed camera is required by the batched MJWarp
       renderer and also makes the policy camera contract explicit.
     -->
-    <camera name="overview" mode="fixed" pos="0 -1.0825 0.725"
+    <!--
+      Dollied 2x closer along the same optical axis (was pos="0 -1.0825 0.725",
+      distance 1.25 m to lookat [0,0,0.10]; now 0.625 m). xyaxes/fovy are
+      unchanged so the view direction and centered point are identical, but
+      table objects render about twice as large for the policy cameras.
+    -->
+    <camera name="overview" mode="fixed" pos="0 -0.5412341 0.4125"
             xyaxes="1 0 0 0 0.5 0.8660254" fovy="45"/>
 
     <body name="rotor_1_up" pos="-0.535 -0.755 1.309" euler="90 45 0">

@@ -64,6 +64,13 @@ class BatchedMoveToDistanceReward:
     z_penalty_scale: float = 0.05
     z_penalty_weight: float = 0.20
     require_z_window: bool = False
+    # When set, the dense shaping is a single bounded inverse-polynomial on the
+    # 3-D distance to a hover point (target XY, ``approach_z``) instead of the
+    # XY term plus an unbounded linear Z penalty. The bounded form keeps the
+    # reward magnitude in [0, weight], which conditions the GRPO group-relative
+    # advantage far better than the old penalty whose scale dwarfed the XY term.
+    distance_include_z: bool = False
+    approach_z: float = 0.27
 
     @classmethod
     def from_metadata(
@@ -139,6 +146,12 @@ class BatchedMoveToDistanceReward:
             ),
             require_z_window=flag(
                 "move_to_object_require_z_window", False
+            ),
+            distance_include_z=flag(
+                "move_to_object_distance_include_z", False
+            ),
+            approach_z=number(
+                "move_to_object_approach_z", 0.5 * (z_low + z_high)
             ),
         )
 
@@ -301,10 +314,49 @@ def move_to_distance_rewards(
     *,
     config: BatchedMoveToDistanceReward,
     ee_z: Any | None = None,
+    ee_position: Any | None = None,
+    target_xy: Any | None = None,
 ) -> Any:
-    """Evaluate the existing inverse-polynomial move-to reward on GPU."""
+    """Evaluate the inverse-polynomial move-to reward on GPU.
+
+    With ``config.distance_include_z`` and the geometry supplied, the shaping
+    is one bounded inverse-polynomial term on the 3-D distance to a hover point
+    ``(target XY, approach_z)`` -- a single well-conditioned potential. Without
+    it, the legacy XY term plus an unbounded linear Z-band penalty is used.
+    """
 
     import torch
+
+    if (
+        bool(config.distance_include_z)
+        and ee_position is not None
+        and target_xy is not None
+    ):
+        hover_target = torch.stack(
+            (
+                target_xy[:, 0],
+                target_xy[:, 1],
+                torch.full_like(target_xy[:, 0], float(config.approach_z)),
+            ),
+            dim=-1,
+        )
+        distance_3d = torch.linalg.vector_norm(
+            ee_position - hover_target, dim=-1
+        )
+        window_error = (
+            distance_3d
+            - torch.full_like(distance_3d, float(config.xy_window_high))
+        ).clamp_min(0.0)
+        normalized = window_error / max(float(config.xy_reward_scale), 1.0e-6)
+        distance_reward = float(config.distance_reward_weight) / (
+            1.0
+            + normalized.pow(
+                max(float(config.distance_reward_exponent), 1.0e-6)
+            )
+        )
+        return distance_reward + success.to(dtype=distance_3d.dtype) * float(
+            config.success_bonus
+        )
 
     low_error = (
         torch.full_like(xy_distance, float(config.xy_window_low)) - xy_distance
@@ -382,25 +434,37 @@ def build_smolvla_state_tensor(
     object_positions: Any,
     target_slots: Any,
     state_dim: int = 6,
+    include_relative_target: bool = False,
 ) -> Any:
-    """Match the first six elements of the established CPU state adapter."""
+    """Match the first six elements of the established CPU state adapter.
+
+    The first six columns are exactly the historical CPU state adapter
+    (``[ee_xyz, ee_yaw, gripper, xy_distance]``) so the frozen SmolVLA replica,
+    which truncates to its own ``state_dim``, sees an unchanged input. When
+    ``include_relative_target`` is set, the full 3-D end-effector->target
+    vector ``(dx, dy, dz)`` is appended as columns 6..8. Only the trainable
+    residual (whose ``state_dim`` is widened to match) consumes those columns,
+    giving it an explicit direction to the object that the frozen prior cannot
+    supply for this embodiment.
+    """
 
     import torch
     import torch.nn.functional as functional
 
     target = gather_world_slots(object_positions, target_slots)
+    relative_target = target - ee_position
     xy_distance = torch.linalg.vector_norm(
-        target[:, :2] - ee_position[:, :2], dim=-1, keepdim=True
+        relative_target[:, :2], dim=-1, keepdim=True
     )
-    state = torch.cat(
-        (
-            ee_position,
-            ee_yaw.reshape(-1, 1),
-            gripper_opening.reshape(-1, 1),
-            xy_distance,
-        ),
-        dim=-1,
-    ).to(dtype=torch.float32)
+    columns = [
+        ee_position,
+        ee_yaw.reshape(-1, 1),
+        gripper_opening.reshape(-1, 1),
+        xy_distance,
+    ]
+    if include_relative_target:
+        columns.append(relative_target)
+    state = torch.cat(columns, dim=-1).to(dtype=torch.float32)
     width = max(1, int(state_dim))
     if int(state.shape[1]) > width:
         return state[:, :width]
@@ -634,6 +698,8 @@ def evaluate_active_sparse_tasks(
             success,
             config=move_to_distance_reward,
             ee_z=ee_position[:, 2],
+            ee_position=ee_position,
+            target_xy=target[:, :2],
         )
         rewards = torch.where(is_move_to, dense_move_to, rewards)
     dense_target_distance = ee_xy_distance

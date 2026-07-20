@@ -852,9 +852,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                 compile_mode=str(args.smolvla_compile_mode),
             )
 
+        include_relative_target = bool(
+            getattr(args, "residual_relative_target", False)
+        )
+        # The frozen SmolVLA replica keeps its native state width; only the
+        # trainable residual is widened by the 3-D target-relative vector.
+        residual_state_dim = int(args.state_dim) + (
+            3 if include_relative_target else 0
+        )
         trainer = SmolVLAGRPOTrainer(
             args=args,
-            state_dim=int(args.state_dim),
+            state_dim=residual_state_dim,
             action_dim=int(args.action_dim),
             chunk_size=int(args.chunk_size),
             run_dir=run_dir,
@@ -984,6 +992,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             group_selection=str(args.grpo_group_selection),
             move_to_distance_reward=move_to_distance_reward,
             catch_release_dense_reward=catch_release_dense_reward,
+            include_relative_target=include_relative_target,
             profile=bool(args.mjwarp_profile_timers),
         )
         validation_collector = None
@@ -1031,6 +1040,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 group_selection="uniform",
                 move_to_distance_reward=move_to_distance_reward,
                 catch_release_dense_reward=catch_release_dense_reward,
+                include_relative_target=include_relative_target,
                 profile=bool(args.mjwarp_profile_timers),
             )
 
