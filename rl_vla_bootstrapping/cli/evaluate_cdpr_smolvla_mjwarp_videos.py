@@ -32,6 +32,16 @@ DEFAULT_TOLERANCES_M = (0.02, 0.025, 0.05, 0.10, 0.15)
 GROUP_SIZE = 8
 
 
+def _scene_object_count_for_round(
+    round_index: int, minimum: int, maximum: int
+) -> int:
+    """Cycle inclusively through the configured scene-object counts."""
+
+    return int(minimum) + int(round_index) % (
+        int(maximum) - int(minimum) + 1
+    )
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
@@ -52,6 +62,18 @@ def _build_parser() -> argparse.ArgumentParser:
         help="XY distances used for the qualitative best-distance sweep.",
     )
     parser.add_argument("--validation-seed", type=int, default=1_000_000)
+    parser.add_argument(
+        "--min-scene-objects",
+        type=int,
+        default=1,
+        help="Minimum active scene objects; counts are cycled across episodes.",
+    )
+    parser.add_argument(
+        "--max-scene-objects",
+        type=int,
+        default=3,
+        help="Maximum active scene objects; counts are cycled across episodes.",
+    )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--smolvla-microbatch-size", type=int, default=8)
     parser.add_argument("--fps", type=float, default=10.0)
@@ -975,6 +997,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error("--min-policy-inferences must be at least 10.")
     if args.min_video_seconds < 5.0:
         parser.error("--min-video-seconds must be at least 5.")
+    if not 1 <= args.min_scene_objects <= 4:
+        parser.error("--min-scene-objects must be in [1, 4].")
+    if not args.min_scene_objects <= args.max_scene_objects <= 4:
+        parser.error(
+            "--max-scene-objects must be between --min-scene-objects and 4."
+        )
     if args.random_start_min_xy_distance < 0.0:
         parser.error("--random-start-min-xy-distance cannot be negative.")
     if not (
@@ -1200,6 +1228,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             frontier_probability=1.0,
             rehearsal_probability=0.0,
             balanced_target_catalogs=True,
+            task_metadata={
+                "min_scene_objects": int(args.min_scene_objects),
+                "max_scene_objects": int(args.max_scene_objects),
+            },
         )
 
         videos_dir = run_dir / "videos"
@@ -1219,7 +1251,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{move_shell}, min_policy_inferences="
             f"{args.min_policy_inferences}, min_video="
             f"{args.min_video_seconds:.1f}s, strict_xy<="
-            f"{args.success_distance:.4f}m",
+            f"{args.success_distance:.4f}m, scene_objects="
+            f"{args.min_scene_objects}-{args.max_scene_objects}",
             flush=True,
         )
         # Match the training validator: reset sampling has its own generator,
@@ -1227,6 +1260,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         torch.manual_seed(int(args.validation_seed))
         torch.cuda.manual_seed(int(args.validation_seed))
         for round_index in range(total_requested):
+            scene_object_count = _scene_object_count_for_round(
+                round_index,
+                int(args.min_scene_objects),
+                int(args.max_scene_objects),
+            )
+            resetter.set_scene_object_range(
+                scene_object_count, scene_object_count
+            )
             target_catalog = allowed_objects[
                 round_index % len(allowed_objects)
             ]
@@ -1261,6 +1302,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             actual_target = str(episode["target_catalog"])
             counts[actual_target] += 1
+            episode["scene_object_count"] = scene_object_count
+            for action_row in trace:
+                action_row["scene_object_count"] = scene_object_count
             episode["target_episode"] = counts[actual_target]
             episode["video"] = str(
                 Path(episode["video"]).relative_to(run_dir)
@@ -1270,6 +1314,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 f"[{round_index + 1:02d}/{total_requested:02d}] "
                 f"{episode['instruction']}: success={episode['strict_success']} "
+                f"scene_objects={scene_object_count} "
                 f"start={episode['initial_xy_distance_m']:.4f}m "
                 f"best={episode['best_xy_distance_m']:.4f}m "
                 f"policy_calls={episode['executed_policy_inferences']} "
@@ -1330,6 +1375,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "success_distance_m": float(args.success_distance),
             "episodes_per_target": int(args.episodes_per_target),
             "target_objects": list(allowed_objects),
+            "min_scene_objects": int(args.min_scene_objects),
+            "max_scene_objects": int(args.max_scene_objects),
+            "scene_object_count_sampling": "deterministic_cycle",
             "worlds": GROUP_SIZE,
             "groups": 1,
             "group_size": GROUP_SIZE,

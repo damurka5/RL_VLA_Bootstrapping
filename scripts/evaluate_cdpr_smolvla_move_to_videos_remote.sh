@@ -10,6 +10,8 @@ EPISODES_PER_TARGET="${EPISODES_PER_TARGET:-3}"
 SUCCESS_DISTANCE="${SUCCESS_DISTANCE:-0.02}"
 TOLERANCES="${TOLERANCES:-0.02 0.025 0.05 0.10 0.15}"
 VALIDATION_SEED="${VALIDATION_SEED:-1000000}"
+MIN_SCENE_OBJECTS="${MIN_SCENE_OBJECTS:-1}"
+MAX_SCENE_OBJECTS="${MAX_SCENE_OBJECTS:-3}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 DEVICE="${DEVICE:-cuda:0}"
 SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-8}"
@@ -50,6 +52,14 @@ if [[ "$MIN_POLICY_INFERENCES" -lt 10 ]]; then
   echo "MIN_POLICY_INFERENCES must be at least 10." >&2
   exit 2
 fi
+if [[ "$MIN_SCENE_OBJECTS" -lt 1 || "$MIN_SCENE_OBJECTS" -gt 4 ]]; then
+  echo "MIN_SCENE_OBJECTS must be in [1, 4]." >&2
+  exit 2
+fi
+if [[ "$MAX_SCENE_OBJECTS" -lt "$MIN_SCENE_OBJECTS" || "$MAX_SCENE_OBJECTS" -gt 4 ]]; then
+  echo "MAX_SCENE_OBJECTS must be between MIN_SCENE_OBJECTS and 4." >&2
+  exit 2
+fi
 if [[ "$RANDOM_START" != "0" && "$RANDOM_START" != "1" ]]; then
   echo "RANDOM_START must be 0 or 1." >&2
   exit 2
@@ -78,6 +88,8 @@ cmd=(
   --episodes-per-target "$EPISODES_PER_TARGET"
   --success-distance "$SUCCESS_DISTANCE"
   --validation-seed "$VALIDATION_SEED"
+  --min-scene-objects "$MIN_SCENE_OBJECTS"
+  --max-scene-objects "$MAX_SCENE_OBJECTS"
   --device "$DEVICE"
   --smolvla-microbatch-size "$SMOLVLA_MICROBATCH_SIZE"
   --fps "$VIDEO_FPS"
@@ -114,6 +126,8 @@ printf 'targets=all_configured episodes_per_target=%s\n' "$EPISODES_PER_TARGET"
 printf 'strict_success_xy_distance_m=%s\n' "$SUCCESS_DISTANCE"
 printf 'validation_seed=%s curriculum_shell=%s\n' \
   "$VALIDATION_SEED" "${CURRICULUM_SHELL:-checkpoint}"
+printf 'scene_objects=%s-%s sampling=deterministic_cycle\n' \
+  "$MIN_SCENE_OBJECTS" "$MAX_SCENE_OBJECTS"
 printf 'cuda_visible_devices=%s device=%s worlds=8 groups=1 group_size=8\n' \
   "$CUDA_VISIBLE_DEVICES" "$DEVICE"
 printf 'smolvla_microbatch_size=%s video_fps=%s\n' \

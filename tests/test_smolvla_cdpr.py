@@ -10,8 +10,10 @@ from types import SimpleNamespace
 import numpy as np
 
 from rl_vla_bootstrapping.cli.evaluate_cdpr_smolvla_mjwarp_videos import (
+    _build_parser as _build_mjwarp_video_parser,
     _evaluation_training_args,
     _sample_random_start_xy,
+    _scene_object_count_for_round,
     _telemetry_lines as _mjwarp_video_telemetry_lines,
     _tolerance_rows,
     _validate_simulator_compatibility,
@@ -395,6 +397,11 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertIn("--smolvla-microbatch-size", script)
         self.assertIn("--min-policy-inferences", script)
         self.assertIn("--min-video-seconds", script)
+        self.assertIn('MIN_SCENE_OBJECTS="${MIN_SCENE_OBJECTS:-1}"', script)
+        self.assertIn('MAX_SCENE_OBJECTS="${MAX_SCENE_OBJECTS:-3}"', script)
+        self.assertIn("--min-scene-objects", script)
+        self.assertIn("--max-scene-objects", script)
+        self.assertIn("sampling=deterministic_cycle", script)
         self.assertIn("--random-start-min-xy-distance", script)
         self.assertIn("continue_after_success=true", script)
         self.assertIn("backend=mjlab_mjwarp exact_training_backend=true", script)
@@ -426,6 +433,28 @@ class SmolVLACDPRTests(unittest.TestCase):
         self.assertEqual(args.smolvla_inference_microbatch_size, 8)
         self.assertFalse(args.smolvla_compile_model)
         self.assertEqual(args.instruction_types, ["move_to_object"])
+
+    def test_mjwarp_video_eval_defaults_to_one_through_three_objects(self):
+        args = _build_mjwarp_video_parser().parse_args(
+            [
+                "--config",
+                "/repo/config.yaml",
+                "--checkpoint",
+                "/repo/checkpoint.pt",
+                "--run-dir",
+                "/repo/eval",
+            ]
+        )
+
+        self.assertEqual(args.min_scene_objects, 1)
+        self.assertEqual(args.max_scene_objects, 3)
+        self.assertEqual(
+            [
+                _scene_object_count_for_round(index, 1, 3)
+                for index in range(6)
+            ],
+            [1, 2, 3, 1, 2, 3],
+        )
 
     def test_mjwarp_video_telemetry_exposes_strict_geometry_and_action(self):
         lines = _mjwarp_video_telemetry_lines(
