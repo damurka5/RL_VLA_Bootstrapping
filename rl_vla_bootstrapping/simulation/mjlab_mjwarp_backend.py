@@ -783,8 +783,13 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
                 quat[:, 0] = 1.0
                 matid = np.full((count,), -1, dtype=np.int32)
                 rgba = np.zeros((count, 4), dtype=np.float32)
+                # rbound == 0 marks an unbounded geom (plane/hfield) in
+                # MuJoCo broadphase, which would pair every parked inactive
+                # geom with every collidable partner and overflow nconmax.
+                # Keep a tiny positive bound matching the 1e-4 parked size.
                 aabb = np.zeros((count, 2, 3), dtype=np.float32)
-                rbound = np.zeros((count,), dtype=np.float32)
+                aabb[:, 1, :] = 1.0e-4
+                rbound = np.full((count,), 2.0e-4, dtype=np.float32)
                 mass = np.float32(1.0e-4)
                 inertia = np.full((3,), 1.0e-8, dtype=np.float32)
                 rest_height = np.float32(0.0)
