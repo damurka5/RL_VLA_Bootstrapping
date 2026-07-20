@@ -242,7 +242,9 @@ training:
       mixed_precision: bf16
       smolvla_action_normalization: tanh
       hidden_dim: 1024
-      residual_scale: 0.30
+      # Must match the move-to phase: the residual was trained at 1.0 so the
+      # frozen prior's task-blind biases can be overridden per axis.
+      residual_scale: 1.0
       learning_rate: 1.0e-4
       adam_eps: 1.0e-5
       weight_decay: 0.0

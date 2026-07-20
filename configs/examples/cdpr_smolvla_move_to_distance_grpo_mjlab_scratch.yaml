@@ -234,7 +234,11 @@ training:
       mixed_precision: bf16
       smolvla_action_normalization: tanh
       hidden_dim: 1024
-      residual_scale: 0.30
+      # The frozen prior carries a task-blind +0.45 mean Z bias (see
+      # scripts/diagnose_smolvla_prior_scale.py). At scale 0.30 the residual
+      # cannot bring action_z <= 0, so the EE can never descend/hold and
+      # move-to is impossible; 1.0 gives the residual full per-axis authority.
+      residual_scale: 1.0
       learning_rate: 1.0e-4
       adam_eps: 1.0e-5
       weight_decay: 0.0

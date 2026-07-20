@@ -436,16 +436,19 @@ def build_smolvla_state_tensor(
     state_dim: int = 6,
     include_relative_target: bool = False,
 ) -> Any:
-    """Match the first six elements of the established CPU state adapter.
+    """Build the SmolVLA/residual state, keeping SmolVLA's view proprioceptive.
 
-    The first six columns are exactly the historical CPU state adapter
-    (``[ee_xyz, ee_yaw, gripper, xy_distance]``) so the frozen SmolVLA replica,
-    which truncates to its own ``state_dim``, sees an unchanged input. When
-    ``include_relative_target`` is set, the full 3-D end-effector->target
-    vector ``(dx, dy, dz)`` is appended as columns 6..8. Only the trainable
-    residual (whose ``state_dim`` is widened to match) consumes those columns,
-    giving it an explicit direction to the object that the frozen prior cannot
-    supply for this embodiment.
+    Legacy layout (``include_relative_target=False``) is the historical CPU
+    adapter ``[ee_xyz, ee_yaw, gripper, xy_distance]``.
+
+    With ``include_relative_target=True`` the first six columns are pure
+    proprioception ``[ee_xyz, ee_yaw, gripper, 0]`` -- the target-distance
+    scalar is deliberately dropped so the frozen SmolVLA replica (which
+    truncates to its own six-dim ``state_dim``) never receives privileged,
+    non-generalizable task geometry. The full 3-D end-effector->target vector
+    ``(dx, dy, dz)`` is appended as columns 6..8 for the trainable residual
+    only, giving it an explicit direction to the object without polluting the
+    VLA's proprioceptive input.
     """
 
     import torch
@@ -453,17 +456,26 @@ def build_smolvla_state_tensor(
 
     target = gather_world_slots(object_positions, target_slots)
     relative_target = target - ee_position
-    xy_distance = torch.linalg.vector_norm(
-        relative_target[:, :2], dim=-1, keepdim=True
-    )
-    columns = [
-        ee_position,
-        ee_yaw.reshape(-1, 1),
-        gripper_opening.reshape(-1, 1),
-        xy_distance,
-    ]
     if include_relative_target:
-        columns.append(relative_target)
+        # Column 5 is a neutral pad, not the target distance, so the frozen
+        # SmolVLA's truncated six-dim view is exactly proprioception.
+        columns = [
+            ee_position,
+            ee_yaw.reshape(-1, 1),
+            gripper_opening.reshape(-1, 1),
+            torch.zeros_like(ee_yaw.reshape(-1, 1)),
+            relative_target,
+        ]
+    else:
+        xy_distance = torch.linalg.vector_norm(
+            relative_target[:, :2], dim=-1, keepdim=True
+        )
+        columns = [
+            ee_position,
+            ee_yaw.reshape(-1, 1),
+            gripper_opening.reshape(-1, 1),
+            xy_distance,
+        ]
     state = torch.cat(columns, dim=-1).to(dtype=torch.float32)
     width = max(1, int(state_dim))
     if int(state.shape[1]) > width:
