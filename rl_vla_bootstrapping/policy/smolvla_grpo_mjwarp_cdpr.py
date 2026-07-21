@@ -408,7 +408,7 @@ def _update_mjwarp_progress_bar(
                 f"{float(metrics.get('candidate_worlds', 0.0)):.0f}"
             ),
             "records": (
-                f"{float(metrics.get('records_informative', 0.0)):.0f}"
+                f"{float(metrics.get('informative_records', 0.0)):.0f}"
             ),
         },
         refresh=False,
@@ -1472,7 +1472,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         f"eta={eta_seconds / 3600.0:.2f}h "
                         f"success={synchronized_metrics['candidate_successes']:.0f}/"
                         f"{synchronized_metrics['candidate_worlds']:.0f} "
-                        f"records={synchronized_metrics.get('records_informative', 0.0):.0f}",
+                        f"records={synchronized_metrics.get('informative_records', 0.0):.0f}",
                     )
 
             # MJWarp allocates through Warp's own CUDA allocator, while
