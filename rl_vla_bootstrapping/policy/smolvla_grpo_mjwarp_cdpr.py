@@ -14,6 +14,7 @@ import math
 import os
 import sys
 import time
+import warnings
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
@@ -315,6 +316,7 @@ def _log_tensorboard_metrics(
 
     if writer is None:
         return
+    skipped: list[str] = []
     for key, value in metrics.items():
         try:
             scalar = float(value)
@@ -322,7 +324,57 @@ def _log_tensorboard_metrics(
             continue
         if math.isfinite(scalar):
             writer.add_scalar(str(key), scalar, int(step))
+        else:
+            skipped.append(str(key))
+    if skipped:
+        # Silently dropping these is how a NaN run masquerades as "TensorBoard
+        # stopped logging some curves": the scalars simply stop appearing while
+        # the job keeps burning GPU hours.
+        warnings.warn(
+            "Non-finite metrics not written to TensorBoard at step "
+            f"{int(step)}: {sorted(skipped)}",
+            RuntimeWarning,
+        )
     writer.flush()
+
+
+def _assert_finite_training_metrics(
+    metrics: Mapping[str, Any], *, update_index: int, global_step: int
+) -> None:
+    """Abort as soon as the rollout goes numerically bad.
+
+    A NaN reward propagates silently: reward_span becomes NaN, ``NaN > 1e-6``
+    is False, so every GRPO group is judged non-informative, the loss mask is
+    empty and nothing trains -- while the progress bar keeps advancing. Fail
+    here instead, so the run stops minutes after the corruption rather than
+    hours.
+    """
+
+    watched = (
+        "candidate_reward_mean",
+        "candidate_reward_std",
+        "group_pass_rate_mean",
+        "vla_lora/grad_norm",
+        "vla_lora/kl",
+        "vla_lora/ppo_loss",
+    )
+    broken = {}
+    for key in watched:
+        if key not in metrics:
+            continue
+        try:
+            scalar = float(metrics[key])
+        except (TypeError, ValueError):
+            continue
+        if not math.isfinite(scalar):
+            broken[key] = scalar
+    if broken:
+        raise RuntimeError(
+            f"Non-finite training metrics at update {int(update_index)} "
+            f"(global step {int(global_step)}): {broken}. The rollout or the "
+            "policy has diverged; every later update would silently train on "
+            "an empty loss mask. Checkpoints from this point are unusable."
+        )
 
 
 def _make_mjwarp_progress_bar(
@@ -1333,6 +1385,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                 synchronized_metrics[
                     "profile/dominant_stage_time_s"
                 ] = dominant_seconds
+
+            _assert_finite_training_metrics(
+                synchronized_metrics,
+                update_index=update_index,
+                global_step=global_step,
+            )
 
             validation_due = _validation_due(
                 args,
