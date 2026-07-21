@@ -1008,8 +1008,8 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             scene,
         )
         # Orientation is preserved: the overview camera was dollied 2x closer
-        # along its own optical axis, so forward/up still match the legacy free
-        # camera while the distance to the lookat halves (1.25 m -> 0.625 m).
+        # along its own optical axis and then raised 10 cm, so forward/up still
+        # match the legacy free camera (only the position moved).
         np.testing.assert_allclose(scene.camera[0].forward, legacy_forward, atol=1e-6)
         np.testing.assert_allclose(scene.camera[0].up, legacy_up, atol=1e-6)
         overview_id = mujoco.mj_name2id(
@@ -1017,7 +1017,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         np.testing.assert_allclose(
             model.cam_pos[overview_id],
-            np.array([0.0, -0.5412341, 0.4125]),
+            np.array([0.0, -0.5412341, 0.5125]),
             atol=1e-6,
         )
         self.assertAlmostEqual(
@@ -1027,7 +1027,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
                     - np.array([0.0, 0.0, 0.10])
                 )
             ),
-            0.625,
+            0.680507,
             places=4,
         )
 
