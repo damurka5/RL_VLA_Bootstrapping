@@ -91,16 +91,35 @@ Replace, for LoRA microbatches, the "use stored detached prior" path with:
   Keep the DDP-equal-schedule invariant: every rank runs the same number of
   VLA-grad microbatches (pad like `synchronize_equal_ddp_schedule` already does).
 
-## Step 4 — batch / VRAM recomputation (2xA40, 48 GB)
+## Step 4 — batch / VRAM, MEASURED (2xA40, ~46 GB usable)
 
-- `worlds_per_rank`: unchanged for rollout (inference, no_grad) — keep 512.
-- `vla_microbatch_size`: NEW, ~16–32 (was residual `microbatch_size: 512`).
-  The residual-only update keeps its large microbatch; only the VLA-grad path
-  shrinks.
-- `vla_update_max_records`: NEW, cap ~256 informative records/update through the
-  VLA to bound image memory and update time.
-- Expect throughput to drop (VLA backward is the new cost); measure with the
-  existing `profile/backpropagation_*` timers.
+Sweep at 512 worlds / inference microbatch 512, LoRA attn+MLP r=16 (3.42M
+trainable), with the grad-through-VLA backward confirmed live
+(`vla_lora/grad_norm` 1.3-2.2, `vla_lora/records` 256):
+
+| VLA microbatch | VRAM MiB | headroom | selected actions/s |
+|---:|---:|---:|---:|
+| 16 | 37714 | ~8.3 GB | 152.84 |
+| 32 | 41094 | ~4.9 GB | 152.45 |
+| 64 | 45488 | ~0.6 GB (unsafe) | 152.46 |
+| 128 | - | OOM (extrapolated ~50 GB) | - |
+
+- `worlds_per_rank`: unchanged for rollout (inference, no_grad) - keep 512.
+- `vla_microbatch_size`: **16**. Throughput is identical across 16/32/64 (the
+  LoRA update is negligible next to ~95 s of SmolVLA rollout inference) and the
+  gradient is identical too (all 256 records are accumulated regardless of
+  chunk size), so larger microbatches buy nothing and cost 3.4-4.4 GB per
+  doubling. At 16 the backward fits under the rollout's existing allocator
+  high-water mark, costing only ~0.3 GB.
+- `vla_update_max_records`: 128. Peak memory is bounded by the microbatch, not
+  by this, so raising it costs update time (more chunks), not VRAM.
+- Adapter cost in the rollout forward, present even with the backward off:
+  attention-only -3.6% selected actions/s, attn+MLP -9.2%.
+
+Caveat that produced one wasted sweep: with the backward accidentally disabled,
+VRAM was FLAT across microbatches. A flat memory curve over a swept batch
+dimension means the swept thing is not running - treat it as a bug signal, not
+as "the knob is free".
 
 ## Step 5 — config / args
 

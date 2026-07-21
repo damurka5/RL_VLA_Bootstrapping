@@ -249,11 +249,23 @@ training:
       lora_rank: 16
       lora_alpha: 32.0
       lora_dropout: 0.0
-      lora_include_mlp: false
+      # attn+MLP: 3.42M trainable (attention-only would be 1.29M). Measured
+      # cost vs no LoRA: -9.2% selected actions/s from the adapters running in
+      # every rollout forward.
+      lora_include_mlp: true
       lora_expert_name_contains: lm_expert
       vla_lr: 1.0e-5
       vla_kl_coef: 0.1
+      # Measured peak VRAM on a ~46 GB A40 at 512 worlds (grad-through-VLA
+      # backward ON): mb 16 -> 37.7 GB, 32 -> 41.1 GB, 64 -> 45.5 GB (~99% of
+      # the card, unsafe), 128 -> OOM. Throughput is identical across all of
+      # them because the LoRA update is negligible next to the 95 s SmolVLA
+      # rollout, and every record is accumulated regardless of chunk size, so
+      # the gradient is unchanged. 16 is therefore strictly dominant: it fits
+      # under the rollout's existing allocator high-water mark (+0.3 GB).
       vla_microbatch_size: 16
+      # Bounded by the microbatch, not by this, so raising it costs update
+      # time (more chunks) rather than VRAM.
       vla_update_max_records: 128
       learning_rate: 1.0e-4
       adam_eps: 1.0e-5
