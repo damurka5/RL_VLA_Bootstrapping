@@ -35,7 +35,14 @@ class CDPRBackendConfig:
     xml_path: Path | None = None
     workspace_x: tuple[float, float] = (-0.28, 0.28)
     workspace_y: tuple[float, float] = (-0.28, 0.28)
-    workspace_z: tuple[float, float] = (0.20, 1.20)
+    # This clamps the CONTROLLER target, i.e. everywhere the policy may drive,
+    # which is a different (and stricter) thing than the task's spawn bounds or
+    # the reward's hover height. The end-effector body sits 0.08 m above the
+    # grasp point, so a floor of 0.20 let the policy push the fingers to 0.12 --
+    # 3 cm through the 0.15 m desk -- and MJWarp diverged into NaN rewards. 0.25
+    # keeps the grasp point 2 cm clear. The ceiling is well under the 1.31 m
+    # rotors, where the cable geometry approaches a singularity.
+    workspace_z: tuple[float, float] = (0.25, 0.60)
 
     def validate(self) -> None:
         if self.backend not in SUPPORTED_SIMULATOR_BACKENDS:

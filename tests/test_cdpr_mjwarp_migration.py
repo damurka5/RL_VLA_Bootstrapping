@@ -108,6 +108,23 @@ XML = ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr_mjwarp_smoke.xml"
 
 
 class CDPRMJWarpMigrationTests(unittest.TestCase):
+    def test_controller_workspace_keeps_the_grasp_point_above_the_desk(self):
+        # The controller clamp bounds everywhere the policy may drive, which is
+        # stricter than the task spawn bounds or the reward hover height. The
+        # end-effector body rides 0.08 m above the grasp point, so a floor that
+        # lets the grasp point reach the 0.15 m desk lets the policy bury the
+        # fingers in the table until MJWarp diverges into NaN rewards.
+        config = CDPRBackendConfig(backend="mjlab_mjwarp")
+        desk_z = 0.15
+        gripper_drop = 0.08
+        lowest_grasp_point = min(config.workspace_z) - gripper_drop
+        self.assertGreater(lowest_grasp_point, desk_z)
+        # And stay clear of the ~1.31 m rotors, where the cables go singular.
+        self.assertLess(max(config.workspace_z), 1.0)
+        # The 0.40 m spawn height in the MJCF must remain reachable.
+        self.assertLessEqual(min(config.workspace_z), 0.40)
+        self.assertGreaterEqual(max(config.workspace_z), 0.40)
+
     def test_scratch_move_to_config_is_step_zero_two_rank_distance_grpo(self):
         config = load_project_config(SCRATCH_MOVE_TO_CONFIG)
         plan = BootstrapPipeline(config).build_stage_plans(
