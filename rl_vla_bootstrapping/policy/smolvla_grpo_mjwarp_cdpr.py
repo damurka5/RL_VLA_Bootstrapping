@@ -848,8 +848,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     if int(args.smolvla_model_image_size) <= 0
                     else int(args.smolvla_model_image_size)
                 ),
-                compile_model=bool(args.smolvla_compile_model)
-                and not bool(getattr(args, "train_vla_lora", False)),
+                # Compilation stays on even with LoRA: the runtime swaps in the
+                # eager sample_actions only for the small grad-enabled
+                # microbatches, so the no_grad rollout keeps its speedup.
+                compile_model=bool(args.smolvla_compile_model),
                 compile_mode=str(args.smolvla_compile_mode),
             )
 

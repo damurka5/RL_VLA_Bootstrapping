@@ -2,7 +2,18 @@
   <compiler autolimits="true"/>
   <default>
     <site type="sphere" rgba="1 0 0 1" size="0.005"/>
-    <tendon rgba="0.22 0.24 0.27 0.90" width="0.002"/>
+    <!--
+      Fully transparent cables. The tendons are MuJoCo spatial elements, not
+      geoms, so the renderer's enabled_geom_groups cannot filter them per
+      camera. They converge at "topcenter", 3.5 cm above and 5 cm behind the
+      wrist camera, which is far outside a downward-looking frustum at rest;
+      the ee_ball joint tilting the end-effector mid-motion is what swings them
+      into the wrist view intermittently, so no fixed fovy/euler removes them
+      (fovy 45 was tried and it cropped the finger pads instead). Alpha 0 keeps
+      the physics identical and only stops them being drawn, including in the
+      overview camera, where the rotors and frame geoms still show the robot.
+    -->
+    <tendon rgba="0.22 0.24 0.27 0.0" width="0.002"/>
     <default class="gripper_surface">
       <geom contype="0" conaffinity="0" group="1" material="gripper_surface_material"
             rgba="0.94 0.94 0.94 1"/>

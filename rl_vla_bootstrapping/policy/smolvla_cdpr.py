@@ -766,22 +766,39 @@ class SmolVLARuntime:
         def predict() -> Any:
             # LoRA fine-tuning needs gradients through the action expert, so
             # skip inference_mode (its tensors cannot participate in autograd).
-            # A compiled sample_actions path is inference-only; the caller
-            # disables compilation when it needs grad.
+            # The compiled sample_actions path is built for inference, so swap
+            # in the eager original for just the grad call rather than giving up
+            # compilation for the (far larger) no_grad rollout.
             grad_ctx = (
                 torch.enable_grad()
                 if enable_grad
                 else torch.inference_mode()
             )
-            with grad_ctx:
-                with torch.autocast(
-                    device_type=self.device.type,
-                    dtype=self.dtype,
-                    enabled=bool(autocast_enabled),
-                ):
-                    if hasattr(self.policy, "predict_action_chunk"):
-                        return self.policy.predict_action_chunk(batch)
-                    return self.policy.select_action(batch)
+            model = getattr(self.policy, "model", None)
+            swap_to_eager = bool(
+                enable_grad
+                and self.compile_model
+                and self._original_sample_actions is not None
+                and model is not None
+            )
+            compiled_sample_actions = (
+                model.sample_actions if swap_to_eager else None
+            )
+            if swap_to_eager:
+                model.sample_actions = self._original_sample_actions
+            try:
+                with grad_ctx:
+                    with torch.autocast(
+                        device_type=self.device.type,
+                        dtype=self.dtype,
+                        enabled=bool(autocast_enabled),
+                    ):
+                        if hasattr(self.policy, "predict_action_chunk"):
+                            return self.policy.predict_action_chunk(batch)
+                        return self.policy.select_action(batch)
+            finally:
+                if swap_to_eager:
+                    model.sample_actions = compiled_sample_actions
 
         try:
             actions = predict()
