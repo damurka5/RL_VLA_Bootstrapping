@@ -28,6 +28,8 @@ SMOLVLA_STATE_KEY = "observation.state"
 SMOLVLA_TASK_KEY = "task"
 SMOLVLA_LANGUAGE_TOKEN_KEY = "observation.language.tokens"
 SMOLVLA_LANGUAGE_MASK_KEY = "observation.language.attention_mask"
+# Bounds the tokenizer cache; see SmolVLARuntime._tokenize.
+_TOKEN_CACHE_MAX_ENTRIES = 32
 DEFAULT_SMOLVLA_IMAGE_KEYS: tuple[str, ...] = (
     "observation.images.camera1",
     "observation.images.camera2",
@@ -723,6 +725,14 @@ class SmolVLARuntime:
             dtype=torch.bool,
             non_blocking=True,
         )
+        # The key is the WHOLE batch of instructions, so with randomised targets
+        # almost every reset mints a fresh entry holding two GPU tensors
+        # (~220 KB at 512 worlds). Unbounded, that is a slow GPU leak on a
+        # device already sharing memory with Warp's allocator. Keep a small
+        # FIFO: repeated keys only really occur within a fixed-seed validation
+        # pass, which a handful of entries already covers.
+        if len(self._token_cache) >= _TOKEN_CACHE_MAX_ENTRIES:
+            self._token_cache.pop(next(iter(self._token_cache)))
         self._token_cache[normalized] = (input_ids, attention_mask)
         return input_ids, attention_mask
 

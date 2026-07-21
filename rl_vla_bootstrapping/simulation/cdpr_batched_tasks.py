@@ -775,11 +775,21 @@ def evaluate_active_sparse_tasks(
                     float(catch_release_dense_reward.plate_release_height),
                 ),
             )
+            # release_height is expressed in the HELD-OBJECT frame: the reset
+            # places the carried object at reference_z + release_height. This
+            # distance is against ee_position, which tracks the end-effector
+            # body riding pick_grasp_height_offset above the grasp point, so the
+            # offset must be added or the target sits a whole gripper-length too
+            # low -- for the plate that landed at 0.205 m, below the 0.25 m
+            # controller floor, i.e. a point the policy could never reach.
+            # pick_up already applies the same offset to its grasp point.
             placement_hover = torch.stack(
                 (
                     reference[:, 0],
                     reference[:, 1],
-                    reference[:, 2] + release_height,
+                    reference[:, 2]
+                    + release_height
+                    + float(catch_release_dense_reward.pick_grasp_height_offset),
                 ),
                 dim=-1,
             )
