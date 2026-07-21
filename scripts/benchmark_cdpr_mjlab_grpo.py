@@ -108,6 +108,8 @@ def _command(
     microbatch: int,
     run_root: Path,
     run_id: str,
+    lora_variant: str = "none",
+    vla_microbatch: int | None = None,
 ) -> list[str]:
     result = [
         sys.executable,
@@ -203,6 +205,34 @@ def _command(
     result.extend(
         ["--smolvla-compile-mode", "max-autotune-no-cudagraphs"]
     )
+    # LoRA on the SmolVLA action expert. The rollout stays no_grad (and stays
+    # compiled); the extra VRAM comes from the grad-enabled expert backward on
+    # vla_microbatch_size records at a time, so that is the knob being swept.
+    if lora_variant == "none":
+        result.append("--no-train-vla-lora")
+        return result
+    result.extend(
+        [
+            "--train-vla-lora",
+            "--lora-rank",
+            str(int(args.lora_rank)),
+            "--lora-alpha",
+            str(float(args.lora_alpha)),
+            "--lora-expert-name-contains",
+            str(args.lora_expert_name_contains),
+            "--vla-microbatch-size",
+            str(int(vla_microbatch or 16)),
+            # Never cap below the microbatch, or a large microbatch would be
+            # starved of records and understate its true peak VRAM.
+            "--vla-update-max-records",
+            str(max(int(args.vla_update_max_records), int(vla_microbatch or 16))),
+        ]
+    )
+    result.append(
+        "--lora-include-mlp"
+        if lora_variant == "attn_mlp"
+        else "--no-lora-include-mlp"
+    )
     return result
 
 
@@ -211,10 +241,14 @@ def _run_one(
     worlds: int,
     microbatch: int,
     output: Path,
+    lora_variant: str = "none",
+    vla_microbatch: int | None = None,
 ) -> dict[str, Any]:
     run_root = output / "runs"
     effective_microbatch = min(worlds, max(1, int(microbatch)))
     run_id = f"worlds_{worlds}_microbatch_{effective_microbatch}"
+    if lora_variant != "none":
+        run_id += f"_lora_{lora_variant}_vlamb_{int(vla_microbatch or 16)}"
     run_dir = run_root / run_id
     run_dir.mkdir(parents=True, exist_ok=True)
     command = _command(
@@ -223,6 +257,8 @@ def _run_one(
         microbatch=effective_microbatch,
         run_root=run_root,
         run_id=run_id,
+        lora_variant=lora_variant,
+        vla_microbatch=vla_microbatch,
     )
     log_path = run_dir / "benchmark.log"
     environment = dict(os.environ)
@@ -276,6 +312,19 @@ def _run_one(
     result: dict[str, Any] = {
         "worlds_per_rank": worlds,
         "configured_smolvla_microbatch_size": effective_microbatch,
+        "lora_variant": lora_variant,
+        "lora_rank": (
+            int(args.lora_rank) if lora_variant != "none" else 0
+        ),
+        "vla_microbatch_size": (
+            int(vla_microbatch or 0) if lora_variant != "none" else 0
+        ),
+        "vla_lora_trainable_params": float(
+            (measured or {}).get("vla_lora/trainable_params", 0.0)
+        ),
+        "vla_lora_modules": float(
+            (measured or {}).get("vla_lora/modules", 0.0)
+        ),
         "groups_per_rank": worlds // 8,
         "server_candidate_worlds": worlds * 2,
         "return_code": return_code,
@@ -335,14 +384,15 @@ def _markdown(payload: dict[str, Any]) -> str:
         "migration. Values below are complete rollout/update measurements; no "
         "physics-only FPS value is labeled as a training speedup.",
         "",
-        "| worlds/rank | groups/rank | status | sampled actions/s | selected actions/s | amplification | active SmolVLA batch | inference microbatch | reset s | physics s | render s | SmolVLA s | backprop s | update s | dominant stage | GPU util mean | power mean W | VRAM max MiB | CPU util mean | RAM max GiB |",
-        "|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|---:|---:|---:|---:|---:|",
+        "| worlds/rank | groups/rank | LoRA | VLA microbatch | LoRA params | status | sampled actions/s | selected actions/s | amplification | active SmolVLA batch | inference microbatch | reset s | physics s | render s | SmolVLA s | backprop s | update s | dominant stage | GPU util mean | power mean W | VRAM max MiB | CPU util mean | RAM max GiB |",
+        "|---:|---:|:---|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|---:|---:|---:|---:|---:|",
     ]
     for row in payload["runs"]:
         metric = row.get("measured_update") or {}
         telemetry = row.get("telemetry") or {}
         lines.append(
-            "| {worlds_per_rank} | {groups_per_rank} | {status} | "
+            "| {worlds_per_rank} | {groups_per_rank} | {lora} | "
+            "{vla_microbatch} | {lora_params} | {status} | "
             "{sampled:.2f} | {selected:.2f} | {amplification:.2f}× | "
             "{batch:.0f} | {microbatch:.0f} | {reset:.3f} | {physics:.3f} | "
             "{render:.3f} | {smol:.3f} | {backprop:.3f} | {update:.3f} | "
@@ -350,6 +400,15 @@ def _markdown(payload: dict[str, Any]) -> str:
             "{cpu:.1f}% | {ram:.1f} |".format(
                 worlds_per_rank=row["worlds_per_rank"],
                 groups_per_rank=row["groups_per_rank"],
+                lora=row.get("lora_variant", "none"),
+                vla_microbatch=(
+                    str(row.get("vla_microbatch_size") or "-")
+                ),
+                lora_params=(
+                    f"{row.get('vla_lora_trainable_params', 0.0) / 1e6:.2f}M"
+                    if row.get("lora_variant", "none") != "none"
+                    else "-"
+                ),
                 status="pass" if row["ok"] else f"fail({row['return_code']})",
                 sampled=float(metric.get("sampled_actions_per_second_global", 0.0)),
                 selected=float(metric.get("selected_actions_per_second_global", 0.0)),
@@ -420,6 +479,35 @@ def main() -> int:
     parser.add_argument("--worlds", nargs="+", type=int, default=[8, 16, 32, 64, 128])
     parser.add_argument("--updates", type=int, default=2)
     parser.add_argument("--microbatch", nargs="+", type=int, default=[16])
+    parser.add_argument(
+        "--lora-variants",
+        nargs="+",
+        default=["none"],
+        choices=["none", "attn", "attn_mlp"],
+        help=(
+            "SmolVLA action-expert LoRA configurations to sweep. 'attn' targets "
+            "q/k/v/o_proj, 'attn_mlp' adds gate/up/down_proj, 'none' is the "
+            "frozen-VLA baseline."
+        ),
+    )
+    parser.add_argument("--lora-rank", type=int, default=16)
+    parser.add_argument("--lora-alpha", type=float, default=32.0)
+    parser.add_argument(
+        "--lora-expert-name-contains",
+        default="lm_expert",
+        help="Qualified-name substring selecting the action expert.",
+    )
+    parser.add_argument(
+        "--vla-microbatch",
+        nargs="+",
+        type=int,
+        default=[16],
+        help=(
+            "Records per grad-enabled SmolVLA forward/backward. This is the "
+            "dominant new VRAM term when LoRA is on; swept only for LoRA runs."
+        ),
+    )
+    parser.add_argument("--vla-update-max-records", type=int, default=128)
     parser.add_argument("--base-checkpoint", default="lerobot/smolvla_base")
     parser.add_argument("--cuda-visible-devices", default="0,1")
     parser.add_argument("--sample-interval", type=float, default=1.0)
@@ -447,20 +535,45 @@ def main() -> int:
             parser.error(f"world count {worlds} is not a positive multiple of eight")
 
     runs = []
-    seen_settings: set[tuple[int, int]] = set()
+    seen_settings: set[tuple[int, int, str, int]] = set()
     for worlds in args.worlds:
         for requested_microbatch in args.microbatch:
             microbatch = min(worlds, max(1, int(requested_microbatch)))
-            setting = (worlds, microbatch)
-            if setting in seen_settings:
-                continue
-            seen_settings.add(setting)
-            print(
-                f"[benchmark] worlds_per_rank={worlds} "
-                f"smolvla_microbatch={microbatch}",
-                flush=True,
-            )
-            runs.append(_run_one(args, worlds, microbatch, output))
+            for lora_variant in args.lora_variants:
+                # vla_microbatch only exists for LoRA runs; the frozen baseline
+                # has no grad-enabled SmolVLA pass to size.
+                vla_microbatches = (
+                    [None]
+                    if lora_variant == "none"
+                    else [max(1, int(value)) for value in args.vla_microbatch]
+                )
+                for vla_microbatch in vla_microbatches:
+                    setting = (
+                        worlds,
+                        microbatch,
+                        lora_variant,
+                        int(vla_microbatch or 0),
+                    )
+                    if setting in seen_settings:
+                        continue
+                    seen_settings.add(setting)
+                    label = (
+                        f"[benchmark] worlds_per_rank={worlds} "
+                        f"smolvla_microbatch={microbatch} lora={lora_variant}"
+                    )
+                    if vla_microbatch is not None:
+                        label += f" vla_microbatch={vla_microbatch}"
+                    print(label, flush=True)
+                    runs.append(
+                        _run_one(
+                            args,
+                            worlds,
+                            microbatch,
+                            output,
+                            lora_variant=lora_variant,
+                            vla_microbatch=vla_microbatch,
+                        )
+                    )
     successful = [row for row in runs if row["ok"]]
     recommended_run = (
         max(
