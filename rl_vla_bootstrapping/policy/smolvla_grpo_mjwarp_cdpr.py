@@ -517,6 +517,8 @@ def _synchronize_validation_rounds(
     successes = torch.zeros_like(counts)
     rewards = torch.zeros_like(counts)
     distances = torch.zeros_like(counts)
+    reward_counts = torch.zeros_like(counts)
+    distance_counts = torch.zeros_like(counts)
     environment_actions = torch.zeros(
         (), dtype=torch.float64, device=device
     )
@@ -552,33 +554,66 @@ def _synchronize_validation_rounds(
         flat_distances = item.final_xy_distance.reshape(-1).to(
             dtype=torch.float64
         )
+        zero = torch.zeros_like(flat_rewards)
         one = torch.ones_like(flat_success)
+        # A single diverged episode used to poison the whole mean (plain sums
+        # over NaN). Accumulate only finite values, with their own counts, and
+        # track how many episodes went bad so instability stays visible instead
+        # of erasing the curve.
+        finite_rewards = torch.isfinite(flat_rewards)
+        finite_distances = torch.isfinite(flat_distances)
         counts.index_add_(0, catalog_ids, one)
         successes.index_add_(0, catalog_ids, flat_success)
-        rewards.index_add_(0, catalog_ids, flat_rewards)
-        distances.index_add_(0, catalog_ids, flat_distances)
+        reward_counts.index_add_(0, catalog_ids, finite_rewards.to(counts.dtype))
+        distance_counts.index_add_(
+            0, catalog_ids, finite_distances.to(counts.dtype)
+        )
+        rewards.index_add_(
+            0, catalog_ids, torch.where(finite_rewards, flat_rewards, zero)
+        )
+        distances.index_add_(
+            0, catalog_ids, torch.where(finite_distances, flat_distances, zero)
+        )
         environment_actions += float(
             item.metrics.get("validation/environment_actions", 0.0)
         )
 
     if dist.is_available() and dist.is_initialized():
-        for tensor in (counts, successes, rewards, distances):
+        for tensor in (
+            counts,
+            successes,
+            rewards,
+            distances,
+            reward_counts,
+            distance_counts,
+        ):
             dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(environment_actions, op=dist.ReduceOp.SUM)
         if timing_values.numel() > 0:
             dist.all_reduce(timing_values, op=dist.ReduceOp.MAX)
 
     total_count = counts.sum().clamp_min(1.0)
+    finite_reward_total = reward_counts.sum()
+    finite_distance_total = distance_counts.sum()
     metrics = {
         "validation/episodes": float(counts.sum().item()),
         "validation/success_rate": float(
             (successes.sum() / total_count).item()
         ),
+        # Episodes whose reward/distance diverged. Non-zero means the physics
+        # or policy went unstable for those rollouts; success_rate already
+        # counts them as failures (NaN comparisons are False).
+        "validation/non_finite_reward_episodes": float(
+            (counts.sum() - finite_reward_total).item()
+        ),
+        "validation/non_finite_distance_episodes": float(
+            (counts.sum() - finite_distance_total).item()
+        ),
         "validation/reward_mean": float(
-            (rewards.sum() / total_count).item()
+            (rewards.sum() / finite_reward_total.clamp_min(1.0)).item()
         ),
         "validation/final_xy_distance_mean_m": float(
-            (distances.sum() / total_count).item()
+            (distances.sum() / finite_distance_total.clamp_min(1.0)).item()
         ),
         "validation/environment_actions": float(environment_actions.item()),
         "validation/rounds_per_rank": float(len(rounds)),
@@ -593,15 +628,19 @@ def _synchronize_validation_rounds(
             continue
         label = OBJECT_VARIANTS[catalog_name].label.replace(" ", "_")
         prefix = f"validation/by_object/{label}"
+        finite_rewards_here = max(1.0, float(reward_counts[catalog_index].item()))
+        finite_distances_here = max(
+            1.0, float(distance_counts[catalog_index].item())
+        )
         metrics[f"{prefix}/episodes"] = count
         metrics[f"{prefix}/success_rate"] = float(
             successes[catalog_index].item() / count
         )
         metrics[f"{prefix}/reward_mean"] = float(
-            rewards[catalog_index].item() / count
+            rewards[catalog_index].item() / finite_rewards_here
         )
         metrics[f"{prefix}/final_xy_distance_mean_m"] = float(
-            distances[catalog_index].item() / count
+            distances[catalog_index].item() / finite_distances_here
         )
     return metrics
 
