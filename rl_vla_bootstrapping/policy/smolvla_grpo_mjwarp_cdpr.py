@@ -697,6 +697,11 @@ def _synchronize_update_metrics_once(
                 "profiled_update",
                 "dense_move_to_distance_reward",
                 "dense_catch_release_reward",
+                # Per-rank LoRA diagnostics: report the rank mean, not the sum
+                # (vla_lora/records stays a sum -- it is a global count).
+                "vla_lora/ppo_loss",
+                "vla_lora/kl",
+                "vla_lora/grad_norm",
             }
         ):
             summed[key] /= float(world_size)
@@ -873,6 +878,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             distributed=dist_ctx,
         )
         train_vla_lora = bool(getattr(args, "train_vla_lora", False))
+        lora_info: dict[str, float] = {}
         if train_vla_lora:
             lora_info = trainer.attach_vla_lora(runtime)
             _log(
@@ -1273,6 +1279,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "curriculum/scene_objects_max": float(
                         scene_object_range[1]
                     ),
+                    # Attach-time LoRA facts are repeated on every row so any
+                    # tool reading the latest metrics (benchmarks, TensorBoard)
+                    # can report them without parsing the startup log.
+                    **lora_info,
                     "global_step": float(global_step),
                     "update_index": float(update_index),
                     "global_step_increment": float(global_selected),

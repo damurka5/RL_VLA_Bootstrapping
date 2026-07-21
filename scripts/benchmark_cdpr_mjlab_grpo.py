@@ -325,6 +325,14 @@ def _run_one(
         "vla_lora_modules": float(
             (measured or {}).get("vla_lora/modules", 0.0)
         ),
+        # Non-zero records/grad_norm are the proof the grad-through-VLA update
+        # actually ran, rather than LoRA merely sitting in the forward path.
+        "vla_lora_records": float(
+            (measured or {}).get("vla_lora/records", 0.0)
+        ),
+        "vla_lora_grad_norm": float(
+            (measured or {}).get("vla_lora/grad_norm", 0.0)
+        ),
         "groups_per_rank": worlds // 8,
         "server_candidate_worlds": worlds * 2,
         "return_code": return_code,
@@ -384,15 +392,16 @@ def _markdown(payload: dict[str, Any]) -> str:
         "migration. Values below are complete rollout/update measurements; no "
         "physics-only FPS value is labeled as a training speedup.",
         "",
-        "| worlds/rank | groups/rank | LoRA | VLA microbatch | LoRA params | status | sampled actions/s | selected actions/s | amplification | active SmolVLA batch | inference microbatch | reset s | physics s | render s | SmolVLA s | backprop s | update s | dominant stage | GPU util mean | power mean W | VRAM max MiB | CPU util mean | RAM max GiB |",
-        "|---:|---:|:---|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|---:|---:|---:|---:|---:|",
+        "| worlds/rank | groups/rank | LoRA | VLA microbatch | LoRA params | LoRA records | LoRA grad norm | status | sampled actions/s | selected actions/s | amplification | active SmolVLA batch | inference microbatch | reset s | physics s | render s | SmolVLA s | backprop s | update s | dominant stage | GPU util mean | power mean W | VRAM max MiB | CPU util mean | RAM max GiB |",
+        "|---:|---:|:---|---:|---:|---:|---:|:---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|---:|:---|---:|---:|---:|---:|---:|",
     ]
     for row in payload["runs"]:
         metric = row.get("measured_update") or {}
         telemetry = row.get("telemetry") or {}
         lines.append(
             "| {worlds_per_rank} | {groups_per_rank} | {lora} | "
-            "{vla_microbatch} | {lora_params} | {status} | "
+            "{vla_microbatch} | {lora_params} | {lora_records} | "
+            "{lora_grad_norm} | {status} | "
             "{sampled:.2f} | {selected:.2f} | {amplification:.2f}× | "
             "{batch:.0f} | {microbatch:.0f} | {reset:.3f} | {physics:.3f} | "
             "{render:.3f} | {smol:.3f} | {backprop:.3f} | {update:.3f} | "
@@ -406,6 +415,16 @@ def _markdown(payload: dict[str, Any]) -> str:
                 ),
                 lora_params=(
                     f"{row.get('vla_lora_trainable_params', 0.0) / 1e6:.2f}M"
+                    if row.get("lora_variant", "none") != "none"
+                    else "-"
+                ),
+                lora_records=(
+                    f"{row.get('vla_lora_records', 0.0):.0f}"
+                    if row.get("lora_variant", "none") != "none"
+                    else "-"
+                ),
+                lora_grad_norm=(
+                    f"{row.get('vla_lora_grad_norm', 0.0):.3f}"
                     if row.get("lora_variant", "none") != "none"
                     else "-"
                 ),
