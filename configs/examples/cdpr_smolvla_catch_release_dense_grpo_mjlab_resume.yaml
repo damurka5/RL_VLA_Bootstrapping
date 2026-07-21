@@ -161,8 +161,20 @@ task:
     put_bowl_xy_tolerance: 0.057
     put_container_z_tolerance: 0.12
     placement_release_success_bonus: 2.0
-    placement_wrong_drop_penalty: 1.0
-    placement_wrong_drop_settle_margin: 0.025
+    # Release is a risky action with a safe alternative: the terminal reward for
+    # hovering over the receptacle until timeout is ~1.0 guaranteed, while
+    # releasing pays 3.0 on success and (1.0 - penalty) on a wrong drop. At
+    # penalty 1.0 releasing only beats hovering once success probability exceeds
+    # 33%, which the policy must first reach by releasing -- a chicken-and-egg
+    # local optimum. 0.25 drops that bar to ~11% while still deterring random
+    # drops (at p=0 releasing is still worse than hovering).
+    placement_wrong_drop_penalty: 0.25
+    # target_has_settled is measured from the DESK, but an object resting
+    # correctly inside the bowl sits ~20.3 mm above it (bowl rest 0.0263, its
+    # interior floor 6 mm below centre). At 0.025 that left only 4.7 mm of
+    # slack, and falling outside it blocks BOTH success and the wrong-drop
+    # termination, so the episode just times out silently. 0.045 gives ~25 mm.
+    placement_wrong_drop_settle_margin: 0.045
     put_require_release: true
     put_require_target_grasp_history: true
     caught_object_start_release_opening_margin: 0.04
