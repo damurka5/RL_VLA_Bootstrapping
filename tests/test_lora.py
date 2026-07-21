@@ -48,6 +48,32 @@ class LoRATests(unittest.TestCase):
         x = torch.randn(3, 8)
         torch.testing.assert_close(wrapped(x), base(x))
 
+    def test_exposes_base_linear_attributes(self):
+        # LeRobot's smolvlm_with_expert reads q_proj.weight.dtype to cast
+        # activations, so the wrapper must look like an nn.Linear.
+        base = nn.Linear(8, 16)
+        wrapped = LoRALinear(base, rank=4, alpha=8.0)
+        self.assertIs(wrapped.weight, base.weight)
+        self.assertIs(wrapped.bias, base.bias)
+        self.assertEqual(wrapped.in_features, 8)
+        self.assertEqual(wrapped.out_features, 16)
+        self.assertEqual(wrapped.weight.dtype, base.weight.dtype)
+
+    def test_base_parameters_are_not_double_counted(self):
+        model = self._model()
+        attach_lora(
+            model,
+            target_leaf_names=("q_proj",),
+            name_contains=("expert",),
+            rank=4,
+            alpha=8.0,
+        )
+        names = [name for name, _ in model.named_parameters()]
+        # The forwarded .weight property must not register an extra parameter.
+        self.assertEqual(len(names), len(set(names)))
+        self.assertIn("expert.q_proj.base.weight", names)
+        self.assertNotIn("expert.q_proj.weight", names)
+
     def test_targets_only_matching_expert_projections(self):
         model = self._model()
         replaced = attach_lora(

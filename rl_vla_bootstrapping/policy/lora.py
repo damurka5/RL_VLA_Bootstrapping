@@ -59,6 +59,28 @@ if nn is not None:
                 else nn.Identity()
             )
 
+        # Host code introspects the wrapped layer as if it were an nn.Linear --
+        # LeRobot's smolvlm_with_expert casts activations with
+        # ``layer.self_attn.q_proj.weight.dtype`` -- so forward the base
+        # module's attributes. These are read-only views: the parameters stay
+        # registered under ``base.*``, so named_parameters() is unaffected and
+        # nothing is double-counted.
+        @property
+        def weight(self) -> "torch.Tensor":
+            return self.base.weight
+
+        @property
+        def bias(self) -> "torch.Tensor | None":
+            return self.base.bias
+
+        @property
+        def in_features(self) -> int:
+            return int(self.base.in_features)
+
+        @property
+        def out_features(self) -> int:
+            return int(self.base.out_features)
+
         def forward(self, x: "torch.Tensor") -> "torch.Tensor":
             base_out = self.base(x)
             update = F.linear(F.linear(self.dropout(x), self.lora_a), self.lora_b)
