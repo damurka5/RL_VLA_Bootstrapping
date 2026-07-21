@@ -1930,6 +1930,15 @@ class RankLocalMJWarpGRPOCollector:
                 timings["reward_time_s"] += time.perf_counter() - started
             active.logical_and_((decision + 1) < reset.horizons)
 
+        # One sync per round (not per step): how many worlds ended with a
+        # non-finite end-effector pose. A NaN reward is downstream of this, so
+        # this says "the simulator diverged" instead of leaving us to infer it.
+        non_finite_worlds = float(
+            (~torch.isfinite(low_dim.ee_position).all(dim=-1))
+            .sum()
+            .item()
+        )
+
         success_by_group = candidate_success.reshape(
             self.layout.groups_per_rank, group_size
         )
@@ -2031,6 +2040,7 @@ class RankLocalMJWarpGRPOCollector:
             "complete_groups_per_rank": float(self.layout.groups_per_rank),
             "informative_groups": float(informative_group.sum().item()),
             "group_pass_rate_mean": float(pass_rate.mean().item()),
+            "non_finite_ee_worlds": non_finite_worlds,
             "candidate_reward_mean": float(rewards_by_group.mean().item()),
             "candidate_reward_std": float(
                 rewards_by_group.std(unbiased=False).item()

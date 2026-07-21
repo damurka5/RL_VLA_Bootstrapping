@@ -19,8 +19,8 @@ remote:
     - Fresh GRPO residual/readout initialization at global step zero; no adapter checkpoint is loaded.
     - One torchrun rank owns one A40, a frozen SmolVLA replica, and complete rank-local GRPO groups.
     - Only move_to_object is sampled; prompts use semantic object labels without RoboCasa variant numbers.
-    - Every GRPO group starts the gripper at a seeded random XY workspace position at Z=0.22 m, at least 0.12 m from its target; Reverse Frontier shells are disabled.
-    - The GPU reward is one bounded inverse-polynomial term on the 3-D distance to the hover point (target XY at Z=0.22 m), so its magnitude stays in [0, 1] and conditions the GRPO group advantage.
+    - Every GRPO group starts the gripper at a seeded random XY workspace position at Z=0.27 m, at least 0.12 m from its target; Reverse Frontier shells are disabled.
+    - The GPU reward is one bounded inverse-polynomial term on the 3-D distance to the hover point (target XY at Z=0.27 m), so its magnitude stays in [0, 1] and conditions the GRPO group advantage.
     - Objects are drawn from a 3x3 candidate grid and the move-to target is a random active slot, so the goal is not pinned to one location.
     - Scenes start with a single object and add a second and third scene object at the configured curriculum steps; the fourth MJWarp slot is never used.
     - SmolVLA camera slot three is a masked empty camera (zeroed image plus padding mask) instead of a duplicated wrist view.
@@ -142,15 +142,22 @@ task:
     # weight 1.0 / scale 0.03 produced penalties of 1-2 that drowned the 0-1 XY
     # distance term in every group advantage and stalled XY learning.
     move_to_object_require_z_window: true
-    move_to_object_z_window_low: 0.21
-    move_to_object_z_window_high: 0.23
+    move_to_object_z_window_low: 0.26
+    move_to_object_z_window_high: 0.28
     # Bounded 3-D shaping: a single inverse-polynomial term on the distance to
     # the hover point (target XY, approach_z) replaces the XY term + linear
     # Z-band penalty. Magnitude stays in [0, weight], which conditions the GRPO
     # group-relative advantage far better. The z_penalty_* keys below are the
     # inactive legacy fallback (used only when distance_include_z is false).
     move_to_object_distance_include_z: true
-    move_to_object_approach_z: 0.22
+    # ee_position tracks ee_base, the cable-suspended base; the gripper hangs
+    # 0.08 m BELOW it (the reset places the EE at object_z + 0.08 when an object
+    # is held, and pick_grasp_height_offset is 0.08). So approach_z 0.22 put the
+    # grasp point at 0.14 -- 1 cm UNDER the 0.15 m desk -- and the policy was
+    # rewarded for driving the fingers through the table, which diverged the
+    # physics into NaN rewards. 0.27 puts the grasp point at 0.19, i.e. at the
+    # object centre band (0.160 plate .. 0.195 mug).
+    move_to_object_approach_z: 0.27
     move_to_object_z_penalty_scale: 0.05
     move_to_object_z_penalty_weight: 0.5
     action_saturation_penalty_weight: 0.0
@@ -162,10 +169,8 @@ task:
     random_workspace_horizon_high: 32
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
-    # Desk top is world Z=0.15 m and object centres sit near 0.19 m, so
-    # 0.22 m hovers ~3 cm above the object centre. The success Z window
-    # above is recentred on the same height.
-    ee_workspace_z_bounds: [0.22, 0.22]
+    # EE origin 0.27 m => grasp point 0.19 m, level with the object centres.
+    ee_workspace_z_bounds: [0.27, 0.27]
 
 simulation:
   entrypoint:

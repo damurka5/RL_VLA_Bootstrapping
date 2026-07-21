@@ -134,23 +134,31 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             config.task.metadata["random_workspace_min_goal_xy_distance"],
             0.12,
         )
-        # Hover height is ~3 cm above object centres (desk 0.15 + rest ~0.04),
-        # and the success Z window is recentred on the same height.
+        # EE origin 0.27 m puts the grasp point (0.08 m lower) at 0.19 m,
+        # level with the object centre band; the success Z window matches.
         self.assertEqual(
-            config.task.metadata["ee_workspace_z_bounds"], [0.22, 0.22]
+            config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.27]
         )
         self.assertTrue(
             config.task.metadata["move_to_object_require_z_window"]
         )
         self.assertEqual(
-            config.task.metadata["move_to_object_z_window_low"], 0.21
+            config.task.metadata["move_to_object_z_window_low"], 0.26
         )
         self.assertEqual(
-            config.task.metadata["move_to_object_z_window_high"], 0.23
+            config.task.metadata["move_to_object_z_window_high"], 0.28
         )
         self.assertEqual(
-            config.task.metadata["move_to_object_approach_z"], 0.22
+            config.task.metadata["move_to_object_approach_z"], 0.27
         )
+        # ee_position tracks ee_base and the gripper hangs 0.08 m below it, so
+        # the grasp point is approach_z - 0.08. It must clear the 0.15 m desk,
+        # or the policy is rewarded for driving the fingers through the table
+        # and MJWarp diverges into NaN rewards (approach_z 0.22 -> 0.14).
+        grasp_point_z = (
+            float(config.task.metadata["move_to_object_approach_z"]) - 0.08
+        )
+        self.assertGreater(grasp_point_z, 0.15)
         self.assertEqual(config.task.metadata["min_scene_objects"], 1)
         self.assertEqual(config.task.metadata["max_scene_objects"], 3)
         self.assertEqual(
