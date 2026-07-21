@@ -284,7 +284,10 @@ task:
     caught_object_start_xy_jitter: 0.010
     caught_object_start_z_jitter: 0.004
     caught_object_start_fit_gripper: true
-    caught_object_start_pin_object: false
+    # Curriculum abstraction: keep the reset-time grasp constrained until the
+    # policy commands an opening beyond the release threshold.  A friction-only
+    # reset loses the 68 g apple even under zero actions.
+    caught_object_start_pin_object: true
     caught_object_start_gripper_clearance: 0.0
     caught_object_start_grip_compression: 0.001
     caught_object_start_min_height_above_table: 0.08
@@ -304,10 +307,16 @@ task:
     put_downward_success_displacement: 0.06
     put_downward_require_caught: true
     put_min_target_motion: 0.04
-    push_surface_reward_enabled: true
+    # A fixed desk-edge target makes the required push depend on the random
+    # spawn and can place success outside the robot workspace. Use the explicit
+    # directional displacement curriculum target instead.
+    push_surface_reward_enabled: false
     push_position_only_reward: true
     push_surface_success_distance: 0.035
     push_success_displacement: 0.08
+    push_require_object_on_support: true
+    push_support_min_clearance: 0.005
+    push_support_vertical_tolerance: 0.06
     grab_require_caught: true
     grab_xy_tolerance: 0.025
     grab_closed_opening_threshold: 0.35

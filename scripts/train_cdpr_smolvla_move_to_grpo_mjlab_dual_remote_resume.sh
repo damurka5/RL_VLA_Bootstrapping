@@ -1,4 +1,11 @@
 #!/usr/bin/env bash
+# Resume an interrupted move-to phase from a numbered GRPO checkpoint.
+#
+# The scratch launcher deliberately refuses CHECKPOINT (its contract is "start
+# at global step zero"). This variant is the counterpart for continuing a run
+# that died mid-phase, e.g. after a Warp out-of-memory abort. MAX_TRAIN_STEPS
+# stays the phase target (5,000,000): the trainer restores global_step from the
+# checkpoint and trains the remainder.
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
@@ -11,6 +18,7 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 ALLOW_LEGACY_SIMULATOR_CHECKPOINT="${ALLOW_LEGACY_SIMULATOR_CHECKPOINT:-0}"
 RUN_PREFLIGHT="${RUN_PREFLIGHT:-1}"
 DRY_RUN="${DRY_RUN:-0}"
+CHECKPOINT="${CHECKPOINT:-}"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/huggingface_public_models.sh
@@ -18,15 +26,15 @@ source "$SCRIPT_DIR/huggingface_public_models.sh"
 configure_huggingface_public_models
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-RUN_NAME="${RUN_NAME:-cdpr_smolvla_move_to_scratch_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
+RUN_NAME="${RUN_NAME:-cdpr_smolvla_move_to_resume_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
 RUN_DIR="$REPO_ROOT/runs/$RUN_NAME"
 
-if [[ -n "${CHECKPOINT:-}" || -n "${RLVLA_SMOLVLA_RESUME_CHECKPOINT:-}" ]]; then
-  echo "Scratch training refuses CHECKPOINT/RLVLA_SMOLVLA_RESUME_CHECKPOINT; start step must be zero." >&2
+if [[ -z "$CHECKPOINT" ]]; then
+  echo "CHECKPOINT is required; use the scratch launcher to start from step zero." >&2
   exit 2
 fi
-if [[ "$MAX_TRAIN_STEPS" -ne 5000000 ]]; then
-  echo "This scratch launcher requires MAX_TRAIN_STEPS=5000000." >&2
+if [[ ! -f "$CHECKPOINT" ]]; then
+  echo "Resume adapter not found: $CHECKPOINT" >&2
   exit 2
 fi
 if [[ "$WORLDS_PER_RANK" -lt 8 || $((WORLDS_PER_RANK % 8)) -ne 0 ]]; then
@@ -43,17 +51,18 @@ if [[ "${#visible_gpus[@]}" -ne 2 ]]; then
   exit 2
 fi
 if [[ ! -f "$CONFIG" ]]; then
-  echo "MJLab scratch config not found: $CONFIG" >&2
+  echo "MJLab move-to config not found: $CONFIG" >&2
   exit 2
 fi
 
 mkdir -p "$RUN_DIR"
-unset RLVLA_SMOLVLA_RESUME_CHECKPOINT
 export CUDA_VISIBLE_DEVICES
 export PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export TRANSFORMERS_VERBOSITY="${TRANSFORMERS_VERBOSITY:-error}"
 export HF_HUB_DISABLE_PROGRESS_BARS="${HF_HUB_DISABLE_PROGRESS_BARS:-1}"
+# garbage_collection_threshold lets the caching allocator hand blocks back
+# before it starves Warp's separate CUDA allocator.
 export PYTORCH_CUDA_ALLOC_CONF="${PYTORCH_CUDA_ALLOC_CONF:-expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8}"
 export TORCH_NCCL_ASYNC_ERROR_HANDLING="${TORCH_NCCL_ASYNC_ERROR_HANDLING:-1}"
 export NCCL_DEBUG="${NCCL_DEBUG:-WARN}"
@@ -62,6 +71,7 @@ export RLVLA_SMOLVLA_MAX_TRAIN_STEPS="$MAX_TRAIN_STEPS"
 export RLVLA_MJWARP_WORLDS_PER_RANK="$WORLDS_PER_RANK"
 export RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE="$SMOLVLA_MICROBATCH_SIZE"
 export RLVLA_SMOLVLA_ALLOW_LEGACY_SIMULATOR_CHECKPOINT="$ALLOW_LEGACY_SIMULATOR_CHECKPOINT"
+export RLVLA_SMOLVLA_RESUME_CHECKPOINT="$CHECKPOINT"
 
 python_cmd=(conda run --no-capture-output -n "$ENV_NAME" python3)
 train_cmd=(
@@ -73,12 +83,13 @@ train_cmd=(
   --execute
 )
 
-printf 'mode=fresh_step_0\n'
+printf 'mode=resume\n'
+printf 'checkpoint=%s\n' "$CHECKPOINT"
 printf 'run_dir=%s\n' "$RUN_DIR"
 printf 'tensorboard_dir=%s\n' "$RUN_DIR/rl/tensorboard"
 printf 'validation_metrics=%s\n' "$RUN_DIR/rl/validation.jsonl"
 printf 'config=%s\n' "$CONFIG"
-printf 'max_train_steps=%s\n' "$MAX_TRAIN_STEPS"
+printf 'max_train_steps=%s (phase target; start step comes from the checkpoint)\n' "$MAX_TRAIN_STEPS"
 printf 'cuda_visible_devices=%s ranks=2\n' "$CUDA_VISIBLE_DEVICES"
 printf 'worlds_per_rank=%s groups_per_rank=%s server_worlds=%s\n' \
   "$WORLDS_PER_RANK" "$((WORLDS_PER_RANK / 8))" "$((2 * WORLDS_PER_RANK))"

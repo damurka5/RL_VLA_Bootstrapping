@@ -1267,8 +1267,19 @@ class SmolVLAGRPOTrainer:
             for param in self.vla_lora_params:
                 if param.grad is None:
                     param.grad = torch.zeros_like(param)
-                dist.all_reduce(param.grad, op=dist.ReduceOp.SUM)
-                param.grad /= float(world_size)
+            # Coalesce into ONE collective. Reducing each tensor separately was
+            # a few hundred small NCCL calls per update, each with its own
+            # transient buffer -- slow, and it churned the allocator on a device
+            # already competing with Warp for memory.
+            grads = [param.grad for param in self.vla_lora_params]
+            flat = torch._utils._flatten_dense_tensors(grads)
+            dist.all_reduce(flat, op=dist.ReduceOp.SUM)
+            flat /= float(world_size)
+            for grad, reduced in zip(
+                grads, torch._utils._unflatten_dense_tensors(flat, grads)
+            ):
+                grad.copy_(reduced)
+            del flat
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.vla_lora_params, float(self.args.max_grad_norm)
         )

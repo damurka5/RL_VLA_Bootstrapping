@@ -9,7 +9,7 @@ repos:
 
 remote:
   env_vars:
-    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8
     TOKENIZERS_PARALLELISM: "false"
     TRANSFORMERS_VERBOSITY: error
     HF_HUB_DISABLE_PROGRESS_BARS: "1"
