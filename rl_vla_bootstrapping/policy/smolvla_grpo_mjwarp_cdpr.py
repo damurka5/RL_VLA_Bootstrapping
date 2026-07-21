@@ -408,7 +408,7 @@ def _update_mjwarp_progress_bar(
                 f"{float(metrics.get('candidate_worlds', 0.0)):.0f}"
             ),
             "records": (
-                f"{float(metrics.get('informative_records', 0.0)):.0f}"
+                f"{float(metrics.get('records_informative', 0.0)):.0f}"
             ),
         },
         refresh=False,
@@ -1472,8 +1472,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                         f"eta={eta_seconds / 3600.0:.2f}h "
                         f"success={synchronized_metrics['candidate_successes']:.0f}/"
                         f"{synchronized_metrics['candidate_worlds']:.0f} "
-                        f"records={synchronized_metrics['informative_records']:.0f}",
+                        f"records={synchronized_metrics.get('records_informative', 0.0):.0f}",
                     )
+
+            # MJWarp allocates through Warp's own CUDA allocator, while
+            # PyTorch's caching allocator never hands freed blocks back to the
+            # driver. Without this the cache creeps up (validation rounds and
+            # the LoRA backward both raise the high-water mark) until Warp
+            # cannot get its transient physics buffers and dies with
+            # "Warp CUDA error 2: out of memory". Once per update is
+            # negligible next to a ~100 s update.
+            torch.cuda.empty_cache()
     finally:
         if progress is not None:
             progress.close()
