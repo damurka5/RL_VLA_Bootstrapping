@@ -7,6 +7,7 @@ import json
 import math
 import random
 import time
+import warnings
 from collections import deque
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -565,6 +566,7 @@ class SmolVLAGRPOTrainer:
             weight_decay=float(args.weight_decay),
         )
         self.gradient_step = 0
+        self._warned_zero_vla_grad = False
         self.loaded_extra_state: dict[str, Any] = {}
         self.bootstrap_source = "fresh_grpo"
         self.profile_update = bool(args.mjwarp_profile_timers)
@@ -1270,6 +1272,19 @@ class SmolVLAGRPOTrainer:
         grad_norm = torch.nn.utils.clip_grad_norm_(
             self.vla_lora_params, float(self.args.max_grad_norm)
         )
+        # An exactly-zero norm on a non-empty batch means nothing reached the
+        # adapters (lora_b starts at zero but must still receive gradient), so
+        # the run would train the VLA not at all. Say so once, loudly, rather
+        # than let hours of "training" pass with a flat grad_norm curve.
+        if n > 0 and float(grad_norm) == 0.0 and not self._warned_zero_vla_grad:
+            self._warned_zero_vla_grad = True
+            warnings.warn(
+                "vla_lora/grad_norm is exactly 0 on a non-empty LoRA batch: no "
+                "gradient is reaching the action-expert adapters, so the VLA is "
+                "not being trained. Check that the SmolVLA forward used for the "
+                "update is not wrapped in torch.no_grad()/inference_mode().",
+                RuntimeWarning,
+            )
         self.vla_optimizer.step()
         self.vla_optimizer.zero_grad(set_to_none=True)
         base.zero_grad(set_to_none=True)

@@ -793,9 +793,28 @@ class SmolVLARuntime:
                         dtype=self.dtype,
                         enabled=bool(autocast_enabled),
                     ):
-                        if hasattr(self.policy, "predict_action_chunk"):
-                            return self.policy.predict_action_chunk(batch)
-                        return self.policy.select_action(batch)
+                        name = (
+                            "predict_action_chunk"
+                            if hasattr(self.policy, "predict_action_chunk")
+                            else "select_action"
+                        )
+                        bound = getattr(self.policy, name)
+                        if not enable_grad:
+                            return bound(batch)
+                        # LeRobot decorates these entry points with
+                        # @torch.no_grad(). A decorator re-disables grad inside
+                        # the function, so an outer enable_grad() cannot win and
+                        # the prior comes back detached, silently starving the
+                        # LoRA of gradient. torch.no_grad uses functools.wraps,
+                        # so __wrapped__ is the undecorated function.
+                        unwrapped = getattr(
+                            getattr(type(self.policy), name, None),
+                            "__wrapped__",
+                            None,
+                        )
+                        if unwrapped is not None:
+                            return unwrapped(self.policy, batch)
+                        return bound(batch)
             finally:
                 if swap_to_eager:
                     model.sample_actions = compiled_sample_actions
@@ -834,6 +853,18 @@ class SmolVLARuntime:
                 f"SmolVLA actions are on {actions.device}, expected {self.device}."
             )
         if enable_grad:
+            # Fail loudly: a detached prior here means the LoRA receives no
+            # gradient and an entire training run silently learns nothing
+            # (observed as vla_lora/grad_norm == 0 for every update).
+            if not actions.requires_grad:
+                raise RuntimeError(
+                    "SmolVLA returned a detached action chunk while "
+                    "enable_grad=True, so no gradient can reach the action "
+                    "expert LoRA. The policy entry point is probably wrapped "
+                    "in torch.no_grad()/inference_mode() without an "
+                    "unwrappable __wrapped__ attribute; call the underlying "
+                    "model directly for the grad path."
+                )
             return actions.to(dtype=torch.float32)
         return actions.detach().to(dtype=torch.float32)
 
