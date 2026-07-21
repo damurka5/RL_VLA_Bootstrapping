@@ -804,6 +804,31 @@ class BatchedReverseFrontierResetter:
             catalogs_group,
             torch.full_like(catalogs_group, INACTIVE_CATALOG_ID),
         )
+
+        # Move-to previously always named the slot-0 object, and slot 0 always
+        # sat on the same lattice point, so every instruction meant the same
+        # place and neither language nor vision could matter. Put the named
+        # catalog in a random ACTIVE slot for move-to groups (swap with slot 0
+        # so all four catalogs stay distinct). Manipulation tasks keep slot 0 as
+        # the handled object because their container logic assumes slots 0/1/2.
+        group_rows = torch.arange(
+            groups, dtype=torch.int64, device=self.device
+        )
+        is_move_to_group = task_group == INSTRUCTION_TO_ID["move_to_object"]
+        sampled_slot = (
+            torch.rand((groups,), generator=generator, device=self.device)
+            * active_object_counts.to(dtype=torch.float32)
+        ).to(dtype=torch.int64).clamp(0, 3)
+        target_slot_group = torch.where(
+            is_move_to_group, sampled_slot, torch.zeros_like(sampled_slot)
+        )
+        slot_zero_catalog = catalogs_group[:, 0].clone()
+        selected_catalog = catalogs_group[
+            group_rows, target_slot_group
+        ].clone()
+        catalogs_group[group_rows, target_slot_group] = slot_zero_catalog
+        catalogs_group[:, 0] = selected_catalog
+
         catalogs = catalogs_group.repeat_interleave(group_size, dim=0)
 
         all_worlds = torch.arange(
@@ -812,29 +837,46 @@ class BatchedReverseFrontierResetter:
         self.backend.reset_worlds(all_worlds)
         self.backend.set_object_catalogs(catalogs)
 
-        base_xy = torch.tensor(
-            (
-                (-0.12, -0.08),
-                (0.12, -0.08),
-                (-0.12, 0.10),
-                (0.12, 0.10),
-            ),
-            dtype=torch.float32,
-            device=self.device,
+        # Objects are drawn from a 3x3 candidate grid (9 cells) instead of the
+        # old 4 fixed points: each group takes a random 4-cell subset, so the
+        # target lands anywhere on the desk instead of one 7.6 cm box.
+        # Separation: spacing 0.18 - 2*jitter 0.01 = 0.16 m, above the widest
+        # realistic pair (plate 0.091 + bowl 0.057 = 0.148); the four slots
+        # always hold distinct catalogs, so two plates can never coincide.
+        # Framing: max |coord| = 0.18 + 0.01 + 0.015 = 0.205 m, inside the
+        # ~0.23 m half-width the dollied-in overview camera still covers at the
+        # near edge of the desk.
+        grid_coordinates = torch.tensor(
+            (-0.18, 0.0, 0.18), dtype=torch.float32, device=self.device
         )
+        cell_choice = torch.rand(
+            (groups, 9), generator=generator, device=self.device
+        ).argsort(dim=1)[:, :4]
+        cell_xy = torch.stack(
+            (
+                grid_coordinates.index_select(
+                    0, (cell_choice % 3).reshape(-1)
+                ).reshape(groups, 4),
+                grid_coordinates.index_select(
+                    0, (cell_choice // 3).reshape(-1)
+                ).reshape(groups, 4),
+            ),
+            dim=-1,
+        )
+        # Common shift moves the whole scene without changing separation.
         scene_shift = (
             torch.rand(
                 (groups, 1, 2), generator=generator, device=self.device
             )
             - 0.5
-        ) * 0.06
+        ) * 0.03
         jitter = (
             torch.rand(
                 (groups, 4, 2), generator=generator, device=self.device
             )
             - 0.5
-        ) * 0.016
-        object_xy_group = base_xy[None, :, :] + scene_shift + jitter
+        ) * 0.02
+        object_xy_group = cell_xy + scene_shift + jitter
         rest_height = torch.tensor(
             _REST_HEIGHT, dtype=torch.float32, device=self.device
         ).index_select(
@@ -865,9 +907,8 @@ class BatchedReverseFrontierResetter:
             parked_positions[None, :, :],
         )
 
-        target_slot_group = torch.zeros(
-            (groups,), dtype=torch.int64, device=self.device
-        )
+        # target_slot_group was chosen above (random active slot for move-to,
+        # slot 0 for every manipulation task).
         reference_slot_group = torch.where(
             is_container
             | (
@@ -1228,6 +1269,13 @@ class BatchedReverseFrontierResetter:
         initial_target_group = torch.where(
             grasp_learning[:, None],
             object_positions_group[:, 0],
+            initial_target_group,
+        )
+        # Move-to may now name a slot other than zero, so its motion baseline
+        # must follow the actual target slot rather than slot 0.
+        initial_target_group = torch.where(
+            is_move_to_group[:, None],
+            object_positions_group[group_rows, target_slot_group],
             initial_target_group,
         )
         yaw_group = (
