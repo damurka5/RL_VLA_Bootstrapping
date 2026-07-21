@@ -245,6 +245,18 @@ training:
       # Must match the move-to phase: the residual actor was widened by the
       # 3-D EE->target vector, so the resumed checkpoint's state dim is 9.
       residual_relative_target: true
+      # Must match the move-to phase: the resumed checkpoint carries
+      # action-expert LoRA weights, and loading refuses to drop them.
+      train_vla_lora: true
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      lora_include_mlp: true
+      lora_expert_name_contains: lm_expert
+      vla_lr: 1.0e-5
+      vla_kl_coef: 0.1
+      vla_microbatch_size: 16
+      vla_update_max_records: 128
       include_wrist: true
       include_aux_camera: true
       mask_empty_aux_camera: true

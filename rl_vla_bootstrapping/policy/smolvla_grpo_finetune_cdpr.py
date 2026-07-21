@@ -1367,6 +1367,7 @@ class SmolVLAGRPOTrainer:
             base.load_state_dict(payload["policy"])
             if "optimizer" in payload:
                 self.optimizer.load_state_dict(payload["optimizer"])
+            self._load_vla_lora_state(payload)
             self.gradient_step = int(payload.get("gradient_step", 0))
             self.loaded_extra_state = dict(payload.get("extra_state") or {})
             self.bootstrap_source = "grpo_resume"
@@ -1380,6 +1381,44 @@ class SmolVLAGRPOTrainer:
                 f"Unsupported SmolVLA checkpoint {checkpoint_path}: expected 'policy' or 'actor'."
             )
         return int(payload.get("global_step", 0))
+
+    def _vla_lora_state_dict(self) -> dict[str, Any] | None:
+        """Only the LoRA tensors from the frozen runtime, or None if unused."""
+
+        runtime = getattr(self, "vla_runtime", None)
+        if runtime is None:
+            return None
+        return {
+            name: tensor.detach().cpu()
+            for name, tensor in runtime.policy.state_dict().items()
+            if "lora_" in name
+        }
+
+    def _load_vla_lora_state(self, payload: Mapping[str, Any]) -> None:
+        """Restore LoRA weights/optimizer; refuse to silently lose them."""
+
+        lora_state = payload.get("vla_lora")
+        runtime = getattr(self, "vla_runtime", None)
+        if not lora_state:
+            if runtime is not None:
+                warnings.warn(
+                    "Resuming with --train-vla-lora, but the checkpoint holds "
+                    "no LoRA weights: the action expert restarts from a no-op "
+                    "adapter and prior VLA adaptation is lost.",
+                    RuntimeWarning,
+                )
+            return
+        if runtime is None:
+            raise RuntimeError(
+                "Checkpoint carries action-expert LoRA weights but this run has "
+                "no LoRA attached. Re-run with --train-vla-lora (and matching "
+                "--lora-rank/--lora-include-mlp) or the adapted prior is lost."
+            )
+        # strict=False: the checkpoint deliberately holds only lora_* keys.
+        runtime.policy.load_state_dict(lora_state, strict=False)
+        optimizer_state = payload.get("vla_lora_optimizer")
+        if optimizer_state and getattr(self, "vla_optimizer", None) is not None:
+            self.vla_optimizer.load_state_dict(optimizer_state)
 
     def save(
         self,
@@ -1401,6 +1440,17 @@ class SmolVLAGRPOTrainer:
             "residual_scale": float(args.residual_scale),
             "hidden_dim": int(args.hidden_dim),
             "policy": self._unwrap(self.actor).state_dict(),
+            # The action-expert LoRA lives on the frozen SmolVLA runtime, not
+            # on self.actor, so it would otherwise be silently dropped: a
+            # resumed phase would restart from a zero (no-op) adapter and throw
+            # away every step of VLA adaptation, and evaluation would run the
+            # un-adapted prior. Store only the lora_* tensors (a few MB).
+            "vla_lora": self._vla_lora_state_dict(),
+            "vla_lora_optimizer": (
+                self.vla_optimizer.state_dict()
+                if getattr(self, "vla_optimizer", None) is not None
+                else None
+            ),
             "optimizer": self.optimizer.state_dict(),
             "extra_state": dict(extra_state or {}),
             "simulator_metadata": dict(simulator_metadata or {}),

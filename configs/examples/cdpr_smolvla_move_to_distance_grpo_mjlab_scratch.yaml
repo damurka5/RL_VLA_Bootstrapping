@@ -245,7 +245,7 @@ training:
       # SmolVLA action-expert LoRA (off by default; flip train_vla_lora to true
       # to let RL gradients reach model.vlm_with_expert.lm_expert, vision + VLM
       # frozen). See SMOLVLA_LORA_FINETUNE_PLAN.md before enabling.
-      train_vla_lora: false
+      train_vla_lora: true
       lora_rank: 16
       lora_alpha: 32.0
       lora_dropout: 0.0
