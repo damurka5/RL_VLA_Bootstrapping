@@ -148,6 +148,12 @@ task:
     move_to_object_distance_reward_weight: 1.0
     catch_release_distance_reward_scale: 0.08
     catch_release_distance_reward_weight: 1.0
+    # Bounded 3-D placement shaping toward a hover point above the receptacle.
+    # XY-only shaping left the release height unconstrained while the frozen
+    # prior pushes +Z, so the gripper drifted up and dropped from height.
+    catch_release_distance_include_z: true
+    put_plate_release_height: 0.045
+    put_bowl_release_height: 0.10
 
     # Placement: distance is gripper-to-receptacle XY distance. Success also
     # requires release and the object center to fall within the real radius.
@@ -164,6 +170,9 @@ task:
     # Pick-up: approach the physical between-fingers grasp point, reward a
     # persistent bilateral grasp, then reward lift only while grasp is kept.
     pick_grasp_height_offset: 0.08
+    # Partial credit for bilateral pad contact: without it there is no gradient
+    # between hovering at the grasp point and a latched persistent grasp.
+    pick_contact_bonus: 0.25
     pick_distance_window: 0.02
     pick_grasp_bonus: 1.0
     pick_lift_reward_weight: 1.0

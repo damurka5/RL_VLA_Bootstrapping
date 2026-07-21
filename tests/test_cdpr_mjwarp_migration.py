@@ -134,17 +134,22 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             config.task.metadata["random_workspace_min_goal_xy_distance"],
             0.12,
         )
+        # Hover height is ~3 cm above object centres (desk 0.15 + rest ~0.04),
+        # and the success Z window is recentred on the same height.
         self.assertEqual(
-            config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.27]
+            config.task.metadata["ee_workspace_z_bounds"], [0.22, 0.22]
         )
         self.assertTrue(
             config.task.metadata["move_to_object_require_z_window"]
         )
         self.assertEqual(
-            config.task.metadata["move_to_object_z_window_low"], 0.26
+            config.task.metadata["move_to_object_z_window_low"], 0.21
         )
         self.assertEqual(
-            config.task.metadata["move_to_object_z_window_high"], 0.28
+            config.task.metadata["move_to_object_z_window_high"], 0.23
+        )
+        self.assertEqual(
+            config.task.metadata["move_to_object_approach_z"], 0.22
         )
         self.assertEqual(config.task.metadata["min_scene_objects"], 1)
         self.assertEqual(config.task.metadata["max_scene_objects"], 3)

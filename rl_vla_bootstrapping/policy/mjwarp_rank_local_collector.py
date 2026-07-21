@@ -1587,6 +1587,26 @@ class RankLocalMJWarpGRPOCollector:
         if self.profile:
             self.torch.cuda.synchronize(self.device)
 
+    def _goal_slots(self, reset: BatchedReset) -> Any:
+        """Slot the reward shapes toward, per world.
+
+        Placement tasks are rewarded on the gripper->receptacle distance while
+        the target object is already held, so their goal is the reference slot.
+        Every other task drives toward the target object itself.
+        """
+
+        torch = self.torch
+        instruction_ids = reset.task_state.instruction_ids
+        reference_slots = reset.task_state.reference_slots
+        is_container = (
+            instruction_ids == INSTRUCTION_TO_ID["put_into_plate"]
+        ) | (instruction_ids == INSTRUCTION_TO_ID["put_into_bowl"])
+        return torch.where(
+            is_container & (reference_slots >= 0),
+            reference_slots,
+            reset.task_state.target_slots,
+        )
+
     def _update_physical_grasp(
         self,
         reset: BatchedReset,
@@ -1739,6 +1759,7 @@ class RankLocalMJWarpGRPOCollector:
             )
         }
         max_decisions = int(reset.horizons.max().detach().cpu().item())
+        goal_slots = self._goal_slots(reset)
         prior_target_cosine_first = torch.zeros(
             (worlds,), dtype=torch.float32, device=self.device
         )
@@ -1763,6 +1784,7 @@ class RankLocalMJWarpGRPOCollector:
                 target_slots=reset.task_state.target_slots,
                 state_dim=int(self.trainer.state_dim),
                 include_relative_target=self.include_relative_target,
+                goal_slots=goal_slots,
             )
             self._sync_for_profile()
             started = time.perf_counter()
@@ -1893,6 +1915,7 @@ class RankLocalMJWarpGRPOCollector:
                     catch_release_dense_reward=(
                         self.catch_release_dense_reward
                     ),
+                    bilateral_contact=grasp_diagnostics["bilateral_contact"],
                 )
                 candidate_rewards.copy_(
                     torch.where(
@@ -2135,6 +2158,7 @@ class RankLocalMJWarpGRPOCollector:
             "validation/reward_time_s": 0.0,
         }
         max_decisions = int(reset.horizons.max().detach().cpu().item())
+        goal_slots = self._goal_slots(reset)
 
         with torch.inference_mode():
             for decision in range(max_decisions):
@@ -2155,6 +2179,7 @@ class RankLocalMJWarpGRPOCollector:
                     target_slots=reset.task_state.target_slots,
                     state_dim=int(self.trainer.state_dim),
                     include_relative_target=self.include_relative_target,
+                    goal_slots=goal_slots,
                 )
                 self._sync_for_profile()
                 started = time.perf_counter()
@@ -2190,7 +2215,7 @@ class RankLocalMJWarpGRPOCollector:
                     low_dim = self.backend.step(
                         actions[:, action_index], step_active
                     )
-                    low_dim, caught_target, _grasp_diagnostics = (
+                    low_dim, caught_target, grasp_diagnostics = (
                         self._update_physical_grasp(
                             reset,
                             low_dim,
@@ -2216,6 +2241,9 @@ class RankLocalMJWarpGRPOCollector:
                         catch_release_dense_reward=(
                             self.catch_release_dense_reward
                         ),
+                        bilateral_contact=grasp_diagnostics[
+                            "bilateral_contact"
+                        ],
                     )
                     candidate_rewards.copy_(
                         torch.where(

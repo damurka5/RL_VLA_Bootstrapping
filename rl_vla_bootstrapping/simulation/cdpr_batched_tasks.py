@@ -169,9 +169,20 @@ class BatchedCatchReleaseDenseReward:
     bowl_radius: float = 0.057
     container_z_tolerance: float = 0.12
     wrong_place_settle_margin: float = 0.025
+    # Placement shaping was XY-only, so nothing held the gripper at release
+    # height while the frozen prior pushes +Z; the policy drifts up and drops
+    # from height. With distance_include_z the term becomes a bounded 3-D
+    # distance to a hover point above the receptacle.
+    distance_include_z: bool = False
+    plate_release_height: float = 0.045
+    bowl_release_height: float = 0.10
     pick_grasp_height_offset: float = 0.08
     pick_distance_window: float = 0.02
     pick_grasp_bonus: float = 1.0
+    # Partial credit for bilateral finger contact before the grasp latches.
+    # Without it there is no gradient between "hovering at the grasp point with
+    # the gripper open" and a full persistent grasp, so pick-up plateaus.
+    pick_contact_bonus: float = 0.25
     pick_lift_reward_weight: float = 1.0
     pick_lift_reward_scale: float = 0.05
     pick_lift_success_height: float = 0.05
@@ -189,6 +200,12 @@ class BatchedCatchReleaseDenseReward:
                 return float(raw)
             except (TypeError, ValueError):
                 return float(default)
+
+        def flag(key: str, default: bool) -> bool:
+            raw = values.get(key, default)
+            if isinstance(raw, str):
+                return raw.strip().lower() in {"1", "true", "yes", "on"}
+            return bool(raw)
 
         default_scale = number("move_to_object_xy_reward_scale", 0.08)
         default_weight = number(
@@ -224,6 +241,12 @@ class BatchedCatchReleaseDenseReward:
             wrong_place_settle_margin=max(
                 number("placement_wrong_drop_settle_margin", 0.025), 0.0
             ),
+            distance_include_z=flag(
+                "catch_release_distance_include_z", False
+            ),
+            plate_release_height=number("put_plate_release_height", 0.045),
+            bowl_release_height=number("put_bowl_release_height", 0.10),
+            pick_contact_bonus=number("pick_contact_bonus", 0.25),
             pick_grasp_height_offset=number(
                 "pick_grasp_height_offset", 0.08
             ),
@@ -435,6 +458,7 @@ def build_smolvla_state_tensor(
     target_slots: Any,
     state_dim: int = 6,
     include_relative_target: bool = False,
+    goal_slots: Any | None = None,
 ) -> Any:
     """Build the SmolVLA/residual state, keeping SmolVLA's view proprioceptive.
 
@@ -445,17 +469,27 @@ def build_smolvla_state_tensor(
     proprioception ``[ee_xyz, ee_yaw, gripper, 0]`` -- the target-distance
     scalar is deliberately dropped so the frozen SmolVLA replica (which
     truncates to its own six-dim ``state_dim``) never receives privileged,
-    non-generalizable task geometry. The full 3-D end-effector->target vector
+    non-generalizable task geometry. The 3-D end-effector->goal vector
     ``(dx, dy, dz)`` is appended as columns 6..8 for the trainable residual
-    only, giving it an explicit direction to the object without polluting the
-    VLA's proprioceptive input.
+    only, giving it an explicit direction without polluting the VLA input.
+
+    ``goal_slots`` is the slot the reward actually shapes toward and defaults to
+    ``target_slots``. Placement tasks must pass the receptacle (reference) slot:
+    their reward is the gripper->receptacle distance while the target object is
+    already in the gripper, so a target-relative vector would be a near-constant
+    ``(0, 0, -0.08)`` and carry no information about where to go.
     """
 
     import torch
     import torch.nn.functional as functional
 
     target = gather_world_slots(object_positions, target_slots)
-    relative_target = target - ee_position
+    goal = (
+        target
+        if goal_slots is None
+        else gather_world_slots(object_positions, goal_slots)
+    )
+    relative_target = goal - ee_position
     if include_relative_target:
         # Column 5 is a neutral pad, not the target distance, so the frozen
         # SmolVLA's truncated six-dim view is exactly proprioception.
@@ -467,8 +501,9 @@ def build_smolvla_state_tensor(
             relative_target,
         ]
     else:
+        # The historical layout always reported distance to the target object.
         xy_distance = torch.linalg.vector_norm(
-            relative_target[:, :2], dim=-1, keepdim=True
+            (target - ee_position)[:, :2], dim=-1, keepdim=True
         )
         columns = [
             ee_position,
@@ -497,6 +532,7 @@ def evaluate_active_sparse_tasks(
     thresholds: BatchedTaskThresholds | None = None,
     move_to_distance_reward: BatchedMoveToDistanceReward | None = None,
     catch_release_dense_reward: BatchedCatchReleaseDenseReward | None = None,
+    bilateral_contact: Any | None = None,
 ) -> BatchedTaskResult:
     """Tensorized task predicates plus optional dense manipulation rewards."""
 
@@ -723,8 +759,35 @@ def evaluate_active_sparse_tasks(
         pick_grasp_distance = torch.linalg.vector_norm(
             pick_grasp_point - ee_position, dim=-1
         )
+        # Bounded 3-D shaping toward a hover point above the receptacle keeps
+        # the gripper at release height; the XY-only term let it drift up (the
+        # frozen prior carries a +Z bias) and drop from height.
+        placement_distance = ee_reference_xy_distance
+        if bool(catch_release_dense_reward.distance_include_z):
+            release_height = torch.where(
+                is_bowl,
+                torch.full_like(
+                    ee_reference_xy_distance,
+                    float(catch_release_dense_reward.bowl_release_height),
+                ),
+                torch.full_like(
+                    ee_reference_xy_distance,
+                    float(catch_release_dense_reward.plate_release_height),
+                ),
+            )
+            placement_hover = torch.stack(
+                (
+                    reference[:, 0],
+                    reference[:, 1],
+                    reference[:, 2] + release_height,
+                ),
+                dim=-1,
+            )
+            placement_distance = torch.linalg.vector_norm(
+                ee_position - placement_hover, dim=-1
+            )
         placement_distance_reward = inverse_polynomial_distance_reward(
-            ee_reference_xy_distance,
+            placement_distance,
             window_high=container_radius,
             scale=catch_release_dense_reward.distance_reward_scale,
             weight=catch_release_dense_reward.distance_reward_weight,
@@ -752,8 +815,17 @@ def evaluate_active_sparse_tasks(
             target_lift
             / float(catch_release_dense_reward.pick_lift_reward_scale)
         ).clamp(0.0, 1.0)
+        # Partial credit for touching the object with both pads bridges the
+        # cliff between approaching and a latched persistent grasp.
+        contact_credit = (
+            torch.zeros_like(pick_distance_reward)
+            if bilateral_contact is None
+            else bilateral_contact.to(dtype=ee_position.dtype)
+            * float(catch_release_dense_reward.pick_contact_bonus)
+        )
         pick_reward = (
             pick_distance_reward
+            + contact_credit
             + state.grasped.to(dtype=ee_position.dtype)
             * float(catch_release_dense_reward.pick_grasp_bonus)
             + normalized_lift
