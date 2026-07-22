@@ -268,6 +268,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         )
         self.set_object_catalogs(inactive)
 
+        self._nonfinite_world_events = 0
         self.render_context = None
         self._overview_rgb_wp = None
         self._wrist_rgb_wp = None
@@ -1167,10 +1168,44 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             for _ in range(self.config.physics_substeps):
                 self._write_controller_controls()
                 self.mjw.step(self.model, self.data)
+        self._contain_nonfinite_worlds()
         self._controller_prev_lengths.copy_(
             self._ten_length.index_select(1, self._tendon_ids_tensor)
         )
         return self.low_dim_observations()
+
+    def _contain_nonfinite_worlds(self) -> None:
+        """Reset any world whose state went non-finite, in isolation.
+
+        The cable-driven dynamics occasionally diverge for a single world
+        (a near-singular cable configuration under a large action). MJWarp
+        integrates worlds independently, so the NaN stays in that world -- but
+        it then flows into its reward, and one NaN poisons the batch-mean
+        metric that aborts training. Detect those worlds and restore their
+        calibrated base state so the rollout stays finite; the affected episode
+        is effectively a throwaway. The count is accumulated for reporting
+        rather than hidden.
+        """
+
+        torch = self.torch
+        finite = (
+            torch.isfinite(self._qpos).all(dim=1)
+            & torch.isfinite(self._qvel).all(dim=1)
+        )
+        diverged = ~finite
+        # One tiny sync per step; divergence is rare so the reset almost never
+        # runs, but the check must be every step or a NaN reaches the reward.
+        if bool(diverged.any().item()):
+            indices = torch.nonzero(diverged, as_tuple=False).reshape(-1)
+            self._nonfinite_world_events += int(indices.numel())
+            self.reset_worlds(indices)
+
+    def pop_nonfinite_world_events(self) -> int:
+        """Return and clear the diverged-world count since the last call."""
+
+        count = int(self._nonfinite_world_events)
+        self._nonfinite_world_events = 0
+        return count
 
     def low_dim_observations(self) -> CDPRLowDimBatch:
         object_positions = self._xpos.index_select(

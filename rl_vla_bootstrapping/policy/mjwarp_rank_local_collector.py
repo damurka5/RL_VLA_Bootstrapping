@@ -1930,14 +1930,12 @@ class RankLocalMJWarpGRPOCollector:
                 timings["reward_time_s"] += time.perf_counter() - started
             active.logical_and_((decision + 1) < reset.horizons)
 
-        # One sync per round (not per step): how many worlds ended with a
-        # non-finite end-effector pose. A NaN reward is downstream of this, so
-        # this says "the simulator diverged" instead of leaving us to infer it.
-        non_finite_worlds = float(
-            (~torch.isfinite(low_dim.ee_position).all(dim=-1))
-            .sum()
-            .item()
-        )
+        # Worlds the backend had to reset this round because their physics went
+        # non-finite. The backend already contained them per step (a round-end
+        # ee_position check would now always be zero), so this is the true
+        # divergence rate: non-zero but small is tolerable, a climbing trend is
+        # a real physics problem.
+        non_finite_worlds = float(self.backend.pop_nonfinite_world_events())
 
         success_by_group = candidate_success.reshape(
             self.layout.groups_per_rank, group_size
