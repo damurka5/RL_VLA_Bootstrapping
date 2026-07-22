@@ -855,6 +855,21 @@ def main(argv: Sequence[str] | None = None) -> None:
         _destroy_distributed(dist_ctx)
         raise RuntimeError("MJWarp production training requires one CUDA GPU per rank.")
 
+    # MJWarp allocates through Warp's own CUDA allocator, separate from
+    # PyTorch's caching allocator, and dies with "Warp CUDA error 2: out of
+    # memory" if PyTorch's cache has grown to fill the card. Cap PyTorch to a
+    # fraction of the device so a fixed slice is always available to Warp for
+    # its physics and render buffers. Opt-in and tunable; 0 disables it.
+    memory_fraction = float(os.environ.get("RLVLA_TORCH_MEMORY_FRACTION", "0.82"))
+    if 0.0 < memory_fraction < 1.0:
+        torch.cuda.set_per_process_memory_fraction(memory_fraction, device)
+        _log(
+            dist_ctx,
+            "[smolvla-mjwarp] PyTorch capped at "
+            f"{memory_fraction:.2f} of GPU memory; the remainder is reserved "
+            "for the MJWarp/Warp allocator.",
+        )
+
     layout = RankLocalGroupLayout(
         worlds_per_rank=int(args.worlds_per_rank),
         groups_per_rank=int(args.groups_per_rank),
@@ -1441,6 +1456,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     raise RuntimeError(
                         "Validation became due without a GPU validation collector."
                     )
+                # Validation runs its own rollout, another peak on top of the
+                # update just finished; release the cache first so Warp keeps
+                # its reserve through it.
+                torch.cuda.empty_cache()
                 validation_metrics = _run_gpu_validation(
                     args=args,
                     collector=validation_collector,

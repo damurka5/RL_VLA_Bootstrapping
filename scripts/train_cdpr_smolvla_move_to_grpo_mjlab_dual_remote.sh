@@ -6,7 +6,11 @@ ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
 CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-5000000}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
-SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-512}"
+# 256, not 512: the 512-world SmolVLA inference activations are the
+# dominant GPU peak, and at 512 the combined PyTorch+Warp footprint sat
+# on the card limit and Warp OOM'd mid-run once the LoRA backward was
+# added. 256 halves that activation peak at negligible throughput cost.
+SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-256}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 ALLOW_LEGACY_SIMULATOR_CHECKPOINT="${ALLOW_LEGACY_SIMULATOR_CHECKPOINT:-0}"
 RUN_PREFLIGHT="${RUN_PREFLIGHT:-1}"

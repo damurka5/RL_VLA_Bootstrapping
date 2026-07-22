@@ -201,7 +201,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             command[
                 command.index("--smolvla-inference-microbatch-size") + 1
             ],
-            "512",
+            "256",
         )
         self.assertEqual(
             command[command.index("--max-train-steps") + 1], "5000000"
@@ -392,7 +392,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             'WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"', source
         )
         self.assertIn(
-            'SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-512}"',
+            'SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-256}"',
             source,
         )
         self.assertIn("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT", source)

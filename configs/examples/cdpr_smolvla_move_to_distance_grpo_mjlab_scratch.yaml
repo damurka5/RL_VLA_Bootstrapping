@@ -231,7 +231,7 @@ training:
       smolvla_model_image_size: 256
       smolvla_compile_model: true
       smolvla_compile_mode: max-autotune-no-cudagraphs
-      smolvla_inference_microbatch_size: 512
+      smolvla_inference_microbatch_size: 256
       state_dim: 6
       # Widen ONLY the trainable residual's state with the 3-D EE->target
       # vector; the frozen SmolVLA replica still gets the truncated 6-dim state.
