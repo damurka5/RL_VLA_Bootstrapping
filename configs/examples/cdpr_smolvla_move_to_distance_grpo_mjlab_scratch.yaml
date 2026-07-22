@@ -122,11 +122,12 @@ task:
         robocasa_plate,
         robocasa_bowl,
       ]
-    # Object-count curriculum: 1 object until the first threshold, then up to
-    # 2, then up to 3 (sampled uniformly per group). Slot four stays inactive.
+    # Object-count curriculum for the 10M-step move-to phase: 1 object until 5M,
+    # then up to 2 until 8M, then up to 3 (sampled uniformly per group, so
+    # earlier counts stay in the mix). Slot four stays inactive.
     min_scene_objects: 1
     max_scene_objects: 3
-    scene_object_curriculum_steps: [1500000, 3000000]
+    scene_object_curriculum_steps: [5000000, 8000000]
     distance_reward_exponent: 2.0
     success_distance: 0.02
     success_bonus: 0.0
@@ -169,8 +170,12 @@ task:
     random_workspace_horizon_high: 32
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
-    # EE origin 0.27 m => grasp point 0.19 m, level with the object centres.
-    ee_workspace_z_bounds: [0.27, 0.27]
+    # Randomize the start height so the policy must learn descent, not just XY
+    # servoing: the EE begins anywhere in [0.27, 0.52] (grasp point 0.19..0.44)
+    # and is rewarded (via distance_include_z to the 0.27 hover point) for
+    # driving down to the object band. 0.27 is the hover/target height; 0.52 is
+    # a 25 cm approach. This matches the eval RANDOM_START_Z_BOUNDS range.
+    ee_workspace_z_bounds: [0.27, 0.52]
 
 simulation:
   entrypoint:
@@ -223,7 +228,7 @@ training:
       standalone: true
       nproc_per_node: 2
     args:
-      max_train_steps: 5000000
+      max_train_steps: 10000000
       max_env_steps: 128
       chunk_size: 8
       replan_every: 4
@@ -233,9 +238,13 @@ training:
       smolvla_compile_mode: max-autotune-no-cudagraphs
       smolvla_inference_microbatch_size: 256
       state_dim: 6
-      # Widen ONLY the trainable residual's state with the 3-D EE->target
-      # vector; the frozen SmolVLA replica still gets the truncated 6-dim state.
-      residual_relative_target: true
+      # No privileged target geometry in the observation: the residual and the
+      # frozen SmolVLA replica both see pure proprioception
+      # [ee_xyz, ee_yaw, gripper, 0]. The policy must localize the target from
+      # the overview + wrist cameras and the language instruction, exactly as it
+      # would on a real robot. (true feeds the residual an oracle EE->target
+      # vector that does not exist at deployment -- do not enable it.)
+      residual_relative_target: false
       include_wrist: true
       include_aux_camera: true
       mask_empty_aux_camera: true

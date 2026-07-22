@@ -15,6 +15,7 @@ import argparse
 import csv
 import json
 import math
+import os
 import shutil
 import subprocess
 import textwrap
@@ -753,6 +754,17 @@ def _run_episode(
     action_step = 0
     policy_inference_count = 0
 
+    def _env_on(name: str) -> bool:
+        return os.environ.get(name, "0").strip().lower() in {
+            "1",
+            "true",
+            "yes",
+            "on",
+        }
+
+    _zero_overview = _env_on("RLVLA_EVAL_ZERO_OVERVIEW")
+    _zero_wrist = _env_on("RLVLA_EVAL_ZERO_WRIST")
+
     cameras = backend.render_policy_cameras()
     base_telemetry = {
         "instruction": instruction,
@@ -801,9 +813,22 @@ def _run_episode(
                     target_slots=reset.task_state.target_slots,
                     state_dim=int(trainer.state_dim),
                 )
+                # Vision-reliance ablation: optionally blank a camera in the
+                # policy's observation only (the recorded video keeps the real
+                # frames). RLVLA_EVAL_ZERO_OVERVIEW / RLVLA_EVAL_ZERO_WRIST=1.
+                policy_overview = (
+                    torch.zeros_like(cameras.overview)
+                    if _zero_overview
+                    else cameras.overview
+                )
+                policy_wrist = (
+                    torch.zeros_like(cameras.wrist)
+                    if _zero_wrist
+                    else cameras.wrist
+                )
                 prior = runtime.sample_cdpr_chunks_from_tensors(
-                    primary_images=cameras.overview,
-                    wrist_images=cameras.wrist,
+                    primary_images=policy_overview,
+                    wrist_images=policy_wrist,
                     states=state,
                     instructions=reset.instructions,
                     microbatch_size=int(

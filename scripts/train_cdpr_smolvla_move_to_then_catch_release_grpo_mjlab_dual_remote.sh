@@ -5,7 +5,7 @@ REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
 ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
 MOVE_TO_CONFIG="${MOVE_TO_CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml}"
 CATCH_RELEASE_CONFIG="${CATCH_RELEASE_CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_catch_release_dense_grpo_mjlab_resume.yaml}"
-MOVE_TO_TRAIN_STEPS="${MOVE_TO_TRAIN_STEPS:-5000000}"
+MOVE_TO_TRAIN_STEPS="${MOVE_TO_TRAIN_STEPS:-10000000}"
 CATCH_RELEASE_ADDITIONAL_TRAIN_STEPS="${CATCH_RELEASE_ADDITIONAL_TRAIN_STEPS:-15000000}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
 MOVE_TO_SMOLVLA_MICROBATCH_SIZE="${MOVE_TO_SMOLVLA_MICROBATCH_SIZE:-${SMOLVLA_MICROBATCH_SIZE:-512}}"
@@ -29,8 +29,8 @@ if [[ -n "${CHECKPOINT:-}" || -n "${RLVLA_SMOLVLA_RESUME_CHECKPOINT:-}" ]]; then
   echo "The two-stage launcher always starts from scratch; do not set CHECKPOINT/RLVLA_SMOLVLA_RESUME_CHECKPOINT." >&2
   exit 2
 fi
-if [[ "$MOVE_TO_TRAIN_STEPS" -ne 5000000 ]]; then
-  echo "Phase 1 requires MOVE_TO_TRAIN_STEPS=5000000." >&2
+if [[ "$MOVE_TO_TRAIN_STEPS" -ne 10000000 ]]; then
+  echo "Phase 1 requires MOVE_TO_TRAIN_STEPS=10000000." >&2
   exit 2
 fi
 if [[ "$CATCH_RELEASE_ADDITIONAL_TRAIN_STEPS" -ne 15000000 ]]; then

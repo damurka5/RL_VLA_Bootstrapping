@@ -460,18 +460,21 @@ def build_smolvla_state_tensor(
     include_relative_target: bool = False,
     goal_slots: Any | None = None,
 ) -> Any:
-    """Build the SmolVLA/residual state, keeping SmolVLA's view proprioceptive.
+    """Build the SmolVLA/residual state as pure proprioception.
 
-    Legacy layout (``include_relative_target=False``) is the historical CPU
-    adapter ``[ee_xyz, ee_yaw, gripper, xy_distance]``.
+    ``include_relative_target=False`` (the deployment-faithful default) emits
+    ``[ee_xyz, ee_yaw, gripper, 0]`` -- pure proprioception with a neutral pad
+    in column 5. The historical layout put ``xy_distance`` to the target in that
+    column, but that is privileged task geometry the real robot never observes,
+    so it is deliberately removed: the policy must localize from the cameras and
+    the language instruction instead.
 
-    With ``include_relative_target=True`` the first six columns are pure
-    proprioception ``[ee_xyz, ee_yaw, gripper, 0]`` -- the target-distance
-    scalar is deliberately dropped so the frozen SmolVLA replica (which
-    truncates to its own six-dim ``state_dim``) never receives privileged,
-    non-generalizable task geometry. The 3-D end-effector->goal vector
-    ``(dx, dy, dz)`` is appended as columns 6..8 for the trainable residual
-    only, giving it an explicit direction without polluting the VLA input.
+    ``include_relative_target=True`` additionally appends the ground-truth 3-D
+    end-effector->goal vector ``(dx, dy, dz)`` as columns 6..8 for the trainable
+    residual only. THIS IS AN ORACLE and must stay off for any run whose policy
+    has to transfer to a real robot -- it lets the residual servo on an exact
+    target direction that will not exist at deployment, which trains a policy
+    that collapses the moment the vector is withheld (e.g. at evaluation).
 
     ``goal_slots`` is the slot the reward actually shapes toward and defaults to
     ``target_slots``. Placement tasks must pass the receptacle (reference) slot:
@@ -501,15 +504,15 @@ def build_smolvla_state_tensor(
             relative_target,
         ]
     else:
-        # The historical layout always reported distance to the target object.
-        xy_distance = torch.linalg.vector_norm(
-            (target - ee_position)[:, :2], dim=-1, keepdim=True
-        )
+        # Pure proprioception: [ee_xyz, ee_yaw, gripper, 0]. The historical
+        # layout reported xy_distance to the target in column 5, but that is
+        # privileged geometry unavailable on a real robot, so it is dropped in
+        # favour of a neutral pad. The policy localizes from the cameras.
         columns = [
             ee_position,
             ee_yaw.reshape(-1, 1),
             gripper_opening.reshape(-1, 1),
-            xy_distance,
+            torch.zeros_like(ee_yaw.reshape(-1, 1)),
         ]
     state = torch.cat(columns, dim=-1).to(dtype=torch.float32)
     width = max(1, int(state_dim))
