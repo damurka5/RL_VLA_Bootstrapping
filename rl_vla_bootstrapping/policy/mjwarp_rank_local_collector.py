@@ -1888,15 +1888,21 @@ class RankLocalMJWarpGRPOCollector:
                         step_active,
                     )
                 )
-                diagnostic_mask = (
-                    step_active & reset.grasp_eligible
-                ).to(dtype=torch.float32)
+                diagnostic_bool = step_active & reset.grasp_eligible
+                diagnostic_mask = diagnostic_bool.to(dtype=torch.float32)
                 grasp_diagnostic_totals["observations"] += (
                     diagnostic_mask.sum()
                 )
                 for name, values in grasp_diagnostics.items():
-                    grasp_diagnostic_totals[name] += (
-                        values.to(dtype=torch.float32) * diagnostic_mask
+                    # torch.where, not `values * mask`: a spurious inf contact
+                    # force in a masked-out world would otherwise give inf*0=NaN
+                    # and poison an observational mean (harmless in move-to, but
+                    # it corrupts the real grasp diagnostics in stage 2). Zero
+                    # the excluded worlds before they can contribute.
+                    grasp_diagnostic_totals[name] += torch.where(
+                        diagnostic_bool,
+                        values.to(dtype=torch.float32),
+                        torch.zeros_like(diagnostic_mask),
                     ).sum()
                 self._sync_for_profile()
                 timings["physics_time_s"] += time.perf_counter() - started
