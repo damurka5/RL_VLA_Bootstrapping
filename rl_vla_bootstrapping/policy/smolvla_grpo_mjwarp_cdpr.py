@@ -1057,10 +1057,21 @@ def main(argv: Sequence[str] | None = None) -> None:
         include_relative_target = bool(
             getattr(args, "residual_relative_target", False)
         )
+        # Vision-aware residual: a frozen fixed-projection of SmolVLA's connector
+        # tokens (which DO encode target position -- linear-probe R^2 ~ 0.44)
+        # appended to the residual state so the trainable residual can localize
+        # the object. 0 disables it (the frozen SmolVLA action head cannot).
+        vision_feature_dim = (
+            int(getattr(args, "residual_vision_dim", 0))
+            if bool(getattr(args, "residual_vision_features", False))
+            else 0
+        )
         # The frozen SmolVLA replica keeps its native state width; only the
-        # trainable residual is widened by the 3-D target-relative vector.
-        residual_state_dim = int(args.state_dim) + (
-            3 if include_relative_target else 0
+        # trainable residual is widened (target-relative vector + vision feature).
+        residual_state_dim = (
+            int(args.state_dim)
+            + (3 if include_relative_target else 0)
+            + vision_feature_dim
         )
         trainer = SmolVLAGRPOTrainer(
             args=args,
@@ -1205,6 +1216,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             move_to_distance_reward=move_to_distance_reward,
             catch_release_dense_reward=catch_release_dense_reward,
             include_relative_target=include_relative_target,
+            vision_feature_dim=vision_feature_dim,
             store_vla_records=train_vla_lora,
             vla_update_max_records=int(
                 getattr(args, "vla_update_max_records", 128)
@@ -1257,6 +1269,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 move_to_distance_reward=move_to_distance_reward,
                 catch_release_dense_reward=catch_release_dense_reward,
                 include_relative_target=include_relative_target,
+                vision_feature_dim=vision_feature_dim,
                 profile=bool(args.mjwarp_profile_timers),
             )
 

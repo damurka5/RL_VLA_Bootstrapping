@@ -1590,6 +1590,7 @@ class RankLocalMJWarpGRPOCollector:
             BatchedCatchReleaseDenseReward | None
         ) = None,
         include_relative_target: bool = False,
+        vision_feature_dim: int = 0,
         store_vla_records: bool = False,
         vla_update_max_records: int = 128,
         profile: bool = False,
@@ -1601,6 +1602,9 @@ class RankLocalMJWarpGRPOCollector:
         self.resetter = resetter
         self.layout = layout
         self.include_relative_target = bool(include_relative_target)
+        # >0 appends a frozen fixed-projection SmolVLA vision feature of this
+        # width to the residual state so the residual can localize the target.
+        self.vision_feature_dim = max(0, int(vision_feature_dim))
         self.store_vla_records = bool(store_vla_records)
         self.vla_update_max_records = max(0, int(vla_update_max_records))
         self.actions_per_policy_decision = max(
@@ -1863,25 +1867,45 @@ class RankLocalMJWarpGRPOCollector:
             timings["render_time_s"] += time.perf_counter() - started
 
             low_dim = self.backend.low_dim_observations()
+            # Proprioception-only width (the vision feature is appended after the
+            # SmolVLA forward, since it comes FROM that forward). SmolVLA sees the
+            # narrow state; the residual sees narrow + vision.
+            proprio_state_dim = int(self.trainer.state_dim) - self.vision_feature_dim
             state_tensor = build_smolvla_state_tensor(
                 ee_position=low_dim.ee_position,
                 ee_yaw=low_dim.ee_yaw,
                 gripper_opening=low_dim.gripper_opening,
                 object_positions=low_dim.object_positions,
                 target_slots=reset.task_state.target_slots,
-                state_dim=int(self.trainer.state_dim),
+                state_dim=proprio_state_dim,
                 include_relative_target=self.include_relative_target,
                 goal_slots=goal_slots,
             )
             self._sync_for_profile()
             started = time.perf_counter()
-            prior = self.runtime.sample_cdpr_chunks_from_tensors(
-                primary_images=cameras.overview,
-                wrist_images=cameras.wrist,
-                states=state_tensor,
-                instructions=reset.instructions,
-                microbatch_size=self.smolvla_microbatch_size,
-            )
+            if self.vision_feature_dim > 0:
+                prior, vision_feature = (
+                    self.runtime.sample_cdpr_chunks_and_vision_from_tensors(
+                        primary_images=cameras.overview,
+                        wrist_images=cameras.wrist,
+                        states=state_tensor,
+                        instructions=reset.instructions,
+                        vision_dim=self.vision_feature_dim,
+                        microbatch_size=self.smolvla_microbatch_size,
+                    )
+                )
+                state_tensor = torch.cat(
+                    [state_tensor, vision_feature.to(dtype=state_tensor.dtype)],
+                    dim=-1,
+                )
+            else:
+                prior = self.runtime.sample_cdpr_chunks_from_tensors(
+                    primary_images=cameras.overview,
+                    wrist_images=cameras.wrist,
+                    states=state_tensor,
+                    instructions=reset.instructions,
+                    microbatch_size=self.smolvla_microbatch_size,
+                )
             self._sync_for_profile()
             timings["smolvla_time_s"] += time.perf_counter() - started
 
@@ -2318,25 +2342,44 @@ class RankLocalMJWarpGRPOCollector:
                 )
 
                 low_dim = self.backend.low_dim_observations()
+                proprio_state_dim = (
+                    int(self.trainer.state_dim) - self.vision_feature_dim
+                )
                 state_tensor = build_smolvla_state_tensor(
                     ee_position=low_dim.ee_position,
                     ee_yaw=low_dim.ee_yaw,
                     gripper_opening=low_dim.gripper_opening,
                     object_positions=low_dim.object_positions,
                     target_slots=reset.task_state.target_slots,
-                    state_dim=int(self.trainer.state_dim),
+                    state_dim=proprio_state_dim,
                     include_relative_target=self.include_relative_target,
                     goal_slots=goal_slots,
                 )
                 self._sync_for_profile()
                 started = time.perf_counter()
-                prior = self.runtime.sample_cdpr_chunks_from_tensors(
-                    primary_images=cameras.overview,
-                    wrist_images=cameras.wrist,
-                    states=state_tensor,
-                    instructions=reset.instructions,
-                    microbatch_size=self.smolvla_microbatch_size,
-                )
+                if self.vision_feature_dim > 0:
+                    prior, vision_feature = (
+                        self.runtime.sample_cdpr_chunks_and_vision_from_tensors(
+                            primary_images=cameras.overview,
+                            wrist_images=cameras.wrist,
+                            states=state_tensor,
+                            instructions=reset.instructions,
+                            vision_dim=self.vision_feature_dim,
+                            microbatch_size=self.smolvla_microbatch_size,
+                        )
+                    )
+                    state_tensor = torch.cat(
+                        [state_tensor, vision_feature.to(dtype=state_tensor.dtype)],
+                        dim=-1,
+                    )
+                else:
+                    prior = self.runtime.sample_cdpr_chunks_from_tensors(
+                        primary_images=cameras.overview,
+                        wrist_images=cameras.wrist,
+                        states=state_tensor,
+                        instructions=reset.instructions,
+                        microbatch_size=self.smolvla_microbatch_size,
+                    )
                 self._sync_for_profile()
                 timings["validation/smolvla_time_s"] += (
                     time.perf_counter() - started

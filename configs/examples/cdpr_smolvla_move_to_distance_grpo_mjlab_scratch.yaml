@@ -282,6 +282,18 @@ training:
       # would on a real robot. (true feeds the residual an oracle EE->target
       # vector that does not exist at deployment -- do not enable it.)
       residual_relative_target: false
+      # Vision-aware residual: append a FROZEN fixed-random projection of
+      # SmolVLA's connector vision tokens (overview+wrist) to the trainable
+      # residual's state, so the residual can localize the target from vision.
+      # The frozen SmolVLA action head does not ground (action->target cosine ~0),
+      # but the connector tokens DO encode target XY (linear-probe R^2 ~ 0.44 on
+      # the un-pooled 16-token grid). SmolVLA still receives only the 6-dim
+      # proprioceptive state; the residual sees proprioception + this 512-dim
+      # frozen feature and learns the vision->direction map RL could not reach
+      # through the rank-16 action-expert LoRA alone. Fixed seed => reproducible
+      # across ranks/eval; changing residual_vision_dim invalidates checkpoints.
+      residual_vision_features: true
+      residual_vision_dim: 512
       include_wrist: true
       include_aux_camera: true
       mask_empty_aux_camera: true

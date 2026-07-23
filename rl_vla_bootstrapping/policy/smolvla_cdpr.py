@@ -972,6 +972,145 @@ class SmolVLARuntime:
             raw, spec=self.action_spec
         )
 
+    def _vision_connector(self) -> Any:
+        """The frozen SmolVLM connector: emits [B, 16, 960] vision->LM tokens
+        per camera. Cached; raises a clear error if the module path changes."""
+
+        cached = getattr(self, "_connector_module", None)
+        if cached is not None:
+            return cached
+        try:
+            connector = self.policy.model.vlm_with_expert.vlm.model.connector
+        except AttributeError as exc:  # pragma: no cover - guards a model change
+            raise RuntimeError(
+                "SmolVLA connector module not found at "
+                "policy.model.vlm_with_expert.vlm.model.connector; the "
+                "vision-aware residual cannot extract vision features."
+            ) from exc
+        self._connector_module = connector
+        return connector
+
+    def _vision_projection(self, in_dim: int, out_dim: int, device: Any) -> Any:
+        """A FIXED (seeded, non-trainable) random projection of the flattened
+        connector tokens to ``out_dim``. Frozen so the stored residual feature is
+        valid across PPO epochs and identical across ranks / eval; a Gaussian
+        projection preserves the linearly-decodable target signal (R^2 ~ 0.44
+        measured on the 15360-dim tokens). Changing the seed/dims invalidates
+        existing checkpoints."""
+
+        proj = getattr(self, "_vision_proj", None)
+        if proj is not None and proj.shape == (in_dim, out_dim):
+            return proj
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(20260723)
+        proj = (
+            torch.randn(in_dim, out_dim, generator=generator)
+            / float(in_dim) ** 0.5
+        ).to(device=device, dtype=torch.float32)
+        self._vision_proj = proj
+        return proj
+
+    def _pool_vision(self, captured: list[Any], out_dim: int) -> Any:
+        """Flatten the overview + wrist connector tokens and fixed-project them.
+
+        ``captured`` holds one [B, 16, 960] tensor per camera in image order
+        (overview, wrist, aux). The 16 tokens are a ~4x4 spatial grid, so the
+        flatten preserves the position information the residual needs; only the
+        real cameras (overview, wrist) are used, never the masked aux view.
+        """
+
+        cams = captured[: max(1, min(2, len(captured)))]
+        # The connector tokens are created under the runtime's inference_mode, so
+        # copy them into fresh NORMAL tensors before use: an inference tensor is
+        # contagious and, once concatenated into the residual state, would make
+        # that state unusable for backward in the GRPO update.
+        with torch.inference_mode(False), torch.no_grad():
+            parts = []
+            for cam in cams:
+                buf = torch.empty(
+                    (cam.shape[0], cam.shape[1] * cam.shape[2]),
+                    dtype=torch.float32,
+                    device=cam.device,
+                )
+                buf.copy_(cam.reshape(cam.shape[0], -1))
+                parts.append(buf)
+            flat = torch.cat(parts, dim=-1)
+            proj = self._vision_projection(
+                int(flat.shape[-1]), int(out_dim), flat.device
+            )
+            return (flat @ proj).clone()
+
+    def sample_cdpr_chunks_and_vision_from_tensors(
+        self,
+        *,
+        primary_images: Any,
+        wrist_images: Any,
+        states: Any,
+        instructions: Sequence[str],
+        vision_dim: int,
+        aux_images: Any | None = None,
+        microbatch_size: int = 0,
+        enable_grad: bool = False,
+    ) -> "tuple[Any, Any]":
+        """Return (prior_chunk, frozen_vision_feature[B, vision_dim]).
+
+        The vision feature is a fixed projection of SmolVLA's connector tokens,
+        detached from the frozen VLM. It is meant to be appended to the residual
+        state so the trainable residual can localize the target from vision --
+        the frozen SmolVLA action head does not.
+        """
+
+        if torch is None:
+            raise RuntimeError("Torch is required for SmolVLA inference.")
+        batch = adapt_cdpr_tensors_to_smolvla_batch(
+            primary_images=primary_images,
+            wrist_images=wrist_images,
+            aux_images=aux_images,
+            states=states,
+            instructions=instructions,
+            spec=self.obs_spec,
+            device=self.device,
+        )
+        input_ids, attention_mask = self._tokenize(instructions)
+        batch[SMOLVLA_LANGUAGE_TOKEN_KEY] = input_ids
+        batch[SMOLVLA_LANGUAGE_MASK_KEY] = attention_mask
+        connector = self._vision_connector()
+        captured: list[Any] = []
+        handle = connector.register_forward_hook(
+            lambda _m, _i, out: captured.append(out)
+        )
+        try:
+            batch_size = int(primary_images.shape[0])
+            microbatch = int(microbatch_size)
+            if microbatch <= 0 or microbatch >= batch_size:
+                captured.clear()
+                raw = self._predict_actions_tensor(batch, enable_grad=enable_grad)
+                vision = self._pool_vision(captured, vision_dim)
+            else:
+                raws: list[Any] = []
+                visions: list[Any] = []
+                for start in range(0, batch_size, microbatch):
+                    end = min(batch_size, start + microbatch)
+                    sliced: dict[str, Any] = {}
+                    for key, value in batch.items():
+                        if isinstance(value, torch.Tensor) and value.ndim > 0:
+                            sliced[key] = value[start:end]
+                        elif isinstance(value, list):
+                            sliced[key] = value[start:end]
+                        else:
+                            sliced[key] = value
+                    captured.clear()
+                    raws.append(
+                        self._predict_actions_tensor(sliced, enable_grad=enable_grad)
+                    )
+                    visions.append(self._pool_vision(captured, vision_dim))
+                raw = torch.cat(raws, dim=0)
+                vision = torch.cat(visions, dim=0)
+        finally:
+            handle.remove()
+        prior = adapt_smolvla_action_tensors_to_cdpr(raw, spec=self.action_spec)
+        return prior, vision
+
     def capture_cdpr_images(self, env: Any) -> tuple[np.ndarray, np.ndarray | None]:
         """Render the camera inputs for one CDPR environment state."""
         sim = env.sim

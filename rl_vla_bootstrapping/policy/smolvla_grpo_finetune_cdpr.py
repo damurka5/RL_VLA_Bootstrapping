@@ -276,6 +276,18 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "state). Gives the residual an explicit direction to the object."
         ),
     )
+    _bool_arg(
+        parser,
+        "residual_vision_features",
+        default=False,
+        help_text=(
+            "Append a frozen fixed-projection of SmolVLA's connector vision "
+            "tokens to the trainable residual's state so it can localize the "
+            "target (the connector feature encodes target XY: linear-probe R^2 "
+            "~ 0.44). SmolVLA still receives only the proprioceptive state."
+        ),
+    )
+    parser.add_argument("--residual-vision-dim", type=int, default=512)
     # --- SmolVLA action-expert LoRA fine-tune (off by default) ---
     _bool_arg(
         parser,

@@ -805,13 +805,18 @@ def _run_episode(
                 if decision > 0:
                     cameras = backend.render_policy_cameras()
                 low_dim = backend.low_dim_observations()
+                _vis_dim = (
+                    int(getattr(trainer.args, "residual_vision_dim", 0))
+                    if bool(getattr(trainer.args, "residual_vision_features", False))
+                    else 0
+                )
                 state = build_smolvla_state_tensor(
                     ee_position=low_dim.ee_position,
                     ee_yaw=low_dim.ee_yaw,
                     gripper_opening=low_dim.gripper_opening,
                     object_positions=low_dim.object_positions,
                     target_slots=reset.task_state.target_slots,
-                    state_dim=int(trainer.state_dim),
+                    state_dim=int(trainer.state_dim) - _vis_dim,
                 )
                 # Vision-reliance ablation: optionally blank a camera in the
                 # policy's observation only (the recorded video keeps the real
@@ -826,15 +831,32 @@ def _run_episode(
                     if _zero_wrist
                     else cameras.wrist
                 )
-                prior = runtime.sample_cdpr_chunks_from_tensors(
-                    primary_images=policy_overview,
-                    wrist_images=policy_wrist,
-                    states=state,
-                    instructions=reset.instructions,
-                    microbatch_size=int(
-                        trainer.args.smolvla_inference_microbatch_size
-                    ),
-                )
+                if _vis_dim > 0:
+                    prior, _vision_feature = (
+                        runtime.sample_cdpr_chunks_and_vision_from_tensors(
+                            primary_images=policy_overview,
+                            wrist_images=policy_wrist,
+                            states=state,
+                            instructions=reset.instructions,
+                            vision_dim=_vis_dim,
+                            microbatch_size=int(
+                                trainer.args.smolvla_inference_microbatch_size
+                            ),
+                        )
+                    )
+                    state = torch.cat(
+                        [state, _vision_feature.to(dtype=state.dtype)], dim=-1
+                    )
+                else:
+                    prior = runtime.sample_cdpr_chunks_from_tensors(
+                        primary_images=policy_overview,
+                        wrist_images=policy_wrist,
+                        states=state,
+                        instructions=reset.instructions,
+                        microbatch_size=int(
+                            trainer.args.smolvla_inference_microbatch_size
+                        ),
+                    )
                 actions = trainer.deterministic_action_chunks_tensor(
                     states=state,
                     priors=prior,
