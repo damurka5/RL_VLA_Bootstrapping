@@ -1007,6 +1007,150 @@ def _run_episode(
     return episode, action_rows
 
 
+def _run_vision_sensitivity_probe(
+    *,
+    backend: Any,
+    runtime: Any,
+    trainer: Any,
+    resetter: Any,
+    num_rounds: int,
+    min_scene_objects: int,
+    max_scene_objects: int,
+    run_dir: Path,
+) -> int:
+    """Counterfactual test of whether the policy actually uses the cameras.
+
+    The proprioceptive state is the ONLY non-vision input and the target never
+    enters it (pure [ee_xyz, ee_yaw, gripper, 0]), so the target can only reach
+    the action through SmolVLA's image encoding -> prior. We hold the state
+    fixed at a canonical pose and vary only the images across many scenes:
+
+      * real vs zeroed images -> if the action barely changes, vision is unused
+        (cos ~ 1, |dA|/|A| ~ 0).
+      * pairwise across different-target scenes -> if the action is ~identical
+        (cos ~ 1) despite the target moving, the output is target-invariant.
+      * grounding: cos(first-step XY action, direction to the true target) -> is
+        any vision influence in the RIGHT direction (~+1) or task-blind (~0).
+
+    All measured for the composed policy action AND the frozen prior alone, so we
+    can tell whether blindness is in SmolVLA or in the residual composition.
+    """
+
+    import torch
+    from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+        build_smolvla_state_tensor,
+    )
+
+    def _cos(a: "torch.Tensor", b: "torch.Tensor") -> float:
+        return float(
+            torch.nn.functional.cosine_similarity(
+                a.reshape(1, -1), b.reshape(1, -1), dim=-1
+            ).item()
+        )
+
+    worlds = int(GROUP_SIZE)
+    device = next(trainer.actor.parameters()).device
+    # Canonical fixed proprioceptive state: workspace centre, mid height.
+    ee_const = torch.tensor([0.0, 0.0, 0.40], device=device).expand(worlds, 3)
+    yaw_const = torch.zeros(worlds, device=device)
+    grip_const = torch.zeros(worlds, device=device)
+    seed = 1234
+    action_count = max(1, int(trainer.args.replan_every))
+    mb = int(trainer.args.smolvla_inference_microbatch_size)
+
+    a_real: list[Any] = []
+    a_zero: list[Any] = []
+    p_real: list[Any] = []
+    p_zero: list[Any] = []
+    tgt_xy: list[Any] = []
+
+    def _prior_action(overview: Any, wrist: Any, state: Any):
+        # Fix the flow-matching noise so differences are attributable to images.
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)
+        prior = runtime.sample_cdpr_chunks_from_tensors(
+            primary_images=overview,
+            wrist_images=wrist,
+            states=state,
+            instructions=reset.instructions,
+            microbatch_size=mb,
+        )
+        act = trainer.deterministic_action_chunks_tensor(
+            states=state, priors=prior, action_count=action_count
+        )
+        return prior, act
+
+    with torch.inference_mode():
+        for round_index in range(int(num_rounds)):
+            count = _scene_object_count_for_round(
+                round_index, int(min_scene_objects), int(max_scene_objects)
+            )
+            resetter.set_scene_object_range(count, count)
+            reset = resetter.reset(update_index=0, round_index=int(round_index))
+            cameras = backend.render_policy_cameras()
+            low_dim = backend.low_dim_observations()
+            state = build_smolvla_state_tensor(
+                ee_position=ee_const,
+                ee_yaw=yaw_const,
+                gripper_opening=grip_const,
+                object_positions=low_dim.object_positions,
+                target_slots=reset.task_state.target_slots,
+                state_dim=int(trainer.state_dim),
+            )
+            rows = torch.arange(worlds, device=device)
+            target = low_dim.object_positions[rows, reset.task_state.target_slots]
+            tgt_xy.append((target[:, :2] - ee_const[:, :2])[0].detach().cpu())
+
+            prior_r, act_r = _prior_action(cameras.overview, cameras.wrist, state)
+            prior_z, act_z = _prior_action(
+                torch.zeros_like(cameras.overview),
+                torch.zeros_like(cameras.wrist),
+                state,
+            )
+            a_real.append(act_r[0, 0].detach().cpu())
+            a_zero.append(act_z[0, 0].detach().cpu())
+            p_real.append(prior_r[0, 0].detach().cpu())
+            p_zero.append(prior_z[0, 0].detach().cpu())
+
+    n = len(a_real)
+    use_action = np.mean([_cos(a_real[i], a_zero[i]) for i in range(n)])
+    use_prior = np.mean([_cos(p_real[i], p_zero[i]) for i in range(n)])
+    delta_action = np.mean([
+        float((a_real[i] - a_zero[i]).norm() / (a_real[i].norm() + 1e-6))
+        for i in range(n)
+    ])
+    ground_action = np.mean([_cos(a_real[i][:2], tgt_xy[i]) for i in range(n)])
+    ground_prior = np.mean([_cos(p_real[i][:2], tgt_xy[i]) for i in range(n)])
+    pairs = [(i, j) for i in range(n) for j in range(i + 1, n)]
+    blind_action = np.mean([_cos(a_real[i], a_real[j]) for i, j in pairs])
+    blind_prior = np.mean([_cos(p_real[i], p_real[j]) for i, j in pairs])
+
+    report = textwrap.dedent(
+        f"""
+        ===== Vision-sensitivity probe ({n} scenes, fixed canonical state) =====
+        cos(action | real vs zeroed images)   = {use_action:+.3f}   (~1 => images ignored)
+        |dAction|/|Action| (real vs zeroed)   = {delta_action:.3f}    (~0 => images ignored)
+        cos(prior  | real vs zeroed images)   = {use_prior:+.3f}   (isolates frozen SmolVLA)
+
+        mean pairwise cos(action) across scenes= {blind_action:+.3f}   (~1 => target-invariant/blind)
+        mean pairwise cos(prior)  across scenes= {blind_prior:+.3f}
+
+        grounding cos(action_xy, target_dir)  = {ground_action:+.3f}   (+1 correct, 0 blind, - anti)
+        grounding cos(prior_xy,  target_dir)  = {ground_prior:+.3f}
+        =========================================================================
+        Read: if the top block is ~1 / ~0, SmolVLA is not using the cameras at all
+        (grounding wall or an image-plumbing bug). If it clearly uses vision
+        (cos < ~0.9, |dA| > ~0.1) but grounding stays ~0, vision is read but not
+        localized -- the vision->action connection is the lever, not exploration.
+        """
+    ).strip()
+    print(report, flush=True)
+    out = run_dir / "vision_sensitivity_probe.txt"
+    out.write_text(report + "\n")
+    print(f"[vision-probe] wrote {out}", flush=True)
+    return 0
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -1284,6 +1428,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         # while the frozen SmolVLA flow sampler consumes this CUDA RNG stream.
         torch.manual_seed(int(args.validation_seed))
         torch.cuda.manual_seed(int(args.validation_seed))
+        if os.environ.get("RLVLA_EVAL_VISION_PROBE", "").strip().lower() in {
+            "1", "true", "yes", "on"
+        }:
+            return _run_vision_sensitivity_probe(
+                backend=backend,
+                runtime=runtime,
+                trainer=trainer,
+                resetter=resetter,
+                num_rounds=total_requested,
+                min_scene_objects=int(args.min_scene_objects),
+                max_scene_objects=int(args.max_scene_objects),
+                run_dir=run_dir,
+            )
         for round_index in range(total_requested):
             scene_object_count = _scene_object_count_for_round(
                 round_index,
