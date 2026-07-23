@@ -1124,13 +1124,15 @@ def _run_vision_sensitivity_probe(
             captured.clear()
             prior_r, act_r = _prior_action(cameras.overview, cameras.wrist, state)
             if hook_handle is not None and captured:
-                # captured: one [B, 16, 960] per camera, in image order
-                # (overview, wrist, aux). Pool world 0 over tokens (and cameras
-                # for the joint feature); keep overview alone for a per-camera
-                # probe.
+                # captured: one [B, 16, 960] per camera (overview, wrist, aux).
+                # The 16 tokens are a ~4x4 spatial grid, so WHERE the object is
+                # lives in WHICH token carries it. Keep the overview tokens
+                # un-pooled and flattened (spatial probe) AND a mean-pooled copy
+                # (the pooling destroys position, so this is the pessimistic
+                # baseline).
                 cams = torch.stack([c[0] for c in captured], dim=0)
                 vfeat_joint.append(cams.mean(dim=(0, 1)).numpy())
-                vfeat_overview.append(captured[0][0].mean(dim=0).numpy())
+                vfeat_overview.append(captured[0][0].reshape(-1).numpy())
             prior_z, act_z = _prior_action(
                 torch.zeros_like(cameras.overview),
                 torch.zeros_like(cameras.wrist),
@@ -1144,41 +1146,56 @@ def _run_vision_sensitivity_probe(
     if hook_handle is not None:
         hook_handle.remove()
 
-    def _ridge_heldout_r2(feats: list[Any], alpha: float = 10.0) -> "tuple[float, float]":
-        """Held-out R^2 of a linear map feature -> target XY, plus a shuffled
-        control. Ridge regularizes so the result is meaningful even when the
-        feature dim exceeds the sample count; the real-vs-shuffled gap is the
-        signal (shuffled ~0 always). Returns (real_R2, shuffled_R2), each the
-        mean over the X and Y axes."""
+    def _ridge_heldout_r2(feats: list[Any]) -> "tuple[float, float, float]":
+        """Held-out R^2 of a linear map feature -> target XY, with a shuffled
+        control, sweeping the ridge alpha and reporting the setting where the
+        shuffled control is best-calibrated to ~0 (so D>>N overfitting cannot
+        masquerade as signal). Uses the dual (kernel) ridge form so the cost is
+        O(N^3), not O(D^3) -- essential for the 15360-dim spatial feature.
+        Returns (real_R2, shuffled_R2, alpha)."""
 
-        if len(feats) < 8:
-            return float("nan"), float("nan")
+        if len(feats) < 16:
+            return float("nan"), float("nan"), 0.0
         F = np.stack(feats).astype(np.float64)
         T = np.stack([t.numpy() for t in tgt_xy]).astype(np.float64)
         m = len(F)
+        idx = np.random.RandomState(0).permutation(m)
+        tr, te = idx[: m // 2], idx[m // 2 :]
+        mu, sd = F[tr].mean(0), F[tr].std(0) + 1e-6
+        Xtr = (F[tr] - mu) / sd
+        Xte = (F[te] - mu) / sd
+        # Gram matrices (+1 folds in an untuned bias). Dual ridge:
+        # pred_te = K_te,tr (K_tr,tr + alpha I)^-1 Y_tr.
+        K_tr = Xtr @ Xtr.T + 1.0
+        K_te = Xte @ Xtr.T + 1.0
+        eye = np.eye(K_tr.shape[0])
+        T_shuf = T[np.random.RandomState(1).permutation(m)]
 
-        def r2(Fm: Any, Tm: Any) -> float:
-            rng = np.random.RandomState(0)
-            idx = rng.permutation(m)
-            tr, te = idx[: m // 2], idx[m // 2 :]
-            mu, sd = Fm[tr].mean(0), Fm[tr].std(0) + 1e-6
-            Xtr = np.concatenate([(Fm[tr] - mu) / sd, np.ones((len(tr), 1))], 1)
-            Xte = np.concatenate([(Fm[te] - mu) / sd, np.ones((len(te), 1))], 1)
-            d = Xtr.shape[1]
-            W = np.linalg.solve(Xtr.T @ Xtr + alpha * np.eye(d), Xtr.T @ Tm[tr])
-            pred = Xte @ W
+        def fit_r2(Tm: Any, alpha: float) -> float:
+            dual = np.linalg.solve(K_tr + alpha * eye, Tm[tr])
+            pred = K_te @ dual
             ss_res = ((Tm[te] - pred) ** 2).sum(0)
             ss_tot = ((Tm[te] - Tm[te].mean(0)) ** 2).sum(0) + 1e-9
             return float((1.0 - ss_res / ss_tot).mean())
 
-        T_shuf = T[np.random.RandomState(1).permutation(m)]
-        return r2(F, T), r2(F, T_shuf)
+        # Pick the LEAST regularization whose shuffled control is calibrated to
+        # ~0 (|shuf| <= 0.05): that is the most sensitive setting to real signal.
+        # Over-regularizing crushes real and shuffled alike, hiding signal.
+        alphas = (1e-2, 1e-1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6)
+        fallback = None
+        for alpha in alphas:
+            shuf = fit_r2(T_shuf, alpha)
+            if fallback is None or abs(shuf) < abs(fallback[1]):
+                fallback = (fit_r2(T, alpha), shuf, alpha)
+            if abs(shuf) <= 0.05:
+                return fit_r2(T, alpha), shuf, alpha
+        return fallback if fallback is not None else (float("nan"), float("nan"), 0.0)
 
-    joint_r2, joint_r2_shuf = (
-        _ridge_heldout_r2(vfeat_joint) if vfeat_joint else (float("nan"), float("nan"))
+    joint_r2, joint_r2_shuf, joint_alpha = (
+        _ridge_heldout_r2(vfeat_joint) if vfeat_joint else (float("nan"), float("nan"), 0.0)
     )
-    overview_r2, overview_r2_shuf = (
-        _ridge_heldout_r2(vfeat_overview) if vfeat_overview else (float("nan"), float("nan"))
+    overview_r2, overview_r2_shuf, overview_alpha = (
+        _ridge_heldout_r2(vfeat_overview) if vfeat_overview else (float("nan"), float("nan"), 0.0)
     )
 
     n = len(a_real)
@@ -1208,19 +1225,21 @@ def _run_vision_sensitivity_probe(
         grounding cos(prior_xy,  target_dir)  = {ground_prior:+.3f}
 
         --- Can the FROZEN connector feature be grounded? (linear probe R^2) ---
-        connector feature -> target XY  R^2   = {joint_r2:+.3f}   (shuffled ctrl {joint_r2_shuf:+.3f})
-        overview-only feature -> XY     R^2   = {overview_r2:+.3f}   (shuffled ctrl {overview_r2_shuf:+.3f})
+        pooled feature -> target XY   R^2 = {joint_r2:+.3f}  (shuf {joint_r2_shuf:+.3f}, a={joint_alpha:g})
+        overview SPATIAL tokens -> XY R^2 = {overview_r2:+.3f}  (shuf {overview_r2_shuf:+.3f}, a={overview_alpha:g})
         =========================================================================
         Read: if the top block is ~1 / ~0, SmolVLA is not using the cameras at all
         (grounding wall or an image-plumbing bug). If it clearly uses vision
         (cos < ~0.9, |dA| > ~0.1) but grounding stays ~0, vision is read but not
-        localized. The probe R^2 is the linchpin for the vision-aware residual:
-        R^2 clearly above its shuffled control means the frozen feature DOES
-        encode target position, so a trainable head reading it can ground -->
-        wire it into the residual. R^2 ~ shuffled means the frozen feature does
-        not localize the object, so no head reading it can help (that would need
-        the vision encoder itself to adapt). Run with many scenes
-        (EPISODES_PER_TARGET high) so the held-out split is stable.
+        localized. The SPATIAL-tokens R^2 is the linchpin for the vision-aware
+        residual (the pooled row is a pessimistic baseline -- pooling erases the
+        4x4 token grid where position lives). With the shuffled control
+        calibrated to ~0 by the alpha sweep, a clearly positive spatial R^2 means
+        the frozen feature DOES encode target position, so a trainable head
+        reading the token grid can ground --> wire it into the residual. R^2 ~ 0
+        (== shuffled) means the frozen feature does not localize the object, so no
+        head reading it can help (the vision encoder itself would have to adapt).
+        Run with many scenes (EPISODES_PER_TARGET high) so the split is stable.
         """
     ).strip()
     print(report, flush=True)
