@@ -1605,6 +1605,20 @@ class RankLocalMJWarpGRPOCollector:
         # >0 appends a frozen fixed-projection SmolVLA vision feature of this
         # width to the residual state so the residual can localize the target.
         self.vision_feature_dim = max(0, int(vision_feature_dim))
+        # Reset-on-drift is configured on the resetter (which parses task
+        # metadata); the rollout loop lives here on the collector, so mirror the
+        # settings across. getattr defaults keep it inert if the resetter type
+        # does not define them.
+        self.reset_on_drift = bool(getattr(resetter, "reset_on_drift", False))
+        self.reset_on_drift_patience = max(
+            1, int(getattr(resetter, "reset_on_drift_patience", 4))
+        )
+        self.reset_on_drift_penalty = float(
+            getattr(resetter, "reset_on_drift_penalty", 0.0)
+        )
+        self.reset_on_drift_min_increase = max(
+            0.0, float(getattr(resetter, "reset_on_drift_min_increase", 0.001))
+        )
         self.store_vla_records = bool(store_vla_records)
         self.vla_update_max_records = max(0, int(vla_update_max_records))
         self.actions_per_policy_decision = max(
