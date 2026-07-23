@@ -168,6 +168,18 @@ task:
     random_workspace_min_goal_xy_distance: 0.12
     random_workspace_horizon_low: 32
     random_workspace_horizon_high: 32
+    # Reset-on-drift: end a trajectory after the EE moves away from the goal for
+    # `patience` consecutive env steps, freezing its GRPO return to `penalty`
+    # (the return is the last active step's reward, so a bare truncation would
+    # reward drifting by stopping the world at its closer pre-drift point). Kept
+    # OFF for now: with a vision-blind policy every world drifts, so all returns
+    # collapse to the penalty and the group contrast vanishes. Enable it together
+    # with the vision-aware residual, once policy_target_cosine_mean > 0 shows
+    # some worlds actually stay -- then it penalizes the drifters relative to
+    # them. Logged as `drift_terminations`.
+    reset_on_drift_enabled: false
+    reset_on_drift_patience: 4
+    reset_on_drift_penalty: 0.0
     # Approach (early-distance) curriculum, SUCCESS-GATED. The EE start begins
     # within a small XY radius of the target so random exploration frequently
     # lands near the goal and manufactures the dense success signal GRPO needs.

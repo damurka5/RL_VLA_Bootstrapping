@@ -545,6 +545,24 @@ class BatchedReverseFrontierResetter:
             self.random_start_horizon_low,
             int(round(number("random_workspace_horizon_high", 32))),
         )
+        # Reset-on-drift: end a move-to trajectory once the EE has moved AWAY
+        # from its goal for this many consecutive env steps, and freeze that
+        # trajectory's GRPO return to the penalty. The return is the last active
+        # step's reward, so a bare truncation would score the drifter at its
+        # closer pre-drift point and reward drifting -- the penalty makes drift
+        # explicitly bad while stopping the wasted steps (the freed record budget
+        # is refilled with fresh starts). Disabled by default.
+        self.reset_on_drift = flag("reset_on_drift_enabled", False)
+        self.reset_on_drift_patience = max(
+            1, int(round(number("reset_on_drift_patience", 4)))
+        )
+        self.reset_on_drift_penalty = float(
+            number("reset_on_drift_penalty", 0.0)
+        )
+        # Deadband so sub-millimetre numerical jitter is not counted as drift.
+        self.reset_on_drift_min_increase = max(
+            0.0, number("reset_on_drift_min_increase_m", 0.001)
+        )
         scene_min = min(4, max(1, int(number("min_scene_objects", 4))))
         scene_max = min(4, max(scene_min, int(number("max_scene_objects", 4))))
         self.scene_object_bounds = (scene_min, scene_max)
@@ -1820,6 +1838,15 @@ class RankLocalMJWarpGRPOCollector:
         }
         max_decisions = int(reset.horizons.max().detach().cpu().item())
         goal_slots = self._goal_slots(reset)
+        drift_counter = torch.zeros(
+            (worlds,), dtype=torch.int64, device=self.device
+        )
+        prev_goal_distance = torch.full(
+            (worlds,), float("inf"), dtype=torch.float32, device=self.device
+        )
+        drift_terminated_total = torch.zeros(
+            (), dtype=torch.float32, device=self.device
+        )
         prior_target_cosine_first = torch.zeros(
             (worlds,), dtype=torch.float32, device=self.device
         )
@@ -1992,6 +2019,51 @@ class RankLocalMJWarpGRPOCollector:
                 )
                 candidate_success.logical_or_(result.success)
                 active.logical_and_(~result.terminated)
+                if self.reset_on_drift:
+                    goal_pos = low_dim.object_positions[
+                        self._world_rows, goal_slots
+                    ]
+                    goal_distance = torch.linalg.vector_norm(
+                        (goal_pos - low_dim.ee_position)[:, :2], dim=-1
+                    )
+                    drifted = goal_distance > (
+                        prev_goal_distance + self.reset_on_drift_min_increase
+                    )
+                    # Count consecutive drift steps; reset the counter on any
+                    # step that made progress. Only stepped worlds update.
+                    drift_counter = torch.where(
+                        step_active & drifted,
+                        drift_counter + 1,
+                        torch.where(
+                            step_active,
+                            torch.zeros_like(drift_counter),
+                            drift_counter,
+                        ),
+                    )
+                    prev_goal_distance = torch.where(
+                        step_active, goal_distance, prev_goal_distance
+                    )
+                    drift_terminate = step_active & (
+                        drift_counter >= self.reset_on_drift_patience
+                    )
+                    # Freeze the terminated trajectory's return to the penalty:
+                    # the return is the last active step's reward, so without
+                    # this a truncation would reward drifting (it stops the world
+                    # at its closer pre-drift point).
+                    candidate_rewards.copy_(
+                        torch.where(
+                            drift_terminate,
+                            torch.full_like(
+                                candidate_rewards,
+                                float(self.reset_on_drift_penalty),
+                            ),
+                            candidate_rewards,
+                        )
+                    )
+                    drift_terminated_total += drift_terminate.sum().to(
+                        dtype=torch.float32
+                    )
+                    active.logical_and_(~drift_terminate)
                 self._sync_for_profile()
                 timings["reward_time_s"] += time.perf_counter() - started
             active.logical_and_((decision + 1) < reset.horizons)
@@ -2105,6 +2177,7 @@ class RankLocalMJWarpGRPOCollector:
             "informative_groups": float(informative_group.sum().item()),
             "group_pass_rate_mean": float(pass_rate.mean().item()),
             "non_finite_ee_worlds": non_finite_worlds,
+            "drift_terminations": float(drift_terminated_total.item()),
             "candidate_reward_mean": float(rewards_by_group.mean().item()),
             "candidate_reward_std": float(
                 rewards_by_group.std(unbiased=False).item()

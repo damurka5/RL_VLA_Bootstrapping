@@ -39,6 +39,15 @@ def main() -> int:
     ap.add_argument("--max-rows", type=int, default=400)
     args = ap.parse_args()
 
+    # SmolVLA + its SmolVLM2 backbone are public. A stale HF_TOKEN inherited from
+    # the shell turns an anonymous download into a 401, so force anonymous access
+    # (mirrors scripts/huggingface_public_models.sh). Must precede the HF import.
+    import os
+
+    os.environ.pop("HF_TOKEN", None)
+    os.environ.pop("HUGGING_FACE_HUB_TOKEN", None)
+    os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+
     import torch
     from rl_vla_bootstrapping.policy.smolvla_cdpr import load_smolvla_runtime
 
