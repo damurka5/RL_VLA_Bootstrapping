@@ -168,19 +168,31 @@ task:
     random_workspace_min_goal_xy_distance: 0.12
     random_workspace_horizon_low: 32
     random_workspace_horizon_high: 32
-    # Approach (early-distance) curriculum. The EE start begins within a small
-    # XY radius of the target so random exploration frequently lands near the
-    # goal and manufactures the dense success signal GRPO needs; the cap then
-    # widens linearly to the full workspace reach. Without this, the policy has
-    # no directional gradient from scratch (the frozen SmolVLA prior points
-    # nowhere useful) and collapses to target-independent homing. The 0.12 floor
-    # above is automatically relaxed to 0.5*cap while the cap is below it, so the
-    # early close starts are feasible. Cap reaches full reach (0.34 m ~ the
-    # 0.24*sqrt(2) workspace diagonal) at 4M, before the 2-object bump at 5M.
+    # Approach (early-distance) curriculum, SUCCESS-GATED. The EE start begins
+    # within a small XY radius of the target so random exploration frequently
+    # lands near the goal and manufactures the dense success signal GRPO needs.
+    # The cap widens ONLY when the policy is actually solving the current
+    # difficulty -- the training group pass rate (EMA) crosses promote_pass_rate
+    # -- and narrows below demote_pass_rate, so it always sits at the edge of the
+    # policy's ability instead of advancing on wall-clock. A fixed step schedule
+    # failed: it widened regardless of mastery, so the easy regime was gone
+    # (cap ~0.12 by 900k) before the policy had any easy wins to learn from. The
+    # 0.12 min-goal floor is auto-relaxed to 0.5*cap while the cap is below it,
+    # so the early close starts stay feasible. Final 0.34 m ~ the 0.24*sqrt(2)
+    # workspace diagonal (full reach). Gate reads the rank-averaged pass rate so
+    # both ranks move the cap in lockstep; state persists across restarts.
+    # If the cap stays stuck at initial, that is the grounding signal: the frozen
+    # vision cannot localize the object even from 6 cm, and LoRA must extend
+    # beyond lm_expert. Logged: curriculum/start_max_goal_distance_m and
+    # curriculum/approach_pass_rate_ema.
     random_workspace_start_distance_curriculum_enabled: true
     random_workspace_start_distance_initial: 0.06
     random_workspace_start_distance_final: 0.34
-    random_workspace_start_distance_warmup_steps: 4000000
+    random_workspace_start_distance_increment: 0.02
+    random_workspace_start_distance_promote_pass_rate: 0.20
+    random_workspace_start_distance_demote_pass_rate: 0.05
+    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    random_workspace_start_distance_cooldown_updates: 5
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
     # Randomize the start height so the policy must learn descent, not just XY

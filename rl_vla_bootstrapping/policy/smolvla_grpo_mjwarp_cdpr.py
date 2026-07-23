@@ -716,42 +716,92 @@ def _apply_scene_object_curriculum(
     return resetter.scene_object_range
 
 
-def _start_distance_curriculum_config(
-    metadata: Mapping[str, Any]
-) -> tuple[float, float, int] | None:
-    """Parse the approach curriculum: (initial_cap, final_cap, warmup_steps).
+class ApproachDistanceCurriculum:
+    """Success-gated cap on the EE start's XY distance to its goal.
 
-    Returns None when disabled, which leaves the EE start distance uncapped
-    (the historical full-workspace distribution).
+    The cap widens only when the policy is actually solving the current
+    difficulty -- the training group pass rate (terminal success at the current
+    cap) rises above a threshold -- and narrows if it regresses, so exploration
+    always starts from a distance the policy can reach. A fixed step schedule
+    fails here because it widens on wall-clock regardless of mastery; by the
+    time the policy sees a hard start it has had no easy wins to learn from.
+
+    The gate reads the global (cross-rank) pass rate, which is identical on
+    every rank, so the cap stays in lockstep without extra collectives. State is
+    persisted so a resume continues at the reached difficulty instead of
+    restarting from the initial cap. Disabled -> the cap is inf (full-workspace
+    starts, byte-for-byte the historical sampling).
     """
 
-    if not bool(
-        metadata.get("random_workspace_start_distance_curriculum_enabled", False)
-    ):
-        return None
-    initial = max(float(metadata.get("random_workspace_start_distance_initial", 0.06)), 0.0)
-    final = float(metadata.get("random_workspace_start_distance_final", 0.34))
-    final = max(final, initial)
-    warmup = max(int(metadata.get("random_workspace_start_distance_warmup_steps", 3_000_000)), 1)
-    return (initial, final, warmup)
+    def __init__(self, metadata: Mapping[str, Any]) -> None:
+        def number(key: str, default: float) -> float:
+            try:
+                return float(metadata.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
 
+        self.enabled = bool(
+            metadata.get(
+                "random_workspace_start_distance_curriculum_enabled", False
+            )
+        )
+        self.initial = max(number("random_workspace_start_distance_initial", 0.06), 0.0)
+        self.final = max(number("random_workspace_start_distance_final", 0.34), self.initial)
+        self.increment = max(number("random_workspace_start_distance_increment", 0.02), 1.0e-6)
+        self.promote_threshold = number(
+            "random_workspace_start_distance_promote_pass_rate", 0.20
+        )
+        self.demote_threshold = number(
+            "random_workspace_start_distance_demote_pass_rate", 0.05
+        )
+        self.ema_decay = min(max(number(
+            "random_workspace_start_distance_pass_rate_ema_decay", 0.9
+        ), 0.0), 0.999)
+        self.cooldown_updates = max(
+            int(number("random_workspace_start_distance_cooldown_updates", 5)), 1
+        )
+        self.cap = self.initial
+        self.pass_rate_ema = 0.0
+        self._cooldown = 0
 
-def _apply_start_distance_curriculum(
-    resetter: Any,
-    *,
-    config: tuple[float, float, int] | None,
-    global_step: int,
-) -> float:
-    """Linearly widen the EE start-distance cap from initial to final over warmup."""
+    def current_cap(self) -> float:
+        return self.cap if self.enabled else float("inf")
 
-    if config is None:
-        resetter.set_random_start_max_goal_distance(float("inf"))
-        return float("inf")
-    initial, final, warmup = config
-    fraction = min(1.0, max(0.0, float(global_step) / float(warmup)))
-    current = initial + fraction * (final - initial)
-    resetter.set_random_start_max_goal_distance(current)
-    return current
+    def observe(self, pass_rate: float) -> None:
+        """Fold in this update's global pass rate; promote/demote when clear."""
+
+        if not self.enabled:
+            return
+        rate = min(max(float(pass_rate), 0.0), 1.0)
+        self.pass_rate_ema = (
+            self.ema_decay * self.pass_rate_ema + (1.0 - self.ema_decay) * rate
+        )
+        if self._cooldown > 0:
+            self._cooldown -= 1
+            return
+        changed = False
+        if self.pass_rate_ema >= self.promote_threshold and self.cap < self.final:
+            self.cap = min(self.final, self.cap + self.increment)
+            changed = True
+        elif self.pass_rate_ema <= self.demote_threshold and self.cap > self.initial:
+            self.cap = max(self.initial, self.cap - self.increment)
+            changed = True
+        if changed:
+            self._cooldown = self.cooldown_updates
+
+    def state_dict(self) -> dict[str, float]:
+        return {
+            "cap": float(self.cap),
+            "pass_rate_ema": float(self.pass_rate_ema),
+            "cooldown": float(self._cooldown),
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any] | None) -> None:
+        if not state:
+            return
+        self.cap = min(self.final, max(self.initial, float(state.get("cap", self.cap))))
+        self.pass_rate_ema = float(state.get("pass_rate_ema", self.pass_rate_ema))
+        self._cooldown = int(float(state.get("cooldown", 0)))
 
 
 def _task_metadata(args: Any) -> dict[str, Any]:
@@ -1211,7 +1261,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
 
         scene_curriculum_steps = _scene_object_curriculum_steps(task_metadata)
-        start_distance_config = _start_distance_curriculum_config(task_metadata)
+        approach_curriculum = ApproachDistanceCurriculum(task_metadata)
+        approach_curriculum.load_state_dict(
+            trainer.loaded_extra_state.get("approach_curriculum")
+        )
         update_index = int(curriculum.updates)
         start_update_index = int(update_index)
         last_saved_step = int(global_step)
@@ -1245,11 +1298,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 curriculum_steps=scene_curriculum_steps,
                 global_step=global_step,
             )
-            start_distance_cap = _apply_start_distance_curriculum(
-                resetter,
-                config=start_distance_config,
-                global_step=global_step,
-            )
+            start_distance_cap = approach_curriculum.current_cap()
+            resetter.set_random_start_max_goal_distance(start_distance_cap)
             profile_limit = int(args.mjwarp_profile_updates)
             profile_this_update = bool(args.mjwarp_profile_timers) and (
                 profile_limit <= 0
@@ -1409,6 +1459,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             global_step += global_selected
             update_index += 1
+            # Success-gate the approach curriculum on the global pass rate (the
+            # metric is already rank-averaged, so every rank promotes/demotes the
+            # cap identically). This affects the cap used from the next update.
+            approach_curriculum.observe(
+                synchronized_metrics.get("group_pass_rate_mean", 0.0)
+            )
             if (
                 synchronized_metrics["contact_capacity_overflow_ranks"] > 0
                 or synchronized_metrics["constraint_capacity_overflow_ranks"] > 0
@@ -1434,6 +1490,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                         float(start_distance_cap)
                         if start_distance_cap != float("inf")
                         else -1.0
+                    ),
+                    "curriculum/approach_pass_rate_ema": float(
+                        approach_curriculum.pass_rate_ema
                     ),
                     # Attach-time LoRA facts are repeated on every row so any
                     # tool reading the latest metrics (benchmarks, TensorBoard)
@@ -1568,6 +1627,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     latest=False,
                     extra_state={
                         "curriculum": curriculum.snapshot(),
+                        "approach_curriculum": approach_curriculum.state_dict(),
                         "validation": {
                             "last_step": int(last_validation_step),
                         },
