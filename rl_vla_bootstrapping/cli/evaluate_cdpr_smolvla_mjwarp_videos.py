@@ -1080,6 +1080,26 @@ def _run_vision_sensitivity_probe(
         )
         return prior, act
 
+    # Capture SmolVLA's connector output ([B, 16, 960] per camera) -- the actual
+    # vision->LM feature the vision-aware residual would tap. If a linear probe
+    # cannot recover the target position from this frozen feature, feeding it to
+    # the residual cannot work either.
+    connector = None
+    try:
+        connector = runtime.policy.model.vlm_with_expert.vlm.model.connector
+    except AttributeError:
+        print("[vision-probe] connector module not found; skipping feature probe")
+    captured: list[Any] = []
+    hook_handle = (
+        connector.register_forward_hook(
+            lambda _m, _i, out: captured.append(out.detach().float().cpu())
+        )
+        if connector is not None
+        else None
+    )
+    vfeat_joint: list[Any] = []
+    vfeat_overview: list[Any] = []
+
     with torch.inference_mode():
         for round_index in range(int(num_rounds)):
             count = _scene_object_count_for_round(
@@ -1101,7 +1121,16 @@ def _run_vision_sensitivity_probe(
             target = low_dim.object_positions[rows, reset.task_state.target_slots]
             tgt_xy.append((target[:, :2] - ee_const[:, :2])[0].detach().cpu())
 
+            captured.clear()
             prior_r, act_r = _prior_action(cameras.overview, cameras.wrist, state)
+            if hook_handle is not None and captured:
+                # captured: one [B, 16, 960] per camera, in image order
+                # (overview, wrist, aux). Pool world 0 over tokens (and cameras
+                # for the joint feature); keep overview alone for a per-camera
+                # probe.
+                cams = torch.stack([c[0] for c in captured], dim=0)
+                vfeat_joint.append(cams.mean(dim=(0, 1)).numpy())
+                vfeat_overview.append(captured[0][0].mean(dim=0).numpy())
             prior_z, act_z = _prior_action(
                 torch.zeros_like(cameras.overview),
                 torch.zeros_like(cameras.wrist),
@@ -1111,6 +1140,46 @@ def _run_vision_sensitivity_probe(
             a_zero.append(act_z[0, 0].detach().cpu())
             p_real.append(prior_r[0, 0].detach().cpu())
             p_zero.append(prior_z[0, 0].detach().cpu())
+
+    if hook_handle is not None:
+        hook_handle.remove()
+
+    def _ridge_heldout_r2(feats: list[Any], alpha: float = 10.0) -> "tuple[float, float]":
+        """Held-out R^2 of a linear map feature -> target XY, plus a shuffled
+        control. Ridge regularizes so the result is meaningful even when the
+        feature dim exceeds the sample count; the real-vs-shuffled gap is the
+        signal (shuffled ~0 always). Returns (real_R2, shuffled_R2), each the
+        mean over the X and Y axes."""
+
+        if len(feats) < 8:
+            return float("nan"), float("nan")
+        F = np.stack(feats).astype(np.float64)
+        T = np.stack([t.numpy() for t in tgt_xy]).astype(np.float64)
+        m = len(F)
+
+        def r2(Fm: Any, Tm: Any) -> float:
+            rng = np.random.RandomState(0)
+            idx = rng.permutation(m)
+            tr, te = idx[: m // 2], idx[m // 2 :]
+            mu, sd = Fm[tr].mean(0), Fm[tr].std(0) + 1e-6
+            Xtr = np.concatenate([(Fm[tr] - mu) / sd, np.ones((len(tr), 1))], 1)
+            Xte = np.concatenate([(Fm[te] - mu) / sd, np.ones((len(te), 1))], 1)
+            d = Xtr.shape[1]
+            W = np.linalg.solve(Xtr.T @ Xtr + alpha * np.eye(d), Xtr.T @ Tm[tr])
+            pred = Xte @ W
+            ss_res = ((Tm[te] - pred) ** 2).sum(0)
+            ss_tot = ((Tm[te] - Tm[te].mean(0)) ** 2).sum(0) + 1e-9
+            return float((1.0 - ss_res / ss_tot).mean())
+
+        T_shuf = T[np.random.RandomState(1).permutation(m)]
+        return r2(F, T), r2(F, T_shuf)
+
+    joint_r2, joint_r2_shuf = (
+        _ridge_heldout_r2(vfeat_joint) if vfeat_joint else (float("nan"), float("nan"))
+    )
+    overview_r2, overview_r2_shuf = (
+        _ridge_heldout_r2(vfeat_overview) if vfeat_overview else (float("nan"), float("nan"))
+    )
 
     n = len(a_real)
     use_action = np.mean([_cos(a_real[i], a_zero[i]) for i in range(n)])
@@ -1137,11 +1206,21 @@ def _run_vision_sensitivity_probe(
 
         grounding cos(action_xy, target_dir)  = {ground_action:+.3f}   (+1 correct, 0 blind, - anti)
         grounding cos(prior_xy,  target_dir)  = {ground_prior:+.3f}
+
+        --- Can the FROZEN connector feature be grounded? (linear probe R^2) ---
+        connector feature -> target XY  R^2   = {joint_r2:+.3f}   (shuffled ctrl {joint_r2_shuf:+.3f})
+        overview-only feature -> XY     R^2   = {overview_r2:+.3f}   (shuffled ctrl {overview_r2_shuf:+.3f})
         =========================================================================
         Read: if the top block is ~1 / ~0, SmolVLA is not using the cameras at all
         (grounding wall or an image-plumbing bug). If it clearly uses vision
         (cos < ~0.9, |dA| > ~0.1) but grounding stays ~0, vision is read but not
-        localized -- the vision->action connection is the lever, not exploration.
+        localized. The probe R^2 is the linchpin for the vision-aware residual:
+        R^2 clearly above its shuffled control means the frozen feature DOES
+        encode target position, so a trainable head reading it can ground -->
+        wire it into the residual. R^2 ~ shuffled means the frozen feature does
+        not localize the object, so no head reading it can help (that would need
+        the vision encoder itself to adapt). Run with many scenes
+        (EPISODES_PER_TARGET high) so the held-out split is stable.
         """
     ).strip()
     print(report, flush=True)
