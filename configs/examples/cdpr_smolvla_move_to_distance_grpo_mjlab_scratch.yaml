@@ -168,6 +168,19 @@ task:
     random_workspace_min_goal_xy_distance: 0.12
     random_workspace_horizon_low: 32
     random_workspace_horizon_high: 32
+    # Approach (early-distance) curriculum. The EE start begins within a small
+    # XY radius of the target so random exploration frequently lands near the
+    # goal and manufactures the dense success signal GRPO needs; the cap then
+    # widens linearly to the full workspace reach. Without this, the policy has
+    # no directional gradient from scratch (the frozen SmolVLA prior points
+    # nowhere useful) and collapses to target-independent homing. The 0.12 floor
+    # above is automatically relaxed to 0.5*cap while the cap is below it, so the
+    # early close starts are feasible. Cap reaches full reach (0.34 m ~ the
+    # 0.24*sqrt(2) workspace diagonal) at 4M, before the 2-object bump at 5M.
+    random_workspace_start_distance_curriculum_enabled: true
+    random_workspace_start_distance_initial: 0.06
+    random_workspace_start_distance_final: 0.34
+    random_workspace_start_distance_warmup_steps: 4000000
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
     # Randomize the start height so the policy must learn descent, not just XY
@@ -286,10 +299,17 @@ training:
       weight_decay: 0.0
       init_log_std: -1.2
       min_log_std: -5.0
-      max_log_std: 0.5
+      # Capped at -0.3 (std ~0.74). At the old 0.5 (std ~1.65) the action
+      # distribution diffused instead of converging: with no directional reward
+      # signal the entropy bonus dominated, log_std climbed from -1.2 toward
+      # -0.7 and rising, and the policy collapsed to target-independent homing.
+      max_log_std: -0.3
       clip_range_low: 0.20
       clip_range_high: 0.28
-      entropy_coef: 0.002
+      # Lowered 0.002 -> 0.0005: the entropy bonus was inflating log_std when the
+      # reward gave no directional gradient. The approach curriculum now supplies
+      # that gradient, so less entropy pressure is needed to explore.
+      entropy_coef: 0.0005
       max_grad_norm: 1.0
       grpo_group_size: 8
       grpo_group_selection: uniform

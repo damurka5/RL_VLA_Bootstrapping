@@ -534,6 +534,10 @@ class BatchedReverseFrontierResetter:
         self.random_start_min_goal_distance = max(
             number("random_workspace_min_goal_xy_distance", 0.10), 0.0
         )
+        # Approach curriculum: an upper bound on the EE start's XY distance from
+        # its goal, set per-update by the trainer. inf disables the cap and
+        # reproduces the historical full-workspace start distribution.
+        self.random_start_max_goal_distance = float("inf")
         self.random_start_horizon_low = max(
             1, int(round(number("random_workspace_horizon_low", 21)))
         )
@@ -581,6 +585,22 @@ class BatchedReverseFrontierResetter:
         low = min(scene_max, max(scene_min, int(low)))
         high = min(scene_max, max(low, int(high)))
         self.scene_object_range = (low, high)
+
+    def set_random_start_max_goal_distance(self, value: float) -> None:
+        """Cap the EE start's XY distance from its goal (approach curriculum).
+
+        A non-positive or non-finite value disables the cap, restoring the
+        full-workspace start distribution.
+        """
+
+        try:
+            distance = float(value)
+        except (TypeError, ValueError):
+            distance = float("inf")
+        if not distance > 0.0 or distance == float("inf"):
+            self.random_start_max_goal_distance = float("inf")
+        else:
+            self.random_start_max_goal_distance = distance
 
     def _generator(self, update_index: int, round_index: int) -> Any:
         generator = self.torch.Generator(device=self.device)
@@ -1075,12 +1095,26 @@ class BatchedReverseFrontierResetter:
             random_goal = torch.where(
                 is_container[:, None], reference, target_position
             )
+            max_goal_distance = float(self.random_start_max_goal_distance)
+            curriculum_active = (
+                max_goal_distance != float("inf") and max_goal_distance > 0.0
+            )
+            if curriculum_active:
+                # Keep the floor strictly below the cap so the early close
+                # starts are not rejected back out to the workspace edge, which
+                # would defeat the approach curriculum.
+                effective_min_goal_distance = min(
+                    self.random_start_min_goal_distance,
+                    0.5 * max_goal_distance,
+                )
+            else:
+                effective_min_goal_distance = self.random_start_min_goal_distance
             for _ in range(6):
                 too_close = (
                     torch.linalg.vector_norm(
                         ee_group[:, :2] - random_goal[:, :2], dim=-1
                     )
-                    < self.random_start_min_goal_distance
+                    < effective_min_goal_distance
                 )
                 replacement = torch.rand(
                     (groups, 2), generator=generator, device=self.device
@@ -1108,7 +1142,7 @@ class BatchedReverseFrontierResetter:
                 torch.linalg.vector_norm(
                     ee_group[:, :2] - random_goal[:, :2], dim=-1
                 )
-                < self.random_start_min_goal_distance
+                < effective_min_goal_distance
             )
             if bool(too_close.any().item()):
                 corners = torch.tensor(
@@ -1147,12 +1181,38 @@ class BatchedReverseFrontierResetter:
                     torch.linalg.vector_norm(
                         ee_group[:, :2] - random_goal[:, :2], dim=-1
                     )
-                    < self.random_start_min_goal_distance
+                    < effective_min_goal_distance
                 )
                 if bool(remaining_too_close.any().item()):
                     raise ValueError(
                         "The configured EE workspace cannot satisfy "
                         "random_workspace_min_goal_xy_distance."
+                    )
+
+            if curriculum_active:
+                # Pull any start that is beyond the current curriculum cap in
+                # toward the goal, to a random distance in the feasible annulus
+                # [effective_min, cap], preserving its sampled direction. Clamp
+                # back into the workspace box so the start stays reachable.
+                offset = ee_group[:, :2] - random_goal[:, :2]
+                distance = torch.linalg.vector_norm(
+                    offset, dim=-1, keepdim=True
+                )
+                too_far = distance.squeeze(-1) > max_goal_distance
+                if bool(too_far.any().item()):
+                    direction = offset / distance.clamp_min(1.0e-6)
+                    sampled = effective_min_goal_distance + torch.rand(
+                        (groups, 1), generator=generator, device=self.device
+                    ) * (max_goal_distance - effective_min_goal_distance)
+                    pulled = random_goal[:, :2] + direction * sampled
+                    pulled[:, 0] = pulled[:, 0].clamp(
+                        self.workspace_x_bounds[0], self.workspace_x_bounds[1]
+                    )
+                    pulled[:, 1] = pulled[:, 1].clamp(
+                        self.workspace_y_bounds[0], self.workspace_y_bounds[1]
+                    )
+                    ee_group[:, :2] = torch.where(
+                        too_far[:, None], pulled, ee_group[:, :2]
                     )
 
         zone_half = torch.full((groups,), 0.015, device=self.device)

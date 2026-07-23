@@ -716,6 +716,44 @@ def _apply_scene_object_curriculum(
     return resetter.scene_object_range
 
 
+def _start_distance_curriculum_config(
+    metadata: Mapping[str, Any]
+) -> tuple[float, float, int] | None:
+    """Parse the approach curriculum: (initial_cap, final_cap, warmup_steps).
+
+    Returns None when disabled, which leaves the EE start distance uncapped
+    (the historical full-workspace distribution).
+    """
+
+    if not bool(
+        metadata.get("random_workspace_start_distance_curriculum_enabled", False)
+    ):
+        return None
+    initial = max(float(metadata.get("random_workspace_start_distance_initial", 0.06)), 0.0)
+    final = float(metadata.get("random_workspace_start_distance_final", 0.34))
+    final = max(final, initial)
+    warmup = max(int(metadata.get("random_workspace_start_distance_warmup_steps", 3_000_000)), 1)
+    return (initial, final, warmup)
+
+
+def _apply_start_distance_curriculum(
+    resetter: Any,
+    *,
+    config: tuple[float, float, int] | None,
+    global_step: int,
+) -> float:
+    """Linearly widen the EE start-distance cap from initial to final over warmup."""
+
+    if config is None:
+        resetter.set_random_start_max_goal_distance(float("inf"))
+        return float("inf")
+    initial, final, warmup = config
+    fraction = min(1.0, max(0.0, float(global_step) / float(warmup)))
+    current = initial + fraction * (final - initial)
+    resetter.set_random_start_max_goal_distance(current)
+    return current
+
+
 def _task_metadata(args: Any) -> dict[str, Any]:
     raw = os.environ.get("RLVLA_TASK_METADATA_JSON", "").strip()
     if raw:
@@ -1173,6 +1211,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
 
         scene_curriculum_steps = _scene_object_curriculum_steps(task_metadata)
+        start_distance_config = _start_distance_curriculum_config(task_metadata)
         update_index = int(curriculum.updates)
         start_update_index = int(update_index)
         last_saved_step = int(global_step)
@@ -1204,6 +1243,11 @@ def main(argv: Sequence[str] | None = None) -> None:
             scene_object_range = _apply_scene_object_curriculum(
                 resetter,
                 curriculum_steps=scene_curriculum_steps,
+                global_step=global_step,
+            )
+            start_distance_cap = _apply_start_distance_curriculum(
+                resetter,
+                config=start_distance_config,
                 global_step=global_step,
             )
             profile_limit = int(args.mjwarp_profile_updates)
@@ -1384,6 +1428,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                     ),
                     "curriculum/scene_objects_max": float(
                         scene_object_range[1]
+                    ),
+                    # -1 sentinel means the cap is disabled (uncapped start).
+                    "curriculum/start_max_goal_distance_m": (
+                        float(start_distance_cap)
+                        if start_distance_cap != float("inf")
+                        else -1.0
                     ),
                     # Attach-time LoRA facts are repeated on every row so any
                     # tool reading the latest metrics (benchmarks, TensorBoard)
