@@ -168,6 +168,18 @@ task:
     random_workspace_min_goal_xy_distance: 0.12
     random_workspace_horizon_low: 32
     random_workspace_horizon_high: 32
+    # Curriculum-coupled horizon: episode length (policy decisions) scales with
+    # the current start-distance cap instead of the fixed 32. The batched SmolVLA
+    # forward runs every decision, so a close start (cap 0.03) needs far fewer
+    # decisions than a far one -- horizon interpolates from curriculum_horizon_min
+    # at the initial cap to curriculum_horizon_max at the final cap. At cap 0.03
+    # that is ~8 decisions (32 env steps, ample for a ~2 cm reach) vs 32, so the
+    # rollout is ~4x cheaper AND yields ~4x more group-starts per update in the
+    # early phase; it grows to 32 as the cap reaches full reach. Validation keeps
+    # the full horizon (its cap is inf). Logged as curriculum/horizon_decisions.
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 8
+    curriculum_horizon_max: 32
     # Reset-on-drift: end a trajectory after the EE moves away from the goal for
     # `patience` consecutive env steps, freezing its GRPO return to `penalty`
     # (the return is the last active step's reward, so a bare truncation would

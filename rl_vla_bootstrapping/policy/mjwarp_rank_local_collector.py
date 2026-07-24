@@ -545,6 +545,30 @@ class BatchedReverseFrontierResetter:
             self.random_start_horizon_low,
             int(round(number("random_workspace_horizon_high", 32))),
         )
+        # Curriculum-coupled horizon: scale the episode length (in policy
+        # decisions) with the current start-distance cap, since the batched
+        # SmolVLA forward runs every decision -- a short reach needs far fewer
+        # decisions than the fixed 32, so a short horizon cuts inference cost and
+        # yields more group-starts per update. Interpolates linearly from
+        # horizon_min at the initial cap to horizon_max at the final cap; falls
+        # back to the fixed [low, high] sampling when disabled or the cap is inf.
+        self.curriculum_horizon_coupling = flag(
+            "curriculum_horizon_coupling_enabled", False
+        )
+        self.curriculum_horizon_min = max(
+            1, int(round(number("curriculum_horizon_min", 8)))
+        )
+        self.curriculum_horizon_max = max(
+            self.curriculum_horizon_min,
+            int(round(number("curriculum_horizon_max", 32))),
+        )
+        self._horizon_cap_initial = max(
+            number("random_workspace_start_distance_initial", 0.06), 1.0e-6
+        )
+        self._horizon_cap_final = max(
+            number("random_workspace_start_distance_final", 0.34),
+            self._horizon_cap_initial,
+        )
         # Reset-on-drift: end a move-to trajectory once the EE has moved AWAY
         # from its goal for this many consecutive env steps, and freeze that
         # trajectory's GRPO return to the penalty. The return is the last active
@@ -704,14 +728,41 @@ class BatchedReverseFrontierResetter:
             )
         ).to(dtype=torch.int64)
         if self.random_workspace_gripper_start:
-            horizon_group = torch.randint(
-                self.random_start_horizon_low,
-                self.random_start_horizon_high + 1,
-                (groups,),
-                generator=generator,
-                device=self.device,
-                dtype=torch.int64,
-            )
+            cap = float(self.random_start_max_goal_distance)
+            if (
+                self.curriculum_horizon_coupling
+                and cap != float("inf")
+                and cap > 0.0
+            ):
+                span = max(
+                    self._horizon_cap_final - self._horizon_cap_initial, 1.0e-6
+                )
+                frac = min(
+                    1.0,
+                    max(0.0, (cap - self._horizon_cap_initial) / span),
+                )
+                coupled = int(
+                    round(
+                        self.curriculum_horizon_min
+                        + frac
+                        * (
+                            self.curriculum_horizon_max
+                            - self.curriculum_horizon_min
+                        )
+                    )
+                )
+                horizon_group = torch.full(
+                    (groups,), coupled, device=self.device, dtype=torch.int64
+                )
+            else:
+                horizon_group = torch.randint(
+                    self.random_start_horizon_low,
+                    self.random_start_horizon_high + 1,
+                    (groups,),
+                    generator=generator,
+                    device=self.device,
+                    dtype=torch.int64,
+                )
             target_action_steps = (
                 horizon_group * 4
             )
@@ -2216,6 +2267,7 @@ class RankLocalMJWarpGRPOCollector:
             "group_pass_rate_mean": float(pass_rate.mean().item()),
             "non_finite_ee_worlds": non_finite_worlds,
             "drift_terminations": float(drift_terminated_total.item()),
+            "curriculum/horizon_decisions": float(max_decisions),
             "candidate_reward_mean": float(rewards_by_group.mean().item()),
             "candidate_reward_std": float(
                 rewards_by_group.std(unbiased=False).item()
