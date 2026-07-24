@@ -204,7 +204,15 @@ task:
     # beyond lm_expert. Logged: curriculum/start_max_goal_distance_m and
     # curriculum/approach_pass_rate_ema.
     random_workspace_start_distance_curriculum_enabled: true
-    random_workspace_start_distance_initial: 0.06
+    # 0.03, not 0.06: at 0.06 the EE must produce ~3-4 correct action steps to
+    # reach the 2 cm success window, which a not-yet-grounded policy never does,
+    # so pass_rate stayed 0 and the curriculum never promoted off the initial cap
+    # (800k steps, 0 successes). At 0.03 the annulus is [0.015, 0.03], so many
+    # starts sit at/just outside the window: random exploration scores often,
+    # giving the curriculum a foothold to climb from -- and only by USING the
+    # vision feature to move inward can the policy keep succeeding as the cap
+    # widens, which is what forces the vision->direction map to be learned.
+    random_workspace_start_distance_initial: 0.03
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
     random_workspace_start_distance_promote_pass_rate: 0.20
