@@ -177,7 +177,13 @@ task:
     # with the vision-aware residual, once policy_target_cosine_mean > 0 shows
     # some worlds actually stay -- then it penalizes the drifters relative to
     # them. Logged as `drift_terminations`.
-    reset_on_drift_enabled: true
+    # OFF: SmolVLA inference is batched over ALL worlds every decision regardless
+    # of the active mask, so terminating a drifting world early saves no compute
+    # but drops its remaining records -- with an early-drifting policy this killed
+    # ~1000/1024 trajectories per rollout and cut throughput ~5x (100s SmolVLA
+    # cost, ~1/8 the harvested steps) while starving exploration. Only reconsider
+    # once the policy reliably stays on target (drift_terminations small).
+    reset_on_drift_enabled: false
     reset_on_drift_patience: 4
     reset_on_drift_penalty: 0.0
     # Approach (early-distance) curriculum, SUCCESS-GATED. The EE start begins
