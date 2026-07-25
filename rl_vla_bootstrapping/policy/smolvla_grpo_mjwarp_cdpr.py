@@ -1094,6 +1094,17 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         simulator_metadata = _runtime_metadata(args, backend)
         global_step = 0
+        warmstart_checkpoint = os.environ.get(
+            "RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", ""
+        ).strip()
+        if warmstart_checkpoint and not args.resume_checkpoint:
+            resolved_warmstart = _resolve_checkpoint(warmstart_checkpoint)
+            trainer.load_weights_only(resolved_warmstart)
+            _log(
+                dist_ctx,
+                f"[smolvla-mjwarp] warm-started weights from {resolved_warmstart} "
+                "(fresh optimizer / curriculum / global step 0)",
+            )
         if args.resume_checkpoint:
             checkpoint = _resolve_checkpoint(args.resume_checkpoint)
             global_step = trainer.load(

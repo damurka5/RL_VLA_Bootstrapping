@@ -1405,6 +1405,44 @@ class SmolVLAGRPOTrainer:
             )
         return int(payload.get("global_step", 0))
 
+    def load_weights_only(self, checkpoint_path: "Path | str") -> None:
+        """Warm-start from a checkpoint's WEIGHTS only.
+
+        Loads the residual (+ log_std) and the LoRA tensors, but deliberately
+        discards the optimizer state, LoRA optimizer, curriculum/extra state, and
+        global step. The learned behaviour carries over while the training run
+        starts fresh at step 0 with the current schedule and hyperparameters --
+        so a re-tuned curriculum/gate takes effect instead of being overwritten
+        by the checkpoint's stalled state. Simulator-metadata is not checked
+        because only architecture-shaped weights are transferred; a mismatched
+        state_dim / chunk / LoRA rank surfaces as a load_state_dict error.
+        """
+
+        try:
+            payload = torch.load(
+                Path(checkpoint_path), map_location=self.device, weights_only=False
+            )
+        except TypeError:  # PyTorch < 2.6
+            payload = torch.load(Path(checkpoint_path), map_location=self.device)
+        if "policy" not in payload:
+            raise KeyError(
+                f"Warm-start checkpoint {checkpoint_path} has no 'policy' weights."
+            )
+        self._unwrap(self.actor).load_state_dict(payload["policy"])
+        lora_state = payload.get("vla_lora")
+        runtime = getattr(self, "vla_runtime", None)
+        if lora_state:
+            if runtime is None:
+                raise RuntimeError(
+                    "Warm-start checkpoint carries LoRA weights but no LoRA is "
+                    "attached; re-run with matching --train-vla-lora settings."
+                )
+            runtime.policy.load_state_dict(lora_state, strict=False)
+        # Fresh training state: step 0, empty curriculum, no optimizer carry-over.
+        self.gradient_step = 0
+        self.loaded_extra_state = {}
+        self.bootstrap_source = "grpo_warmstart_weights"
+
     def _vla_lora_state_dict(self) -> dict[str, Any] | None:
         """Only the LoRA tensors from the frozen runtime, or None if unused."""
 

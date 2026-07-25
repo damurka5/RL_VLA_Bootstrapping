@@ -66,6 +66,16 @@ export RLVLA_SMOLVLA_MAX_TRAIN_STEPS="$MAX_TRAIN_STEPS"
 export RLVLA_MJWARP_WORLDS_PER_RANK="$WORLDS_PER_RANK"
 export RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE="$SMOLVLA_MICROBATCH_SIZE"
 export RLVLA_SMOLVLA_ALLOW_LEGACY_SIMULATOR_CHECKPOINT="$ALLOW_LEGACY_SIMULATOR_CHECKPOINT"
+# Optional weights-only warm start: load the residual + LoRA WEIGHTS from a prior
+# checkpoint but start fresh at step 0 with this run's schedule/hyperparameters
+# (fresh optimizer + curriculum). Distinct from CHECKPOINT/resume, which the
+# scratch launcher forbids -- this carries learned behaviour, not RL state.
+WARMSTART_CHECKPOINT="${WARMSTART_CHECKPOINT:-}"
+if [[ -n "$WARMSTART_CHECKPOINT" && ! -f "$WARMSTART_CHECKPOINT" ]]; then
+  echo "WARMSTART_CHECKPOINT not found: $WARMSTART_CHECKPOINT" >&2
+  exit 2
+fi
+export RLVLA_SMOLVLA_WARMSTART_CHECKPOINT="$WARMSTART_CHECKPOINT"
 
 python_cmd=(conda run --no-capture-output -n "$ENV_NAME" python3)
 train_cmd=(
