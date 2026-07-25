@@ -153,9 +153,12 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         # EE origin 0.27 m puts the grasp point (0.08 m lower) at 0.19 m,
         # level with the object centre band; the success Z window matches.
+        # The start height is randomized up to 0.52 so descent has to be
+        # learned, and the approach cap bounds that height too.
         self.assertEqual(
-            config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.27]
+            config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.52]
         )
+        self.assertTrue(config.task.metadata["curriculum_cap_includes_z"])
         self.assertTrue(
             config.task.metadata["move_to_object_require_z_window"]
         )
@@ -178,9 +181,11 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertGreater(grasp_point_z, 0.15)
         self.assertEqual(config.task.metadata["min_scene_objects"], 1)
         self.assertEqual(config.task.metadata["max_scene_objects"], 3)
+        # Distractors arrive only after the distance curriculum has had room to
+        # climb; adding them on a fixed early schedule degraded the grounding.
         self.assertEqual(
             config.task.metadata["scene_object_curriculum_steps"],
-            [1500000, 3000000],
+            [8000000, 9500000],
         )
         self.assertEqual(
             command[command.index("--complex-training-approach") + 1],
@@ -204,7 +209,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             "256",
         )
         self.assertEqual(
-            command[command.index("--max-train-steps") + 1], "5000000"
+            command[command.index("--max-train-steps") + 1], "10000000"
         )
         self.assertEqual(command[command.index("--hidden-dim") + 1], "1024")
         self.assertEqual(
@@ -286,11 +291,15 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertEqual(reward.z_penalty_weight, 1.0)
         self.assertTrue(reward.require_z_window)
 
-    @unittest.skipUnless(
-        importlib.util.find_spec("torch") is not None,
-        "random workspace reset fixture requires PyTorch",
-    )
-    def test_move_to_random_workspace_reset_is_not_overwritten_by_shell(self):
+    def _build_random_workspace_resetter(
+        self, *, groups: int = 8, group_size: int = 8, **metadata: object
+    ):
+        """Fixture: the move-to resetter on a fake backend, on CPU.
+
+        ``metadata`` overrides the task metadata, so a test can switch the
+        approach curriculum's cap semantics or the horizon coupling on.
+        """
+
         import torch
 
         class FakeBackend:
@@ -343,36 +352,60 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
                 )
 
         layout = RankLocalGroupLayout(
-            worlds_per_rank=16,
-            groups_per_rank=2,
-            group_size=8,
+            worlds_per_rank=groups * group_size,
+            groups_per_rank=groups,
+            group_size=group_size,
         )
         backend = FakeBackend()
-        curriculum = RankLocalCurriculum(device=backend.device)
+        task_metadata = {
+            "random_workspace_gripper_start": True,
+            "random_workspace_min_goal_xy_distance": 0.12,
+            "random_workspace_horizon_low": 32,
+            "random_workspace_horizon_high": 32,
+            "ee_workspace_x_bounds": [-0.24, 0.24],
+            "ee_workspace_y_bounds": [-0.24, 0.24],
+            "ee_workspace_z_bounds": [0.27, 0.27],
+        }
+        task_metadata.update(metadata)
         resetter = BatchedRandomWorkspaceMoveToResetter(
             backend=backend,
             layout=layout,
-            curriculum=curriculum,
+            curriculum=RankLocalCurriculum(device=backend.device),
             rank=0,
             base_seed=123,
             instruction_types=("move_to_object",),
             allowed_objects=("robocasa_apple", "robocasa_banana"),
-            task_metadata={
-                "random_workspace_gripper_start": True,
-                "random_workspace_min_goal_xy_distance": 0.12,
-                "random_workspace_horizon_low": 32,
-                "random_workspace_horizon_high": 32,
-                "ee_workspace_x_bounds": [-0.24, 0.24],
-                "ee_workspace_y_bounds": [-0.24, 0.24],
-                "ee_workspace_z_bounds": [0.27, 0.27],
-            },
+            task_metadata=task_metadata,
         )
+        return backend, resetter, layout
 
+    @staticmethod
+    def _group_start_geometry(backend, reset, layout):
+        """Per-group EE start and the position of its own target slot."""
+
+        import torch
+
+        group_size = int(layout.group_size)
+        ee = backend.ee_positions.reshape(-1, group_size, 3)
+        objects = backend.object_positions.reshape(-1, group_size, 4, 3)
+        slots = reset.task_state.target_slots.reshape(-1, group_size)[:, 0]
+        rows = torch.arange(ee.shape[0], dtype=torch.int64)
+        return ee, objects[:, 0][rows, slots]
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "random workspace reset fixture requires PyTorch",
+    )
+    def test_move_to_random_workspace_reset_is_not_overwritten_by_shell(self):
+        import torch
+
+        backend, resetter, layout = self._build_random_workspace_resetter(
+            groups=2, group_size=8
+        )
         reset = resetter.reset(update_index=0, round_index=0)
-        ee = backend.ee_positions.reshape(2, 8, 3)
-        targets = backend.object_positions[:, 0].reshape(2, 8, 3)
+        ee, targets = self._group_start_geometry(backend, reset, layout)
         distances = torch.linalg.vector_norm(
-            ee[:, 0, :2] - targets[:, 0, :2], dim=-1
+            ee[:, 0, :2] - targets[:, :2], dim=-1
         )
 
         self.assertTrue(torch.allclose(ee, ee[:, :1].expand_as(ee)))
@@ -381,13 +414,102 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         self.assertTrue(bool((reset.horizons == 32).all().item()))
         self.assertFalse(torch.allclose(ee[0, 0], ee[1, 0]))
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "random workspace reset fixture requires PyTorch",
+    )
+    def test_move_to_random_workspace_start_obeys_approach_curriculum_cap(
+        self,
+    ):
+        """The realized start must honour the cap the curriculum reports.
+
+        Regression: the move-to resetter used to re-sample the EE pose after
+        the base class had placed it, from a sampler that took only a MINIMUM
+        goal distance -- so the approach-curriculum cap and the coupled horizon
+        never reached the simulator. ``start_max_goal_distance_m`` logged a
+        schedule the policy never trained on: over 2M steps the group pass rate
+        was 0.044 at a 0.03 m cap and 0.037 at 0.34 m, i.e. flat in the one
+        variable the curriculum controls, so the success gate promoted on noise.
+        """
+
+        import torch
+
+        approach_z = 0.27
+        metadata = {
+            "ee_workspace_z_bounds": [approach_z, 0.52],
+            "move_to_object_approach_z": approach_z,
+            "curriculum_cap_includes_z": True,
+            "curriculum_horizon_coupling_enabled": True,
+            "curriculum_horizon_min": 8,
+            "curriculum_horizon_max": 32,
+            "random_workspace_start_distance_initial": 0.03,
+            "random_workspace_start_distance_final": 0.34,
+        }
+
+        def hover_distances(backend, reset, layout):
+            ee, targets = self._group_start_geometry(backend, reset, layout)
+            hover = targets.clone()
+            hover[:, 2] = approach_z
+            return torch.linalg.vector_norm(ee[:, 0] - hover, dim=-1)
+
+        # An uncapped curriculum keeps the historical full-workspace start.
+        backend, resetter, layout = self._build_random_workspace_resetter(
+            **metadata
+        )
+        reset = resetter.reset(update_index=0, round_index=0)
+        uncapped = hover_distances(backend, reset, layout)
+        self.assertTrue(bool((uncapped > 0.12).all().item()))
+        self.assertTrue(bool((reset.horizons == 32).all().item()))
+
+        # 8 + round(24 * (cap - 0.03) / 0.31) decisions.
+        for cap, expected_horizon in ((0.03, 8), (0.10, 13), (0.34, 32)):
+            with self.subTest(cap=cap):
+                backend, resetter, layout = (
+                    self._build_random_workspace_resetter(**metadata)
+                )
+                resetter.set_random_start_max_goal_distance(
+                    {ACTIVE_INSTRUCTION_TYPES.index("move_to_object"): cap}
+                )
+                reset = resetter.reset(update_index=1, round_index=0)
+
+                # The cap must bound the 3-D distance the dense reward reads,
+                # measured against this group's own target slot -- not slot 0,
+                # and not XY alone.
+                distances = hover_distances(backend, reset, layout)
+                self.assertTrue(
+                    bool((distances <= cap + 1.0e-4).all().item()),
+                    f"start distance {distances.max().item():.4f} exceeds "
+                    f"cap {cap}",
+                )
+                # The horizon follows the cap, so a close start is not paid for
+                # with a full-length rollout.
+                self.assertTrue(
+                    bool((reset.horizons == expected_horizon).all().item()),
+                    f"horizon {int(reset.horizons.max())} != "
+                    f"{expected_horizon} at cap {cap}",
+                )
+
+        # A tight cap must actually be tighter than the uncapped distribution;
+        # this is what the old override silently broke.
+        backend, resetter, layout = self._build_random_workspace_resetter(
+            **metadata
+        )
+        resetter.set_random_start_max_goal_distance(
+            {ACTIVE_INSTRUCTION_TYPES.index("move_to_object"): 0.03}
+        )
+        reset = resetter.reset(update_index=0, round_index=0)
+        capped = hover_distances(backend, reset, layout)
+        self.assertLess(float(capped.max()), float(uncapped.min()))
+
     def test_scratch_launcher_rejects_resume_state(self):
         source = (
             ROOT
             / "scripts"
             / "train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh"
         ).read_text(encoding="utf-8")
-        self.assertIn("MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-5000000}\"", source)
+        self.assertIn(
+            "MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-10000000}\"", source
+        )
         self.assertIn(
             'WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"', source
         )
