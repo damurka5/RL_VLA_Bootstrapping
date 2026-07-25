@@ -127,7 +127,12 @@ task:
     # earlier counts stay in the mix). Slot four stays inactive.
     min_scene_objects: 1
     max_scene_objects: 3
-    scene_object_curriculum_steps: [5000000, 8000000]
+    # Pushed later (was [5e6, 8e6]): the 2nd object at 5.7M coincided with the
+    # grounding degrading (cosine 0.20->0.05, successes 72->17) -- distractors
+    # were added on a fixed schedule before single-object move-to was mastered at
+    # any distance (the start-distance curriculum was stalled). Keep it one object
+    # while the distance curriculum climbs; add complexity only once it is solved.
+    scene_object_curriculum_steps: [8000000, 9500000]
     distance_reward_exponent: 2.0
     success_distance: 0.02
     success_bonus: 0.0
@@ -227,8 +232,15 @@ task:
     random_workspace_start_distance_initial: 0.03
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
-    random_workspace_start_distance_promote_pass_rate: 0.20
-    random_workspace_start_distance_demote_pass_rate: 0.05
+    # 0.03/0.01, not 0.20/0.05: terminal 2 cm success from a 3 cm start with
+    # 1.5 cm action steps is inherently rare (the policy ends ~2-3 cm out even
+    # when well grounded), so pass_rate plateaued at ~0.045 and the 0.20 gate
+    # could never trip -- the cap stayed at 0.03 for 7.8M steps and the policy
+    # never trained on farther starts (validation stuck at 2%). At 0.03 the cap
+    # promotes once the policy is reliably close, then widening forces it to keep
+    # grounding; the 0.01 demote floor still catches a level it cannot handle.
+    random_workspace_start_distance_promote_pass_rate: 0.03
+    random_workspace_start_distance_demote_pass_rate: 0.01
     random_workspace_start_distance_pass_rate_ema_decay: 0.9
     random_workspace_start_distance_cooldown_updates: 5
     ee_workspace_x_bounds: [-0.24, 0.24]
