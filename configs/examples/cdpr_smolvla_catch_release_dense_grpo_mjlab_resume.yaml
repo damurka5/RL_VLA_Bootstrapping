@@ -229,6 +229,10 @@ task:
     # curriculum/start_max_goal_distance_m/<instruction>: the placement caps
     # should climb quickly while pick_up's stays low until grasps appear.
     random_workspace_start_distance_curriculum_enabled: true
+    # Bound the 3-D start distance, not just its XY projection: the placement
+    # hover points sit 0.285 m (plate) and 0.356 m (bowl) up, so an XY-only cap
+    # left the Z offset alone larger than the cap itself.
+    curriculum_cap_includes_z: true
     random_workspace_start_distance_initial: 0.03
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02

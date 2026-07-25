@@ -221,6 +221,17 @@ task:
     # beyond lm_expert. Logged: curriculum/start_max_goal_distance_m and
     # curriculum/approach_pass_rate_ema.
     random_workspace_start_distance_curriculum_enabled: true
+    # The cap used to bound the start's XY distance only, while the reward is a
+    # 3-D potential and ee_workspace_z_bounds spans 25 cm. Measured at cap 0.03:
+    # the true 3-D distance to the hover point averaged 0.126 m and only 10.8% of
+    # starts were actually inside the cap -- so the "easy foothold" the
+    # curriculum exists to manufacture never existed, and the policy had to solve
+    # a near-full-reach descent to score anything at the initial cap. With this
+    # on the same measurement is 0.029 m / 100%. At the final 0.34 cap the
+    # distribution is essentially unchanged (0.266 vs 0.270), so the Z
+    # randomization still forces descent to be learned -- just not before the
+    # policy can do anything at all.
+    curriculum_cap_includes_z: true
     # 0.03, not 0.06: at 0.06 the EE must produce ~3-4 correct action steps to
     # reach the 2 cm success window, which a not-yet-grounded policy never does,
     # so pass_rate stayed 0 and the curriculum never promoted off the initial cap

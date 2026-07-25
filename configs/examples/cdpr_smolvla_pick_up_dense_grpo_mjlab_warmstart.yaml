@@ -189,6 +189,11 @@ task:
     # gate cannot be dragged by an easier task. Expect the cap to sit at 0.03 for
     # a long while: that is correct, it must not widen before a grasp exists.
     random_workspace_start_distance_curriculum_enabled: true
+    # Bound the 3-D start distance, not just its XY projection. The reward is a
+    # 3-D potential, so an XY-only cap let the Z spread alone put a "3 cm" start
+    # over 20 cm from the grasp point. With this on, the Z band below can stay
+    # wide enough to keep teaching descent without breaking the early foothold.
+    curriculum_cap_includes_z: true
     random_workspace_start_distance_initial: 0.03
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02

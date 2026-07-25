@@ -569,6 +569,25 @@ class BatchedReverseFrontierResetter:
             number("random_workspace_start_distance_final", 0.34),
             self._horizon_cap_initial,
         )
+        # Make the approach-curriculum cap bound the 3-D start distance, not just
+        # XY. The rewards are 3-D (a bounded potential on the distance to a hover
+        # point) but the cap only ever pulled the start in XY, so with a wide
+        # ee_workspace_z_bounds a "3 cm" start was up to 0.25 m away once Z was
+        # counted -- the easy regime the curriculum exists to create did not
+        # exist, and the policy had to solve a near-full-reach descent to score
+        # at the initial cap. With this on, the start Z is additionally confined
+        # to the goal's shaping height +/- sqrt(cap^2 - dxy^2), so the cap means
+        # what it says. The Z spread returns as the cap widens, so the policy
+        # still has to learn descent -- just not before it can do anything else.
+        self.curriculum_cap_includes_z = flag(
+            "curriculum_cap_includes_z", False
+        )
+        self.move_to_approach_z = number("move_to_object_approach_z", 0.27)
+        self.pick_grasp_height_offset = number(
+            "pick_grasp_height_offset", 0.08
+        )
+        self.plate_release_height = number("put_plate_release_height", 0.045)
+        self.bowl_release_height = number("put_bowl_release_height", 0.10)
         # Reset-on-drift: end a move-to trajectory once the EE has moved AWAY
         # from its goal for this many consecutive env steps, and freeze that
         # trajectory's GRPO return to the penalty. The return is the last active
@@ -1209,8 +1228,17 @@ class BatchedReverseFrontierResetter:
             between[:, None], between_goal, placement_goal
         )
         if self.random_workspace_gripper_start:
+            # The move-to target is a RANDOM active slot (the named catalog is
+            # swapped into target_slot_group), so the curriculum must measure
+            # against that slot, not slot 0. With slot 0 the start was pulled
+            # within the cap of the wrong object whenever the scene held more
+            # than one: at cap 0.03 the mean XY distance to the real target was
+            # 0.204 m, i.e. the approach curriculum did nothing at all. Latent
+            # while scenes hold one object (the sampled slot is then always 0)
+            # and live from the first object-count unlock.
+            goal_target = object_positions_group[group_rows, target_slot_group]
             random_goal = torch.where(
-                is_container[:, None], reference, target_position
+                is_container[:, None], reference, goal_target
             )
             # Per-group cap (each group runs a single instruction, and each
             # instruction owns its own approach-curriculum cap).
@@ -1350,6 +1378,70 @@ class BatchedReverseFrontierResetter:
                     ee_group[:, :2] = torch.where(
                         too_far[:, None], pulled, ee_group[:, :2]
                     )
+
+            if self.curriculum_cap_includes_z and any_curriculum:
+                # Confine the start height so the cap bounds the 3-D distance the
+                # reward actually measures, not just its XY projection. Without
+                # this the Z spread alone can exceed the cap several times over.
+                # goal_z is the height each instruction's dense term pulls toward:
+                # the move-to hover height, the grasp point (object + the gripper
+                # hang), or the receptacle release height (+ the same hang).
+                grasp_z = (
+                    random_goal[:, 2] + float(self.pick_grasp_height_offset)
+                )
+                container_z = (
+                    reference[:, 2]
+                    + torch.where(
+                        is_bowl,
+                        torch.full_like(
+                            reference[:, 2], float(self.bowl_release_height)
+                        ),
+                        torch.full_like(
+                            reference[:, 2], float(self.plate_release_height)
+                        ),
+                    )
+                    + float(self.pick_grasp_height_offset)
+                )
+                goal_z = torch.where(
+                    is_container,
+                    container_z,
+                    torch.where(
+                        move_to_mask,
+                        torch.full_like(grasp_z, float(self.move_to_approach_z)),
+                        grasp_z,
+                    ),
+                )
+                planar = torch.linalg.vector_norm(
+                    ee_group[:, :2] - random_goal[:, :2], dim=-1
+                )
+                # Whatever of the cap the XY offset has not already consumed.
+                z_allowance = (
+                    (max_goal_distance.square() - planar.square())
+                    .clamp_min(0.0)
+                    .sqrt()
+                )
+                low = torch.maximum(
+                    goal_z - z_allowance,
+                    torch.full_like(goal_z, self.workspace_z_bounds[0]),
+                )
+                high = torch.minimum(
+                    goal_z + z_allowance,
+                    torch.full_like(goal_z, self.workspace_z_bounds[1]),
+                )
+                # If the allowed band misses the workspace entirely, sit at the
+                # reachable height closest to the goal rather than inverting the
+                # clamp.
+                fallback = goal_z.clamp(
+                    self.workspace_z_bounds[0], self.workspace_z_bounds[1]
+                )
+                confined = torch.where(
+                    low <= high,
+                    torch.minimum(torch.maximum(ee_group[:, 2], low), high),
+                    fallback,
+                )
+                ee_group[:, 2] = torch.where(
+                    curriculum_active, confined, ee_group[:, 2]
+                )
 
         zone_half = torch.full((groups,), 0.015, device=self.device)
         relation_boundary = zone_half / random_direction.abs().amax(

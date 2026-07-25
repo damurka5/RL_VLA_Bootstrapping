@@ -702,5 +702,120 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
         self.assertGreater(max(observed["put_into_plate"]), 0.05)
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "torch is required for the approach-curriculum start geometry",
+)
+class CDPRApproachCurriculumGeometryTests(unittest.TestCase):
+    """The cap has to bound the distance the reward actually measures."""
+
+    OBJECTS = (
+        "robocasa_apple",
+        "robocasa_banana",
+        "robocasa_tomato",
+        "robocasa_orange",
+    )
+
+    def _move_to_starts(self, *, cap, include_z, scene_objects):
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+            RankLocalCurriculum,
+        )
+        from rl_vla_bootstrapping.policy.rank_local_grpo import (
+            RankLocalGroupLayout,
+        )
+
+        layout = RankLocalGroupLayout(
+            worlds_per_rank=64, groups_per_rank=8, group_size=8
+        )
+        metadata = {
+            "random_workspace_gripper_start": True,
+            "ee_workspace_x_bounds": [-0.24, 0.24],
+            "ee_workspace_y_bounds": [-0.24, 0.24],
+            "ee_workspace_z_bounds": [0.27, 0.52],
+            "random_workspace_min_goal_xy_distance": 0.12,
+            "min_scene_objects": scene_objects,
+            "max_scene_objects": scene_objects,
+            "move_to_object_approach_z": 0.27,
+            "curriculum_cap_includes_z": include_z,
+        }
+        planar: list[float] = []
+        spatial: list[float] = []
+        for update_index in range(12):
+            backend = CDPRCatchReleaseRewardTests._fake_backend(torch)
+            resetter = BatchedReverseFrontierResetter(
+                backend=backend,
+                layout=layout,
+                curriculum=RankLocalCurriculum(device=backend.device),
+                rank=0,
+                base_seed=5,
+                instruction_types=("move_to_object",),
+                allowed_objects=self.OBJECTS,
+                task_metadata=metadata,
+            )
+            resetter.set_random_start_max_goal_distance(cap)
+            reset = resetter.reset(update_index=update_index, round_index=0)
+            ee = backend.ee_positions
+            target_slots = reset.task_state.target_slots
+            rows = torch.arange(ee.shape[0], dtype=torch.int64)
+            target = backend.object_positions[rows, target_slots]
+            hover = target.clone()
+            hover[:, 2] = 0.27
+            planar.extend(
+                torch.linalg.vector_norm(
+                    ee[:, :2] - target[:, :2], dim=-1
+                ).tolist()
+            )
+            spatial.extend(
+                torch.linalg.vector_norm(ee - hover, dim=-1).tolist()
+            )
+        return planar, spatial
+
+    def test_cap_measures_the_named_slot_not_slot_zero(self):
+        """Move-to names a RANDOM active slot, so the cap must follow it.
+
+        The named catalog is swapped into target_slot_group, but the curriculum
+        used to measure against slot 0. With more than one object in the scene
+        that pulled the start close to the wrong object entirely.
+        """
+
+        planar, _ = self._move_to_starts(
+            cap=0.03, include_z=False, scene_objects=3
+        )
+        self.assertLessEqual(max(planar), 0.03 + 1.0e-3)
+
+    def test_three_dimensional_cap_bounds_the_reward_distance(self):
+        _, without = self._move_to_starts(
+            cap=0.03, include_z=False, scene_objects=3
+        )
+        _, with_z = self._move_to_starts(
+            cap=0.03, include_z=True, scene_objects=3
+        )
+        # XY-only: the Z spread alone puts most starts far outside the cap.
+        self.assertGreater(max(without), 0.10)
+        self.assertLessEqual(max(with_z), 0.03 + 1.0e-3)
+
+    def test_wide_caps_keep_the_height_randomization(self):
+        """Descent must still be learned once the cap is wide.
+
+        The point of the fix is the early foothold, not removing the Z spread:
+        at full reach the start distribution should be essentially unchanged.
+        """
+
+        _, with_z = self._move_to_starts(
+            cap=0.34, include_z=True, scene_objects=3
+        )
+        spread = max(with_z) - min(with_z)
+        self.assertGreater(spread, 0.15)
+
+    def test_staged_configs_bound_the_cap_in_three_dimensions(self):
+        for path in STAGED_CONFIGS:
+            metadata = load_project_config(path).task.metadata
+            with self.subTest(config=path.name):
+                self.assertTrue(metadata["curriculum_cap_includes_z"])
+
+
 if __name__ == "__main__":
     unittest.main()
