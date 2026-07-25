@@ -610,6 +610,14 @@ class BatchedReverseFrontierResetter:
             # The tensor is still sampled before the task-specific torch.where;
             # for a move-only run its value is never selected.
             graspable_ids = catalog_ids
+        # Per-instruction approach-curriculum caps; inf everywhere means the cap
+        # is disabled. set_random_start_max_goal_distance rewrites this.
+        self._start_cap_table = self.torch.full(
+            (len(ACTIVE_INSTRUCTION_TYPES),),
+            float("inf"),
+            dtype=self.torch.float32,
+            device=self.device,
+        )
         self.instruction_ids = self.torch.tensor(
             instruction_ids, dtype=self.torch.int64, device=self.device
         )
@@ -628,21 +636,56 @@ class BatchedReverseFrontierResetter:
         high = min(scene_max, max(low, int(high)))
         self.scene_object_range = (low, high)
 
-    def set_random_start_max_goal_distance(self, value: float) -> None:
+    def set_random_start_max_goal_distance(
+        self, value: float | Mapping[int, float]
+    ) -> None:
         """Cap the EE start's XY distance from its goal (approach curriculum).
 
-        A non-positive or non-finite value disables the cap, restoring the
-        full-workspace start distribution.
+        Accepts a scalar (one cap for every instruction) or a mapping from
+        instruction id to cap. The per-instruction form exists because a shared
+        cap driven by the mixed pass rate advances on the easiest task in the
+        run: with put_into_plate passing and pick_up at zero, one global gate
+        widens the starts for pick_up too and starves it of the close starts it
+        still needs. Each instruction now climbs on its own success.
+
+        A non-positive or non-finite value disables the cap for that
+        instruction, restoring the full-workspace start distribution.
         """
 
-        try:
-            distance = float(value)
-        except (TypeError, ValueError):
-            distance = float("inf")
-        if not distance > 0.0 or distance == float("inf"):
-            self.random_start_max_goal_distance = float("inf")
-        else:
-            self.random_start_max_goal_distance = distance
+        def sanitize(raw: Any) -> float:
+            try:
+                distance = float(raw)
+            except (TypeError, ValueError):
+                return float("inf")
+            if not distance > 0.0 or distance == float("inf"):
+                return float("inf")
+            return distance
+
+        if isinstance(value, Mapping):
+            caps = {int(key): sanitize(raw) for key, raw in value.items()}
+            self._start_cap_table = self.torch.tensor(
+                [
+                    caps.get(index, float("inf"))
+                    for index in range(len(ACTIVE_INSTRUCTION_TYPES))
+                ],
+                dtype=self.torch.float32,
+                device=self.device,
+            )
+            finite = [cap for cap in caps.values() if cap != float("inf")]
+            # Scalar mirror kept for diagnostics and for callers that still read
+            # the attribute; the tensor is what reset() actually applies.
+            self.random_start_max_goal_distance = (
+                max(finite) if finite else float("inf")
+            )
+            return
+        distance = sanitize(value)
+        self.random_start_max_goal_distance = distance
+        self._start_cap_table = self.torch.full(
+            (len(ACTIVE_INSTRUCTION_TYPES),),
+            distance,
+            dtype=self.torch.float32,
+            device=self.device,
+        )
 
     def _generator(self, update_index: int, round_index: int) -> Any:
         generator = self.torch.Generator(device=self.device)
@@ -728,31 +771,36 @@ class BatchedReverseFrontierResetter:
             )
         ).to(dtype=torch.int64)
         if self.random_workspace_gripper_start:
-            cap = float(self.random_start_max_goal_distance)
-            if (
-                self.curriculum_horizon_coupling
-                and cap != float("inf")
-                and cap > 0.0
-            ):
+            # Per-group cap: each group runs one instruction, and each
+            # instruction carries its own approach-curriculum cap.
+            cap_group = self._start_cap_table.index_select(0, task_group)
+            cap_active = torch.isfinite(cap_group) & (cap_group > 0.0)
+            if self.curriculum_horizon_coupling and bool(cap_active.any().item()):
                 span = max(
                     self._horizon_cap_final - self._horizon_cap_initial, 1.0e-6
                 )
-                frac = min(
-                    1.0,
-                    max(0.0, (cap - self._horizon_cap_initial) / span),
-                )
-                coupled = int(
-                    round(
-                        self.curriculum_horizon_min
-                        + frac
-                        * (
-                            self.curriculum_horizon_max
-                            - self.curriculum_horizon_min
-                        )
+                frac = (
+                    (cap_group - self._horizon_cap_initial) / span
+                ).clamp(0.0, 1.0)
+                coupled = (
+                    self.curriculum_horizon_min
+                    + frac
+                    * float(
+                        self.curriculum_horizon_max
+                        - self.curriculum_horizon_min
                     )
+                ).round().to(dtype=torch.int64)
+                # Groups whose instruction has no cap keep the sampled horizon.
+                uncapped_horizon = torch.randint(
+                    self.random_start_horizon_low,
+                    self.random_start_horizon_high + 1,
+                    (groups,),
+                    generator=generator,
+                    device=self.device,
+                    dtype=torch.int64,
                 )
-                horizon_group = torch.full(
-                    (groups,), coupled, device=self.device, dtype=torch.int64
+                horizon_group = torch.where(
+                    cap_active, coupled, uncapped_horizon
                 )
             else:
                 horizon_group = torch.randint(
@@ -1164,20 +1212,28 @@ class BatchedReverseFrontierResetter:
             random_goal = torch.where(
                 is_container[:, None], reference, target_position
             )
-            max_goal_distance = float(self.random_start_max_goal_distance)
-            curriculum_active = (
-                max_goal_distance != float("inf") and max_goal_distance > 0.0
+            # Per-group cap (each group runs a single instruction, and each
+            # instruction owns its own approach-curriculum cap).
+            max_goal_distance = self._start_cap_table.index_select(0, task_group)
+            curriculum_active = torch.isfinite(max_goal_distance) & (
+                max_goal_distance > 0.0
             )
-            if curriculum_active:
-                # Keep the floor strictly below the cap so the early close
-                # starts are not rejected back out to the workspace edge, which
-                # would defeat the approach curriculum.
-                effective_min_goal_distance = min(
-                    self.random_start_min_goal_distance,
+            any_curriculum = bool(curriculum_active.any().item())
+            # Keep the floor strictly below the cap so the early close starts are
+            # not rejected back out to the workspace edge, which would defeat the
+            # approach curriculum.
+            effective_min_goal_distance = torch.where(
+                curriculum_active,
+                torch.minimum(
+                    torch.full_like(
+                        max_goal_distance, self.random_start_min_goal_distance
+                    ),
                     0.5 * max_goal_distance,
-                )
-            else:
-                effective_min_goal_distance = self.random_start_min_goal_distance
+                ),
+                torch.full_like(
+                    max_goal_distance, self.random_start_min_goal_distance
+                ),
+            )
             for _ in range(6):
                 too_close = (
                     torch.linalg.vector_norm(
@@ -1258,21 +1314,32 @@ class BatchedReverseFrontierResetter:
                         "random_workspace_min_goal_xy_distance."
                     )
 
-            if curriculum_active:
-                # Pull any start that is beyond the current curriculum cap in
-                # toward the goal, to a random distance in the feasible annulus
-                # [effective_min, cap], preserving its sampled direction. Clamp
-                # back into the workspace box so the start stays reachable.
+            if any_curriculum:
+                # Pull any start that is beyond its instruction's curriculum cap
+                # in toward the goal, to a random distance in the feasible
+                # annulus [effective_min, cap], preserving its sampled direction.
+                # Clamp back into the workspace box so the start stays reachable.
                 offset = ee_group[:, :2] - random_goal[:, :2]
                 distance = torch.linalg.vector_norm(
                     offset, dim=-1, keepdim=True
                 )
-                too_far = distance.squeeze(-1) > max_goal_distance
+                too_far = curriculum_active & (
+                    distance.squeeze(-1) > max_goal_distance
+                )
                 if bool(too_far.any().item()):
                     direction = offset / distance.clamp_min(1.0e-6)
-                    sampled = effective_min_goal_distance + torch.rand(
+                    # Uncapped instructions carry an inf cap; zero their span so
+                    # no inf/NaN is produced in the discarded branch.
+                    span = torch.where(
+                        curriculum_active,
+                        (
+                            max_goal_distance - effective_min_goal_distance
+                        ).clamp_min(0.0),
+                        torch.zeros_like(effective_min_goal_distance),
+                    )
+                    sampled = effective_min_goal_distance[:, None] + torch.rand(
                         (groups, 1), generator=generator, device=self.device
-                    ) * (max_goal_distance - effective_min_goal_distance)
+                    ) * span[:, None]
                     pulled = random_goal[:, :2] + direction * sampled
                     pulled[:, 0] = pulled[:, 0].clamp(
                         self.workspace_x_bounds[0], self.workspace_x_bounds[1]
@@ -1617,6 +1684,11 @@ class ValidationRound:
     group_target_catalog_ids: Any
     group_shell_ids: Any
     metrics: dict[str, float]
+    # Which instruction each group ran. A run that mixes instructions of very
+    # different difficulty (pick_up vs. the pre-grasped placement tasks) reports
+    # a single blended success_rate that the easy tasks dominate, so a task stuck
+    # at zero stays invisible. None keeps the aggregate-only behaviour.
+    group_instruction_ids: Any | None = None
 
 
 class RankLocalMJWarpGRPOCollector:
@@ -2539,6 +2611,7 @@ class RankLocalMJWarpGRPOCollector:
             ),
             group_target_catalog_ids=reset.group_target_catalog_ids,
             group_shell_ids=reset.group_shell_ids,
+            group_instruction_ids=reset.group_instruction_ids,
             metrics={
                 **timings,
                 "validation/time_s": float(validation_time),

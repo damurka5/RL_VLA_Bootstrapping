@@ -1,0 +1,355 @@
+project:
+  name: cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  env_vars:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_VERBOSITY: error
+    HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    NCCL_DEBUG: WARN
+  notes:
+    - Phase 1 of the manipulation curriculum - pick_up ONLY. Placement is phase 2.
+    - Warm-started WEIGHTS-ONLY from the move-to adapter (fresh optimizer, fresh curriculum, step 0).
+    - pick_up's dense target is (target XY, object_z + 0.08) ~ 0.26 m, essentially the move-to hover point, so the warm-started approach skill transfers directly and RL only has to learn descend/close/lift.
+    - The approach curriculum is success-gated on pick_up's OWN pass rate and starts at a 3 cm cap.
+    - Scenes hold a single object until the object-count curriculum unlocks distractors; the move-to run showed distractors added before mastery destroy the grounding.
+    - Every policy/LoRA/vision-residual setting matches the move-to run exactly; a mismatch makes the warm-start weights fail to load.
+
+embodiment:
+  name: cdpr_5dof_mjwarp
+  kind: mjlab_mjwarp
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+  dof: 5
+  extra_python_paths: [../../robots/cdpr]
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs: {}
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 1.0]
+
+task:
+  instruction_types: [pick_up]
+  target_objects:
+    [
+      robocasa_apple,
+      robocasa_banana,
+      robocasa_tomato,
+      robocasa_orange,
+      robocasa_potato,
+      robocasa_mug,
+    ]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    instruction_sampling: uniform_cycle
+    reward_mode: dense
+    # Only graspable objects. Plate and bowl have fitted_gripper_opening 0.0 and
+    # are not liftable, so they are excluded entirely from phase 1 -- including
+    # as distractors, which keeps the object-count curriculum honest.
+    target_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    catchable_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    distractor_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    scene_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    # ONE object until the grasp itself is solved. This is the direct lesson from
+    # move-to: a second object arriving on a fixed schedule at 5.7M coincided with
+    # the grounding collapsing (cosine 0.20 -> 0.05, successes 72 -> 17) because
+    # distractors landed before the single-object task was mastered. pick_up is
+    # strictly harder than move-to, so the unlock points sit even later.
+    min_scene_objects: 1
+    max_scene_objects: 3
+    scene_object_curriculum_steps: [7000000, 9000000]
+
+    random_workspace_gripper_start: true
+    # No caught-object start in phase 1: the whole point is to LEARN the grasp.
+    placement_start_with_caught_object: false
+    ee_workspace_x_bounds: [-0.24, 0.24]
+    ee_workspace_y_bounds: [-0.24, 0.24]
+    # The approach curriculum caps the START'S XY DISTANCE ONLY, while the reward
+    # and the grasp are 3-D. With move-to's [0.27, 0.52] band, a "3 cm" start is
+    # really up to 0.25 m away once Z is counted, so the easy regime was never as
+    # easy as intended. The grasp point sits at ~0.26 m (object centre + the 0.08
+    # gripper hang), so this band bounds the descent to <= 0.11 m and makes the
+    # cap mean what it says.
+    ee_workspace_z_bounds: [0.27, 0.38]
+    random_workspace_min_goal_xy_distance: 0.10
+    random_workspace_horizon_low: 24
+    random_workspace_horizon_high: 32
+
+    # --- Dense shaping (identical curve for every instruction) -------------
+    # Coarse inverse-polynomial on the 3-D distance to the grasp point, plus a
+    # tight fine term. The coarse term alone is >= 0.94 two centimetres out while
+    # bilateral pad contact needs millimetres, so the last centimetre -- the part
+    # that decides whether a grasp happens at all -- had no gradient.
+    distance_reward_exponent: 2.0
+    catch_release_distance_reward_scale: 0.08
+    catch_release_distance_reward_weight: 1.0
+    catch_release_fine_distance_reward_weight: 0.5
+    catch_release_fine_distance_reward_scale: 0.01
+    catch_release_fine_distance_window: 0.0
+    pick_distance_window: 0.02
+
+    # ee_position tracks ee_base; the gripper hangs 0.08 m below it, so the grasp
+    # point is object_z + 0.08 (0.258 m tomato .. 0.275 m mug). That is the same
+    # height band move-to was trained to hover at (approach_z 0.27).
+    pick_grasp_height_offset: 0.08
+    # Partial credit for bilateral pad contact bridges hovering -> latched grasp.
+    pick_contact_bonus: 0.25
+    pick_grasp_bonus: 1.0
+    pick_lift_reward_weight: 1.0
+    pick_lift_reward_scale: 0.05
+    pick_lift_success_height: 0.05
+    pick_success_bonus: 2.0
+    # Terminal returns (the GRPO return is the last active step's reward):
+    #   far away          ~0.1
+    #   hovering at grasp  1.5
+    #   + pad contact      1.75
+    #   + latched grasp    2.75
+    #   + full lift        3.75
+    #   + success          5.75
+    # Every step of the grasp sequence strictly increases the return, so there is
+    # no rung on which stalling beats continuing.
+    action_saturation_penalty_weight: 0.0
+
+    # --- Approach curriculum (success-gated, per instruction) --------------
+    # Same machinery and thresholds that finally moved move-to. The cap widens
+    # only when pick_up itself is passing, and phase 1 has one instruction so the
+    # gate cannot be dragged by an easier task. Expect the cap to sit at 0.03 for
+    # a long while: that is correct, it must not widen before a grasp exists.
+    random_workspace_start_distance_curriculum_enabled: true
+    random_workspace_start_distance_initial: 0.03
+    random_workspace_start_distance_final: 0.34
+    random_workspace_start_distance_increment: 0.02
+    random_workspace_start_distance_promote_pass_rate: 0.03
+    random_workspace_start_distance_demote_pass_rate: 0.01
+    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    random_workspace_start_distance_cooldown_updates: 5
+    # Horizon coupled to the cap. 16 (not move-to's 8) because pick_up must also
+    # close the gripper and lift after arriving: from 1.0 the opening has to fall
+    # to the fitted value (0.368 banana .. 0.80 mug) at 0.05 per env step and 4
+    # env steps per decision, i.e. up to ~4 decisions of closing, then 2 env steps
+    # of grasp persistence, then 5 cm of lift at 0.015 per step. 16 leaves slack
+    # for exploration on top of that.
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 16
+    curriculum_horizon_max: 32
+    # OFF, as in move-to: SmolVLA inference is batched over all worlds every
+    # decision regardless of the active mask, so early termination saves no
+    # compute but discards the remaining records.
+    reset_on_drift_enabled: false
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [robocasa_apple, robocasa_plate, robocasa_bowl]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  build_kwargs:
+    table_z: 0.15
+    ee_start: [0.0, 0.0, 0.40]
+  randomization:
+    random_scene_count: 256
+    max_objects: 4
+    use_domain_randomization: true
+
+simulator:
+  backend: mjlab_mjwarp
+  worlds_per_rank: 512
+  groups_per_rank: 64
+  nconmax: 256
+  njmax: 1024
+  render_width: 320
+  render_height: 240
+  object_slots: 4
+  fixed_scene_xml: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+
+policy:
+  type: smolvla_cdpr
+  base_checkpoint: lerobot/smolvla_base
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+  num_images_in_input: 3
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: false
+      bins: 256
+    export_filename: smolvla_action_codec.json
+
+training:
+  preview_before_rl: false
+  rl:
+    enabled: true
+    algorithm: smolvla_residual_grpo_mjwarp
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
+    args:
+      # No resume_checkpoint: the launcher passes the move-to adapter through
+      # RLVLA_SMOLVLA_WARMSTART_CHECKPOINT instead. Weights-only is deliberate --
+      # a full resume would also restore move-to's approach-curriculum state (a
+      # cap already widened for a different task) and its optimizer moments.
+      max_train_steps: 10000000
+      max_env_steps: 128
+      chunk_size: 8
+      replan_every: 4
+      image_size: 256
+      smolvla_model_image_size: 256
+      smolvla_compile_model: true
+      smolvla_compile_mode: max-autotune-no-cudagraphs
+      # 256, not 512: at 512 the combined PyTorch+Warp footprint sat on the card
+      # limit and Warp OOM'd once the LoRA backward was added.
+      smolvla_inference_microbatch_size: 256
+      state_dim: 6
+      # --- MUST MATCH THE MOVE-TO RUN (warm-start loads weights strictly) ---
+      residual_relative_target: false
+      residual_vision_features: true
+      residual_vision_dim: 512
+      residual_scale: 1.0
+      hidden_dim: 1024
+      train_vla_lora: true
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      lora_include_mlp: true
+      lora_expert_name_contains: lm_expert
+      # ---------------------------------------------------------------------
+      vla_lr: 1.0e-5
+      vla_kl_coef: 0.1
+      vla_microbatch_size: 16
+      vla_update_max_records: 128
+      include_wrist: true
+      include_aux_camera: true
+      mask_empty_aux_camera: true
+      mixed_precision: bf16
+      smolvla_action_normalization: tanh
+      learning_rate: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      init_log_std: -1.2
+      min_log_std: -5.0
+      # -0.3, not 0.5. At 0.5 (std ~1.65) the move-to action distribution
+      # diffused instead of converging: the entropy bonus dominated, log_std
+      # climbed, and the policy collapsed to target-independent homing.
+      max_log_std: -0.3
+      clip_range_low: 0.20
+      clip_range_high: 0.28
+      # 0.0005, not 0.002, for the same reason; the approach curriculum supplies
+      # the directional signal that the entropy bonus was being asked to find.
+      entropy_coef: 0.0005
+      max_grad_norm: 1.0
+      grpo_group_size: 8
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.10
+      grpo_dynamic_max_pass_rate: 0.90
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 64
+      grpo_max_collection_seconds_per_update: 600
+      ppo_epochs: 4
+      minibatch_size: 512
+      microbatch_size: 512
+      complex_training_approach: none
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      hold_steps: 6
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      validation_every_steps: 200000
+      validation_episodes_per_instruction: 1024
+      validation_seed: 3000000
+      validation_video_count: 0
+      save_every_steps: 200000
+      mjwarp_profile_timers: true
+      mjwarp_profile_updates: 4
+      distributed: true
+      distributed_backend: nccl
+      distributed_timeout_seconds: 21600
+      progress: true
+      progress_only: true
+      device: cuda
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks: []

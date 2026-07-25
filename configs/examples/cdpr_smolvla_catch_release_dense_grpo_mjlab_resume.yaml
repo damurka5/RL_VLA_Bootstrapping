@@ -16,12 +16,15 @@ remote:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
     NCCL_DEBUG: WARN
   notes:
-    - Resume the successful 5,000,081-step MJWarp move-to adapter and train 15,000,000 additional selected environment actions.
+    - Phase 2 of the manipulation curriculum. Warm-start WEIGHTS-ONLY from the phase-1 pick_up adapter, not from move-to directly.
+    - pick_up is kept in the mix as rehearsal so the grasp learned in phase 1 is not forgotten while placement is added.
     - Plain GRPO only; Reverse Frontier shells and LC-HOL are disabled, and the new phase is started in a fresh torchrun process.
     - Only catchable objects seen by the move-to checkpoint are language targets; plate and bowl are receptacles/distractors.
-    - Every episode starts the gripper at a workspace-random pose at least 0.10 m from the requested target.
-    - Plate/bowl episodes start with the named object physically caught between the fingers.
+    - Plate/bowl episodes start with the named object physically caught between the fingers; pick_up episodes start with it on the desk.
     - Placement failures terminate as soon as the released/lost object settles outside the requested receptacle radius.
+    - Each instruction runs its OWN success-gated approach curriculum, so placement successes cannot widen pick_up's start distance.
+    - All three instructions share one dense shaping curve (coarse 0.08 + fine 0.01); the shaping window is decoupled from the success radius.
+    - Every policy/LoRA/vision-residual setting matches phase 1 exactly; a mismatch makes the warm-start weights fail to load.
 
 embodiment:
   name: cdpr_5dof_mjwarp
@@ -128,26 +131,50 @@ task:
         robocasa_plate,
         robocasa_bowl,
       ]
-    # Exactly target + plate + bowl; the fourth MJWarp slot stays inactive.
-    min_scene_objects: 3
+    # Placement forces 3 slots (target + plate + bowl) regardless of this range,
+    # so min 1 only affects pick_up groups: they start distractor-free and pick
+    # up extra objects at the curriculum steps. This matters because pick_up is
+    # the task still being learned here -- move-to showed that distractors added
+    # before the single-object task is mastered collapse the grounding.
+    min_scene_objects: 1
     max_scene_objects: 3
+    scene_object_curriculum_steps: [6000000, 9000000]
 
     # The new phase never uses the near-goal shell-0 spawn.
     random_workspace_gripper_start: true
     placement_start_with_caught_object: true
     ee_workspace_x_bounds: [-0.28, 0.28]
     ee_workspace_y_bounds: [-0.28, 0.28]
-    ee_workspace_z_bounds: [0.30, 0.48]
+    # Narrowed from [0.30, 0.48]. The approach curriculum caps the start's XY
+    # distance only, while the reward is 3-D: with a 0.18 m Z spread a "3 cm"
+    # start was really up to ~0.18 m away, so the easy regime the curriculum
+    # thinks it is creating did not exist. Plate hover sits at 0.285 m and bowl
+    # hover at 0.356 m, so this band still requires a real descent.
+    ee_workspace_z_bounds: [0.29, 0.40]
     random_workspace_min_goal_xy_distance: 0.10
-    random_workspace_horizon_low: 21
+    random_workspace_horizon_low: 24
     random_workspace_horizon_high: 32
 
-    # Shared inverse-polynomial distance shaping, matching move-to.
+    # --- Dense shaping: ONE curve for all three instructions ---------------
+    # The placement term used to take its window from the SUCCESS radius (plate
+    # 0.091, bowl 0.057). With scale 0.08 that made the plate reward >= 0.988
+    # anywhere inside 10 cm: eight group candidates landing 3-6 cm apart scored
+    # within ~0.003 of each other, and GRPO's group normalization divided that by
+    # a near-zero std, turning rollout noise into full-magnitude advantages.
+    # placement_distance_window decouples shaping from success -- success still
+    # uses the real radius, shaping uses the same 0.02 window as pick_up.
     distance_reward_exponent: 2.0
     move_to_object_xy_reward_scale: 0.08
     move_to_object_distance_reward_weight: 1.0
     catch_release_distance_reward_scale: 0.08
     catch_release_distance_reward_weight: 1.0
+    placement_distance_window: 0.02
+    # Fine term: the coarse curve is already >= 0.94 two centimetres out, but a
+    # grasp needs the pads within millimetres. Without this the last centimetre
+    # of every approach carries no gradient at all.
+    catch_release_fine_distance_reward_weight: 0.5
+    catch_release_fine_distance_reward_scale: 0.01
+    catch_release_fine_distance_window: 0.0
     # Bounded 3-D placement shaping toward a hover point above the receptacle.
     # XY-only shaping left the release height unconstrained while the frozen
     # prior pushes +Z, so the gripper drifted up and dropped from height.
@@ -161,13 +188,15 @@ task:
     put_bowl_xy_tolerance: 0.057
     put_container_z_tolerance: 0.12
     placement_release_success_bonus: 2.0
-    # Release is a risky action with a safe alternative: the terminal reward for
-    # hovering over the receptacle until timeout is ~1.0 guaranteed, while
-    # releasing pays 3.0 on success and (1.0 - penalty) on a wrong drop. At
-    # penalty 1.0 releasing only beats hovering once success probability exceeds
-    # 33%, which the policy must first reach by releasing -- a chicken-and-egg
-    # local optimum. 0.25 drops that bar to ~11% while still deterring random
-    # drops (at p=0 releasing is still worse than hovering).
+    # Release is a risky action with a safe alternative: hovering over the
+    # receptacle until timeout pays the shaping terms guaranteed (coarse 1.0 +
+    # fine 0.5 = 1.5), while releasing pays 3.5 on success and (1.5 - penalty)
+    # on a wrong drop. At penalty 1.0 releasing only beats hovering once the
+    # success probability exceeds 33%, which the policy must first reach BY
+    # releasing -- a chicken-and-egg local optimum. 0.25 drops that bar to
+    # ~11% (1.25 + 2.25p > 1.5) while still deterring random drops: at p=0
+    # releasing remains strictly worse than hovering. The fine term shifts both
+    # sides equally, so the break-even is unchanged.
     placement_wrong_drop_penalty: 0.25
     # target_has_settled is measured from the DESK, but an object resting
     # correctly inside the bowl sits ~20.3 mm above it (bowl rest 0.0263, its
@@ -191,6 +220,30 @@ task:
     pick_lift_reward_scale: 0.05
     pick_lift_success_height: 0.05
     pick_success_bonus: 2.0
+
+    # --- Approach curriculum, run PER INSTRUCTION -------------------------
+    # One cap per instruction, each gated on its own pass rate. A single shared
+    # cap would be promoted by the placement tasks -- which start with the object
+    # already in the gripper and only have to servo to a receptacle -- and would
+    # drag pick_up out to far starts before it can grasp at all. Watch
+    # curriculum/start_max_goal_distance_m/<instruction>: the placement caps
+    # should climb quickly while pick_up's stays low until grasps appear.
+    random_workspace_start_distance_curriculum_enabled: true
+    random_workspace_start_distance_initial: 0.03
+    random_workspace_start_distance_final: 0.34
+    random_workspace_start_distance_increment: 0.02
+    random_workspace_start_distance_promote_pass_rate: 0.03
+    random_workspace_start_distance_demote_pass_rate: 0.01
+    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    random_workspace_start_distance_cooldown_updates: 5
+    # Horizon coupled to each group's own cap. 16 at the initial cap: placement
+    # must reach the hover point, open the gripper past the release threshold
+    # (up to 0.215 of opening for the banana at 0.05 per env step), and let the
+    # object fall and settle before the episode can be scored.
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 16
+    curriculum_horizon_max: 32
+    reset_on_drift_enabled: false
 
 simulation:
   entrypoint:
@@ -243,8 +296,12 @@ training:
       standalone: true
       nproc_per_node: 2
     args:
-      resume_checkpoint: /root/repo/RL_VLA_Bootstrapping/runs/cdpr_smolvla_move_to_scratch_mjwarp_w512_20260719_081705/rl/step_5000081/smolvla_grpo_adapter.pt
-      max_train_steps: 20000081
+      # No resume_checkpoint. The launcher passes the phase-1 pick_up adapter
+      # through RLVLA_SMOLVLA_WARMSTART_CHECKPOINT instead: a full resume would
+      # also restore phase 1's per-instruction curriculum caps and optimizer
+      # moments, and phase 1 never trained the placement instructions, so their
+      # caps would be meaningless here.
+      max_train_steps: 15000000
       max_env_steps: 128
       chunk_size: 8
       replan_every: 4
@@ -255,12 +312,20 @@ training:
       smolvla_inference_microbatch_size: 256
       state_dim: 6
       # Must match the move-to phase: no privileged target geometry in the
-      # observation, so the residual actor's state dim is 6 (pure
-      # proprioception). The policy localizes the receptacle and the held object
-      # from the cameras, exactly as at real-robot deployment.
+      # observation, so the frozen SmolVLA's state is 6-dim pure proprioception.
+      # The policy localizes the receptacle and the held object from the cameras,
+      # exactly as at real-robot deployment.
       residual_relative_target: false
-      # Must match the move-to phase: the resumed checkpoint carries
-      # action-expert LoRA weights, and loading refuses to drop them.
+      # MUST MATCH the warm-start checkpoint. The trainable residual's input is
+      # state_dim + vision_feature_dim, so omitting these builds a 6-wide
+      # residual where the checkpoint holds a 518-wide one and the strict
+      # load_state_dict fails outright. (Even if it loaded, dropping the frozen
+      # connector-token projection would throw away the only part of the
+      # observation that actually localizes the target.)
+      residual_vision_features: true
+      residual_vision_dim: 512
+      # Must match the move-to phase: the checkpoint carries action-expert LoRA
+      # weights, and loading refuses to drop them.
       train_vla_lora: true
       lora_rank: 16
       lora_alpha: 32.0
@@ -285,10 +350,17 @@ training:
       weight_decay: 0.0
       init_log_std: -1.2
       min_log_std: -5.0
-      max_log_std: 0.5
+      # -0.3, not 0.5. At 0.5 (std ~1.65) the move-to action distribution
+      # diffused instead of converging: with no directional reward signal the
+      # entropy bonus dominated, log_std climbed from -1.2 upward, and the policy
+      # collapsed to target-independent homing. This phase inherits that fix.
+      max_log_std: -0.3
       clip_range_low: 0.20
       clip_range_high: 0.28
-      entropy_coef: 0.002
+      # 0.0005, not 0.002, for the same reason; the per-instruction approach
+      # curriculum now supplies the directional signal the entropy bonus was
+      # being asked to find by diffusing.
+      entropy_coef: 0.0005
       max_grad_norm: 1.0
       grpo_group_size: 8
       grpo_group_selection: uniform

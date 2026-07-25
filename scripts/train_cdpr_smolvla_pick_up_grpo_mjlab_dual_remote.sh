@@ -1,26 +1,24 @@
 #!/usr/bin/env bash
-# Phase 2 of the manipulation curriculum: put_into_plate + put_into_bowl with
-# pick_up kept in the mix as rehearsal, warm-started WEIGHTS-ONLY from the
-# phase-1 pick_up adapter.
+# Phase 1 of the manipulation curriculum: pick_up only, warm-started
+# WEIGHTS-ONLY from a move-to adapter.
 #
 # Weights-only (not --resume-checkpoint) is deliberate. A full resume would also
-# restore phase 1's per-instruction approach-curriculum caps and optimizer
-# moments; phase 1 never trained the placement instructions, so their caps carry
-# no information, and pick_up's cap was earned under a different scene
-# distribution. Weights-only keeps the learned behaviour and restarts the
-# schedule at step 0.
+# restore the move-to run's approach-curriculum state and optimizer moments; the
+# curriculum cap it reached was earned on a different task, and reusing it would
+# drop pick_up straight into far starts with no grasp skill -- the exact failure
+# that stalled move-to for 7.8M steps. Weights-only keeps the learned behaviour
+# and restarts the schedule at step 0.
 set -euo pipefail
 
 REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
 ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
-CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_catch_release_dense_grpo_mjlab_resume.yaml}"
+CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml}"
 WARMSTART_CHECKPOINT="${WARMSTART_CHECKPOINT:-}"
-MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-15000000}"
+MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-10000000}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
-# 256, not 512. The 512-world SmolVLA inference activations are the dominant GPU
-# peak; at 512 the combined PyTorch+Warp footprint sat on the A40 limit and Warp
-# OOM'd mid-run once the LoRA backward was added. This env var OVERRIDES the
-# config value, so it must stay at 256 for as long as train_vla_lora is true.
+# 256, not 512: the 512-world SmolVLA inference activations are the dominant GPU
+# peak, and at 512 the combined PyTorch+Warp footprint sat on the card limit and
+# Warp OOM'd mid-run once the LoRA backward was added.
 SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-256}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 ALLOW_LEGACY_SIMULATOR_CHECKPOINT="${ALLOW_LEGACY_SIMULATOR_CHECKPOINT:-0}"
@@ -33,16 +31,16 @@ source "$SCRIPT_DIR/huggingface_public_models.sh"
 configure_huggingface_public_models
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-RUN_NAME="${RUN_NAME:-cdpr_smolvla_catch_release_dense_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
+RUN_NAME="${RUN_NAME:-cdpr_smolvla_pick_up_warmstart_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
 RUN_DIR="$REPO_ROOT/runs/$RUN_NAME"
 
 if [[ -n "${CHECKPOINT:-}" || -n "${RLVLA_SMOLVLA_RESUME_CHECKPOINT:-}" ]]; then
   echo "This launcher warm-starts weights only; do not set CHECKPOINT/RLVLA_SMOLVLA_RESUME_CHECKPOINT." >&2
-  echo "Pass the phase-1 pick_up adapter as WARMSTART_CHECKPOINT instead." >&2
+  echo "Pass the move-to adapter as WARMSTART_CHECKPOINT instead." >&2
   exit 2
 fi
 if [[ -z "$WARMSTART_CHECKPOINT" ]]; then
-  echo "WARMSTART_CHECKPOINT is required: point it at the phase-1 pick_up smolvla_grpo_adapter.pt." >&2
+  echo "WARMSTART_CHECKPOINT is required: point it at the move-to smolvla_grpo_adapter.pt." >&2
   exit 2
 fi
 if [[ "$DRY_RUN" != "1" && ! -f "$WARMSTART_CHECKPOINT" ]]; then
@@ -63,7 +61,7 @@ if [[ "${#visible_gpus[@]}" -ne 2 ]]; then
   exit 2
 fi
 if [[ ! -f "$CONFIG" ]]; then
-  echo "MJLab catch/release config not found: $CONFIG" >&2
+  echo "MJLab pick-up config not found: $CONFIG" >&2
   exit 2
 fi
 
@@ -94,7 +92,7 @@ train_cmd=(
   --execute
 )
 
-printf 'mode=catch_release_weights_only_warmstart\n'
+printf 'mode=pick_up_weights_only_warmstart\n'
 printf 'warmstart_checkpoint=%s\n' "$WARMSTART_CHECKPOINT"
 printf 'run_dir=%s\n' "$RUN_DIR"
 printf 'tensorboard_dir=%s\n' "$RUN_DIR/rl/tensorboard"
@@ -105,7 +103,7 @@ printf 'cuda_visible_devices=%s ranks=2\n' "$CUDA_VISIBLE_DEVICES"
 printf 'worlds_per_rank=%s groups_per_rank=%s server_worlds=%s\n' \
   "$WORLDS_PER_RANK" "$((WORLDS_PER_RANK / 8))" "$((2 * WORLDS_PER_RANK))"
 printf 'smolvla_inference_microbatch_size=%s\n' "$SMOLVLA_MICROBATCH_SIZE"
-printf 'watch: validation/by_instruction/<name>/success_rate and curriculum/start_max_goal_distance_m/<name>\n'
+printf 'watch: curriculum/start_max_goal_distance_m/pick_up and validation/by_instruction/pick_up/success_rate\n'
 printf 'command:'
 printf ' %q' "${train_cmd[@]}"
 printf '\n'

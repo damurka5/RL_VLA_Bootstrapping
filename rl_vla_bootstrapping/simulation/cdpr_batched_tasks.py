@@ -176,8 +176,28 @@ class BatchedCatchReleaseDenseReward:
     distance_include_z: bool = False
     plate_release_height: float = 0.045
     bowl_release_height: float = 0.10
+    # Shaping window for the placement distance term. This used to be the
+    # SUCCESS radius (plate 0.091, bowl 0.057), which made the term flat over
+    # the whole endgame: with scale 0.08 the plate reward is >= 0.988 anywhere
+    # inside 10 cm, so eight group candidates landing 3-6 cm out score within
+    # ~0.003 of each other. GRPO then divides that by the group std, turning
+    # pure rollout noise into full-magnitude advantages. Shaping and success are
+    # separate concerns -- success still uses the real radius, while the reward
+    # pulls toward the receptacle centre on the same curve every other
+    # instruction uses. 0.0 keeps the legacy behaviour (window = success radius).
+    placement_distance_window: float = 0.02
     pick_grasp_height_offset: float = 0.08
     pick_distance_window: float = 0.02
+    # Bounded fine-approach term, shared by placement and pick-up. The coarse
+    # term (scale 0.08) saturates ~2 cm out, but a grasp needs the pads within
+    # millimetres and a release needs the object over the receptacle -- so
+    # between the coarse plateau and the contact bonus there is a dead band with
+    # no gradient at all. This second inverse-polynomial on the same distance,
+    # with a much tighter scale, fills it while staying bounded in
+    # [0, fine_distance_reward_weight]. Weight 0.0 disables it.
+    fine_distance_reward_weight: float = 0.0
+    fine_distance_reward_scale: float = 0.01
+    fine_distance_window: float = 0.0
     pick_grasp_bonus: float = 1.0
     # Partial credit for bilateral finger contact before the grasp latches.
     # Without it there is no gradient between "hovering at the grasp point with
@@ -246,6 +266,19 @@ class BatchedCatchReleaseDenseReward:
             ),
             plate_release_height=number("put_plate_release_height", 0.045),
             bowl_release_height=number("put_bowl_release_height", 0.10),
+            placement_distance_window=max(
+                number("placement_distance_window", 0.02), 0.0
+            ),
+            fine_distance_reward_weight=max(
+                number("catch_release_fine_distance_reward_weight", 0.0), 0.0
+            ),
+            fine_distance_reward_scale=max(
+                number("catch_release_fine_distance_reward_scale", 0.01),
+                1.0e-6,
+            ),
+            fine_distance_window=max(
+                number("catch_release_fine_distance_window", 0.0), 0.0
+            ),
             pick_contact_bonus=number("pick_contact_bonus", 0.25),
             pick_grasp_height_offset=number(
                 "pick_grasp_height_offset", 0.08
@@ -436,6 +469,36 @@ def inverse_polynomial_distance_reward(
     normalized = error / max(float(scale), 1.0e-6)
     return float(weight) / (
         1.0 + normalized.pow(max(float(exponent), 1.0e-6))
+    )
+
+
+def _fine_distance_reward(
+    distance: Any,
+    *,
+    config: BatchedCatchReleaseDenseReward,
+) -> Any:
+    """Tight second potential that fills the coarse term's dead band.
+
+    The coarse shaping (scale 0.08) is already >= 0.94 two centimetres from the
+    grasp/release point, but a grasp needs the pads within a few millimetres and
+    the contact bonus only pays once they touch. Between those two radii nothing
+    in the reward changes, so the last centimetre of the approach -- the part
+    that decides whether the episode grasps at all -- carries no gradient. This
+    adds a bounded inverse-polynomial on the same distance at a much tighter
+    scale, so the pull keeps increasing all the way in.
+    """
+
+    import torch
+
+    weight = float(config.fine_distance_reward_weight)
+    if weight <= 0.0:
+        return torch.zeros_like(distance)
+    return inverse_polynomial_distance_reward(
+        distance,
+        window_high=float(config.fine_distance_window),
+        scale=config.fine_distance_reward_scale,
+        weight=weight,
+        exponent=config.distance_reward_exponent,
     )
 
 
@@ -799,12 +862,25 @@ def evaluate_active_sparse_tasks(
             placement_distance = torch.linalg.vector_norm(
                 ee_position - placement_hover, dim=-1
             )
+        # Shaping window, NOT the success radius: see
+        # BatchedCatchReleaseDenseReward.placement_distance_window. 0.0 restores
+        # the legacy "window = success radius" behaviour.
+        placement_window = (
+            torch.full_like(
+                container_radius,
+                float(catch_release_dense_reward.placement_distance_window),
+            )
+            if float(catch_release_dense_reward.placement_distance_window) > 0.0
+            else container_radius
+        )
         placement_distance_reward = inverse_polynomial_distance_reward(
             placement_distance,
-            window_high=container_radius,
+            window_high=placement_window,
             scale=catch_release_dense_reward.distance_reward_scale,
             weight=catch_release_dense_reward.distance_reward_weight,
             exponent=catch_release_dense_reward.distance_reward_exponent,
+        ) + _fine_distance_reward(
+            placement_distance, config=catch_release_dense_reward
         )
         placement_reward = (
             placement_distance_reward
@@ -823,6 +899,8 @@ def evaluate_active_sparse_tasks(
             scale=catch_release_dense_reward.distance_reward_scale,
             weight=catch_release_dense_reward.distance_reward_weight,
             exponent=catch_release_dense_reward.distance_reward_exponent,
+        ) + _fine_distance_reward(
+            pick_grasp_distance, config=catch_release_dense_reward
         )
         normalized_lift = (
             target_lift

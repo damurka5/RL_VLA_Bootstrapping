@@ -16,15 +16,23 @@ CONFIG = (
     / "examples"
     / "cdpr_smolvla_catch_release_dense_grpo_mjlab_resume.yaml"
 )
-CHECKPOINT = (
-    "/root/repo/RL_VLA_Bootstrapping/runs/"
-    "cdpr_smolvla_move_to_scratch_mjwarp_w512_20260719_081705/"
-    "rl/step_5000081/smolvla_grpo_adapter.pt"
+PICK_UP_CONFIG = (
+    ROOT
+    / "configs"
+    / "examples"
+    / "cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml"
 )
+MOVE_TO_CONFIG = (
+    ROOT
+    / "configs"
+    / "examples"
+    / "cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml"
+)
+STAGED_CONFIGS = (MOVE_TO_CONFIG, PICK_UP_CONFIG, CONFIG)
 
 
 class CDPRCatchReleaseConfigTests(unittest.TestCase):
-    def test_resume_profile_uses_random_workspace_and_15m_additional_steps(self):
+    def test_catch_release_profile_uses_random_workspace_and_warmstart(self):
         config = load_project_config(CONFIG)
         plan = BootstrapPipeline(config).build_stage_plans(
             ROOT / "runs" / "catch_release_unit", ["rl"]
@@ -45,15 +53,11 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
         self.assertEqual(
             config.task.metadata["ee_workspace_x_bounds"], [-0.28, 0.28]
         )
+        # Weights-only handoff: the phase must not pin a resume checkpoint, or
+        # it would also restore the previous phase's curriculum caps/optimizer.
+        self.assertNotIn("--resume-checkpoint", command)
         self.assertEqual(
-            config.task.metadata["random_workspace_min_goal_xy_distance"],
-            0.10,
-        )
-        self.assertEqual(
-            command[command.index("--resume-checkpoint") + 1], CHECKPOINT
-        )
-        self.assertEqual(
-            command[command.index("--max-train-steps") + 1], "20000081"
+            command[command.index("--max-train-steps") + 1], "15000000"
         )
         self.assertEqual(
             command[command.index("--complex-training-approach") + 1],
@@ -66,76 +70,144 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
             "reverse_frontier_profile", config.task.metadata
         )
 
-    def test_launcher_defaults_to_exact_checkpoint_and_15m_continuation(self):
-        source = (
-            ROOT
-            / "scripts"
-            / "train_cdpr_smolvla_catch_release_grpo_mjlab_dual_remote.sh"
-        ).read_text(encoding="utf-8")
-        self.assertIn(f'CHECKPOINT="${{CHECKPOINT:-{CHECKPOINT}}}"', source)
-        self.assertIn(
-            'ADDITIONAL_TRAIN_STEPS="${ADDITIONAL_TRAIN_STEPS:-15000000}"',
-            source,
-        )
-        self.assertIn(
-            'MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-$((START_STEP + ADDITIONAL_TRAIN_STEPS))}"',
-            source,
-        )
-        self.assertIn('WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"', source)
+    def test_every_staged_config_keeps_the_move_to_stability_fixes(self):
+        """Each phase hands weights to the next through a strict load.
 
-    def test_two_stage_launcher_restarts_grpo_with_discovered_checkpoint(self):
+        The residual architecture and the entropy/log-std settings that stopped
+        move-to from diffusing into target-independent homing have to be
+        identical across all three phases: an architecture mismatch fails the
+        load outright, and a hyperparameter regression silently reintroduces a
+        failure that already cost a run.
+        """
+
+        for path in STAGED_CONFIGS:
+            config = load_project_config(path)
+            args = config.training.rl.args
+            with self.subTest(config=config.project.name):
+                self.assertTrue(args["residual_vision_features"])
+                self.assertEqual(args["residual_vision_dim"], 512)
+                self.assertTrue(args["train_vla_lora"])
+                self.assertEqual(args["lora_rank"], 16)
+                self.assertTrue(args["lora_include_mlp"])
+                self.assertEqual(args["state_dim"], 6)
+                self.assertFalse(args["residual_relative_target"])
+                self.assertEqual(args["residual_scale"], 1.0)
+                self.assertEqual(args["max_log_std"], -0.3)
+                self.assertEqual(args["entropy_coef"], 0.0005)
+                # 512 sat on the A40 limit and OOM'd Warp once the LoRA
+                # backward was added.
+                self.assertEqual(
+                    args["smolvla_inference_microbatch_size"], 256
+                )
+
+    def test_grasp_phases_run_a_success_gated_approach_curriculum(self):
+        for path in (PICK_UP_CONFIG, CONFIG):
+            metadata = load_project_config(path).task.metadata
+            with self.subTest(config=path.name):
+                self.assertTrue(
+                    metadata[
+                        "random_workspace_start_distance_curriculum_enabled"
+                    ]
+                )
+                self.assertEqual(
+                    metadata["random_workspace_start_distance_initial"], 0.03
+                )
+                self.assertTrue(
+                    metadata["curriculum_horizon_coupling_enabled"]
+                )
+                # Longer than move-to's 8: a grasp still has to close the
+                # gripper and lift after arriving at the hover point.
+                self.assertGreaterEqual(
+                    metadata["curriculum_horizon_min"], 16
+                )
+                # Scenes start distractor-free and unlock more objects later.
+                self.assertEqual(metadata["min_scene_objects"], 1)
+                self.assertTrue(metadata["scene_object_curriculum_steps"])
+
+    def test_grasp_phases_share_one_dense_shaping_curve(self):
+        for path in (PICK_UP_CONFIG, CONFIG):
+            metadata = load_project_config(path).task.metadata
+            with self.subTest(config=path.name):
+                self.assertEqual(
+                    metadata["catch_release_distance_reward_scale"], 0.08
+                )
+                self.assertEqual(
+                    metadata["catch_release_distance_reward_weight"], 1.0
+                )
+                self.assertEqual(metadata["pick_distance_window"], 0.02)
+                self.assertEqual(
+                    metadata["catch_release_fine_distance_reward_weight"], 0.5
+                )
+                self.assertEqual(
+                    metadata["catch_release_fine_distance_reward_scale"], 0.01
+                )
+        # Placement shaping must use the same window as pick_up, NOT the plate
+        # and bowl success radii, which flatten the term over the whole endgame.
+        placement = load_project_config(CONFIG).task.metadata
+        self.assertEqual(
+            placement["placement_distance_window"],
+            placement["pick_distance_window"],
+        )
+        self.assertNotEqual(
+            placement["placement_distance_window"],
+            placement["put_plate_xy_tolerance"],
+        )
+
+    def test_launcher_warm_starts_weights_only_at_microbatch_256(self):
+        for name in (
+            "train_cdpr_smolvla_pick_up_grpo_mjlab_dual_remote.sh",
+            "train_cdpr_smolvla_catch_release_grpo_mjlab_dual_remote.sh",
+        ):
+            source = (ROOT / "scripts" / name).read_text(encoding="utf-8")
+            with self.subTest(launcher=name):
+                self.assertIn(
+                    'WARMSTART_CHECKPOINT="${WARMSTART_CHECKPOINT:-}"', source
+                )
+                self.assertIn(
+                    'export RLVLA_SMOLVLA_WARMSTART_CHECKPOINT="$WARMSTART_CHECKPOINT"',
+                    source,
+                )
+                # A resume would restore the previous phase's curriculum caps.
+                self.assertIn("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT", source)
+                self.assertIn(
+                    'SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-256}"',
+                    source,
+                )
+                self.assertIn(
+                    'WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"', source
+                )
+
+    def test_staged_launcher_chains_three_phases_by_discovered_checkpoint(self):
         source = (
             ROOT
             / "scripts"
             / "train_cdpr_smolvla_move_to_then_catch_release_grpo_mjlab_dual_remote.sh"
         ).read_text(encoding="utf-8")
-        phase_1 = source.index('bash "$MOVE_TO_LAUNCHER"')
-        discovery = source.index(
-            'MOVE_TO_CHECKPOINT="$(latest_move_to_checkpoint)"'
-        )
-        phase_2 = source.rindex('bash "$CATCH_RELEASE_LAUNCHER"')
-        self.assertLess(phase_1, discovery)
-        self.assertLess(discovery, phase_2)
+        phase_1 = source.rindex('bash "$MOVE_TO_LAUNCHER"')
+        move_to_discovery = source.index('MOVE_TO_CHECKPOINT="$(latest_checkpoint')
+        pick_up_discovery = source.index('PICK_UP_CHECKPOINT="$(latest_checkpoint')
+        self.assertLess(phase_1, move_to_discovery)
+        self.assertLess(move_to_discovery, pick_up_discovery)
         self.assertIn(
-            'START_STEP="$(checkpoint_step "$MOVE_TO_CHECKPOINT")"',
+            "curriculum=per_instruction_success_gated lchol=disabled "
+            "handoff=weights_only",
             source,
         )
-        self.assertIn(
-            'MAX_TRAIN_STEPS="$((START_STEP + CATCH_RELEASE_ADDITIONAL_TRAIN_STEPS))"',
-            source,
-        )
-        self.assertIn(
-            'CATCH_RELEASE_ADDITIONAL_TRAIN_STEPS="${CATCH_RELEASE_ADDITIONAL_TRAIN_STEPS:-15000000}"',
-            source,
-        )
-        self.assertIn(
-            'MOVE_TO_SMOLVLA_MICROBATCH_SIZE="${MOVE_TO_SMOLVLA_MICROBATCH_SIZE:-${SMOLVLA_MICROBATCH_SIZE:-512}}"',
-            source,
-        )
-        self.assertIn(
-            'CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE="${CATCH_RELEASE_SMOLVLA_MICROBATCH_SIZE:-${SMOLVLA_MICROBATCH_SIZE:-512}}"',
-            source,
-        )
-        self.assertIn(
-            'curriculum=none lchol=disabled checkpoint_handoff=full_grpo_state',
-            source,
-        )
-        self.assertIn(
-            'assert_plain_grpo_config "$MOVE_TO_CONFIG"', source
-        )
-        self.assertIn(
-            'assert_plain_grpo_config "$CATCH_RELEASE_CONFIG"', source
-        )
+        for config_var in (
+            "$MOVE_TO_CONFIG",
+            "$PICK_UP_CONFIG",
+            "$CATCH_RELEASE_CONFIG",
+        ):
+            self.assertIn(
+                f'assert_plain_grpo_config "{config_var}"', source
+            )
+        # The handoff guard: a config missing the vision residual would fail the
+        # strict weight load only after the phase had already started.
+        self.assertIn("residual_vision_features:[[:space:]]+true", source)
 
-    def test_both_pipeline_configs_are_plain_grpo_without_shells_or_lchol(self):
-        move_to = load_project_config(
-            ROOT
-            / "configs"
-            / "examples"
-            / "cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml"
-        )
-        catch_release = load_project_config(CONFIG)
-        for config in (move_to, catch_release):
+    def test_all_staged_configs_are_plain_grpo_without_shells_or_lchol(self):
+        for path in STAGED_CONFIGS:
+            config = load_project_config(path)
             with self.subTest(config=config.project.name):
                 self.assertEqual(
                     config.training.rl.algorithm,
@@ -148,6 +220,27 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
                 self.assertNotIn(
                     "reverse_frontier_profile", config.task.metadata
                 )
+                self.assertNotIn(
+                    "resume_checkpoint", config.training.rl.args
+                )
+
+    def test_pick_up_phase_trains_only_graspable_objects(self):
+        config = load_project_config(PICK_UP_CONFIG)
+        self.assertEqual(config.task.instruction_types, ("pick_up",))
+        # Plate and bowl have fitted_gripper_opening 0.0 and cannot be lifted,
+        # so they must not appear even as distractors in the pick-up phase.
+        for key in (
+            "target_object_pool",
+            "scene_object_pool",
+            "distractor_object_pool",
+        ):
+            pool = config.task.metadata[key]
+            with self.subTest(pool=key):
+                self.assertNotIn("robocasa_plate", pool)
+                self.assertNotIn("robocasa_bowl", pool)
+        self.assertFalse(
+            config.task.metadata["placement_start_with_caught_object"]
+        )
 
 
 @unittest.skipUnless(
@@ -368,9 +461,245 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
         self.assertTrue(
             bool(result.diagnostics["wrong_place_drop"][1].item())
         )
-        self.assertAlmostEqual(float(result.rewards[0].item()), 3.0, places=5)
+        # World 0 sits 0.08 m from the plate centre. Success still uses the real
+        # 0.091 m plate radius, but the SHAPING window is 0.02 m, so the distance
+        # term is 1/(1+((0.08-0.02)/0.08)^2) = 0.64 rather than a flat 1.0.
+        # Decoupling the two is the whole point: with the window tied to the
+        # success radius every candidate inside the plate scored identically.
+        self.assertAlmostEqual(float(result.rewards[0].item()), 2.64, places=5)
         self.assertAlmostEqual(float(result.rewards[2].item()), 2.0, places=5)
         self.assertAlmostEqual(float(result.rewards[3].item()), 5.0, places=5)
+
+    def test_placement_shaping_is_not_flat_across_the_receptacle(self):
+        """Placement and pick-up must share one non-degenerate shaping curve.
+
+        The regression this guards: taking the shaping window from the success
+        radius (plate 0.091 m) made the reward >= 0.988 anywhere inside 10 cm.
+        Eight GRPO candidates then scored within ~0.003 of each other, and the
+        group normalization divided that by a near-zero std -- amplifying pure
+        rollout noise into full-magnitude advantages.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            BatchedCatchReleaseDenseReward,
+            _fine_distance_reward,
+            inverse_polynomial_distance_reward,
+        )
+
+        config = BatchedCatchReleaseDenseReward.from_metadata(
+            {
+                "catch_release_distance_reward_scale": 0.08,
+                "catch_release_distance_reward_weight": 1.0,
+                "placement_distance_window": 0.02,
+                "pick_distance_window": 0.02,
+                "catch_release_fine_distance_reward_weight": 0.5,
+                "catch_release_fine_distance_reward_scale": 0.01,
+            }
+        )
+        self.assertNotEqual(
+            config.placement_distance_window, config.plate_radius
+        )
+
+        def shaping(distance, window):
+            values = torch.as_tensor(distance, dtype=torch.float32)
+            return inverse_polynomial_distance_reward(
+                values,
+                window_high=torch.full_like(values, float(window)),
+                scale=config.distance_reward_scale,
+                weight=config.distance_reward_weight,
+                exponent=config.distance_reward_exponent,
+            ) + _fine_distance_reward(values, config=config)
+
+        distances = [0.0, 0.01, 0.02, 0.03, 0.05, 0.08]
+        placement = shaping(distances, config.placement_distance_window)
+        pick = shaping(distances, config.pick_distance_window)
+        # Identical curve for placement and pick-up: one reward scale across
+        # every instruction the phase trains.
+        self.assertTrue(torch.allclose(placement, pick))
+        # Strictly decreasing, so every centimetre of progress is scored --
+        # including the last one, where the coarse term alone is flat.
+        for nearer, farther in zip(placement[:-1], placement[1:]):
+            self.assertGreater(float(nearer.item()), float(farther.item()))
+        # And the spread across a realistic group is large enough that the
+        # group-normalized advantage tracks real progress, not noise.
+        self.assertGreater(float(placement.std().item()), 0.1)
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "torch is required for the per-instruction approach curriculum",
+)
+class CDPRPerInstructionCurriculumTests(unittest.TestCase):
+    """An easy instruction must not widen a hard one's start distance."""
+
+    METADATA = {
+        "random_workspace_start_distance_curriculum_enabled": True,
+        "random_workspace_start_distance_initial": 0.03,
+        "random_workspace_start_distance_final": 0.34,
+        "random_workspace_start_distance_increment": 0.02,
+        "random_workspace_start_distance_promote_pass_rate": 0.03,
+        "random_workspace_start_distance_demote_pass_rate": 0.01,
+        "random_workspace_start_distance_cooldown_updates": 1,
+        "random_workspace_start_distance_pass_rate_ema_decay": 0.0,
+    }
+
+    def _curriculum(self, names):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            PerInstructionApproachCurriculum,
+        )
+
+        return PerInstructionApproachCurriculum(
+            self.METADATA, instruction_types=names
+        )
+
+    def test_a_passing_instruction_does_not_promote_a_failing_one(self):
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        curriculum = self._curriculum(
+            ("put_into_plate", "put_into_bowl", "pick_up")
+        )
+        for _ in range(6):
+            curriculum.observe(
+                {
+                    "put_into_plate": 0.50,
+                    "put_into_bowl": 0.50,
+                    "pick_up": 0.0,
+                }
+            )
+        caps = curriculum.caps_by_instruction_id()
+        plate_cap = caps[INSTRUCTION_TO_ID["put_into_plate"]]
+        pick_cap = caps[INSTRUCTION_TO_ID["pick_up"]]
+        self.assertGreater(plate_cap, 0.03)
+        # pick_up never passed, so it keeps the close starts it still needs.
+        self.assertAlmostEqual(pick_cap, 0.03, places=6)
+
+    def test_an_instruction_absent_this_update_is_not_scored_as_zero(self):
+        """Instruction sampling is random per group, so a task can be missing.
+
+        Feeding it a zero would ratchet its EMA down and eventually demote a cap
+        the policy had genuinely earned.
+        """
+
+        curriculum = self._curriculum(("put_into_plate", "pick_up"))
+        for _ in range(6):
+            curriculum.observe({"pick_up": 0.50})
+        before = dict(curriculum.caps_by_instruction_id())
+        for _ in range(6):
+            curriculum.observe({"put_into_plate": 0.50})
+        after = curriculum.caps_by_instruction_id()
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        pick_id = INSTRUCTION_TO_ID["pick_up"]
+        self.assertEqual(after[pick_id], before[pick_id])
+
+    def test_state_round_trips_and_accepts_legacy_single_curriculum(self):
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        curriculum = self._curriculum(("put_into_plate", "pick_up"))
+        for _ in range(4):
+            curriculum.observe({"put_into_plate": 0.5, "pick_up": 0.0})
+        restored = self._curriculum(("put_into_plate", "pick_up"))
+        restored.load_state_dict(curriculum.state_dict())
+        self.assertEqual(
+            restored.caps_by_instruction_id(),
+            curriculum.caps_by_instruction_id(),
+        )
+        # A checkpoint written before the split stored one flat entry; replay it
+        # into every instruction instead of silently resetting to the initial.
+        legacy = self._curriculum(("put_into_plate", "pick_up"))
+        legacy.load_state_dict(
+            {"cap": 0.11, "pass_rate_ema": 0.2, "cooldown": 0}
+        )
+        caps = legacy.caps_by_instruction_id()
+        self.assertAlmostEqual(
+            caps[INSTRUCTION_TO_ID["pick_up"]], 0.11, places=6
+        )
+
+    def test_resetter_applies_each_instruction_its_own_start_cap(self):
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+            RankLocalCurriculum,
+        )
+        from rl_vla_bootstrapping.policy.rank_local_grpo import (
+            RankLocalGroupLayout,
+        )
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        layout = RankLocalGroupLayout(
+            worlds_per_rank=64, groups_per_rank=8, group_size=8
+        )
+        metadata = {
+            "random_workspace_gripper_start": True,
+            "placement_start_with_caught_object": True,
+            "random_workspace_min_goal_xy_distance": 0.10,
+            "ee_workspace_x_bounds": [-0.28, 0.28],
+            "ee_workspace_y_bounds": [-0.28, 0.28],
+            "ee_workspace_z_bounds": [0.29, 0.40],
+            "curriculum_horizon_coupling_enabled": True,
+            "curriculum_horizon_min": 16,
+            "curriculum_horizon_max": 32,
+            "random_workspace_start_distance_initial": 0.03,
+            "random_workspace_start_distance_final": 0.34,
+        }
+        objects = (
+            "robocasa_apple",
+            "robocasa_banana",
+            "robocasa_plate",
+            "robocasa_bowl",
+        )
+        # pick_up stays pinned at the 3 cm foothold while placement runs wide.
+        caps = {
+            INSTRUCTION_TO_ID["pick_up"]: 0.03,
+            INSTRUCTION_TO_ID["put_into_plate"]: 0.30,
+        }
+        observed = {"pick_up": [], "put_into_plate": []}
+        for update_index in range(12):
+            backend = CDPRCatchReleaseRewardTests._fake_backend(torch)
+            resetter = BatchedReverseFrontierResetter(
+                backend=backend,
+                layout=layout,
+                curriculum=RankLocalCurriculum(device=backend.device),
+                rank=0,
+                base_seed=7,
+                instruction_types=("pick_up", "put_into_plate"),
+                allowed_objects=objects,
+                task_metadata=metadata,
+            )
+            resetter.set_random_start_max_goal_distance(caps)
+            reset = resetter.reset(update_index=update_index, round_index=0)
+            ee = backend.ee_positions
+            instruction_ids = reset.task_state.instruction_ids
+            for name in observed:
+                mask = instruction_ids == INSTRUCTION_TO_ID[name]
+                if not bool(mask.any().item()):
+                    continue
+                # pick_up shapes toward the target, placement toward the
+                # receptacle in slot 1.
+                slot = 0 if name == "pick_up" else 1
+                goal = backend.object_positions[:, slot]
+                distance = torch.linalg.vector_norm(
+                    ee[:, :2] - goal[:, :2], dim=-1
+                )
+                observed[name].extend(distance[mask].tolist())
+
+        self.assertTrue(observed["pick_up"])
+        self.assertTrue(observed["put_into_plate"])
+        self.assertLessEqual(max(observed["pick_up"]), 0.03 + 1.0e-4)
+        # Placement is genuinely sampling farther starts, i.e. the caps are
+        # applied per instruction rather than collapsing to a single value.
+        self.assertGreater(max(observed["put_into_plate"]), 0.05)
 
 
 if __name__ == "__main__":

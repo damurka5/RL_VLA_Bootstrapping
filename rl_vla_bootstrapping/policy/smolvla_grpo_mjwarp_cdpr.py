@@ -62,6 +62,8 @@ from rl_vla_bootstrapping.simulation.cdpr_backend import (
     create_cdpr_backend,
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+    ACTIVE_INSTRUCTION_TYPES,
+    INSTRUCTION_TO_ID,
     BatchedCatchReleaseDenseReward,
     BatchedMoveToDistanceReward,
 )
@@ -540,6 +542,11 @@ def _synchronize_validation_rounds(
         dtype=torch.float64,
         device=device,
     )
+    instruction_count = len(ACTIVE_INSTRUCTION_TYPES)
+    instruction_counts = torch.zeros(
+        (instruction_count,), dtype=torch.float64, device=device
+    )
+    instruction_successes = torch.zeros_like(instruction_counts)
     group_size = int(rounds[0].candidate_success.shape[1])
     for item in rounds:
         catalog_ids = item.group_target_catalog_ids.repeat_interleave(
@@ -574,6 +581,12 @@ def _synchronize_validation_rounds(
         distances.index_add_(
             0, catalog_ids, torch.where(finite_distances, flat_distances, zero)
         )
+        if item.group_instruction_ids is not None:
+            instruction_ids = item.group_instruction_ids.repeat_interleave(
+                group_size
+            ).to(dtype=torch.int64)
+            instruction_counts.index_add_(0, instruction_ids, one)
+            instruction_successes.index_add_(0, instruction_ids, flat_success)
         environment_actions += float(
             item.metrics.get("validation/environment_actions", 0.0)
         )
@@ -586,6 +599,8 @@ def _synchronize_validation_rounds(
             distances,
             reward_counts,
             distance_counts,
+            instruction_counts,
+            instruction_successes,
         ):
             dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(environment_actions, op=dist.ReduceOp.SUM)
@@ -641,6 +656,20 @@ def _synchronize_validation_rounds(
         )
         metrics[f"{prefix}/final_xy_distance_mean_m"] = float(
             distances[catalog_index].item() / finite_distances_here
+        )
+    # Per-instruction success. Without this, a run mixing pick_up with the two
+    # pre-grasped placement tasks reports one blended number: placement can carry
+    # it while pick_up sits at zero for millions of steps unnoticed.
+    for instruction_index, instruction_name in enumerate(
+        ACTIVE_INSTRUCTION_TYPES
+    ):
+        episodes = float(instruction_counts[instruction_index].item())
+        if episodes <= 0.0:
+            continue
+        prefix = f"validation/by_instruction/{instruction_name}"
+        metrics[f"{prefix}/episodes"] = episodes
+        metrics[f"{prefix}/success_rate"] = float(
+            instruction_successes[instruction_index].item() / episodes
         )
     return metrics
 
@@ -802,6 +831,90 @@ class ApproachDistanceCurriculum:
         self.cap = min(self.final, max(self.initial, float(state.get("cap", self.cap))))
         self.pass_rate_ema = float(state.get("pass_rate_ema", self.pass_rate_ema))
         self._cooldown = int(float(state.get("cooldown", 0)))
+
+
+class PerInstructionApproachCurriculum:
+    """One success-gated approach curriculum per configured instruction.
+
+    A single shared cap is wrong as soon as the run trains more than one
+    instruction: the gate reads the pass rate averaged over every task, so the
+    easiest one drags the cap up for all of them. Concretely, put_into_plate
+    starts with the object already in the gripper and only has to servo to a
+    receptacle, while pick_up has to descend, close, and lift -- mixing them,
+    placement successes promote the cap and pick_up loses exactly the close
+    starts it needs to get its first grasp. Each instruction now advances only
+    on its own successes.
+
+    A run with one instruction behaves identically to the single curriculum.
+    """
+
+    def __init__(
+        self,
+        metadata: Mapping[str, Any],
+        *,
+        instruction_types: Sequence[str],
+    ) -> None:
+        names = tuple(instruction_types) or (ACTIVE_INSTRUCTION_TYPES[0],)
+        self.instruction_names = names
+        self._by_name = {
+            name: ApproachDistanceCurriculum(metadata) for name in names
+        }
+
+    @property
+    def enabled(self) -> bool:
+        return any(item.enabled for item in self._by_name.values())
+
+    def caps_by_instruction_id(self) -> dict[int, float]:
+        return {
+            int(INSTRUCTION_TO_ID[name]): item.current_cap()
+            for name, item in self._by_name.items()
+        }
+
+    def observe(self, pass_rates: Mapping[str, float]) -> None:
+        """Fold in each instruction's own pass rate for this update.
+
+        An instruction absent from ``pass_rates`` collected no groups this
+        update (instruction sampling is random per group), so it is skipped
+        rather than fed a zero -- a spurious zero would ratchet its EMA down and
+        eventually demote a cap the policy had actually earned.
+        """
+
+        for name, item in self._by_name.items():
+            if name in pass_rates:
+                item.observe(float(pass_rates[name]))
+
+    def metrics(self) -> dict[str, float]:
+        values: dict[str, float] = {}
+        for name, item in self._by_name.items():
+            cap = item.current_cap()
+            # -1 sentinel means the cap is disabled (uncapped start).
+            values[f"curriculum/start_max_goal_distance_m/{name}"] = (
+                float(cap) if cap != float("inf") else -1.0
+            )
+            values[f"curriculum/approach_pass_rate_ema/{name}"] = float(
+                item.pass_rate_ema
+            )
+        return values
+
+    def state_dict(self) -> dict[str, Any]:
+        return {
+            name: item.state_dict() for name, item in self._by_name.items()
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any] | None) -> None:
+        if not state:
+            return
+        # Legacy single-curriculum checkpoints stored a flat {cap, pass_rate_ema,
+        # cooldown}; replay it into every instruction so a resume keeps the
+        # difficulty it had reached.
+        if "cap" in state:
+            for item in self._by_name.values():
+                item.load_state_dict(state)
+            return
+        for name, item in self._by_name.items():
+            entry = state.get(name)
+            if isinstance(entry, Mapping):
+                item.load_state_dict(entry)
 
 
 def _task_metadata(args: Any) -> dict[str, Any]:
@@ -1285,7 +1398,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
 
         scene_curriculum_steps = _scene_object_curriculum_steps(task_metadata)
-        approach_curriculum = ApproachDistanceCurriculum(task_metadata)
+        configured_instruction_names = tuple(
+            args.instruction_types or (ACTIVE_INSTRUCTION_TYPES[0],)
+        )
+        approach_curriculum = PerInstructionApproachCurriculum(
+            task_metadata, instruction_types=configured_instruction_names
+        )
         approach_curriculum.load_state_dict(
             trainer.loaded_extra_state.get("approach_curriculum")
         )
@@ -1322,8 +1440,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 curriculum_steps=scene_curriculum_steps,
                 global_step=global_step,
             )
-            start_distance_cap = approach_curriculum.current_cap()
-            resetter.set_random_start_max_goal_distance(start_distance_cap)
+            start_distance_caps = approach_curriculum.caps_by_instruction_id()
+            resetter.set_random_start_max_goal_distance(start_distance_caps)
             profile_limit = int(args.mjwarp_profile_updates)
             profile_this_update = bool(args.mjwarp_profile_timers) and (
                 profile_limit <= 0
@@ -1451,9 +1569,26 @@ def main(argv: Sequence[str] | None = None) -> None:
                 time.perf_counter() - synchronization_started
             )
             capacity = backend.capacity_status()
+            # Per-instruction success counts. These are plain sums, so the
+            # update-boundary all-reduce turns them into global counts and every
+            # rank derives the same pass rate -- which keeps the per-instruction
+            # approach curricula in lockstep without an extra collective.
+            instruction_counts: dict[str, float] = {}
+            for name in configured_instruction_names:
+                selected = task_ids == int(INSTRUCTION_TO_ID[name])
+                worlds_for_name = float(
+                    selected.sum().item() * successes.shape[1]
+                )
+                instruction_counts[
+                    f"instruction_successes/{name}"
+                ] = float(successes[selected].sum().item())
+                instruction_counts[
+                    f"instruction_worlds/{name}"
+                ] = worlds_for_name
             local_metrics = {
                 **rollout_metrics,
                 **update_metrics,
+                **instruction_counts,
                 "candidate_successes": float(successes.sum().item()),
                 "candidate_worlds": float(successes.numel()),
                 "candidate_reward_sum": float(candidate_rewards.sum().item()),
@@ -1483,12 +1618,23 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             global_step += global_selected
             update_index += 1
-            # Success-gate the approach curriculum on the global pass rate (the
-            # metric is already rank-averaged, so every rank promotes/demotes the
-            # cap identically). This affects the cap used from the next update.
-            approach_curriculum.observe(
-                synchronized_metrics.get("group_pass_rate_mean", 0.0)
-            )
+            # Success-gate each instruction's approach curriculum on ITS OWN
+            # global pass rate, so an easy task cannot promote a hard one's cap.
+            # The counts are global sums, so every rank computes the same rates
+            # and moves the caps identically. Affects the next update's caps.
+            instruction_pass_rates = {}
+            for name in configured_instruction_names:
+                worlds_for_name = synchronized_metrics.get(
+                    f"instruction_worlds/{name}", 0.0
+                )
+                if worlds_for_name > 0.0:
+                    instruction_pass_rates[name] = (
+                        synchronized_metrics.get(
+                            f"instruction_successes/{name}", 0.0
+                        )
+                        / worlds_for_name
+                    )
+            approach_curriculum.observe(instruction_pass_rates)
             if (
                 synchronized_metrics["contact_capacity_overflow_ranks"] > 0
                 or synchronized_metrics["constraint_capacity_overflow_ranks"] > 0
@@ -1509,14 +1655,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "curriculum/scene_objects_max": float(
                         scene_object_range[1]
                     ),
+                    # Per-instruction caps and pass-rate EMAs. The unsuffixed
+                    # aggregate below stays for dashboards that predate the
+                    # split; it is the widest cap in the run.
+                    **approach_curriculum.metrics(),
                     # -1 sentinel means the cap is disabled (uncapped start).
                     "curriculum/start_max_goal_distance_m": (
-                        float(start_distance_cap)
-                        if start_distance_cap != float("inf")
+                        float(max(start_distance_caps.values()))
+                        if start_distance_caps
+                        and max(start_distance_caps.values()) != float("inf")
                         else -1.0
-                    ),
-                    "curriculum/approach_pass_rate_ema": float(
-                        approach_curriculum.pass_rate_ema
                     ),
                     # Attach-time LoRA facts are repeated on every row so any
                     # tool reading the latest metrics (benchmarks, TensorBoard)
