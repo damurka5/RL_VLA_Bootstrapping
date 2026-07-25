@@ -243,17 +243,29 @@ task:
     random_workspace_start_distance_initial: 0.03
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
-    # 0.03/0.01, not 0.20/0.05: terminal 2 cm success from a 3 cm start with
-    # 1.5 cm action steps is inherently rare (the policy ends ~2-3 cm out even
-    # when well grounded), so pass_rate plateaued at ~0.045 and the 0.20 gate
-    # could never trip -- the cap stayed at 0.03 for 7.8M steps and the policy
-    # never trained on farther starts (validation stuck at 2%). At 0.03 the cap
-    # promotes once the policy is reliably close, then widening forces it to keep
-    # grounding; the 0.01 demote floor still catches a level it cannot handle.
-    random_workspace_start_distance_promote_pass_rate: 0.03
-    random_workspace_start_distance_demote_pass_rate: 0.01
+    # 0.30/0.12, not 0.03/0.01. The 0.03 gate was fitted to a broken regime: the
+    # resetter was discarding the cap, so the realized start was ~0.13 m at every
+    # setting and the pass rate could not exceed ~0.045 no matter what. With the
+    # cap actually reaching the simulator the same measurement is 0.41 at a 3 cm
+    # start and 0.06-0.20 out to 0.19 m -- so a 0.03 gate is below every value
+    # the metric can take, it is open on every update, and the "success-gated"
+    # curriculum degenerates into a fixed +0.02 per 6 updates. It marched
+    # 0.03 -> 0.19 m in 350k steps that way. 0.30 sits under the 0.41 an
+    # ungrounded policy already scores at the initial cap (so the first level
+    # still clears quickly) and above the 0.20 it scores at 0.05 (so the next one
+    # has to be earned). 0.12 sits just under the ~0.09 plateau a cap that has
+    # outrun the policy produces, so the controller can now pull back -- at 0.01
+    # demotion was unreachable. A cap that stalls here is real evidence about
+    # grounding rather than an artifact of the start distribution.
+    random_workspace_start_distance_promote_pass_rate: 0.30
+    random_workspace_start_distance_demote_pass_rate: 0.12
     random_workspace_start_distance_pass_rate_ema_decay: 0.9
-    random_workspace_start_distance_cooldown_updates: 5
+    # 15, not 5: at decay 0.9 the EMA needs ~10 updates to reflect a level, so a
+    # 5-update cooldown decided on an average still dominated by the previous
+    # cap. The EMA is also re-seeded on every cap change (see
+    # ApproachDistanceCurriculum.observe), so these 15 updates measure the new
+    # difficulty only.
+    random_workspace_start_distance_cooldown_updates: 15
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
     # Randomize the start height so the policy must learn descent, not just XY

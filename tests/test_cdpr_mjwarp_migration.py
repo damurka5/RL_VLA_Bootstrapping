@@ -159,6 +159,29 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.52]
         )
         self.assertTrue(config.task.metadata["curriculum_cap_includes_z"])
+        # The promote gate must sit inside the range the pass rate can actually
+        # take (measured 0.06-0.41 once the cap reaches the simulator). Below
+        # that range it is open on every update and the success gate degenerates
+        # into a fixed schedule, which is what marched the cap 0.03 -> 0.19 m in
+        # 350k steps.
+        self.assertEqual(
+            config.task.metadata[
+                "random_workspace_start_distance_promote_pass_rate"
+            ],
+            0.30,
+        )
+        self.assertEqual(
+            config.task.metadata[
+                "random_workspace_start_distance_demote_pass_rate"
+            ],
+            0.12,
+        )
+        self.assertEqual(
+            config.task.metadata[
+                "random_workspace_start_distance_cooldown_updates"
+            ],
+            15,
+        )
         self.assertTrue(
             config.task.metadata["move_to_object_require_z_window"]
         )

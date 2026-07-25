@@ -545,14 +545,86 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
         "random_workspace_start_distance_pass_rate_ema_decay": 0.0,
     }
 
-    def _curriculum(self, names):
+    # A gate with a realistic band, and an EMA that actually averages, for the
+    # promote/hold/demote behaviour. METADATA above uses decay 0.0 so its own
+    # tests can step the cap in a fixed number of observations.
+    GATED_METADATA = {
+        **METADATA,
+        "random_workspace_start_distance_promote_pass_rate": 0.30,
+        "random_workspace_start_distance_demote_pass_rate": 0.12,
+        "random_workspace_start_distance_cooldown_updates": 1,
+        "random_workspace_start_distance_pass_rate_ema_decay": 0.9,
+    }
+
+    def _curriculum(self, names, metadata=None):
         from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
             PerInstructionApproachCurriculum,
         )
 
         return PerInstructionApproachCurriculum(
-            self.METADATA, instruction_types=names
+            metadata if metadata is not None else self.METADATA,
+            instruction_types=names,
         )
+
+    def _gated(self):
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        curriculum = self._curriculum(
+            ("move_to_object",), metadata=self.GATED_METADATA
+        )
+
+        def cap():
+            return curriculum.caps_by_instruction_id()[
+                INSTRUCTION_TO_ID["move_to_object"]
+            ]
+
+        def feed(rate, updates):
+            for _ in range(updates):
+                curriculum.observe({"move_to_object": rate})
+
+        return curriculum, cap, feed
+
+    def test_a_pass_rate_inside_the_band_holds_the_cap(self):
+        """The gate must be able to say no.
+
+        Regression: promote was 0.03 while the realized pass rate never fell
+        below ~0.06, so the gate was open on every update and the cap advanced
+        on its cooldown alone -- 0.03 -> 0.19 m in 350k steps regardless of what
+        the policy was doing.
+        """
+
+        _, cap, feed = self._gated()
+        feed(0.20, 50)
+        self.assertAlmostEqual(cap(), 0.03, places=6)
+
+    def test_the_cap_retreats_when_the_policy_stops_keeping_up(self):
+        _, cap, feed = self._gated()
+        feed(0.90, 10)
+        promoted = cap()
+        self.assertAlmostEqual(promoted, 0.11, places=6)
+        feed(0.02, 20)
+        self.assertLess(cap(), promoted)
+        # The initial cap is the floor; demotion never goes below it.
+        self.assertAlmostEqual(cap(), 0.03, places=6)
+
+    def test_a_new_cap_is_judged_on_its_own_pass_rate(self):
+        """The EMA is re-seeded on a cap change, not carried across it.
+
+        Carried over, the average right after a promotion is still dominated by
+        the easier level's higher rate, so the next decision repeats the last
+        one and the cap ratchets away from the policy under its own momentum.
+        """
+
+        _, cap, feed = self._gated()
+        feed(0.90, 4)
+        self.assertAlmostEqual(cap(), 0.05, places=6)
+        # Two updates at a rate under the demote floor. Re-seeded, the average
+        # is 0.05 and the cap steps straight back; carrying the 0.31 it held at
+        # the previous cap would leave it parked at 0.05.
+        feed(0.05, 2)
+        self.assertAlmostEqual(cap(), 0.03, places=6)
 
     def test_a_passing_instruction_does_not_promote_a_failing_one(self):
         from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (

@@ -629,6 +629,7 @@ class ApproachDistanceCurriculum:
         self.cap = self.initial
         self.pass_rate_ema = 0.0
         self._cooldown = 0
+        self._reseed_ema = False
 
     def current_cap(self) -> float:
         return self.cap if self.enabled else float("inf")
@@ -639,9 +640,20 @@ class ApproachDistanceCurriculum:
         if not self.enabled:
             return
         rate = min(max(float(pass_rate), 0.0), 1.0)
-        self.pass_rate_ema = (
-            self.ema_decay * self.pass_rate_ema + (1.0 - self.ema_decay) * rate
-        )
+        if self._reseed_ema:
+            # First update at a new cap: start the average from what this
+            # difficulty actually scores instead of blending it into the old
+            # level's value. Carrying it over biases the next decision toward
+            # repeating the last one -- after a promotion the EMA still holds
+            # the easier level's higher rate, which promotes again, and the
+            # curriculum ratchets away from the policy on its own momentum.
+            self.pass_rate_ema = rate
+            self._reseed_ema = False
+        else:
+            self.pass_rate_ema = (
+                self.ema_decay * self.pass_rate_ema
+                + (1.0 - self.ema_decay) * rate
+            )
         if self._cooldown > 0:
             self._cooldown -= 1
             return
@@ -654,12 +666,14 @@ class ApproachDistanceCurriculum:
             changed = True
         if changed:
             self._cooldown = self.cooldown_updates
+            self._reseed_ema = True
 
     def state_dict(self) -> dict[str, float]:
         return {
             "cap": float(self.cap),
             "pass_rate_ema": float(self.pass_rate_ema),
             "cooldown": float(self._cooldown),
+            "reseed_ema": float(self._reseed_ema),
         }
 
     def load_state_dict(self, state: Mapping[str, Any] | None) -> None:
@@ -668,6 +682,7 @@ class ApproachDistanceCurriculum:
         self.cap = min(self.final, max(self.initial, float(state.get("cap", self.cap))))
         self.pass_rate_ema = float(state.get("pass_rate_ema", self.pass_rate_ema))
         self._cooldown = int(float(state.get("cooldown", 0)))
+        self._reseed_ema = bool(float(state.get("reseed_ema", 0.0)))
 
 
 class PerInstructionApproachCurriculum:
