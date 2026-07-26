@@ -22,7 +22,7 @@ remote:
     - Every GRPO group starts the gripper at a seeded random XY workspace position at Z=0.27 m, at least 0.12 m from its target; Reverse Frontier shells are disabled.
     - The GPU reward is one bounded inverse-polynomial term on the 3-D distance to the hover point (target XY at Z=0.27 m), so its magnitude stays in [0, 1] and conditions the GRPO group advantage.
     - Objects are drawn from a 3x3 candidate grid and the move-to target is a random active slot, so the goal is not pinned to one location.
-    - Scenes start with a single object and add a second and third scene object at the configured curriculum steps; the fourth MJWarp slot is never used.
+    - Scenes start with a single object and add a second at the configured curriculum step, which also restarts the start-distance curriculum; MJWarp slots three and four are never used.
     - SmolVLA camera slot three is a masked empty camera (zeroed image plus padding mask) instead of a duplicated wrist view.
     - Rank zero writes TensorBoard metrics; every 200k selected actions both ranks evaluate fixed held-out GPU scenes balanced across all eight objects and save the same policy checkpoint.
 
@@ -122,17 +122,22 @@ task:
         robocasa_plate,
         robocasa_bowl,
       ]
-    # Object-count curriculum for the 10M-step move-to phase: 1 object until 5M,
-    # then up to 2 until 8M, then up to 3 (sampled uniformly per group, so
-    # earlier counts stay in the mix). Slot four stays inactive.
+    # Object-count curriculum for the 16M-step move-to phase: one object until
+    # 8M, then up to two (sampled uniformly per group, so single-object scenes
+    # stay in the mix as rehearsal). Slots three and four stay inactive -- a
+    # third object is the NEXT run, not a second threshold inside this one,
+    # because each unlock restarts the start-distance curriculum and two
+    # restarts in one run leaves neither stage enough steps to climb back.
     min_scene_objects: 1
-    max_scene_objects: 3
-    # Pushed later (was [5e6, 8e6]): the 2nd object at 5.7M coincided with the
-    # grounding degrading (cosine 0.20->0.05, successes 72->17) -- distractors
-    # were added on a fixed schedule before single-object move-to was mastered at
-    # any distance (the start-distance curriculum was stalled). Keep it one object
-    # while the distance curriculum climbs; add complexity only once it is solved.
-    scene_object_curriculum_steps: [8000000, 9500000]
+    max_scene_objects: 2
+    # 8M, and the ONLY threshold. Two earlier attempts died here: the 2nd object
+    # at 5.7M degraded the grounding (cosine 0.20->0.05, successes 72->17)
+    # because it arrived while the distance cap was still climbing, so the policy
+    # got target selection and far starts in the same instant. The unlock now
+    # restarts the approach curriculum (cap -> initial), which re-manufactures
+    # the close starts that make target selection learnable; see
+    # ApproachDistanceCurriculum.restart.
+    scene_object_curriculum_steps: [8000000]
     distance_reward_exponent: 2.0
     success_distance: 0.02
     success_bonus: 0.0
@@ -326,7 +331,7 @@ training:
       standalone: true
       nproc_per_node: 2
     args:
-      max_train_steps: 10000000
+      max_train_steps: 16000000
       max_env_steps: 128
       chunk_size: 8
       replan_every: 4

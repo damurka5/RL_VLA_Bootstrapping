@@ -668,6 +668,31 @@ class ApproachDistanceCurriculum:
             self._cooldown = self.cooldown_updates
             self._reseed_ema = True
 
+    def restart(self) -> bool:
+        """Drop the cap back to ``initial`` and forget the pass-rate history.
+
+        Called when something outside this curriculum makes the task harder --
+        today, when the scene-object curriculum unlocks a distractor. The cap
+        the policy earned was earned on the EASIER scene, so carrying it over
+        hands the policy two difficulty increases at once: it must suddenly pick
+        the named object out of several AND do it from the far starts it had
+        just mastered on a single-object scene. That is the failure this run
+        already paid for once (grounding degraded, cosine 0.20 -> 0.05, when the
+        second object arrived at 5.7M on a fixed schedule).
+
+        Returns whether anything actually changed, so the caller can log it.
+        """
+
+        if not self.enabled or self.cap <= self.initial:
+            return False
+        self.cap = self.initial
+        # Not a re-seed: the next observation must not be treated as "the first
+        # sample at a promoted level" either, since the whole history is void.
+        self.pass_rate_ema = 0.0
+        self._reseed_ema = True
+        self._cooldown = self.cooldown_updates
+        return True
+
     def state_dict(self) -> dict[str, float]:
         return {
             "cap": float(self.cap),
@@ -734,6 +759,13 @@ class PerInstructionApproachCurriculum:
         for name, item in self._by_name.items():
             if name in pass_rates:
                 item.observe(float(pass_rates[name]))
+
+    def restart(self) -> tuple[str, ...]:
+        """Restart every instruction's cap; returns the ones that moved."""
+
+        return tuple(
+            name for name, item in self._by_name.items() if item.restart()
+        )
 
     def metrics(self) -> dict[str, float]:
         values: dict[str, float] = {}
@@ -1259,6 +1291,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         approach_curriculum.load_state_dict(
             trainer.loaded_extra_state.get("approach_curriculum")
         )
+        # Seed from the count this run STARTS at, so a resume past an unlock
+        # threshold does not read as a fresh unlock and wipe the earned cap.
+        previous_scene_object_max = _apply_scene_object_curriculum(
+            resetter,
+            curriculum_steps=scene_curriculum_steps,
+            global_step=global_step,
+        )[1]
         update_index = int(curriculum.updates)
         start_update_index = int(update_index)
         last_saved_step = int(global_step)
@@ -1292,6 +1331,24 @@ def main(argv: Sequence[str] | None = None) -> None:
                 curriculum_steps=scene_curriculum_steps,
                 global_step=global_step,
             )
+            # A distractor unlock is an outer-curriculum step, so the inner
+            # start-distance curriculum has to start over: the cap was earned on
+            # the easier scene, and keeping it would demand target selection AND
+            # the far starts at the same moment. Restarting costs the climb but
+            # re-manufactures the close starts that make the new grounding
+            # problem learnable.
+            if scene_object_range[1] > previous_scene_object_max:
+                restarted = approach_curriculum.restart()
+                if dist_ctx.is_main and restarted:
+                    print(
+                        "[smolvla-mjwarp] scene objects "
+                        f"{previous_scene_object_max} -> "
+                        f"{scene_object_range[1]} at step {global_step}; "
+                        "restarted approach curriculum for "
+                        f"{', '.join(restarted)}",
+                        flush=True,
+                    )
+                previous_scene_object_max = scene_object_range[1]
             start_distance_caps = approach_curriculum.caps_by_instruction_id()
             resetter.set_random_start_max_goal_distance(start_distance_caps)
             profile_limit = int(args.mjwarp_profile_updates)

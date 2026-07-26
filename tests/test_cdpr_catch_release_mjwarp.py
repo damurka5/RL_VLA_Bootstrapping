@@ -626,6 +626,77 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
         feed(0.05, 2)
         self.assertAlmostEqual(cap(), 0.03, places=6)
 
+    def test_an_object_unlock_restarts_the_cap(self):
+        """A distractor unlock must hand the cap back to the initial value.
+
+        The cap was earned on single-object scenes, where the instruction is
+        irrelevant -- there is nothing to disambiguate, so the policy only ever
+        learned object-agnostic servoing. Carrying that cap across the unlock
+        asks for target selection AND the far starts in the same instant, which
+        is how the 5.7M-step attempt lost its grounding (cosine 0.20 -> 0.05).
+        """
+
+        curriculum, cap, feed = self._gated()
+        feed(0.90, 10)
+        self.assertAlmostEqual(cap(), 0.11, places=6)
+
+        self.assertEqual(curriculum.restart(), ("move_to_object",))
+        self.assertAlmostEqual(cap(), 0.03, places=6)
+
+        # The restart also clears the pass-rate history, so the next promotion
+        # has to be earned on the new scene rather than inherited from the old
+        # level's average.
+        metrics = curriculum.metrics()
+        self.assertEqual(
+            metrics["curriculum/approach_pass_rate_ema/move_to_object"], 0.0
+        )
+        feed(0.90, 1)
+        self.assertAlmostEqual(cap(), 0.03, places=6)
+
+    def test_restarting_an_unpromoted_curriculum_reports_no_change(self):
+        """So the unlock does not log a restart that did not happen."""
+
+        curriculum, cap, _ = self._gated()
+        self.assertAlmostEqual(cap(), 0.03, places=6)
+        self.assertEqual(curriculum.restart(), ())
+
+    def test_object_unlock_is_detected_by_step_not_by_edge(self):
+        """Resuming past a threshold must not read as a fresh unlock.
+
+        The training loop compares the current object count against the one it
+        started at, so a run that resumes at 9M -- already past the 8M unlock --
+        keeps the cap it earned instead of restarting on its first update.
+        """
+
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            _apply_scene_object_curriculum,
+        )
+
+        class StubResetter:
+            scene_object_bounds = (1, 2)
+
+            def __init__(self) -> None:
+                self.scene_object_range = (1, 1)
+
+            def set_scene_object_range(self, low, high):
+                low = min(2, max(1, int(low)))
+                self.scene_object_range = (low, min(2, max(low, int(high))))
+
+        steps = (8_000_000,)
+
+        def count_at(step):
+            resetter = StubResetter()
+            return _apply_scene_object_curriculum(
+                resetter, curriculum_steps=steps, global_step=step
+            )[1]
+
+        self.assertEqual(count_at(0), 1)
+        self.assertEqual(count_at(7_999_999), 1)
+        self.assertEqual(count_at(8_000_000), 2)
+        # A resume at 9M seeds previous_scene_object_max at 2, so the loop's
+        # `range[1] > previous` check is false and the cap survives.
+        self.assertEqual(count_at(9_000_000), 2)
+
     def test_a_passing_instruction_does_not_promote_a_failing_one(self):
         from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
             INSTRUCTION_TO_ID,

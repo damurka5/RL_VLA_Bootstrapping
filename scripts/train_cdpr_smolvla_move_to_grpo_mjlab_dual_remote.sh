@@ -4,7 +4,7 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
 ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
 CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml}"
-MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-10000000}"
+MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-16000000}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
 # 256, not 512: the 512-world SmolVLA inference activations are the
 # dominant GPU peak, and at 512 the combined PyTorch+Warp footprint sat
@@ -29,8 +29,8 @@ if [[ -n "${CHECKPOINT:-}" || -n "${RLVLA_SMOLVLA_RESUME_CHECKPOINT:-}" ]]; then
   echo "Scratch training refuses CHECKPOINT/RLVLA_SMOLVLA_RESUME_CHECKPOINT; start step must be zero." >&2
   exit 2
 fi
-if [[ "$MAX_TRAIN_STEPS" -ne 10000000 ]]; then
-  echo "This scratch launcher requires MAX_TRAIN_STEPS=10000000." >&2
+if [[ "$MAX_TRAIN_STEPS" -ne 16000000 ]]; then
+  echo "This scratch launcher requires MAX_TRAIN_STEPS=16000000." >&2
   exit 2
 fi
 if [[ "$WORLDS_PER_RANK" -lt 8 || $((WORLDS_PER_RANK % 8)) -ne 0 ]]; then

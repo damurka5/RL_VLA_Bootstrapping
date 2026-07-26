@@ -203,12 +203,13 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         self.assertGreater(grasp_point_z, 0.15)
         self.assertEqual(config.task.metadata["min_scene_objects"], 1)
-        self.assertEqual(config.task.metadata["max_scene_objects"], 3)
-        # Distractors arrive only after the distance curriculum has had room to
-        # climb; adding them on a fixed early schedule degraded the grounding.
+        # Two objects max, one threshold: each unlock restarts the start-distance
+        # curriculum, so a second threshold inside the same run would leave
+        # neither stage enough steps to climb back to the final cap.
+        self.assertEqual(config.task.metadata["max_scene_objects"], 2)
         self.assertEqual(
             config.task.metadata["scene_object_curriculum_steps"],
-            [8000000, 9500000],
+            [8000000],
         )
         self.assertEqual(
             command[command.index("--complex-training-approach") + 1],
@@ -232,7 +233,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             "256",
         )
         self.assertEqual(
-            command[command.index("--max-train-steps") + 1], "10000000"
+            command[command.index("--max-train-steps") + 1], "16000000"
         )
         self.assertEqual(command[command.index("--hidden-dim") + 1], "1024")
         self.assertEqual(
@@ -531,7 +532,7 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             / "train_cdpr_smolvla_move_to_grpo_mjlab_dual_remote.sh"
         ).read_text(encoding="utf-8")
         self.assertIn(
-            "MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-10000000}\"", source
+            "MAX_TRAIN_STEPS=\"${MAX_TRAIN_STEPS:-16000000}\"", source
         )
         self.assertIn(
             'WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"', source
