@@ -124,9 +124,63 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
                 self.assertGreaterEqual(
                     metadata["curriculum_horizon_min"], 16
                 )
-                # Scenes start distractor-free and unlock more objects later.
                 self.assertEqual(metadata["min_scene_objects"], 1)
-                self.assertTrue(metadata["scene_object_curriculum_steps"])
+
+    def test_every_approach_gate_can_actually_say_no(self):
+        """No config may carry the degenerate promote/demote pair.
+
+        0.03/0.01 was fitted while a resetter bug pinned the measured pass rate
+        under 0.045. Once the cap reached the simulator the real range was
+        0.06-0.41, so promote was true on every update, demote was unreachable,
+        and the cap advanced on its cooldown alone -- 0.03 -> 0.19 m in 350k
+        steps. The gate has to sit inside the range the metric actually takes,
+        and the cooldown has to be long enough for the EMA to reflect the level
+        it is judging.
+        """
+
+        for path in STAGED_CONFIGS:
+            metadata = load_project_config(path).task.metadata
+            if not metadata.get(
+                "random_workspace_start_distance_curriculum_enabled"
+            ):
+                continue
+            promote = metadata[
+                "random_workspace_start_distance_promote_pass_rate"
+            ]
+            demote = metadata[
+                "random_workspace_start_distance_demote_pass_rate"
+            ]
+            with self.subTest(config=path.name):
+                # A pass rate this low is the noise floor, not mastery.
+                self.assertGreaterEqual(promote, 0.15)
+                self.assertGreater(promote, demote)
+                # Demote must be reachable: a floor near zero means a level the
+                # policy cannot do is never given back.
+                self.assertGreaterEqual(demote, 0.05)
+                self.assertGreaterEqual(
+                    metadata[
+                        "random_workspace_start_distance_cooldown_updates"
+                    ],
+                    10,
+                )
+
+    def test_object_unlocks_are_one_per_run(self):
+        """Each unlock restarts the start-distance curriculum (eeffbc0).
+
+        Two thresholds in one run means two full re-climbs, and neither stage
+        gets the steps to reach the final cap.
+        """
+
+        for path in STAGED_CONFIGS:
+            metadata = load_project_config(path).task.metadata
+            steps = metadata.get("scene_object_curriculum_steps") or []
+            with self.subTest(config=path.name):
+                self.assertLessEqual(len(steps), 1)
+                span = (
+                    metadata["max_scene_objects"]
+                    - metadata["min_scene_objects"]
+                )
+                self.assertLessEqual(span, 1)
 
     def test_grasp_phases_share_one_dense_shaping_curve(self):
         for path in (PICK_UP_CONFIG, CONFIG):

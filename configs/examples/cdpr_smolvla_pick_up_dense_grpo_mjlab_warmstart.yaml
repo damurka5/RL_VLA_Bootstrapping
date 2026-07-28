@@ -123,14 +123,31 @@ task:
         robocasa_potato,
         robocasa_mug,
       ]
-    # ONE object until the grasp itself is solved. This is the direct lesson from
-    # move-to: a second object arriving on a fixed schedule at 5.7M coincided with
-    # the grounding collapsing (cosine 0.20 -> 0.05, successes 72 -> 17) because
-    # distractors landed before the single-object task was mastered. pick_up is
-    # strictly harder than move-to, so the unlock points sit even later.
+    # TWO objects from step 0, and only two. This reverses the earlier plan of
+    # one object until 7M, on three pieces of evidence that arrived after it was
+    # written.
+    #
+    # 1. Distractors are not what broke the 5.7M run. Phase means from the 16M
+    #    move-to run put the two-object window at the HIGHEST mean reward of the
+    #    whole run (0.761 vs 0.696 and 0.723 single-object) at unchanged
+    #    action->target cosine. That run died of log_std diffusion, fixed in
+    #    7d99c3e. The earlier collapse was distractors arriving mid-climb, which
+    #    the curriculum restart (eeffbc0) now prevents.
+    # 2. This phase INHERITS its grounding rather than learning it -- the warm
+    #    start comes from a move-to policy trained on two-object scenes. Dropping
+    #    to one object is therefore a regression in the observation
+    #    distribution, not a simplification, and nothing would maintain the
+    #    disambiguation skill for 7M steps. The unlock would then hand
+    #    distractors to a policy that had forgotten how to tell objects apart.
+    #    The new skill here is the grasp; the approach is already two-object.
+    # 3. Each unlock restarts the start-distance curriculum, so two thresholds in
+    #    one run means two full re-climbs and leaves neither stage the steps to
+    #    reach the final cap.
+    #
+    # A third object is the next run, not a second threshold in this one.
     min_scene_objects: 1
-    max_scene_objects: 3
-    scene_object_curriculum_steps: [7000000, 9000000]
+    max_scene_objects: 2
+    scene_object_curriculum_steps: [0]
 
     random_workspace_gripper_start: true
     # No caught-object start in phase 1: the whole point is to LEARN the grasp.
@@ -197,10 +214,38 @@ task:
     random_workspace_start_distance_initial: 0.03
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
-    random_workspace_start_distance_promote_pass_rate: 0.03
-    random_workspace_start_distance_demote_pass_rate: 0.01
+    # 0.30/0.12/15, NOT the 0.03/0.01/5 this file used to carry. Those were the
+    # degenerate pair: they were fitted while a resetter bug pinned the measured
+    # pass rate under 0.045, so once the cap actually reached the simulator the
+    # promote gate was true on every update and demote was unreachable. The cap
+    # then marched 0.03 -> 0.19 m in 350k steps on nothing but its cooldown. See
+    # 17a83f7; move-to has run on 0.30/0.12/15 since, and the gate now holds a
+    # level for 1.5M steps at a time instead of ratcheting.
+    #
+    # CALIBRATION CAVEAT, because this is the same mistake one level down: 0.30
+    # was derived from move-to's observed pass-rate range (0.06-0.41). pick_up's
+    # range is unmeasured -- terminal success needs grasp AND a 5 cm lift, so its
+    # achievable ceiling may well sit below 0.30, in which case the cap would
+    # never promote off 0.03.
+    #
+    # These numbers still err high on purpose, because the two failures are not
+    # symmetric. A promote threshold that is too HIGH stalls the cap at 0.03 and
+    # says so plainly -- curriculum/start_max_goal_distance_m/pick_up flat while
+    # curriculum/approach_pass_rate_ema/pick_up sits just under the gate -- and
+    # costs only the steps it takes to notice. A promote threshold that is too
+    # LOW destroys the run silently, which has now happened twice. So: if the cap
+    # is still 0.03 after ~3M steps AND the EMA has plateaued below 0.30 while
+    # physical_grasp_rate is climbing, lower promote to that plateau plus ~0.05
+    # and drop demote to roughly a third of it. Do not lower it before the grasp
+    # exists -- an early cap is exactly what this gate is here to prevent.
+    random_workspace_start_distance_promote_pass_rate: 0.30
+    random_workspace_start_distance_demote_pass_rate: 0.12
     random_workspace_start_distance_pass_rate_ema_decay: 0.9
-    random_workspace_start_distance_cooldown_updates: 5
+    # 15, not 5: at 5 the cap could advance every ~30k steps, far faster than the
+    # EMA can reflect whether the last level was learned. The EMA is also
+    # re-seeded on every cap change (17a83f7), so a promotion is judged on what
+    # the NEW difficulty scores rather than on the easier level's average.
+    random_workspace_start_distance_cooldown_updates: 15
     # Horizon coupled to the cap. 16 (not move-to's 8) because pick_up must also
     # close the gripper and lift after arriving: from 1.0 the opening has to fall
     # to the fitted value (0.368 banana .. 0.80 mug) at 0.05 per env step and 4

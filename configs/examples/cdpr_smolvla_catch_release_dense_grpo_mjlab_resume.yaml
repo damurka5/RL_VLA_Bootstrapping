@@ -132,13 +132,17 @@ task:
         robocasa_bowl,
       ]
     # Placement forces 3 slots (target + plate + bowl) regardless of this range,
-    # so min 1 only affects pick_up groups: they start distractor-free and pick
-    # up extra objects at the curriculum steps. This matters because pick_up is
-    # the task still being learned here -- move-to showed that distractors added
-    # before the single-object task is mastered collapse the grounding.
+    # so this only affects pick_up groups. Two objects from step 0, one
+    # threshold: this phase inherits its grounding from a two-object pick_up
+    # run, so starting distractor-free is a regression in the observation
+    # distribution rather than a simplification, and nothing would maintain the
+    # disambiguation skill until the unlock. Distractors also cost nothing once
+    # they arrive on close starts -- the two-object window was the best phase of
+    # the 16M move-to run. And each unlock restarts the start-distance
+    # curriculum (eeffbc0), so two thresholds mean two full re-climbs.
     min_scene_objects: 1
-    max_scene_objects: 3
-    scene_object_curriculum_steps: [6000000, 9000000]
+    max_scene_objects: 2
+    scene_object_curriculum_steps: [0]
 
     # The new phase never uses the near-goal shell-0 spawn.
     random_workspace_gripper_start: true
@@ -236,10 +240,21 @@ task:
     random_workspace_start_distance_initial: 0.03
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
-    random_workspace_start_distance_promote_pass_rate: 0.03
-    random_workspace_start_distance_demote_pass_rate: 0.01
+    # 0.30/0.12/15, NOT 0.03/0.01/5. The old pair was fitted while a resetter
+    # bug pinned the measured pass rate under 0.045; against the real 0.06-0.41
+    # range promote was true on every update and demote was unreachable, so the
+    # cap advanced on its cooldown alone (17a83f7). Each instruction here runs
+    # its own gate, so a passing placement task cannot drag pick_up's cap.
+    #
+    # Same calibration caveat as pick_up: 0.30 comes from move-to's measured
+    # range, and the placement tasks' achievable rate is unmeasured. Err high --
+    # a too-high gate stalls the cap visibly and cheaply, a too-low one destroys
+    # the run silently. If an instruction's cap is still 0.03 after ~3M steps
+    # with its EMA plateaued below 0.30, lower promote to that plateau + ~0.05.
+    random_workspace_start_distance_promote_pass_rate: 0.30
+    random_workspace_start_distance_demote_pass_rate: 0.12
     random_workspace_start_distance_pass_rate_ema_decay: 0.9
-    random_workspace_start_distance_cooldown_updates: 5
+    random_workspace_start_distance_cooldown_updates: 15
     # Horizon coupled to each group's own cap. 16 at the initial cap: placement
     # must reach the hover point, open the gripper past the release threshold
     # (up to 0.215 of opening for the banana at 0.05 per env step), and let the
