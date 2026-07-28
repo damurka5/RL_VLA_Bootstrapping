@@ -153,10 +153,12 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         )
         # EE origin 0.27 m puts the grasp point (0.08 m lower) at 0.19 m,
         # level with the object centre band; the success Z window matches.
-        # The start height is randomized up to 0.52 so descent has to be
-        # learned, and the approach cap bounds that height too.
+        # The start height is randomized so descent has to be learned, and the
+        # approach cap bounds that height too. Ceiling 0.52 -> 0.47: a 25 cm
+        # approach spent most of the episode descending before XY servoing
+        # could pay off.
         self.assertEqual(
-            config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.52]
+            config.task.metadata["ee_workspace_z_bounds"], [0.27, 0.47]
         )
         self.assertTrue(config.task.metadata["curriculum_cap_includes_z"])
         # The promote gate must sit inside the range the pass rate can actually
@@ -236,6 +238,14 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             command[command.index("--max-train-steps") + 1], "16000000"
         )
         self.assertEqual(command[command.index("--hidden-dim") + 1], "1024")
+        # The action distribution must not be able to diffuse out of the band it
+        # was productive in. See test_the_action_distribution_cannot_diffuse.
+        self.assertLessEqual(
+            float(command[command.index("--max-log-std") + 1]), -1.10
+        )
+        self.assertEqual(
+            float(command[command.index("--entropy-coef") + 1]), 0.0
+        )
         self.assertEqual(
             command[command.index("--smolvla-compile-mode") + 1],
             "max-autotune-no-cudagraphs",

@@ -274,11 +274,16 @@ task:
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
     # Randomize the start height so the policy must learn descent, not just XY
-    # servoing: the EE begins anywhere in [0.27, 0.52] (grasp point 0.19..0.44)
+    # servoing: the EE begins anywhere in [0.27, 0.47] (grasp point 0.19..0.39)
     # and is rewarded (via distance_include_z to the 0.27 hover point) for
-    # driving down to the object band. 0.27 is the hover/target height; 0.52 is
-    # a 25 cm approach. This matches the eval RANDOM_START_Z_BOUNDS range.
-    ee_workspace_z_bounds: [0.27, 0.52]
+    # driving down to the object band. 0.27 is the hover/target height.
+    # Ceiling 0.52 -> 0.47: a 25 cm approach spent most of the episode's Z
+    # budget descending before any XY servoing could pay off, and the wrist
+    # camera at that altitude sees a footprint far wider than the target. 20 cm
+    # keeps descent in the task without making it the whole task. NOTE: this
+    # also makes the uncapped validation start distribution easier, so
+    # validation/success_rate is NOT comparable across this change.
+    ee_workspace_z_bounds: [0.27, 0.47]
 
 simulation:
   entrypoint:
@@ -401,17 +406,26 @@ training:
       weight_decay: 0.0
       init_log_std: -1.2
       min_log_std: -5.0
-      # Capped at -0.3 (std ~0.74). At the old 0.5 (std ~1.65) the action
-      # distribution diffused instead of converging: with no directional reward
-      # signal the entropy bonus dominated, log_std climbed from -1.2 toward
-      # -0.7 and rising, and the policy collapsed to target-independent homing.
-      max_log_std: -0.3
+      # -1.10, not -0.3. At -0.3 the ceiling was never the binding constraint
+      # and the distribution diffused underneath it: over the 16M-step run
+      # log_std bottomed at -1.227 (3.6M) and then rose monotonically for 12M
+      # steps -- -1.15 at 7.6M, -1.10 at 11.3M, -1.00 at 13.7M, -0.895 at 16M --
+      # while entropy went 0.83 -> 4.15, the action->target cosine fell 0.25 ->
+      # 0.14, and validation collapsed from its 7.3% peak at 7.4M to 0.7%. The
+      # policy was healthy in [-1.23, -1.15] for its entire productive phase, so
+      # the ceiling now sits just above that band: it CANNOT diffuse out of the
+      # regime that worked. Raise this only with evidence that exploration, not
+      # diffusion, is the binding problem.
+      max_log_std: -1.10
       clip_range_low: 0.20
       clip_range_high: 0.28
-      # Lowered 0.002 -> 0.0005: the entropy bonus was inflating log_std when the
-      # reward gave no directional gradient. The approach curriculum now supplies
-      # that gradient, so less entropy pressure is needed to explore.
-      entropy_coef: 0.0005
+      # 0.0005 -> 0.0. Lowering it from 0.002 slowed the diffusion but did not
+      # stop it: nothing else pushes log_std down, so any net-positive entropy
+      # bonus wins on a long run. The approach curriculum supplies exploration by
+      # construction -- it starts the EE where random actions already score --
+      # so the bonus is buying noise, not coverage. max_log_std above is the
+      # backstop; this removes the pressure itself.
+      entropy_coef: 0.0
       max_grad_norm: 1.0
       grpo_group_size: 8
       grpo_group_selection: uniform

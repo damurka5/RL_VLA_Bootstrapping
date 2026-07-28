@@ -354,17 +354,20 @@ training:
       weight_decay: 0.0
       init_log_std: -1.2
       min_log_std: -5.0
-      # -0.3, not 0.5. At 0.5 (std ~1.65) the move-to action distribution
-      # diffused instead of converging: with no directional reward signal the
-      # entropy bonus dominated, log_std climbed from -1.2 upward, and the policy
-      # collapsed to target-independent homing. This phase inherits that fix.
-      max_log_std: -0.3
+      # -1.10, not -0.3. MUST MATCH the move-to phase. At -0.3 the ceiling never
+      # bound and the distribution diffused underneath it: over move-to's
+      # 16M-step run log_std rose monotonically for 12M steps (-1.227 -> -0.895)
+      # while entropy went 0.83 -> 4.15, the action->target cosine fell
+      # 0.25 -> 0.14 and validation collapsed from a 7.3% peak to 0.7%. The
+      # ceiling now sits just above the [-1.23, -1.15] band the policy was
+      # productive in, so it cannot diffuse out of it.
+      max_log_std: -1.10
       clip_range_low: 0.20
       clip_range_high: 0.28
-      # 0.0005, not 0.002, for the same reason; the per-instruction approach
-      # curriculum now supplies the directional signal the entropy bonus was
-      # being asked to find by diffusing.
-      entropy_coef: 0.0005
+      # 0.0 (was 0.0005), for the same reason and MUST MATCH the move-to phase.
+      # Nothing pushes log_std down, so any net-positive entropy bonus wins on a
+      # long run; the approach curriculum supplies exploration by construction.
+      entropy_coef: 0.0
       max_grad_norm: 1.0
       grpo_group_size: 8
       grpo_group_selection: uniform

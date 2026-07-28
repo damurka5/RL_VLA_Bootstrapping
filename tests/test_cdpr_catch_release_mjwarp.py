@@ -92,8 +92,12 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
                 self.assertEqual(args["state_dim"], 6)
                 self.assertFalse(args["residual_relative_target"])
                 self.assertEqual(args["residual_scale"], 1.0)
-                self.assertEqual(args["max_log_std"], -0.3)
-                self.assertEqual(args["entropy_coef"], 0.0005)
+                # Inside the band the policy was productive in, not merely
+                # below the old ceiling that never bound. A phase that raises
+                # either of these reintroduces the diffusion that cost the
+                # 16M-step move-to run its last 8M steps.
+                self.assertLessEqual(args["max_log_std"], -1.10)
+                self.assertEqual(args["entropy_coef"], 0.0)
                 # 512 sat on the A40 limit and OOM'd Warp once the LoRA
                 # backward was added.
                 self.assertEqual(
@@ -659,6 +663,50 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
         curriculum, cap, _ = self._gated()
         self.assertAlmostEqual(cap(), 0.03, places=6)
         self.assertEqual(curriculum.restart(), ())
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "log_std clamp requires PyTorch",
+    )
+    def test_the_action_distribution_cannot_diffuse(self):
+        """max_log_std must actually bound the sampled std, not just record it.
+
+        The 16M-step run died of diffusion, not of any curriculum problem: with
+        entropy_coef pushing log_std up and nothing pushing it down, log_std rose
+        for 12M steps straight from -1.227 to -0.895 while the action->target
+        cosine fell 0.25 -> 0.14 and validation went from a 7.3% peak to 0.7%.
+        The -0.3 ceiling never bound. This pins the ceiling INSIDE the band the
+        policy was productive in, and pins that the clamp is applied on the path
+        that produces actions rather than only stored on the module.
+        """
+
+        import torch
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
+            SmolVLAGRPOPolicy,
+        )
+
+        policy = SmolVLAGRPOPolicy(
+            state_dim=6,
+            chunk_size=8,
+            action_dim=5,
+            hidden_dim=32,
+            residual_scale=1.0,
+            init_log_std=-1.2,
+            min_log_std=-5.0,
+            max_log_std=-1.10,
+        )
+        # Drive the raw parameter far past the ceiling, the way 12M steps of a
+        # net-positive entropy bonus did.
+        with torch.no_grad():
+            policy.log_std.fill_(0.5)
+        clamped = policy.clamped_log_std()
+        self.assertTrue(bool((clamped <= -1.10 + 1e-6).all().item()))
+        # And the floor still holds in the other direction.
+        with torch.no_grad():
+            policy.log_std.fill_(-9.0)
+        self.assertTrue(
+            bool((policy.clamped_log_std() >= -5.0 - 1e-6).all().item())
+        )
 
     def test_object_unlock_is_detected_by_step_not_by_edge(self):
         """Resuming past a threshold must not read as a fresh unlock.
