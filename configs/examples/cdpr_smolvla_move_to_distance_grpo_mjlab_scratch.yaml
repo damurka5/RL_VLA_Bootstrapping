@@ -130,14 +130,28 @@ task:
     # restarts in one run leaves neither stage enough steps to climb back.
     min_scene_objects: 1
     max_scene_objects: 2
-    # 8M, and the ONLY threshold. Two earlier attempts died here: the 2nd object
-    # at 5.7M degraded the grounding (cosine 0.20->0.05, successes 72->17)
-    # because it arrived while the distance cap was still climbing, so the policy
-    # got target selection and far starts in the same instant. The unlock now
-    # restarts the approach curriculum (cap -> initial), which re-manufactures
-    # the close starts that make target selection learnable; see
-    # ApproachDistanceCurriculum.restart.
-    scene_object_curriculum_steps: [8000000]
+    # Step 0, i.e. two objects for the whole run. Measured, not assumed: in the
+    # 16M run the two-object phase (8-11M) scored the highest mean reward of the
+    # run (0.761 vs 0.696 / 0.723 single-object) at unchanged action->target
+    # cosine, so distractors cost nothing once they arrive on close starts. What
+    # DOES cost is deferring them -- with one object the instruction is
+    # meaningless, so every single-object step teaches object-agnostic servoing
+    # and no grounding at all. A warm start resets the cap to initial anyway, so
+    # the close starts that make target selection learnable are already there.
+    #
+    # NOTE on what this actually buys: object separation is >=0.16 m, so while
+    # the cap is under ~0.15 the named target is simply the nearest one and
+    # selection is not yet exercised. Grounding pressure begins as the cap
+    # approaches the separation; watch policy_target_cosine_mean from cap 0.15.
+    #
+    # A fixed threshold mid-run is what the two earlier attempts died on: the
+    # 2nd object at 5.7M degraded grounding (cosine 0.20->0.05, successes
+    # 72->17) because it arrived while the cap was still climbing. The unlock
+    # path still restarts the curriculum (ApproachDistanceCurriculum.restart)
+    # for any config that does stage it later; at step 0 there is nothing to
+    # restart, and previous_scene_object_max is seeded to 2 so no spurious
+    # restart fires on the first update.
+    scene_object_curriculum_steps: [0]
     distance_reward_exponent: 2.0
     success_distance: 0.02
     success_bonus: 0.0

@@ -209,9 +209,12 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
         # curriculum, so a second threshold inside the same run would leave
         # neither stage enough steps to climb back to the final cap.
         self.assertEqual(config.task.metadata["max_scene_objects"], 2)
+        # Step 0: two objects for the whole run. One object teaches no
+        # grounding at all, and the two-object phase of the 16M run cost
+        # nothing once distractors arrived on close starts.
         self.assertEqual(
             config.task.metadata["scene_object_curriculum_steps"],
-            [8000000],
+            [0],
         )
         self.assertEqual(
             command[command.index("--complex-training-approach") + 1],
