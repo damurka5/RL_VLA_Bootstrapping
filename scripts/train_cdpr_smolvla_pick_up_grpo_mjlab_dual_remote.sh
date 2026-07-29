@@ -14,7 +14,7 @@ REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
 ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
 CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml}"
 WARMSTART_CHECKPOINT="${WARMSTART_CHECKPOINT:-}"
-MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-10000000}"
+MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-16000000}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
 # 256, not 512: the 512-world SmolVLA inference activations are the dominant GPU
 # peak, and at 512 the combined PyTorch+Warp footprint sat on the card limit and

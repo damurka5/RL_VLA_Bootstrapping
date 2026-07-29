@@ -20,7 +20,8 @@ remote:
     - Warm-started WEIGHTS-ONLY from the move-to adapter (fresh optimizer, fresh curriculum, step 0).
     - pick_up's dense target is (target XY, object_z + 0.08) ~ 0.26 m, essentially the move-to hover point, so the warm-started approach skill transfers directly and RL only has to learn descend/close/lift.
     - The approach curriculum is success-gated on pick_up's OWN pass rate and starts at a 3 cm cap.
-    - Scenes hold a single object until the object-count curriculum unlocks distractors; the move-to run showed distractors added before mastery destroy the grounding.
+    - Scenes hold two objects from step zero, matching the two-object distribution the warm-start policy was trained on, so the inherited grounding is maintained rather than left to decay.
+    - The rollout horizon is capped at 26 policy decisions at every curriculum level, and the start-distance cap tops out at 0.20 m - just inside the approach range move-to actually reached.
     - Every policy/LoRA/vision-residual setting matches the move-to run exactly; a mismatch makes the warm-start weights fail to load.
 
 embodiment:
@@ -162,8 +163,12 @@ task:
     # cap mean what it says.
     ee_workspace_z_bounds: [0.27, 0.38]
     random_workspace_min_goal_xy_distance: 0.10
-    random_workspace_horizon_low: 24
-    random_workspace_horizon_high: 32
+    # 26/26, not 24/32. This pair is the fallback used when a group has NO cap,
+    # which in practice means validation -- so leaving it at 32 would measure the
+    # policy over a longer episode than training ever gives it. Fixed at the same
+    # 26-decision ceiling as curriculum_horizon_max below.
+    random_workspace_horizon_low: 26
+    random_workspace_horizon_high: 26
 
     # --- Dense shaping (identical curve for every instruction) -------------
     # Coarse inverse-polynomial on the 3-D distance to the grasp point, plus a
@@ -212,7 +217,28 @@ task:
     # wide enough to keep teaching descent without breaking the early foothold.
     curriculum_cap_includes_z: true
     random_workspace_start_distance_initial: 0.03
-    random_workspace_start_distance_final: 0.34
+    # 0.20, not move-to's 0.34, so the spawn stays near the target.
+    #
+    # Note WHY, because the obvious reason is the wrong one: 26 decisions is not
+    # the binding constraint on distance. 26 decisions is 104 env steps; the
+    # grasp sequence costs ~22 of them (up to ~13 env steps closing the gripper
+    # from 1.0 to the fitted opening at 0.05/step, 6 steps of grasp persistence,
+    # ~4 steps of 5 cm lift at 0.015/step), leaving ~82 steps at 0.015 m each --
+    # over a metre of travel for a 0.20 m approach. Even a 0.34 m start needs
+    # only ~23 env steps of pure translation.
+    #
+    # The real reason is skill, not time. move-to plateaued with its cap at 0.23
+    # and a pass rate of 0.21, below its own promote gate, after 9M steps. This
+    # phase inherits exactly that approach ability, so a final cap beyond it
+    # would ask the policy to extend its approach range AND learn a grasp at the
+    # same time. 0.20 sits just inside what the inherited policy demonstrably
+    # does, which leaves the grasp as the only unsolved thing.
+    #
+    # This value also anchors the horizon interpolation: the coupled horizon
+    # runs from curriculum_horizon_min at the initial cap to
+    # curriculum_horizon_max at THIS value, so the 26-decision ceiling is
+    # reached exactly when the cap tops out.
+    random_workspace_start_distance_final: 0.20
     random_workspace_start_distance_increment: 0.02
     # 0.30/0.12/15, NOT the 0.03/0.01/5 this file used to carry. Those were the
     # degenerate pair: they were fitted while a resetter bug pinned the measured
@@ -254,7 +280,12 @@ task:
     # for exploration on top of that.
     curriculum_horizon_coupling_enabled: true
     curriculum_horizon_min: 16
-    curriculum_horizon_max: 32
+    # Hard ceiling of 26 decisions; the horizon never grows past it at any cap.
+    # Each decision runs a batched SmolVLA forward over every world, so the
+    # horizon is the dominant per-update cost -- move-to reached 23 decisions and
+    # its rollouts dominated wall clock. Paired with the 0.20 final cap above,
+    # which is where this ceiling is reached.
+    curriculum_horizon_max: 26
     # OFF, as in move-to: SmolVLA inference is batched over all worlds every
     # decision regardless of the active mask, so early termination saves no
     # compute but discards the remaining records.
@@ -315,7 +346,7 @@ training:
       # RLVLA_SMOLVLA_WARMSTART_CHECKPOINT instead. Weights-only is deliberate --
       # a full resume would also restore move-to's approach-curriculum state (a
       # cap already widened for a different task) and its optimizer moments.
-      max_train_steps: 10000000
+      max_train_steps: 16000000
       max_env_steps: 128
       chunk_size: 8
       replan_every: 4

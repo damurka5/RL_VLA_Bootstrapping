@@ -164,6 +164,49 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
                     10,
                 )
 
+    def test_pick_up_holds_a_hard_horizon_ceiling(self):
+        """No pick_up episode may exceed 26 policy decisions, at any cap.
+
+        Each decision runs a batched SmolVLA forward over every world, so the
+        horizon is the dominant per-update cost. Two paths can produce an
+        episode: the curriculum-coupled horizon, which interpolates up to
+        curriculum_horizon_max, and the uncapped fallback sampled from
+        [random_workspace_horizon_low, high] -- which is what validation gets,
+        because validation never receives a cap. Both have to respect the
+        ceiling or the run measures the policy over a longer episode than it
+        trains on.
+        """
+
+        metadata = load_project_config(PICK_UP_CONFIG).task.metadata
+        ceiling = 26
+        self.assertLessEqual(metadata["curriculum_horizon_max"], ceiling)
+        self.assertLessEqual(metadata["random_workspace_horizon_high"], ceiling)
+        self.assertLessEqual(metadata["random_workspace_horizon_low"], ceiling)
+        self.assertLessEqual(
+            metadata["curriculum_horizon_min"],
+            metadata["curriculum_horizon_max"],
+        )
+
+    def test_pick_up_spawns_inside_the_inherited_approach_range(self):
+        """The final cap must not exceed what move-to actually reached.
+
+        move-to plateaued with its cap at 0.23 m and a pass rate of 0.21 after
+        9M steps, below its own promote gate. pick_up inherits exactly that
+        approach ability, so a final cap beyond it asks the policy to extend its
+        approach range and learn a grasp at the same time. The value also
+        anchors the horizon interpolation, whose ceiling is reached at the final
+        cap.
+        """
+
+        metadata = load_project_config(PICK_UP_CONFIG).task.metadata
+        self.assertLessEqual(
+            metadata["random_workspace_start_distance_final"], 0.23
+        )
+        self.assertGreater(
+            metadata["random_workspace_start_distance_final"],
+            metadata["random_workspace_start_distance_initial"],
+        )
+
     def test_object_unlocks_are_one_per_run(self):
         """Each unlock restarts the start-distance curriculum (eeffbc0).
 
