@@ -33,6 +33,27 @@
                diffuse=".62 .62 .62"
                specular=".08 .08 .08"/>
     <rgba haze=".035 .050 .075 1"/>
+    <!--
+      znear/zfar are FRACTIONS of model.stat.extent, which is 14.70 m here
+      because the 5x5 m floor geom dominates it. At MuJoCo's default
+      znear=0.01 the near plane lands at 0.147 m, while the wrist camera works
+      centimetres from what it is supposed to see. Rasterized renders showed
+      the desk vanish and the distant floor show through as a blank white
+      field at every end-effector height at or below 0.22 m, which is the
+      whole grasp phase. Measured: 100% desk at ee_z 0.30, a 56/44 desk/floor
+      split at 0.25 (the boundary falls mid-frame), 100% floor at 0.20.
+
+      0.0002 * 14.70 = 2.9 mm, so the wrist camera can see an object it is
+      about to close on, and the fingers now appear in frame. zfar drops from
+      50 to 2.0 (29 m, still far beyond the 5 m floor) so the depth range
+      stays near 10000:1 instead of 250000:1.
+
+      Only the OpenGL rasterizer clipped. Training and the mjwarp video
+      evaluator go through mjw.render, a BVH ray tracer. Fixed regardless: the
+      rasterizer is what the reference-episode script renders with, and that
+      script is how grasp geometry gets verified.
+    -->
+    <map znear="0.0002" zfar="2.0"/>
   </visual>
 
   <asset>

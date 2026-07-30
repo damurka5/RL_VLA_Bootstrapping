@@ -1271,6 +1271,49 @@ class CDPRGripperGeometryTests(unittest.TestCase):
                 self.assertLessEqual(ee + low, center)
                 self.assertGreaterEqual(ee + high, center)
 
+    @unittest.skipUnless(
+        importlib.util.find_spec("mujoco") is not None,
+        "near-plane check requires MuJoCo",
+    )
+    def test_the_wrist_camera_can_see_what_it_is_grasping(self):
+        """The render near plane must be closer than the grasp working distance.
+
+        znear and zfar are FRACTIONS of model.stat.extent, and extent here is
+        ~14.7 m because a 5x5 m floor geom dominates it. At MuJoCo's default
+        znear=0.01 the near plane sat at 0.147 m while the wrist camera works
+        centimetres from the object: rasterized renders showed the desk vanish
+        and the distant floor show through as a blank white field at every
+        end-effector height at or below 0.22 m -- the entire grasp phase.
+
+        Only the OpenGL rasterizer clipped; the mjwarp ray tracer used for
+        training did not. But the rasterizer is what the reference-episode
+        script renders with, and that script is how grasp geometry gets
+        verified, so a blank wrist view there hides exactly what it exists to
+        show.
+        """
+
+        import mujoco
+
+        config = load_project_config(PICK_UP_CONFIG)
+        xml = config.resolve_path(config.embodiment.xml_path)
+        model = mujoco.MjModel.from_xml_path(str(xml))
+        near = float(model.vis.map.znear) * float(model.stat.extent)
+
+        # The wrist camera sits 0.045 m above ee_base, and a grasp puts ee_base
+        # about 0.0075 m above the object centre -- so roughly 0.05 m of working
+        # distance, less for anything nearer than the object's centre.
+        self.assertLess(
+            near,
+            0.010,
+            f"near plane {near:.4f} m (znear={model.vis.map.znear} x extent="
+            f"{model.stat.extent:.2f} m) clips everything the wrist camera "
+            "needs to see during a grasp",
+        )
+        # Keep the depth range sane once znear is small.
+        far = float(model.vis.map.zfar) * float(model.stat.extent)
+        self.assertLess(far / near, 5.0e4, "depth range too wide for precision")
+        self.assertGreater(far, 6.0, "zfar must still cover the 5 m floor")
+
     def test_a_wrong_offset_is_rejected_with_the_arithmetic(self):
         """The guard has to fail on the value that actually shipped."""
 
