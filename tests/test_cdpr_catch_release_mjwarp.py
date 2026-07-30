@@ -533,12 +533,18 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
             support_surface_z=torch.full((4,), 0.15),
             target_rest_height=torch.full((4,), 0.03),
         )
+        # The two pick_up worlds hold an object, so their end-effector height is
+        # object_z + the MEASURED pad offset 0.0075 m -- not the 0.08 m
+        # ee_platform offset this fixture used to carry, which placed a "caught"
+        # object 8 cm below the pads that were supposedly holding it. The
+        # expected rewards below are unchanged: they encode the ladder, and the
+        # ladder is reached from the geometrically consistent pose.
         ee = torch.tensor(
             [
                 [0.08, 0.00, 0.26],
                 [0.10, 0.00, 0.26],
-                [0.00, 0.00, 0.26],
-                [0.00, 0.00, 0.32],
+                [0.00, 0.00, 0.1875],
+                [0.00, 0.00, 0.2475],
             ],
             dtype=torch.float32,
         )
@@ -1107,3 +1113,158 @@ class CDPRApproachCurriculumGeometryTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CDPRGripperGeometryTests(unittest.TestCase):
+    """The reward's grasp point must be somewhere the gripper can actually grasp.
+
+    This is the test that was missing. pick_up ran 10M GPU-hours-worth of steps
+    with pick_grasp_height_offset=0.08 against a real pad offset of 0.0075 m: the
+    reward's optimum was a pose 7.25 cm above the object, the policy converged to
+    within 1.2-1.5 cm of it, and the grasp rate DECAYED from 0.068 to 0.056 as
+    convergence removed the erratic excursions that had been producing accidental
+    contacts. Terminal successes went 8/1024 -> 0/1024. Nothing failed loudly.
+    """
+
+    TABLE_Z = 0.15
+    GRASP_CONFIGS = (PICK_UP_CONFIG, CONFIG)
+
+    def _geometry(self):
+        from rl_vla_bootstrapping.simulation.cdpr_gripper_geometry import (
+            load_cdpr_gripper_geometry,
+        )
+
+        config = load_project_config(PICK_UP_CONFIG)
+        xml = config.resolve_path(config.embodiment.xml_path)
+        self.assertIsNotNone(xml, "pick_up config must resolve an MJCF path")
+        return load_cdpr_gripper_geometry(xml), xml
+
+    def test_the_measured_pad_offset_is_not_the_platform_offset(self):
+        """Pin the number the configs are calibrated against.
+
+        ee_platform sits 0.08 m ABOVE ee_base and the pad 0.0875 m below that, so
+        the pads are 0.0075 m BELOW the body ee_position tracks. Confusing the two
+        is the whole bug, so if the model changes this test says so.
+        """
+
+        geometry, _ = self._geometry()
+        self.assertAlmostEqual(geometry.pad_center_offset, -0.0075, places=6)
+        self.assertAlmostEqual(geometry.grasp_height_offset, 0.0075, places=6)
+        self.assertAlmostEqual(geometry.pad_half_height, 0.0175, places=6)
+        self.assertAlmostEqual(geometry.finger_tip_offset, -0.0390, places=6)
+        # The fingers reach well below the pads, which is why a grasp height that
+        # looks harmless can still drive the tips through the desk.
+        self.assertLess(
+            geometry.finger_tip_offset, geometry.pad_span[0]
+        )
+
+    def test_grasp_configs_target_a_reachable_grasp_point(self):
+        from rl_vla_bootstrapping.simulation.cdpr_gripper_geometry import (
+            assert_grasp_offset_matches_model,
+        )
+
+        for path in self.GRASP_CONFIGS:
+            config = load_project_config(path)
+            metadata = config.task.metadata
+            if "pick_grasp_height_offset" not in metadata:
+                continue
+            xml = config.resolve_path(config.embodiment.xml_path)
+            with self.subTest(config=path.name):
+                # Raises with the arithmetic if the offset leaves the pad span.
+                assert_grasp_offset_matches_model(
+                    metadata["pick_grasp_height_offset"],
+                    xml_path=xml,
+                    label=f"{path.name}:pick_grasp_height_offset",
+                )
+
+    def test_the_controller_floor_lets_the_pads_reach_every_object(self):
+        """A floor above the grasp height makes the task impossible, silently."""
+
+        from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+            OBJECT_VARIANTS,
+        )
+
+        geometry, _ = self._geometry()
+        for path in self.GRASP_CONFIGS:
+            config = load_project_config(path)
+            metadata = config.task.metadata
+            args = config.training.rl.args
+            floor = args.get("controller_workspace_z_bounds")
+            with self.subTest(config=path.name):
+                self.assertIsNotNone(
+                    floor,
+                    "a grasp phase must set controller_workspace_z_bounds; the "
+                    "0.25 default puts the pads above every object",
+                )
+                floor_z = float(floor[0])
+                offset = float(metadata["pick_grasp_height_offset"])
+                for name in metadata["target_object_pool"]:
+                    variant = OBJECT_VARIANTS[name]
+                    if variant.fitted_gripper_opening <= 0.0:
+                        continue  # not liftable; excluded from grasp phases
+                    center = self.TABLE_Z + variant.rest_height
+                    with self.subTest(object=name):
+                        self.assertTrue(
+                            geometry.can_reach(
+                                center, controller_floor=floor_z
+                            ),
+                            f"{name}: pads cannot reach a centre at "
+                            f"{center:.4f} m from floor {floor_z:.4f} m",
+                        )
+                        # And the reward's own target must be reachable, not just
+                        # the loosest grasp height.
+                        self.assertGreaterEqual(
+                            center + offset,
+                            floor_z,
+                            f"{name}: reward target {center + offset:.4f} m is "
+                            f"below the controller floor {floor_z:.4f} m",
+                        )
+
+    def test_the_grasp_height_keeps_the_finger_tips_out_of_the_desk(self):
+        """Why the configs carry 0.015 rather than the exact 0.0075.
+
+        At the exact pad offset the tips sit 3-4 mm through the desk for the
+        shortest objects. Biasing the grasp height up keeps the object centre
+        inside the pad span while lifting the tips clear.
+        """
+
+        from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+            OBJECT_VARIANTS,
+        )
+
+        geometry, _ = self._geometry()
+        config = load_project_config(PICK_UP_CONFIG)
+        metadata = config.task.metadata
+        offset = float(metadata["pick_grasp_height_offset"])
+        for name in metadata["target_object_pool"]:
+            variant = OBJECT_VARIANTS[name]
+            if variant.fitted_gripper_opening <= 0.0:
+                continue
+            center = self.TABLE_Z + variant.rest_height
+            ee = center + offset
+            with self.subTest(object=name):
+                self.assertGreaterEqual(
+                    geometry.finger_tip_height(ee),
+                    self.TABLE_Z,
+                    f"{name}: finger tips reach "
+                    f"{geometry.finger_tip_height(ee):.4f} m, under the "
+                    f"{self.TABLE_Z:.2f} m desk",
+                )
+                # The object centre still has to sit inside the pads.
+                low, high = geometry.pad_span
+                self.assertLessEqual(ee + low, center)
+                self.assertGreaterEqual(ee + high, center)
+
+    def test_a_wrong_offset_is_rejected_with_the_arithmetic(self):
+        """The guard has to fail on the value that actually shipped."""
+
+        from rl_vla_bootstrapping.simulation.cdpr_gripper_geometry import (
+            assert_grasp_offset_matches_model,
+        )
+
+        _, xml = self._geometry()
+        with self.assertRaises(ValueError) as caught:
+            assert_grasp_offset_matches_model(0.08, xml_path=xml)
+        message = str(caught.exception)
+        self.assertIn("0.0800", message)
+        self.assertIn("cannot touch", message)

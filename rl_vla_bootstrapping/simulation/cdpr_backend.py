@@ -37,11 +37,16 @@ class CDPRBackendConfig:
     workspace_y: tuple[float, float] = (-0.28, 0.28)
     # This clamps the CONTROLLER target, i.e. everywhere the policy may drive,
     # which is a different (and stricter) thing than the task's spawn bounds or
-    # the reward's hover height. The end-effector body sits 0.08 m above the
-    # grasp point, so a floor of 0.20 let the policy push the fingers to 0.12 --
-    # 3 cm through the 0.15 m desk -- and MJWarp diverged into NaN rewards. 0.25
-    # keeps the grasp point 2 cm clear. The ceiling is well under the 1.31 m
-    # rotors, where the cable geometry approaches a singularity.
+    # the reward's hover height. The ceiling is well under the 1.31 m rotors,
+    # where the cable geometry approaches a singularity.
+    #
+    # The 0.25 floor is a MOVE-TO value and it makes grasping impossible: the
+    # finger pads sit 0.0075 m below ee_base (measured, see
+    # cdpr_gripper_geometry), so at the floor the pads bottom out at 0.2425 while
+    # graspable object centres sit at 0.178-0.195. pick_up ran 10M steps unable
+    # to reach any object. Grasp phases must pass a lower floor explicitly via
+    # --controller-workspace-z-bounds; 0.25 stays the default because a hover
+    # task wants the fingers well clear of the 0.15 m desk.
     workspace_z: tuple[float, float] = (0.25, 0.60)
 
     def validate(self) -> None:

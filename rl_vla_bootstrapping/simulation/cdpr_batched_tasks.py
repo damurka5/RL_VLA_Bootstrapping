@@ -186,7 +186,9 @@ class BatchedCatchReleaseDenseReward:
     # pulls toward the receptacle centre on the same curve every other
     # instruction uses. 0.0 keeps the legacy behaviour (window = success radius).
     placement_distance_window: float = 0.02
-    pick_grasp_height_offset: float = 0.08
+    # Measured from the MJCF; see cdpr_gripper_geometry. The old 0.08 was the
+    # ee_platform offset, not the finger-pad offset.
+    pick_grasp_height_offset: float = 0.0075
     pick_distance_window: float = 0.02
     # Bounded fine-approach term, shared by placement and pick-up. The coarse
     # term (scale 0.08) saturates ~2 cm out, but a grasp needs the pads within
@@ -281,7 +283,7 @@ class BatchedCatchReleaseDenseReward:
             ),
             pick_contact_bonus=number("pick_contact_bonus", 0.25),
             pick_grasp_height_offset=number(
-                "pick_grasp_height_offset", 0.08
+                "pick_grasp_height_offset", 0.0075
             ),
             pick_distance_window=max(
                 number("pick_distance_window", 0.02), 0.0

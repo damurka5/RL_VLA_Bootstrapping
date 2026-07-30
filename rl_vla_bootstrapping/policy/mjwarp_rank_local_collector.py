@@ -583,8 +583,15 @@ class BatchedReverseFrontierResetter:
             "curriculum_cap_includes_z", False
         )
         self.move_to_approach_z = number("move_to_object_approach_z", 0.27)
+    # 0.0075, the value MEASURED from the MJCF by
+    # cdpr_gripper_geometry.load_cdpr_gripper_geometry: ee_platform sits 0.08 m
+    # ABOVE ee_base and left_finger_pad sits 0.0875 m below that, so the pads are
+    # 0.0075 m below the body ee_position tracks. The old 0.08 default was the
+    # ee_platform offset, not the pad offset, and it put the reward's grasp point
+    # 7.25 cm above the object -- pick_up then solved that reward accurately for
+    # 10M steps while its grasp rate DECAYED and successes went 8/1024 -> 0/1024.
         self.pick_grasp_height_offset = number(
-            "pick_grasp_height_offset", 0.08
+            "pick_grasp_height_offset", 0.0075
         )
         self.plate_release_height = number("put_plate_release_height", 0.045)
         self.bowl_release_height = number("put_bowl_release_height", 0.10)

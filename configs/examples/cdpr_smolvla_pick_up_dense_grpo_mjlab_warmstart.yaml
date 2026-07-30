@@ -18,7 +18,8 @@ remote:
   notes:
     - Phase 1 of the manipulation curriculum - pick_up ONLY. Placement is phase 2.
     - Warm-started WEIGHTS-ONLY from the move-to adapter (fresh optimizer, fresh curriculum, step 0).
-    - pick_up's dense target is (target XY, object_z + 0.08) ~ 0.26 m, essentially the move-to hover point, so the warm-started approach skill transfers directly and RL only has to learn descend/close/lift.
+    - pick_up's dense target is (target XY, object_z + 0.015) ~ 0.19-0.21 m, the height at which the finger pads straddle the object; the warm-started approach skill supplies the XY servoing and RL has to learn descend/close/lift.
+    - The controller floor is lowered to 0.18 m; the default 0.25 m makes grasping geometrically impossible.
     - The approach curriculum is success-gated on pick_up's OWN pass rate and starts at a 3 cm cap.
     - Scenes hold two objects from step zero, matching the two-object distribution the warm-start policy was trained on, so the inherited grounding is maintained rather than left to decay.
     - The rollout horizon is capped at 26 policy decisions at every curriculum level, and the start-distance cap tops out at 0.20 m - just inside the approach range move-to actually reached.
@@ -155,13 +156,13 @@ task:
     placement_start_with_caught_object: false
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
-    # The approach curriculum caps the START'S XY DISTANCE ONLY, while the reward
-    # and the grasp are 3-D. With move-to's [0.27, 0.52] band, a "3 cm" start is
-    # really up to 0.25 m away once Z is counted, so the easy regime was never as
-    # easy as intended. The grasp point sits at ~0.26 m (object centre + the 0.08
-    # gripper hang), so this band bounds the descent to <= 0.11 m and makes the
-    # cap mean what it says.
-    ee_workspace_z_bounds: [0.27, 0.38]
+    # [0.19, 0.30]. The grasp point is now object centre + 0.015, i.e. 0.193 m
+    # (orange) to 0.210 m (mug), so the old [0.27, 0.38] band started the
+    # end-effector 8-19 cm ABOVE it and the 3 cm cap was unsatisfiable -- the
+    # cap-includes-Z clamp would have fallen back to the 0.27 floor and the
+    # realized start distance would never have gone below ~0.10 m. The floor now
+    # sits at the grasp height and the ceiling gives ~11 cm of descent to learn.
+    ee_workspace_z_bounds: [0.19, 0.30]
     random_workspace_min_goal_xy_distance: 0.10
     # 26/26, not 24/32. This pair is the fallback used when a group has NO cap,
     # which in practice means validation -- so leaving it at 32 would measure the
@@ -183,10 +184,26 @@ task:
     catch_release_fine_distance_window: 0.0
     pick_distance_window: 0.02
 
-    # ee_position tracks ee_base; the gripper hangs 0.08 m below it, so the grasp
-    # point is object_z + 0.08 (0.258 m tomato .. 0.275 m mug). That is the same
-    # height band move-to was trained to hover at (approach_z 0.27).
-    pick_grasp_height_offset: 0.08
+    # 0.015, not 0.08. MEASURED geometry: the finger pads sit 0.0075 m below
+    # ee_base (the body ee_position tracks), with a 0.0175 m pad half-height --
+    # see rl_vla_bootstrapping/simulation/cdpr_gripper_geometry.py, which derives
+    # this from the MJCF and is asserted against this value by
+    # test_grasp_configs_target_a_reachable_grasp_point.
+    #
+    # The old 0.08 was the ee_PLATFORM offset, not the pad offset. It put the
+    # reward's grasp point 7.25 cm above the object, and pick_up spent 10M steps
+    # solving that reward accurately -- converging to within 1.2-1.5 cm of a pose
+    # from which the gripper cannot touch anything. Grasp rate PEAKED at 0.068
+    # near 4.5M and then decayed to 0.056 as convergence removed the erratic
+    # excursions that had been producing accidental contacts; terminal successes
+    # went 8/1024 -> 0/1024.
+    #
+    # 0.015 rather than the exact 0.0075 because it biases the pads slightly high:
+    # the object centre still sits well inside the pad span, and the finger tips
+    # (0.039 m below ee_base) then clear the 0.15 m desk for every graspable
+    # object -- tomato and orange, the shortest, clear it by 4 mm. At 0.0075 they
+    # would sit 3-4 mm THROUGH the desk.
+    pick_grasp_height_offset: 0.015
     # Partial credit for bilateral pad contact bridges hovering -> latched grasp.
     pick_contact_bonus: 0.25
     pick_grasp_bonus: 1.0
@@ -348,6 +365,21 @@ training:
       # cap already widened for a different task) and its optimizer moments.
       max_train_steps: 16000000
       max_env_steps: 128
+      # Grasp phases MUST lower this. It clamps every commanded target, so the
+      # default 0.25 floor makes grasping geometrically impossible: the finger
+      # pads sit 0.0075 m below ee_base, so at 0.25 they bottom out at 0.2425
+      # while graspable object centres are 0.178-0.195. pick_up ran 10M steps
+      # unable to reach any object.
+      #
+      # 0.18 is the lowest value that is still conservative about the desk. The
+      # grasp target is object centre + 0.015, i.e. 0.193 (orange) to 0.210
+      # (mug), so 0.18 leaves 1.3 cm of travel below the nearest target for the
+      # reward gradient to be two-sided, and the finger tips (0.039 m below
+      # ee_base) reach 0.141 at worst -- 0.9 cm into the 0.15 m desk, a shallow
+      # tip contact rather than the deep interpenetration that previously
+      # diverged MJWarp into NaN rewards. VERIFY on a smoke run that
+      # bilateral_pad_contact_rate rises and rewards stay finite.
+      controller_workspace_z_bounds: [0.18, 0.60]
       chunk_size: 8
       replan_every: 4
       image_size: 256

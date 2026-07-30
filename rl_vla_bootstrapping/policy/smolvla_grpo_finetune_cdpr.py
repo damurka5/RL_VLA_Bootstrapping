@@ -174,6 +174,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--render-width", type=int, default=320)
     parser.add_argument("--render-height", type=int, default=240)
     parser.add_argument("--object-slots", type=int, default=4)
+    # The floor here clamps EVERY commanded target, so it decides whether the
+    # gripper can physically reach an object at all -- a separate and stricter
+    # thing than the task's spawn band. Default matches CDPRBackendConfig.
+    parser.add_argument(
+        "--controller-workspace-z-bounds",
+        nargs=2,
+        type=float,
+        default=None,
+    )
     parser.add_argument(
         "--smolvla-inference-microbatch-size",
         type=int,

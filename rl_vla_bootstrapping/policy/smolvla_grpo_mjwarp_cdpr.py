@@ -1002,6 +1002,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             nccdmax=args.mjwarp_nccdmax,
             device=str(device),
             xml_path=Path(args.mjwarp_xml_path),
+            **(
+                {
+                    "workspace_z": (
+                        float(args.controller_workspace_z_bounds[0]),
+                        float(args.controller_workspace_z_bounds[1]),
+                    )
+                }
+                if getattr(args, "controller_workspace_z_bounds", None)
+                else {}
+            ),
         )
         _log(
             dist_ctx,

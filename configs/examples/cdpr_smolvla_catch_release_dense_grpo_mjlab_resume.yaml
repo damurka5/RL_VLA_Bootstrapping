@@ -154,7 +154,9 @@ task:
     # start was really up to ~0.18 m away, so the easy regime the curriculum
     # thinks it is creating did not exist. Plate hover sits at 0.285 m and bowl
     # hover at 0.356 m, so this band still requires a real descent.
-    ee_workspace_z_bounds: [0.29, 0.40]
+    # Lowered with the corrected grasp offset; see the pick_up config. The old
+    # [0.29, 0.40] sat 10-21 cm above the real grasp point.
+    ee_workspace_z_bounds: [0.19, 0.32]
     random_workspace_min_goal_xy_distance: 0.10
     random_workspace_horizon_low: 24
     random_workspace_horizon_high: 32
@@ -214,7 +216,12 @@ task:
 
     # Pick-up: approach the physical between-fingers grasp point, reward a
     # persistent bilateral grasp, then reward lift only while grasp is kept.
-    pick_grasp_height_offset: 0.08
+    # 0.015, not 0.08 -- the finger pads sit 0.0075 m below ee_base (measured;
+    # see rl_vla_bootstrapping/simulation/cdpr_gripper_geometry.py), and 0.08 was
+    # the ee_platform offset. It placed the reward's grasp point 7.25 cm above the
+    # object; see the pick_up config for what that cost. The extra 0.0075 m over
+    # the exact pad offset keeps the finger tips clear of the 0.15 m desk.
+    pick_grasp_height_offset: 0.015
     # Partial credit for bilateral pad contact: without it there is no gradient
     # between hovering at the grasp point and a latched persistent grasp.
     pick_contact_bonus: 0.25
@@ -322,6 +329,21 @@ training:
       # caps would be meaningless here.
       max_train_steps: 15000000
       max_env_steps: 128
+      # Grasp phases MUST lower this. It clamps every commanded target, so the
+      # default 0.25 floor makes grasping geometrically impossible: the finger
+      # pads sit 0.0075 m below ee_base, so at 0.25 they bottom out at 0.2425
+      # while graspable object centres are 0.178-0.195. pick_up ran 10M steps
+      # unable to reach any object.
+      #
+      # 0.18 is the lowest value that is still conservative about the desk. The
+      # grasp target is object centre + 0.015, i.e. 0.193 (orange) to 0.210
+      # (mug), so 0.18 leaves 1.3 cm of travel below the nearest target for the
+      # reward gradient to be two-sided, and the finger tips (0.039 m below
+      # ee_base) reach 0.141 at worst -- 0.9 cm into the 0.15 m desk, a shallow
+      # tip contact rather than the deep interpenetration that previously
+      # diverged MJWarp into NaN rewards. VERIFY on a smoke run that
+      # bilateral_pad_contact_rate rises and rewards stay finite.
+      controller_workspace_z_bounds: [0.18, 0.60]
       chunk_size: 8
       replan_every: 4
       image_size: 256
