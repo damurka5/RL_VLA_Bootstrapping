@@ -28,6 +28,15 @@ Every video, CSV row and manifest entry records which backend produced it.
 
 from __future__ import annotations
 
+import os as _os
+
+# MuJoCo picks its GL backend at import time. On a headless box GLFW fails with
+# "gladLoadGL error" / "DISPLAY environment variable is missing"; EGL is what the
+# training backend already uses there. Set before any mujoco import, and only if
+# the caller has not chosen a backend.
+_os.environ.setdefault("MUJOCO_GL", "egl")
+_os.environ.setdefault("PYOPENGL_PLATFORM", _os.environ["MUJOCO_GL"])
+
 import argparse
 import csv
 import json
@@ -658,6 +667,7 @@ def run_episode(
     grasp_height_offset: float,
     reseat_held_object: bool,
     release_opening_threshold: float | None,
+    render: bool,
     torch: Any,
 ) -> dict[str, Any]:
     reset = resetter.reset(update_index=0, round_index=round_index)
@@ -903,18 +913,32 @@ def run_episode(
             }
             rows.append(row)
 
-            rendered = backend.render_world(world)
-            title_over = f"{CAMERA_LABELS['overview']}  |  oracle reference episode"
-            title_wrist = f"{CAMERA_LABELS['ee_camera']}  |  oracle reference episode"
-            frames["overview"].append(_annotate(rendered["overview"], row, title_over))
-            frames["ee_camera"].append(_annotate(rendered["ee_camera"], row, title_wrist))
-            frames["composite"].append(
-                _annotate(
-                    np.concatenate((rendered["overview"], rendered["ee_camera"]), axis=1),
-                    row,
-                    "OVERVIEW  +  WRIST (ee_camera)  |  oracle reference episode",
+            # Rendering only. Must NOT skip the termination handling below, or a
+            # no-video run would never break on terminal and terminated_at would
+            # stay unset.
+            if render:
+                rendered = backend.render_world(world)
+                title_over = (
+                    f"{CAMERA_LABELS['overview']}  |  oracle reference episode"
                 )
-            )
+                title_wrist = (
+                    f"{CAMERA_LABELS['ee_camera']}  |  oracle reference episode"
+                )
+                frames["overview"].append(
+                    _annotate(rendered["overview"], row, title_over)
+                )
+                frames["ee_camera"].append(
+                    _annotate(rendered["ee_camera"], row, title_wrist)
+                )
+                frames["composite"].append(
+                    _annotate(
+                        np.concatenate(
+                            (rendered["overview"], rendered["ee_camera"]), axis=1
+                        ),
+                        row,
+                        "OVERVIEW  +  WRIST (ee_camera)  |  oracle reference episode",
+                    )
+                )
 
             if bool(result.terminated[world].item()):
                 if terminated_at is None:
@@ -1047,6 +1071,16 @@ def main() -> int:
             "Override task.metadata entries (numeric or boolean), e.g. "
             "put_plate_release_height=0.10. Applied before the reward and the "
             "resetter are built, so both see the same value the trainer would."
+        ),
+    )
+    parser.add_argument(
+        "--no-video",
+        action="store_true",
+        help=(
+            "Skip all rendering and write only telemetry.csv and manifest.json. "
+            "This check is about physics -- whether the pads reach the object and "
+            "the reward ladder is climbed -- so it must not depend on a working "
+            "GL context. Use it when rendering fails or is not needed."
         ),
     )
     parser.add_argument(
@@ -1219,6 +1253,7 @@ def main() -> int:
                     grasp_height_offset=grasp_height_offset,
                     reseat_held_object=bool(args.reseat_held_object),
                     release_opening_threshold=args.release_opening_threshold,
+                    render=not bool(args.no_video),
                     torch=torch,
                 )
                 summary = result["summary"]
@@ -1227,6 +1262,8 @@ def main() -> int:
                 hold = max(0, int(round(float(args.terminal_hold_seconds) * float(args.fps))))
                 videos = {}
                 for name, frame_list in result["frames"].items():
+                    if not frame_list:
+                        continue
                     padded = list(frame_list) + [frame_list[-1]] * hold
                     path = episode_dir / f"{instruction_type}_ep{episode:02d}_{name}.mp4"
                     _write_video(padded, path, fps=float(args.fps))
