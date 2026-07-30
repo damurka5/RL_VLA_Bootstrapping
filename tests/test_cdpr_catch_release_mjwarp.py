@@ -1336,3 +1336,131 @@ class CDPRGripperGeometryTests(unittest.TestCase):
         message = str(caught.exception)
         self.assertIn("0.0800", message)
         self.assertIn("cannot touch", message)
+
+
+class CDPRPostGraspDiagnosticTests(unittest.TestCase):
+    """The metrics that say WHY grasps do not become lifts.
+
+    Across two pick_up runs the grasp->lift conversion sat at 0.31-0.33 and
+    never moved while the grasp rate itself climbed. physical_grasp_rate and
+    physical_lift_rate report that fact and cannot explain it, so these summarize
+    what each world did after it first held a real grasp.
+    """
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "post-grasp metrics operate on tensors",
+    )
+    def test_it_averages_only_over_worlds_that_grasped(self):
+        """Counting never-grasped worlds as zero would track the grasp rate.
+
+        The whole point is to describe the behaviour of the worlds that DID
+        grasp, independently of how many of them there were.
+        """
+
+        import torch
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            post_grasp_metrics,
+        )
+
+        # Two grasped at steps 10 and 30, rising 0.02 and 0.04; two never did.
+        first = torch.tensor([10, -1, 30, -1], dtype=torch.int64)
+        at = torch.tensor([0.20, 0.0, 0.19, 0.0], dtype=torch.float32)
+        peak = torch.tensor([0.22, 0.0, 0.23, 0.0], dtype=torch.float32)
+        out = post_grasp_metrics(first, at, peak)
+
+        self.assertEqual(out["post_grasp_worlds"], 2.0)
+        self.assertAlmostEqual(out["post_grasp_first_env_step_mean"], 20.0, 5)
+        self.assertAlmostEqual(out["post_grasp_rise_mean_m"], 0.03, 5)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "post-grasp metrics operate on tensors",
+    )
+    def test_no_grasp_reports_zero_worlds_rather_than_a_number(self):
+        """A 0.0 mean must be distinguishable from a measured 0.0."""
+
+        import torch
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            post_grasp_metrics,
+        )
+
+        n = 4
+        out = post_grasp_metrics(
+            torch.full((n,), -1, dtype=torch.int64),
+            torch.zeros(n, dtype=torch.float32),
+            torch.zeros(n, dtype=torch.float32),
+        )
+        self.assertEqual(out["post_grasp_worlds"], 0.0)
+        self.assertEqual(out["post_grasp_first_env_step_mean"], 0.0)
+        self.assertEqual(out["post_grasp_rise_mean_m"], 0.0)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "post-grasp metrics operate on tensors",
+    )
+    def test_it_separates_the_three_failure_shapes(self):
+        """Each hypothesis has to produce a distinguishable signature."""
+
+        import torch
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            post_grasp_metrics,
+        )
+
+        horizon = 64
+
+        # Grasps late: no steps left to lift.
+        late = post_grasp_metrics(
+            torch.tensor([60, 58], dtype=torch.int64),
+            torch.tensor([0.19, 0.19], dtype=torch.float32),
+            torch.tensor([0.19, 0.19], dtype=torch.float32),
+        )
+        self.assertGreater(late["post_grasp_first_env_step_mean"], 0.8 * horizon)
+        self.assertAlmostEqual(late["post_grasp_rise_mean_m"], 0.0, 5)
+
+        # Grasps early and never commands up.
+        never_up = post_grasp_metrics(
+            torch.tensor([12, 15], dtype=torch.int64),
+            torch.tensor([0.19, 0.19], dtype=torch.float32),
+            torch.tensor([0.191, 0.190], dtype=torch.float32),
+        )
+        self.assertLess(never_up["post_grasp_first_env_step_mean"], 0.3 * horizon)
+        self.assertLess(never_up["post_grasp_rise_mean_m"], 0.005)
+
+        # Lifts well clear of the 0.05 m success height, so a low lift rate then
+        # means it settled back before the terminal step.
+        lifts = post_grasp_metrics(
+            torch.tensor([12, 15], dtype=torch.int64),
+            torch.tensor([0.19, 0.19], dtype=torch.float32),
+            torch.tensor([0.26, 0.25], dtype=torch.float32),
+        )
+        self.assertGreater(lifts["post_grasp_rise_mean_m"], 0.05)
+
+        # The three shapes are mutually distinguishable on these two numbers.
+        self.assertNotAlmostEqual(
+            late["post_grasp_first_env_step_mean"],
+            never_up["post_grasp_first_env_step_mean"],
+        )
+        self.assertNotAlmostEqual(
+            never_up["post_grasp_rise_mean_m"], lifts["post_grasp_rise_mean_m"]
+        )
+
+    def test_the_metric_names_survive_the_rank_reduction(self):
+        """Sums and means are reduced differently at the update boundary.
+
+        Every metric is all-reduced with SUM, then a suffix rule divides some
+        keys back down by world size. The two means must match that rule or they
+        come out doubled; the world count must NOT, because a global count is
+        what makes an all-zero mean readable.
+        """
+
+        divided = ("_time_s", "_mean", "_max", "_std", "_rate")
+        names = {
+            "post_grasp_first_env_step_mean": True,
+            "post_grasp_rise_mean_m": True,
+            "post_grasp_worlds": False,
+        }
+        for name, should_divide in names.items():
+            with self.subTest(metric=name):
+                matched = name.endswith(divided) or "_mean_" in name
+                self.assertEqual(matched, should_divide)

@@ -52,6 +52,49 @@ _GRASP_MAX_RELATIVE_ORIENTATION_SLIP_RAD = 0.15
 _GRASP_MIN_LIFT_M = 0.015
 
 
+def post_grasp_metrics(
+    first_grasp_step: Any,
+    ee_z_at_first_grasp: Any,
+    peak_ee_z_after_grasp: Any,
+) -> dict[str, float]:
+    """Summarize what each world did AFTER it first held a real grasp.
+
+    ``physical_grasp_rate`` and ``physical_lift_rate`` report that two thirds of
+    grasps never become lifts; they cannot say why. These three numbers separate
+    the candidates:
+
+    * ``post_grasp_first_env_step_mean`` near the horizon -- the grasp lands too
+      late for a lift to fit in the remaining steps.
+    * ``post_grasp_rise_mean_m`` near zero -- the policy holds the object and
+      never commands upward.
+    * a healthy rise with a low lift rate -- it lifts and then settles, and since
+      the GRPO return is the last active step's reward that scores as no lift.
+
+    Worlds that never grasped are excluded rather than counted as zero, which
+    would make the means track the grasp rate instead of the behaviour. Both
+    means are 0.0 when nothing grasped; ``post_grasp_worlds`` makes that visible
+    instead of it reading as a real measurement.
+    """
+
+    import torch
+
+    grasped = first_grasp_step >= 0
+    count = float(grasped.sum().item())
+    zeros = torch.zeros_like(peak_ee_z_after_grasp)
+    step_sum = torch.where(
+        grasped, first_grasp_step.to(dtype=peak_ee_z_after_grasp.dtype), zeros
+    ).sum()
+    rise_sum = torch.where(
+        grasped, peak_ee_z_after_grasp - ee_z_at_first_grasp, zeros
+    ).sum()
+    denominator = max(count, 1.0)
+    return {
+        "post_grasp_first_env_step_mean": float(step_sum.item() / denominator),
+        "post_grasp_rise_mean_m": float(rise_sum.item() / denominator),
+        "post_grasp_worlds": count,
+    }
+
+
 def resolve_mjwarp_instruction_ids(
     instruction_types: Sequence[str] | None,
 ) -> tuple[int, ...]:
@@ -2083,6 +2126,23 @@ class RankLocalMJWarpGRPOCollector:
                 "physical_release",
             )
         }
+        # Post-grasp diagnostics. physical_grasp_rate and physical_lift_rate say
+        # THAT two thirds of grasps never become lifts, not why. These separate
+        # the three candidate explanations: a late first_grasp_step means the
+        # episode runs out before a lift is possible, a post_grasp_rise near zero
+        # means the policy never commands up, and a healthy rise with a low lift
+        # rate means it lifts and then settles before the terminal step (the GRPO
+        # return is the last active step's reward, so a transient lift scores as
+        # no lift).
+        first_grasp_step = torch.full(
+            (worlds,), -1, dtype=torch.int64, device=self.device
+        )
+        ee_z_at_first_grasp = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
+        peak_ee_z_after_grasp = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
         max_decisions = int(reset.horizons.max().detach().cpu().item())
         goal_slots = self._goal_slots(reset)
         drift_counter = torch.zeros(
@@ -2242,6 +2302,39 @@ class RankLocalMJWarpGRPOCollector:
                         step_active,
                     )
                 )
+                # Record the first env step at which each world holds a real
+                # grasp, and track how high it gets the object afterwards. Only
+                # grasp-eligible, still-active worlds count, matching the other
+                # grasp diagnostics.
+                env_step_index = (
+                    decision * self.actions_per_policy_decision + action_index
+                )
+                newly_grasped = (
+                    caught_target
+                    & (first_grasp_step < 0)
+                    & step_active
+                    & reset.grasp_eligible
+                )
+                first_grasp_step = torch.where(
+                    newly_grasped,
+                    torch.full_like(first_grasp_step, int(env_step_index)),
+                    first_grasp_step,
+                )
+                ee_z_at_first_grasp = torch.where(
+                    newly_grasped, low_dim.ee_position[:, 2], ee_z_at_first_grasp
+                )
+                peak_ee_z_after_grasp = torch.where(
+                    newly_grasped,
+                    low_dim.ee_position[:, 2],
+                    torch.where(
+                        (first_grasp_step >= 0) & step_active,
+                        torch.maximum(
+                            peak_ee_z_after_grasp, low_dim.ee_position[:, 2]
+                        ),
+                        peak_ee_z_after_grasp,
+                    ),
+                )
+
                 diagnostic_bool = step_active & reset.grasp_eligible
                 diagnostic_mask = diagnostic_bool.to(dtype=torch.float32)
                 grasp_diagnostic_totals["observations"] += (
@@ -2418,6 +2511,9 @@ class RankLocalMJWarpGRPOCollector:
             grasp_diagnostic_totals["observations"].item()
         )
         grasp_denominator = max(1.0, grasp_observations)
+        post_grasp = post_grasp_metrics(
+            first_grasp_step, ee_z_at_first_grasp, peak_ee_z_after_grasp
+        )
         metrics = {
             **timings,
             "reset_time_s": float(reset_time),
@@ -2514,6 +2610,18 @@ class RankLocalMJWarpGRPOCollector:
                 grasp_diagnostic_totals["physical_release"].item()
                 / grasp_denominator
             ),
+            # Post-grasp diagnostics, averaged over the worlds that actually
+            # grasped (0 when none did, which the companion count makes visible).
+            # Read them together with physical_lift_rate:
+            #   first_env_step near the horizon  -> no time left to lift
+            #   rise_mean_m near 0               -> never commands up
+            #   rise_mean_m healthy, lift low    -> lifts then settles, and the
+            #     GRPO return is the last active step's reward, so it scores as
+            #     no lift.
+            # The two means are per-rank and then rank-averaged by the update
+            # collective; the counts are similar enough across ranks (same world
+            # count, same policy) for that to be the right average.
+            **post_grasp,
         }
         return CollectorRound(
             records=records,
