@@ -37,6 +37,10 @@ import os as _os
 _os.environ.setdefault("MUJOCO_GL", "egl")
 _os.environ.setdefault("PYOPENGL_PLATFORM", _os.environ["MUJOCO_GL"])
 
+# Finger-pad centre below ee_base, measured from the MJCF. See
+# rl_vla_bootstrapping/simulation/cdpr_gripper_geometry.py.
+_MEASURED_PAD_OFFSET_M = 0.0075
+
 import argparse
 import csv
 import json
@@ -1042,7 +1046,9 @@ def main() -> int:
         default=None,
         help=(
             "Override the controller workspace floor (CDPRBackendConfig."
-            "workspace_z low). Defaults to the production 0.25 m."
+            "workspace_z low). Defaults to the config's "
+            "controller_workspace_z_bounds, i.e. what the run will use, and only "
+            "then to the dataclass default."
         ),
     )
     parser.add_argument(
@@ -1121,12 +1127,22 @@ def main() -> int:
             metadata[key] = float(raw)
     if args.grasp_height_offset is not None:
         metadata["pick_grasp_height_offset"] = float(args.grasp_height_offset)
-    grasp_height_offset = float(metadata.get("pick_grasp_height_offset", 0.08))
-    z_floor = (
-        float(args.controller_z_floor)
-        if args.controller_z_floor is not None
-        else float(min(CDPRBackendConfig.workspace_z))
+    grasp_height_offset = float(
+        metadata.get("pick_grasp_height_offset", _MEASURED_PAD_OFFSET_M)
     )
+    # Take the floor from the config the run will actually use, falling back to
+    # the dataclass default only when the config is silent. Defaulting straight
+    # to the dataclass made this script "verify" a combination the trainer would
+    # never run: with the config at 0.18 and this at 0.25 the oracle sat pinned
+    # at z=0.248 commanding a full -0.45 descent, reported 0/2 and reward 0.87,
+    # and none of that said anything about the configuration under test.
+    configured_floor = rl_args.get("controller_workspace_z_bounds")
+    if args.controller_z_floor is not None:
+        z_floor = float(args.controller_z_floor)
+    elif configured_floor:
+        z_floor = float(min(float(v) for v in configured_floor))
+    else:
+        z_floor = float(min(CDPRBackendConfig.workspace_z))
     target_objects = list(args.target_catalogs or task.get("target_objects") or [])
 
     xml_path = Path(
@@ -1135,6 +1151,55 @@ def main() -> int:
     )
     if not xml_path.is_absolute():
         xml_path = (args.config.parent / xml_path).resolve()
+
+    # Say up front whether this offset/floor pair can grasp at all. Without this
+    # an unreachable configuration just reports "no success" with a plausible
+    # partial reward, which reads as a behaviour problem and is not one.
+    try:
+        from rl_vla_bootstrapping.simulation.cdpr_gripper_geometry import (
+            load_cdpr_gripper_geometry,
+        )
+        from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+            OBJECT_VARIANTS,
+        )
+
+        table_z = float(
+            ((config.get("simulation", {}) or {}).get("build_kwargs", {}) or {}).get(
+                "table_z", 0.15
+            )
+        )
+        geometry = load_cdpr_gripper_geometry(xml_path)
+        print(
+            f"[geometry] measured pad offset {geometry.grasp_height_offset:.4f} m"
+            f" | configured grasp offset {grasp_height_offset:.4f} m"
+            f" | controller floor {z_floor:.4f} m"
+        )
+        unreachable = []
+        for name in target_objects:
+            variant = OBJECT_VARIANTS.get(name)
+            if variant is None or variant.fitted_gripper_opening <= 0.0:
+                continue
+            centre = table_z + float(variant.rest_height)
+            if not geometry.can_reach(centre, controller_floor=z_floor):
+                unreachable.append(
+                    f"{name} (centre {centre:.3f} m, needs the end-effector at or"
+                    f" below {geometry.maximum_ee_height(centre):.3f} m)"
+                )
+        if unreachable:
+            print(
+                "[geometry] WARNING: the controller floor is above the grasp "
+                "height for:\n  - " + "\n  - ".join(unreachable)
+            )
+            print(
+                "[geometry] No policy can grasp these. Lower the floor via "
+                "--controller-z-floor or controller_workspace_z_bounds in the "
+                "config before reading anything into the episode results."
+            )
+    except (ImportError, OSError, ValueError) as exc:
+        # A missing model or an unparseable chain is worth noting, not fatal.
+        # Anything else (NameError, TypeError) is a bug in this pre-flight and
+        # must surface rather than be reported as "skipped".
+        print(f"[geometry] skipped reachability pre-flight: {exc}")
 
     group_size = 2  # the layout requires >= 2; both worlds are identical clones
     backend_config = CDPRBackendConfig(
