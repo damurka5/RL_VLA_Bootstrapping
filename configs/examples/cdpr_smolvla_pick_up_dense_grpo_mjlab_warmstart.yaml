@@ -156,8 +156,8 @@ task:
     placement_start_with_caught_object: false
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
-    # [0.19, 0.30]. The grasp point is now object centre + 0.015, i.e. 0.193 m
-    # (orange) to 0.210 m (mug), so the old [0.27, 0.38] band started the
+    # [0.19, 0.30]. The grasp point is object centre + 0.0075, i.e. 0.185 m
+    # (orange) to 0.203 m (mug), so the old [0.27, 0.38] band started the
     # end-effector 8-19 cm ABOVE it and the 3 cm cap was unsatisfiable -- the
     # cap-includes-Z clamp would have fallen back to the 0.27 floor and the
     # realized start distance would never have gone below ~0.10 m. The floor now
@@ -434,10 +434,23 @@ training:
       max_log_std: -1.10
       clip_range_low: 0.20
       clip_range_high: 0.28
-      # 0.0 (was 0.0005), for the same reason and MUST MATCH the move-to phase.
-      # Nothing pushes log_std down, so any net-positive entropy bonus wins on a
-      # long run; the approach curriculum supplies exploration by construction.
-      entropy_coef: 0.0
+      # 0.0002 for the GRASP phases, where entropy_coef 0.0 collapsed the policy.
+      # Measured over pick_up's 3.1M-step run: entropy_mean fell monotonically at
+      # every single checkpoint, -0.404 -> -0.754, and everything peaked at ~2.0M
+      # then regressed -- pass rate -0.0089/M, grasp rate -0.033/M, reward
+      # -0.246/M, validation reward 0.261 -> 0.141. _normal_entropy is a pure
+      # function of log_std, so this is the sampling distribution narrowing (the
+      # 0.43 drop is ~5 action dims x 0.086 on the sampled chunk rows), which is
+      # exactly what this coefficient opposes.
+      #
+      # Safe at a value that was NOT safe before: max_log_std is now a hard -1.10
+      # ceiling, and log_std sits at -1.386, so the bonus can move it at most
+      # 0.29 and cannot run away. The old diffusion happened with the ceiling at
+      # -0.3, where it never bound. 0.002 diffused, 0.0005 slowed but did not stop
+      # it, 0.0 collapses -- 0.0002 sits under all of that with a ceiling behind
+      # it. move_to keeps 0.0: it ran 9M steps with log_std drifting UP slightly,
+      # so it has the opposite problem and needs no bonus.
+      entropy_coef: 0.0002
       max_grad_norm: 1.0
       grpo_group_size: 8
       grpo_group_selection: uniform

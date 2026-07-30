@@ -73,11 +73,12 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
     def test_every_staged_config_keeps_the_move_to_stability_fixes(self):
         """Each phase hands weights to the next through a strict load.
 
-        The residual architecture and the entropy/log-std settings that stopped
-        move-to from diffusing into target-independent homing have to be
-        identical across all three phases: an architecture mismatch fails the
-        load outright, and a hyperparameter regression silently reintroduces a
-        failure that already cost a run.
+        The residual architecture has to be identical across all three phases or
+        the load fails outright. The stability settings are held too, but as
+        bounds rather than equalities: max_log_std is a hard ceiling every phase
+        must respect, while entropy_coef is phase-dependent because the two
+        failure modes are opposite -- move-to diffuses without a ceiling, the
+        grasp phases collapse without a floor. Both have already cost a run.
         """
 
         for path in STAGED_CONFIGS:
@@ -92,12 +93,20 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
                 self.assertEqual(args["state_dim"], 6)
                 self.assertFalse(args["residual_relative_target"])
                 self.assertEqual(args["residual_scale"], 1.0)
-                # Inside the band the policy was productive in, not merely
-                # below the old ceiling that never bound. A phase that raises
-                # either of these reintroduces the diffusion that cost the
-                # 16M-step move-to run its last 8M steps.
+                # max_log_std is the hard anti-diffusion guard and must hold in
+                # every phase: inside the band the policy was productive in, not
+                # merely below the old -0.3 ceiling that never bound.
                 self.assertLessEqual(args["max_log_std"], -1.10)
-                self.assertEqual(args["entropy_coef"], 0.0)
+                # entropy_coef is a BAND, not a fixed value, because the two
+                # failure modes are opposite and phase-dependent. 0.002 diffused
+                # move-to; 0.0 collapsed pick_up (entropy_mean fell monotonically
+                # -0.404 -> -0.754 while pass rate, grasp rate and reward all
+                # regressed from a 2.0M peak). move-to runs 0.0 because its
+                # log_std drifts up on its own; the grasp phases run a small
+                # positive floor. Anything at or above 0.0005 is the value that
+                # was measured to keep diffusing.
+                self.assertGreaterEqual(args["entropy_coef"], 0.0)
+                self.assertLess(args["entropy_coef"], 0.0005)
                 # 512 sat on the A40 limit and OOM'd Warp once the LoRA
                 # backward was added.
                 self.assertEqual(
