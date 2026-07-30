@@ -1509,9 +1509,15 @@ class BatchedReverseFrontierResetter:
         )
 
         caught_group = held_group
+        # These offsets place an "already held" object relative to the gripper,
+        # so they must be the finger-pad offset -- the same number the reward
+        # uses. They were hard-coded 0.08 (the ee_platform offset), which spawned
+        # the held object 7.25 cm BELOW the pads supposedly holding it: in free
+        # space, so it fell and took the wrong-drop penalty on env step 1.
+        grasp_offset = float(self.pick_grasp_height_offset)
         if self.random_workspace_gripper_start:
             random_caught_position = ee_group.clone()
-            random_caught_position[:, 2] -= 0.08
+            random_caught_position[:, 2] -= grasp_offset
             object_positions_group[:, 0] = torch.where(
                 caught_group[:, None],
                 random_caught_position,
@@ -1519,10 +1525,11 @@ class BatchedReverseFrontierResetter:
             )
         caught_object_position = object_positions_group[:, 0].clone()
         caught_ee = caught_object_position.clone()
-        caught_ee[:, 2] += 0.08
+        caught_ee[:, 2] += grasp_offset
         ee_group = torch.where(caught_group[:, None], caught_ee, ee_group)
         grasp_pose = caught_object_position.clone()
-        grasp_pose[:, 2] += 0.09
+        # 1 cm above the grasp height: pads bracketing the object, not yet closed.
+        grasp_pose[:, 2] += grasp_offset + 0.01
         ee_group = torch.where(
             (grasp_learning & (shell_group == 5))[:, None],
             grasp_pose,

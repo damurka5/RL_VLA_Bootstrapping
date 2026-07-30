@@ -219,9 +219,10 @@ task:
     # 0.015, not 0.08 -- the finger pads sit 0.0075 m below ee_base (measured;
     # see rl_vla_bootstrapping/simulation/cdpr_gripper_geometry.py), and 0.08 was
     # the ee_platform offset. It placed the reward's grasp point 7.25 cm above the
-    # object; see the pick_up config for what that cost. The extra 0.0075 m over
-    # the exact pad offset keeps the finger tips clear of the 0.15 m desk.
-    pick_grasp_height_offset: 0.015
+    # object; see the pick_up config for what that cost, and
+    # runs/cdpr_task_reference_episodes for the oracle run that verifies this
+    # value reaches the full 5.7 reward with a real physical grasp.
+    pick_grasp_height_offset: 0.0075
     # Partial credit for bilateral pad contact: without it there is no gradient
     # between hovering at the grasp point and a latched persistent grasp.
     pick_contact_bonus: 0.25

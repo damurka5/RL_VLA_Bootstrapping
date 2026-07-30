@@ -472,9 +472,17 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
                     self.assertTrue(
                         bool(reset.task_state.ever_grasped.all().item())
                     )
+                    # A held object sits exactly one finger-pad offset below the
+                    # end-effector. Asserted against the offset the resetter
+                    # actually resolved, not a literal: this used to hard-code
+                    # 0.08, which is the ee_platform offset, and so pinned a
+                    # reset that spawned the "held" object 7.25 cm below the pads
+                    # holding it -- in free space, falling on env step 1.
                     self.assertTrue(
                         torch.allclose(
-                            target[:, 2], ee[:, 2] - 0.08, atol=1.0e-6
+                            target[:, 2],
+                            ee[:, 2] - float(resetter.pick_grasp_height_offset),
+                            atol=1.0e-6,
                         )
                     )
                     reference = backend.object_positions[:, 1]
@@ -1220,13 +1228,20 @@ class CDPRGripperGeometryTests(unittest.TestCase):
                             f"below the controller floor {floor_z:.4f} m",
                         )
 
-    def test_the_grasp_height_keeps_the_finger_tips_out_of_the_desk(self):
-        """Why the configs carry 0.015 rather than the exact 0.0075.
+    def test_the_grasp_height_keeps_desk_contact_shallow(self):
+        """Grasping small objects puts the finger tips into the desk, shallowly.
 
-        At the exact pad offset the tips sit 3-4 mm through the desk for the
-        shortest objects. Biasing the grasp height up keeps the object centre
-        inside the pad span while lifting the tips clear.
+        This is a bound, not a prohibition. The fingers reach 0.039 m below
+        ee_base while the pads are only 0.0075 m below it, so grasping anything
+        resting on the desk necessarily drives the tips near or just past the
+        surface -- for the shortest objects, 3-4 mm past. The oracle run in
+        runs/cdpr_task_reference_episodes shows that is harmless: 3/3 pick_up
+        successes at 5.70-5.72 with finite rewards throughout. What is NOT
+        harmless is deep interpenetration, which has previously diverged MJWarp
+        into NaN rewards, so this pins the depth rather than requiring zero.
         """
+
+        MAX_DEPTH = 0.010
 
         from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
             OBJECT_VARIANTS,
@@ -1243,12 +1258,13 @@ class CDPRGripperGeometryTests(unittest.TestCase):
             center = self.TABLE_Z + variant.rest_height
             ee = center + offset
             with self.subTest(object=name):
-                self.assertGreaterEqual(
-                    geometry.finger_tip_height(ee),
-                    self.TABLE_Z,
+                depth = self.TABLE_Z - geometry.finger_tip_height(ee)
+                self.assertLessEqual(
+                    depth,
+                    MAX_DEPTH,
                     f"{name}: finger tips reach "
-                    f"{geometry.finger_tip_height(ee):.4f} m, under the "
-                    f"{self.TABLE_Z:.2f} m desk",
+                    f"{geometry.finger_tip_height(ee):.4f} m, {depth * 1000:.1f} "
+                    f"mm into the {self.TABLE_Z:.2f} m desk",
                 )
                 # The object centre still has to sit inside the pads.
                 low, high = geometry.pad_span

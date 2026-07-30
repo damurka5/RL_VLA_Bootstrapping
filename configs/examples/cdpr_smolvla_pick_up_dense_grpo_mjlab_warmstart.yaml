@@ -18,7 +18,7 @@ remote:
   notes:
     - Phase 1 of the manipulation curriculum - pick_up ONLY. Placement is phase 2.
     - Warm-started WEIGHTS-ONLY from the move-to adapter (fresh optimizer, fresh curriculum, step 0).
-    - pick_up's dense target is (target XY, object_z + 0.015) ~ 0.19-0.21 m, the height at which the finger pads straddle the object; the warm-started approach skill supplies the XY servoing and RL has to learn descend/close/lift.
+    - pick_up's dense target is (target XY, object_z + 0.0075) ~ 0.185-0.203 m, the height at which the finger pads straddle the object; the warm-started approach skill supplies the XY servoing and RL has to learn descend/close/lift.
     - The controller floor is lowered to 0.18 m; the default 0.25 m makes grasping geometrically impossible.
     - The approach curriculum is success-gated on pick_up's OWN pass rate and starts at a 3 cm cap.
     - Scenes hold two objects from step zero, matching the two-object distribution the warm-start policy was trained on, so the inherited grounding is maintained rather than left to decay.
@@ -198,12 +198,19 @@ task:
     # excursions that had been producing accidental contacts; terminal successes
     # went 8/1024 -> 0/1024.
     #
-    # 0.015 rather than the exact 0.0075 because it biases the pads slightly high:
-    # the object centre still sits well inside the pad span, and the finger tips
-    # (0.039 m below ee_base) then clear the 0.15 m desk for every graspable
-    # object -- tomato and orange, the shortest, clear it by 4 mm. At 0.0075 they
-    # would sit 3-4 mm THROUGH the desk.
-    pick_grasp_height_offset: 0.015
+    # Exactly the measured pad offset, because that combination is VERIFIED end to
+    # end: runs/cdpr_task_reference_episodes ran the real resetter, the real
+    # reward and the trainer's own grasp detector under an oracle policy at
+    # offset 0.0075 with the controller floor at 0.18 and got 3/3 pick_up
+    # successes at final reward 5.70-5.72, against the 5.75 this ladder predicts
+    # -- with ever_physically_grasped true. The same harness at 0.08 / 0.25 got
+    # 0/N, never grasped, and a final reward of 1.42-1.48, which is exactly what
+    # the 10M-step run produced. A slightly larger offset would keep the finger
+    # tips further from the desk, but the verified value earns the benefit of the
+    # doubt over that reasoning: the oracle run shows the shallow tip contact is
+    # harmless. Re-run scripts/render_cdpr_task_reference_episodes.py before
+    # changing it.
+    pick_grasp_height_offset: 0.0075
     # Partial credit for bilateral pad contact bridges hovering -> latched grasp.
     pick_contact_bonus: 0.25
     pick_grasp_bonus: 1.0
