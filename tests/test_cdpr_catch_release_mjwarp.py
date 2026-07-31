@@ -1464,3 +1464,135 @@ class CDPRPostGraspDiagnosticTests(unittest.TestCase):
             with self.subTest(metric=name):
                 matched = name.endswith(divided) or "_mean_" in name
                 self.assertEqual(matched, should_divide)
+
+
+class CDPRLiftIncentiveTests(unittest.TestCase):
+    """Attempting a lift must never be worse than holding still.
+
+    The GRPO return is the last active step's reward. While the grasp bonus was
+    gated on state.grasped, a lift that failed cost the whole 1.0 grasp credit,
+    so trying only paid off above P(success|grasp) = 0.322. Measured over three
+    pick_up runs the ratio started at 0.319 -- essentially AT break-even -- and
+    then decayed to 0.132 as the policy learned not to try, with the post-grasp
+    rise falling from 18 mm to 6.9 mm against a 50 mm success height.
+    """
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
+    def _rewards(self, *, grasped, ever_grasped, object_z, initial_z):
+        import torch
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+            BatchedCatchReleaseDenseReward,
+            BatchedTaskState,
+            evaluate_active_sparse_tasks,
+        )
+
+        n = len(grasped)
+        objects = torch.zeros((n, 4, 3), dtype=torch.float32)
+        for i, z in enumerate(object_z):
+            objects[i, 0] = torch.tensor([0.0, 0.0, float(z)])
+        initial = objects[:, 0].clone()
+        for i, z in enumerate(initial_z):
+            initial[i, 2] = float(z)
+        state = BatchedTaskState(
+            instruction_ids=torch.full(
+                (n,), INSTRUCTION_TO_ID["pick_up"], dtype=torch.int64
+            ),
+            target_slots=torch.zeros((n,), dtype=torch.int64),
+            reference_slots=torch.full((n,), -1, dtype=torch.int64),
+            second_reference_slots=torch.full((n,), -1, dtype=torch.int64),
+            initial_target_positions=initial,
+            ever_grasped=torch.tensor(ever_grasped, dtype=torch.bool),
+            grasped=torch.zeros((n,), dtype=torch.bool),
+            step_count=torch.zeros((n,), dtype=torch.int64),
+            release_threshold=torch.full((n,), 0.55),
+            support_surface_z=torch.full((n,), 0.15),
+            target_rest_height=torch.full((n,), 0.03),
+        )
+        # End-effector one pad offset above whatever it is holding.
+        ee = torch.zeros((n, 3), dtype=torch.float32)
+        for i, z in enumerate(object_z):
+            ee[i] = torch.tensor([0.0, 0.0, float(z) + 0.0075])
+        result = evaluate_active_sparse_tasks(
+            state=state,
+            ee_position=ee,
+            object_positions=objects,
+            gripper_opening=torch.full((n,), 0.50),
+            caught_target=torch.tensor(grasped, dtype=torch.bool),
+            active_mask=torch.ones((n,), dtype=torch.bool),
+            max_steps=128,
+            catch_release_dense_reward=BatchedCatchReleaseDenseReward(),
+        )
+        return [float(v) for v in result.rewards]
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
+    def test_a_failed_lift_keeps_the_grasp_credit(self):
+        """Dropping must not erase what the policy already achieved."""
+
+        rest = 0.18
+        # 0: never grasped, sitting at the object.
+        # 1: grasped once, dropped it, object back at rest.
+        # 2: still holding at rest height.
+        rewards = self._rewards(
+            grasped=[False, False, True],
+            ever_grasped=[False, True, True],
+            object_z=[rest, rest, rest],
+            initial_z=[rest, rest, rest],
+        )
+        never, dropped, holding = rewards
+        self.assertGreater(
+            dropped,
+            never,
+            "a world that achieved a grasp and lost it must still score above "
+            "one that never grasped",
+        )
+        # The whole point: the gap between holding and having dropped is now the
+        # lift term alone, not the lift term plus the entire grasp bonus.
+        self.assertLess(
+            holding - dropped,
+            0.5,
+            f"dropping still costs {holding - dropped:.3f}; attempting a lift "
+            "remains a gamble against holding still",
+        )
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
+    def test_trying_beats_holding_at_the_measured_success_rate(self):
+        """Break-even must sit below the rate the policy actually achieves.
+
+        With P(success|grasp) measured at 0.123 and falling, the old 0.322
+        break-even made not-trying correct. The check is that the expected value
+        of attempting now exceeds holding at that same measured rate.
+        """
+
+        rest = 0.18
+        holding = self._rewards(
+            grasped=[True], ever_grasped=[True],
+            object_z=[rest], initial_z=[rest],
+        )[0]
+        lifted = self._rewards(
+            grasped=[True], ever_grasped=[True],
+            object_z=[rest + 0.06], initial_z=[rest],
+        )[0]
+        dropped = self._rewards(
+            grasped=[False], ever_grasped=[True],
+            object_z=[rest], initial_z=[rest],
+        )[0]
+
+        self.assertGreater(lifted, holding)
+        break_even = (holding - dropped) / (lifted - dropped)
+        self.assertLess(
+            break_even,
+            0.123,
+            f"break-even P(success|grasp) is {break_even:.3f}, at or above the "
+            "measured success rate, so the policy is still better off not "
+            "trying to lift",
+        )

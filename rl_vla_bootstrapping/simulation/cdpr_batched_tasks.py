@@ -916,10 +916,40 @@ def evaluate_active_sparse_tasks(
             else bilateral_contact.to(dtype=ee_position.dtype)
             * float(catch_release_dense_reward.pick_contact_bonus)
         )
+        # The grasp bonus is a RATCHET on ever_grasped, not a function of the
+        # current grasp. The GRPO return is the last active step's reward, so
+        # gating it on state.grasped priced a failed lift attempt as a loss of
+        # the whole 1.0 grasp credit:
+        #
+        #   hold the grasp still   2.75
+        #   lift and succeed       5.70
+        #   lift and drop it       1.35   <- with state.grasped
+        #
+        # which makes attempting a lift positive-EV only when P(success|grasp)
+        # exceeds 0.322. Measured across three pick_up runs the ratio sat at
+        # 0.319, 0.271, 0.199, 0.154, 0.132 -- it started AT the break-even and
+        # then fell away from it, because once trying is -EV the policy learns
+        # not to try, which lowers the success rate, which makes trying worse
+        # still. post_grasp_rise_mean_m tracked it down from 18 mm to 6.9 mm
+        # against a 50 mm success height, with the grasp landing at env step 27
+        # of 64 -- so there was ample time and it simply never commanded up.
+        # GRPO was optimizing the reward correctly; the reward was wrong.
+        #
+        # ever_grasped is set by logical_or on the collector's physical-grasp
+        # signal (bilateral pad force, persistence, stable relative pose), so it
+        # cannot be earned by brushing the object. A dropped attempt now returns
+        # ~2.50 instead of 1.35 and break-even falls to ~0.08, below the current
+        # success rate, so trying is worth it again and improves from there.
+        #
+        # The lift term stays on state.grasped: lift is only credited while the
+        # object is actually held, and a dropped object falls back to its start
+        # height so normalized_lift decays to zero on its own. The ladder is
+        # unchanged -- 1.5 hover, 1.75 contact, 2.75 grasp, 3.75 lift, 5.75
+        # success -- so no rung rewards stalling over continuing.
         pick_reward = (
             pick_distance_reward
             + contact_credit
-            + state.grasped.to(dtype=ee_position.dtype)
+            + state.ever_grasped.to(dtype=ee_position.dtype)
             * float(catch_release_dense_reward.pick_grasp_bonus)
             + normalized_lift
             * state.grasped.to(dtype=ee_position.dtype)
