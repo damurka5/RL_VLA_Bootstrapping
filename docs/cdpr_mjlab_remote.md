@@ -151,6 +151,43 @@ acceptance limit to catch orientation/channel mistakes while allowing renderer
 differences; shape, order, dtype, RGB convention, range, and third-slot alias
 are also hard checks.
 
+## Oracle reference episodes
+
+The reference-episode harness drives a scripted oracle through the *production*
+reset, reward, success predicate and grasp detector, and asserts that its
+on-screen reward breakdown matches the training reward term for term. It is the
+check to run after touching reset shaping, the reward ladder or the grasp
+geometry, before launching a run.
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab \
+  bash scripts/render_cdpr_task_reference_episodes_remote.sh
+```
+
+Physics is MuJoCo **CPU** here on every machine — the harness hard-codes
+`backend="mujoco_cpu"`, so running it on the GPU box does not exercise MJWarp.
+What the remote run buys is a working EGL context (macOS rejects
+`MUJOCO_GL=egl` outright, so the videos cannot be rendered on a laptop at all)
+and the same asset and dependency stack as training.
+
+By default it runs two passes into `as_configured/` and
+`prelifted_fraction_0/` and prints both tallies, because a single pass is not
+interpretable: the oracle is a fixed script, so whether an episode succeeds
+depends on which object it drew, and any new reset-shaping knob shifts the
+resetter's RNG stream. Set `COMPARE_BASELINE=0` for one pass.
+
+Knobs: `CONFIG_PATH`, `INSTRUCTIONS`, `EPISODES_PER_INSTRUCTION`,
+`TARGET_CATALOGS`, `START_DISTANCE_CAP`, `SEED`, `VIDEO=0` for telemetry only,
+`DRY_RUN=1` to print the commands. Extra arguments are forwarded to the harness.
+
+On the config's full object pool one episode reliably fails: the scripted
+oracle opens the gripper before it closes, and a banana slips out. The 3/3
+recorded under `runs/cdpr_task_reference_episodes/` used
+`TARGET_CATALOGS="robocasa_apple robocasa_tomato robocasa_orange
+robocasa_potato"`. Compare against a same-invocation baseline, not against the
+numbers quoted in config comments.
+
 ## Two-GPU update/checkpoint/resume smoke
 
 ```bash
