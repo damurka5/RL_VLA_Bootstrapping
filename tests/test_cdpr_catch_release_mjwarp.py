@@ -1992,6 +1992,138 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         )
         self.assertEqual(legacy["post_grasp_worlds_prelifted"], 0.0)
 
+    def test_the_approach_gate_is_measured_without_pregrasped_groups(self):
+        """The curriculum cap must not promote on episodes that never approach.
+
+        The approach curriculum widens the start-distance cap once an
+        instruction's pass rate crosses 0.30. A pre-grasped pick_up start begins
+        with the object already in the gripper, performs no approach at all, and
+        succeeds far more often -- 0.32 against 0.12 measured over a 400k-step
+        probe. Feeding those to the gate inflated the observed rate by ~40%
+        relative (0.169 against 0.121) and pushed the cap toward promoting on
+        the strength of a different task.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            instruction_outcome_counts,
+        )
+
+        # 4 groups x 8 candidates. Groups 0-1 are pre-grasped and mostly
+        # succeed; groups 2-3 approach normally and mostly do not.
+        successes = torch.zeros((4, 8), dtype=torch.bool)
+        successes[0, :6] = True
+        successes[1, :6] = True
+        successes[2, :1] = True
+        successes[3, :1] = True
+        task_ids = torch.zeros((4,), dtype=torch.int64)
+        prelifted = torch.tensor([True, True, False, False])
+
+        counts = instruction_outcome_counts(
+            successes, task_ids, {"pick_up": 0}, prelifted
+        )
+        # Whole-run outcome keeps counting everything.
+        self.assertEqual(counts["instruction_successes/pick_up"], 14.0)
+        self.assertEqual(counts["instruction_worlds/pick_up"], 32.0)
+        # The gate sees only the two normal-start groups.
+        self.assertEqual(
+            counts["instruction_successes_normal_start/pick_up"], 2.0
+        )
+        self.assertEqual(counts["instruction_worlds_normal_start/pick_up"], 16.0)
+
+        contaminated = (
+            counts["instruction_successes/pick_up"]
+            / counts["instruction_worlds/pick_up"]
+        )
+        gated = (
+            counts["instruction_successes_normal_start/pick_up"]
+            / counts["instruction_worlds_normal_start/pick_up"]
+        )
+        self.assertAlmostEqual(contaminated, 0.4375, places=6)
+        self.assertAlmostEqual(gated, 0.125, places=6)
+        self.assertLess(
+            gated,
+            contaminated,
+            "the pre-grasped groups must not be able to raise the gate",
+        )
+
+    def test_outcome_counts_are_unchanged_when_nothing_is_pregrasped(self):
+        """With the stage off the two pairs must be identical.
+
+        Both when the mask is absent (a collector round that predates the
+        field) and when it is present and all-false.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            instruction_outcome_counts,
+        )
+
+        successes = torch.tensor(
+            [[True, False], [False, False], [True, True]], dtype=torch.bool
+        )
+        task_ids = torch.tensor([0, 1, 0], dtype=torch.int64)
+        ids = {"pick_up": 0, "move_to_object": 1}
+        for label, mask in (
+            ("absent", None),
+            ("all false", torch.zeros((3,), dtype=torch.bool)),
+        ):
+            with self.subTest(mask=label):
+                counts = instruction_outcome_counts(
+                    successes, task_ids, ids, mask
+                )
+                for name in ids:
+                    self.assertEqual(
+                        counts[f"instruction_successes_normal_start/{name}"],
+                        counts[f"instruction_successes/{name}"],
+                    )
+                    self.assertEqual(
+                        counts[f"instruction_worlds_normal_start/{name}"],
+                        counts[f"instruction_worlds/{name}"],
+                    )
+        # And the per-instruction split itself is right.
+        counts = instruction_outcome_counts(successes, task_ids, ids, None)
+        self.assertEqual(counts["instruction_successes/pick_up"], 3.0)
+        self.assertEqual(counts["instruction_worlds/pick_up"], 4.0)
+        self.assertEqual(counts["instruction_successes/move_to_object"], 0.0)
+        self.assertEqual(counts["instruction_worlds/move_to_object"], 2.0)
+
+    def test_rounds_carry_the_pregrasped_mask_through_concatenation(self):
+        """The gate is computed after rounds are merged, so the mask must survive."""
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            CollectorRound,
+            concatenate_collector_rounds,
+        )
+
+        def make(prelifted):
+            return CollectorRound(
+                records={"advantage": torch.zeros((2,))},
+                loss_mask=torch.ones((2,)),
+                candidate_rewards=torch.zeros((2, 8)),
+                candidate_success=torch.zeros((2, 8), dtype=torch.bool),
+                group_instruction_ids=torch.zeros((2,), dtype=torch.int64),
+                group_shell_ids=torch.zeros((2,), dtype=torch.int64),
+                metrics={"rollout_time_s": 1.0},
+                group_prelifted=prelifted,
+            )
+
+        first = torch.tensor([True, False])
+        second = torch.tensor([False, True])
+        merged = concatenate_collector_rounds([make(first), make(second)])
+        self.assertEqual(len(merged), 8)
+        self.assertTrue(
+            torch.equal(merged[-1], torch.tensor([True, False, False, True]))
+        )
+        # A round without the mask disables the split rather than guessing,
+        # so the gate falls back to counting every world.
+        partial = concatenate_collector_rounds([make(first), make(None)])
+        self.assertIsNone(partial[-1])
+
     def test_the_new_metric_names_survive_the_rank_reduction(self):
         """Means are divided back down at the update boundary; counts are not."""
 
@@ -2013,6 +2145,11 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
             "group_reward_std_mean": True,
             "group_reward_std_mean_prelifted": True,
             "group_reward_std_mean_normal_start": True,
+            # Counts again: these two drive the approach curriculum's gate, and
+            # dividing them by the world size would leave the rate unchanged but
+            # the logged counts wrong by 1024x.
+            "instruction_successes_normal_start/pick_up": False,
+            "instruction_worlds_normal_start/pick_up": False,
         }
         for name, should_divide in names.items():
             with self.subTest(metric=name):

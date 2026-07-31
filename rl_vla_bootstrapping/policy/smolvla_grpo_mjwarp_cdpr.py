@@ -35,6 +35,7 @@ from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     RankLocalMJWarpGRPOCollector,
     ValidationRound,
     concatenate_collector_rounds,
+    instruction_outcome_counts,
 )
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     RankLocalGroupLayout,
@@ -1408,6 +1409,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 task_ids,
                 shell_ids,
                 rollout_metrics,
+                prelifted_groups,
             ) = (
                 concatenate_collector_rounds(rounds)
             )
@@ -1492,18 +1494,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             # update-boundary all-reduce turns them into global counts and every
             # rank derives the same pass rate -- which keeps the per-instruction
             # approach curricula in lockstep without an extra collective.
-            instruction_counts: dict[str, float] = {}
-            for name in configured_instruction_names:
-                selected = task_ids == int(INSTRUCTION_TO_ID[name])
-                worlds_for_name = float(
-                    selected.sum().item() * successes.shape[1]
-                )
-                instruction_counts[
-                    f"instruction_successes/{name}"
-                ] = float(successes[selected].sum().item())
-                instruction_counts[
-                    f"instruction_worlds/{name}"
-                ] = worlds_for_name
+            instruction_counts = instruction_outcome_counts(
+                successes,
+                task_ids,
+                {
+                    name: int(INSTRUCTION_TO_ID[name])
+                    for name in configured_instruction_names
+                },
+                prelifted_groups,
+            )
             local_metrics = {
                 **rollout_metrics,
                 **update_metrics,
@@ -1541,15 +1540,22 @@ def main(argv: Sequence[str] | None = None) -> None:
             # global pass rate, so an easy task cannot promote a hard one's cap.
             # The counts are global sums, so every rank computes the same rates
             # and moves the caps identically. Affects the next update's caps.
+            #
+            # Measured over the normal-start groups only. What this gate is for
+            # is deciding whether the policy can reach the object from the
+            # current start distance, and a pre-grasped start answers no part of
+            # that question -- it begins holding the object. The unsuffixed
+            # instruction_successes/{name} stays in the metrics as the run's
+            # overall outcome; it is just not what promotes the cap.
             instruction_pass_rates = {}
             for name in configured_instruction_names:
                 worlds_for_name = synchronized_metrics.get(
-                    f"instruction_worlds/{name}", 0.0
+                    f"instruction_worlds_normal_start/{name}", 0.0
                 )
                 if worlds_for_name > 0.0:
                     instruction_pass_rates[name] = (
                         synchronized_metrics.get(
-                            f"instruction_successes/{name}", 0.0
+                            f"instruction_successes_normal_start/{name}", 0.0
                         )
                         / worlds_for_name
                     )

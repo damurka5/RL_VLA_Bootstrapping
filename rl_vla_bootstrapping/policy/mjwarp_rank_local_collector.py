@@ -125,6 +125,54 @@ def post_grasp_metrics(
     }
 
 
+def instruction_outcome_counts(
+    successes: Any,
+    task_ids: Any,
+    instruction_ids: Mapping[str, int],
+    prelifted_groups: Any | None = None,
+) -> dict[str, float]:
+    """Per-instruction success/world counts, whole-run and approach-only.
+
+    Two pairs per instruction. ``instruction_successes/{name}`` counts every
+    world and is the run's outcome. ``instruction_successes_normal_start/{name}``
+    counts only the groups that actually performed an approach, and is what the
+    approach curriculum's pass-rate gate must be measured on: a pre-grasped
+    pick_up start begins with the object already in the gripper, so it says
+    nothing about whether the policy can reach an object from the current start
+    distance -- while succeeding far more often (0.32 against 0.12 measured),
+    which would promote the start-distance cap on the strength of episodes that
+    skip the approach entirely.
+
+    Plain counts, so the update-boundary all-reduce turns them into global sums
+    and every rank derives the same rate without an extra collective.
+    """
+
+    import torch
+
+    counts: dict[str, float] = {}
+    candidates = int(successes.shape[1])
+    prelifted = (
+        None if prelifted_groups is None
+        else prelifted_groups.to(dtype=torch.bool)
+    )
+    for name, instruction_id in instruction_ids.items():
+        selected = task_ids == int(instruction_id)
+        approach = selected if prelifted is None else selected & ~prelifted
+        counts[f"instruction_successes/{name}"] = float(
+            successes[selected].sum().item()
+        )
+        counts[f"instruction_worlds/{name}"] = float(
+            selected.sum().item() * candidates
+        )
+        counts[f"instruction_successes_normal_start/{name}"] = float(
+            successes[approach].sum().item()
+        )
+        counts[f"instruction_worlds_normal_start/{name}"] = float(
+            approach.sum().item() * candidates
+        )
+    return counts
+
+
 def resolve_mjwarp_instruction_ids(
     instruction_types: Sequence[str] | None,
 ) -> tuple[int, ...]:
@@ -1920,6 +1968,11 @@ class CollectorRound:
     group_instruction_ids: Any
     group_shell_ids: Any
     metrics: dict[str, float]
+    # Per-group mask of the pre-grasped starts. The approach curriculum's gate
+    # is a pass rate, and a pre-grasped episode performs no approach at all, so
+    # it has to be excluded from that rate or the cap promotes on evidence about
+    # a different task.
+    group_prelifted: Any | None = None
     # Capped decision-0 subsample of SmolVLA inputs for the LoRA grad-through-VLA
     # update (None unless the collector was asked to store it).
     vla_records: dict[str, Any] | None = None
@@ -2803,6 +2856,7 @@ class RankLocalMJWarpGRPOCollector:
             group_shell_ids=reset.group_shell_ids,
             metrics=metrics,
             vla_records=vla_records,
+            group_prelifted=prelifted_group_mask,
         )
 
     def validate_round(
@@ -3016,7 +3070,7 @@ class RankLocalMJWarpGRPOCollector:
 
 def concatenate_collector_rounds(
     rounds: Sequence[CollectorRound],
-) -> tuple[dict[str, Any], Any, Any, Any, Any, Any, dict[str, float]]:
+) -> tuple[dict[str, Any], Any, Any, Any, Any, Any, dict[str, float], Any]:
     if not rounds:
         raise ValueError("At least one collector round is required.")
     import torch
@@ -3031,6 +3085,11 @@ def concatenate_collector_rounds(
     successes = torch.cat([item.candidate_success for item in rounds], dim=0)
     task_ids = torch.cat([item.group_instruction_ids for item in rounds], dim=0)
     shell_ids = torch.cat([item.group_shell_ids for item in rounds], dim=0)
+    prelifted_groups = (
+        torch.cat([item.group_prelifted for item in rounds], dim=0)
+        if all(item.group_prelifted is not None for item in rounds)
+        else None
+    )
     metrics: dict[str, float] = {}
     for key in rounds[0].metrics:
         values = [float(item.metrics.get(key, 0.0)) for item in rounds]
@@ -3049,4 +3108,13 @@ def concatenate_collector_rounds(
         metrics.get("sampled_environment_actions", 0.0)
         / max(1.0, metrics.get("selected_environment_actions", 0.0))
     )
-    return records, mask, rewards, successes, task_ids, shell_ids, metrics
+    return (
+        records,
+        mask,
+        rewards,
+        successes,
+        task_ids,
+        shell_ids,
+        metrics,
+        prelifted_groups,
+    )
