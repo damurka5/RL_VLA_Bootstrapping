@@ -165,11 +165,17 @@ REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab \
   bash scripts/render_cdpr_task_reference_episodes_remote.sh
 ```
 
-Physics is MuJoCo **CPU** here on every machine — the harness hard-codes
-`backend="mujoco_cpu"`, so running it on the GPU box does not exercise MJWarp.
-What the remote run buys is a working EGL context (macOS rejects
-`MUJOCO_GL=egl` outright, so the videos cannot be rendered on a laptop at all)
-and the same asset and dependency stack as training.
+Physics comes from `PHYSICS`, which defaults to `auto`: MJWarp whenever CUDA
+and the MJWarp runtime are present, so on this box the run is the training
+stack end to end. `PHYSICS=mjlab_mjwarp` turns an unavailable runtime into an
+error rather than a silent downgrade; `PHYSICS=mujoco_cpu` pins the CPU
+reference, which is what every manifest recorded before 2026-07-31 used.
+
+A CPU number and a GPU number are not comparable — different precision,
+different solver iteration order, GPU nondeterminism. The manifest records
+`physics_backend`, `physics_backend_selection`, `physics_device` and
+`exact_production_backend`; check them before comparing a run against anything.
+The harness prints the same on its `[physics]` line.
 
 By default it runs two passes into `as_configured/` and
 `prelifted_fraction_0/` and prints both tallies, because a single pass is not
@@ -177,9 +183,13 @@ interpretable: the oracle is a fixed script, so whether an episode succeeds
 depends on which object it drew, and any new reset-shaping knob shifts the
 resetter's RNG stream. Set `COMPARE_BASELINE=0` for one pass.
 
-Knobs: `CONFIG_PATH`, `INSTRUCTIONS`, `EPISODES_PER_INSTRUCTION`,
-`TARGET_CATALOGS`, `START_DISTANCE_CAP`, `SEED`, `VIDEO=0` for telemetry only,
-`DRY_RUN=1` to print the commands. Extra arguments are forwarded to the harness.
+Knobs: `PHYSICS`, `DEVICE`, `CONFIG_PATH`, `INSTRUCTIONS`,
+`EPISODES_PER_INSTRUCTION`, `TARGET_CATALOGS`, `START_DISTANCE_CAP`, `SEED`,
+`VIDEO=0` for telemetry only, `DRY_RUN=1` to print the commands. Extra
+arguments are forwarded to the harness.
+
+`VIDEO=0` also skips allocating the MJWarp renderer, so a telemetry-only run
+needs neither GPU colour buffers nor a GL context.
 
 On the config's full object pool one episode reliably fails: the scripted
 oracle opens the gripper before it closes, and a banana slips out. The 3/3

@@ -1207,6 +1207,26 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self._nonfinite_world_events = 0
         return count
 
+    def controller_state(self) -> dict[str, Any]:
+        """Commanded controller set-points, as the policy's actions accumulate them.
+
+        Host numpy, matching MujocoReferenceBatchedBackend term for term, so a
+        tool that reads telemetry off a backend does not have to know which one
+        it was handed. Shapes are (worlds, 3) for the target and (worlds,) for
+        the yaw and the normalized gripper opening.
+        """
+
+        import numpy as np
+
+        def host(value: Any) -> Any:
+            return np.asarray(value.detach().cpu().numpy(), dtype=np.float64).copy()
+
+        return {
+            "target": host(self._controller_target),
+            "yaw": host(self._controller_yaw),
+            "gripper": host(self._controller_gripper),
+        }
+
     def low_dim_observations(self) -> CDPRLowDimBatch:
         object_positions = self._xpos.index_select(
             1, self._object_body_ids_tensor
@@ -1302,6 +1322,34 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         if overview.dtype != self.torch.float32 or wrist.dtype != self.torch.float32:
             raise RuntimeError("MJWarp RGB output must be normalized float32.")
         return CDPRRenderBatch(overview=overview, wrist=wrist)
+
+    def render_world(self, world: int) -> dict[str, np.ndarray]:
+        """RGB frames for one world's two policy cameras, HWC uint8.
+
+        The same contract MujocoReferenceBatchedBackend offers, so video tools
+        can drive either backend. MJWarp renders every world in one dispatch, so
+        this costs a full batch render per call -- fine for the two-world oracle
+        harness, wasteful if you want all the worlds. Use render_policy_cameras
+        and slice it yourself in that case.
+        """
+
+        import numpy as np
+
+        index = int(world)
+        if not 0 <= index < self.worlds_per_rank:
+            raise IndexError(
+                f"world {index} is outside [0, {self.worlds_per_rank})."
+            )
+        cameras = self.render_policy_cameras()
+
+        def frame(value: Any) -> Any:
+            array = value[index].permute(1, 2, 0).detach().cpu().numpy()
+            return np.clip(np.rint(array * 255.0), 0.0, 255.0).astype(np.uint8)
+
+        return {
+            "overview": frame(cameras.overview),
+            "ee_camera": frame(cameras.wrist),
+        }
 
     def body_pose(self, body_names: Sequence[str]) -> tuple[Any, Any]:
         ids = self.torch.tensor(

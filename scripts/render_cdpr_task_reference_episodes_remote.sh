@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # Re-run the oracle reference-episode harness on the remote box.
 #
-# What this does and does NOT prove
-# ---------------------------------
-# render_cdpr_task_reference_episodes.py hard-codes backend="mujoco_cpu": the
-# reset, the reward, the success predicate and the grasp detector are the real
-# training code, but the PHYSICS is MuJoCo CPU on every machine, GPU or not.
-# Running it on the A40 box therefore does not make it the production MJWarp
-# pipeline. What the remote run buys is a working EGL context (so the videos
-# render at all -- macOS rejects MUJOCO_GL=egl outright) and the same asset,
-# mesh and dependency stack the training runs use.
+# What this proves
+# ----------------
+# The reset, the reward, the success predicate and the grasp detector are the
+# real training code. PHYSICS defaults to `auto`, which takes the production
+# MJWarp engine whenever CUDA and the MJWarp runtime are present -- so on the
+# A40 box this is the training stack end to end. It falls back to the MuJoCo CPU
+# reference elsewhere and says so; PHYSICS=mjlab_mjwarp makes an unavailable
+# runtime an error rather than a silent downgrade, and PHYSICS=mujoco_cpu pins
+# the CPU reference for comparison against older records.
+#
+# A CPU number and a GPU number are not comparable: different precision,
+# different solver iteration order, GPU nondeterminism. The manifest records
+# `physics_backend` and `exact_production_backend` for exactly this reason --
+# check them before comparing a run against anything.
 #
 # Why two passes by default
 # -------------------------
@@ -53,7 +58,11 @@ START_DISTANCE_CAP="${START_DISTANCE_CAP:-}"
 COMPARE_BASELINE="${COMPARE_BASELINE:-1}"
 VIDEO="${VIDEO:-1}"
 MUJOCO_GL="${MUJOCO_GL:-egl}"
+# auto | mjlab_mjwarp | mujoco_cpu. See the header.
+PHYSICS="${PHYSICS:-auto}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
+# Index within CUDA_VISIBLE_DEVICES, so cuda:0 is correct for a single-GPU mask.
+DEVICE="${DEVICE:-cuda:0}"
 DRY_RUN="${DRY_RUN:-0}"
 
 if [[ ! -f "$CONFIG_PATH" ]]; then
@@ -76,6 +85,13 @@ if [[ "$VIDEO" == "1" ]] && ! command -v ffmpeg >/dev/null 2>&1; then
   echo "ffmpeg not found; re-run with VIDEO=0 for telemetry only." >&2
   exit 2
 fi
+case "$PHYSICS" in
+  auto|mjlab_mjwarp|mujoco_cpu) ;;
+  *)
+    echo "PHYSICS must be auto, mjlab_mjwarp or mujoco_cpu." >&2
+    exit 2
+    ;;
+esac
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 RUN_DIR="${RUN_DIR:-$OUTPUT_ROOT/$timestamp}"
@@ -107,6 +123,8 @@ build_cmd() {
     --instructions "${instruction_values[@]}"
     --episodes-per-instruction "$EPISODES_PER_INSTRUCTION"
     --seed "$SEED"
+    --physics "$PHYSICS"
+    --device "$DEVICE"
   )
   if [[ -n "$TARGET_CATALOGS" ]]; then
     local catalog_values
@@ -149,6 +167,12 @@ for manifest_path in manifests:
     manifest = json.loads(manifest_path.read_text())
     overrides = manifest.get("metadata_overrides") or ["<config as written>"]
     print(f"[{label}] metadata_overrides={' '.join(overrides)}")
+    print(
+        f"[{label}] physics={manifest.get('physics_backend', '?')} "
+        f"({manifest.get('physics_backend_selection', '?')}) "
+        f"device={manifest.get('physics_device', '?')} "
+        f"exact_production_backend={manifest.get('exact_production_backend')}"
+    )
     for episode in manifest.get("episodes", []):
         total += 1
         successes += bool(episode.get("success"))
@@ -170,7 +194,8 @@ baseline_dir="$RUN_DIR/prelifted_fraction_0"
 printf 'mode=oracle_reference_episodes\n'
 printf 'config=%s\n' "$CONFIG_PATH"
 printf 'output=%s\n' "$RUN_DIR"
-printf 'physics=mujoco_cpu exact_production_backend=false production_backend=mjlab_mjwarp\n'
+printf 'physics_request=%s device=%s (resolved by the harness; see its [physics] line)\n' \
+  "$PHYSICS" "$DEVICE"
 printf 'instructions=%s episodes_per_instruction=%s seed=%s\n' \
   "$INSTRUCTIONS" "$EPISODES_PER_INSTRUCTION" "$SEED"
 printf 'target_catalogs=%s\n' "${TARGET_CATALOGS:-config_pool}"

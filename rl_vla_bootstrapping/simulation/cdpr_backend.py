@@ -13,6 +13,73 @@ class SimulatorDependencyError(RuntimeError):
     """Raised when an explicitly selected simulator backend is unavailable."""
 
 
+# Importable without CUDA; the backend itself additionally needs mjlab.
+MJWARP_RUNTIME_PACKAGES = ("torch", "warp", "mujoco_warp")
+
+
+def missing_mjwarp_dependencies() -> tuple[str, ...]:
+    """Names of the MJWarp runtime packages that are not installed."""
+
+    import importlib.util
+
+    missing: list[str] = []
+    for name in MJWARP_RUNTIME_PACKAGES:
+        try:
+            found = importlib.util.find_spec(name) is not None
+        except (ImportError, ValueError):
+            # A namespace-package parent that is itself broken counts as
+            # missing rather than crashing the caller's backend selection.
+            found = False
+        if not found:
+            missing.append(name)
+    return tuple(missing)
+
+
+def resolve_simulator_backend(
+    requested: str,
+    *,
+    cuda_available: bool,
+    missing_dependencies: Sequence[str] = (),
+) -> tuple[str, str]:
+    """Pick a physics backend, and say why, for tools that can run on either.
+
+    ``requested`` is one of ``SUPPORTED_SIMULATOR_BACKENDS`` or ``"auto"``.
+    Returns ``(backend, reason)``; the reason is meant to be printed and stored,
+    because a result from the CPU reference physics and one from the production
+    MJWarp physics are not interchangeable and a run that does not say which it
+    used cannot be compared to anything.
+
+    Naming an unavailable backend explicitly is an error rather than a silent
+    downgrade -- asking for MJWarp and quietly getting CPU MuJoCo is exactly the
+    kind of substitution that makes a "verified" result mean nothing.
+    """
+
+    missing = tuple(str(name) for name in missing_dependencies)
+    if requested not in SUPPORTED_SIMULATOR_BACKENDS + ("auto",):
+        raise ValueError(
+            f"Unsupported simulator backend {requested!r}; expected one of "
+            f"{SUPPORTED_SIMULATOR_BACKENDS + ('auto',)}."
+        )
+    if requested == "mujoco_cpu":
+        return "mujoco_cpu", "requested explicitly"
+    if requested == "mjlab_mjwarp":
+        if not cuda_available:
+            raise SimulatorDependencyError(
+                "mjlab_mjwarp was requested but no CUDA device is available."
+            )
+        if missing:
+            raise SimulatorDependencyError(
+                "mjlab_mjwarp was requested but these packages are missing: "
+                + ", ".join(missing)
+            )
+        return "mjlab_mjwarp", "requested explicitly"
+    if not cuda_available:
+        return "mujoco_cpu", "auto: no CUDA device"
+    if missing:
+        return "mujoco_cpu", "auto: missing " + ", ".join(missing)
+    return "mjlab_mjwarp", "auto: CUDA and the MJWarp runtime are available"
+
+
 @dataclass(frozen=True)
 class CDPRBackendConfig:
     backend: str = "mujoco_cpu"

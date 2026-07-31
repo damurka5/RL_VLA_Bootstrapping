@@ -20,10 +20,16 @@ re-implemented:
   ``RankLocalMJWarpGRPOCollector._update_physical_grasp`` (persistent bilateral
   pad contact, solved normal force, and relative-pose stability).
 
-The only substitution is the physics engine.  MJ-Lab/MJWarp is CUDA-only, so on
-a machine without an NVIDIA GPU the scene runs on MuJoCo's CPU pipeline using
-the *same* fixed-topology MJWarp MJCF, catalog meshes, colliders and cameras.
-Every video, CSV row and manifest entry records which backend produced it.
+The physics engine is selected with ``--physics``.  ``mjlab_mjwarp`` is the
+engine training actually runs, and ``auto`` (the default) uses it whenever CUDA
+and the MJWarp runtime are present.  MJ-Lab/MJWarp is CUDA-only, so on a machine
+without an NVIDIA GPU the scene falls back to MuJoCo's CPU pipeline using the
+*same* fixed-topology MJWarp MJCF, catalog meshes, colliders and cameras -- a
+close relative, not the same engine: different precision, different solver
+iteration order, and no GPU nondeterminism.  Every video, CSV row and manifest
+entry records which backend produced it, and ``exact_production_backend`` in the
+manifest says plainly whether the run is the real thing.  Do not compare a CPU
+run's numbers against a GPU run's.
 """
 
 from __future__ import annotations
@@ -75,6 +81,10 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (  # noqa: E402
 )
 from rl_vla_bootstrapping.simulation.cdpr_backend import (  # noqa: E402
     CDPRBackendConfig,
+    CDPRSimulatorBackend,
+    SimulatorDependencyError,
+    missing_mjwarp_dependencies,
+    resolve_simulator_backend,
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
     ACTIVE_INSTRUCTION_TYPES,
@@ -578,7 +588,7 @@ def _write_video(frames: Sequence[np.ndarray], output: Path, *, fps: float) -> N
 
 def seat_held_object(
     *,
-    backend: MujocoReferenceBatchedBackend,
+    backend: CDPRSimulatorBackend,
     reset: Any,
     grasp_height_offset: float,
     torch: Any,
@@ -610,7 +620,9 @@ def seat_held_object(
     closed_steps = 0
     while opening > 0.0:
         opening = max(0.0, opening - 0.02)
-        backend.set_gripper_openings(torch.full((worlds,), opening))
+        backend.set_gripper_openings(
+            torch.full((worlds,), opening, device=backend.device)
+        )
         backend.set_free_body_poses(
             backend.object_body_ids, positions, low_dim.object_quaternions
         )
@@ -663,7 +675,7 @@ def _load_config(path: Path) -> dict[str, Any]:
 
 def run_episode(
     *,
-    backend: MujocoReferenceBatchedBackend,
+    backend: CDPRSimulatorBackend,
     resetter: BatchedReverseFrontierResetter,
     grasp: _GraspShim,
     reward_config: BatchedCatchReleaseDenseReward,
@@ -1040,6 +1052,23 @@ def main() -> int:
     )
     parser.add_argument("--keep-existing", action="store_true")
     parser.add_argument(
+        "--physics",
+        choices=("auto", "mjlab_mjwarp", "mujoco_cpu"),
+        default="auto",
+        help=(
+            "Physics engine. 'mjlab_mjwarp' is what training runs; 'mujoco_cpu' "
+            "is the CPU reference that reads the same MJCF. 'auto' takes MJWarp "
+            "whenever CUDA and the MJWarp runtime are present and falls back "
+            "otherwise, printing which it chose. Naming an unavailable backend "
+            "explicitly is an error, not a silent downgrade."
+        ),
+    )
+    parser.add_argument(
+        "--device",
+        default="cuda:0",
+        help="CUDA device for --physics mjlab_mjwarp. Ignored on CPU physics.",
+    )
+    parser.add_argument(
         "--grasp-height-offset",
         type=float,
         default=None,
@@ -1210,9 +1239,26 @@ def main() -> int:
         # must surface rather than be reported as "skipped".
         print(f"[geometry] skipped reachability pre-flight: {exc}")
 
+    try:
+        physics, physics_reason = resolve_simulator_backend(
+            args.physics,
+            cuda_available=bool(torch.cuda.is_available()),
+            missing_dependencies=missing_mjwarp_dependencies(),
+        )
+    except SimulatorDependencyError as exc:
+        raise SystemExit(f"[physics] {exc}") from exc
+    exact_production_backend = physics == "mjlab_mjwarp"
+    print(f"[physics] {physics} ({physics_reason})")
+    if not exact_production_backend:
+        print(
+            "[physics] This is the CPU reference engine reading the same MJCF, "
+            "not the engine training runs. Its numbers are not comparable with "
+            "an mjlab_mjwarp run's."
+        )
+
     group_size = 2  # the layout requires >= 2; both worlds are identical clones
     backend_config = CDPRBackendConfig(
-        backend="mujoco_cpu",
+        backend=physics,
         worlds_per_rank=group_size,
         groups_per_rank=1,
         grpo_group_size=group_size,
@@ -1226,11 +1272,33 @@ def main() -> int:
         ),
         render_width=int(simulator.get("render_width", 320)),
         render_height=int(simulator.get("render_height", 240)),
-        device="cpu",
+        # Sized from the config the run will use, like every other physics
+        # parameter here -- a smaller contact budget than training's changes
+        # what the solver does at the pads, which is the part being verified.
+        nconmax=int(rl_args.get("mjwarp_nconmax", CDPRBackendConfig.nconmax)),
+        njmax=int(rl_args.get("mjwarp_njmax", CDPRBackendConfig.njmax)),
+        nccdmax=rl_args.get("mjwarp_nccdmax", CDPRBackendConfig.nccdmax),
+        device=str(args.device) if exact_production_backend else "cpu",
         xml_path=xml_path,
         workspace_z=(z_floor, float(max(CDPRBackendConfig.workspace_z))),
     )
-    backend = MujocoReferenceBatchedBackend(config=backend_config, xml_path=xml_path)
+    if exact_production_backend:
+        from rl_vla_bootstrapping.simulation.mjlab_mjwarp_backend import (
+            MJLabMJWarpCDPRBackend,
+        )
+
+        # No renderer without --no-video: it allocates GPU-side colour buffers
+        # and needs a working GL context, neither of which a telemetry-only run
+        # should require.
+        backend = MJLabMJWarpCDPRBackend(
+            config=backend_config,
+            create_renderer=not bool(args.no_video),
+            require_mjlab=True,
+        )
+    else:
+        backend = MujocoReferenceBatchedBackend(
+            config=backend_config, xml_path=xml_path
+        )
 
     reward_config = BatchedCatchReleaseDenseReward.from_metadata(metadata)
     thresholds = BatchedTaskThresholds(
@@ -1259,12 +1327,21 @@ def main() -> int:
         "config": str(args.config),
         "xml_path": str(xml_path),
         "renderer_backend": backend.metadata()["backend"],
-        "exact_production_backend": False,
+        "exact_production_backend": exact_production_backend,
         "production_backend": "mjlab_mjwarp",
+        "physics_backend": physics,
+        "physics_backend_selection": physics_reason,
+        "physics_device": str(backend_config.device),
         "note": (
             "Oracle (scripted) reference episodes. Reset, reward, success "
-            "predicate and grasp detection are the production training code; "
-            "physics is MuJoCo CPU because MJ-Lab/MJWarp requires CUDA."
+            "predicate and grasp detection are the production training code."
+            + (
+                " Physics is the production MJWarp engine."
+                if exact_production_backend
+                else " Physics is the MuJoCo CPU reference reading the same "
+                "MJCF, not the engine training runs -- MJ-Lab/MJWarp requires "
+                "CUDA. Do not compare these numbers with an mjlab_mjwarp run's."
+            )
         ),
         "start_distance_cap_m": float(cap),
         "pick_grasp_height_offset_m": grasp_height_offset,
