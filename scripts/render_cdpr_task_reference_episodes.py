@@ -376,12 +376,20 @@ def _reward_breakdown(
             max(lift / float(reward_config.pick_lift_reward_scale), 0.0), 1.0
         )
         grasped = float(grasp_flags["grasped"])
+        # The grasp bonus is a RATCHET on ever_grasped (see the pick_reward
+        # assembly in cdpr_batched_tasks): a failed lift must not cost the grasp
+        # credit. Reading state.grasped here made the overlay disagree with the
+        # training reward by exactly pick_grasp_bonus on any step after a drop,
+        # and the drift assertion below aborted the whole run.
+        ever_grasped = float(grasp_flags["ever_grasped"])
         terms["distance_coarse"] = float(coarse[0])
         terms["distance_fine"] = float(fine[0])
         terms["contact_bonus"] = float(
             grasp_flags["bilateral_contact"] * reward_config.pick_contact_bonus
         )
-        terms["grasp_bonus"] = float(grasped * reward_config.pick_grasp_bonus)
+        terms["grasp_bonus"] = float(
+            ever_grasped * reward_config.pick_grasp_bonus
+        )
         terms["lift"] = float(
             normalized_lift * grasped * reward_config.pick_lift_reward_weight
         )
@@ -836,6 +844,7 @@ def run_episode(
             wrong_place = bool(diagnostics["wrong_place_drop"][world].item())
             grasp_flags = {
                 "grasped": float(task_state.grasped[world].item()),
+                "ever_grasped": float(task_state.ever_grasped[world].item()),
                 "bilateral_contact": float(
                     grasp_diagnostics["bilateral_contact"][world].item()
                 ),
