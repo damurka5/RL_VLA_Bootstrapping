@@ -2150,6 +2150,11 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
             # the logged counts wrong by 1024x.
             "instruction_successes_normal_start/pick_up": False,
             "instruction_worlds_normal_start/pick_up": False,
+            # Residual telemetry: two means and a rate, all divided.
+            "residual_action_norm_mean": True,
+            "prior_action_norm_mean": True,
+            "residual_target_cosine_mean": True,
+            "residual_target_alignment_rate": True,
         }
         for name, should_divide in names.items():
             with self.subTest(metric=name):

@@ -449,7 +449,21 @@ training:
       adam_eps: 1.0e-5
       weight_decay: 0.0
       init_log_std: -1.2
-      min_log_std: -5.0
+      # -1.45, not -5.0. max_log_std stops the distribution diffusing OUT of the
+      # productive band; nothing stopped it collapsing INTO a point, and -5.0 is
+      # not a floor in any practical sense. Measured: log_std fell monotonically
+      # from -1.389 to -1.396 over 1.5M steps with entropy_coef already at
+      # 0.0002, and entropy_mean fell at every checkpoint of every pick_up run.
+      # The consequence is not subtle -- validation runs the DETERMINISTIC mean
+      # action and scores 0.001-0.007 while sampled training scores 0.11, so
+      # essentially every success is an exploration excursion. Narrow the
+      # sampling distribution and those excursions stop happening, which is the
+      # decay the last three runs all showed.
+      #
+      # -1.45 sits just below the [-1.39, -1.38] band the recent runs held, so
+      # it does not force exploration wider than what has been stable; it only
+      # forbids further collapse. Symmetric with the -1.10 ceiling below.
+      min_log_std: -1.45
       # -1.10, not -0.3. MUST MATCH the move-to phase. At -0.3 the ceiling never
       # bound and the distribution diffused underneath it: over move-to's
       # 16M-step run log_std rose monotonically for 12M steps (-1.227 -> -0.895)

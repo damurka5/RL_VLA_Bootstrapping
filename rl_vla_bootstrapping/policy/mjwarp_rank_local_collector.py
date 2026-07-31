@@ -2313,6 +2313,23 @@ class RankLocalMJWarpGRPOCollector:
         policy_target_cosine_first = torch.zeros_like(
             prior_target_cosine_first
         )
+        residual_target_cosine_first = torch.zeros_like(
+            prior_target_cosine_first
+        )
+        # How much the trainable path actually moves the action, and where it
+        # points. policy_target_cosine minus prior_target_cosine has been
+        # NEGATIVE in every run measured (-0.005, -0.005, -0.022): the composed
+        # policy is aligned no better than the frozen prior it sits on. Two very
+        # different causes produce that -- a residual near zero (the head is not
+        # learning) or a large residual pointed the wrong way (it is learning
+        # something orthogonal to the task) -- and they need opposite fixes.
+        # These separate them. Measured on the deterministic mean action, not
+        # the sampled one, so exploration noise (sigma ~ 0.25) does not swamp it.
+        residual_norm_sum = torch.zeros(
+            (), dtype=torch.float32, device=self.device
+        )
+        prior_norm_sum = torch.zeros_like(residual_norm_sum)
+        action_norm_observations = torch.zeros_like(residual_norm_sum)
         vla_capture: dict[str, Any] | None = None
 
         for decision in range(max_decisions):
@@ -2366,13 +2383,26 @@ class RankLocalMJWarpGRPOCollector:
             timings["smolvla_time_s"] += time.perf_counter() - started
 
             started = time.perf_counter()
-            actions, log_probs, _means = (
+            actions, log_probs, action_means = (
                 self.trainer.sample_action_chunks_tensor(
                     states=state_tensor,
                     priors=prior,
                     action_count=self.actions_per_policy_decision,
                     generator=self._sample_generator,
                 )
+            )
+
+            # Residual magnitude over the whole rollout, on the mean action.
+            taken = int(action_means.shape[1])
+            residual_chunk = action_means - prior[:, :taken]
+            residual_norm_sum += torch.linalg.vector_norm(
+                residual_chunk, dim=-1
+            ).sum()
+            prior_norm_sum += torch.linalg.vector_norm(
+                prior[:, :taken], dim=-1
+            ).sum()
+            action_norm_observations += float(
+                residual_chunk.shape[0] * residual_chunk.shape[1]
             )
 
             if decision == 0:
@@ -2390,6 +2420,13 @@ class RankLocalMJWarpGRPOCollector:
                 )
                 policy_target_cosine_first = _cosine_2d(
                     actions[:, 0, :2], rel_xy0
+                )
+                # The residual's OWN direction, independent of the prior it is
+                # added to. Near +1 means it is pushing toward the object and
+                # the prior is what drags the sum down; near 0 means it is
+                # adding motion unrelated to the task.
+                residual_target_cosine_first = _cosine_2d(
+                    (action_means[:, 0, :2] - prior[:, 0, :2]), rel_xy0
                 )
                 if self.store_vla_records and self.vla_update_max_records > 0:
                     # Capped subsample of whole groups for the LoRA update:
@@ -2759,6 +2796,27 @@ class RankLocalMJWarpGRPOCollector:
             ),
             "policy_target_alignment_rate": float(
                 (policy_target_cosine_first > 0.0).float().mean().item()
+            ),
+            # Is the trainable path doing anything, and is it aimed?
+            # residual_action_norm_mean near zero  -> the head is not learning
+            #   and policy == prior by construction.
+            # large norm with residual_target_cosine_mean near zero -> it IS
+            #   learning, just nothing about the direction to the object.
+            # large norm with a positive cosine -> the residual is aimed and
+            #   the frozen prior is what drags the composed action off target.
+            "residual_action_norm_mean": float(
+                (residual_norm_sum / action_norm_observations.clamp_min(1.0))
+                .item()
+            ),
+            "prior_action_norm_mean": float(
+                (prior_norm_sum / action_norm_observations.clamp_min(1.0))
+                .item()
+            ),
+            "residual_target_cosine_mean": float(
+                residual_target_cosine_first.mean().item()
+            ),
+            "residual_target_alignment_rate": float(
+                (residual_target_cosine_first > 0.0).float().mean().item()
             ),
             "dense_move_to_distance_reward": float(
                 self.move_to_distance_reward is not None
