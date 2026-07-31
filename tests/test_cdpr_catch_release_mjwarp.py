@@ -369,6 +369,7 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
                 self.object_quaternions = None
                 self.ee_positions = None
                 self.ee_yaw = None
+                self.gripper_openings = None
 
             def reset_worlds(self, _worlds):
                 return None
@@ -386,8 +387,8 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
                 self.ee_positions = positions.clone()
                 self.ee_yaw = yaw.clone()
 
-            def set_gripper_openings(self, _openings):
-                return None
+            def set_gripper_openings(self, openings):
+                self.gripper_openings = openings.clone()
 
             def set_visual_variants(self, *_args):
                 return None
@@ -1596,3 +1597,412 @@ class CDPRLiftIncentiveTests(unittest.TestCase):
             "measured success rate, so the policy is still better off not "
             "trying to lift",
         )
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "the resetter operates on tensors",
+)
+class CDPRPreliftedPickUpStartTests(unittest.TestCase):
+    """pick_up starts that begin already holding the object.
+
+    Three multi-million-step runs plateaued at a ~0.30 grasp rate while the lift
+    decayed -- post_grasp_rise_mean_m fell from 18 mm to 7-10 mm against a 50 mm
+    success height, with the first grasp landing at env step ~27 of 64. The
+    entropy floor and the ever_grasped ratchet each slowed that decay and
+    neither stopped it, so a fraction of groups now skips the discovery problem
+    entirely and gets dense signal on the lift from env step 0.
+    """
+
+    _OBJECTS = (
+        "robocasa_apple",
+        "robocasa_banana",
+        "robocasa_plate",
+        "robocasa_bowl",
+    )
+
+    @staticmethod
+    def _metadata(fraction, **overrides):
+        metadata = {
+            "random_workspace_gripper_start": True,
+            "placement_start_with_caught_object": False,
+            "random_workspace_min_goal_xy_distance": 0.10,
+            "random_workspace_horizon_low": 26,
+            "random_workspace_horizon_high": 26,
+            "ee_workspace_x_bounds": [-0.24, 0.24],
+            "ee_workspace_y_bounds": [-0.24, 0.24],
+            "ee_workspace_z_bounds": [0.19, 0.30],
+            "min_scene_objects": 1,
+            "max_scene_objects": 2,
+            "pick_grasp_height_offset": 0.0075,
+        }
+        if fraction is not None:
+            metadata["pick_up_prelifted_group_fraction"] = fraction
+        metadata.update(overrides)
+        return metadata
+
+    def _resetter(self, torch, *, groups, fraction, instruction="pick_up"):
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+            RankLocalCurriculum,
+        )
+        from rl_vla_bootstrapping.policy.rank_local_grpo import (
+            RankLocalGroupLayout,
+        )
+
+        backend = CDPRCatchReleaseRewardTests._fake_backend(torch)
+        resetter = BatchedReverseFrontierResetter(
+            backend=backend,
+            layout=RankLocalGroupLayout(
+                worlds_per_rank=groups * 8, groups_per_rank=groups, group_size=8
+            ),
+            curriculum=RankLocalCurriculum(device=backend.device),
+            rank=0,
+            base_seed=17,
+            instruction_types=(instruction,),
+            allowed_objects=self._OBJECTS,
+            task_metadata=self._metadata(fraction),
+        )
+        return backend, resetter
+
+    def test_every_candidate_in_a_group_shares_the_stage(self):
+        """A mixed group would make GRPO score the spawn, not the actions.
+
+        The advantage is normalized WITHIN a group of eight. If some candidates
+        started pre-grasped and others had to earn the grasp, the ones handed it
+        would carry a large positive advantage for having been lucky, and the
+        update would be silently corrupted rather than obviously broken.
+        """
+
+        import torch
+
+        groups = 64
+        backend, resetter = self._resetter(torch, groups=groups, fraction=0.5)
+        reset = resetter.reset(update_index=0, round_index=0)
+
+        for name, flat in (
+            ("prelifted", reset.prelifted),
+            ("ever_grasped", reset.task_state.ever_grasped),
+            ("grasped", reset.task_state.grasped),
+            ("physical_grasp", reset.physical_grasp),
+        ):
+            by_group = flat.reshape(groups, 8)
+            mixed = by_group.any(dim=1) & ~by_group.all(dim=1)
+            self.assertFalse(
+                bool(mixed.any().item()),
+                f"{name} differs across candidates of the same GRPO group",
+            )
+        # And the stage is really varying across groups, so the check above is
+        # not passing because every group happened to land on one side.
+        by_group = reset.prelifted.reshape(groups, 8)[:, 0]
+        self.assertTrue(bool(by_group.any().item()))
+        self.assertFalse(bool(by_group.all().item()))
+        # The object poses each group starts from must be group-uniform too --
+        # the pre-grasped path rewrites the end-effector, so it is the one that
+        # could break this.
+        ee_by_group = backend.ee_positions.reshape(groups, 8, 3)
+        self.assertTrue(
+            torch.allclose(ee_by_group, ee_by_group[:, :1, :].expand_as(ee_by_group))
+        )
+
+    def test_a_pregrasped_start_is_the_object_at_rest_in_a_closed_gripper(self):
+        """Rest height, one pad offset below the pads, fingers closed.
+
+        Three ways this silently degrades into something else:
+
+        * reusing the placement path's random_caught_position would put the
+          object below wherever the end-effector already was -- for pick_up,
+          floating in mid-air above the desk;
+        * an end-effector offset other than the measured 0.0075 m pad offset
+          would spawn the object away from the pads that are supposedly holding
+          it, and it would fall on env step 1;
+        * an open gripper leaves state.grasped false, which requires
+          gripper_opening <= 0.94, so the world would not be pre-grasped at all.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            _FITTED_GRIPPER,
+        )
+
+        groups = 32
+        backend, resetter = self._resetter(torch, groups=groups, fraction=0.5)
+        reset = resetter.reset(update_index=0, round_index=0)
+
+        prelifted = reset.prelifted
+        self.assertTrue(bool(prelifted.any().item()))
+        target = backend.object_positions[:, 0]
+        ee = backend.ee_positions
+        offset = float(resetter.pick_grasp_height_offset)
+
+        rest_z = (
+            reset.task_state.support_surface_z
+            + reset.task_state.target_rest_height
+        )
+        self.assertTrue(
+            torch.allclose(
+                target[prelifted, 2], rest_z[prelifted], atol=1.0e-6
+            ),
+            "the pre-grasped object must start on the desk at its rest height",
+        )
+        self.assertTrue(
+            torch.allclose(
+                ee[prelifted], target[prelifted] + torch.tensor(
+                    [0.0, 0.0, offset]
+                ), atol=1.0e-6
+            ),
+            "the pads must straddle the object, one pad offset above its centre",
+        )
+
+        fitted = torch.tensor(
+            _FITTED_GRIPPER, dtype=torch.float32
+        ).index_select(0, reset.group_target_catalog_ids)
+        expected_opening = (fitted - (0.001 / 0.03)).clamp(
+            0.0, 1.0
+        ).repeat_interleave(8)
+        openings = backend.gripper_openings
+        self.assertTrue(
+            torch.allclose(
+                openings[prelifted], expected_opening[prelifted], atol=1.0e-6
+            )
+        )
+        self.assertTrue(
+            bool((openings[prelifted] <= 0.94).all().item()),
+            "state.grasped requires gripper_opening <= 0.94",
+        )
+        self.assertTrue(bool(reset.task_state.grasped[prelifted].all().item()))
+        self.assertTrue(
+            bool(reset.task_state.ever_grasped[prelifted].all().item())
+        )
+        self.assertTrue(bool(reset.physical_grasp[prelifted].all().item()))
+        # Untouched groups still start empty-handed at the full task.
+        normal = ~prelifted
+        self.assertTrue(bool(normal.any().item()))
+        self.assertFalse(bool(reset.task_state.grasped[normal].any().item()))
+        self.assertTrue(
+            torch.allclose(target[normal, 2], rest_z[normal], atol=1.0e-6)
+        )
+
+    def test_the_lift_is_still_measured_against_the_desk(self):
+        """initial_target_positions must be the REST position.
+
+        pick_success is `grasped & (target_z - initial_target_z >= 0.05)`. If the
+        reset wrote a raised position into initial_target_positions, the
+        requirement would silently become "5 cm above wherever the reset put it"
+        -- or, if it wrote a position below rest, success would come free.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            BatchedCatchReleaseDenseReward,
+            evaluate_active_sparse_tasks,
+        )
+
+        groups = 32
+        offset = 0.0075
+        lift_height = 0.05
+
+        def outcome(raise_by):
+            backend, resetter = self._resetter(
+                torch, groups=groups, fraction=0.5
+            )
+            reset = resetter.reset(update_index=0, round_index=0)
+            prelifted = reset.prelifted
+            rest_z = (
+                reset.task_state.support_surface_z
+                + reset.task_state.target_rest_height
+            )
+            self.assertTrue(
+                torch.allclose(
+                    reset.task_state.initial_target_positions[prelifted, 2],
+                    rest_z[prelifted],
+                    atol=1.0e-6,
+                ),
+                "the lift baseline is not the rest height",
+            )
+            objects = backend.object_positions.clone()
+            objects[:, 0, 2] += raise_by
+            ee = backend.ee_positions.clone()
+            ee[:, 2] += raise_by
+            result = evaluate_active_sparse_tasks(
+                state=reset.task_state,
+                ee_position=ee,
+                object_positions=objects,
+                gripper_opening=backend.gripper_openings.clone(),
+                caught_target=prelifted,
+                active_mask=prelifted,
+                max_steps=128,
+                catch_release_dense_reward=BatchedCatchReleaseDenseReward(),
+            )
+            return prelifted, result
+
+        prelifted, raised = outcome(lift_height + 0.001)
+        self.assertTrue(
+            bool(raised.success[prelifted].all().item()),
+            "a 5 cm raise from a pre-grasped start must satisfy pick_success",
+        )
+        _, short = outcome(lift_height - 0.001)
+        self.assertFalse(
+            bool(short.success[prelifted].any().item()),
+            "a raise under the success height must not succeed -- the baseline "
+            "has drifted below the rest position",
+        )
+        # And the pads really are on the object at that pre-grasped pose, so the
+        # dense term is at its maximum rather than penalizing the start.
+        self.assertTrue(
+            bool(
+                (
+                    raised.diagnostics["pick_grasp_distance"][prelifted]
+                    <= offset * 1.01
+                ).all().item()
+            )
+        )
+
+    def test_zero_fraction_reproduces_the_previous_resets_exactly(self):
+        """The knob defaults off and must be inert when it is.
+
+        Not merely "no pre-grasped groups": the sampler must not consume a draw
+        either, or every downstream random quantity in the reset shifts and a run
+        that set the fraction to 0 would still differ from one that predates the
+        knob.
+        """
+
+        import torch
+
+        groups = 16
+        absent_backend, absent = self._resetter(
+            torch, groups=groups, fraction=None
+        )
+        zero_backend, zero = self._resetter(torch, groups=groups, fraction=0.0)
+
+        self.assertEqual(absent.pick_up_prelifted_group_fraction, 0.0)
+        absent_reset = absent.reset(update_index=3, round_index=1)
+        zero_reset = zero.reset(update_index=3, round_index=1)
+
+        self.assertFalse(bool(zero_reset.prelifted.any().item()))
+        self.assertFalse(bool(zero_reset.task_state.grasped.any().item()))
+        for name, left, right in (
+            ("objects", absent_backend.object_positions, zero_backend.object_positions),
+            ("quaternions", absent_backend.object_quaternions, zero_backend.object_quaternions),
+            ("ee", absent_backend.ee_positions, zero_backend.ee_positions),
+            ("yaw", absent_backend.ee_yaw, zero_backend.ee_yaw),
+            ("openings", absent_backend.gripper_openings, zero_backend.gripper_openings),
+        ):
+            with self.subTest(field=name):
+                self.assertTrue(torch.equal(left, right))
+        self.assertTrue(
+            torch.equal(absent_reset.horizons, zero_reset.horizons)
+        )
+
+    def test_the_realized_fraction_matches_the_configured_one(self):
+        import torch
+
+        groups = 128
+        rounds = 8
+        for fraction in (0.25, 0.5):
+            with self.subTest(fraction=fraction):
+                _, resetter = self._resetter(
+                    torch, groups=groups, fraction=fraction
+                )
+                prelifted = 0
+                for round_index in range(rounds):
+                    reset = resetter.reset(
+                        update_index=0, round_index=round_index
+                    )
+                    # Count GROUPS, since the stage is a per-group draw.
+                    prelifted += int(
+                        reset.prelifted.reshape(groups, 8)[:, 0].sum().item()
+                    )
+                realized = prelifted / float(groups * rounds)
+                self.assertAlmostEqual(realized, fraction, delta=0.05)
+
+    def test_only_pick_up_and_only_training_gets_a_pregrasped_start(self):
+        """move_to has nothing to hold, and validation must run the full task.
+
+        Letting the stage into validation would make the held-out success rate --
+        the number that says whether this intervention worked -- move with the
+        knob instead of with the policy.
+        """
+
+        import torch
+
+        _, move_to = self._resetter(
+            torch, groups=16, fraction=1.0, instruction="move_to_object"
+        )
+        self.assertFalse(
+            bool(
+                move_to.reset(update_index=0, round_index=0)
+                .prelifted.any()
+                .item()
+            )
+        )
+
+        _, pick_up = self._resetter(torch, groups=16, fraction=1.0)
+        self.assertTrue(
+            bool(
+                pick_up.reset(update_index=0, round_index=0)
+                .prelifted.all()
+                .item()
+            )
+        )
+        validation = pick_up.reset(
+            update_index=0, round_index=0, allow_prelifted=False
+        )
+        self.assertFalse(bool(validation.prelifted.any().item()))
+        self.assertFalse(bool(validation.task_state.grasped.any().item()))
+
+    def test_post_grasp_metrics_keep_the_two_populations_apart(self):
+        """A pre-grasped world grasps at env step 0 by construction.
+
+        Folding those into post_grasp_first_env_step_mean would drag it toward 0
+        as the pre-grasped fraction rose, and it would stop meaning "how late the
+        policy earns its grasp" -- which is the comparison the metric exists to
+        support across runs.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            post_grasp_metrics,
+        )
+
+        first = torch.tensor([0, 0, 20, 30], dtype=torch.int64)
+        at = torch.tensor([0.1875, 0.1875, 0.19, 0.19], dtype=torch.float32)
+        peak = torch.tensor([0.2475, 0.2275, 0.20, 0.21], dtype=torch.float32)
+        prelifted = torch.tensor([True, True, False, False])
+
+        out = post_grasp_metrics(first, at, peak, prelifted)
+        self.assertEqual(out["post_grasp_worlds"], 2.0)
+        self.assertAlmostEqual(out["post_grasp_first_env_step_mean"], 25.0, 5)
+        self.assertAlmostEqual(out["post_grasp_rise_mean_m"], 0.015, 5)
+        self.assertEqual(out["post_grasp_worlds_prelifted"], 2.0)
+        self.assertAlmostEqual(
+            out["post_grasp_first_env_step_mean_prelifted"], 0.0, 5
+        )
+        self.assertAlmostEqual(out["post_grasp_rise_mean_m_prelifted"], 0.05, 5)
+
+        # Omitting the mask reproduces the pre-existing three numbers over every
+        # grasped world, so the metric predates and survives this stage.
+        legacy = post_grasp_metrics(first, at, peak)
+        self.assertEqual(legacy["post_grasp_worlds"], 4.0)
+        self.assertAlmostEqual(
+            legacy["post_grasp_first_env_step_mean"], 12.5, 5
+        )
+        self.assertEqual(legacy["post_grasp_worlds_prelifted"], 0.0)
+
+    def test_the_new_metric_names_survive_the_rank_reduction(self):
+        """Means are divided back down at the update boundary; counts are not."""
+
+        divided = ("_time_s", "_mean", "_max", "_std", "_rate")
+        names = {
+            "post_grasp_first_env_step_mean_prelifted": True,
+            "post_grasp_rise_mean_m_prelifted": True,
+            "post_grasp_worlds_prelifted": False,
+            "prelifted_start_rate": True,
+        }
+        for name, should_divide in names.items():
+            with self.subTest(metric=name):
+                matched = name.endswith(divided) or "_mean_" in name
+                self.assertEqual(matched, should_divide)

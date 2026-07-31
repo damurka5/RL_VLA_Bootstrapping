@@ -56,6 +56,7 @@ def post_grasp_metrics(
     first_grasp_step: Any,
     ee_z_at_first_grasp: Any,
     peak_ee_z_after_grasp: Any,
+    prelifted: Any | None = None,
 ) -> dict[str, float]:
     """Summarize what each world did AFTER it first held a real grasp.
 
@@ -74,24 +75,45 @@ def post_grasp_metrics(
     would make the means track the grasp rate instead of the behaviour. Both
     means are 0.0 when nothing grasped; ``post_grasp_worlds`` makes that visible
     instead of it reading as a real measurement.
+
+    ``prelifted`` marks the worlds that were RESET already holding the object.
+    They are split into their own ``*_prelifted`` keys rather than folded in or
+    dropped. Folding them in would corrupt both numbers -- they grasp at env step
+    0 by construction, so a rising pre-grasped fraction alone would drag
+    ``post_grasp_first_env_step_mean`` toward 0 and it would stop meaning "how
+    late the policy earns its grasp", which is the comparison these metrics
+    exist to support across runs. Dropping them would throw away the one
+    measurement the pre-grasped stage is there to produce: whether the policy
+    raises an object it is handed.
     """
 
     import torch
 
     grasped = first_grasp_step >= 0
-    count = float(grasped.sum().item())
+    if prelifted is None:
+        prelifted = torch.zeros_like(grasped)
     zeros = torch.zeros_like(peak_ee_z_after_grasp)
-    step_sum = torch.where(
-        grasped, first_grasp_step.to(dtype=peak_ee_z_after_grasp.dtype), zeros
-    ).sum()
-    rise_sum = torch.where(
-        grasped, peak_ee_z_after_grasp - ee_z_at_first_grasp, zeros
-    ).sum()
-    denominator = max(count, 1.0)
+    rise = peak_ee_z_after_grasp - ee_z_at_first_grasp
+    steps = first_grasp_step.to(dtype=peak_ee_z_after_grasp.dtype)
+
+    def summarize(selected: Any, suffix: str) -> dict[str, float]:
+        count = float(selected.sum().item())
+        denominator = max(count, 1.0)
+        step_sum = torch.where(selected, steps, zeros).sum()
+        rise_sum = torch.where(selected, rise, zeros).sum()
+        return {
+            f"post_grasp_first_env_step_mean{suffix}": float(
+                step_sum.item() / denominator
+            ),
+            f"post_grasp_rise_mean_m{suffix}": float(
+                rise_sum.item() / denominator
+            ),
+            f"post_grasp_worlds{suffix}": count,
+        }
+
     return {
-        "post_grasp_first_env_step_mean": float(step_sum.item() / denominator),
-        "post_grasp_rise_mean_m": float(rise_sum.item() / denominator),
-        "post_grasp_worlds": count,
+        **summarize(grasped & ~prelifted, ""),
+        **summarize(grasped & prelifted, "_prelifted"),
     }
 
 
@@ -504,6 +526,10 @@ class BatchedReset:
     target_rest_height: Any
     group_ids: Any
     group_target_catalog_ids: Any | None = None
+    # Per-world mask of the pick_up starts that began already holding the
+    # object. They grasp at env step 0 by construction, so the post-grasp
+    # diagnostics have to keep them apart from the worlds that earned a grasp.
+    prelifted: Any | None = None
 
 
 class BatchedReverseFrontierResetter:
@@ -564,6 +590,22 @@ class BatchedReverseFrontierResetter:
         )
         self.force_caught_container_start = flag(
             "placement_start_with_caught_object", False
+        )
+        # Fraction of pick_up GRPO groups that start with the object ALREADY
+        # grasped at its rest height on the desk, so the only task left is the
+        # 5 cm lift. pick_up plateaus at a ~0.30 grasp rate while
+        # post_grasp_rise_mean_m decays from 18 mm to 7-10 mm: the grasp lands
+        # at env step ~27 of 64, so there is ample time and the policy simply
+        # stops commanding up. An entropy floor and the ever_grasped ratchet
+        # each delayed that decay without stopping it, so instead of waiting for
+        # the lift to be DISCOVERED behind a grasp, these groups hand it the
+        # grasp and give the lift its own dense signal from env step 0.
+        #
+        # Sampled per GROUP, never per candidate: GRPO normalizes the advantage
+        # within a group, so a group whose eight candidates started from
+        # different stages would score the spawn instead of the actions.
+        self.pick_up_prelifted_group_fraction = min(
+            1.0, max(0.0, number("pick_up_prelifted_group_fraction", 0.0))
         )
         self.workspace_x_bounds = bounds(
             "ee_workspace_x_bounds", (-0.28, 0.28)
@@ -767,7 +809,21 @@ class BatchedReverseFrontierResetter:
         generator.manual_seed(int(seed))
         return generator
 
-    def reset(self, *, update_index: int, round_index: int) -> BatchedReset:
+    def reset(
+        self,
+        *,
+        update_index: int,
+        round_index: int,
+        allow_prelifted: bool = True,
+    ) -> BatchedReset:
+        """Build one rank-local batch of starts.
+
+        ``allow_prelifted`` is False for held-out validation: the pre-grasped
+        pick_up stage is a TRAINING aid, and letting it into validation would
+        mean the held-out success rate -- the number that says whether the aid
+        worked -- was partly measured on episodes that were handed the grasp.
+        """
+
         torch = self.torch
         generator = self._generator(update_index, round_index)
         groups = int(self.layout.groups_per_rank)
@@ -1566,6 +1622,41 @@ class BatchedReverseFrontierResetter:
                 random_caught_position,
                 object_positions_group[:, 0],
             )
+        # Pre-grasped pick_up starts. Sampled per group (one draw per row of
+        # `groups`, broadcast to all group_size candidates further down), so the
+        # eight candidates GRPO normalizes against each other always share a
+        # stage.
+        #
+        # Deliberately AFTER the random_caught_position block: that path drops
+        # the held object to wherever the end-effector already is, which for a
+        # placement start is the point (the object travels with the gripper) but
+        # for pick_up would spawn it in mid-air, above the desk, with a lift
+        # baseline already paid. These groups instead leave the object on its
+        # lattice point at support_surface_z + rest_height and bring the
+        # end-effector DOWN to it, so `initial_target_positions` -- which is
+        # `target_position`, captured before any placement repositioning -- stays
+        # the rest position and the 5 cm success height still measures a real
+        # lift off the desk.
+        prelifted_fraction = (
+            float(self.pick_up_prelifted_group_fraction)
+            if allow_prelifted
+            else 0.0
+        )
+        if prelifted_fraction > 0.0:
+            prelifted_group = pick_up_task & (
+                torch.rand((groups,), generator=generator, device=self.device)
+                < prelifted_fraction
+            )
+        else:
+            # Draw nothing when the stage is off, so the generator stream -- and
+            # therefore every start this resetter produces -- is byte-identical
+            # to the run before this knob existed.
+            prelifted_group = torch.zeros_like(pick_up_task)
+        # From here on a pre-grasped start is just another caught start: it
+        # takes the same end-effector-above-object pose, the same object yaw
+        # aligned to the gripper, the same fitted (closed) opening, and the same
+        # grasped/ever_grasped/physical_grasp seeding.
+        caught_group = caught_group | prelifted_group
         caught_object_position = object_positions_group[:, 0].clone()
         caught_ee = caught_object_position.clone()
         caught_ee[:, 2] += grasp_offset
@@ -1808,6 +1899,7 @@ class BatchedReverseFrontierResetter:
             target_rest_height=target_rest_height,
             group_ids=group_ids.repeat_interleave(group_size),
             group_target_catalog_ids=target_catalog,
+            prelifted=prelifted_group.repeat_interleave(group_size),
         )
 
 
@@ -2512,7 +2604,15 @@ class RankLocalMJWarpGRPOCollector:
         )
         grasp_denominator = max(1.0, grasp_observations)
         post_grasp = post_grasp_metrics(
-            first_grasp_step, ee_z_at_first_grasp, peak_ee_z_after_grasp
+            first_grasp_step,
+            ee_z_at_first_grasp,
+            peak_ee_z_after_grasp,
+            reset.prelifted,
+        )
+        prelifted_start_rate = (
+            0.0
+            if reset.prelifted is None
+            else float(reset.prelifted.to(dtype=torch.float32).mean().item())
         )
         metrics = {
             **timings,
@@ -2622,6 +2722,10 @@ class RankLocalMJWarpGRPOCollector:
             # collective; the counts are similar enough across ranks (same world
             # count, same policy) for that to be the right average.
             **post_grasp,
+            # Realized fraction of worlds reset already holding the object, so
+            # the configured group fraction can be checked against what the
+            # sampler actually produced.
+            "prelifted_start_rate": prelifted_start_rate,
         }
         return CollectorRound(
             records=records,
@@ -2651,7 +2755,13 @@ class RankLocalMJWarpGRPOCollector:
             )
 
         validation_started = time.perf_counter()
-        reset = self.resetter.reset(update_index=0, round_index=round_index)
+        # Validation always runs the full task: approach, grasp, then lift. The
+        # pre-grasped pick_up starts exist to train the lift, and scoring the
+        # held-out rate on episodes that began already holding the object would
+        # make the metric move with the knob rather than with the policy.
+        reset = self.resetter.reset(
+            update_index=0, round_index=round_index, allow_prelifted=False
+        )
         if reset.group_target_catalog_ids is None:
             raise RuntimeError("Validation reset did not expose target catalogs.")
 

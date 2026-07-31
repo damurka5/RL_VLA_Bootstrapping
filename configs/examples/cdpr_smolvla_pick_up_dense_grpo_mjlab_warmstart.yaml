@@ -154,6 +154,32 @@ task:
     random_workspace_gripper_start: true
     # No caught-object start in phase 1: the whole point is to LEARN the grasp.
     placement_start_with_caught_object: false
+    # Fraction of GRPO groups that start with the object already grasped at rest
+    # height, so the lift gets its own dense signal.
+    #
+    # Three multi-million-step runs all did the same thing: the grasp rate
+    # reached ~0.30 and stopped there while the LIFT decayed.
+    # post_grasp_rise_mean_m peaked at 18 mm and fell to 7-10 mm against the
+    # 50 mm success height, with the first grasp landing at env step ~27 of 64 --
+    # ample time left, and the policy simply stopped commanding up. Two fixes
+    # aimed at that failed: the entropy floor (entropy_coef 0 -> 0.0002) slowed
+    # the decay, and making the grasp bonus a ratchet on ever_grasped so a failed
+    # lift no longer costs the grasp credit delayed it ~0.9M steps. Neither
+    # stopped it, because both were still betting on the policy DISCOVERING the
+    # lift from behind a 0.30-probability grasp.
+    #
+    # A quarter of the groups now skip that discovery: the object starts held,
+    # at its rest height on the desk, with the pads closed on it and
+    # initial_target_positions at the rest position -- so the 5 cm success height
+    # still measures a real lift off the desk and every step of the episode is
+    # dense signal on the one behaviour that was not being learned. The other
+    # three quarters run the full approach + grasp + lift, so the grasp skill is
+    # trained on-distribution and the pre-grasped stage cannot become the task.
+    #
+    # Sampled per GROUP, not per candidate: GRPO normalizes advantage within a
+    # group of 8, so a mixed group would score the spawn instead of the actions.
+    # Held-out validation always runs the full task, whatever this is set to.
+    pick_up_prelifted_group_fraction: 0.25
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
     # [0.19, 0.30]. The grasp point is object centre + 0.0075, i.e. 0.185 m
