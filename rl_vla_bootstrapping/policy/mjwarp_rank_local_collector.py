@@ -50,6 +50,14 @@ _GRASP_PERSISTENCE_STEPS = 2
 _GRASP_MAX_RELATIVE_POSITION_SLIP_M = 0.008
 _GRASP_MAX_RELATIVE_ORIENTATION_SLIP_RAD = 0.15
 _GRASP_MIN_LIFT_M = 0.015
+# A GRPO group whose eight candidates score within this of each other carries no
+# usable signal, but torch_group_advantages divides by the group std with a
+# 1e-6 floor -- so its rollout noise still comes out as full-magnitude
+# advantages. On the dense reward the informative-group filter is
+# `reward_span > 1e-6`, which never fires (informative_groups has equalled
+# groups_collected on every update of every run), so nothing else excludes them.
+# Counting them is the cheapest way to see how much of an update is noise.
+_DEGENERATE_GROUP_REWARD_STD = 0.05
 
 
 def post_grasp_metrics(
@@ -2614,6 +2622,44 @@ class RankLocalMJWarpGRPOCollector:
             if reset.prelifted is None
             else float(reset.prelifted.to(dtype=torch.float32).mean().item())
         )
+        # Split the OUTCOME by starting stage, not just the diagnostics. Without
+        # this, a pre-grasped world that succeeds and a normal one that succeeds
+        # are the same number, so "the pre-grasped stage produces successes" and
+        # "the policy learned to lift" are indistinguishable -- and they call for
+        # opposite decisions. Counts, not rates, so the update-boundary all-reduce
+        # sums them and the ratio stays exact across ranks.
+        prelifted_world = (
+            torch.zeros_like(candidate_success)
+            if reset.prelifted is None
+            else reset.prelifted.to(dtype=torch.bool)
+        )
+        successes_prelifted = float(
+            (candidate_success & prelifted_world).sum().item()
+        )
+        successes_normal = float(
+            (candidate_success & ~prelifted_world).sum().item()
+        )
+        worlds_prelifted = float(prelifted_world.sum().item())
+        worlds_normal = float((~prelifted_world).sum().item())
+        # How much spread each group actually has. The advantage is the centred
+        # reward divided by THIS, floored at 1e-6, so a group of eight candidates
+        # that all did the same thing contributes gradients of the same magnitude
+        # as one that separated a success from a failure. Pre-grasped groups are
+        # the ones to watch: every candidate starts already holding the object, so
+        # if none of them lifts they are near-identical by construction.
+        group_reward_std = rewards_by_group.std(dim=1, unbiased=False)
+        degenerate_group = group_reward_std < float(
+            _DEGENERATE_GROUP_REWARD_STD
+        )
+        prelifted_group_mask = prelifted_world.reshape(
+            self.layout.groups_per_rank, group_size
+        )[:, 0]
+
+        def group_std_mean(selected: Any) -> float:
+            count = int(selected.sum().item())
+            if count == 0:
+                return 0.0
+            return float(group_reward_std[selected].mean().item())
         metrics = {
             **timings,
             "reset_time_s": float(reset_time),
@@ -2726,6 +2772,27 @@ class RankLocalMJWarpGRPOCollector:
             # the configured group fraction can be checked against what the
             # sampler actually produced.
             "prelifted_start_rate": prelifted_start_rate,
+            # Outcome by starting stage. successes_prelifted/worlds_prelifted is
+            # the question the pre-grasped stage exists to answer: given the
+            # grasp for free, does the policy complete the lift?
+            "successes_prelifted": successes_prelifted,
+            "worlds_prelifted": worlds_prelifted,
+            "successes_normal_start": successes_normal,
+            "worlds_normal_start": worlds_normal,
+            # Within-group reward spread -- the divisor of the GRPO advantage.
+            # A falling group_reward_std_mean with a rising degenerate count
+            # means more of each update is amplified rollout noise.
+            "group_reward_std_mean": float(group_reward_std.mean().item()),
+            "group_reward_std_mean_prelifted": group_std_mean(
+                prelifted_group_mask
+            ),
+            "group_reward_std_mean_normal_start": group_std_mean(
+                ~prelifted_group_mask
+            ),
+            "degenerate_reward_groups": float(degenerate_group.sum().item()),
+            "degenerate_reward_groups_prelifted": float(
+                (degenerate_group & prelifted_group_mask).sum().item()
+            ),
         }
         return CollectorRound(
             records=records,

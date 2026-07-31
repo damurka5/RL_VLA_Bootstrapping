@@ -2001,6 +2001,18 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
             "post_grasp_rise_mean_m_prelifted": True,
             "post_grasp_worlds_prelifted": False,
             "prelifted_start_rate": True,
+            # Counts. A success count divided by the world size would read as a
+            # rate and quietly understate the split by a factor of 1024.
+            "successes_prelifted": False,
+            "worlds_prelifted": False,
+            "successes_normal_start": False,
+            "worlds_normal_start": False,
+            "degenerate_reward_groups": False,
+            "degenerate_reward_groups_prelifted": False,
+            # Means across ranks.
+            "group_reward_std_mean": True,
+            "group_reward_std_mean_prelifted": True,
+            "group_reward_std_mean_normal_start": True,
         }
         for name, should_divide in names.items():
             with self.subTest(metric=name):
