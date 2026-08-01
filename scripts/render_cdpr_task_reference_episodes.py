@@ -381,11 +381,17 @@ def _reward_breakdown(
             exponent=reward_config.distance_reward_exponent,
         )
         fine = _fine_distance_reward(distance, config=reward_config)
-        lift = float(diagnostics["target_lift"][0])
+        # credited_lift is the RATCHETED peak height reached while holding, not
+        # the instantaneous lift: a lift that happens and then settles keeps its
+        # credit. Reading target_lift here would disagree with the training
+        # reward on every step after a settle, exactly as reading state.grasped
+        # for the grasp bonus used to.
+        lift = float(
+            diagnostics.get("credited_lift", diagnostics["target_lift"])[0]
+        )
         normalized_lift = min(
             max(lift / float(reward_config.pick_lift_reward_scale), 0.0), 1.0
         )
-        grasped = float(grasp_flags["grasped"])
         # The grasp bonus is a RATCHET on ever_grasped (see the pick_reward
         # assembly in cdpr_batched_tasks): a failed lift must not cost the grasp
         # credit. Reading state.grasped here made the overlay disagree with the
@@ -400,8 +406,10 @@ def _reward_breakdown(
         terms["grasp_bonus"] = float(
             ever_grasped * reward_config.pick_grasp_bonus
         )
+        # No state.grasped factor: credited_lift only ever accumulated while
+        # holding, so the gate is already baked into it.
         terms["lift"] = float(
-            normalized_lift * grasped * reward_config.pick_lift_reward_weight
+            normalized_lift * reward_config.pick_lift_reward_weight
         )
         terms["success_bonus"] = float(
             (1.0 if success else 0.0) * reward_config.pick_success_bonus

@@ -1566,6 +1566,167 @@ class CDPRLiftIncentiveTests(unittest.TestCase):
         importlib.util.find_spec("torch") is not None,
         "reward assembly operates on tensors",
     )
+    def test_a_lift_that_settles_keeps_its_credit(self):
+        """The GRPO return is the terminal reward, so a transient lift paid nothing.
+
+        With the lift term read off the INSTANT height, a policy that raised the
+        object 40 mm at step 40 and let it settle by step 128 scored exactly the
+        same as one that never moved. Measured consequence over 4.2M steps:
+        physical_grasp_rate climbed 0.380 -> 0.447 while post_grasp_rise_mean_m
+        fell 19 mm -> 10 mm and success fell 0.108 -> 0.042. The policy had found
+        the "close the gripper and hold still" rung and every transient lift it
+        produced was scored as though it had not happened.
+        """
+
+        import torch
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+            BatchedCatchReleaseDenseReward,
+            BatchedTaskState,
+            evaluate_active_sparse_tasks,
+        )
+
+        rest = 0.18
+        offset = 0.0075
+        config = BatchedCatchReleaseDenseReward()
+
+        def episode(heights, grasped_flags):
+            """Step one world through a height trajectory; return final reward."""
+
+            state = BatchedTaskState(
+                instruction_ids=torch.full(
+                    (1,), INSTRUCTION_TO_ID["pick_up"], dtype=torch.int64
+                ),
+                target_slots=torch.zeros((1,), dtype=torch.int64),
+                reference_slots=torch.full((1,), -1, dtype=torch.int64),
+                second_reference_slots=torch.full((1,), -1, dtype=torch.int64),
+                initial_target_positions=torch.tensor([[0.0, 0.0, rest]]),
+                ever_grasped=torch.zeros((1,), dtype=torch.bool),
+                grasped=torch.zeros((1,), dtype=torch.bool),
+                step_count=torch.zeros((1,), dtype=torch.int64),
+                release_threshold=torch.full((1,), 0.55),
+                support_surface_z=torch.full((1,), 0.15),
+                target_rest_height=torch.full((1,), 0.03),
+                peak_lift=torch.zeros((1,)),
+            )
+            reward = 0.0
+            for height, held in zip(heights, grasped_flags):
+                objects = torch.zeros((1, 4, 3))
+                objects[0, 0] = torch.tensor([0.0, 0.0, height])
+                ee = torch.tensor([[0.0, 0.0, height + offset]])
+                result = evaluate_active_sparse_tasks(
+                    state=state,
+                    ee_position=ee,
+                    object_positions=objects,
+                    gripper_opening=torch.full((1,), 0.50),
+                    caught_target=torch.tensor([held]),
+                    active_mask=torch.ones((1,), dtype=torch.bool),
+                    max_steps=1024,
+                    catch_release_dense_reward=config,
+                )
+                reward = float(result.rewards[0].item())
+            return reward
+
+        # Never moves: grasps and holds at rest for the whole episode.
+        held_still = episode([rest] * 6, [True] * 6)
+        # Raises 40 mm, loses the grasp, object settles back to rest.
+        lifted_and_settled = episode(
+            [rest, rest + 0.02, rest + 0.04, rest + 0.02, rest, rest, ],
+            [True, True, True, False, False, False],
+        )
+        self.assertGreater(
+            lifted_and_settled,
+            held_still,
+            "a 40 mm lift that settled must still beat never having tried; "
+            "otherwise the policy is correct to hold still, which is exactly "
+            "what four runs converged on",
+        )
+        # And the credit is the PEAK, not the final height: 40 mm of a 50 mm
+        # scale at weight 1.0 is 0.8 of the lift term.
+        self.assertAlmostEqual(lifted_and_settled - held_still, 0.8, places=5)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
+    def test_peak_lift_cannot_be_earned_without_holding_the_object(self):
+        """Batting the object upward must not pay -- only lifting it does."""
+
+        import torch
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+            BatchedCatchReleaseDenseReward,
+            BatchedTaskState,
+            evaluate_active_sparse_tasks,
+        )
+
+        rest = 0.18
+        state = BatchedTaskState(
+            instruction_ids=torch.full(
+                (1,), INSTRUCTION_TO_ID["pick_up"], dtype=torch.int64
+            ),
+            target_slots=torch.zeros((1,), dtype=torch.int64),
+            reference_slots=torch.full((1,), -1, dtype=torch.int64),
+            second_reference_slots=torch.full((1,), -1, dtype=torch.int64),
+            initial_target_positions=torch.tensor([[0.0, 0.0, rest]]),
+            ever_grasped=torch.zeros((1,), dtype=torch.bool),
+            grasped=torch.zeros((1,), dtype=torch.bool),
+            step_count=torch.zeros((1,), dtype=torch.int64),
+            release_threshold=torch.full((1,), 0.55),
+            support_surface_z=torch.full((1,), 0.15),
+            target_rest_height=torch.full((1,), 0.03),
+            peak_lift=torch.zeros((1,)),
+        )
+        objects = torch.zeros((1, 4, 3))
+        # Object 6 cm up -- well past the success height -- but NOT held.
+        objects[0, 0] = torch.tensor([0.0, 0.0, rest + 0.06])
+        evaluate_active_sparse_tasks(
+            state=state,
+            ee_position=torch.tensor([[0.0, 0.0, rest + 0.0675]]),
+            object_positions=objects,
+            gripper_opening=torch.full((1,), 0.50),
+            caught_target=torch.tensor([False]),
+            active_mask=torch.ones((1,), dtype=torch.bool),
+            max_steps=1024,
+            catch_release_dense_reward=BatchedCatchReleaseDenseReward(),
+        )
+        self.assertEqual(float(state.peak_lift[0].item()), 0.0)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
+    def test_omitting_peak_lift_reproduces_the_instantaneous_term(self):
+        """Callers that predate the ratchet must be unaffected."""
+
+        import torch
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            BatchedCatchReleaseDenseReward,
+        )
+
+        config = BatchedCatchReleaseDenseReward()
+        rest = 0.18
+        # _rewards() below constructs the state WITHOUT peak_lift.
+        holding = self._rewards(
+            grasped=[True], ever_grasped=[True],
+            object_z=[rest + 0.04], initial_z=[rest],
+        )[0]
+        dropped = self._rewards(
+            grasped=[False], ever_grasped=[True],
+            object_z=[rest], initial_z=[rest],
+        )[0]
+        # Without the ratchet the settled world keeps no lift credit, which is
+        # the pre-change behaviour this fallback has to preserve exactly.
+        self.assertAlmostEqual(
+            holding - dropped,
+            0.8 * float(config.pick_lift_reward_weight),
+            places=5,
+        )
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
     def test_trying_beats_holding_at_the_measured_success_rate(self):
         """Break-even must sit below the rate the policy actually achieves.
 

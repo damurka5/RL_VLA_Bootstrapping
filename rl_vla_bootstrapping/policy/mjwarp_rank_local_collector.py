@@ -1883,6 +1883,12 @@ class BatchedReverseFrontierResetter:
                     target_slots,
                 ]
             ),
+            # Starts at zero even for pre-grasped worlds: they hold the object
+            # at its REST height, so nothing has been lifted yet and the 5 cm
+            # still has to be earned.
+            peak_lift=torch.zeros(
+                (worlds,), dtype=torch.float32, device=self.device
+            ),
         )
         target_catalog_names = [
             ACTIVE_CDPR_CATALOGS[index]

@@ -179,7 +179,14 @@ task:
     # Sampled per GROUP, not per candidate: GRPO normalizes advantage within a
     # group of 8, so a mixed group would score the spawn instead of the actions.
     # Held-out validation always runs the full task, whatever this is set to.
-    pick_up_prelifted_group_fraction: 0.25
+    #
+    # 0.5, raised from 0.25. The A/B measured the stage working: normal-start
+    # success 0.1215 with it against 0.1076 without, from the same checkpoint,
+    # with the control holding MORE normal-start worlds -- and the whole gap sat
+    # in grasp->success conversion (0.205 against 0.177) at an identical
+    # ever-grasp rate, which is exactly the transfer it was built for. The lift
+    # is still the only unlearned half of the task, so it gets half the batch.
+    pick_up_prelifted_group_fraction: 0.5
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
     # [0.19, 0.30]. The grasp point is object centre + 0.0075, i.e. 0.185 m
@@ -239,20 +246,39 @@ task:
     pick_grasp_height_offset: 0.0075
     # Partial credit for bilateral pad contact bridges hovering -> latched grasp.
     pick_contact_bonus: 0.25
-    pick_grasp_bonus: 1.0
-    pick_lift_reward_weight: 1.0
+    # 0.5, not 1.0. The grasp is the part the policy HAS learned -- over a 4.2M
+    # run physical_grasp_rate climbed 0.380 -> 0.447 and bilateral pad contact
+    # 0.416 -> 0.482 while the lift collapsed. "Close the gripper and hold
+    # still" was worth 2.75 with no risk, and the policy converged onto exactly
+    # that: group_reward_std fell 0.80 -> 0.52 as the eight candidates stopped
+    # differing. Paying less for the solved half makes that rung shallower.
+    pick_grasp_bonus: 0.5
+    # 2.0, not 1.0. The lift is the unlearned skill and it is now a ratchet on
+    # the PEAK height reached while holding (see cdpr_batched_tasks), so partial
+    # progress is kept rather than erased when the object settles. Doubling the
+    # weight makes a 20 mm lift -- which the policy already produces -- worth
+    # +0.8 instead of +0.4, against a 0.5 grasp rung.
+    pick_lift_reward_weight: 2.0
     pick_lift_reward_scale: 0.05
     pick_lift_success_height: 0.05
-    pick_success_bonus: 2.0
-    # Terminal returns (the GRPO return is the last active step's reward):
+    # 3.0, not 2.0, so terminal success stays the single largest increment even
+    # after the lift weight doubled. Otherwise the biggest jump on the ladder
+    # would be a partial lift, and a policy that maximizes partial lifts is not
+    # the same as one that finishes.
+    pick_success_bonus: 3.0
+    # Returns (the GRPO return is the last active step's reward, but the grasp
+    # and lift terms are now both ratchets, so a rung once reached is kept):
     #   far away          ~0.1
     #   hovering at grasp  1.5
     #   + pad contact      1.75
-    #   + latched grasp    2.75
-    #   + full lift        3.75
-    #   + success          5.75
-    # Every step of the grasp sequence strictly increases the return, so there is
-    # no rung on which stalling beats continuing.
+    #   + latched grasp    2.25
+    #   + peak lift 20 mm  3.05   <- previously 3.15, and lost on settling
+    #   + peak lift 50 mm  4.25
+    #   + success          7.25
+    # Every step strictly increases the return and none of them can be undone by
+    # a later failure, so attempting a lift now dominates holding still at every
+    # height -- which was not true before: a lift that settled scored 2.75, the
+    # same as never trying.
     action_saturation_penalty_weight: 0.0
 
     # --- Approach curriculum (success-gated, per instruction) --------------

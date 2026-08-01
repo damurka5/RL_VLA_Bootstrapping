@@ -317,6 +317,16 @@ class BatchedTaskState:
     release_threshold: Any
     support_surface_z: Any
     target_rest_height: Any | None = None
+    # Highest lift reached WHILE HOLDING the object, in metres, ratcheted over
+    # the episode. The GRPO return is the last active step's reward, so an
+    # instantaneous lift term pays nothing for a lift that happens and then
+    # settles -- and settling is what the policy does: measured peak rise 20 mm
+    # against a 50 mm threshold, decaying to 7 mm over 4.2M steps while the
+    # grasp rate CLIMBED. The reward was asking the policy to still be holding
+    # the object 5 cm up at env step 128, which is a much harder task than
+    # "raise it 5 cm" and is not the task. None reproduces the old
+    # instantaneous behaviour for callers that predate this.
+    peak_lift: Any | None = None
 
     def validate(self, batch_size: int, device: Any) -> None:
         import torch
@@ -355,6 +365,15 @@ class BatchedTaskState:
             ):
                 raise ValueError(
                     f"target_rest_height must have shape ({batch_size},) on {device}."
+                )
+        if self.peak_lift is not None:
+            if (
+                not isinstance(self.peak_lift, torch.Tensor)
+                or tuple(self.peak_lift.shape) != (batch_size,)
+                or self.peak_lift.device != device
+            ):
+                raise ValueError(
+                    f"peak_lift must have shape ({batch_size},) on {device}."
                 )
 
 
@@ -734,6 +753,16 @@ def evaluate_active_sparse_tasks(
     target_lift = (
         target[:, 2] - state.initial_target_positions[:, 2]
     ).clamp_min(0.0)
+    # Ratchet the height reached while actually holding the object. Only counted
+    # while state.grasped, so it cannot be earned by knocking the object upward.
+    held_lift = torch.where(
+        state.grasped, target_lift, torch.zeros_like(target_lift)
+    )
+    if state.peak_lift is not None:
+        state.peak_lift.copy_(torch.maximum(state.peak_lift, held_lift))
+        credited_lift = state.peak_lift
+    else:
+        credited_lift = held_lift
     is_pick_up = instruction == INSTRUCTION_TO_ID["pick_up"]
     pick_success = (
         state.grasped
@@ -905,7 +934,7 @@ def evaluate_active_sparse_tasks(
             pick_grasp_distance, config=catch_release_dense_reward
         )
         normalized_lift = (
-            target_lift
+            credited_lift
             / float(catch_release_dense_reward.pick_lift_reward_scale)
         ).clamp(0.0, 1.0)
         # Partial credit for touching the object with both pads bridges the
@@ -941,18 +970,31 @@ def evaluate_active_sparse_tasks(
         # ~2.50 instead of 1.35 and break-even falls to ~0.08, below the current
         # success rate, so trying is worth it again and improves from there.
         #
-        # The lift term stays on state.grasped: lift is only credited while the
-        # object is actually held, and a dropped object falls back to its start
-        # height so normalized_lift decays to zero on its own. The ladder is
-        # unchanged -- 1.5 hover, 1.75 contact, 2.75 grasp, 3.75 lift, 5.75
-        # success -- so no rung rewards stalling over continuing.
+        # The LIFT term is a ratchet on state.peak_lift for the same reason the
+        # grasp bonus is a ratchet on ever_grasped. Gating it on the INSTANT
+        # lift priced a lift that happens and then settles as no lift at all,
+        # because the GRPO return is the last active step's reward -- so the
+        # policy had to still be holding the object 5 cm up at env step 128,
+        # which is a strictly harder task than "raise it 5 cm" and is not the
+        # task that was asked for.
+        #
+        # Measured over 4.2M steps with the instantaneous term: the grasp rate
+        # CLIMBED 0.380 -> 0.447 while post_grasp_rise_mean_m fell 19 mm ->
+        # 10 mm and success fell 0.108 -> 0.042. Handed a free grasp the policy
+        # raised the object 7 mm. It had converged on "close the gripper and
+        # hold still", which is the 2.75 rung, and every transient lift it did
+        # produce was scored as though it had never happened.
+        #
+        # peak_lift only accumulates while state.grasped, so it cannot be earned
+        # by batting the object upward, and it cannot be lost by a later drop.
+        # A lift attempt that fails now keeps its partial credit, so attempting
+        # strictly dominates holding still at every height.
         pick_reward = (
             pick_distance_reward
             + contact_credit
             + state.ever_grasped.to(dtype=ee_position.dtype)
             * float(catch_release_dense_reward.pick_grasp_bonus)
             + normalized_lift
-            * state.grasped.to(dtype=ee_position.dtype)
             * float(catch_release_dense_reward.pick_lift_reward_weight)
             + success.to(dtype=ee_position.dtype)
             * float(catch_release_dense_reward.pick_success_bonus)
@@ -980,6 +1022,7 @@ def evaluate_active_sparse_tasks(
             "move_to_z_in_window": move_to_z_in_window,
             "target_motion_xy": target_motion_xy,
             "target_lift": target_lift,
+            "credited_lift": credited_lift,
             "pick_grasp_distance": pick_grasp_distance,
             "push_motion": push_motion,
             "container_xy_error": container_xy,
