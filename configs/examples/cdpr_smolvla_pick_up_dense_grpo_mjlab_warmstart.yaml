@@ -253,6 +253,26 @@ task:
     # that: group_reward_std fell 0.80 -> 0.52 as the eight candidates stopped
     # differing. Paying less for the solved half makes that rung shallower.
     pick_grasp_bonus: 0.5
+    # A grasp earns its bonus only once it has taken the object 5 mm off the
+    # desk. 0.0 would pay it on ever_grasped, which is what every run so far did.
+    #
+    # Measured over 451 updates of the 4.8M run, grasp quality and lift are
+    # ANTI-correlated: corr(grasp rate, prelifted rise) = -0.786,
+    # corr(pad force, rise) = -0.696. Pad force rose 6.4 -> 8.0 N and bilateral
+    # contact 0.467 -> 0.603 while slip FELL 3.86 -> 2.97 mm and the lift died
+    # 35 mm -> 15 mm. Pressing the object into the desk maximizes all three of
+    # those -- and the physical-grasp detector's pose-stability test as well --
+    # while making the object unliftable. The policy converged on a maximally
+    # secure grasp it cannot lift from, which is why four successive lift-reward
+    # fixes each delayed the collapse without stopping it: they raised the payoff
+    # for lifting from a pose that physically cannot lift.
+    #
+    # 5 mm because _GRASP_MIN_LIFT_M (the collector's own "physically lifted"
+    # test) is 15 mm, so this is deliberately well below the bar the diagnostics
+    # use -- it asks only that the object left the desk at all, not that it was
+    # lifted. pick_contact_bonus stays unconditional so the approach keeps its
+    # gradient.
+    pick_grasp_bonus_min_lift: 0.005
     # 2.0, not 1.0. The lift is the unlearned skill and it is now a ratchet on
     # the PEAK height reached while holding (see cdpr_batched_tasks), so partial
     # progress is kept rather than erased when the object settles. Doubling the
@@ -268,13 +288,14 @@ task:
     pick_success_bonus: 3.0
     # Returns (the GRPO return is the last active step's reward, but the grasp
     # and lift terms are now both ratchets, so a rung once reached is kept):
-    #   far away          ~0.1
-    #   hovering at grasp  1.5
-    #   + pad contact      1.75
-    #   + latched grasp    2.25
-    #   + peak lift 20 mm  3.05   <- previously 3.15, and lost on settling
-    #   + peak lift 50 mm  4.25
-    #   + success          7.25
+    #   far away              ~0.1
+    #   hovering at grasp      1.5
+    #   + pad contact          1.75
+    #   latched but PINNED     1.75   <- no grasp bonus: it never left the desk
+    #   + off the desk 5 mm    2.45   (0.5 grasp + 0.2 lift)
+    #   + peak lift 20 mm      3.05
+    #   + peak lift 50 mm      4.25
+    #   + success              7.25
     # Every step strictly increases the return and none of them can be undone by
     # a later failure, so attempting a lift now dominates holding still at every
     # height -- which was not true before: a lift that settled scored 2.75, the

@@ -1649,6 +1649,184 @@ class CDPRLiftIncentiveTests(unittest.TestCase):
         importlib.util.find_spec("torch") is not None,
         "reward assembly operates on tensors",
     )
+    def test_a_grasp_that_never_lifts_earns_no_grasp_bonus(self):
+        """Pressing the object into the desk must stop paying.
+
+        Grasp quality and lift are anti-correlated in training -- corr(grasp
+        rate, prelifted rise) = -0.786 over 451 updates, with pad force rising
+        6.4 -> 8.0 N and slip FALLING 3.86 -> 2.97 mm as the lift died
+        35 mm -> 15 mm. Pressing down maximizes pad force, bilateral contact and
+        pose stability, all of which the reward and the physical-grasp detector
+        pay for, while making the object unliftable. Gating the grasp bonus on a
+        real lift removes that payoff.
+        """
+
+        import torch
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+            BatchedCatchReleaseDenseReward,
+            BatchedTaskState,
+            evaluate_active_sparse_tasks,
+        )
+
+        rest, offset = 0.18, 0.0075
+        config = BatchedCatchReleaseDenseReward.from_metadata(
+            {"pick_grasp_bonus": 0.5, "pick_grasp_bonus_min_lift": 0.005}
+        )
+
+        def reward_at(object_z, held):
+            state = BatchedTaskState(
+                instruction_ids=torch.full(
+                    (1,), INSTRUCTION_TO_ID["pick_up"], dtype=torch.int64
+                ),
+                target_slots=torch.zeros((1,), dtype=torch.int64),
+                reference_slots=torch.full((1,), -1, dtype=torch.int64),
+                second_reference_slots=torch.full((1,), -1, dtype=torch.int64),
+                initial_target_positions=torch.tensor([[0.0, 0.0, rest]]),
+                ever_grasped=torch.zeros((1,), dtype=torch.bool),
+                grasped=torch.zeros((1,), dtype=torch.bool),
+                step_count=torch.zeros((1,), dtype=torch.int64),
+                release_threshold=torch.full((1,), 0.55),
+                support_surface_z=torch.full((1,), 0.15),
+                target_rest_height=torch.full((1,), 0.03),
+                peak_lift=torch.zeros((1,)),
+            )
+            objects = torch.zeros((1, 4, 3))
+            objects[0, 0] = torch.tensor([0.0, 0.0, object_z])
+            result = evaluate_active_sparse_tasks(
+                state=state,
+                ee_position=torch.tensor([[0.0, 0.0, object_z + offset]]),
+                object_positions=objects,
+                gripper_opening=torch.full((1,), 0.50),
+                caught_target=torch.tensor([held]),
+                active_mask=torch.ones((1,), dtype=torch.bool),
+                max_steps=1024,
+                catch_release_dense_reward=config,
+                bilateral_contact=torch.tensor([True]),
+            )
+            return float(result.rewards[0].item()), result
+
+        # A latched grasp at rest height -- the pressing pose -- earns contact
+        # but NOT the grasp bonus.
+        pinned, _ = reward_at(rest, True)
+        # 2 mm up: still under the 5 mm gate.
+        barely, _ = reward_at(rest + 0.002, True)
+        # 10 mm up: qualifies.
+        lifted, _ = reward_at(rest + 0.010, True)
+
+        # Under the gate, the only thing that changed is the lift term itself:
+        # 2 mm of a 50 mm scale at weight 1.0 = 0.04. No grasp bonus.
+        lift_only = (
+            float(config.pick_lift_reward_weight)
+            * 0.002
+            / float(config.pick_lift_reward_scale)
+        )
+        self.assertAlmostEqual(barely - pinned, lift_only, places=4)
+        # Clearing it hands over the whole bonus on top of the lift term.
+        expected = float(config.pick_grasp_bonus) + (
+            float(config.pick_lift_reward_weight)
+            * 0.008
+            / float(config.pick_lift_reward_scale)
+        )
+        self.assertAlmostEqual(lifted - barely, expected, places=4)
+        self.assertGreater(
+            lifted - barely,
+            float(config.pick_grasp_bonus),
+            "clearing the gate must hand over the whole grasp bonus",
+        )
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
+    def test_the_lift_gate_is_a_ratchet_not_an_instantaneous_test(self):
+        """Once a grasp has lifted, dropping must not revoke the bonus."""
+
+        import torch
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+            BatchedCatchReleaseDenseReward,
+            BatchedTaskState,
+            evaluate_active_sparse_tasks,
+        )
+
+        rest, offset = 0.18, 0.0075
+        config = BatchedCatchReleaseDenseReward.from_metadata(
+            {"pick_grasp_bonus": 0.5, "pick_grasp_bonus_min_lift": 0.005}
+        )
+        state = BatchedTaskState(
+            instruction_ids=torch.full(
+                (1,), INSTRUCTION_TO_ID["pick_up"], dtype=torch.int64
+            ),
+            target_slots=torch.zeros((1,), dtype=torch.int64),
+            reference_slots=torch.full((1,), -1, dtype=torch.int64),
+            second_reference_slots=torch.full((1,), -1, dtype=torch.int64),
+            initial_target_positions=torch.tensor([[0.0, 0.0, rest]]),
+            ever_grasped=torch.zeros((1,), dtype=torch.bool),
+            grasped=torch.zeros((1,), dtype=torch.bool),
+            step_count=torch.zeros((1,), dtype=torch.int64),
+            release_threshold=torch.full((1,), 0.55),
+            support_surface_z=torch.full((1,), 0.15),
+            target_rest_height=torch.full((1,), 0.03),
+            peak_lift=torch.zeros((1,)),
+        )
+
+        def step(object_z, held):
+            objects = torch.zeros((1, 4, 3))
+            objects[0, 0] = torch.tensor([0.0, 0.0, object_z])
+            return evaluate_active_sparse_tasks(
+                state=state,
+                ee_position=torch.tensor([[0.0, 0.0, object_z + offset]]),
+                object_positions=objects,
+                gripper_opening=torch.full((1,), 0.50),
+                caught_target=torch.tensor([held]),
+                active_mask=torch.ones((1,), dtype=torch.bool),
+                max_steps=1024,
+                catch_release_dense_reward=config,
+                bilateral_contact=torch.tensor([held]),
+            )
+
+        step(rest, True)
+        step(rest + 0.020, True)          # qualifies the grasp
+        after_drop = step(rest, False)    # loses it; object back on the desk
+        self.assertGreaterEqual(float(state.peak_lift[0].item()), 0.019)
+        # ever_grasped is true and the lift ratchet is above the gate, so the
+        # bonus survives the drop -- otherwise attempting a lift would again be
+        # priced as losing the grasp, which is the trap e787c80 removed.
+        self.assertGreater(float(after_drop.rewards[0].item()), 1.5)
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
+    def test_zero_min_lift_reproduces_the_ever_grasped_bonus(self):
+        """The knob defaults off and must be inert when it is."""
+
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            BatchedCatchReleaseDenseReward,
+        )
+
+        self.assertEqual(
+            BatchedCatchReleaseDenseReward().pick_grasp_bonus_min_lift, 0.0
+        )
+        self.assertEqual(
+            BatchedCatchReleaseDenseReward.from_metadata(
+                {}
+            ).pick_grasp_bonus_min_lift,
+            0.0,
+        )
+        # Negative values are clamped rather than inverting the comparison.
+        self.assertEqual(
+            BatchedCatchReleaseDenseReward.from_metadata(
+                {"pick_grasp_bonus_min_lift": -0.01}
+            ).pick_grasp_bonus_min_lift,
+            0.0,
+        )
+
+    @unittest.skipUnless(
+        importlib.util.find_spec("torch") is not None,
+        "reward assembly operates on tensors",
+    )
     def test_peak_lift_cannot_be_earned_without_holding_the_object(self):
         """Batting the object upward must not pay -- only lifting it does."""
 
@@ -2316,6 +2494,8 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
             "prior_action_norm_mean": True,
             "residual_target_cosine_mean": True,
             "residual_target_alignment_rate": True,
+            "object_press_depth_mean_m": True,
+            "object_press_depth_mean_m_prelifted": True,
         }
         for name, should_divide in names.items():
             with self.subTest(metric=name):

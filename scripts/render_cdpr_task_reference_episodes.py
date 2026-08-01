@@ -397,7 +397,17 @@ def _reward_breakdown(
         # credit. Reading state.grasped here made the overlay disagree with the
         # training reward by exactly pick_grasp_bonus on any step after a drop,
         # and the drift assertion below aborted the whole run.
+        # The grasp bonus is additionally gated on the grasp having lifted the
+        # object, when pick_grasp_bonus_min_lift is set: pressing it into the
+        # desk maximizes every contact metric and cannot lift, so it must not
+        # pay. credited_lift is the peak-while-held ratchet, so this matches the
+        # training reward step for step.
         ever_grasped = float(grasp_flags["ever_grasped"])
+        grasp_min_lift = float(
+            getattr(reward_config, "pick_grasp_bonus_min_lift", 0.0)
+        )
+        if grasp_min_lift > 0.0:
+            ever_grasped = 1.0 if lift >= grasp_min_lift else 0.0
         terms["distance_coarse"] = float(coarse[0])
         terms["distance_fine"] = float(fine[0])
         terms["contact_bonus"] = float(

@@ -2336,6 +2336,17 @@ class RankLocalMJWarpGRPOCollector:
         )
         prior_norm_sum = torch.zeros_like(residual_norm_sum)
         action_norm_observations = torch.zeros_like(residual_norm_sum)
+        # Deepest the object was pushed BELOW its rest height at any point in
+        # the episode. Tests the pressing hypothesis directly: grasp quality and
+        # lift are anti-correlated (corr -0.786 over 451 updates), and the
+        # mechanism that would explain it is the gripper pinning the object
+        # against the desk to maximize pad force, bilateral contact and pose
+        # stability. If that is what is happening this climbs as the run
+        # proceeds; if it stays near zero the correlation is something else and
+        # the grasp-bonus gate is treating the wrong cause.
+        peak_press_depth = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
         vla_capture: dict[str, Any] | None = None
 
         for decision in range(max_decisions):
@@ -2529,6 +2540,23 @@ class RankLocalMJWarpGRPOCollector:
                         ),
                         peak_ee_z_after_grasp,
                     ),
+                )
+
+                # Deepest push below rest height so far. Ratcheted like the
+                # peak rise above it, and only over active steps so a finished
+                # episode's frozen pose cannot keep contributing.
+                target_now = gather_world_slots(
+                    low_dim.object_positions, reset.task_state.target_slots
+                )
+                press_depth = (
+                    reset.task_state.support_surface_z
+                    + reset.target_rest_height
+                    - target_now[:, 2]
+                ).clamp_min(0.0)
+                peak_press_depth = torch.where(
+                    step_active,
+                    torch.maximum(peak_press_depth, press_depth),
+                    peak_press_depth,
                 )
 
                 diagnostic_bool = step_active & reset.grasp_eligible
@@ -2823,6 +2851,17 @@ class RankLocalMJWarpGRPOCollector:
             ),
             "residual_target_alignment_rate": float(
                 (residual_target_cosine_first > 0.0).float().mean().item()
+            ),
+            # Peak depth the object was pushed below its rest height. Rising as
+            # the grasp rate rises is the pressing pathology; flat near zero
+            # means the grasp/lift anti-correlation has another cause.
+            "object_press_depth_mean_m": float(
+                peak_press_depth.mean().item()
+            ),
+            "object_press_depth_mean_m_prelifted": float(
+                peak_press_depth[prelifted_world].mean().item()
+                if bool(prelifted_world.any().item())
+                else 0.0
             ),
             "dense_move_to_distance_reward": float(
                 self.move_to_distance_reward is not None

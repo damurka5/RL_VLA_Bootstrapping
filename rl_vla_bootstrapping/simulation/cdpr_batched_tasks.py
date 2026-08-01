@@ -201,9 +201,26 @@ class BatchedCatchReleaseDenseReward:
     fine_distance_reward_scale: float = 0.01
     fine_distance_window: float = 0.0
     pick_grasp_bonus: float = 1.0
+    # Metres of lift a grasp must achieve before it earns pick_grasp_bonus.
+    # 0.0 pays the bonus on ever_grasped, which is the historical behaviour.
+    #
+    # Why a non-zero value exists: measured over 451 updates of a 4.8M run,
+    # grasp quality and lift are ANTI-correlated -- corr(grasp rate, prelifted
+    # rise) = -0.786, corr(pad force, rise) = -0.696. Pad force rose 6.4 -> 8.0 N
+    # and bilateral contact 0.467 -> 0.603 while slip FELL 3.86 -> 2.97 mm and
+    # the lift died 35 mm -> 15 mm. Every one of those is maximized by pressing
+    # the object down into the desk: a gripper pinning an object at 8 N has
+    # perfect contact metrics, minimal relative slip, and cannot raise it. The
+    # policy converges on a maximally secure grasp it cannot lift from, which is
+    # why four successive lift-reward fixes each delayed the collapse without
+    # stopping it. Gating the grasp bonus on a grasp that has actually taken the
+    # object off the desk removes the payoff for that pose.
+    pick_grasp_bonus_min_lift: float = 0.0
     # Partial credit for bilateral finger contact before the grasp latches.
     # Without it there is no gradient between "hovering at the grasp point with
-    # the gripper open" and a full persistent grasp, so pick-up plateaus.
+    # the gripper open" and a full persistent grasp, so pick-up plateaus. Left
+    # UNCONDITIONAL so the approach still has a gradient when the grasp bonus is
+    # lift-gated.
     pick_contact_bonus: float = 0.25
     pick_lift_reward_weight: float = 1.0
     pick_lift_reward_scale: float = 0.05
@@ -289,6 +306,9 @@ class BatchedCatchReleaseDenseReward:
                 number("pick_distance_window", 0.02), 0.0
             ),
             pick_grasp_bonus=number("pick_grasp_bonus", 1.0),
+            pick_grasp_bonus_min_lift=max(
+                number("pick_grasp_bonus_min_lift", 0.0), 0.0
+            ),
             pick_lift_reward_weight=number(
                 "pick_lift_reward_weight", 1.0
             ),
@@ -989,10 +1009,29 @@ def evaluate_active_sparse_tasks(
         # by batting the object upward, and it cannot be lost by a later drop.
         # A lift attempt that fails now keeps its partial credit, so attempting
         # strictly dominates holding still at every height.
+        # A grasp only earns its bonus once it has taken the object off the
+        # desk, when pick_grasp_bonus_min_lift is set. credited_lift is the
+        # peak-while-held ratchet, so this is itself a ratchet: once a grasp has
+        # lifted, the credit cannot be lost. At 0.0 this is exactly
+        # state.ever_grasped and nothing changes.
+        #
+        # The point is to stop paying for a grasp that cannot lift. Pressing the
+        # object into the desk maximizes pad force, bilateral contact and pose
+        # stability -- all three of which the old bonus and the physical-grasp
+        # detector reward -- while making the object unliftable, and the run
+        # measurably converged onto exactly that pose.
+        grasp_min_lift = float(
+            catch_release_dense_reward.pick_grasp_bonus_min_lift
+        )
+        qualified_grasp = (
+            state.ever_grasped.to(dtype=ee_position.dtype)
+            if grasp_min_lift <= 0.0
+            else (credited_lift >= grasp_min_lift).to(dtype=ee_position.dtype)
+        )
         pick_reward = (
             pick_distance_reward
             + contact_credit
-            + state.ever_grasped.to(dtype=ee_position.dtype)
+            + qualified_grasp
             * float(catch_release_dense_reward.pick_grasp_bonus)
             + normalized_lift
             * float(catch_release_dense_reward.pick_lift_reward_weight)
@@ -1023,6 +1062,18 @@ def evaluate_active_sparse_tasks(
             "target_motion_xy": target_motion_xy,
             "target_lift": target_lift,
             "credited_lift": credited_lift,
+            # How far the object sits BELOW its rest height: the direct measure
+            # of the gripper pressing it into the desk. Zero when it is resting
+            # or lifted.
+            "target_press_depth": (
+                state.support_surface_z
+                + (
+                    torch.zeros_like(target[:, 2])
+                    if state.target_rest_height is None
+                    else state.target_rest_height
+                )
+                - target[:, 2]
+            ).clamp_min(0.0),
             "pick_grasp_distance": pick_grasp_distance,
             "push_motion": push_motion,
             "container_xy_error": container_xy,
