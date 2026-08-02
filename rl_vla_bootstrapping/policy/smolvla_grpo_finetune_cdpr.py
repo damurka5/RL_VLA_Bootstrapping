@@ -119,11 +119,53 @@ if nn is not None:
         def clamped_log_std(self) -> torch.Tensor:
             return self.log_std.clamp(float(self.min_log_std), float(self.max_log_std))
 
+        def project_log_std(self) -> None:
+            """Pull the raw log_std back inside its band, in place.
+
+            ``clamp`` has ZERO gradient outside its bounds, so an entry that
+            leaves the band stops receiving any gradient and can never return --
+            it is frozen at whatever value it drifted to, while the forward pass
+            keeps reporting the bound. Dumping the parameter after a 3.6M-step
+            run found all twenty trained entries outside the band: fifteen
+            pinned at the -1.10 ceiling, five at the -1.45 floor, none inside,
+            with raw values spanning -3.51 to -0.2990. Eight sat at -0.2996 --
+            the move-to ceiling of -0.30 that 7d99c3e replaced, fossilized
+            before that fix and carried through every warm start since.
+
+            That is why log_std_mean was EXACTLY -1.193750 on every update of
+            five consecutive runs: not a frozen parameter, but a fixed pattern
+            of saturated bounds. It also means entropy_coef has been inert for
+            the whole campaign, and the min/max clamps stopped being able to do
+            anything the moment they were first hit.
+
+            Projecting after each optimizer step keeps the parameter on the
+            boundary rather than beyond it, so the gradient is live again and
+            the clamp in the forward becomes a no-op.
+            """
+
+            with torch.no_grad():
+                self.log_std.clamp_(
+                    float(self.min_log_std), float(self.max_log_std)
+                )
+
 else:
 
     class SmolVLAGRPOPolicy:  # pragma: no cover - dependency guard
         def __init__(self, *args, **kwargs):
             _require_torch()
+
+
+def _log_std_saturated_fraction(base: Any) -> float:
+    """How much of log_std is pinned on a clamp bound rather than free."""
+
+    import torch
+
+    with torch.no_grad():
+        raw = base.log_std.detach()
+        at_bound = (raw <= float(base.min_log_std) + 1.0e-6) | (
+            raw >= float(base.max_log_std) - 1.0e-6
+        )
+        return float(at_bound.to(dtype=torch.float32).mean().item())
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
@@ -941,6 +983,7 @@ class SmolVLAGRPOTrainer:
                 )
                 gradient_norms.append(float(grad_norm.detach().item()))
                 self.optimizer.step()
+                self._unwrap(self.actor).project_log_std()
                 synchronize_profile()
                 if self.profile_update:
                     optimizer_time_s += (
@@ -986,6 +1029,15 @@ class SmolVLAGRPOTrainer:
                 else 0.0
             ),
             "log_std_mean": float(base.clamped_log_std().detach().mean().item()),
+            # Fraction of log_std entries sitting exactly on a clamp bound.
+            # This is what would have exposed the saturation years earlier:
+            # log_std_mean was a constant -1.193750 for five runs because every
+            # trained entry was pinned at a bound, and averaging over the four
+            # chunk rows that are never sampled (they hold init_log_std forever)
+            # hid it further. 1.0 means the parameter is doing nothing.
+            "log_std_saturated_fraction": float(
+                _log_std_saturated_fraction(base)
+            ),
             "log_std_update_abs_mean": float(
                 (base.clamped_log_std().detach() - initial_log_std)
                 .abs()
@@ -1074,6 +1126,7 @@ class SmolVLAGRPOTrainer:
                 grad_norm = torch.nn.utils.clip_grad_norm_(self.actor.parameters(), grad_limit)
                 gradient_norms.append(float(grad_norm.detach().item()))
                 self.optimizer.step()
+                self._unwrap(self.actor).project_log_std()
                 self.gradient_step += 1
                 optimizer_steps += 1
 
@@ -1090,6 +1143,15 @@ class SmolVLAGRPOTrainer:
             "advantage_mean": float(advantages.mean().detach().item()),
             "advantage_std": float(advantages.std(unbiased=False).detach().item()) if advantages.numel() > 1 else 0.0,
             "log_std_mean": float(base.clamped_log_std().detach().mean().item()),
+            # Fraction of log_std entries sitting exactly on a clamp bound.
+            # This is what would have exposed the saturation years earlier:
+            # log_std_mean was a constant -1.193750 for five runs because every
+            # trained entry was pinned at a bound, and averaging over the four
+            # chunk rows that are never sampled (they hold init_log_std forever)
+            # hid it further. 1.0 means the parameter is doing nothing.
+            "log_std_saturated_fraction": float(
+                _log_std_saturated_fraction(base)
+            ),
             "log_std_update_abs_mean": float(
                 (base.clamped_log_std().detach() - initial_log_std).abs().mean().item()
             ),
@@ -1145,6 +1207,7 @@ class SmolVLAGRPOTrainer:
                 if float(self.args.max_grad_norm) > 0.0:
                     torch.nn.utils.clip_grad_norm_(self.actor.parameters(), float(self.args.max_grad_norm))
                 self.optimizer.step()
+                self._unwrap(self.actor).project_log_std()
                 self.gradient_step += 1
                 hindsight_losses.append(float(nll.detach().item()))
         metrics.update(

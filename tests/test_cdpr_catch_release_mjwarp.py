@@ -2501,3 +2501,97 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
             with self.subTest(metric=name):
                 matched = name.endswith(divided) or "_mean_" in name
                 self.assertEqual(matched, should_divide)
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "the log_std projection operates on tensors",
+)
+class LogStdProjectionTests(unittest.TestCase):
+    """clamp() has no gradient outside its bounds, so a drifted entry is dead.
+
+    Dumping the actor after a 3.6M-step run found all twenty TRAINED log_std
+    entries outside the [-1.45, -1.10] band -- fifteen at the ceiling, five at
+    the floor, none inside -- with raw values from -3.51 to -0.2990, and eight
+    sitting at -0.2996, the move-to ceiling of -0.30 that 7d99c3e replaced.
+    That is why log_std_mean was EXACTLY -1.193750 on every update of five
+    consecutive runs: a fixed pattern of saturated bounds, not a frozen
+    parameter, and it meant entropy_coef could not do anything at all.
+    """
+
+    @staticmethod
+    def _policy(torch, **kwargs):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
+            SmolVLAGRPOPolicy,
+        )
+
+        return SmolVLAGRPOPolicy(
+            state_dim=6, chunk_size=8, action_dim=5, hidden_dim=16,
+            residual_scale=1.0, init_log_std=-1.2,
+            min_log_std=-1.45, max_log_std=-1.10, **kwargs
+        )
+
+    def test_clamp_alone_kills_the_gradient_outside_the_band(self):
+        """The bug, pinned so it cannot come back by a different route."""
+
+        import torch
+
+        policy = self._policy(torch)
+        with torch.no_grad():
+            policy.log_std.fill_(-3.0)          # drifted far below the floor
+        policy.clamped_log_std().sum().backward()
+        self.assertAlmostEqual(
+            float(policy.log_std.grad.abs().sum().item()), 0.0, places=8,
+            msg="an entry outside the clamp receives no gradient, so nothing "
+                "can ever bring it back -- which is the whole failure",
+        )
+
+    def test_projection_returns_the_parameter_to_the_band(self):
+        import torch
+
+        policy = self._policy(torch)
+        with torch.no_grad():
+            policy.log_std[0].fill_(-3.5124)    # observed raw values
+            policy.log_std[1].fill_(-0.2996)
+        policy.project_log_std()
+        raw = policy.log_std.detach()
+        self.assertTrue(bool((raw >= -1.45 - 1e-6).all().item()))
+        self.assertTrue(bool((raw <= -1.10 + 1e-6).all().item()))
+        # And once back on the boundary the gradient is live again.
+        policy.log_std.grad = None
+        policy.clamped_log_std().sum().backward()
+        self.assertGreater(float(policy.log_std.grad.abs().sum().item()), 0.0)
+
+    def test_the_saturated_fraction_reproduces_the_observed_constant(self):
+        """The diagnostic must flag the exact state the run was in."""
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
+            _log_std_saturated_fraction,
+        )
+
+        policy = self._policy(torch)
+        observed = torch.tensor([
+            [-3.5124, -0.7563, -0.2996, -0.2996, -1.0996],
+            [-2.8856, -0.7427, -0.2996, -0.2995, -0.5588],
+            [-2.9693, -1.0999, -0.2995, -0.4795, -0.6278],
+            [-2.4415, -0.2996, -0.2999, -0.2990, -2.8820],
+            [-1.2] * 5, [-1.2] * 5, [-1.2] * 5, [-1.2] * 5,
+        ])
+        with torch.no_grad():
+            policy.log_std.copy_(observed)
+        # Every trained entry saturated; rows 4-7 hold init and are never used.
+        self.assertAlmostEqual(
+            _log_std_saturated_fraction(policy), 0.5, places=6
+        )
+        # And this is the number that was logged, to six decimals.
+        self.assertAlmostEqual(
+            float(policy.clamped_log_std().mean().item()), -1.193750, places=6
+        )
+        policy.project_log_std()
+        self.assertAlmostEqual(
+            _log_std_saturated_fraction(policy), 0.5, places=6,
+            msg="projection puts entries ON the boundary, which still counts "
+                "as saturated -- it restores the gradient, it does not hide it",
+        )
