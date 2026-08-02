@@ -507,10 +507,23 @@ training:
       # sampling distribution and those excursions stop happening, which is the
       # decay the last three runs all showed.
       #
-      # -1.45 sits just below the [-1.39, -1.38] band the recent runs held, so
-      # it does not force exploration wider than what has been stable; it only
-      # forbids further collapse. Symmetric with the -1.10 ceiling below.
-      min_log_std: -1.45
+      # -2.5, widened from -1.45, and it only means anything now that
+      # 80f6c35 projects the raw parameter back into the band after each
+      # optimizer step. Before that, clamp() had zero gradient outside its
+      # bounds, so an entry that left the band froze forever while the forward
+      # pass kept reporting the bound -- log_std_mean read EXACTLY -1.193750 on
+      # every update of five consecutive runs because all twenty trained entries
+      # were saturated, fifteen at the ceiling and five at the floor, none
+      # inside. Neither bound had bound anything since the first time it was hit.
+      #
+      # The dumped parameter is what sets this value. Raw entries spanned
+      # -3.5124 to -0.2990; four of them, mostly the x action, drove to -2.44 or
+      # below. The policy asked repeatedly for much tighter control on that axis
+      # and a -1.45 floor refused it. There is no evidence that downward
+      # movement is harmful -- the failure move-to proved is diffusion UPWARD,
+      # which the ceiling below still forbids -- so the floor stops fighting the
+      # gradient and only rules out a true collapse to a point.
+      min_log_std: -2.5
       # -1.10, not -0.3. MUST MATCH the move-to phase. At -0.3 the ceiling never
       # bound and the distribution diffused underneath it: over move-to's
       # 16M-step run log_std rose monotonically for 12M steps (-1.227 -> -0.895)
