@@ -5,7 +5,9 @@ CDPR · SmolVLA · GRPO · MJWarp backend
 - Prepared 2026-08-01, updated 2026-08-02, code `0a9bbe4`
 - Phase 0 `move_to_object`: **28M steps**, complete
 - Phase 1 `pick_up`: **~41M steps over 12 runs**, running
-- **Campaign total: ~87M GRPO environment steps across 22 runs**
+- **Compute spent: ~87M GRPO environment steps across 22 runs**
+- **Training depth in the current policy: ~15M** — the runs are a tree of warm
+  starts, not one chain, so these are different numbers (see §2)
 - Configs: `cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml`,
   `cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml`
 
@@ -71,21 +73,52 @@ runs, against a 0.30 promote threshold, so the cap has not moved since 171k.
 
 ### Step accounting
 
-Measured directly from the TensorBoard event files, deduplicated by run (several
-directories are successive dumps of the same run):
+Two different quantities, and they are not interchangeable.
+
+**Compute spent — 87.4M steps.** Every step actually executed, measured from the
+TensorBoard event files and deduplicated by run (several directories are
+successive dumps of the same run):
 
 | | runs | steps |
 |---|---:|---:|
 | `pick_up` (identified) | 12 | 40,957,412 |
 | `move_to_object` (identified) | 4 | 26,004,402 |
 | pre-dating the per-instruction metrics | 6 | 20,417,827 |
-| **total** | **22** | **87,379,641** |
+| **total executed** | **22** | **87,379,641** |
 
 The third row cannot be attributed automatically — `instruction_worlds/{name}`
-did not exist when those ran. Note also that the 28M quoted for move-to is the
-*productive* decomposition (5M baseline + 7M to the collapse + 8M + 8M), whereas
-the table above sums every step in each event file, so the 16M run contributes
-its full length rather than only its productive 7M.
+did not exist when those ran.
+
+**Training depth in the current policy — ~15M steps.** The runs are a *tree*, not
+a chain. Warm starts were frequently taken from a mid-run checkpoint rather than
+a run's end, which discards everything after the branch point, and some runs
+started from no checkpoint at all. Summing runs therefore overstates how much
+training any single set of weights carries. The traceable lineage of the run in
+flight:
+
+| segment | steps at the branch point |
+|---|---:|
+| move-to scratch adapter | 5,000,081 |
+| `pick_up_warmstart_20260731_100335` | 803,288 |
+| prelifted run | ~1,400,000 |
+| control `nopre` | 407,399 |
+| `pick_up_16M` | 806,981 |
+| `peaklift_16M` | 1,006,618 |
+| `liftgate_16M` | 3,203,866 |
+| `adaptivestd_16M` | 2,406,053 |
+| **lineage total** | **~15.0M** |
+
+Note the phase-0 contribution is the **5M scratch adapter**, not the 28M
+campaign end — pick-up warm-started from an early move-to checkpoint. The
+pre-session hops are as recorded in the run launchers and have not been verified
+against the checkpoints themselves; the exact tree is recoverable with
+`grep -h '^warmstart_checkpoint=' runs/*/train.log`, which the launcher writes
+for every run.
+
+Also note the 28M quoted for move-to is the *productive* decomposition (5M
+baseline + 7M to the collapse + 8M + 8M), whereas the executed table sums whole
+event files, so the 16M run contributes its full length rather than its
+productive 7M.
 
 ---
 
