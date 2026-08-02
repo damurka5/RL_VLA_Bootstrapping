@@ -2595,3 +2595,160 @@ class LogStdProjectionTests(unittest.TestCase):
             msg="projection puts entries ON the boundary, which still counts "
                 "as saturated -- it restores the gradient, it does not hide it",
         )
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "the curricula are imported from the trainer module",
+)
+class StartDistanceLadderTests(unittest.TestCase):
+    """A single increment makes the first promotion the largest relative jump.
+
+    0.03 -> 0.05 is +67%, and the measured pass rate fell 0.400 -> 0.180 on the
+    update after it, then held ~0.21 for 9M steps across two runs without ever
+    recovering to the 0.30 gate.
+    """
+
+    LADDER = [0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.13, 0.16, 0.20]
+
+    def _curriculum(self, **overrides):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            ApproachDistanceCurriculum,
+        )
+
+        metadata = {
+            "random_workspace_start_distance_curriculum_enabled": True,
+            "random_workspace_start_distance_ladder": self.LADDER,
+            "random_workspace_start_distance_promote_pass_rate": 0.30,
+            "random_workspace_start_distance_demote_pass_rate": 0.12,
+            "random_workspace_start_distance_cooldown_updates": 1,
+            "random_workspace_start_distance_pass_rate_ema_decay": 0.0,
+        }
+        metadata.update(overrides)
+        return ApproachDistanceCurriculum(metadata)
+
+    def test_promotion_walks_the_ladder_one_rung_at_a_time(self):
+        curriculum = self._curriculum()
+        self.assertAlmostEqual(curriculum.current_cap(), 0.03)
+        seen = [curriculum.current_cap()]
+        for _ in range(30):
+            curriculum.observe(0.9)          # always passing
+            if curriculum.current_cap() != seen[-1]:
+                seen.append(curriculum.current_cap())
+        for value in seen:
+            self.assertIn(round(value, 6), [round(v, 6) for v in self.LADDER])
+        self.assertAlmostEqual(seen[1], 0.04, places=6)
+        self.assertAlmostEqual(seen[-1], 0.20, places=6)
+        # The first step is +33%, not the +67% a flat 0.02 increment gave.
+        self.assertAlmostEqual((seen[1] - seen[0]) / seen[0], 1.0 / 3.0, places=3)
+
+    def test_demotion_walks_back_down_the_same_rungs(self):
+        curriculum = self._curriculum()
+        for _ in range(12):
+            curriculum.observe(0.9)
+        top = curriculum.current_cap()
+        self.assertGreater(top, 0.03)
+        for _ in range(30):
+            curriculum.observe(0.0)          # always failing
+        self.assertAlmostEqual(curriculum.current_cap(), 0.03, places=6)
+
+    def test_a_resumed_cap_snaps_onto_a_rung(self):
+        """A cap earned under the old flat increment must not keep its spacing."""
+
+        curriculum = self._curriculum()
+        curriculum.load_state_dict({"cap": 0.07, "pass_rate_ema": 0.2})
+        self.assertIn(
+            round(curriculum.current_cap(), 6),
+            [round(v, 6) for v in self.LADDER],
+        )
+        self.assertAlmostEqual(curriculum.current_cap(), 0.06, places=6)
+
+    def test_without_a_ladder_the_flat_increment_is_unchanged(self):
+        curriculum = self._curriculum(
+            random_workspace_start_distance_ladder=None,
+            random_workspace_start_distance_initial=0.03,
+            random_workspace_start_distance_final=0.20,
+            random_workspace_start_distance_increment=0.02,
+        )
+        self.assertEqual(curriculum.ladder, ())
+        curriculum.observe(0.9)
+        self.assertAlmostEqual(curriculum.current_cap(), 0.05, places=6)
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "the curricula are imported from the trainer module",
+)
+class PreliftedStageCurriculumTests(unittest.TestCase):
+    """Practice should follow the deficit, not stay where it was set.
+
+    At a fixed 0.5 the pre-grasped stage spent half of every batch on a
+    sub-task measuring 0.79-0.82 while the full task sat at 0.21.
+    """
+
+    def _curriculum(self, **overrides):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            PreliftedStageCurriculum,
+        )
+
+        metadata = {
+            "pick_up_prelifted_curriculum_enabled": True,
+            "pick_up_prelifted_group_fraction": 0.5,
+            "pick_up_prelifted_fraction_min": 0.15,
+            "pick_up_prelifted_fraction_step": 0.05,
+            "pick_up_prelifted_reduce_success": 0.70,
+            "pick_up_prelifted_restore_success": 0.45,
+            "pick_up_prelifted_cooldown_updates": 1,
+            "pick_up_prelifted_success_ema_decay": 0.0,
+        }
+        metadata.update(overrides)
+        return PreliftedStageCurriculum(metadata)
+
+    def test_a_learned_lift_shrinks_the_stage_to_its_floor(self):
+        curriculum = self._curriculum()
+        self.assertAlmostEqual(curriculum.current_fraction(), 0.5)
+        for _ in range(40):
+            curriculum.observe(0.82)         # the measured plateau
+        self.assertAlmostEqual(curriculum.current_fraction(), 0.15, places=6)
+
+    def test_a_decaying_lift_brings_the_stage_back(self):
+        curriculum = self._curriculum()
+        for _ in range(40):
+            curriculum.observe(0.82)
+        self.assertAlmostEqual(curriculum.current_fraction(), 0.15, places=6)
+        for _ in range(40):
+            curriculum.observe(0.20)         # the lift collapses again
+        self.assertAlmostEqual(curriculum.current_fraction(), 0.5, places=6)
+
+    def test_the_band_between_the_thresholds_holds_steady(self):
+        curriculum = self._curriculum()
+        for _ in range(40):
+            curriculum.observe(0.55)         # between restore and reduce
+        self.assertAlmostEqual(curriculum.current_fraction(), 0.5, places=6)
+
+    def test_disabled_by_default_and_inert(self):
+        curriculum = self._curriculum(
+            pick_up_prelifted_curriculum_enabled=False
+        )
+        for _ in range(40):
+            curriculum.observe(0.95)
+        self.assertAlmostEqual(curriculum.current_fraction(), 0.5, places=6)
+
+    def test_no_prelifted_worlds_is_not_an_observation(self):
+        """A batch with no pre-grasped groups must not read as zero success."""
+
+        curriculum = self._curriculum()
+        for _ in range(40):
+            curriculum.observe(None)
+        self.assertAlmostEqual(curriculum.current_fraction(), 0.5, places=6)
+
+    def test_state_survives_a_resume(self):
+        curriculum = self._curriculum()
+        for _ in range(40):
+            curriculum.observe(0.82)
+        state = curriculum.state_dict()
+        resumed = self._curriculum()
+        resumed.load_state_dict(state)
+        self.assertAlmostEqual(
+            resumed.current_fraction(), curriculum.current_fraction(), places=6
+        )

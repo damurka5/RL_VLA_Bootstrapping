@@ -612,9 +612,32 @@ class ApproachDistanceCurriculum:
                 "random_workspace_start_distance_curriculum_enabled", False
             )
         )
-        self.initial = max(number("random_workspace_start_distance_initial", 0.06), 0.0)
-        self.final = max(number("random_workspace_start_distance_final", 0.34), self.initial)
-        self.increment = max(number("random_workspace_start_distance_increment", 0.02), 1.0e-6)
+        # An explicit ladder of caps, when given, replaces initial/final/
+        # increment. A single increment forces every promotion to be the same
+        # absolute size, which near the bottom of the range is enormous in
+        # relative terms: 0.03 -> 0.05 is +67%, and the measured pass rate fell
+        # 0.400 -> 0.180 the update after it, then sat at ~0.21 for the next
+        # 9M steps across two runs without ever recovering to the 0.30 gate.
+        # The rungs should be geometric-ish -- small while the task is hard and
+        # the relative jump matters, wider once the policy has margin.
+        raw_ladder = metadata.get("random_workspace_start_distance_ladder")
+        ladder: list[float] = []
+        if isinstance(raw_ladder, (list, tuple)):
+            for value in raw_ladder:
+                try:
+                    ladder.append(max(float(value), 0.0))
+                except (TypeError, ValueError):
+                    ladder = []
+                    break
+        self.ladder = tuple(sorted(set(ladder))) if len(ladder) >= 2 else ()
+        if self.ladder:
+            self.initial = float(self.ladder[0])
+            self.final = float(self.ladder[-1])
+            self.increment = 0.0
+        else:
+            self.initial = max(number("random_workspace_start_distance_initial", 0.06), 0.0)
+            self.final = max(number("random_workspace_start_distance_final", 0.34), self.initial)
+            self.increment = max(number("random_workspace_start_distance_increment", 0.02), 1.0e-6)
         self.promote_threshold = number(
             "random_workspace_start_distance_promote_pass_rate", 0.20
         )
@@ -634,6 +657,36 @@ class ApproachDistanceCurriculum:
 
     def current_cap(self) -> float:
         return self.cap if self.enabled else float("inf")
+
+    def _rung_index(self, cap: float) -> int:
+        """Highest rung at or below ``cap``; -1 when no ladder is configured.
+
+        Snapping DOWN rather than to the nearest rung: a cap arriving from a
+        resume (or from a run with different spacing) must never promote the
+        policy as a side effect of being rounded, and a value exactly between
+        two rungs would otherwise be decided by float representation.
+        """
+
+        if not self.ladder:
+            return -1
+        index = 0
+        for position, rung in enumerate(self.ladder):
+            if rung <= float(cap) + 1.0e-9:
+                index = position
+            else:
+                break
+        return index
+
+    def _step_cap(self, direction: int) -> float:
+        """One rung up or down, or one increment when there is no ladder."""
+
+        if self.ladder:
+            index = self._rung_index(self.cap) + int(direction)
+            index = min(max(index, 0), len(self.ladder) - 1)
+            return float(self.ladder[index])
+        if direction > 0:
+            return min(self.final, self.cap + self.increment)
+        return max(self.initial, self.cap - self.increment)
 
     def observe(self, pass_rate: float) -> None:
         """Fold in this update's global pass rate; promote/demote when clear."""
@@ -660,10 +713,10 @@ class ApproachDistanceCurriculum:
             return
         changed = False
         if self.pass_rate_ema >= self.promote_threshold and self.cap < self.final:
-            self.cap = min(self.final, self.cap + self.increment)
+            self.cap = self._step_cap(+1)
             changed = True
         elif self.pass_rate_ema <= self.demote_threshold and self.cap > self.initial:
-            self.cap = max(self.initial, self.cap - self.increment)
+            self.cap = self._step_cap(-1)
             changed = True
         if changed:
             self._cooldown = self.cooldown_updates
@@ -706,9 +759,126 @@ class ApproachDistanceCurriculum:
         if not state:
             return
         self.cap = min(self.final, max(self.initial, float(state.get("cap", self.cap))))
+        if self.ladder:
+            # A resumed cap from a run with a different ladder (or none) must
+            # land ON a rung, or every later promotion inherits the old spacing.
+            self.cap = float(self.ladder[self._rung_index(self.cap)])
         self.pass_rate_ema = float(state.get("pass_rate_ema", self.pass_rate_ema))
         self._cooldown = int(float(state.get("cooldown", 0)))
         self._reseed_ema = bool(float(state.get("reseed_ema", 0.0)))
+
+
+class PreliftedStageCurriculum:
+    """Anneal the pre-grasped pick_up fraction as the lift gets learned.
+
+    The stage hands a fraction of GRPO groups a finished grasp so the lift has
+    dense signal. It works -- an A/B put normal-start grasp->success conversion
+    at 0.205 with it against 0.177 without -- but it is not free: at a fixed
+    0.5 it spends half of every batch forever on a sub-task that measured 0.81
+    success while the full task sat at 0.21 and the approach cap refused to move
+    for 9M steps across two runs. Practice should follow the deficit.
+
+    So the fraction is itself success-gated, on the SAME shape as the approach
+    curriculum: an EMA of pre-grasped success, a promote/demote pair, a cooldown
+    and a re-seed on change. High pre-grasped success shifts batch toward the
+    full task; if it falls back, the stage returns. Disabled by default, in
+    which case the fraction is whatever the config set and never moves.
+    """
+
+    def __init__(self, metadata: Mapping[str, Any]) -> None:
+        def number(key: str, default: float) -> float:
+            try:
+                return float(metadata.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        self.enabled = bool(
+            metadata.get("pick_up_prelifted_curriculum_enabled", False)
+        )
+        self.initial = min(
+            max(number("pick_up_prelifted_group_fraction", 0.0), 0.0), 1.0
+        )
+        self.minimum = min(
+            max(number("pick_up_prelifted_fraction_min", 0.15), 0.0),
+            self.initial,
+        )
+        self.step = max(number("pick_up_prelifted_fraction_step", 0.05), 1.0e-6)
+        # Reduce the stage once the handed-grasp lift is comfortably learned;
+        # restore it if that regresses. 0.70/0.45 brackets the 0.79-0.82 band
+        # the stage has actually held, so it anneals from where it is now and
+        # comes back if the lift decays the way it has in every prior run.
+        self.reduce_above = number("pick_up_prelifted_reduce_success", 0.70)
+        self.restore_below = number("pick_up_prelifted_restore_success", 0.45)
+        self.ema_decay = min(
+            max(number("pick_up_prelifted_success_ema_decay", 0.9), 0.0), 0.999
+        )
+        self.cooldown_updates = max(
+            int(number("pick_up_prelifted_cooldown_updates", 15)), 1
+        )
+        self.fraction = self.initial
+        self.success_ema = 0.0
+        self._seeded = False
+        self._cooldown = 0
+
+    def current_fraction(self) -> float:
+        return self.fraction
+
+    def observe(self, prelifted_success: float | None) -> None:
+        """Fold in this update's pre-grasped success rate and adjust."""
+
+        if not self.enabled or prelifted_success is None:
+            return
+        rate = min(max(float(prelifted_success), 0.0), 1.0)
+        if not self._seeded:
+            self.success_ema = rate
+            self._seeded = True
+        else:
+            self.success_ema = (
+                self.ema_decay * self.success_ema
+                + (1.0 - self.ema_decay) * rate
+            )
+        if self._cooldown > 0:
+            self._cooldown -= 1
+            return
+        changed = False
+        if self.success_ema >= self.reduce_above and self.fraction > self.minimum:
+            self.fraction = max(self.minimum, self.fraction - self.step)
+            changed = True
+        elif self.success_ema <= self.restore_below and self.fraction < self.initial:
+            self.fraction = min(self.initial, self.fraction + self.step)
+            changed = True
+        if changed:
+            self._cooldown = self.cooldown_updates
+            # Re-seed for the same reason the approach curriculum does: the old
+            # average was earned at a different batch composition, and carrying
+            # it over makes the next decision repeat the last one.
+            self._seeded = False
+
+    def metrics(self) -> dict[str, float]:
+        return {
+            "curriculum/prelifted_fraction": float(self.fraction),
+            "curriculum/prelifted_success_ema": float(self.success_ema),
+            "curriculum/prelifted_enabled": float(self.enabled),
+        }
+
+    def state_dict(self) -> dict[str, float]:
+        return {
+            "fraction": float(self.fraction),
+            "success_ema": float(self.success_ema),
+            "seeded": float(self._seeded),
+            "cooldown": float(self._cooldown),
+        }
+
+    def load_state_dict(self, state: Mapping[str, Any] | None) -> None:
+        if not state:
+            return
+        self.fraction = min(
+            self.initial,
+            max(self.minimum, float(state.get("fraction", self.fraction))),
+        )
+        self.success_ema = float(state.get("success_ema", self.success_ema))
+        self._seeded = bool(float(state.get("seeded", 0.0)))
+        self._cooldown = int(float(state.get("cooldown", 0)))
 
 
 class PerInstructionApproachCurriculum:
@@ -1302,6 +1472,14 @@ def main(argv: Sequence[str] | None = None) -> None:
         approach_curriculum.load_state_dict(
             trainer.loaded_extra_state.get("approach_curriculum")
         )
+        prelifted_curriculum = PreliftedStageCurriculum(task_metadata)
+        prelifted_curriculum.load_state_dict(
+            trainer.loaded_extra_state.get("prelifted_curriculum")
+        )
+        if prelifted_curriculum.enabled:
+            resetter.set_prelifted_group_fraction(
+                prelifted_curriculum.current_fraction()
+            )
         # Seed from the count this run STARTS at, so a resume past an unlock
         # threshold does not read as a fresh unlock and wipe the earned cap.
         previous_scene_object_max = _apply_scene_object_curriculum(
@@ -1560,6 +1738,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                         / worlds_for_name
                     )
             approach_curriculum.observe(instruction_pass_rates)
+            # Anneal the pre-grasped stage on ITS OWN success, not the run's.
+            # The global pass rate mixes both populations, and the stage should
+            # shrink exactly when the handed-grasp lift is learned -- which is a
+            # different question from whether the full task is.
+            prelifted_worlds = synchronized_metrics.get("worlds_prelifted", 0.0)
+            prelifted_curriculum.observe(
+                synchronized_metrics.get("successes_prelifted", 0.0)
+                / prelifted_worlds
+                if prelifted_worlds > 0.0
+                else None
+            )
+            if prelifted_curriculum.enabled:
+                resetter.set_prelifted_group_fraction(
+                    prelifted_curriculum.current_fraction()
+                )
             if (
                 synchronized_metrics["contact_capacity_overflow_ranks"] > 0
                 or synchronized_metrics["constraint_capacity_overflow_ranks"] > 0
@@ -1584,6 +1777,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     # aggregate below stays for dashboards that predate the
                     # split; it is the widest cap in the run.
                     **approach_curriculum.metrics(),
+                    **prelifted_curriculum.metrics(),
                     # -1 sentinel means the cap is disabled (uncapped start).
                     "curriculum/start_max_goal_distance_m": (
                         float(max(start_distance_caps.values()))
@@ -1725,6 +1919,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     extra_state={
                         "curriculum": curriculum.snapshot(),
                         "approach_curriculum": approach_curriculum.state_dict(),
+                        "prelifted_curriculum": prelifted_curriculum.state_dict(),
                         "validation": {
                             "last_step": int(last_validation_step),
                         },

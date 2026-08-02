@@ -803,6 +803,17 @@ class BatchedReverseFrontierResetter:
         high = min(scene_max, max(low, int(high)))
         self.scene_object_range = (low, high)
 
+    def set_prelifted_group_fraction(self, fraction: float) -> None:
+        """Set the pre-grasped group fraction, per update, from the curriculum.
+
+        Sampled per group inside reset(), so changing it here takes effect on
+        the next batch and never mixes stages within a group.
+        """
+
+        self.pick_up_prelifted_group_fraction = min(
+            1.0, max(0.0, float(fraction))
+        )
+
     def set_random_start_max_goal_distance(
         self, value: float | Mapping[int, float]
     ) -> None:

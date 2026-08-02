@@ -187,6 +187,22 @@ task:
     # ever-grasp rate, which is exactly the transfer it was built for. The lift
     # is still the only unlearned half of the task, so it gets half the batch.
     pick_up_prelifted_group_fraction: 0.5
+    # ...and now annealed rather than fixed. At a constant 0.5 the stage spent
+    # half of every batch on a sub-task measuring 0.79-0.82 success while the
+    # full task sat at 0.21 and the approach cap refused to move for 9M steps.
+    # Practice should follow the deficit. Gated on the stage's OWN success --
+    # the global pass rate mixes both populations and would answer a different
+    # question -- with the same EMA/cooldown/re-seed shape as the approach
+    # curriculum. 0.70/0.45 brackets the band the stage has actually held, so it
+    # starts annealing from where the policy is now and the stage comes back if
+    # the lift decays the way it did in every run before the lift gate.
+    pick_up_prelifted_curriculum_enabled: true
+    pick_up_prelifted_fraction_min: 0.15
+    pick_up_prelifted_fraction_step: 0.05
+    pick_up_prelifted_reduce_success: 0.70
+    pick_up_prelifted_restore_success: 0.45
+    pick_up_prelifted_success_ema_decay: 0.9
+    pick_up_prelifted_cooldown_updates: 15
     ee_workspace_x_bounds: [-0.24, 0.24]
     ee_workspace_y_bounds: [-0.24, 0.24]
     # [0.19, 0.30]. The grasp point is object centre + 0.0075, i.e. 0.185 m
@@ -337,6 +353,17 @@ task:
     # reached exactly when the cap tops out.
     random_workspace_start_distance_final: 0.20
     random_workspace_start_distance_increment: 0.02
+    # An explicit ladder, which overrides initial/final/increment above.
+    #
+    # A single 0.02 increment made the FIRST promotion a +67% jump: 0.03 -> 0.05
+    # dropped the measured pass rate 0.400 -> 0.180 on the very next update, and
+    # it then sat at ~0.21 for 9M steps across two runs without ever recovering
+    # to the gate. The step has to be small where the task is hard and the
+    # relative jump is what matters, and can widen once the policy has margin.
+    # 3 -> 4 is +33%, 4 -> 5 is +25%, and by 0.10 -> 0.13 it is +30% of a
+    # distance the policy can already cover.
+    random_workspace_start_distance_ladder:
+      [0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.13, 0.16, 0.20]
     # 0.30/0.12/15, NOT the 0.03/0.01/5 this file used to carry. Those were the
     # degenerate pair: they were fitted while a resetter bug pinned the measured
     # pass rate under 0.045, so once the cap actually reached the simulator the
