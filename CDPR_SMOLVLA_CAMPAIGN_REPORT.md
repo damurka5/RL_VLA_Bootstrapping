@@ -2,9 +2,10 @@
 
 CDPR · SmolVLA · GRPO · MJWarp backend
 
-- Prepared 2026-08-01, code `942bf52`
+- Prepared 2026-08-01, updated 2026-08-02, code `0a9bbe4`
 - Phase 0 `move_to_object`: **28M steps**, complete
-- Phase 1 `pick_up`: **2M of 16M**, running
+- Phase 1 `pick_up`: **~41M steps over 12 runs**, running
+- **Campaign total: ~87M GRPO environment steps across 22 runs**
 - Configs: `cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml`,
   `cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml`
 
@@ -38,21 +39,53 @@ the thing being measured was not the thing that mattered. move-to needed
 outcome split by starting stage and the residual sized against the frozen prior.
 Neither existed until the run had already failed.
 
+The sharpest instance of that arrived late. `log_std_mean` read **exactly
+−1.193750** on every update of five consecutive runs, which looked like a frozen
+parameter and was treated as a curiosity for most of the campaign. Dumping the
+actor showed the raw tensor spanning −3.51 to −0.30 with **all twenty trained
+entries outside the clamp band** — fifteen on the ceiling, five on the floor,
+none inside — and `clamp()` has zero gradient outside its bounds, so every one of
+them had been dead since the first time it was hit. Eight sat at −0.2996: the
+move-to ceiling of −0.30 that `7d99c3e` replaced, fossilized before that fix and
+carried through every warm start since. `entropy_coef` had therefore been inert
+for the entire campaign, and every `min_log_std`/`max_log_std` change had been a
+no-op. Fixed in `80f6c35`.
+
 ---
 
 ## 2. Where it stands
 
 | | move-to | pick-up |
 |---|---:|---:|
-| steps | 28M (complete) | 2M of 16M |
-| best validation success | 7.3% (at 7.4M) | 0.1–0.4% |
-| `validation/reward_mean` | — | 0.19–0.22 |
-| success \| pre-grasped | — | 0.60 |
-| success \| normal start | — | 0.17 at the 5 cm cap |
-| curriculum cap | reached 0.23 | 0.05 (promoted at 1.08M) |
+| steps | 28M (complete) | ~41M over 12 runs, running |
+| best validation success | 7.3% (at 7.4M) | 1.2% |
+| `validation/reward_mean` | — | 0.21 |
+| **success \| pre-grasped** | — | **0.82 peak, 0.79 held** |
+| success \| normal start | — | 0.21 at the 5 cm cap |
+| `post_grasp_rise` (pre-grasped) | — | **48 mm** against a 50 mm bar |
+| curriculum cap | reached 0.23 | 0.05 |
 
-pick-up is where move-to was at roughly 3M: the mechanism works, the deterministic
-policy does not yet generalize, and the curriculum has started to move.
+The pre-grasped lift is close to solved. The approach is not: `success | normal
+start` has sat at 0.21 and the gate EMA at 0.20–0.24 for ~9M steps across three
+runs, against a 0.30 promote threshold, so the cap has not moved since 171k.
+
+### Step accounting
+
+Measured directly from the TensorBoard event files, deduplicated by run (several
+directories are successive dumps of the same run):
+
+| | runs | steps |
+|---|---:|---:|
+| `pick_up` (identified) | 12 | 40,957,412 |
+| `move_to_object` (identified) | 4 | 26,004,402 |
+| pre-dating the per-instruction metrics | 6 | 20,417,827 |
+| **total** | **22** | **87,379,641** |
+
+The third row cannot be attributed automatically — `instruction_worlds/{name}`
+did not exist when those ran. Note also that the 28M quoted for move-to is the
+*productive* decomposition (5M baseline + 7M to the collapse + 8M + 8M), whereas
+the table above sums every step in each event file, so the 16M run contributes
+its full length rather than only its productive 7M.
 
 ---
 
@@ -281,7 +314,46 @@ as it must, since pre-grasped starts approach nothing.
 
 Stuck: the approach at the 5 cm cap — the EMA has been flat at 0.165–0.19 against
 the 0.30 gate for ~900k steps. `post_grasp_rise` has plateaued at 0.035 against
-the 0.05 needed.
+the 0.05 needed. It went on to turn over at ~3M; see the ledger below.
+
+### 4.8 · Run ledger
+
+Every pick-up run for which telemetry was analysed, in order. "Peak" is the best
+`success | pre-grasped` the run reached; the two 400k entries are the A/B pair.
+
+| run | steps | what changed | peak | outcome |
+|---|---:|---|---:|---|
+| prelifted | 1.54M | pre-grasped stage at 0.25 | — | every metric decayed; grasp 0.41→0.30, reward 2.24→1.69 |
+| degenerate probe | 407k | instrumentation only | 0.32 | A/B arm **with** the stage |
+| control `nopre` | 407k | fraction 0 | — | A/B arm **without**: normal-start 0.1076 vs 0.1215 |
+| `pick_up_16M` | 4.22M | ratchet + retuned ladder | 0.24 | collapsed: grasp 0.38→0.45, rise 19→10 mm, success 0.11→0.04 |
+| `peaklift_16M` | 4.78M | **peak-lift ratchet** (`ffe974d`) | **0.59** | best yet, then turned over at ~2M |
+| `liftgate_16M` | 5.95M | **lift-gated grasp bonus** (`03f9f20`) | **0.82** | best of campaign; turned over at ~3M |
+| `adaptivestd_16M` | 2.34M | **log_std projection** (`80f6c35`) | 0.82 | **decay arrested**; stable plateau, no climb |
+| `ladder_16M` | running | fraction + cap curricula (`0a9bbe4`) | — | — |
+
+Two results carried by that table:
+
+**`03f9f20` produced the campaign's best numbers.** Grasp quality and lift were
+measured anti-correlated — `corr(grasp rate, prelifted rise) = −0.786` and
+`corr(pad force, rise) = −0.696` over 451 updates, with pad force rising
+6.4 → 8.0 N and slip *falling* 3.86 → 2.97 mm as the lift died 35 → 15 mm. Gating
+the grasp bonus on the object having left the desk reversed all four contact
+metrics and took pre-grasped success 0.59 → 0.82.
+
+**`80f6c35` stopped the decay.** Every run before it peaked and then collapsed;
+this one held pre-grasped success at 0.79–0.82 across 2.3M steps with pad force,
+slip and grasp rate all flat, and `log_std_saturated_fraction` fell 0.21 → 0.09
+with `entropy_mean` moving for the first time in the campaign. It did not,
+however, produce any *climb* — the system settled into a stable plateau.
+
+> **Caveat on the pressing account.** `object_press_depth_mean_m` was added to
+> confirm the mechanism and reads a flat ~1.4 mm — the object is not being pushed
+> into the desk. The gate was active from step 0, so the metric cannot separate
+> "pressing was never the cause" from "the gate removed it before it could be
+> observed", and the later run reproduced the same anti-correlation *without*
+> pressing. The four contact reversals are real; the mechanism behind them is
+> not settled.
 
 ---
 
@@ -310,17 +382,24 @@ path. It is simply not this bug, at ~7% of groups.
 
 ## 6. Open
 
-**`log_std_mean` is exactly −1.19375** across every update of the last three
-pick-up runs (549, 284, 62 updates). Earlier runs moved (−1.3893 → −1.3962). It
-is interior to the [−1.45, −1.10] clamp, so it is not pinned at a bound.
-`approx_kl` also fell 0.105 → 0.030 and `gradient_norm` 6.7 → 3.2 across the same
-boundary. If the exploration parameter is frozen, the current results are being
-obtained *despite* that. Unresolved; the check is a one-line dump of the actor's
-`log_std` from any checkpoint.
+**~~`log_std_mean` is exactly −1.19375~~ — RESOLVED, see §1.** The parameter was
+saturated on both clamp bounds, not frozen; `clamp()` has zero gradient outside
+its range so every trained entry had been dead since the first time it left the
+band. Fixed in `80f6c35`, which arrested the decay that had ended every previous
+run. `log_std_saturated_fraction` now makes the state visible.
 
-**The train/validation gap.** Training normal-start success ~0.23 against
-deterministic validation 0.001–0.004. The mean action still almost never
-completes the task; the rising residual cosine is the thing to watch.
+**The approach is the live bottleneck.** `success | normal start` 0.21 and the
+gate EMA 0.20–0.24 against a 0.30 promote threshold, unmoved for ~9M steps across
+three runs, so the cap has sat at 0.05 since 171k. Two changes target it
+(`0a9bbe4`): the pre-grasped fraction anneals off a sub-task at 0.82 onto the one
+at 0.21, and the cap ladder replaces a flat 0.02 increment whose first promotion
+was a +67% jump. Raising the promote gate to 0.40 was considered and rejected —
+the EMA has peaked at 0.302 in the entire campaign, so a 0.40 gate would freeze
+the cap at 3 cm permanently.
+
+**The train/validation gap.** Training normal-start success ~0.21 against
+deterministic validation 0.002–0.012. The mean action still rarely completes the
+task; the rising residual cosine is the thing to watch.
 
 **The cosine metrics need a prelifted split.** They are a decision-0 probe against
 the direction to the object, and at `prelifted: 0.5` half the worlds start with
@@ -353,6 +432,22 @@ config's full pool includes a banana the scripted oracle cannot grip, so it
 reports 2/3 there. Compare against a same-invocation baseline, never against a
 number quoted in a config comment.
 
-Phase 1 commits, in order: `894a516`, `d610dcc`, `d4d693c`, `62e647b`,
-`857f3ea`, `cd2f91d`, `d3fa5d6`, `ffe974d`.
+Phase 1 commits, in order:
+
+| commit | change |
+|---|---|
+| `e787c80` | grasp bonus becomes a ratchet on `ever_grasped` |
+| `894a516` | oracle overlay follows that ratchet (harness could not run) |
+| `d610dcc` | pre-grasped start stage |
+| `d4d693c` | remote runner for the oracle harness |
+| `62e647b` | oracle harness gains the MJWarp physics path |
+| `857f3ea` | outcome and advantage divisor split by start stage |
+| `cd2f91d` | pre-grasped starts kept out of the approach gate |
+| `d3fa5d6` | residual telemetry; `min_log_std` floor |
+| `ffe974d` | **peak-lift ratchet** — lift credit survives a settle |
+| `03f9f20` | **lift-gated grasp bonus** — no credit for a grasp that cannot lift |
+| `80f6c35` | **`log_std` projection** — clamp bounds stop killing the gradient |
+| `4d4eb06` | `min_log_std` widened to −2.5 now that it can bind |
+| `0a9bbe4` | pre-grasped fraction curriculum; explicit cap ladder |
+
 Phase 0 fixes referenced: `c76cbb1`, `17a83f7`, `7d99c3e`, `64c1437`.
