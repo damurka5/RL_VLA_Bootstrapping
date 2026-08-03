@@ -302,28 +302,46 @@ def _dual_ridge_scores(
     fold_count = max(2, min(int(folds), unique.size))
     assignments = np.array_split(unique[order], fold_count)
 
+    # Precompute each fold ONCE. The Gram depends only on the features and the
+    # fold's training statistics -- not on alpha and not on which label set is
+    # being scored -- so building it inside the sweep rebuilt a 30720-wide
+    # standardized copy ninety times (9 alphas x {real, control} x 5 folds) for
+    # a result that never changed.
+    #
+    # Eigendecomposing K_train once then makes the whole alpha sweep almost
+    # free: with K = Q diag(lam) Q^T, the dual solution is
+    # Q diag(1/(lam + alpha)) Q^T y, so every extra alpha is a division and two
+    # small matrix-vector products rather than another O(n^3) solve.
+    prepared: list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]] = []
+    features32 = np.ascontiguousarray(features, dtype=np.float32)
+    for held in assignments:
+        test = np.isin(episodes, held)
+        train = ~test
+        if train.sum() < 2 or test.sum() < 2:
+            continue
+        centred = features32 - features32[train].mean(axis=0, keepdims=True)
+        centred /= np.maximum(
+            features32[train].std(axis=0, keepdims=True), 1.0e-8
+        )
+        # float32 for the outer product (the dominant cost), float64 for the
+        # decomposition: a probe does not need more precision than that, and
+        # the matmul is where all the time goes.
+        gram = (centred @ centred.T).astype(np.float64) + 1.0
+        eigenvalues, vectors = np.linalg.eigh(gram[np.ix_(train, train)])
+        prepared.append(
+            (train, test, vectors, eigenvalues, gram[np.ix_(test, train)] @ vectors)
+        )
+    del features32
+
     def score(target: np.ndarray, alpha: float) -> tuple[float, float]:
         per_fold: list[float] = []
-        for held in assignments:
-            test = np.isin(episodes, held)
-            train = ~test
-            if train.sum() < 2 or test.sum() < 2:
-                continue
+        for train, test, vectors, eigenvalues, projected in prepared:
             if np.unique(target[test] > 0).size < 2:
                 # A fold with one class cannot produce a balanced accuracy that
                 # means anything; skipping is honest, inventing 0.5 is not.
                 continue
-            matrix = features.astype(np.float64)
-            matrix = matrix - matrix[train].mean(axis=0, keepdims=True)
-            matrix = matrix / np.maximum(
-                matrix[train].std(axis=0, keepdims=True), 1.0e-8
-            )
-            gram = matrix @ matrix.T + 1.0
-            dual = np.linalg.solve(
-                gram[np.ix_(train, train)] + alpha * np.eye(int(train.sum())),
-                target[train],
-            )
-            predicted = (gram[np.ix_(test, train)] @ dual) > 0.0
+            weights = (vectors.T @ target[train]) / (eigenvalues + alpha)
+            predicted = (projected @ weights) > 0.0
             truth = target[test] > 0
             halves = [
                 float((predicted[truth == value] == value).mean())
@@ -366,13 +384,44 @@ def _stack(rows: Sequence[dict[str, Any]], key: str) -> np.ndarray:
     return np.stack([np.asarray(row[key], dtype=np.float32) for row in rows])
 
 
+def _subsample_per_episode(
+    rows: Sequence[dict[str, Any]], limit: int
+) -> list[dict[str, Any]]:
+    """Keep at most ``limit`` evenly spaced steps per episode.
+
+    Consecutive steps are near-duplicates and the label barely varies inside an
+    episode, so the hundredth step of an episode adds essentially nothing to a
+    probe whose effective sample size is the episode count. It does, however,
+    add its full share to an O(N^2) Gram -- at 104 steps x 60 episodes the
+    30720-wide connector arm builds a 6240x6240 kernel to answer a question
+    with 60 independent units in it.
+
+    Evenly spaced rather than the first ``limit``: the early steps of an episode
+    are all approach, and taking a prefix would drop the grasp entirely.
+    """
+
+    if limit <= 0:
+        return list(rows)
+    kept: list[dict[str, Any]] = []
+    for episode in sorted({row["episode"] for row in rows}):
+        block = [row for row in rows if row["episode"] == episode]
+        if len(block) <= limit:
+            kept.extend(block)
+            continue
+        indices = np.linspace(0, len(block) - 1, limit).round().astype(int)
+        kept.extend(block[index] for index in sorted(set(indices.tolist())))
+    return kept
+
+
 def _report_subset(
     name: str,
     rows: Sequence[dict[str, Any]],
     label_key: str,
     *,
     keep_connector: bool,
+    max_steps_per_episode: int = 0,
 ) -> dict[str, Any]:
+    rows = _subsample_per_episode(rows, int(max_steps_per_episode))
     labels = np.array([1.0 if row[label_key] else 0.0 for row in rows])
     episodes = np.array([row["episode"] for row in rows])
     positive = float(labels.mean()) if labels.size else float("nan")
@@ -405,6 +454,112 @@ def _report_subset(
 
 
 # ---------------------------------------------------------------------- main
+
+
+def _probe_and_report(
+    rows: Sequence[dict[str, Any]],
+    args: argparse.Namespace,
+    *,
+    keep_connector: bool,
+    features_path: Path | None,
+) -> int:
+    """Save the captured features, then probe them and print the verdict."""
+
+    label_key = str(args.label)
+    args.output.mkdir(parents=True, exist_ok=True)
+
+    # Save BEFORE probing. The rollout is the expensive half -- a SmolVLA
+    # forward per env step -- and it must not be lost to a probe that is slow,
+    # runs out of memory, or is simply interrupted. --from-features re-probes
+    # this file without touching the simulator or the VLA.
+    if features_path is not None:
+        np.savez_compressed(
+            features_path,
+            vision=_stack(rows, "vision"),
+            proprio=_stack(rows, "proprio"),
+            physical_grasp=np.array(
+                [1.0 if row["physical_grasp"] else 0.0 for row in rows]
+            ),
+            contact_loaded=np.array(
+                [1.0 if row["contact_loaded"] else 0.0 for row in rows]
+            ),
+            episode=np.array([row["episode"] for row in rows]),
+            missed=np.array([1.0 if row["missed"] else 0.0 for row in rows]),
+            gripper_opening=np.array(
+                [row["gripper_opening"] for row in rows]
+            ),
+            ee_z=np.array([row["ee_z"] for row in rows]),
+        )
+        print(f"\n[probe] wrote {features_path} before probing")
+
+    print("\n" + "=" * 74)
+    print(f"Linear probe: frozen features -> {label_key}")
+    print("=" * 74)
+    all_episodes = {row["episode"] for row in rows}
+    grasped_episodes = {row["episode"] for row in rows if row[label_key]}
+    missed_episodes = {row["episode"] for row in rows if row["missed"]}
+    print(
+        f"\n  {len(rows)} steps over {len(all_episodes)} episodes; "
+        f"{len(grasped_episodes)} ever reached {label_key}; "
+        f"{len(missed_episodes)} were driven to close on air"
+    )
+
+    results: dict[str, Any] = {"label": label_key}
+    results["all_steps"] = _report_subset(
+        "ALL STEPS  (pose is informative here -- expect a high score that means "
+        "little)",
+        rows,
+        label_key,
+        keep_connector=keep_connector,
+        max_steps_per_episode=int(args.max_steps_per_episode),
+    )
+    matched = [
+        row
+        for row in rows
+        if row["gripper_opening"] <= float(args.closed_gripper_below)
+    ]
+    results["matched_closed_gripper"] = _report_subset(
+        "MATCHED SUBSET  (fingers closed -- object present or not is what is "
+        "left to decode)",
+        matched,
+        label_key,
+        keep_connector=keep_connector,
+        max_steps_per_episode=int(args.max_steps_per_episode),
+    )
+
+    summary = args.output / "grasp_feature_probe.json"
+    summary.write_text(json.dumps(results, indent=2, default=float))
+    print(
+        "\n"
+        + "-" * 74
+        + "\n  Read MARGIN on the MATCHED subset. Nothing else here is evidence.\n"
+        "\n"
+        "  The raw accuracy is inflated by episode identity: grasp state is\n"
+        "  near-constant within an episode, so any feature that says WHICH\n"
+        "  episode a step came from predicts the label. The control is a\n"
+        "  between-episode label shuffle that keeps that structure, so the\n"
+        "  margin over it is the part attributable to seeing the grasp.\n"
+        "\n"
+        "  proprio margin already large: the residual can ALREADY tell. The\n"
+        "    6-d state carries gripper_opening, and a hit stops the fingers at\n"
+        "    the object's width while a miss closes them fully -- the same\n"
+        "    physical signal a real parallel gripper reports. Observability is\n"
+        "    then not the explanation for anything, and no new input is needed.\n"
+        "  vision margin >> proprio margin: the frozen feature carries grasp\n"
+        "    state, the residual can condition on it, and the lift failure is\n"
+        "    not an observability problem.\n"
+        "  vision margin ~ 0 but connector margin > 0: the fixed random\n"
+        "    projection is discarding it. Learn or widen the projection.\n"
+        "  both margins ~ 0: the frozen connector does not represent grasp\n"
+        "    state, so no head reading it can help and the encoder itself must\n"
+        "    adapt -- which is work for the action-expert LoRA, not a new input.\n"
+        "\n"
+        "  The effective sample size is EPISODES, not steps. Under ~20 matched\n"
+        "  episodes a margin of a few points is noise; rerun with --episodes\n"
+        "  high enough that the fold spread is small next to the margin.\n"
+        f"\n  wrote {summary}"
+    )
+    return 0
 
 
 def _build_runtime(harness: Any, config_path: Path, device: str) -> tuple[Any, int, int]:
@@ -506,6 +661,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Skip the 30720-d un-projected probe (saves memory and time).",
     )
+    parser.add_argument(
+        "--max-steps-per-episode",
+        type=int,
+        default=24,
+        help=(
+            "Evenly spaced steps kept per episode before probing. The effective "
+            "sample size is the EPISODE count, so extra steps within one add "
+            "almost no information while adding their full share to an O(N^2) "
+            "kernel. 0 keeps every step."
+        ),
+    )
+    parser.add_argument(
+        "--from-features",
+        type=Path,
+        default=None,
+        help=(
+            "Re-probe a features.npz written by an earlier run instead of "
+            "rolling out again. Skips the simulator and SmolVLA entirely. The "
+            "30720-d connector is not saved, so a replay probes proprio and "
+            "vision only."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260803)
     parser.add_argument(
         "--output", type=Path, default=ROOT / "runs" / "grasp_feature_probe"
@@ -515,6 +692,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--target-catalogs", nargs="+", default=list(DEFAULT_CATALOGS)
     )
     args = parser.parse_args(argv)
+
+    if args.from_features is not None:
+        saved = np.load(args.from_features)
+        rows = [
+            {
+                "episode": int(saved["episode"][index]),
+                "missed": bool(saved["missed"][index]),
+                "physical_grasp": bool(saved["physical_grasp"][index]),
+                "contact_loaded": bool(saved["contact_loaded"][index]),
+                "gripper_opening": float(saved["gripper_opening"][index]),
+                "ee_z": float(saved["ee_z"][index]),
+                "proprio": saved["proprio"][index],
+                "vision": saved["vision"][index],
+            }
+            for index in range(int(saved["episode"].shape[0]))
+        ]
+        print(f"[probe] re-probing {len(rows)} saved steps from {args.from_features}")
+        # The 30720-d connector is not saved (it is ~750 MB at 60 episodes), so
+        # a replay probes proprio and vision only.
+        return _probe_and_report(
+            rows, args, keep_connector=False, features_path=None
+        )
 
     harness = _load_harness()
     runtime, vision_dim, state_dim = _build_runtime(
@@ -590,86 +789,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not rows:
         print("[probe] captured no steps")
         return 1
-    label_key = str(args.label)
-    keep_connector = not args.no_connector
-
-    print("\n" + "=" * 74)
-    print(f"Linear probe: frozen features -> {label_key}")
-    print("=" * 74)
-    all_episodes = {row["episode"] for row in rows}
-    grasped_episodes = {row["episode"] for row in rows if row[label_key]}
-    missed_episodes = {row["episode"] for row in rows if row["missed"]}
-    print(
-        f"\n  {len(rows)} steps over {len(all_episodes)} episodes; "
-        f"{len(grasped_episodes)} ever reached {label_key}; "
-        f"{len(missed_episodes)} were driven to close on air"
-    )
-
-    results: dict[str, Any] = {"label": label_key}
-    results["all_steps"] = _report_subset(
-        "ALL STEPS  (pose is informative here -- expect a high score that means "
-        "little)",
+    return _probe_and_report(
         rows,
-        label_key,
-        keep_connector=keep_connector,
+        args,
+        keep_connector=not args.no_connector,
+        features_path=args.output / "features.npz",
     )
-
-    matched = [
-        row
-        for row in rows
-        if row["gripper_opening"] <= float(args.closed_gripper_below)
-    ]
-    results["matched_closed_gripper"] = _report_subset(
-        "MATCHED SUBSET  (fingers closed -- object present or not is what is "
-        "left to decode)",
-        matched,
-        label_key,
-        keep_connector=keep_connector,
-    )
-
-    args.output.mkdir(parents=True, exist_ok=True)
-    summary = args.output / "grasp_feature_probe.json"
-    summary.write_text(json.dumps(results, indent=2, default=float))
-    np.savez_compressed(
-        args.output / "features.npz",
-        vision=_stack(rows, "vision"),
-        proprio=_stack(rows, "proprio"),
-        label=np.array([1.0 if row[label_key] else 0.0 for row in rows]),
-        episode=np.array([row["episode"] for row in rows]),
-        gripper_opening=np.array([row["gripper_opening"] for row in rows]),
-    )
-
-    print(
-        "\n"
-        + "-" * 74
-        + "\n  Read MARGIN on the MATCHED subset. Nothing else here is evidence.\n"
-        "\n"
-        "  The raw accuracy is inflated by episode identity: grasp state is\n"
-        "  near-constant within an episode, so any feature that says WHICH\n"
-        "  episode a step came from predicts the label. The control is a\n"
-        "  between-episode label shuffle that keeps that structure, so the\n"
-        "  margin over it is the part attributable to seeing the grasp.\n"
-        "\n"
-        "  proprio margin already large: the residual can ALREADY tell. The\n"
-        "    6-d state carries gripper_opening, and a hit stops the fingers at\n"
-        "    the object's width while a miss closes them fully -- the same\n"
-        "    physical signal a real parallel gripper reports. Observability is\n"
-        "    then not the explanation for anything, and no new input is needed.\n"
-        "  vision margin >> proprio margin: the frozen feature carries grasp\n"
-        "    state, the residual can condition on it, and the lift failure is\n"
-        "    not an observability problem.\n"
-        "  vision margin ~ 0 but connector margin > 0: the fixed random\n"
-        "    projection is discarding it. Learn or widen the projection.\n"
-        "  both margins ~ 0: the frozen connector does not represent grasp\n"
-        "    state, so no head reading it can help and the encoder itself must\n"
-        "    adapt -- which is work for the action-expert LoRA, not a new input.\n"
-        "\n"
-        "  The effective sample size is EPISODES, not steps. Under ~20 matched\n"
-        "  episodes a margin of a few points is noise; rerun with --episodes\n"
-        "  high enough that the fold spread is small next to the margin.\n"
-        f"\n  wrote {summary}"
-    )
-    return 0
 
 
 if __name__ == "__main__":
