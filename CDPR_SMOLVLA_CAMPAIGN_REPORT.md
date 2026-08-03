@@ -363,7 +363,7 @@ Every pick-up run for which telemetry was analysed, in order. "Peak" is the best
 | `peaklift_16M` | 4.78M | **peak-lift ratchet** (`ffe974d`) | **0.59** | best yet, then turned over at ~2M |
 | `liftgate_16M` | 5.95M | **lift-gated grasp bonus** (`03f9f20`) | **0.82** | best of campaign; turned over at ~3M |
 | `adaptivestd_16M` | 2.34M | **log_std projection** (`80f6c35`) | 0.82 | **decay arrested**; stable plateau, no climb |
-| `ladder_16M` | running | fraction + cap curricula (`0a9bbe4`) | — | — |
+| `ladder_16M` | 4.00M | fraction + cap curricula (`0a9bbe4`) | 0.75 | **regression** — ended below its own start; fraction curriculum reverted in `ccc7589` |
 
 Two results carried by that table:
 
@@ -379,6 +379,30 @@ this one held pre-grasped success at 0.79–0.82 across 2.3M steps with pad forc
 slip and grasp rate all flat, and `log_std_saturated_fraction` fell 0.21 → 0.09
 with `entropy_mean` moving for the first time in the campaign. It did not,
 however, produce any *climb* — the system settled into a stable plateau.
+
+**The pre-grasped stage is load-bearing, not a scaffold.** The clearest negative
+result of the campaign, and it came from the curriculum that was built to
+exploit the opposite assumption. `PreliftedStageCurriculum` annealed the
+fraction on the stage's own success, and inside a single 4M-step run it ran the
+experiment in both directions:
+
+```
+fraction 0.50 -> 0.20 over 602k    success | pre-grasped  0.753 -> 0.410
+fraction 0.20 -> 0.50 over 618k    success | pre-grasped  0.410 -> 0.552
+```
+
+0.82 pre-grasped success never meant the lift had been learned and the practice
+could be withdrawn — it meant the practice was holding the lift up. Nor is the
+cost local: moving batch onto the approach made the **approach** worse too,
+`success | normal start` 0.245 → 0.098, because a degraded lift means the
+normal-start episodes that do reach a grasp can no longer finish it. The damage
+is partly hysteretic — 2.4M steps back at 0.50 recovered pre-grasped success only
+to 0.55 against the 0.79–0.82 it held before — so the run ended below the
+checkpoint it started from. Reverted to a fixed 0.5.
+
+The cap ladder from the same commit was never exercised: the EMA stayed at
+0.10–0.22 against the 0.30 gate for the whole run, so no promotion occurred. It
+is untested rather than implicated, and is retained.
 
 > **Caveat on the pressing account.** `object_press_depth_mean_m` was added to
 > confirm the mechanism and reads a flat ~1.4 mm — the object is not being pushed
@@ -404,6 +428,7 @@ Each cost a diagnostic cycle. None should be re-litigated without new evidence.
 | Gripper geometry / pad offset | verified in the consistency report; oracle succeeds |
 | The pre-grasped stage transfers nothing | A/B: conversion 0.205 vs 0.177 |
 | Peak-lift ratcheting just banks exploration noise | validation reward recovered 0.120 → 0.218 and residual cosine rose; noise-banking shows neither |
+| The pre-grasped stage is a scaffold that can be annealed away once its success is high | annealing 0.50 → 0.20 took pre-grasped success 0.753 → 0.410 **and** normal-start 0.245 → 0.098; restoring it recovered only to 0.55 |
 
 The degenerate-group line is worth keeping: `torch_group_advantages` divides by
 the group std floored at `1e-6`, and the informative-group filter is

@@ -187,16 +187,37 @@ task:
     # ever-grasp rate, which is exactly the transfer it was built for. The lift
     # is still the only unlearned half of the task, so it gets half the batch.
     pick_up_prelifted_group_fraction: 0.5
-    # ...and now annealed rather than fixed. At a constant 0.5 the stage spent
-    # half of every batch on a sub-task measuring 0.79-0.82 success while the
-    # full task sat at 0.21 and the approach cap refused to move for 9M steps.
-    # Practice should follow the deficit. Gated on the stage's OWN success --
-    # the global pass rate mixes both populations and would answer a different
-    # question -- with the same EMA/cooldown/re-seed shape as the approach
-    # curriculum. 0.70/0.45 brackets the band the stage has actually held, so it
-    # starts annealing from where the policy is now and the stage comes back if
-    # the lift decays the way it did in every run before the lift gate.
-    pick_up_prelifted_curriculum_enabled: true
+    # FIXED at 0.5. Do not anneal it. This was tried and it is a measured
+    # regression, not an untested worry.
+    #
+    # The reasoning that motivated annealing was: pre-grasped success sits at
+    # 0.79-0.82 while the full task sits at 0.21, so half the batch is being
+    # spent on a solved sub-task and practice should follow the deficit. That
+    # reasoning is wrong, and the curriculum that implemented it disproved it
+    # by running the experiment in both directions inside one 4M-step run:
+    #
+    #   fraction 0.50 -> 0.20 over 602k   success | pre-grasped 0.753 -> 0.410
+    #   fraction 0.20 -> 0.50 over 618k   success | pre-grasped 0.410 -> 0.552
+    #
+    # The stage is LOAD-BEARING, not a scaffold. 0.82 pre-grasped success never
+    # meant the lift had been learned and the practice could be withdrawn; it
+    # meant the practice was holding the lift up. Withdraw it and the skill
+    # decays within a few hundred thousand steps.
+    #
+    # It is also not a local cost. Moving batch onto the approach made the
+    # APPROACH worse -- success | normal start fell 0.245 -> 0.098 over the same
+    # window -- because a degraded lift means the normal-start episodes that do
+    # reach a grasp can no longer finish. And the damage is partly hysteretic:
+    # the fraction has since been back at 0.50 for 2.4M steps and pre-grasped
+    # success has recovered only to 0.55, against the 0.79-0.82 it held before
+    # any of this. That run ended below the checkpoint it started from.
+    #
+    # If the batch split is revisited, the thing to change is the TOTAL batch or
+    # the horizon, not this ratio -- and it needs an A/B against a fixed 0.5
+    # control from a shared checkpoint, the way the stage itself was justified.
+    pick_up_prelifted_curriculum_enabled: false
+    # Retained so the machinery is configurable if the question is reopened, and
+    # so the disproved thresholds are on the record next to the result.
     pick_up_prelifted_fraction_min: 0.15
     pick_up_prelifted_fraction_step: 0.05
     pick_up_prelifted_reduce_success: 0.70
