@@ -46,11 +46,50 @@ from __future__ import annotations
 import argparse
 import importlib.util
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any, Sequence
 
-import numpy as np
+
+def _configure_public_hf_models() -> None:
+    """Strip an inherited credential before anything imports huggingface_hub.
+
+    The Python mirror of ``configure_huggingface_public_models`` in
+    ``scripts/huggingface_public_models.sh``, which every training launcher
+    sources. Both ``lerobot/smolvla_base`` and its ``SmolVLM2-500M-Video-Instruct``
+    backbone are public, but a stale HF_TOKEN in the remote shell (or one cached
+    by huggingface_hub) turns the anonymous processor fetch into a 401
+    RepositoryNotFoundError -- which reads as a missing model and is not one. The
+    weights load first, so the failure lands well after the download bar, on
+    AutoProcessor.from_pretrained.
+
+    Called at import, before every other import here, because huggingface_hub
+    reads HF_HUB_DISABLE_IMPLICIT_TOKEN into a module constant the first time it
+    is imported; setting it later would be silently too late.
+
+    Same escape hatch as the shell helper: RLVLA_HF_PUBLIC_MODELS_ONLY=0 leaves
+    the environment alone for a genuinely private or gated checkpoint.
+    """
+
+    setting = os.environ.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1")
+    if setting == "0":
+        return
+    if setting != "1":
+        raise SystemExit("RLVLA_HF_PUBLIC_MODELS_ONLY must be 0 or 1.")
+    removed = [
+        name
+        for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+        if os.environ.pop(name, None)
+    ]
+    os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+    if removed:
+        print(f"[huggingface] ignoring inherited {', '.join(removed)}")
+
+
+_configure_public_hf_models()
+
+import numpy as np  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
