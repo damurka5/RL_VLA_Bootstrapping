@@ -398,6 +398,33 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--clip-range-high", type=float, default=None)
     parser.add_argument("--entropy-coef", type=float, default=0.0)
     parser.add_argument("--action-l2", type=float, default=0.0)
+    parser.add_argument(
+        "--episode-offset-std",
+        type=float,
+        nargs="+",
+        default=[0.0],
+        metavar="STD",
+        help=(
+            "Standard deviation of a per-episode, per-world action-mean offset "
+            "held constant for the whole episode (temporally correlated "
+            "exploration). One value broadcasts to every action dimension; "
+            "pass action_dim values for a per-dimension vector, e.g. "
+            "'0 0 0.25 0 0' for z only. 0 (the default) disables it and "
+            "restores the i.i.d. per-step sampler exactly.\n"
+            "\n"
+            "Why it exists: the per-step Gaussian explores the SUSTAINED action "
+            "bias with std sigma/sqrt(N), so over a ~13-step window at the "
+            "-1.10 log_std ceiling the episode-mean std is 0.09. Measured on "
+            "the CPU reference engine, the loaded z plant has a dead zone below "
+            "a_z ~ 0.15 (sustained 0.05/0.10 lift the object 1.8 mm; 0.30 lifts "
+            "47 mm and succeeds 7/14; 0.60 lifts 125 mm and succeeds 14/14), so "
+            "the lifting region sits 3.3 sigma out and a driftless sampler "
+            "reached 0/14 successes from a latched grasp. A per-episode offset "
+            "makes the GRPO group -- 8 candidates sharing a start -- a "
+            "finite-difference probe along sustained-bias directions, which is "
+            "the estimator a dead-zoned response actually needs."
+        ),
+    )
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--grpo-group-size", type=int, default=2)
     parser.add_argument("--grpo-group-selection", choices=("uniform", "best", "softmax"), default="uniform")
@@ -523,6 +550,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.clip_range_high = float(args.clip_range if args.clip_range_high is None else args.clip_range_high)
     if args.clip_range_low < 0.0 or args.clip_range_high < 0.0:
         parser.error("--clip-range-low and --clip-range-high must be non-negative")
+    args.episode_offset_std = [float(value) for value in args.episode_offset_std]
+    if any(value < 0.0 for value in args.episode_offset_std):
+        parser.error("--episode-offset-std entries must be non-negative")
+    if len(args.episode_offset_std) not in (1, int(args.action_dim)):
+        parser.error(
+            "--episode-offset-std takes either one value or action_dim "
+            f"(={int(args.action_dim)}) values, got "
+            f"{len(args.episode_offset_std)}"
+        )
     args.grpo_dynamic_min_pass_rate = float(np.clip(args.grpo_dynamic_min_pass_rate, 0.0, 1.0))
     args.grpo_dynamic_max_pass_rate = float(np.clip(args.grpo_dynamic_max_pass_rate, 0.0, 1.0))
     if args.grpo_dynamic_min_pass_rate >= args.grpo_dynamic_max_pass_rate:
@@ -633,10 +669,80 @@ class SmolVLAGRPOTrainer:
         self.loaded_extra_state: dict[str, Any] = {}
         self.bootstrap_source = "fresh_grpo"
         self.profile_update = bool(args.mjwarp_profile_timers)
+        configured = [
+            float(value)
+            for value in (getattr(args, "episode_offset_std", None) or [0.0])
+        ]
+        if len(configured) == 1:
+            configured = configured * int(action_dim)
+        if len(configured) != int(action_dim):
+            raise ValueError(
+                "episode_offset_std must hold one value or action_dim "
+                f"(={int(action_dim)}) values, got {len(configured)}."
+            )
+        self.episode_offset_std = torch.tensor(
+            configured, dtype=torch.float32, device=device
+        )
+        self.episode_offset_enabled = bool(
+            float(self.episode_offset_std.abs().max().item()) > 0.0
+        )
 
     @staticmethod
     def _unwrap(module: nn.Module) -> nn.Module:
         return module.module if hasattr(module, "module") else module
+
+    def sample_episode_offsets(
+        self,
+        worlds: int,
+        *,
+        generator: torch.Generator | None = None,
+    ) -> torch.Tensor | None:
+        """One action-mean offset per world, held for a whole episode.
+
+        Temporally correlated exploration. The behaviour policy for world w is
+        ``N(mu_theta(s) + eps_w, sigma^2)`` with ``eps_w`` fixed across the
+        episode, so a GRPO group -- eight candidates sharing a start -- becomes
+        a finite-difference probe along sustained-bias directions rather than
+        eight draws from the same driftless per-step noise.
+
+        ``eps_w`` enters the behaviour MEAN, so it must be added back at update
+        time before the log-prob or the importance ratio is against the wrong
+        distribution. The gradient still flows only through ``mu_theta``: the
+        offset is a constant, and the surrogate pulls the learned mean toward
+        whichever offsets earned advantage.
+
+        Returns ``None`` when the feature is off, which keeps the sampler and
+        the update on their original code path bit-for-bit.
+        """
+
+        if not self.episode_offset_enabled:
+            return None
+        noise = torch.randn(
+            (int(worlds), int(self.action_dim)),
+            dtype=torch.float32,
+            device=self.device,
+            generator=generator,
+        )
+        return noise * self.episode_offset_std.unsqueeze(0)
+
+    @staticmethod
+    def _apply_mean_offset(
+        mean: torch.Tensor, mean_offset: torch.Tensor | None
+    ) -> torch.Tensor:
+        """Add a per-row offset to an action mean, chunked or flat."""
+
+        if mean_offset is None:
+            return mean
+        if int(mean_offset.shape[0]) != int(mean.shape[0]):
+            raise ValueError(
+                f"mean_offset has {int(mean_offset.shape[0])} rows for "
+                f"{int(mean.shape[0])} means."
+            )
+        offset = mean_offset.to(dtype=mean.dtype, device=mean.device)
+        if mean.ndim == 3:
+            # [B, H, A] against [B, A]: the same offset on every chunk entry.
+            offset = offset.unsqueeze(1)
+        return mean + offset
 
     def _mean_and_log_std(
         self,
@@ -734,8 +840,16 @@ class SmolVLAGRPOTrainer:
         priors: torch.Tensor,
         action_count: int,
         generator: torch.Generator | None = None,
+        mean_offset: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        """GPU-resident stochastic sampling for every active local world."""
+        """GPU-resident stochastic sampling for every active local world.
+
+        ``mean_offset`` is the per-episode exploration offset from
+        ``sample_episode_offsets``; it shifts the BEHAVIOUR mean the actions and
+        their log-probs are drawn against. The third return value stays the
+        UNPERTURBED policy mean, because the residual telemetry built on it
+        measures what the policy has learned, not how it was perturbed.
+        """
 
         count = max(1, min(int(action_count), int(self.chunk_size)))
         if states.device != self.device or priors.device != self.device:
@@ -750,6 +864,7 @@ class SmolVLAGRPOTrainer:
         with torch.no_grad():
             base = self._unwrap(self.actor)
             mean_chunk = base(states, priors)[:, :count]
+            behaviour_mean = self._apply_mean_offset(mean_chunk, mean_offset)
             log_std = base.clamped_log_std()[:count].unsqueeze(0)
             noise = torch.randn(
                 mean_chunk.shape,
@@ -758,9 +873,9 @@ class SmolVLAGRPOTrainer:
                 generator=generator,
             )
             actions = torch.clamp(
-                mean_chunk + noise * torch.exp(log_std), -1.0, 1.0
+                behaviour_mean + noise * torch.exp(log_std), -1.0, 1.0
             )
-            log_probs = _normal_log_prob(actions, mean_chunk, log_std)
+            log_probs = _normal_log_prob(actions, behaviour_mean, log_std)
         return actions, log_probs, mean_chunk
 
     def deterministic_action_chunks_tensor(
@@ -873,6 +988,14 @@ class SmolVLAGRPOTrainer:
         action_indices = padded["action_index"].to(dtype=torch.long)
         old_log_probs = padded["old_log_prob"].to(dtype=torch.float32)
         advantages = padded["advantage"].to(dtype=torch.float32)
+        # Behaviour-mean offset, present only when per-episode exploration is on.
+        # Rollouts collected without it carry no such key, so an older buffer
+        # replays on the original code path untouched.
+        mean_offsets = (
+            padded["mean_offset"].to(dtype=torch.float32)
+            if "mean_offset" in padded
+            else None
+        )
         valid = mask > 0.0
         valid_count = valid.sum().clamp_min(1)
         valid_advantages = advantages[valid]
@@ -921,8 +1044,12 @@ class SmolVLAGRPOTrainer:
                     forward_started = time.perf_counter()
                     weight = mask[idx]
                     denominator = weight.sum().clamp_min(1.0)
-                    mean, log_std = self._mean_and_log_std(
+                    policy_mean, log_std = self._mean_and_log_std(
                         states[idx], priors[idx], action_indices[idx]
+                    )
+                    mean = self._apply_mean_offset(
+                        policy_mean,
+                        None if mean_offsets is None else mean_offsets[idx],
                     )
                     log_prob = _normal_log_prob(actions[idx], mean, log_std)
                     entropy = _normal_entropy(log_std)
@@ -939,7 +1066,9 @@ class SmolVLAGRPOTrainer:
                     )
                     policy_loss = -(surrogate * weight).sum() / denominator
                     entropy_mean = (entropy * weight).sum() / denominator
-                    l2_per_row = mean.pow(2).mean(dim=-1)
+                    # Regularize the LEARNED mean, not the perturbed behaviour
+                    # mean: the offset is exploration, not something to shrink.
+                    l2_per_row = policy_mean.pow(2).mean(dim=-1)
                     l2_mean = (l2_per_row * weight).sum() / denominator
                     loss = (
                         policy_loss
@@ -1302,6 +1431,13 @@ class SmolVLAGRPOTrainer:
             old_log_probs = records["old_log_prob"].to(dtype=torch.float32)
             advantages = advantages.to(dtype=torch.float32)
             prior_ref = records["prior_ref"].to(dtype=torch.float32)
+            # Same behaviour distribution the rollout sampled from, or the
+            # importance ratio is computed against a mean that was never used.
+            lora_mean_offsets = (
+                records["mean_offset"].to(dtype=torch.float32)
+                if "mean_offset" in records
+                else None
+            )
             if n > 1:
                 advantages = (
                     advantages - advantages.mean()
@@ -1324,6 +1460,12 @@ class SmolVLAGRPOTrainer:
                 )
                 mean_chunk = base(states[sl], prior_grad)
                 mean = _gather_chunk_values(mean_chunk, action_indices[sl])
+                mean = self._apply_mean_offset(
+                    mean,
+                    None
+                    if lora_mean_offsets is None
+                    else lora_mean_offsets[sl],
+                )
                 log_std = base.clamped_log_std()[
                     action_indices[sl].clamp(0, self.chunk_size - 1)
                 ]

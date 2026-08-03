@@ -1631,6 +1631,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                         "prior_ref",
                         "advantage",
                     )
+                    if "mean_offset" in vla_batches[0]:
+                        # Per-episode exploration offset. The LoRA ratio is
+                        # against the behaviour mean, so it has to travel with
+                        # the rest of the batch or it prices the wrong policy.
+                        tensor_keys = tensor_keys + ("mean_offset",)
                     for key in tensor_keys:
                         merged_vla[key] = torch.cat(
                             [batch[key] for batch in vla_batches], dim=0

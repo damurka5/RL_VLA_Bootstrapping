@@ -60,6 +60,42 @@ _GRASP_MIN_LIFT_M = 0.015
 _DEGENERATE_GROUP_REWARD_STD = 0.05
 
 
+def _post_grasp_action_z_metrics(
+    action_z_sum: Any,
+    action_steps: Any,
+) -> dict[str, float]:
+    """Mean and per-episode spread of the post-grasp z command.
+
+    A lift needs the mean ``a_z`` held above the loaded plant's dead zone for
+    roughly thirteen consecutive env steps. ``..._mean`` says whether the policy
+    commands that; ``..._episode_std`` is the spread of the per-episode means,
+    i.e. how far exploration actually reaches along sustained bias. With i.i.d.
+    per-step noise that spread is sigma/sqrt(N) and shrinks as episodes get
+    longer, which is the opposite of what a dead-zoned axis needs.
+    """
+
+    import torch
+
+    grasped = action_steps > 0.0
+    count = int(grasped.sum().item())
+    if count == 0:
+        return {
+            "post_grasp_action_z_mean": 0.0,
+            "post_grasp_action_z_episode_std": 0.0,
+            "post_grasp_action_z_episodes": 0.0,
+        }
+    per_episode = action_z_sum[grasped] / action_steps[grasped]
+    return {
+        "post_grasp_action_z_mean": float(
+            (action_z_sum.sum() / action_steps.sum().clamp_min(1.0)).item()
+        ),
+        "post_grasp_action_z_episode_std": float(
+            per_episode.std(unbiased=False).item() if count > 1 else 0.0
+        ),
+        "post_grasp_action_z_episodes": float(count),
+    }
+
+
 def post_grasp_metrics(
     first_grasp_step: Any,
     ee_z_at_first_grasp: Any,
@@ -2214,6 +2250,18 @@ class RankLocalMJWarpGRPOCollector:
         reset.physical_grasp.copy_(physical_grasp)
         reset.previous_relative_position.copy_(relative_position)
         reset.previous_relative_quaternion.copy_(relative_quaternion)
+        # Contact-CONDITIONED versions of the pose test. The plain
+        # relative_position_slip_m mean below is taken over every active
+        # grasp-eligible step, most of which are free-space approach steps where
+        # the "slip" is just how fast the gripper is closing on the object -- so
+        # it falls whenever the policy moves less, which is the behaviour under
+        # investigation rather than evidence about it. These three are gated on
+        # the pads actually being loaded, so they say whether the 8 mm stability
+        # test ever rejects a real grasp. Measured on the CPU reference engine,
+        # slip while held peaks at 0.46-3.52 mm across a scripted lift and a
+        # full-sigma Gaussian one, and is LOWEST during the fastest lift, so the
+        # expected reading is a reject rate at or near zero.
+        contact_loaded = contacts.bilateral_contact & force_ok
         diagnostics = {
             "bilateral_contact": contacts.bilateral_contact,
             "left_pad_force_n": contacts.left_normal_force,
@@ -2221,6 +2269,13 @@ class RankLocalMJWarpGRPOCollector:
             "relative_position_slip_m": relative_position_slip,
             "relative_orientation_slip_rad": relative_orientation_slip,
             "stable_relative_pose": stable_relative_pose,
+            "contact_loaded": contact_loaded,
+            "contact_loaded_pose_rejected": contact_loaded & ~stable_relative_pose,
+            "slip_while_loaded_m": self.torch.where(
+                contact_loaded,
+                relative_position_slip,
+                self.torch.zeros_like(relative_position_slip),
+            ),
             "physically_lifted": lifted,
             "physical_grasp": physical_grasp,
             "physical_release": reset.task_state.ever_grasped
@@ -2271,6 +2326,18 @@ class RankLocalMJWarpGRPOCollector:
             "old_log_prob": [],
             "world_index": [],
         }
+        # Per-episode exploration offset: one draw per world, drawn HERE (after
+        # the reset, before the first decision) and held for the whole episode.
+        # The eight candidates of a GRPO group share a start and get eight
+        # different offsets, which is what makes the group a finite-difference
+        # probe along sustained-bias directions instead of eight draws from the
+        # same driftless per-step noise. None when the feature is off, and then
+        # nothing below this line changes behaviour.
+        episode_offsets = self.trainer.sample_episode_offsets(
+            worlds, generator=self._sample_generator
+        )
+        if episode_offsets is not None:
+            record_lists["mean_offset"] = []
         valid_masks: list[Any] = []
         timings = {
             "render_time_s": 0.0,
@@ -2294,8 +2361,22 @@ class RankLocalMJWarpGRPOCollector:
                 "physically_lifted",
                 "physical_grasp",
                 "physical_release",
+                "contact_loaded",
+                "contact_loaded_pose_rejected",
+                "slip_while_loaded_m",
             )
         }
+        # Sustained post-grasp z command, per world. The lift needs the MEAN
+        # a_z held above the loaded plant's dead zone for ~13 consecutive env
+        # steps; i.i.d. per-step noise explores that sustained bias with std
+        # sigma/sqrt(N), so these two numbers say directly whether the policy is
+        # commanding a lift or whether the occasional lift is a noise excursion.
+        # The episode std is the width of the exploration distribution over
+        # sustained bias -- the quantity --episode-offset-std widens.
+        post_grasp_action_z_sum = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
+        post_grasp_action_steps = torch.zeros_like(post_grasp_action_z_sum)
         # Post-grasp diagnostics. physical_grasp_rate and physical_lift_rate say
         # THAT two thirds of grasps never become lifts, not why. These separate
         # the three candidate explanations: a late first_grasp_step means the
@@ -2417,6 +2498,7 @@ class RankLocalMJWarpGRPOCollector:
                     priors=prior,
                     action_count=self.actions_per_policy_decision,
                     generator=self._sample_generator,
+                    mean_offset=episode_offsets,
                 )
             )
 
@@ -2480,6 +2562,8 @@ class RankLocalMJWarpGRPOCollector:
                         "old_log_prob": log_probs[idx, 0].detach(),
                         "prior_ref": prior[idx].detach(),
                     }
+                    if episode_offsets is not None:
+                        vla_capture["mean_offset"] = episode_offsets[idx]
             self._sync_for_profile()
             timings["policy_time_s"] += time.perf_counter() - started
 
@@ -2504,6 +2588,8 @@ class RankLocalMJWarpGRPOCollector:
                         worlds, dtype=torch.int64, device=self.device
                     )
                 )
+                if episode_offsets is not None:
+                    record_lists["mean_offset"].append(episode_offsets)
                 valid_masks.append(step_active)
                 sampled_actions += step_active.sum()
                 actions_per_world += step_active.to(dtype=torch.int64)
@@ -2569,6 +2655,15 @@ class RankLocalMJWarpGRPOCollector:
                     torch.maximum(peak_press_depth, press_depth),
                     peak_press_depth,
                 )
+
+                post_grasp_now = (
+                    step_active & reset.grasp_eligible & (first_grasp_step >= 0)
+                ).to(dtype=torch.float32)
+                post_grasp_action_z_sum += (
+                    actions[:, action_index, 2].to(dtype=torch.float32)
+                    * post_grasp_now
+                )
+                post_grasp_action_steps += post_grasp_now
 
                 diagnostic_bool = step_active & reset.grasp_eligible
                 diagnostic_mask = diagnostic_bool.to(dtype=torch.float32)
@@ -2922,6 +3017,41 @@ class RankLocalMJWarpGRPOCollector:
             "physical_release_rate": float(
                 grasp_diagnostic_totals["physical_release"].item()
                 / grasp_denominator
+            ),
+            # Contact-conditioned pose test. relative_position_slip_mean_m above
+            # is NOT gated on contact and mostly measures approach speed; these
+            # are the ones that say whether the 8 mm stability bound rejects a
+            # grasp that is physically loaded.
+            "contact_loaded_rate": float(
+                grasp_diagnostic_totals["contact_loaded"].item()
+                / grasp_denominator
+            ),
+            "pose_reject_rate_while_loaded": float(
+                grasp_diagnostic_totals["contact_loaded_pose_rejected"].item()
+                / max(
+                    1.0,
+                    float(grasp_diagnostic_totals["contact_loaded"].item()),
+                )
+            ),
+            "slip_mean_while_loaded_m": float(
+                grasp_diagnostic_totals["slip_while_loaded_m"].item()
+                / max(
+                    1.0,
+                    float(grasp_diagnostic_totals["contact_loaded"].item()),
+                )
+            ),
+            # Sustained post-grasp z command. The mean says whether the policy
+            # commands a lift at all; the episode std is how far the exploration
+            # distribution reaches along sustained bias, which is what has to
+            # clear the loaded plant's dead zone (a_z ~ 0.15) for a lift to
+            # happen and what --episode-offset-std widens.
+            **_post_grasp_action_z_metrics(
+                post_grasp_action_z_sum, post_grasp_action_steps
+            ),
+            "episode_offset_std_mean": float(
+                self.trainer.episode_offset_std.mean().item()
+                if hasattr(self.trainer, "episode_offset_std")
+                else 0.0
             ),
             # Post-grasp diagnostics, averaged over the worlds that actually
             # grasped (0 when none did, which the companion count makes visible).

@@ -599,6 +599,33 @@ training:
       # it. move_to keeps 0.0: it ran 9M steps with log_std drifting UP slightly,
       # so it has the opposite problem and needs no bonus.
       entropy_coef: 0.0002
+      # Temporally correlated exploration: a per-episode, per-world offset added
+      # to the action mean and held for the whole episode. 0 is the historical
+      # i.i.d. per-step sampler, bit-for-bit.
+      #
+      # Why the knob exists. entropy_coef and max_log_std both move the PER-STEP
+      # sigma, and the campaign has now spent four interventions on that axis. It
+      # is the wrong axis. A lift needs the mean a_z held above the loaded plant's
+      # dead zone for ~13 consecutive env steps, and i.i.d. per-step noise
+      # explores that SUSTAINED bias with std sigma/sqrt(N) -- 0.09 over a 13-step
+      # window at the -1.10 ceiling, so the lifting region sits 3.3 sigma out.
+      # Measured on the CPU reference engine from an identical latched grasp:
+      #
+      #   sustained a_z    0.05   0.10   0.20   0.30   0.40   0.60
+      #   median lift mm    1.8    1.8   17.8   46.7   74.1  124.9
+      #   success/latched   0/6    0/6    0/6   7/14    6/6  14/14
+      #
+      # and a driftless Gaussian at sigma 0.333 reached 0/14 successes with a
+      # median peak lift of 10.5 mm. Nothing about that is a reward problem --
+      # the reward pays 1.58 more for a 60 mm lift than for holding still. It is
+      # that the estimator never proposes a sustained lift to be paid for.
+      #
+      # Turn it on ONLY after tools/audit/lift_barrier_probe.py reproduces the
+      # dead zone on MJWarp; the CPU engine is a different integrator and the
+      # threshold can move. A per-dimension vector is allowed, e.g.
+      # [0, 0, 0.25, 0, 0] for z alone -- but the general form is the honest
+      # first test, since nothing says z is the only axis that needs it.
+      episode_offset_std: 0.0
       max_grad_norm: 1.0
       grpo_group_size: 8
       grpo_group_selection: uniform
