@@ -1146,6 +1146,16 @@ def main() -> int:
         ),
     )
     parser.add_argument(
+        "--force-renderer",
+        action="store_true",
+        help=(
+            "Create the camera renderer even under --no-video. Video writing "
+            "stays off. This is for an in-process consumer that reads "
+            "backend.render_policy_cameras() itself -- a feature probe, say -- "
+            "and wants the frames without paying to encode them."
+        ),
+    )
+    parser.add_argument(
         "--reseat-held-object",
         action="store_true",
         help=(
@@ -1307,10 +1317,14 @@ def main() -> int:
 
         # No renderer without --no-video: it allocates GPU-side colour buffers
         # and needs a working GL context, neither of which a telemetry-only run
-        # should require.
+        # should require. --force-renderer separates "frames exist in-process"
+        # from "frames get encoded to a file", for a consumer that reads the
+        # cameras itself and wants neither the video nor the encode.
         backend = MJLabMJWarpCDPRBackend(
             config=backend_config,
-            create_renderer=not bool(args.no_video),
+            create_renderer=(
+                not bool(args.no_video) or bool(args.force_renderer)
+            ),
             require_mjlab=True,
         )
     else:

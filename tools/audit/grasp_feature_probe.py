@@ -568,6 +568,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--physics", str(args.physics),
         "--device", str(args.device),
         "--no-video",
+        # The probe reads the cameras itself, so it needs the renderer to exist
+        # but not a single encoded frame written to disk.
+        "--force-renderer",
         "--continue-after-terminal",
         "--start-distance-cap", str(float(args.start_distance_cap)),
         "--target-catalogs", *args.target_catalogs,
