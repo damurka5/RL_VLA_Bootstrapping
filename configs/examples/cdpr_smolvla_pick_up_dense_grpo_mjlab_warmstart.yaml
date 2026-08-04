@@ -681,20 +681,29 @@ training:
       # 0.35 -> 0.53, pad force 4.6 -> 7.6 N, lift down, reward 3.70 -> 2.17 --
       # which has happened in runs with no offset at all.
       #
-      # Back to 0.0, which restores the i.i.d. per-step sampler bit-for-bit, so
-      # the next resume doubles as the control these two runs never had. If it
-      # also decays to a_z ~ -0.4, the offset was irrelevant and the decay is
-      # endogenous to a resume from this checkpoint; if it holds near +0.18, the
-      # offset was doing harm after all.
+      # Neither failure was the offset's idea being wrong -- it was the
+      # estimator. Scoring the log-prob against mu+eps is the CONDITIONAL
+      # density given eps, whose score (a - mu - eps)/sigma^2 is the per-step
+      # noise and independent of eps by construction, so the gradient on mu
+      # learned nothing about which offset paid. The offset perturbed the
+      # rollouts and informed nothing: half the pre-grasped worlds drew a -z
+      # offset into the dead zone and failed, and the run paid that variance
+      # without ever collecting the finite-difference term. On synthetic data
+      # with advantage set equal to the offset signal that score reads -0.015
+      # against +1.43 for the marginal form now in use.
       #
-      # What survives, and is the target either way: the plant curve is real and
-      # post_grasp_action_z_mean is the control variable. +0.20 lifts ~34 mm,
-      # +0.30 lifts ~83 mm and succeeds 14/15. Every run so far sits at or below
-      # +0.20 and slides down from there.
-      episode_offset_std: 0.0
-      # Kept because it is the form that matches what the plant probe measured
-      # (offset applied from the latch, oracle driving the approach). Inert
-      # while the std above is 0.
+      # The source run settles what the baseline is: adaptivestd is FLAT across
+      # its whole 2.34M steps -- succ|pre 0.820 -> 0.802, rise|pre 47.4 -> 46.1
+      # mm, grasp 0.339 -> 0.327, pad force 4.28 -> 4.15 N. Nothing was decaying
+      # until the offset was added, so both collapses were caused, not
+      # inherited.
+      #
+      # ON again now that eps reaches the gradient, at the probe's 0.25 and
+      # gated. Target: move post_grasp_action_z_mean from ~+0.18 to +0.30, where
+      # the plant lifts 83 mm and succeeds 14/15. Kill it if that metric is
+      # below +0.15 at 3.2M rather than spending another 3M steps confirming a
+      # slide. 0.0 restores the i.i.d. per-step sampler bit-for-bit.
+      episode_offset_std: [0.0, 0.0, 0.25, 0.0, 0.0]
       episode_offset_after_grasp: true
       max_grad_norm: 1.0
       grpo_group_size: 8

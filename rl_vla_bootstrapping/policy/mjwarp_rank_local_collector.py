@@ -2507,17 +2507,16 @@ class RankLocalMJWarpGRPOCollector:
             timings["smolvla_time_s"] += time.perf_counter() - started
 
             started = time.perf_counter()
-            # Gate the offset on already holding the object, when asked. A
-            # whole-episode offset also perturbs the APPROACH, and that is not a
-            # symmetric cost: the approach reward is dense and paid on every
-            # step of every episode, while the lift reward is conditional on a
-            # grasp and rare. GRPO correctly cancels a disturbance it is paid to
-            # cancel, so a persistent +z bias taught the policy to drive its own
-            # mean z DOWN -- measured over a 3.6M-step run,
-            # post_grasp_action_z_mean slid +0.201 -> -0.373 and the pre-grasped
-            # rise followed it 42.5 -> 8.6 mm. Gated after the grasp, the offset
-            # only ever perturbs a phase where +z earns reward, so the surrogate
-            # pushes the mean up rather than down.
+            # Gate the offset on already holding the object, when asked, so it
+            # perturbs only the phase where +z earns reward. This is also the
+            # form the plant probe measured: there the oracle drove the approach
+            # and the offset began at the latch.
+            #
+            # It is NOT why the first two runs failed. An ungated run and a
+            # gated one collapsed indistinguishably, because the estimator made
+            # the offset invisible to the gradient either way -- see
+            # _marginal_log_std. The gate is worth keeping on its own terms; it
+            # was never the fix.
             step_offsets = episode_offsets
             step_offset_std = offset_std_row
             if episode_offsets is not None and self.episode_offset_after_grasp:
