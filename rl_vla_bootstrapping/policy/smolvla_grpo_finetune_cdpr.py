@@ -425,6 +425,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "the estimator a dead-zoned response actually needs."
         ),
     )
+    _bool_arg(
+        parser,
+        "episode_offset_after_grasp",
+        default=False,
+        help_text=(
+            "Apply --episode-offset-std only while the world already holds the "
+            "object, instead of for the whole episode. A whole-episode offset "
+            "also perturbs the approach, and that cost is not symmetric: the "
+            "approach reward is dense and paid on every step, the lift reward "
+            "is conditional and rare, so GRPO cancels the disturbance by "
+            "driving the policy's own mean z down. Measured over 3.6M steps at "
+            "0.20 on z: post_grasp_action_z_mean went +0.201 -> -0.373, the "
+            "pre-grasped rise followed 42.5 -> 8.6 mm, and success | "
+            "pre-grasped fell 0.71 -> 0.07. Gated, the offset only perturbs a "
+            "phase where +z earns reward."
+        ),
+    )
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--grpo-group-size", type=int, default=2)
     parser.add_argument("--grpo-group-selection", choices=("uniform", "best", "softmax"), default="uniform")

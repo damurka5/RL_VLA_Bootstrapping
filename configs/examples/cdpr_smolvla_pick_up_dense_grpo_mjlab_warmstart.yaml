@@ -638,23 +638,38 @@ training:
       # rate no candidate in a group ever lifts, so group-relative advantage has
       # nothing to rank; at 5/15 groups land inside grpo_dynamic_min/max_pass_rate.
       #
-      # z ONLY, deliberately. The offset is held for the WHOLE episode, so a
-      # sustained bias on the gripper channel would drift it open or closed over
-      # 128 steps and destroy grasps outright, and on xy it would walk the
-      # end-effector into the workspace clamp. 0.20 rather than the probe's 0.25
-      # for the same reason: the probe applied the offset only AFTER the latch
-      # (the oracle drove the approach), while this applies it from step 0, so
-      # roughly half the normal-start worlds carry a +z bias fighting the
-      # descent. The pre-grasped half of the groups starts at rest height with
-      # no approach to spoil and is exactly the regime the probe measured, so
-      # watch `success | pre-grasped` first.
+      # z ONLY: a sustained bias on the gripper channel would drift it open or
+      # closed over 128 steps and destroy grasps outright, and on xy it would
+      # walk the end-effector into the workspace clamp.
       #
-      # Abort/adjust signal: physical_grasp_rate or the approach pass-rate EMA
-      # falling while pre-grasped success climbs means the whole-episode offset
-      # is hurting the approach specifically. The fix then is to scale the
-      # offset by phase, which is a second experiment, not a reason to drop this
-      # one. 0.0 restores the i.i.d. per-step sampler bit-for-bit.
-      episode_offset_std: [0.0, 0.0, 0.20, 0.0, 0.0]
+      # AFTER THE GRASP ONLY, and that gate is load-bearing. Run
+      # pick_up_resume 2.41M -> 5.97M applied this ungated at 0.20 and it was
+      # the worst regression of the campaign:
+      #
+      #   Mstep   a_z post-grasp   rise|pre mm   succ|pre   approach EMA
+      #     2.4           +0.201          42.5      0.699          0.187
+      #     3.8           +0.031          33.3      0.500          0.131
+      #     4.6           -0.266          12.6      0.125          0.070
+      #     5.8           -0.373           8.6      0.066          0.048
+      #
+      # The offset perturbs the approach too, and that cost is not symmetric:
+      # the approach reward is dense and paid on every step of every episode,
+      # the lift reward is conditional on a grasp and rare. GRPO cancelled the
+      # disturbance exactly as it should -- by driving the policy's own mean z
+      # DOWN -- and because one residual serves both phases, the cancellation
+      # dragged the post-grasp command from +0.201 to -0.373. The plant curve
+      # says +0.30 lifts 83 mm; the run ended at -0.37.
+      #
+      # That run also CONFIRMED the transfer function it was fighting. At the
+      # resume point the policy's own post-grasp command was +0.201 and its
+      # pre-grasped rise was 42.5 mm, against the probe's 33.8 mm at a
+      # sustained 0.20 -- two independent measurements agreeing that
+      # post_grasp_action_z_mean is the control variable. The target is to move
+      # it +0.20 -> +0.30, and it is now logged every update.
+      #
+      # 0.0 restores the i.i.d. per-step sampler bit-for-bit.
+      episode_offset_std: [0.0, 0.0, 0.25, 0.0, 0.0]
+      episode_offset_after_grasp: true
       max_grad_norm: 1.0
       grpo_group_size: 8
       grpo_group_selection: uniform

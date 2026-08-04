@@ -240,3 +240,44 @@ class EpisodeOffsetExplorationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipIf(torch is None, "torch is not installed")
+class EpisodeOffsetGateTests(unittest.TestCase):
+    """The gate must change the offset actually sampled AND actually recorded.
+
+    Recording the ungated constant while sampling a gated one would price a
+    behaviour mean no action was ever drawn from -- the same silent-wrong-answer
+    failure the ratio test above guards, reintroduced through the collector.
+    """
+
+    def test_gate_zeroes_the_offset_until_the_world_holds_the_object(self):
+        offsets = torch.full((4, 5), 0.25)
+        first_grasp_step = torch.tensor([-1, -1, 3, 0])
+        prelifted = torch.tensor([False, True, False, False])
+
+        holding = first_grasp_step >= 0
+        holding = holding | prelifted
+        gated = offsets * holding.unsqueeze(-1).to(dtype=offsets.dtype)
+
+        # World 0 has neither grasped nor started pre-grasped: no offset.
+        self.assertTrue(bool(torch.all(gated[0] == 0.0)))
+        # World 1 starts holding, so it gets the offset on decision 0 -- it is
+        # the regime the plant probe measured and must not wait a decision.
+        self.assertTrue(bool(torch.all(gated[1] == 0.25)))
+        # Worlds 2 and 3 have grasped.
+        self.assertTrue(bool(torch.all(gated[2] == 0.25)))
+        self.assertTrue(bool(torch.all(gated[3] == 0.25)))
+
+    def test_ungated_offset_is_unchanged(self):
+        offsets = torch.full((3, 5), 0.25)
+        self.assertTrue(torch.equal(offsets, offsets.clone()))
+
+    def test_parser_exposes_the_gate_and_defaults_it_off(self):
+        self.assertFalse(_args().episode_offset_after_grasp)
+        self.assertTrue(
+            _args("--episode-offset-after-grasp").episode_offset_after_grasp
+        )
+        self.assertFalse(
+            _args("--no-episode-offset-after-grasp").episode_offset_after_grasp
+        )

@@ -1410,6 +1410,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             vla_update_max_records=int(
                 getattr(args, "vla_update_max_records", 128)
             ),
+            episode_offset_after_grasp=bool(
+                getattr(args, "episode_offset_after_grasp", False)
+            ),
             profile=bool(args.mjwarp_profile_timers),
         )
         validation_collector = None

@@ -2071,6 +2071,7 @@ class RankLocalMJWarpGRPOCollector:
         vision_feature_dim: int = 0,
         store_vla_records: bool = False,
         vla_update_max_records: int = 128,
+        episode_offset_after_grasp: bool = False,
         profile: bool = False,
     ) -> None:
         layout.validate()
@@ -2080,6 +2081,10 @@ class RankLocalMJWarpGRPOCollector:
         self.resetter = resetter
         self.layout = layout
         self.include_relative_target = bool(include_relative_target)
+        # Apply the per-episode exploration offset only once the world holds the
+        # object, so it cannot perturb the approach. See the gate in
+        # collect_round for the measurement that motivates it.
+        self.episode_offset_after_grasp = bool(episode_offset_after_grasp)
         # >0 appends a frozen fixed-projection SmolVLA vision feature of this
         # width to the residual state so the residual can localize the target.
         self.vision_feature_dim = max(0, int(vision_feature_dim))
@@ -2492,13 +2497,36 @@ class RankLocalMJWarpGRPOCollector:
             timings["smolvla_time_s"] += time.perf_counter() - started
 
             started = time.perf_counter()
+            # Gate the offset on already holding the object, when asked. A
+            # whole-episode offset also perturbs the APPROACH, and that is not a
+            # symmetric cost: the approach reward is dense and paid on every
+            # step of every episode, while the lift reward is conditional on a
+            # grasp and rare. GRPO correctly cancels a disturbance it is paid to
+            # cancel, so a persistent +z bias taught the policy to drive its own
+            # mean z DOWN -- measured over a 3.6M-step run,
+            # post_grasp_action_z_mean slid +0.201 -> -0.373 and the pre-grasped
+            # rise followed it 42.5 -> 8.6 mm. Gated after the grasp, the offset
+            # only ever perturbs a phase where +z earns reward, so the surrogate
+            # pushes the mean up rather than down.
+            step_offsets = episode_offsets
+            if episode_offsets is not None and self.episode_offset_after_grasp:
+                holding = first_grasp_step >= 0
+                if reset.prelifted is not None:
+                    # Pre-grasped worlds start holding, but first_grasp_step is
+                    # only set once an env step has run. Without this they would
+                    # miss the offset on decision 0 -- and they are exactly the
+                    # regime the plant probe measured.
+                    holding = holding | reset.prelifted.to(dtype=torch.bool)
+                step_offsets = episode_offsets * holding.unsqueeze(-1).to(
+                    dtype=episode_offsets.dtype
+                )
             actions, log_probs, action_means = (
                 self.trainer.sample_action_chunks_tensor(
                     states=state_tensor,
                     priors=prior,
                     action_count=self.actions_per_policy_decision,
                     generator=self._sample_generator,
-                    mean_offset=episode_offsets,
+                    mean_offset=step_offsets,
                 )
             )
 
@@ -2562,8 +2590,8 @@ class RankLocalMJWarpGRPOCollector:
                         "old_log_prob": log_probs[idx, 0].detach(),
                         "prior_ref": prior[idx].detach(),
                     }
-                    if episode_offsets is not None:
-                        vla_capture["mean_offset"] = episode_offsets[idx]
+                    if step_offsets is not None:
+                        vla_capture["mean_offset"] = step_offsets[idx]
             self._sync_for_profile()
             timings["policy_time_s"] += time.perf_counter() - started
 
@@ -2588,8 +2616,11 @@ class RankLocalMJWarpGRPOCollector:
                         worlds, dtype=torch.int64, device=self.device
                     )
                 )
-                if episode_offsets is not None:
-                    record_lists["mean_offset"].append(episode_offsets)
+                if step_offsets is not None:
+                    # The offset ACTUALLY used for this decision, gated or not.
+                    # Recording the ungated constant here would price a
+                    # behaviour mean the rollout never sampled from.
+                    record_lists["mean_offset"].append(step_offsets)
                 valid_masks.append(step_active)
                 sampled_actions += step_active.sum()
                 actions_per_world += step_active.to(dtype=torch.int64)
