@@ -761,6 +761,43 @@ class SmolVLAGRPOTrainer:
             offset = offset.unsqueeze(1)
         return mean + offset
 
+    @staticmethod
+    def _marginal_log_std(
+        log_std: torch.Tensor, offset_std: torch.Tensor | None
+    ) -> torch.Tensor:
+        """log_std of the MARGINAL behaviour distribution, over the offset.
+
+        This is the correction that makes a per-episode offset do anything.
+
+        Sampling ``a = mu + eps + noise*sigma`` with ``eps ~ N(0, s^2)`` drawn
+        once per episode, the natural-looking log-prob is against ``mu + eps``.
+        It is a valid estimator -- but it is the CONDITIONAL density given eps,
+        and its score ``(a - mu - eps)/sigma^2`` is exactly the per-step noise,
+        which is independent of eps by construction. So the gradient on mu
+        carries no information about which offset scored well: the offset
+        perturbs the rollouts and contributes nothing to learning. Measured on
+        synthetic data with advantage set equal to the offset signal, the score
+        under that form is -0.015 against +1.43 for the form below.
+
+        Since eps and the per-step noise are independent Gaussians, the marginal
+        is exactly ``N(mu, sigma^2 + s^2)``. Scoring against THAT is both correct
+        importance sampling and restores the finite-difference term: ``a - mu``
+        now contains eps, so the group of eight candidates sharing a start
+        becomes the ES-style probe along sustained-bias directions that the
+        offset was introduced to provide.
+
+        A happy consequence: eps itself never has to be stored or replayed. Only
+        the std in effect for each record does, which is what the collector
+        records once the offset is gated on holding the object.
+        """
+
+        if offset_std is None:
+            return log_std
+        variance = torch.exp(2.0 * log_std) + offset_std.to(
+            dtype=log_std.dtype, device=log_std.device
+        ).pow(2)
+        return 0.5 * torch.log(variance.clamp_min(1.0e-12))
+
     def _mean_and_log_std(
         self,
         state: torch.Tensor,
@@ -858,6 +895,7 @@ class SmolVLAGRPOTrainer:
         action_count: int,
         generator: torch.Generator | None = None,
         mean_offset: torch.Tensor | None = None,
+        offset_std: torch.Tensor | None = None,
     ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """GPU-resident stochastic sampling for every active local world.
 
@@ -892,7 +930,17 @@ class SmolVLAGRPOTrainer:
             actions = torch.clamp(
                 behaviour_mean + noise * torch.exp(log_std), -1.0, 1.0
             )
-            log_probs = _normal_log_prob(actions, behaviour_mean, log_std)
+            # Score against the MARGINAL over the offset -- mean_chunk with the
+            # widened std -- not against mu+eps. See _marginal_log_std: the
+            # conditional form makes the offset invisible to the gradient.
+            log_probs = _normal_log_prob(
+                actions,
+                mean_chunk,
+                self._marginal_log_std(
+                    log_std,
+                    None if offset_std is None else offset_std.unsqueeze(1),
+                ),
+            )
         return actions, log_probs, mean_chunk
 
     def deterministic_action_chunks_tensor(
@@ -1008,9 +1056,13 @@ class SmolVLAGRPOTrainer:
         # Behaviour-mean offset, present only when per-episode exploration is on.
         # Rollouts collected without it carry no such key, so an older buffer
         # replays on the original code path untouched.
-        mean_offsets = (
-            padded["mean_offset"].to(dtype=torch.float32)
-            if "mean_offset" in padded
+        # Per-record std of the offset that was in effect. The realised offset
+        # itself is NOT needed: scoring against the marginal only requires its
+        # width. Rollouts collected before this existed carry no such key and
+        # replay on the original path.
+        offset_stds = (
+            padded["offset_std"].to(dtype=torch.float32)
+            if "offset_std" in padded
             else None
         )
         valid = mask > 0.0
@@ -1064,11 +1116,16 @@ class SmolVLAGRPOTrainer:
                     policy_mean, log_std = self._mean_and_log_std(
                         states[idx], priors[idx], action_indices[idx]
                     )
-                    mean = self._apply_mean_offset(
-                        policy_mean,
-                        None if mean_offsets is None else mean_offsets[idx],
+                    behaviour_log_std = self._marginal_log_std(
+                        log_std,
+                        None if offset_stds is None else offset_stds[idx],
                     )
-                    log_prob = _normal_log_prob(actions[idx], mean, log_std)
+                    log_prob = _normal_log_prob(
+                        actions[idx], policy_mean, behaviour_log_std
+                    )
+                    # Entropy stays the POLICY's, not the widened behaviour
+                    # distribution's: the bonus regulates what the policy learns,
+                    # and the offset is exploration layered on top of it.
                     entropy = _normal_entropy(log_std)
                     ratio = torch.exp(
                         (log_prob - old_log_probs[idx]).clamp(-20.0, 20.0)
@@ -1450,9 +1507,9 @@ class SmolVLAGRPOTrainer:
             prior_ref = records["prior_ref"].to(dtype=torch.float32)
             # Same behaviour distribution the rollout sampled from, or the
             # importance ratio is computed against a mean that was never used.
-            lora_mean_offsets = (
-                records["mean_offset"].to(dtype=torch.float32)
-                if "mean_offset" in records
+            lora_offset_stds = (
+                records["offset_std"].to(dtype=torch.float32)
+                if "offset_std" in records
                 else None
             )
             if n > 1:
@@ -1477,16 +1534,19 @@ class SmolVLAGRPOTrainer:
                 )
                 mean_chunk = base(states[sl], prior_grad)
                 mean = _gather_chunk_values(mean_chunk, action_indices[sl])
-                mean = self._apply_mean_offset(
-                    mean,
-                    None
-                    if lora_mean_offsets is None
-                    else lora_mean_offsets[sl],
-                )
                 log_std = base.clamped_log_std()[
                     action_indices[sl].clamp(0, self.chunk_size - 1)
                 ]
-                log_prob = _normal_log_prob(actions[sl], mean, log_std)
+                log_prob = _normal_log_prob(
+                    actions[sl],
+                    mean,
+                    self._marginal_log_std(
+                        log_std,
+                        None
+                        if lora_offset_stds is None
+                        else lora_offset_stds[sl],
+                    ),
+                )
                 ratio = torch.exp(
                     (log_prob - old_log_probs[sl]).clamp(-20.0, 20.0)
                 )

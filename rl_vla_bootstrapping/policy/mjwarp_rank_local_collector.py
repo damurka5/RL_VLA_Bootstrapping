@@ -2341,8 +2341,18 @@ class RankLocalMJWarpGRPOCollector:
         episode_offsets = self.trainer.sample_episode_offsets(
             worlds, generator=self._sample_generator
         )
+        offset_std_row = (
+            None
+            if episode_offsets is None
+            else self.trainer.episode_offset_std.unsqueeze(0).expand(
+                worlds, -1
+            ).contiguous()
+        )
         if episode_offsets is not None:
-            record_lists["mean_offset"] = []
+            # The offset STD in effect per record, not the realised offset.
+            # Scoring against the marginal N(mu, sigma^2 + s^2) needs only the
+            # width; the draw itself never has to be replayed.
+            record_lists["offset_std"] = []
         valid_masks: list[Any] = []
         timings = {
             "render_time_s": 0.0,
@@ -2509,6 +2519,7 @@ class RankLocalMJWarpGRPOCollector:
             # only ever perturbs a phase where +z earns reward, so the surrogate
             # pushes the mean up rather than down.
             step_offsets = episode_offsets
+            step_offset_std = offset_std_row
             if episode_offsets is not None and self.episode_offset_after_grasp:
                 holding = first_grasp_step >= 0
                 if reset.prelifted is not None:
@@ -2517,9 +2528,9 @@ class RankLocalMJWarpGRPOCollector:
                     # miss the offset on decision 0 -- and they are exactly the
                     # regime the plant probe measured.
                     holding = holding | reset.prelifted.to(dtype=torch.bool)
-                step_offsets = episode_offsets * holding.unsqueeze(-1).to(
-                    dtype=episode_offsets.dtype
-                )
+                gate = holding.unsqueeze(-1).to(dtype=episode_offsets.dtype)
+                step_offsets = episode_offsets * gate
+                step_offset_std = offset_std_row * gate
             actions, log_probs, action_means = (
                 self.trainer.sample_action_chunks_tensor(
                     states=state_tensor,
@@ -2527,6 +2538,7 @@ class RankLocalMJWarpGRPOCollector:
                     action_count=self.actions_per_policy_decision,
                     generator=self._sample_generator,
                     mean_offset=step_offsets,
+                    offset_std=step_offset_std,
                 )
             )
 
@@ -2590,8 +2602,8 @@ class RankLocalMJWarpGRPOCollector:
                         "old_log_prob": log_probs[idx, 0].detach(),
                         "prior_ref": prior[idx].detach(),
                     }
-                    if step_offsets is not None:
-                        vla_capture["mean_offset"] = step_offsets[idx]
+                    if step_offset_std is not None:
+                        vla_capture["offset_std"] = step_offset_std[idx]
             self._sync_for_profile()
             timings["policy_time_s"] += time.perf_counter() - started
 
@@ -2616,11 +2628,11 @@ class RankLocalMJWarpGRPOCollector:
                         worlds, dtype=torch.int64, device=self.device
                     )
                 )
-                if step_offsets is not None:
-                    # The offset ACTUALLY used for this decision, gated or not.
-                    # Recording the ungated constant here would price a
-                    # behaviour mean the rollout never sampled from.
-                    record_lists["mean_offset"].append(step_offsets)
+                if step_offset_std is not None:
+                    # The width ACTUALLY in effect for this decision, gated or
+                    # not. Recording the ungated constant would price a
+                    # behaviour distribution the rollout never sampled from.
+                    record_lists["offset_std"].append(step_offset_std)
                 valid_masks.append(step_active)
                 sampled_actions += step_active.sum()
                 actions_per_world += step_active.to(dtype=torch.int64)

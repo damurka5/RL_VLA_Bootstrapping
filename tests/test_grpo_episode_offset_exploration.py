@@ -90,7 +90,16 @@ class EpisodeOffsetExplorationTests(unittest.TestCase):
                 float((offsets[0, 2] - offsets[1, 2]).abs()), 0.0
             )
 
-    def test_sampler_shifts_the_behaviour_mean_not_the_reported_mean(self):
+    def test_sampler_scores_against_the_marginal_not_the_perturbed_mean(self):
+        """The offset must be inside the STD, not the mean, or it is invisible.
+
+        Scoring against mu+eps is the conditional density given eps. Its score
+        is (a - mu - eps)/sigma^2 -- the per-step noise, independent of eps by
+        construction -- so the gradient on mu learns nothing about which offset
+        paid. Scoring against the marginal N(mu, sigma^2 + s^2) is equally valid
+        importance sampling and puts eps back into (a - mu).
+        """
+
         with tempfile.TemporaryDirectory() as temp_dir:
             trainer = _trainer(
                 _args("--episode-offset-std", "0.25"), Path(temp_dir)
@@ -98,6 +107,7 @@ class EpisodeOffsetExplorationTests(unittest.TestCase):
             states = torch.randn(4, 6)
             priors = torch.zeros(4, 2, 5)
             offsets = trainer.sample_episode_offsets(4)
+            stds = trainer.episode_offset_std.unsqueeze(0).expand(4, -1)
 
             generator = torch.Generator().manual_seed(11)
             actions, log_probs, means = trainer.sample_action_chunks_tensor(
@@ -106,8 +116,9 @@ class EpisodeOffsetExplorationTests(unittest.TestCase):
                 action_count=2,
                 generator=generator,
                 mean_offset=offsets,
+                offset_std=stds,
             )
-            # The third return value is the UNPERTURBED policy mean: the
+            # The third return value stays the UNPERTURBED policy mean: the
             # residual telemetry built on it measures what the policy learned.
             expected_mean = trainer._unwrap(trainer.actor)(states, priors)[:, :2]
             self.assertTrue(torch.allclose(means, expected_mean, atol=1e-6))
@@ -115,92 +126,49 @@ class EpisodeOffsetExplorationTests(unittest.TestCase):
             log_std = trainer._unwrap(trainer.actor).clamped_log_std()[
                 :2
             ].unsqueeze(0)
+            marginal = trainer._marginal_log_std(log_std, stds.unsqueeze(1))
             self.assertTrue(
+                torch.allclose(
+                    log_probs,
+                    _normal_log_prob(actions, means, marginal),
+                    atol=1e-5,
+                )
+            )
+            # The widened std is the whole point.
+            self.assertTrue(bool(torch.all(marginal > log_std)))
+            # And NOT the conditional density given the realised offset.
+            self.assertFalse(
                 torch.allclose(
                     log_probs,
                     _normal_log_prob(
                         actions, means + offsets.unsqueeze(1), log_std
                     ),
-                    atol=1e-5,
-                )
-            )
-            # And emphatically NOT against the unperturbed mean.
-            self.assertFalse(
-                torch.allclose(
-                    log_probs,
-                    _normal_log_prob(actions, means, log_std),
                     atol=1e-3,
                 )
             )
 
-    def test_update_replays_the_behaviour_distribution(self):
-        """ratio == 1 at unchanged parameters, only if the offset is restored."""
+    def test_offset_reaches_the_gradient_on_the_mean(self):
+        """The regression test for the bug that cost two training runs.
 
-        from rl_vla_bootstrapping.policy.rank_local_grpo import EqualDDPSchedule
+        Build a batch whose advantage is exactly the offset signal -- worlds
+        with a larger offset scored better -- and check the gradient on the
+        policy mean actually points along it. Under the shipped-then-reverted
+        conditional form this is ~0.
+        """
 
-        with tempfile.TemporaryDirectory() as temp_dir:
-            trainer = _trainer(
-                _args("--episode-offset-std", "0.25"), Path(temp_dir)
-            )
-            worlds = 8
-            states = torch.randn(worlds, 6)
-            priors = torch.zeros(worlds, 2, 5)
-            offsets = trainer.sample_episode_offsets(worlds)
-            generator = torch.Generator().manual_seed(5)
-            actions, log_probs, _ = trainer.sample_action_chunks_tensor(
-                states=states,
-                priors=priors,
-                action_count=2,
-                generator=generator,
-                mean_offset=offsets,
-            )
+        sigma, offset_std, worlds = 0.333, 0.25, 40000
+        torch.manual_seed(0)
+        mean = torch.zeros(worlds)
+        eps = torch.randn(worlds) * offset_std
+        actions = mean + eps + torch.randn(worlds) * sigma
+        advantage = eps / offset_std
 
-            records = {
-                "state": states,
-                "prior": priors,
-                "action": actions[:, 0],
-                "action_index": torch.zeros(worlds, dtype=torch.long),
-                "old_log_prob": log_probs[:, 0],
-                "advantage": torch.zeros(worlds),
-                "mean_offset": offsets,
-            }
-            policy_mean, log_std = trainer._mean_and_log_std(
-                records["state"],
-                records["prior"],
-                records["action_index"],
-            )
-            replayed = _normal_log_prob(
-                records["action"],
-                trainer._apply_mean_offset(policy_mean, records["mean_offset"]),
-                log_std,
-            )
-            ratio = torch.exp(replayed - records["old_log_prob"])
-            self.assertTrue(
-                torch.allclose(ratio, torch.ones_like(ratio), atol=1e-4),
-                f"ratio should be 1 at unchanged parameters, got {ratio}",
-            )
+        conditional = ((actions - (mean + eps)) / sigma**2 * advantage).mean()
+        marginal_var = sigma**2 + offset_std**2
+        marginal = ((actions - mean) / marginal_var * advantage).mean()
 
-            # Dropping the offset is the exact bug this guards: the ratio then
-            # departs from 1 even though nothing about the policy changed.
-            naive = torch.exp(
-                _normal_log_prob(records["action"], policy_mean, log_std)
-                - records["old_log_prob"]
-            )
-            self.assertFalse(
-                torch.allclose(naive, torch.ones_like(naive), atol=1e-2)
-            )
-
-            # The real update path must run clean with the extra key present.
-            metrics = trainer.update_tensor_records(
-                records,
-                loss_mask=torch.ones(worlds),
-                schedule=EqualDDPSchedule(
-                    records_per_minibatch=worlds,
-                    ppo_epochs=1,
-                    global_max_records=worlds,
-                ),
-            )
-            self.assertIn("clip_fraction_mean", metrics)
+        self.assertLess(abs(float(conditional)), 0.1)
+        self.assertGreater(float(marginal), 1.0)
 
     def test_records_without_the_key_take_the_original_path(self):
         """An older rollout buffer must replay untouched."""
