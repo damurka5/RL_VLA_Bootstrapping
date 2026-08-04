@@ -667,8 +667,34 @@ training:
       # post_grasp_action_z_mean is the control variable. The target is to move
       # it +0.20 -> +0.30, and it is now logged every update.
       #
-      # 0.0 restores the i.i.d. per-step sampler bit-for-bit.
-      episode_offset_std: [0.0, 0.0, 0.25, 0.0, 0.0]
+      # BOTH FORMS FAILED. Two resumes from the same checkpoint (step 2406053):
+      #
+      #                    a_z post-grasp      rise|pre mm     succ|pre
+      #   ungated 0.20   +0.203 -> -0.254    42.7 -> 13.3   0.71 -> 0.14
+      #   gated   0.25   +0.177 -> -0.408    40.6 -> 10.1   0.66 -> 0.10
+      #
+      # measured at the same global steps. They are indistinguishable across
+      # ~20 metrics, and the gate PROVABLY removes the offset from the approach,
+      # so the "the offset perturbs the approach and GRPO cancels it" reading of
+      # the first failure was wrong. The offset is more likely inert here than
+      # causal: what both runs show is the campaign's canonical decay -- grasp
+      # 0.35 -> 0.53, pad force 4.6 -> 7.6 N, lift down, reward 3.70 -> 2.17 --
+      # which has happened in runs with no offset at all.
+      #
+      # Back to 0.0, which restores the i.i.d. per-step sampler bit-for-bit, so
+      # the next resume doubles as the control these two runs never had. If it
+      # also decays to a_z ~ -0.4, the offset was irrelevant and the decay is
+      # endogenous to a resume from this checkpoint; if it holds near +0.18, the
+      # offset was doing harm after all.
+      #
+      # What survives, and is the target either way: the plant curve is real and
+      # post_grasp_action_z_mean is the control variable. +0.20 lifts ~34 mm,
+      # +0.30 lifts ~83 mm and succeeds 14/15. Every run so far sits at or below
+      # +0.20 and slides down from there.
+      episode_offset_std: 0.0
+      # Kept because it is the form that matches what the plant probe measured
+      # (offset applied from the latch, oracle driving the approach). Inert
+      # while the std above is 0.
       episode_offset_after_grasp: true
       max_grad_norm: 1.0
       grpo_group_size: 8
