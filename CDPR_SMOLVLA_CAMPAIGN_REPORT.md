@@ -2,11 +2,11 @@
 
 CDPR · SmolVLA · GRPO · MJWarp backend
 
-- Prepared 2026-08-01, updated 2026-08-02, code `0a9bbe4`
+- Prepared 2026-08-01, updated 2026-08-05, code `88b0b30`
 - Phase 0 `move_to_object`: **28M steps**, complete
-- Phase 1 `pick_up`: **~41M steps over 12 runs**, running
-- **Compute spent: ~87M GRPO environment steps across 22 runs**
-- **Training depth in the current policy: ~15M** — the runs are a tree of warm
+- Phase 1 `pick_up`: **~50M steps over 15 runs**, running
+- **Compute spent: ~96M GRPO environment steps across 25 runs**
+- **Training depth in the current policy: ~17.6M** — the runs are a tree of warm
   starts, not one chain, so these are different numbers (see §2)
 - Configs: `cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml`,
   `cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml`
@@ -59,37 +59,52 @@ no-op. Fixed in `80f6c35`.
 
 | | move-to | pick-up |
 |---|---:|---:|
-| steps | 28M (complete) | ~41M over 12 runs, running |
+| steps | 28M (complete) | ~50M over 15 runs, running |
 | best validation success | 7.3% (at 7.4M) | 1.2% |
 | `validation/reward_mean` | — | 0.21 |
-| **success \| pre-grasped** | — | **0.82 peak, 0.79 held** |
-| success \| normal start | — | 0.21 at the 5 cm cap |
-| `post_grasp_rise` (pre-grasped) | — | **48 mm** against a 50 mm bar |
+| **success \| pre-grasped** | — | **0.83 held** (`offset_marginal`) |
+| success \| normal start | — | 0.17–0.22 at the 5 cm cap |
+| `post_grasp_action_z_mean` | — | **+0.32**, first run above the +0.30 lift threshold |
+| `post_grasp_rise` (pre-grasped) | — | 44–48 mm against a 50 mm bar |
 | curriculum cap | reached 0.23 | 0.05 |
 
-The pre-grasped lift is close to solved. The approach is not: `success | normal
-start` has sat at 0.21 and the gate EMA at 0.20–0.24 for ~9M steps across three
-runs, against a 0.30 promote threshold, so the cap has not moved since 171k.
+The pre-grasped lift is solved as far as sampled success goes, and §4.9 explains
+why it took so long: the loaded z axis is dead-zoned below `a_z ≈ 0.2`, and
+per-step Gaussian noise explores sustained bias with std `sigma/sqrt(N)`, so the
+lifting region sat 3.3 sigma out. Correcting the exploration estimator raised
+`post_grasp_action_z_mean` for the first time in the campaign.
+
+Two things that did **not** follow. `success | normal start` has sat at 0.17–0.22
+for ~14M steps across four runs against a 0.30 promote threshold, so the cap has
+not moved since 171k — and in the run that fixed the lift it *fell*, with grasp
+rate 0.331 → 0.217. The old invariant was "better at grasping, worse at lifting";
+this is the same tension with the sign flipped, and one shared residual still
+cannot hold sustained −z for the descent and sustained +z for the lift.
+Deterministic validation remains 0.000–0.012 in every run of the campaign: the
+mean action has never completed the task.
 
 ### Step accounting
 
 Two different quantities, and they are not interchangeable.
 
-**Compute spent — 87.4M steps.** Every step actually executed, measured from the
+**Compute spent — 96.1M steps.** Every step actually executed, measured from the
 TensorBoard event files and deduplicated by run (several directories are
 successive dumps of the same run):
 
 | | runs | steps |
 |---|---:|---:|
-| `pick_up` (identified) | 12 | 40,957,412 |
+| `pick_up` (identified) | 15 | 49,700,206 |
 | `move_to_object` (identified) | 4 | 26,004,402 |
 | pre-dating the per-instruction metrics | 6 | 20,417,827 |
-| **total executed** | **22** | **87,379,641** |
+| **total executed** | **25** | **96,122,435** |
 
 The third row cannot be attributed automatically — `instruction_worlds/{name}`
-did not exist when those ran.
+did not exist when those ran. The three runs added since the last revision are
+the exploration arc of §4.9, all resumed from the same `adaptivestd` checkpoint:
+`offset_ungated` 3,558,059, `offset_gated` 2,590,256, `offset_marginal`
+2,593,019.
 
-**Training depth in the current policy — ~15M steps.** The runs are a *tree*, not
+**Training depth in the current policy — ~17.6M steps.** The runs are a *tree*, not
 a chain. Warm starts were frequently taken from a mid-run checkpoint rather than
 a run's end, which discards everything after the branch point, and some runs
 started from no checkpoint at all. Summing runs therefore overstates how much
@@ -106,7 +121,12 @@ flight:
 | `peaklift_16M` | 1,006,618 |
 | `liftgate_16M` | 3,203,866 |
 | `adaptivestd_16M` | 2,406,053 |
-| **lineage total** | **~15.0M** |
+| `offset_marginal` | 2,593,019 |
+| **lineage total** | **~17.6M** |
+
+The two failed offset runs are *not* in the lineage: they branch from the same
+`adaptivestd` checkpoint and were abandoned, so their 6.1M steps are compute
+spent without training depth.
 
 Note the phase-0 contribution is the **5M scratch adapter**, not the 28M
 campaign end — pick-up warm-started from an early move-to checkpoint. The
@@ -362,8 +382,11 @@ Every pick-up run for which telemetry was analysed, in order. "Peak" is the best
 | `pick_up_16M` | 4.22M | ratchet + retuned ladder | 0.24 | collapsed: grasp 0.38→0.45, rise 19→10 mm, success 0.11→0.04 |
 | `peaklift_16M` | 4.78M | **peak-lift ratchet** (`ffe974d`) | **0.59** | best yet, then turned over at ~2M |
 | `liftgate_16M` | 5.95M | **lift-gated grasp bonus** (`03f9f20`) | **0.82** | best of campaign; turned over at ~3M |
-| `adaptivestd_16M` | 2.34M | **log_std projection** (`80f6c35`) | 0.82 | **decay arrested**; stable plateau, no climb |
+| `adaptivestd_16M` | 2.34M | **log_std projection** (`80f6c35`) | 0.82 | **decay arrested**; stable plateau, no climb. Re-read later: flat on *every* metric across its full length — the campaign's true baseline |
 | `ladder_16M` | 4.00M | fraction + cap curricula (`0a9bbe4`) | 0.75 | **regression** — ended below its own start; fraction curriculum reverted in `ccc7589` |
+| `offset_ungated` | 3.56M | per-episode z offset 0.20, whole episode (`f9dc94f`) | 0.71 | collapsed: `a_z` +0.20 → −0.37, rise 42.5 → 8.6 mm. Estimator bug, see §4.9 |
+| `offset_gated` | 2.59M | same offset gated on holding (`1e4a401`) | 0.66 | collapsed **indistinguishably** — which is what identified the estimator rather than the gating |
+| `offset_marginal` | 2.59M | **marginal log-prob** (`a4bf902`, on in `88b0b30`) | **0.83** | **first run to raise `post_grasp_action_z_mean`** (+0.24 → +0.32); pre-grasped record, held. Grasp rate and normal-start success fell |
 
 Two results carried by that table:
 
@@ -414,6 +437,125 @@ is untested rather than implicated, and is retained.
 
 ---
 
+### 4.9 · The lift was an exploration problem, not a reward problem
+
+Four reward interventions had each delayed the lift collapse without stopping
+it. This arc stopped changing the reward and measured the plant instead.
+
+**The leading hypothesis was wrong, and the metric behind it was measuring
+something else.** The suspicion was that the grasp detector's 8 mm relative-pose
+bound penalises the acceleration a lift requires — slip and lift had moved
+together across every run. They do, but `relative_position_slip_mean_m` is not
+gated on contact. It averages over every active grasp-eligible step, and most of
+those are free-space approach steps where the "slip" is just how fast the gripper
+is closing on the object. It falls whenever the policy moves less, which is the
+behaviour under investigation rather than evidence about it. Conditioned on the
+pads being loaded, on MJWarp, slip peaks at **5.74 mm against the 8 mm bound**
+across every arm of the probe, and is *lowest* during the fastest lift — a held
+object translates with the gripper, so the relative pose stops changing.
+`pose_reject_rate_while_loaded` reads 0.013–0.024 in training. The detector never
+rejects a loaded grasp.
+
+**What the probe found instead: the loaded z axis is dead-zoned.** From an
+identical latched grasp under production MJWarp, driving a sustained commanded
+`a_z` (`tools/audit/lift_barrier_probe.py`, 15 episodes per arm):
+
+| sustained `a_z` | 0.05 | 0.10 | 0.20 | 0.30 | 0.40 | 0.60 |
+|---|---:|---:|---:|---:|---:|---:|
+| median lift (mm) | 3.1 | 3.1 | 33.8 | 82.7 | 134.8 | 238.6 |
+| success / latched | 0/15 | 0/15 | 0/15 | 14/15 | 15/15 | 15/15 |
+
+A lift is only reachable by a large **sustained** bias. Per-step i.i.d. Gaussian
+noise explores sustained bias with std `sigma/sqrt(N)` — 0.09 over a 13-step
+window at the −1.10 `log_std` ceiling — so the lifting region sits 3.3 sigma out.
+A driftless Gaussian at the run's own sigma reached **0/15** successes from a
+perfect grasp, with no episode exceeding 38 mm.
+
+That made `post_grasp_action_z_mean` the control variable, and it is now logged
+every update. It immediately cross-validated: at the resume point the policy's
+own post-grasp command was **+0.20** and its pre-grasped rise **42.5 mm**,
+against the probe's 33.8 mm at a sustained 0.20. Two instruments agreeing. The
+target became a single number — move it from +0.20 to +0.30.
+
+**Two runs then failed, on an estimator bug rather than the idea.** A
+per-episode, per-world offset `eps` added to the action mean and held for the
+episode should make the GRPO group — eight candidates sharing a start — a
+finite-difference probe along sustained-bias directions. It did not, because the
+log-prob was scored against `mu + eps`. That is the *conditional* density given
+`eps`, and its score `(a - mu - eps)/sigma^2` is exactly the per-step noise,
+independent of `eps` by construction. The gradient on `mu` learned nothing about
+which offset paid. On synthetic data with advantage set equal to the offset
+signal, that score reads **−0.015** where the correct form reads **+1.43**.
+
+So the offset perturbed the rollouts and informed nothing: half the pre-grasped
+worlds drew a −z offset into the dead zone and failed, and the runs paid that
+variance without ever collecting the term the idea rested on. An ungated offset
+and a post-grasp-gated one collapsed indistinguishably, which is what finally
+identified the estimator rather than the gating as the fault.
+
+`eps` and the per-step noise are independent Gaussians, so the marginal is
+exactly `N(mu, sigma^2 + s^2)`. Scoring against that is equally valid importance
+sampling and puts `eps` back into `(a - mu)`. Records carry the offset *std* in
+effect rather than the realised offset — the marginal needs only the width.
+
+**The corrected run moved the number for the first time in the campaign.**
+
+| | baseline `adaptivestd` | ungated (bug) | gated (bug) | **marginal (fixed)** |
+|---|---:|---:|---:|---:|
+| `post_grasp_action_z_mean` | — | −0.285 | −0.420 | **+0.320** |
+| `success \| pre-grasped` | 0.797 | 0.101 | 0.092 | **0.828** |
+| `post_grasp_rise` pre-grasped | 46.0 mm | 10.9 mm | 9.9 mm | 43.9 mm |
+| `success \| normal start` | 0.218 | 0.057 | 0.053 | 0.166 |
+| `physical_grasp_rate` | 0.331 | 0.536 | 0.538 | 0.217 |
+| pad force | 4.27 N | 7.62 N | 7.95 N | 3.26 N |
+| curriculum cap | 0.05 | 0.03 | 0.03 | 0.05 |
+
+`post_grasp_action_z_mean` rose monotonically +0.238 → +0.318, crossing the
+plant's +0.30 threshold, and `success | pre-grasped` reached **0.834** — a
+campaign record, and held for 2.6M steps rather than peaking before a collapse.
+Both figures are 250k-step window means, as everywhere else in this report; the
+best single updates were +0.389 and 0.915.
+
+**But the trade reversed rather than resolved.** Grasp rate fell 0.331 → 0.217,
+bilateral contact 0.361 → 0.244, and `success | normal start` 0.218 → 0.166 —
+below the baseline. The campaign's invariant has always been "better at grasping,
+worse at lifting"; this run is the same invariant with the sign flipped. One
+residual has to emit sustained −z for the descent and sustained +z for the lift,
+and it still cannot hold both. Deterministic validation is unchanged at
+0.000–0.002.
+
+**A methodological note that cost two runs.** Neither offset run had a control,
+on the argument that the `adaptivestd` plateau would serve as one. It does not —
+that was continuous training, not a resume — and reading its logs afterwards
+showed it was *flat across its whole 2.34M steps* (`success | pre-grasped`
+0.820 → 0.802, rise 47.4 → 46.1 mm, grasp 0.339 → 0.327, pad force 4.28 → 4.15 N).
+Nothing was decaying until the offset was added, so both collapses were caused,
+not inherited. Two intermediate diagnoses — "the offset perturbs the approach and
+GRPO cancels it", then "the offset is inert and this is the canonical decay" —
+were both wrong, and both would have been caught by running the control first.
+
+**Observability was ruled out along the way.** Whether the residual can even see
+that it is holding the object was tested directly
+(`tools/audit/grasp_feature_probe.py`), with hard negatives — episodes driven to
+close on air at grasp height — and a between-episode label shuffle as the null,
+since grasp state is near-constant within an episode and a step-level shuffle
+lets episode identity pass as signal. On the matched subset (fingers closed):
+
+| feature | balanced accuracy | margin over control |
+|---|---:|---:|
+| proprioception (6-d) | 0.898 | +0.317 |
+| frozen vision projection (512-d) | 0.682 | +0.221 |
+| un-projected connector (30720-d) | 0.904 | +0.349 |
+
+The signal is there twice over — `gripper_opening` alone carries it, because a
+hit stops the fingers at the object's width while a miss closes them fully. The
+residual could always tell. Separately, the 512-d fixed random projection is the
+weakest of the three and is discarding a real amount of what the connector
+encodes; that is worth fixing on its own terms, but it is not what blocks the
+lift.
+
+---
+
 ## 5. Eliminated, with evidence
 
 Each cost a diagnostic cycle. None should be re-litigated without new evidence.
@@ -429,6 +571,9 @@ Each cost a diagnostic cycle. None should be re-litigated without new evidence.
 | The pre-grasped stage transfers nothing | A/B: conversion 0.205 vs 0.177 |
 | Peak-lift ratcheting just banks exploration noise | validation reward recovered 0.120 → 0.218 and residual cosine rose; noise-banking shows neither |
 | The pre-grasped stage is a scaffold that can be annealed away once its success is high | annealing 0.50 → 0.20 took pre-grasped success 0.753 → 0.410 **and** normal-start 0.245 → 0.098; restoring it recovered only to 0.55 |
+| The grasp detector's 8 mm pose bound penalises the acceleration a lift needs | slip **conditioned on loaded pads** peaks at 5.74 mm against the bound on MJWarp, and is lowest during the fastest lift; `pose_reject_rate_while_loaded` 0.013–0.024 in training. The unconditioned slip mean that suggested this is dominated by free-space approach steps |
+| The residual cannot tell whether it is holding the object, so its post-close z is an average over both cases | linear probe on matched negatives: proprioception alone decodes it at 0.898 (margin +0.317 over a between-episode shuffle), the un-projected connector at 0.904. `gripper_opening` carries it — a hit stops the fingers at the object's width |
+| The lift is blocked by the reward | the reward pays 1.58 more for a 60 mm lift than for holding still, and nothing about the reward changed in `offset_marginal`, which raised the lift. The plant is dead-zoned and the estimator was not proposing sustained lifts to be paid for |
 
 The degenerate-group line is worth keeping: `torch_group_advantages` divides by
 the group std floored at `1e-6`, and the informative-group filter is
@@ -446,18 +591,42 @@ its range so every trained entry had been dead since the first time it left the
 band. Fixed in `80f6c35`, which arrested the decay that had ended every previous
 run. `log_std_saturated_fraction` now makes the state visible.
 
-**The approach is the live bottleneck.** `success | normal start` 0.21 and the
-gate EMA 0.20–0.24 against a 0.30 promote threshold, unmoved for ~9M steps across
-three runs, so the cap has sat at 0.05 since 171k. Two changes target it
-(`0a9bbe4`): the pre-grasped fraction anneals off a sub-task at 0.82 onto the one
-at 0.21, and the cap ladder replaces a flat 0.02 increment whose first promotion
-was a +67% jump. Raising the promote gate to 0.40 was considered and rejected —
-the EMA has peaked at 0.302 in the entire campaign, so a 0.40 gate would freeze
-the cap at 3 cm permanently.
+**~~The grasp detector's pose bound blocks the lift~~ — FALSIFIED, see §4.9.**
+Conditioned on loaded pads, slip never exceeds 5.74 mm against an 8 mm bound and
+is lowest during the fastest lift. `pose_reject_rate_while_loaded` and
+`slip_mean_while_loaded_m` replace the unconditioned slip mean that suggested it.
 
-**The train/validation gap.** Training normal-start success ~0.21 against
-deterministic validation 0.002–0.012. The mean action still rarely completes the
-task; the rising residual cosine is the thing to watch.
+**~~The lift cannot be learned~~ — RESOLVED, see §4.9.** The loaded z axis is
+dead-zoned below `a_z ≈ 0.2`; per-step noise explores sustained bias with std
+`sigma/sqrt(N)`, so the lifting region sat 3.3 sigma out. A per-episode offset
+scored against the *marginal* raised `post_grasp_action_z_mean` +0.24 → +0.32 and
+took `success | pre-grasped` to 0.83, held.
+
+**The approach is the live bottleneck, and now it is also the price.**
+`success | normal start` 0.17–0.22 and the gate EMA 0.17–0.24 against a 0.30
+promote threshold, unmoved for ~14M steps across four runs, so the cap has sat at
+0.05 since 171k. `offset_marginal` made it worse rather than better — grasp rate
+0.331 → 0.217 while the lift was being fixed. Raising the promote gate to 0.40
+was considered and rejected — the EMA has peaked at 0.302 in the entire campaign,
+so a 0.40 gate would freeze the cap at 3 cm permanently.
+
+**One residual cannot hold both phases — now the leading hypothesis.** The
+descent needs sustained −z, the lift sustained +z, and every run trades one
+against the other: the first eleven got better at grasping and worse at lifting,
+`offset_marginal` did the reverse. `residual_target_cosine_mean` has never left
+0.03–0.06. The observability explanation is eliminated (§4.9) — the residual can
+see the grasp — so what remains is representational capacity or gradient
+dominance between the phases, and neither is addressed by anything tried so far.
+
+**The 512-d vision projection is lossy.** The frozen random projection the
+residual is fed decodes grasp state at 0.682 where the un-projected connector
+manages 0.904. Independent of the lift question, and untested as a change.
+
+**The train/validation gap.** Training normal-start success ~0.17–0.22 against
+deterministic validation 0.000–0.012. The mean action has never completed the
+task in any run of the campaign, including the one that fixed the lift — the
+gains are in sampled success. This is the single most under-explained number
+here.
 
 **The cosine metrics need a prelifted split.** They are a decision-0 probe against
 the direction to the object, and at `prelifted: 0.5` half the worlds start with
@@ -483,6 +652,22 @@ REPO_ROOT="$PWD" ENV_NAME=cdpr-mjlab PHYSICS=mjlab_mjwarp \
   bash scripts/render_cdpr_task_reference_episodes_remote.sh
 ```
 
+Two audit tools were added during §4.9 and are the checks to run before
+attributing a lift failure to the reward:
+
+```bash
+MUJOCO_GL=egl conda run --no-capture-output -n cdpr-mjlab python \
+  tools/audit/lift_barrier_probe.py --physics mjlab_mjwarp --episodes 16
+MUJOCO_GL=egl conda run --no-capture-output -n cdpr-mjlab python \
+  tools/audit/grasp_feature_probe.py --physics mjlab_mjwarp --episodes 60
+```
+
+The first sweeps sustained `a_z` from a real latched grasp and reports slip
+conditioned on loaded pads; the second linear-probes the frozen features for
+grasp state against hard negatives. Both run without a checkpoint. Note that
+`grasp_feature_probe` writes `features.npz` before probing, so `--from-features`
+re-scores a capture without re-running SmolVLA.
+
 The oracle harness is the check to run after touching reset shaping, the reward
 ladder or the grasp geometry. Expect 3/3 at reward ~7.2 on the reference
 catalogs (`robocasa_apple robocasa_tomato robocasa_orange robocasa_potato`); the
@@ -507,5 +692,15 @@ Phase 1 commits, in order:
 | `80f6c35` | **`log_std` projection** — clamp bounds stop killing the gradient |
 | `4d4eb06` | `min_log_std` widened to −2.5 now that it can bind |
 | `0a9bbe4` | pre-grasped fraction curriculum; explicit cap ladder |
+| `e3957ae` | pre-grasped fraction curriculum reverted — the stage is load-bearing |
+| `5564139` | **plant probe** — the 8 mm pose bound is not what blocks the lift |
+| `7e973cf` | per-episode exploration offset; contact-conditioned slip and `post_grasp_action_z_mean` telemetry |
+| `f8465c1` | grasp-feature probe — can the residual see that it is holding? |
+| `8a89aa6` | oracle harness: `--force-renderer` separates frames from video files |
+| `f9dc94f` | offset on for z, whole episode + pick-up resume launcher — **failed** |
+| `1e4a401` | offset gated on holding the object — **failed identically** |
+| `45c0591` | offset back to 0 after both failures |
+| `a4bf902` | **marginal log-prob** — the offset was invisible to the gradient |
+| `88b0b30` | offset on again, now that it reaches the gradient |
 
 Phase 0 fixes referenced: `c76cbb1`, `17a83f7`, `7d99c3e`, `64c1437`.
