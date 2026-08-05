@@ -442,6 +442,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "phase where +z earns reward."
         ),
     )
+    _bool_arg(
+        parser,
+        "split_credit_at_grasp",
+        default=False,
+        help_text=(
+            "Give the approach and the lift separate GRPO returns, split at the "
+            "moment the grasp latches. The return is otherwise the last active "
+            "step's reward broadcast to every step, so a descent action and a "
+            "lift action get identical credit while the task wants opposite z "
+            "from them -- and one residual serves both. Eleven runs got better "
+            "at grasping and worse at lifting; the run that finally raised the "
+            "lift did the reverse, buying post-grasp z at the price of ~19% of "
+            "grasps. Split, the approach is scored on the dense reward at the "
+            "latch (did it reach a good grasp?) and the lift keeps the terminal "
+            "reward. Episodes that never grasp are unchanged."
+        ),
+    )
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--grpo-group-size", type=int, default=2)
     parser.add_argument("--grpo-group-selection", choices=("uniform", "best", "softmax"), default="uniform")

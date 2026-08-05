@@ -1413,6 +1413,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             episode_offset_after_grasp=bool(
                 getattr(args, "episode_offset_after_grasp", False)
             ),
+            split_credit_at_grasp=bool(
+                getattr(args, "split_credit_at_grasp", False)
+            ),
             profile=bool(args.mjwarp_profile_timers),
         )
         validation_collector = None

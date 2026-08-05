@@ -2072,6 +2072,7 @@ class RankLocalMJWarpGRPOCollector:
         store_vla_records: bool = False,
         vla_update_max_records: int = 128,
         episode_offset_after_grasp: bool = False,
+        split_credit_at_grasp: bool = False,
         profile: bool = False,
     ) -> None:
         layout.validate()
@@ -2085,6 +2086,10 @@ class RankLocalMJWarpGRPOCollector:
         # object, so it cannot perturb the approach. See the gate in
         # collect_round for the measurement that motivates it.
         self.episode_offset_after_grasp = bool(episode_offset_after_grasp)
+        # Score the approach on whether it reached a grasp, and the lift on the
+        # terminal reward, instead of giving every step of an episode the same
+        # scalar. See the two-advantage block in collect_round.
+        self.split_credit_at_grasp = bool(split_credit_at_grasp)
         # >0 appends a frozen fixed-projection SmolVLA vision feature of this
         # width to the residual state so the residual can localize the target.
         self.vision_feature_dim = max(0, int(vision_feature_dim))
@@ -2331,6 +2336,10 @@ class RankLocalMJWarpGRPOCollector:
             "old_log_prob": [],
             "world_index": [],
         }
+        if self.split_credit_at_grasp:
+            # Which phase each record belongs to. Appended BEFORE the physics
+            # step, so it reads "was this action taken while already holding?"
+            record_lists["post_grasp_record"] = []
         # Per-episode exploration offset: one draw per world, drawn HERE (after
         # the reset, before the first decision) and held for the whole episode.
         # The eight candidates of a GRPO group share a start and get eight
@@ -2404,6 +2413,13 @@ class RankLocalMJWarpGRPOCollector:
             (worlds,), -1, dtype=torch.int64, device=self.device
         )
         ee_z_at_first_grasp = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
+        )
+        # Return for the PRE-grasp segment: the dense reward at the moment the
+        # grasp latches. It answers "did this approach reach a good grasp?" and
+        # is deliberately blind to whether the lift then worked, which is the
+        # whole point of splitting the credit.
+        reward_at_first_grasp = torch.zeros(
             (worlds,), dtype=torch.float32, device=self.device
         )
         peak_ee_z_after_grasp = torch.zeros(
@@ -2608,6 +2624,14 @@ class RankLocalMJWarpGRPOCollector:
 
             for action_index in range(self.actions_per_policy_decision):
                 step_active = active & (decision < reset.horizons)
+                # Phase of the action about to be taken. Read before the step,
+                # so a record is "post-grasp" only if the world was ALREADY
+                # holding when it chose this action.
+                holding_now = first_grasp_step >= 0
+                if reset.prelifted is not None:
+                    holding_now = holding_now | reset.prelifted.to(
+                        dtype=torch.bool
+                    )
                 record_lists["state"].append(state_tensor.detach())
                 record_lists["prior"].append(prior.detach())
                 record_lists["action"].append(actions[:, action_index].detach())
@@ -2627,6 +2651,10 @@ class RankLocalMJWarpGRPOCollector:
                         worlds, dtype=torch.int64, device=self.device
                     )
                 )
+                if self.split_credit_at_grasp:
+                    record_lists["post_grasp_record"].append(
+                        holding_now.clone()
+                    )
                 if step_offset_std is not None:
                     # The width ACTUALLY in effect for this decision, gated or
                     # not. Recording the ungated constant would price a
@@ -2749,6 +2777,12 @@ class RankLocalMJWarpGRPOCollector:
                         candidate_rewards,
                     )
                 )
+                if self.split_credit_at_grasp:
+                    reward_at_first_grasp = torch.where(
+                        newly_grasped,
+                        result.rewards.to(dtype=torch.float32),
+                        reward_at_first_grasp,
+                    )
                 candidate_success.logical_or_(result.success)
                 active.logical_and_(~result.terminated)
                 if self.reset_on_drift:
@@ -2866,7 +2900,42 @@ class RankLocalMJWarpGRPOCollector:
         }
         record_valid = torch.cat(valid_masks, dim=0)
         record_world = records.pop("world_index")
-        records["advantage"] = world_advantage.index_select(0, record_world)
+        if self.split_credit_at_grasp:
+            # Two returns per world instead of one.
+            #
+            # The GRPO return is the last active step's reward, and that single
+            # scalar is broadcast to every step of the trajectory -- so a
+            # descent action and a lift action receive IDENTICAL credit even
+            # though the task wants opposite z from them. One residual serves
+            # both phases, and the campaign's whole history is that improving
+            # one costs the other: eleven runs got better at grasping and worse
+            # at lifting, and `offset_marginal` did the reverse, buying
+            # +0.24 -> +0.32 of post-grasp z at the price of ~19% of grasps.
+            #
+            # Splitting at the latch gives the approach a return that answers
+            # "did this reach a good grasp?" (the dense reward at the moment it
+            # latched) and leaves the lift with the terminal reward. Neither
+            # segment's gradient is then contaminated by the other's outcome.
+            # Episodes that never grasp keep the terminal reward for both, which
+            # is exactly today's behaviour.
+            pre_returns = torch.where(
+                first_grasp_step >= 0, reward_at_first_grasp, candidate_rewards
+            )
+            pre_advantage = torch_group_advantages(
+                pre_returns.reshape(self.layout.groups_per_rank, group_size),
+                normalize=self.normalize_advantage,
+                clip_abs=self.advantage_clip_abs,
+            ).reshape(-1)
+            record_post = records.pop("post_grasp_record").to(dtype=torch.bool)
+            records["advantage"] = torch.where(
+                record_post,
+                world_advantage.index_select(0, record_world),
+                pre_advantage.index_select(0, record_world),
+            )
+        else:
+            records["advantage"] = world_advantage.index_select(
+                0, record_world
+            )
         loss_mask = record_valid & informative_world.index_select(
             0, record_world
         )

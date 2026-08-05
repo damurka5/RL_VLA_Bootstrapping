@@ -79,7 +79,10 @@ for ~14M steps across four runs against a 0.30 promote threshold, so the cap has
 not moved since 171k — and in the run that fixed the lift it *fell*, with grasp
 rate 0.331 → 0.217. The old invariant was "better at grasping, worse at lifting";
 this is the same tension with the sign flipped, and one shared residual still
-cannot hold sustained −z for the descent and sustained +z for the lift.
+cannot hold sustained −z for the descent and sustained +z for the lift. The
+structural reason is now named: the GRPO return is the last active step's reward
+broadcast to every step, so both phases receive identical credit. `4d09e3d`
+splits it at the latch.
 Deterministic validation remains 0.000–0.012 in every run of the campaign: the
 mean action has never completed the task.
 
@@ -506,7 +509,8 @@ effect rather than the realised offset — the marginal needs only the width.
 | `success \| pre-grasped` | 0.797 | 0.101 | 0.092 | **0.828** |
 | `post_grasp_rise` pre-grasped | 46.0 mm | 10.9 mm | 9.9 mm | 43.9 mm |
 | `success \| normal start` | 0.218 | 0.057 | 0.053 | 0.166 |
-| `physical_grasp_rate` | 0.331 | 0.536 | 0.538 | 0.217 |
+| ever-grasped worlds | 0.231 | — | — | 0.187 |
+| `physical_grasp_rate` (step-avg) | 0.331 | 0.536 | 0.538 | 0.217 |
 | pad force | 4.27 N | 7.62 N | 7.95 N | 3.26 N |
 | curriculum cap | 0.05 | 0.03 | 0.03 | 0.05 |
 
@@ -516,9 +520,13 @@ campaign record, and held for 2.6M steps rather than peaking before a collapse.
 Both figures are 250k-step window means, as everywhere else in this report; the
 best single updates were +0.389 and 0.915.
 
-**But the trade reversed rather than resolved.** Grasp rate fell 0.331 → 0.217,
-bilateral contact 0.361 → 0.244, and `success | normal start` 0.218 → 0.166 —
-below the baseline. The campaign's invariant has always been "better at grasping,
+**But the trade reversed rather than resolved.** Worlds that ever grasped fell
+0.231 → 0.187 and the first grasp arrived 29.4 → 34.1 env steps in, with
+`success | normal start` 0.218 → 0.166 — below the baseline. (`physical_grasp_rate`
+reads a larger 0.331 → 0.217, but it averages over active steps and successful
+episodes terminate early, spending proportionally fewer steps holding — 6.18 →
+5.65 selected actions per candidate. The ever-grasped count is the honest
+figure; the step-averaged one roughly doubles the apparent loss.) The campaign's invariant has always been "better at grasping,
 worse at lifting"; this run is the same invariant with the sign flipped. One
 residual has to emit sustained −z for the descent and sustained +z for the lift,
 and it still cannot hold both. Deterministic validation is unchanged at
