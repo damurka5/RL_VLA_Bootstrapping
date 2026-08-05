@@ -118,6 +118,10 @@ DEFAULT_CATALOGS = (
 )
 
 
+class _ConnectorReached(Exception):
+    """Raised from the connector hook to abandon the rest of the forward."""
+
+
 def _load_harness() -> Any:
     spec = importlib.util.spec_from_file_location(
         "cdpr_oracle_reference_harness", HARNESS
@@ -255,24 +259,77 @@ class _Capture:
         }
         self.rows.append(row)
 
-    def compute_features(self, batch_size: int) -> None:
+    def compute_features(
+        self,
+        batch_size: int,
+        *,
+        skip_action_expert: bool = True,
+        verify_fast_path: bool = True,
+    ) -> None:
         """Run SmolVLA over the captured frames in batches, then drop them.
 
-        One forward per batch instead of one per env step. The connector hook
-        fires once per camera per forward, so the captured tensors come back
-        [batch, tokens, channels] and slice straight onto the rows.
+        One forward per batch instead of one per env step.
+
+        ``skip_action_expert`` abandons each forward the moment the connector
+        has produced its tokens, by raising out of the forward hook. The
+        connector runs in the prefix pass; everything after it is the
+        flow-matching action expert integrating a chunk of actions this probe
+        throws away. Aborting there is faithful by construction -- same model,
+        same preprocessing, same module, same tensor, just stopped early -- and
+        it needs no reimplementation of the model's internals, so it cannot
+        drift when they change.
+
+        The projected feature is then produced by the runtime's OWN
+        ``_pool_vision``, which is the code the residual is fed by, rather than
+        a copy of it here.
+
+        ``verify_fast_path`` spends one full forward on the first batch to check
+        the two paths agree before trusting the fast one. It costs a few seconds
+        and it is the difference between believing this is equivalent and
+        knowing it.
         """
 
         import torch
 
         if not self.rows:
             return
-        module = (
-            self._runtime._vision_connector() if self._keep_connector else None
-        )
+        module = self._runtime._vision_connector()
         device = getattr(self._runtime, "device", "cpu")
         total = len(self.rows)
         started = time.perf_counter()
+        expected_calls: int | None = None
+        verified = not verify_fast_path
+
+        def run(overview, wrist, states, instructions, *, abort_after):
+            """Return (captured_on_device, projected_or_None)."""
+            captured: list[Any] = []
+
+            def hook(_module, _inputs, output):
+                captured.append(output.detach())
+                if abort_after is not None and len(captured) >= abort_after:
+                    raise _ConnectorReached
+                return output
+
+            handle = module.register_forward_hook(hook)
+            projected = None
+            try:
+                with torch.inference_mode():
+                    _prior, projected = (
+                        self._runtime.sample_cdpr_chunks_and_vision_from_tensors(
+                            primary_images=overview,
+                            wrist_images=wrist,
+                            states=states,
+                            instructions=instructions,
+                            vision_dim=self._vision_dim,
+                            microbatch_size=0,
+                        )
+                    )
+            except _ConnectorReached:
+                projected = None
+            finally:
+                handle.remove()
+            return captured, projected
+
         for begin in range(0, total, max(1, int(batch_size))):
             chunk = self.rows[begin : begin + max(1, int(batch_size))]
             overview = torch.stack([r.pop("_overview") for r in chunk]).to(
@@ -284,35 +341,56 @@ class _Capture:
             states = torch.stack([r.pop("_state") for r in chunk]).to(
                 device=device
             )
-            captured: list[Any] = []
-            hook = (
-                module.register_forward_hook(
-                    lambda _m, _i, out: captured.append(
-                        out.detach().float().cpu()
-                    )
+            instructions = [r["instruction"] for r in chunk]
+
+            if expected_calls is None or not skip_action_expert:
+                # Full forward: also tells us how many times the connector fires
+                # per batch, which is what the fast path aborts on.
+                captured, projected = run(
+                    overview, wrist, states, instructions, abort_after=None
                 )
-                if module is not None
-                else None
-            )
-            try:
-                with torch.inference_mode():
-                    _prior, vision = (
-                        self._runtime.sample_cdpr_chunks_and_vision_from_tensors(
-                            primary_images=overview,
-                            wrist_images=wrist,
-                            states=states,
-                            instructions=[r["instruction"] for r in chunk],
-                            vision_dim=self._vision_dim,
-                            microbatch_size=0,
-                        )
+                expected_calls = len(captured)
+                vision = projected
+                if skip_action_expert and not verified:
+                    fast_captured, _ = run(
+                        overview,
+                        wrist,
+                        states,
+                        instructions,
+                        abort_after=expected_calls,
                     )
-            finally:
-                if hook is not None:
-                    hook.remove()
+                    fast_vision = self._runtime._pool_vision(
+                        fast_captured, self._vision_dim
+                    )
+                    delta = float(
+                        (fast_vision.float() - vision.float()).abs().max().item()
+                    )
+                    if delta > 1e-3:
+                        raise RuntimeError(
+                            "Fast path disagrees with the full forward "
+                            f"(max |delta| = {delta:.3e}). Rerun with "
+                            "--no-skip-action-expert."
+                        )
+                    print(
+                        f"[probe] fast path verified against the full forward "
+                        f"(max |delta| = {delta:.2e}); skipping the action "
+                        f"expert from here"
+                    )
+                    verified = True
+            else:
+                captured, _ = run(
+                    overview,
+                    wrist,
+                    states,
+                    instructions,
+                    abort_after=expected_calls,
+                )
+                vision = self._runtime._pool_vision(captured, self._vision_dim)
+
             vision_cpu = vision.detach().float().cpu().numpy()
             for index, row in enumerate(chunk):
                 row["vision"] = vision_cpu[index].copy()
-            if captured:
+            if self._keep_connector and captured:
                 # Overview + wrist only, matching _pool_vision; never the masked
                 # aux. Kept as [cameras*tokens, channels] rather than flattened:
                 # the 16 tokens per camera are a ~4x4 spatial grid, so WHERE the
@@ -321,7 +399,7 @@ class _Capture:
                 # flattens first cannot.
                 cams = captured[: max(1, min(2, len(captured)))]
                 stacked = np.concatenate(
-                    [cam.numpy() for cam in cams], axis=1
+                    [cam.float().cpu().numpy() for cam in cams], axis=1
                 ).astype(np.float32)
                 for index, row in enumerate(chunk):
                     row["connector"] = stacked[index].copy()
@@ -335,9 +413,6 @@ class _Capture:
             f"[probe] featurized {total} steps in {elapsed:.0f}s "
             f"({total / max(elapsed, 1e-6):.1f}/s)"
         )
-
-
-# ---------------------------------------------------------------- probe maths
 
 
 def _block_shuffled_labels(
@@ -636,7 +711,7 @@ def _stack(rows: Sequence[dict[str, Any]], key: str) -> np.ndarray:
 
 
 def _connector_reductions(
-    tokens: np.ndarray, seed: int
+    tokens: np.ndarray, seed: int, shipped: np.ndarray | None = None
 ) -> dict[str, np.ndarray]:
     """Candidate replacements for the fixed random projection.
 
@@ -667,8 +742,16 @@ def _connector_reductions(
         matrix /= np.sqrt(channels)
         return (tokens @ matrix).reshape(count, -1)
 
-    return {
-        "random 512 (shipped)": random_projection(512),
+    reductions: dict[str, np.ndarray] = {}
+    if shipped is not None:
+        # The projection the residual is ACTUALLY fed, not a re-draw of the same
+        # kind. At 1.7% retention the outcome depends heavily on which matrix
+        # was drawn, so a re-draw and the real one can disagree by more than
+        # their fold spreads -- which is itself an argument against a random
+        # projection: its usefulness is a lottery ticket, fixed at seed time.
+        reductions["SHIPPED (real _pool_vision)"] = shipped
+    reductions.update({
+        "random 512 (re-draw)": random_projection(512),
         "random 2048": random_projection(2048),
         f"channel-mean per token ({places})": tokens.mean(axis=2),
         f"per-token random x4 ({places * 4})": per_token_projection(4),
@@ -679,7 +762,8 @@ def _connector_reductions(
         f"per-token random x16 ({places * 16}) DROP-IN": per_token_projection(16),
         f"per-token random x32 ({places * 32})": per_token_projection(32),
         f"un-projected ({flat.shape[1]})": flat,
-    }
+    })
+    return reductions
 
 
 def _report_reductions(
@@ -709,7 +793,10 @@ def _report_reductions(
         f"episodes {len(set(episodes.tolist()))}\n"
     )
     out: dict[str, Any] = {}
-    for label, reduced in _connector_reductions(tokens, int(seed)).items():
+    shipped = _stack(rows, "vision") if "vision" in rows[0] else None
+    for label, reduced in _connector_reductions(
+        tokens, int(seed), shipped
+    ).items():
         scores = _dual_ridge_r2(
             reduced, target, swapped, episodes, seed=int(seed)
         )
@@ -733,7 +820,13 @@ def _report_reductions(
         "  Read the +- spread before the ranking: it is the standard deviation\n"
         "  across folds, and gaps smaller than it are not real. The DROP-IN row\n"
         "  is 512 wide, exactly what the residual takes today, so adopting it\n"
-        "  changes no tensor shape and a warm start still loads."
+        "  changes no tensor shape and a warm start still loads.\n"
+        "\n"
+        "  SHIPPED is the real projection; `random 512 (re-draw)` is another\n"
+        "  draw of the same kind. If those two disagree by more than their\n"
+        "  spreads, that is the point: at 1.7%% retention the random projection\n"
+        "  is a lottery fixed at seed time, and a per-token reduction reaches\n"
+        "  the un-projected ceiling at the same width without the gamble."
     )
     return out
 
@@ -917,8 +1010,26 @@ def _probe_and_report(
             ee_z=np.array([row["ee_z"] for row in rows]),
             target_xy=_stack(rows, "target_xy"),
             ee_xy=_stack(rows, "ee_xy"),
+            **(
+                {
+                    "connector": np.stack(
+                        [
+                            np.asarray(row["connector"], dtype=np.float32)
+                            for row in rows
+                        ]
+                    )
+                }
+                if "connector" in rows[0]
+                else {}
+            ),
         )
         print(f"\n[probe] wrote {features_path} before probing")
+        if getattr(args, "capture_only", False):
+            print(
+                "[probe] --capture-only: stopping here. Merge the shards with\n"
+                f"        --from-features <shard>/features.npz ..."
+            )
+            return 0
 
     print("\n" + "=" * 74)
     print(f"Linear probe: frozen features -> {label_key}")
@@ -1163,6 +1274,27 @@ def main(argv: Sequence[str] | None = None) -> int:
             "kernel. 0 keeps every step."
         ),
     )
+    _bool_flag = parser.add_argument
+    _bool_flag(
+        "--skip-action-expert",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help=(
+            "Abandon each forward once the connector has produced its tokens. "
+            "Everything after it is the flow-matching action expert computing a "
+            "chunk this probe discards. Verified against a full forward on the "
+            "first batch before it is trusted."
+        ),
+    )
+    parser.add_argument(
+        "--capture-only",
+        action="store_true",
+        help=(
+            "Write features.npz and stop, without probing. For running several "
+            "shards in parallel; probe the merged set afterwards by passing "
+            "every shard's file to --from-features."
+        ),
+    )
     parser.add_argument(
         "--capture-every",
         type=int,
@@ -1187,12 +1319,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--from-features",
         type=Path,
+        nargs="+",
         default=None,
         help=(
             "Re-probe a features.npz written by an earlier run instead of "
             "rolling out again. Skips the simulator and SmolVLA entirely. The "
-            "30720-d connector is not saved, so a replay probes proprio and "
-            "vision only."
+            "Accepts several files, which are concatenated with their episode "
+            "ids offset so shards stay distinct -- that is how parallel "
+            "captures are merged."
         ),
     )
     parser.add_argument("--seed", type=int, default=20260803)
@@ -1206,27 +1340,46 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.from_features is not None:
-        saved = np.load(args.from_features)
-        rows = [
-            {
-                "episode": int(saved["episode"][index]),
-                "missed": bool(saved["missed"][index]),
-                "physical_grasp": bool(saved["physical_grasp"][index]),
-                "contact_loaded": bool(saved["contact_loaded"][index]),
-                "gripper_opening": float(saved["gripper_opening"][index]),
-                "ee_z": float(saved["ee_z"][index]),
-                "proprio": saved["proprio"][index],
-                "vision": saved["vision"][index],
-                "target_xy": saved["target_xy"][index],
-                "ee_xy": saved["ee_xy"][index],
-            }
-            for index in range(int(saved["episode"].shape[0]))
-        ]
-        print(f"[probe] re-probing {len(rows)} saved steps from {args.from_features}")
-        # The 30720-d connector is not saved (it is ~750 MB at 60 episodes), so
-        # a replay probes proprio and vision only.
+        rows = []
+        offset = 0
+        has_connector = True
+        for path in args.from_features:
+            saved = np.load(path)
+            count = int(saved["episode"].shape[0])
+            local = [
+                {
+                    # Offset so two shards' episode 0 do not merge into one
+                    # episode -- which would silently break every fold split.
+                    "episode": int(saved["episode"][index]) + offset,
+                    "missed": bool(saved["missed"][index]),
+                    "physical_grasp": bool(saved["physical_grasp"][index]),
+                    "contact_loaded": bool(saved["contact_loaded"][index]),
+                    "gripper_opening": float(saved["gripper_opening"][index]),
+                    "ee_z": float(saved["ee_z"][index]),
+                    "proprio": saved["proprio"][index],
+                    "vision": saved["vision"][index],
+                    "target_xy": saved["target_xy"][index],
+                    "ee_xy": saved["ee_xy"][index],
+                }
+                for index in range(count)
+            ]
+            if "connector" in saved:
+                for index, row in enumerate(local):
+                    row["connector"] = saved["connector"][index]
+            else:
+                has_connector = False
+            rows.extend(local)
+            offset = max(row["episode"] for row in rows) + 1
+            print(f"[probe] loaded {count} steps from {path}")
+        print(
+            f"[probe] re-probing {len(rows)} steps over "
+            f"{len({row['episode'] for row in rows})} episodes"
+        )
         return _probe_and_report(
-            rows, args, keep_connector=False, features_path=None
+            rows,
+            args,
+            keep_connector=has_connector and not args.no_connector,
+            features_path=None,
         )
 
     harness = _load_harness()
@@ -1304,7 +1457,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not rows:
         print("[probe] captured no steps")
         return 1
-    capture.compute_features(int(args.feature_batch))
+    capture.compute_features(
+        int(args.feature_batch),
+        skip_action_expert=bool(args.skip_action_expert),
+    )
     return _probe_and_report(
         rows,
         args,
