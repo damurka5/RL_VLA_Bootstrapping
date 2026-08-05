@@ -2036,6 +2036,12 @@ class ValidationRound:
     candidate_rewards: Any
     candidate_success: Any
     final_xy_distance: Any
+    # Terminal and minimum end-effector height, per episode. final_xy_distance
+    # cannot separate "flew to the ceiling and stayed" from "descended, missed,
+    # then left"; these can, and the distinction decides whether the approach
+    # failure is the prior's +Z bias or a servoing failure at height.
+    final_ee_z: Any
+    min_ee_z: Any
     group_target_catalog_ids: Any
     group_shell_ids: Any
     metrics: dict[str, float]
@@ -3256,6 +3262,37 @@ class RankLocalMJWarpGRPOCollector:
             dtype=torch.float32,
             device=self.device,
         )
+        # Where the deterministic policy actually goes.
+        #
+        # final_xy_distance is misnamed -- it records dense_target_distance,
+        # which for pick_up is the 3-D EE->grasp-point distance -- and it has
+        # read 0.39-0.42 m at the end of every validation episode of every run,
+        # uniformly across objects. Ceiling-minus-grasp-point is 0.405 m, so
+        # that is consistent with the policy parking at the top of the
+        # workspace, but the distance alone cannot separate "flew up and stayed"
+        # from "descended, missed, then left". These three can:
+        #   final  -- where it ends
+        #   min    -- the lowest it ever reached, i.e. did it descend at all
+        #   pinned -- fraction ending within 2 cm of the controller ceiling
+        final_ee_z = torch.full(
+            (worlds,), float("nan"), dtype=torch.float32, device=self.device
+        )
+        min_ee_z = torch.full(
+            (worlds,), float("inf"), dtype=torch.float32, device=self.device
+        )
+        # The controller clamp the policy cannot drive above, read from the
+        # backend rather than hard-coded, so the pinned-rate stays honest if the
+        # bounds are ever retuned. The CPU reference backend exposes the same
+        # config; the fallback keeps a stripped test double from crashing here.
+        ceiling_z = float(
+            max(
+                getattr(
+                    getattr(self.backend, "config", None),
+                    "workspace_z",
+                    (0.25, 0.60),
+                )
+            )
+        )
         sampled_actions = torch.zeros(
             (), dtype=torch.int64, device=self.device
         )
@@ -3355,6 +3392,16 @@ class RankLocalMJWarpGRPOCollector:
                         time.perf_counter() - started
                     )
 
+                    ee_z_now = low_dim.ee_position[:, 2].to(
+                        dtype=torch.float32
+                    )
+                    final_ee_z = torch.where(step_active, ee_z_now, final_ee_z)
+                    min_ee_z = torch.where(
+                        step_active,
+                        torch.minimum(min_ee_z, ee_z_now),
+                        min_ee_z,
+                    )
+
                     started = time.perf_counter()
                     result = evaluate_active_sparse_tasks(
                         state=reset.task_state,
@@ -3409,6 +3456,12 @@ class RankLocalMJWarpGRPOCollector:
             final_xy_distance=final_xy_distance.reshape(
                 self.layout.groups_per_rank, group_size
             ),
+            final_ee_z=final_ee_z.reshape(
+                self.layout.groups_per_rank, group_size
+            ),
+            min_ee_z=torch.nan_to_num(
+                min_ee_z, posinf=float(ceiling_z)
+            ).reshape(self.layout.groups_per_rank, group_size),
             group_target_catalog_ids=reset.group_target_catalog_ids,
             group_shell_ids=reset.group_shell_ids,
             group_instruction_ids=reset.group_instruction_ids,
@@ -3419,6 +3472,7 @@ class RankLocalMJWarpGRPOCollector:
                     sampled_actions.item()
                 ),
                 "validation/episodes_per_rank": float(worlds),
+                "validation/controller_ceiling_z_m": float(ceiling_z),
             },
         )
 

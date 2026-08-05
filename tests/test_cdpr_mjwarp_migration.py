@@ -634,6 +634,15 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             final_xy_distance=torch.full(
                 (catalog_count, 2), 0.03, dtype=torch.float32
             ),
+            # Ends low and reached the grasp height: the shape a policy that
+            # actually servos to the object would produce, so a regression that
+            # reports the ceiling instead is visible here.
+            final_ee_z=torch.full(
+                (catalog_count, 2), 0.21, dtype=torch.float32
+            ),
+            min_ee_z=torch.full(
+                (catalog_count, 2), 0.19, dtype=torch.float32
+            ),
             group_target_catalog_ids=torch.arange(
                 catalog_count, dtype=torch.int64
             ),
@@ -1635,3 +1644,85 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MJWarpValidationHeightMetricsTests(unittest.TestCase):
+    """The approach diagnostic has to survive aggregation.
+
+    `_synchronize_validation_rounds` forwards per-round scalars only when the
+    key ends in `_time_s`, so a metric returned in `ValidationRound.metrics`
+    would be silently dropped and never reach TensorBoard. These flow as
+    per-episode tensors for that reason, and the point of the test is that the
+    numbers arrive, not merely that the code runs.
+    """
+
+    def test_height_metrics_reach_the_aggregated_output(self):
+        import torch
+
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            _synchronize_validation_rounds,
+        )
+
+        groups = len(ACTIVE_CDPR_CATALOGS)
+        # Half the episodes park at the controller ceiling, half reach the
+        # grasp height -- so a pinned rate of exactly 0.5 is the correct answer
+        # and an aggregation that averages the wrong axis will not produce it.
+        final = torch.tensor([[0.60, 0.21]] * groups, dtype=torch.float32)
+        lowest = torch.tensor([[0.59, 0.19]] * groups, dtype=torch.float32)
+        round_ = ValidationRound(
+            candidate_rewards=torch.full((groups, 2), 0.75, dtype=torch.float32),
+            candidate_success=torch.zeros((groups, 2), dtype=torch.bool),
+            final_xy_distance=torch.full((groups, 2), 0.40, dtype=torch.float32),
+            final_ee_z=final,
+            min_ee_z=lowest,
+            group_target_catalog_ids=torch.arange(groups, dtype=torch.int64),
+            group_shell_ids=torch.zeros((groups,), dtype=torch.int64),
+            metrics={
+                "validation/time_s": 1.0,
+                "validation/environment_actions": 64.0,
+                "validation/controller_ceiling_z_m": 0.60,
+            },
+        )
+        metrics = _synchronize_validation_rounds(
+            [round_], device=torch.device("cpu")
+        )
+        self.assertAlmostEqual(
+            metrics["validation/final_ee_z_mean_m"], 0.405, places=3
+        )
+        self.assertAlmostEqual(
+            metrics["validation/min_ee_z_mean_m"], 0.39, places=3
+        )
+        self.assertAlmostEqual(metrics["validation/ceiling_pinned_rate"], 0.5)
+        self.assertAlmostEqual(
+            metrics["validation/controller_ceiling_z_m"], 0.60
+        )
+
+    def test_a_policy_that_never_descends_reads_as_fully_pinned(self):
+        import torch
+
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            _synchronize_validation_rounds,
+        )
+
+        groups = len(ACTIVE_CDPR_CATALOGS)
+        round_ = ValidationRound(
+            candidate_rewards=torch.full((groups, 2), 0.16, dtype=torch.float32),
+            candidate_success=torch.zeros((groups, 2), dtype=torch.bool),
+            final_xy_distance=torch.full((groups, 2), 0.40, dtype=torch.float32),
+            final_ee_z=torch.full((groups, 2), 0.60, dtype=torch.float32),
+            min_ee_z=torch.full((groups, 2), 0.55, dtype=torch.float32),
+            group_target_catalog_ids=torch.arange(groups, dtype=torch.int64),
+            group_shell_ids=torch.zeros((groups,), dtype=torch.int64),
+            metrics={
+                "validation/time_s": 1.0,
+                "validation/environment_actions": 64.0,
+                "validation/controller_ceiling_z_m": 0.60,
+            },
+        )
+        metrics = _synchronize_validation_rounds(
+            [round_], device=torch.device("cpu")
+        )
+        self.assertEqual(metrics["validation/ceiling_pinned_rate"], 1.0)
+        # min_ee_z well above the 0.19-0.21 m grasp height is the signature of
+        # a policy that never descends at all -- the hypothesis under test.
+        self.assertGreater(metrics["validation/min_ee_z_mean_m"], 0.50)

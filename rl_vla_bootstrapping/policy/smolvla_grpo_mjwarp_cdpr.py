@@ -359,6 +359,14 @@ def _synchronize_validation_rounds(
     distances = torch.zeros_like(counts)
     reward_counts = torch.zeros_like(counts)
     distance_counts = torch.zeros_like(counts)
+    # Where the deterministic policy ends up, and the lowest it ever got.
+    # Accumulated as scalars rather than per-catalog: the question is whether
+    # the policy descends at all, which is not an object-specific one.
+    height_sum = torch.zeros((), dtype=torch.float64, device=device)
+    min_height_sum = torch.zeros((), dtype=torch.float64, device=device)
+    ceiling_pinned = torch.zeros((), dtype=torch.float64, device=device)
+    height_count = torch.zeros((), dtype=torch.float64, device=device)
+    ceiling_z = 0.0
     environment_actions = torch.zeros(
         (), dtype=torch.float64, device=device
     )
@@ -428,6 +436,24 @@ def _synchronize_validation_rounds(
         environment_actions += float(
             item.metrics.get("validation/environment_actions", 0.0)
         )
+        ceiling_z = max(
+            ceiling_z,
+            float(item.metrics.get("validation/controller_ceiling_z_m", 0.0)),
+        )
+        flat_height = item.final_ee_z.reshape(-1).to(dtype=torch.float64)
+        flat_min_height = item.min_ee_z.reshape(-1).to(dtype=torch.float64)
+        finite_height = torch.isfinite(flat_height)
+        height_count += finite_height.to(dtype=torch.float64).sum()
+        height_sum += torch.where(
+            finite_height, flat_height, torch.zeros_like(flat_height)
+        ).sum()
+        min_height_sum += torch.where(
+            finite_height, flat_min_height, torch.zeros_like(flat_min_height)
+        ).sum()
+        if ceiling_z > 0.0:
+            ceiling_pinned += (
+                finite_height & (flat_height >= (ceiling_z - 0.02))
+            ).to(dtype=torch.float64).sum()
 
     if dist.is_available() and dist.is_initialized():
         for tensor in (
@@ -442,6 +468,13 @@ def _synchronize_validation_rounds(
         ):
             dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
         dist.all_reduce(environment_actions, op=dist.ReduceOp.SUM)
+        for tensor in (
+            height_sum,
+            min_height_sum,
+            ceiling_pinned,
+            height_count,
+        ):
+            dist.all_reduce(tensor, op=dist.ReduceOp.SUM)
         if timing_values.numel() > 0:
             dist.all_reduce(timing_values, op=dist.ReduceOp.MAX)
 
@@ -470,6 +503,22 @@ def _synchronize_validation_rounds(
         ),
         "validation/environment_actions": float(environment_actions.item()),
         "validation/rounds_per_rank": float(len(rounds)),
+        # The approach diagnostic. final_xy_distance_mean_m has read 0.39-0.42 m
+        # at the end of every validation episode of every run, against a
+        # ceiling-minus-grasp-point of ~0.405 m -- consistent with the policy
+        # parking at the top of the workspace, but the distance alone cannot
+        # prove it. final_ee_z says where it ends; min_ee_z says whether it ever
+        # descended toward the 0.19-0.21 m grasp height at all.
+        "validation/final_ee_z_mean_m": float(
+            (height_sum / height_count.clamp_min(1.0)).item()
+        ),
+        "validation/min_ee_z_mean_m": float(
+            (min_height_sum / height_count.clamp_min(1.0)).item()
+        ),
+        "validation/ceiling_pinned_rate": float(
+            (ceiling_pinned / height_count.clamp_min(1.0)).item()
+        ),
+        "validation/controller_ceiling_z_m": float(ceiling_z),
     }
     for key, value in zip(
         timing_keys, timing_values.detach().cpu().tolist()
