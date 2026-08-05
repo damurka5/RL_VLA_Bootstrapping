@@ -57,6 +57,7 @@ import importlib.util
 import json
 import os
 import sys
+import time
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -149,12 +150,15 @@ class _Capture:
         vision_dim: int,
         state_dim: int,
         keep_connector: bool,
+        capture_every: int = 1,
     ) -> None:
         self._harness = harness
         self._runtime = runtime
         self._vision_dim = int(vision_dim)
         self._state_dim = int(state_dim)
         self._keep_connector = bool(keep_connector)
+        self._capture_every = max(1, int(capture_every))
+        self._step_index = 0
         self._original = harness._GraspShim.update
         self.episode = -1
         self.missed = False
@@ -163,6 +167,9 @@ class _Capture:
     def start_episode(self, *, missed: bool) -> None:
         self.episode += 1
         self.missed = bool(missed)
+        # Restart the stride each episode so every episode is sampled the same
+        # way, rather than the phase drifting with episode length.
+        self._step_index = 0
 
     def install(self) -> None:
         capture = self
@@ -178,7 +185,25 @@ class _Capture:
         self._harness._GraspShim.update = self._original
 
     def _record(self, shim: Any, reset: Any, low_dim: Any, result: Any) -> None:
+        """Store the frame and the labels. SmolVLA runs later, in batches.
+
+        The first version ran one SmolVLA forward per env step at batch 2 --
+        6240 forwards for 60 episodes, 35 minutes, with the GPU almost idle.
+        Two things were wrong. Every step was featurized even though the probes
+        subsample to ~24 per episode and throw ~75% away, and each forward was
+        batch 2 because the harness clones two worlds and only world 0 is read.
+
+        So capture is now cheap: render, keep the frame as fp16 on the host,
+        record the labels, and skip the step entirely unless it is one of the
+        ones that will be probed. The SmolVLA forwards happen afterwards in
+        `compute_features`, batched.
+        """
+
         import torch
+
+        self._step_index += 1
+        if (self._step_index - 1) % self._capture_every:
+            return
 
         _low_dim, physical_grasp, diagnostics = result
         world = 0
@@ -198,31 +223,6 @@ class _Capture:
             ),
             reset.task_state.target_slots,
         ]
-        connector_flat: list[Any] = []
-        hook = None
-        if self._keep_connector:
-            module = self._runtime._vision_connector()
-            hook = module.register_forward_hook(
-                lambda _m, _i, out: connector_flat.append(
-                    out.detach().float().cpu()
-                )
-            )
-        try:
-            with torch.inference_mode():
-                _prior, vision = (
-                    self._runtime.sample_cdpr_chunks_and_vision_from_tensors(
-                        primary_images=cameras.overview,
-                        wrist_images=cameras.wrist,
-                        states=state,
-                        instructions=reset.instructions,
-                        vision_dim=self._vision_dim,
-                        microbatch_size=0,
-                    )
-                )
-        finally:
-            if hook is not None:
-                hook.remove()
-
         row: dict[str, Any] = {
             "episode": int(self.episode),
             "missed": bool(self.missed),
@@ -231,10 +231,8 @@ class _Capture:
             "gripper_opening": float(low_dim.gripper_opening[world].item()),
             "ee_z": float(low_dim.ee_position[world, 2].item()),
             # Absolute object XY and end-effector XY, kept separately so the
-            # actionable quantity (the EE->target vector the policy must servo
-            # on) and the raw location can be probed independently, and so the
-            # regression control can swap one episode's object for another's
-            # while keeping the real trajectory.
+            # raw location can be probed and so the regression control can swap
+            # one episode's object for another's while keeping the trajectory.
             "target_xy": target_position[world, :2]
             .detach()
             .float()
@@ -248,20 +246,95 @@ class _Capture:
             .numpy()
             .copy(),
             "proprio": state[world].detach().float().cpu().numpy().copy(),
-            "vision": vision[world].detach().float().cpu().numpy().copy(),
+            "instruction": str(reset.instructions[world]),
+            # fp16 on the host: at ~26 kept steps per episode these are a few
+            # hundred MB, against several GB if every step were kept.
+            "_overview": cameras.overview[world].detach().half().cpu(),
+            "_wrist": cameras.wrist[world].detach().half().cpu(),
+            "_state": state[world].detach().float().cpu(),
         }
-        if self._keep_connector and connector_flat:
-            # Overview + wrist only, matching _pool_vision; never the masked aux.
-            # Kept as [cameras*tokens, channels] rather than flattened: the 16
-            # tokens per camera are a ~4x4 spatial grid, so WHERE the object is
-            # lives in WHICH token carries it, and a reduction that respects
-            # that axis can keep position where one that flattens first cannot.
-            cams = connector_flat[: max(1, min(2, len(connector_flat)))]
-            row["connector"] = (
-                np.concatenate([cam[world].numpy() for cam in cams], axis=0)
-                .astype(np.float32)
-            )
         self.rows.append(row)
+
+    def compute_features(self, batch_size: int) -> None:
+        """Run SmolVLA over the captured frames in batches, then drop them.
+
+        One forward per batch instead of one per env step. The connector hook
+        fires once per camera per forward, so the captured tensors come back
+        [batch, tokens, channels] and slice straight onto the rows.
+        """
+
+        import torch
+
+        if not self.rows:
+            return
+        module = (
+            self._runtime._vision_connector() if self._keep_connector else None
+        )
+        device = getattr(self._runtime, "device", "cpu")
+        total = len(self.rows)
+        started = time.perf_counter()
+        for begin in range(0, total, max(1, int(batch_size))):
+            chunk = self.rows[begin : begin + max(1, int(batch_size))]
+            overview = torch.stack([r.pop("_overview") for r in chunk]).to(
+                device=device, dtype=torch.float32
+            )
+            wrist = torch.stack([r.pop("_wrist") for r in chunk]).to(
+                device=device, dtype=torch.float32
+            )
+            states = torch.stack([r.pop("_state") for r in chunk]).to(
+                device=device
+            )
+            captured: list[Any] = []
+            hook = (
+                module.register_forward_hook(
+                    lambda _m, _i, out: captured.append(
+                        out.detach().float().cpu()
+                    )
+                )
+                if module is not None
+                else None
+            )
+            try:
+                with torch.inference_mode():
+                    _prior, vision = (
+                        self._runtime.sample_cdpr_chunks_and_vision_from_tensors(
+                            primary_images=overview,
+                            wrist_images=wrist,
+                            states=states,
+                            instructions=[r["instruction"] for r in chunk],
+                            vision_dim=self._vision_dim,
+                            microbatch_size=0,
+                        )
+                    )
+            finally:
+                if hook is not None:
+                    hook.remove()
+            vision_cpu = vision.detach().float().cpu().numpy()
+            for index, row in enumerate(chunk):
+                row["vision"] = vision_cpu[index].copy()
+            if captured:
+                # Overview + wrist only, matching _pool_vision; never the masked
+                # aux. Kept as [cameras*tokens, channels] rather than flattened:
+                # the 16 tokens per camera are a ~4x4 spatial grid, so WHERE the
+                # object is lives in WHICH token carries it, and a reduction
+                # that respects that axis can keep position where one that
+                # flattens first cannot.
+                cams = captured[: max(1, min(2, len(captured)))]
+                stacked = np.concatenate(
+                    [cam.numpy() for cam in cams], axis=1
+                ).astype(np.float32)
+                for index, row in enumerate(chunk):
+                    row["connector"] = stacked[index].copy()
+            print(
+                f"[probe] features {min(begin + len(chunk), total)}/{total}",
+                end="\r",
+                flush=True,
+            )
+        elapsed = time.perf_counter() - started
+        print(
+            f"[probe] featurized {total} steps in {elapsed:.0f}s "
+            f"({total / max(elapsed, 1e-6):.1f}/s)"
+        )
 
 
 # ---------------------------------------------------------------- probe maths
@@ -1091,6 +1164,27 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--capture-every",
+        type=int,
+        default=4,
+        help=(
+            "Featurize every Nth env step. The probes subsample to "
+            "--max-steps-per-episode anyway, so featurizing all ~104 steps of "
+            "an episode computes ~75%% of them to be discarded. 1 restores the "
+            "original behaviour."
+        ),
+    )
+    parser.add_argument(
+        "--feature-batch",
+        type=int,
+        default=64,
+        help=(
+            "SmolVLA batch for the featurization pass. The rollout harness "
+            "clones two worlds and only world 0 is read, so a per-step forward "
+            "runs at batch 2 and leaves the GPU idle. Lower this if it OOMs."
+        ),
+    )
+    parser.add_argument(
         "--from-features",
         type=Path,
         default=None,
@@ -1145,6 +1239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         vision_dim=vision_dim,
         state_dim=state_dim,
         keep_connector=not args.no_connector,
+        capture_every=int(args.capture_every),
     )
 
     # Displace the grasp point on a chosen fraction of episodes so the gripper
@@ -1209,6 +1304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not rows:
         print("[probe] captured no steps")
         return 1
+    capture.compute_features(int(args.feature_batch))
     return _probe_and_report(
         rows,
         args,
