@@ -66,7 +66,8 @@ no-op. Fixed in `80f6c35`.
 | success \| normal start | — | 0.21 at the 5 cm cap |
 | `post_grasp_action_z_mean` | — | **+0.33**, above the +0.30 lift threshold |
 | `post_grasp_rise` (pre-grasped) | — | 44–48 mm against a 50 mm bar |
-| deterministic validation | — | **0.001**, and 0.40 m from the object |
+| deterministic validation | — | **0.001**, and 0.40 m *horizontally* from the object |
+| validation final / min ee_z | — | 0.201 / 0.174 m — height is correct |
 | curriculum cap | reached 0.23 | 0.05 |
 
 The pre-grasped lift is solved as far as sampled success goes, and §4.9 explains
@@ -83,13 +84,15 @@ wash against the baseline: normal-start success 0.206 against 0.202, ever-graspe
 
 **Which is the finding.** Deterministic validation has read 0.000–0.012 all
 campaign, and the metric beside it says why: the policy ends every validation
-episode **0.39–0.42 m from the grasp point**, uniformly across objects, against a
-ceiling-minus-grasp-point of 0.405 m — pinned at the top of the workspace, from
-starts capped at 5 cm. `policy_target_cosine_mean` 0.09 says the same thing
-another way. **The mean policy has never learned to servo to the object**; every
-success in this campaign is exploration noise finding it from a start already
-close, which is also why the cap has never left 0.05 m. §4.10 has the evidence
-and the one-line check that would confirm it directly.
+episode **0.40 m from the grasp point**, from a start capped at 5 cm. Direct
+measurement (`95b4759`) shows the height is **correct** — it ends at 0.2006 m,
+descends to 0.174 m, and not one episode of 1024 finishes near the ceiling — so
+**all 0.40 m of the miss is horizontal**. The Z arc is finished; the policy
+reaches the right height, descends and lifts. **What it cannot do is localize the
+object in XY**: `policy_target_cosine_mean` is 0.11 and the frozen prior's is
+0.05, both 2-D XY cosines against the direction to the object. Every success is
+exploration noise finding an object already within 5 cm, which is why the cap has
+never left 0.05 m. §4.10 has the decomposition.
 
 ### Step accounting
 
@@ -599,35 +602,56 @@ bought a correct mechanism and no capability.
 the entire campaign and was treated as a curiosity. The metric next to it is the
 explanation. `validation/final_xy_distance_mean_m` — misnamed, it records
 `dense_target_distance`, which for pick-up is the **3-D** EE→grasp-point distance
-— reads **0.39–0.42 m** at the end of every validation episode, in all three
-runs, uniformly across objects:
+— reads **0.39–0.42 m** at the end of every validation episode, in every run,
+uniformly across objects:
 
 | object | apple | tomato | orange | potato | mug | banana |
 |---|---:|---:|---:|---:|---:|---:|
 | final distance (mm) | 403 | 433 | 340 | 429 | 336 | 416 |
 
-The controller workspace is `z ∈ [0.18, 0.60]` and grasp points sit at
-0.19–0.21 m, so ceiling-minus-grasp-point is **0.405 m**. Validation starts are
-capped at the same 5 cm as training and validation runs the full task
-(`allow_prelifted=False`), so the deterministic policy is not failing to close a
-gap — it is opening one, and ending pinned near the top of the workspace.
+Validation starts are capped at the same 5 cm as training and validation runs the
+full task (`allow_prelifted=False`), so the policy is not failing to close a gap.
+It opens one.
 
-That is consistent with everything the campaign has measured and never
-assembled: `policy_target_cosine_mean` 0.09 and `residual_target_cosine_mean`
-0.03–0.06 (the action is near-orthogonal to the direction to the object); the
-frozen prior's documented +Z bias; the cap frozen at 5 cm since 171k, because at
-5 cm the σ = 0.333 exploration noise can stumble onto the object and at anything
-wider it cannot; and sampled success ~0.21 against deterministic ~0.001.
+The first reading of that was **wrong** and is recorded here because it was
+acted on. Ceiling-minus-grasp-point is 0.405 m, the frozen prior has a documented
++Z bias, and 0.40 m matched it almost exactly, so the inference was that the
+policy flies to the top of the workspace. `95b4759` added the three metrics that
+could settle it. They settle it the other way:
 
-**The mean policy has never learned to servo to the object. Every success in this
-campaign is exploration noise finding it from a start already 5 cm away.** The
-lift work in §4.9 is real and the credit split is real, but they improved the
-behaviour *after* the object is reached, which is not the part that was missing.
+| | measured | meaning |
+|---|---:|---|
+| `validation/final_ee_z_mean_m` | **0.2006 m** | ends *at* the grasp height (0.19–0.21) |
+| `validation/min_ee_z_mean_m` | **0.174 m** | descends past it, to the 0.18 m floor |
+| `validation/ceiling_pinned_rate` | **0.000** | not one episode of 1024 ends high |
 
-This is an inference from the distance metric and the geometry, not a direct
-measurement: nothing logs the terminal end-effector height in validation. One
-line adding `ee_z` to the validation diagnostics would settle it, and should be
-the next thing run, before any further training.
+**The height is correct. All 0.40 m of the miss is horizontal** — the XY
+component works out to 399.5–399.8 mm for any grasp height in the 0.185–0.210 m
+range. The policy descends properly, holds the right height, and translates
+about 40 cm sideways, from a start 5 cm away, into the workspace XY clamp at
+±0.28 m. A driftless random walk at σ = 0.333 over 128 steps produces ~56 mm of
+XY drift, so this is sustained directed motion, not noise.
+
+Which is what the aiming metrics have said all along, unread: these are **2-D XY**
+cosines against the direction to the object, and they are
+`policy_target_cosine_mean` 0.11, `prior_target_cosine_mean` 0.05,
+`residual_target_cosine_mean` 0.06. The frozen prior does not aim in XY and the
+residual does not fix it.
+
+So the campaign's Z arc — the dead zone, the exploration estimator, the credit
+split — was correct, and it is finished: the policy now reaches the right height,
+descends, and lifts. **The bottleneck is that it cannot localize the object
+horizontally.** Every success is exploration noise finding an object that was
+already within 5 cm, which is also why the cap has never promoted past 0.05 m.
+
+That points at the one measured deficiency left unaddressed. The residual's only
+view of the world is a **frozen random projection** of SmolVLA's connector
+tokens, and §4.9 measured it losing a lot: grasp state decodes at 0.904 from the
+un-projected connector and 0.682 through the projection. The campaign's earlier
+probe put target *position* at R² ≈ 0.44 from the connector before any
+projection. Whether the 512-d feature the residual actually receives retains
+enough to servo on has never been measured, and it is the next thing to measure
+— a regression probe for target XY, no training required.
 
 ---
 
@@ -691,16 +715,21 @@ while `post_grasp_action_z_mean` held at +0.325. Both phases coexist and the
 state is stable. It bought no capability: the full-task numbers are level with
 the baseline.
 
-**The policy does not servo to the object — the live bottleneck, and the only
-one that matters.** Deterministic validation ends 0.39–0.42 m from the grasp
-point against a ceiling-minus-grasp-point of 0.405 m, uniformly across six
-objects and identically in all three recent runs; `policy_target_cosine_mean` is
-0.09 and `residual_target_cosine_mean` 0.03–0.06. Sampled success ~0.21 comes
-from starts capped at 5 cm plus σ = 0.333 noise, which is also why the cap has
-never promoted past 0.05 m — at anything wider, noise cannot find the object.
-Everything else in this report improves what happens *after* the object is
-reached. **Confirm it first** (§4.10: log the terminal end-effector height in
-validation, one line) before spending another run on anything else.
+**The policy cannot localize the object in XY — the live bottleneck, and the
+only one that matters.** Measured, not inferred (§4.10): validation ends at
+0.2006 m height with a ceiling-pinned rate of 0.000, so the height is right and
+all 0.40 m of the miss is horizontal, from a 5 cm start, against ~56 mm of XY
+drift a random walk would produce. `policy_target_cosine_mean` 0.11,
+`prior_target_cosine_mean` 0.05, `residual_target_cosine_mean` 0.06 — near-blind,
+and the prior is blind too.
+
+The next measurement is a regression probe of the **512-d frozen random
+projection for target XY**, extending `tools/audit/grasp_feature_probe.py`. That
+feature is the residual's only view of the world, and it is already measured to
+lose a lot: grasp state decodes at 0.904 un-projected and 0.682 through the
+projection. If target XY does not survive it, no amount of RL will make the
+residual servo and the fix is the vision path — a learned or wider projection, or
+letting the LoRA reach the encoder. No training required to find out.
 
 **The 512-d vision projection is lossy.** The frozen random projection the
 residual is fed decodes grasp state at 0.682 where the un-projected connector
@@ -708,9 +737,9 @@ manages 0.904. Independent of the lift question, and untested as a change.
 
 **~~The train/validation gap~~ — EXPLAINED, see §4.10.** Training normal-start
 success ~0.21 against deterministic 0.001 is not a generalization gap. The
-deterministic policy drives away from the object and parks at the workspace
-ceiling; the sampled policy stumbles onto it from 5 cm. Same task, same starts —
-the difference is entirely the exploration noise.
+deterministic policy holds the correct height and drifts ~40 cm sideways; the
+sampled policy stumbles onto an object already within 5 cm. Same task, same
+starts — the difference is entirely the exploration noise.
 
 **The cosine metrics need a prelifted split.** They are a decision-0 probe against
 the direction to the object, and at `prelifted: 0.5` half the worlds start with
@@ -788,5 +817,7 @@ Phase 1 commits, in order:
 | `88b0b30` | offset on again, now that it reaches the gradient |
 | `a38dfb7` | **separate returns for the approach and the lift**, split at the latch |
 | `97c2e05` | report: honest ever-grasped figure in place of the step-averaged one |
+| `95b4759` | **validation end-effector height** — settles where the policy actually goes |
+| `510b714` | `RLVLA_HF_OFFLINE` for a cached box with no route to huggingface.co |
 
 Phase 0 fixes referenced: `c76cbb1`, `17a83f7`, `7d99c3e`, `64c1437`.
