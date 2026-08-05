@@ -550,6 +550,7 @@ class SmolVLARuntime:
         model_image_size: int | None = None,
         compile_model: bool = False,
         compile_mode: str = "max-autotune",
+        vision_pooling: str = "flat_random",
         original_sample_actions: Any | None = None,
     ) -> None:
         self.policy = policy
@@ -565,6 +566,12 @@ class SmolVLARuntime:
         )
         self.compile_model = bool(compile_model)
         self.compile_mode = str(compile_mode)
+        self.vision_pooling = str(vision_pooling)
+        if self.vision_pooling not in ("flat_random", "per_token_random"):
+            raise ValueError(
+                "vision_pooling must be 'flat_random' or 'per_token_random', "
+                f"got {self.vision_pooling!r}."
+            )
         self._original_sample_actions = original_sample_actions
         self._compile_fallback_used = False
 
@@ -588,6 +595,7 @@ class SmolVLARuntime:
         model_image_size: int | None = None,
         compile_model: bool = False,
         compile_mode: str = "max-autotune",
+        vision_pooling: str = "flat_random",
     ) -> "SmolVLARuntime":
         if torch is None:
             raise RuntimeError("SmolVLA runtime requires PyTorch plus `lerobot[smolvla]`.")
@@ -683,6 +691,7 @@ class SmolVLARuntime:
             model_image_size=resolved_model_image_size,
             compile_model=compile_enabled,
             compile_mode=str(compile_mode),
+            vision_pooling=str(vision_pooling),
             original_sample_actions=original_sample_actions,
         )
 
@@ -1011,13 +1020,37 @@ class SmolVLARuntime:
         return proj
 
     def _pool_vision(self, captured: list[Any], out_dim: int) -> Any:
-        """Flatten the overview + wrist connector tokens and fixed-project them.
+        """Reduce the connector tokens to the width the residual takes.
 
         ``captured`` holds one [B, 16, 960] tensor per camera in image order
-        (overview, wrist, aux). The 16 tokens are a ~4x4 spatial grid, so the
-        flatten preserves the position information the residual needs; only the
-        real cameras (overview, wrist) are used, never the masked aux view.
+        (overview, wrist, aux). Only the real cameras are used, never the masked
+        aux view.
+
+        Two modes, and the difference decides whether the residual can see the
+        object at all.
+
+        ``flat_random`` -- the original. Flatten both cameras to 30720 and apply
+        a fixed random projection to 512. A fixed random projection retains only
+        ``d_out/d_in`` of any linearly decodable signal, and 512 of 30720 is
+        **1.7%**. Measured on MJWarp: the object's direction is decodable from
+        the un-projected tokens at cosine +0.41 and from this at +0.09. The 16
+        tokens are a ~4x4 spatial grid, so WHERE the object is lives in WHICH
+        token carries it -- and flattening hands that structure to a random
+        matrix that mixes it away.
+
+        ``per_token_random`` -- reduce CHANNELS only, with one projection shared
+        across tokens, and keep the token axis. 32 places x 16 channels = the
+        same 512 the residual already takes, so no tensor shape changes and a
+        warm start still loads. Measured at that identical width: cosine +0.39
+        against an un-projected ceiling of +0.41.
+
+        Note what a mode change means: the feature keeps its shape but not its
+        meaning, so a residual carrying weights trained against the other mode
+        has to relearn its vision path. It does not have to relearn anything
+        else.
         """
+
+        import torch
 
         cams = captured[: max(1, min(2, len(captured)))]
         # The connector tokens are created under the runtime's inference_mode, so
@@ -1025,6 +1058,27 @@ class SmolVLARuntime:
         # contagious and, once concatenated into the residual state, would make
         # that state unusable for backward in the GRPO update.
         with torch.inference_mode(False), torch.no_grad():
+            if self.vision_pooling == "per_token_random":
+                parts = []
+                for cam in cams:
+                    buf = torch.empty(
+                        cam.shape, dtype=torch.float32, device=cam.device
+                    )
+                    buf.copy_(cam)
+                    parts.append(buf)
+                tokens = torch.cat(parts, dim=1)
+                places = int(tokens.shape[1])
+                if int(out_dim) % places:
+                    raise ValueError(
+                        f"per_token_random needs residual_vision_dim divisible "
+                        f"by the token count: {out_dim} % {places} != 0."
+                    )
+                proj = self._vision_projection(
+                    int(tokens.shape[-1]),
+                    int(out_dim) // places,
+                    tokens.device,
+                )
+                return (tokens @ proj).reshape(int(tokens.shape[0]), -1).clone()
             parts = []
             for cam in cams:
                 buf = torch.empty(

@@ -765,13 +765,24 @@ signal — **1.7%**. Measured: the object's direction is decodable from the
 un-projected connector at cosine +0.336 and from the projection at **+0.004**.
 The residual's only view of the world does not say where the object is.
 
-**Replace the projection — the live work.** Widening cannot fix it (8192 dims
-still keeps 27%). The connector is 16 tokens × 960 channels per camera and the
-tokens are a ~4×4 spatial layout, so position lives in *which* token carries the
-object, and flattening before reducing destroys exactly that. `b2b3c5c` compares
-candidate reductions on captured features with no training. Whatever wins there
-is the change to make, and it is the first change in the campaign aimed at the
-approach rather than at the lift.
+**~~Replace the projection~~ — DONE, `residual_vision_pooling`.** Measured over
+120 episodes, at the identical 512 width:
+
+| reduction | dims | direction cosine |
+|---|---:|---:|
+| `flat_random` (shipped) | 512 | +0.090 ± 0.070 |
+| **`per_token_random`** | **512** | **+0.389 ± 0.164** |
+| un-projected ceiling | 30720 | +0.412 ± 0.151 |
+
+Reducing channels only, with one projection shared across tokens, keeps the
+spatial grid and recovers the whole ceiling at no extra width. Widening
+`flat_random` cannot: 8192 dims still keeps 27%, and its yield is a lottery
+fixed at seed time — two draws of the same kind scored +0.44 and +0.09 on the
+same data. The feature keeps its shape, so warm starts still load and only the
+residual's vision path relearns.
+
+This is the first change in the campaign aimed at the approach rather than the
+lift, and the first with a mechanism measured before the run rather than after.
 
 **The 512-d vision projection is lossy.** The frozen random projection the
 residual is fed decodes grasp state at 0.682 where the un-projected connector

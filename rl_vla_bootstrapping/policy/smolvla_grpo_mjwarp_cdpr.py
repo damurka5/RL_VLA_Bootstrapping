@@ -1279,6 +1279,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 # microbatches, so the no_grad rollout keeps its speedup.
                 compile_model=bool(args.smolvla_compile_model),
                 compile_mode=str(args.smolvla_compile_mode),
+                vision_pooling=str(
+                    getattr(args, "residual_vision_pooling", "flat_random")
+                ),
             )
 
         include_relative_target = bool(

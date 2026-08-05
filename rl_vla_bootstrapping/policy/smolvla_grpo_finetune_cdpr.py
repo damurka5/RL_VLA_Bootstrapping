@@ -339,6 +339,24 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--residual-vision-dim", type=int, default=512)
+    parser.add_argument(
+        "--residual-vision-pooling",
+        choices=("flat_random", "per_token_random"),
+        default="flat_random",
+        help=(
+            "How SmolVLA's connector tokens are reduced to the residual's "
+            "vision feature. flat_random flattens both cameras to 30720 and "
+            "applies a fixed random projection; it retains only d_out/d_in of "
+            "any linearly decodable signal, which at 512 of 30720 is 1.7%, and "
+            "measured on MJWarp it drops the object's direction from cosine "
+            "+0.41 (un-projected) to +0.09. per_token_random reduces channels "
+            "only, sharing one projection across tokens and keeping the 4x4 "
+            "spatial grid where position lives: +0.39 at the SAME 512 width, so "
+            "no tensor shape changes and a warm start still loads. The feature "
+            "keeps its shape but not its meaning, so a residual trained against "
+            "the other mode relearns its vision path -- and nothing else."
+        ),
+    )
     # --- SmolVLA action-expert LoRA fine-tune (off by default) ---
     _bool_arg(
         parser,

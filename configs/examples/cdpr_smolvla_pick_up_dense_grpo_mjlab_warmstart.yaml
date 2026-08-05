@@ -522,6 +522,33 @@ training:
       residual_relative_target: false
       residual_vision_features: true
       residual_vision_dim: 512
+      # HOW the connector tokens become that 512-d feature, and it is the
+      # difference between a policy that can aim and one that cannot.
+      #
+      # flat_random (the original) flattens both cameras to 30720 and applies a
+      # fixed random projection. A random projection retains only d_out/d_in of
+      # any linearly decodable signal -- 512 of 30720 is 1.7% -- and measured on
+      # MJWarp over 120 episodes it takes the object's direction from cosine
+      # +0.41 un-projected to +0.09. That is why the deterministic policy holds
+      # the correct height (terminal ee_z 0.2006 m, ceiling-pinned rate 0.000)
+      # and still misses by 0.40 m HORIZONTALLY, why policy_target_cosine_mean
+      # has never left ~0.11, why the cap has never promoted past 0.05 m, and
+      # why deterministic validation has read ~0.001 for 52M steps. The policy
+      # was never blind to the grasp; it was blind to where the object is.
+      #
+      # per_token_random reduces channels only, sharing one projection across
+      # tokens, and keeps the 16-token ~4x4 spatial grid where position lives.
+      # 32 places x 16 channels = the same 512, so no tensor shape changes and a
+      # warm start still loads. Measured at that identical width: cosine +0.39
+      # against an un-projected ceiling of +0.41 -- the whole of it, at no extra
+      # width. Widening flat_random instead cannot get there: 8192 dims still
+      # keeps only 27%, and its yield is a lottery fixed at seed time (two draws
+      # of the same kind scored +0.44 and +0.09 on the same data).
+      #
+      # Expect a dip early. The feature keeps its shape but not its meaning, so
+      # the residual's vision path relearns from scratch while everything else
+      # -- the lift, the grasp, the proprioceptive path -- carries over intact.
+      residual_vision_pooling: per_token_random
       residual_scale: 1.0
       hidden_dim: 1024
       train_vla_lora: true
