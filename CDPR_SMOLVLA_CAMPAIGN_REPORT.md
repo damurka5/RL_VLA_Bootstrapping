@@ -2,11 +2,11 @@
 
 CDPR · SmolVLA · GRPO · MJWarp backend
 
-- Prepared 2026-08-01, updated 2026-08-05, code `a38dfb7`
+- Prepared 2026-08-01, updated 2026-08-05, code `97c2e05`
 - Phase 0 `move_to_object`: **28M steps**, complete
-- Phase 1 `pick_up`: **~50M steps over 15 runs**, running
-- **Compute spent: ~96M GRPO environment steps across 25 runs**
-- **Training depth in the current policy: ~17.6M** — the runs are a tree of warm
+- Phase 1 `pick_up`: **~52M steps over 16 runs**, running
+- **Compute spent: ~99M GRPO environment steps across 26 runs**
+- **Training depth in the current policy: ~20.1M** — the runs are a tree of warm
   starts, not one chain, so these are different numbers (see §2)
 - Configs: `cdpr_smolvla_move_to_distance_grpo_mjlab_scratch.yaml`,
   `cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml`
@@ -59,13 +59,14 @@ no-op. Fixed in `80f6c35`.
 
 | | move-to | pick-up |
 |---|---:|---:|
-| steps | 28M (complete) | ~50M over 15 runs, running |
+| steps | 28M (complete) | ~52M over 16 runs, running |
 | best validation success | 7.3% (at 7.4M) | 1.2% |
-| `validation/reward_mean` | — | 0.21 |
-| **success \| pre-grasped** | — | **0.83 held** (`offset_marginal`) |
-| success \| normal start | — | 0.17–0.22 at the 5 cm cap |
-| `post_grasp_action_z_mean` | — | **+0.32**, first run above the +0.30 lift threshold |
+| `validation/reward_mean` | — | 0.16 |
+| **success \| pre-grasped** | — | **0.83 held** (`split_credit`) |
+| success \| normal start | — | 0.21 at the 5 cm cap |
+| `post_grasp_action_z_mean` | — | **+0.33**, above the +0.30 lift threshold |
 | `post_grasp_rise` (pre-grasped) | — | 44–48 mm against a 50 mm bar |
+| deterministic validation | — | **0.001**, and 0.40 m from the object |
 | curriculum cap | reached 0.23 | 0.05 |
 
 The pre-grasped lift is solved as far as sampled success goes, and §4.9 explains
@@ -74,47 +75,44 @@ per-step Gaussian noise explores sustained bias with std `sigma/sqrt(N)`, so the
 lifting region sat 3.3 sigma out. Correcting the exploration estimator raised
 `post_grasp_action_z_mean` for the first time in the campaign.
 
-Two things that did **not** follow. `success | normal start` has sat at 0.17–0.22
-for ~14M steps across four runs against a 0.30 promote threshold, so the cap has
-not moved since 171k — and in the run that fixed the lift it *fell*, with
-ever-grasped worlds 0.231 → 0.187. The old invariant was "better at grasping,
-worse at lifting"; this is the same tension with the sign flipped, and one shared
-residual still cannot hold sustained −z for the descent and sustained +z for the
-lift.
+Splitting the GRPO return at the latch (§4.10) then recovered the approach the
+lift work had cost, without giving the lift back — the first time both phases
+hold at once, and a stable plateau rather than a peak. On the full task it is a
+wash against the baseline: normal-start success 0.206 against 0.202, ever-grasped
+0.226 against 0.234.
 
-The structural reason is now named. The GRPO return is the last active step's
-reward broadcast to *every* step, so a descent action and a lift action receive
-identical credit while the task wants opposite z from them. Observability is not
-the obstacle — `gripper_opening` alone decodes grasp state at 0.898 (§4.9), so the
-residual can already tell which phase it is in; what it lacked was any gradient
-saying the two phases want different things. `a38dfb7` splits the return at the
-latch and is the next experiment.
-
-Deterministic validation remains 0.000–0.012 in every run of the campaign: the
-mean action has never completed the task.
+**Which is the finding.** Deterministic validation has read 0.000–0.012 all
+campaign, and the metric beside it says why: the policy ends every validation
+episode **0.39–0.42 m from the grasp point**, uniformly across objects, against a
+ceiling-minus-grasp-point of 0.405 m — pinned at the top of the workspace, from
+starts capped at 5 cm. `policy_target_cosine_mean` 0.09 says the same thing
+another way. **The mean policy has never learned to servo to the object**; every
+success in this campaign is exploration noise finding it from a start already
+close, which is also why the cap has never left 0.05 m. §4.10 has the evidence
+and the one-line check that would confirm it directly.
 
 ### Step accounting
 
 Two different quantities, and they are not interchangeable.
 
-**Compute spent — 96.1M steps.** Every step actually executed, measured from the
+**Compute spent — 98.6M steps.** Every step actually executed, measured from the
 TensorBoard event files and deduplicated by run (several directories are
 successive dumps of the same run):
 
 | | runs | steps |
 |---|---:|---:|
-| `pick_up` (identified) | 15 | 49,700,206 |
+| `pick_up` (identified) | 16 | 52,193,837 |
 | `move_to_object` (identified) | 4 | 26,004,402 |
 | pre-dating the per-instruction metrics | 6 | 20,417,827 |
-| **total executed** | **25** | **96,122,435** |
+| **total executed** | **26** | **98,616,066** |
 
 The third row cannot be attributed automatically — `instruction_worlds/{name}`
 did not exist when those ran. The three runs added since the last revision are
 the exploration arc of §4.9, all resumed from the same `adaptivestd` checkpoint:
 `offset_ungated` 3,558,059, `offset_gated` 2,590,256, `offset_marginal`
-2,593,019.
+2,593,019, and `split_credit` 2,493,631 resumed from `offset_marginal`.
 
-**Training depth in the current policy — ~17.6M steps.** The runs are a *tree*, not
+**Training depth in the current policy — ~20.1M steps.** The runs are a *tree*, not
 a chain. Warm starts were frequently taken from a mid-run checkpoint rather than
 a run's end, which discards everything after the branch point, and some runs
 started from no checkpoint at all. Summing runs therefore overstates how much
@@ -132,7 +130,8 @@ flight:
 | `liftgate_16M` | 3,203,866 |
 | `adaptivestd_16M` | 2,406,053 |
 | `offset_marginal` | 2,593,019 |
-| **lineage total** | **~17.6M** |
+| `split_credit` | 2,493,631 |
+| **lineage total** | **~20.1M** |
 
 The two failed offset runs are *not* in the lineage: they branch from the same
 `adaptivestd` checkpoint and were abandoned, so their 6.1M steps are compute
@@ -397,6 +396,7 @@ Every pick-up run for which telemetry was analysed, in order. "Peak" is the best
 | `offset_ungated` | 3.56M | per-episode z offset 0.20, whole episode (`f9dc94f`) | 0.71 | collapsed: `a_z` +0.20 → −0.37, rise 42.5 → 8.6 mm. Estimator bug, see §4.9 |
 | `offset_gated` | 2.59M | same offset gated on holding (`1e4a401`) | 0.66 | collapsed **indistinguishably** — which is what identified the estimator rather than the gating |
 | `offset_marginal` | 2.59M | **marginal log-prob** (`a4bf902`, on in `88b0b30`) | **0.83** | **first run to raise `post_grasp_action_z_mean`** (+0.24 → +0.32); pre-grasped record, held. Grasp rate and normal-start success fell |
+| `split_credit` | 2.49M | **separate returns for approach and lift** (`a38dfb7`) | **0.83** | **first run to hold both phases**: approach recovered (ever-grasped 0.198 → 0.226) with the lift kept (+0.325). Full-task numbers level with the baseline; exposed the servoing failure in §4.10 |
 
 Two results carried by that table:
 
@@ -569,6 +569,66 @@ weakest of the three and is discarding a real amount of what the connector
 encodes; that is worth fixing on its own terms, but it is not what blocks the
 lift.
 
+### 4.10 · Splitting the credit — both phases held, and what that exposed
+
+`split_credit_at_grasp` gives the approach the dense reward at the moment the
+grasp latched and leaves the lift with the terminal reward, so neither segment's
+gradient carries the other's outcome. Resumed from `offset_marginal`, 2.49M steps.
+
+| tail-quarter mean | baseline | `offset_marginal` | **`split_credit`** |
+|---|---:|---:|---:|
+| `post_grasp_action_z_mean` | — | +0.316 | **+0.325** |
+| `success \| pre-grasped` | 0.793 | 0.831 | **0.832** |
+| ever-grasped worlds | 0.234 | 0.198 | **0.226** |
+| `success \| normal start` | 0.202 | 0.176 | **0.206** |
+| `candidate_reward_mean` | 4.111 | 4.000 | **4.133** |
+
+**It did what it was designed to do.** The approach recovered — ever-grasped
+0.198 → 0.226 and normal-start success 0.176 → 0.206 — *without* giving the lift
+back: `post_grasp_action_z_mean` held at +0.325, above the plant's +0.30
+threshold, for the whole run. This is the first time in the campaign that both
+phases hold at once, and it is a stable plateau from ~6.2M rather than a peak
+before a collapse.
+
+**And it changed nothing about the task.** Against the true baseline the full-task
+numbers are a wash: normal-start success 0.206 against 0.202, ever-grasped 0.226
+against 0.234, reward 4.133 against 4.111. Three interventions and ~8M steps
+bought a correct mechanism and no capability.
+
+**What that finally exposes.** Deterministic validation has read 0.000–0.012 for
+the entire campaign and was treated as a curiosity. The metric next to it is the
+explanation. `validation/final_xy_distance_mean_m` — misnamed, it records
+`dense_target_distance`, which for pick-up is the **3-D** EE→grasp-point distance
+— reads **0.39–0.42 m** at the end of every validation episode, in all three
+runs, uniformly across objects:
+
+| object | apple | tomato | orange | potato | mug | banana |
+|---|---:|---:|---:|---:|---:|---:|
+| final distance (mm) | 403 | 433 | 340 | 429 | 336 | 416 |
+
+The controller workspace is `z ∈ [0.18, 0.60]` and grasp points sit at
+0.19–0.21 m, so ceiling-minus-grasp-point is **0.405 m**. Validation starts are
+capped at the same 5 cm as training and validation runs the full task
+(`allow_prelifted=False`), so the deterministic policy is not failing to close a
+gap — it is opening one, and ending pinned near the top of the workspace.
+
+That is consistent with everything the campaign has measured and never
+assembled: `policy_target_cosine_mean` 0.09 and `residual_target_cosine_mean`
+0.03–0.06 (the action is near-orthogonal to the direction to the object); the
+frozen prior's documented +Z bias; the cap frozen at 5 cm since 171k, because at
+5 cm the σ = 0.333 exploration noise can stumble onto the object and at anything
+wider it cannot; and sampled success ~0.21 against deterministic ~0.001.
+
+**The mean policy has never learned to servo to the object. Every success in this
+campaign is exploration noise finding it from a start already 5 cm away.** The
+lift work in §4.9 is real and the credit split is real, but they improved the
+behaviour *after* the object is reached, which is not the part that was missing.
+
+This is an inference from the distance metric and the geometry, not a direct
+measurement: nothing logs the terminal end-effector height in validation. One
+line adding `ee_z` to the validation diagnostics would settle it, and should be
+the next thing run, before any further training.
+
 ---
 
 ## 5. Eliminated, with evidence
@@ -625,27 +685,32 @@ worlds 0.231 → 0.187 while the lift was being fixed. Raising the promote gate 
 was considered and rejected — the EMA has peaked at 0.302 in the entire campaign,
 so a 0.40 gate would freeze the cap at 3 cm permanently.
 
-**One residual cannot hold both phases — now the leading hypothesis, and being
-tested.** The descent needs sustained −z, the lift sustained +z, and every run
-trades one against the other: the first eleven got better at grasping and worse
-at lifting, `offset_marginal` did the reverse. `residual_target_cosine_mean` has
-never left 0.03–0.06. Observability is eliminated (§4.9) — the residual can see
-the grasp — which leaves the credit itself: one scalar per trajectory,
-broadcast to every step, so nothing in the gradient distinguishes the phases.
-`a38dfb7` (`split_credit_at_grasp`) scores the approach on the dense reward at
-the latch and the lift on the terminal reward. Untested at the time of writing;
-the number to watch is ever-grasped worlds recovering toward 0.23 *without*
-`post_grasp_action_z_mean` falling back below +0.30.
+**~~One residual cannot hold both phases~~ — ADDRESSED, see §4.10.**
+`split_credit_at_grasp` (`a38dfb7`) recovered ever-grasped worlds 0.198 → 0.226
+while `post_grasp_action_z_mean` held at +0.325. Both phases coexist and the
+state is stable. It bought no capability: the full-task numbers are level with
+the baseline.
+
+**The policy does not servo to the object — the live bottleneck, and the only
+one that matters.** Deterministic validation ends 0.39–0.42 m from the grasp
+point against a ceiling-minus-grasp-point of 0.405 m, uniformly across six
+objects and identically in all three recent runs; `policy_target_cosine_mean` is
+0.09 and `residual_target_cosine_mean` 0.03–0.06. Sampled success ~0.21 comes
+from starts capped at 5 cm plus σ = 0.333 noise, which is also why the cap has
+never promoted past 0.05 m — at anything wider, noise cannot find the object.
+Everything else in this report improves what happens *after* the object is
+reached. **Confirm it first** (§4.10: log the terminal end-effector height in
+validation, one line) before spending another run on anything else.
 
 **The 512-d vision projection is lossy.** The frozen random projection the
 residual is fed decodes grasp state at 0.682 where the un-projected connector
 manages 0.904. Independent of the lift question, and untested as a change.
 
-**The train/validation gap.** Training normal-start success ~0.17–0.22 against
-deterministic validation 0.000–0.012. The mean action has never completed the
-task in any run of the campaign, including the one that fixed the lift — the
-gains are in sampled success. This is the single most under-explained number
-here.
+**~~The train/validation gap~~ — EXPLAINED, see §4.10.** Training normal-start
+success ~0.21 against deterministic 0.001 is not a generalization gap. The
+deterministic policy drives away from the object and parks at the workspace
+ceiling; the sampled policy stumbles onto it from 5 cm. Same task, same starts —
+the difference is entirely the exploration noise.
 
 **The cosine metrics need a prelifted split.** They are a decision-0 probe against
 the direction to the object, and at `prelifted: 0.5` half the worlds start with
@@ -721,5 +786,7 @@ Phase 1 commits, in order:
 | `45c0591` | offset back to 0 after both failures |
 | `a4bf902` | **marginal log-prob** — the offset was invisible to the gradient |
 | `88b0b30` | offset on again, now that it reaches the gradient |
+| `a38dfb7` | **separate returns for the approach and the lift**, split at the latch |
+| `97c2e05` | report: honest ever-grasped figure in place of the step-averaged one |
 
 Phase 0 fixes referenced: `c76cbb1`, `17a83f7`, `7d99c3e`, `64c1437`.
