@@ -16,6 +16,15 @@ probe's accuracy on the matched subset -- fingers closed, end-effector at grasp
 height -- where pose is uninformative and only "is there an object between the
 pads" separates the classes.
 
+Two questions, one capture. **Does it know it is holding the object** (a
+classification probe, below) and **does it know where the object is** (a
+regression probe on the EE->target XY vector). The 7.5M-step run made the second
+the live one: the deterministic policy holds the correct height -- terminal
+end-effector z 0.2006 m against grasp points at 0.19-0.21, ceiling-pinned rate
+0.000 -- and misses by 0.40 m *horizontally*. Its action-to-target cosine is
+0.11, the frozen prior's 0.05. So the policy is blind in XY, and the question is
+whether the feature it reads carries the answer at all.
+
 Three feature sets are probed, because they call for different fixes:
 
   proprio (6-d)      the control. If this alone decodes grasp state, the
@@ -182,6 +191,13 @@ class _Capture:
             target_slots=reset.task_state.target_slots,
             state_dim=self._state_dim,
         )
+        target_position = low_dim.object_positions[
+            torch.arange(
+                low_dim.object_positions.shape[0],
+                device=low_dim.object_positions.device,
+            ),
+            reset.task_state.target_slots,
+        ]
         connector_flat: list[Any] = []
         hook = None
         if self._keep_connector:
@@ -214,6 +230,23 @@ class _Capture:
             "contact_loaded": bool(diagnostics["contact_loaded"][world].item()),
             "gripper_opening": float(low_dim.gripper_opening[world].item()),
             "ee_z": float(low_dim.ee_position[world, 2].item()),
+            # Absolute object XY and end-effector XY, kept separately so the
+            # actionable quantity (the EE->target vector the policy must servo
+            # on) and the raw location can be probed independently, and so the
+            # regression control can swap one episode's object for another's
+            # while keeping the real trajectory.
+            "target_xy": target_position[world, :2]
+            .detach()
+            .float()
+            .cpu()
+            .numpy()
+            .copy(),
+            "ee_xy": low_dim.ee_position[world, :2]
+            .detach()
+            .float()
+            .cpu()
+            .numpy()
+            .copy(),
             "proprio": state[world].detach().float().cpu().numpy().copy(),
             "vision": vision[world].detach().float().cpu().numpy().copy(),
         }
@@ -380,6 +413,137 @@ def _dual_ridge_scores(
     }
 
 
+def _dual_ridge_r2(
+    features: np.ndarray,
+    targets: np.ndarray,
+    control_targets: np.ndarray,
+    episodes: np.ndarray,
+    *,
+    seed: int = 0,
+    folds: int = 5,
+) -> dict[str, float]:
+    """Held-out R^2 of a linear map feature -> 2-D target, folded by episode.
+
+    Same dual-ridge machinery as the classification probe, with two differences
+    that matter for a vector target.
+
+    The control is a TARGET SWAP, not a label shuffle: each episode keeps its
+    real end-effector trajectory and is given another episode's object. That
+    destroys the feature-to-object association while preserving everything about
+    the motion, which a plain shuffle would also destroy and so score too easily.
+
+    ``direction_cosine`` is reported next to R^2 because it is the quantity that
+    decides whether a policy can servo. A probe can carry real R^2 while
+    pointing the wrong way, and only the direction moves the end-effector toward
+    the object.
+    """
+
+    unique = np.unique(episodes)
+    nan = {
+        "r2": float("nan"),
+        "control_r2": float("nan"),
+        "direction_cosine": float("nan"),
+        "alpha": 0.0,
+        "episodes": int(unique.size),
+    }
+    if unique.size < 6:
+        return nan
+    rng = np.random.RandomState(seed)
+    order = rng.permutation(unique.size)
+    fold_count = max(2, min(int(folds), unique.size))
+    assignments = np.array_split(unique[order], fold_count)
+
+    prepared = []
+    features32 = np.ascontiguousarray(features, dtype=np.float32)
+    for held in assignments:
+        test = np.isin(episodes, held)
+        train = ~test
+        if train.sum() < 2 or test.sum() < 2:
+            continue
+        centred = features32 - features32[train].mean(axis=0, keepdims=True)
+        centred /= np.maximum(
+            features32[train].std(axis=0, keepdims=True), 1.0e-8
+        )
+        gram = (centred @ centred.T).astype(np.float64) + 1.0
+        eigenvalues, vectors = np.linalg.eigh(gram[np.ix_(train, train)])
+        prepared.append(
+            (train, test, vectors, eigenvalues, gram[np.ix_(test, train)] @ vectors)
+        )
+    del features32
+    if not prepared:
+        return nan
+
+    def score(values: np.ndarray, alpha: float) -> tuple[float, float]:
+        r2s: list[float] = []
+        cosines: list[float] = []
+        for train, test, vectors, eigenvalues, projected in prepared:
+            centre = values[train].mean(axis=0, keepdims=True)
+            weights = (vectors.T @ (values[train] - centre)) / (
+                eigenvalues + alpha
+            )[:, None]
+            predicted = projected @ weights + centre
+            truth = values[test]
+            residual = ((truth - predicted) ** 2).sum()
+            total = ((truth - centre) ** 2).sum()
+            r2s.append(float(1.0 - residual / max(total, 1.0e-12)))
+            norms = np.linalg.norm(predicted, axis=1) * np.linalg.norm(
+                truth, axis=1
+            )
+            keep = norms > 1.0e-9
+            if keep.any():
+                cosines.append(
+                    float(
+                        ((predicted[keep] * truth[keep]).sum(axis=1) / norms[keep]).mean()
+                    )
+                )
+        if not r2s:
+            return float("nan"), float("nan")
+        return float(np.mean(r2s)), float(np.mean(cosines) if cosines else np.nan)
+
+    best = None
+    fallback = None
+    for alpha in (1e-2, 1e-1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6):
+        control, _ = score(control_targets, alpha)
+        real, cosine = score(targets, alpha)
+        if np.isnan(control) or np.isnan(real):
+            continue
+        if fallback is None or abs(control) < abs(fallback[1]):
+            fallback = (real, control, cosine, alpha)
+        if abs(control) <= 0.05:
+            best = (real, control, cosine, alpha)
+            break
+    chosen = best or fallback
+    if chosen is None:
+        return nan
+    return {
+        "r2": chosen[0],
+        "control_r2": chosen[1],
+        "direction_cosine": chosen[2],
+        "alpha": chosen[3],
+        "episodes": int(unique.size),
+    }
+
+
+def _swap_targets_between_episodes(
+    rows: Sequence[dict[str, Any]], rng: np.random.RandomState
+) -> np.ndarray:
+    """Each episode keeps its trajectory and gets another episode's object."""
+
+    episodes = sorted({row["episode"] for row in rows})
+    per_episode = {
+        episode: next(
+            row["target_xy"] for row in rows if row["episode"] == episode
+        )
+        for episode in episodes
+    }
+    permuted = rng.permutation(len(episodes))
+    mapping = {
+        episode: per_episode[episodes[permuted[index]]]
+        for index, episode in enumerate(episodes)
+    }
+    return np.stack([mapping[row["episode"]] for row in rows])
+
+
 def _stack(rows: Sequence[dict[str, Any]], key: str) -> np.ndarray:
     return np.stack([np.asarray(row[key], dtype=np.float32) for row in rows])
 
@@ -456,6 +620,77 @@ def _report_subset(
 # ---------------------------------------------------------------------- main
 
 
+def _report_localization(
+    name: str,
+    rows: Sequence[dict[str, Any]],
+    *,
+    keep_connector: bool,
+    max_steps_per_episode: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Can the feature say WHERE the object is, relative to the gripper?"""
+
+    rows = _subsample_per_episode(rows, int(max_steps_per_episode))
+    episodes = np.array([row["episode"] for row in rows])
+    print(f"\n  {name}")
+    print(f"    steps {len(rows)}   episodes {len(set(episodes.tolist()))}")
+    if len(rows) < 12 or len(set(episodes.tolist())) < 6:
+        print("    too few episodes to fold")
+        return {"steps": len(rows)}
+    ee = _stack(rows, "ee_xy")
+    target = _stack(rows, "target_xy")
+    rng = np.random.RandomState(int(seed))
+    swapped = _swap_targets_between_episodes(rows, rng)
+    out: dict[str, Any] = {"steps": len(rows)}
+    # The target is the object's ABSOLUTE XY, not the EE->target vector, and
+    # that is deliberate. The swap control cannot null the relative vector: the
+    # real label (target - ee) and the control (swapped - ee) share the -ee
+    # term, ee is in proprioception, so a model predicts a chunk of both and the
+    # alpha sweep regularizes the real signal away chasing a control that will
+    # not fall. Verified on synthetic data -- a feature carrying the object
+    # position scores R2 0.61 / dir cos 0.89 on absolute XY and 0.008 on the
+    # relative vector, which is the control failing, not the feature.
+    #
+    # Absolute XY answers the question anyway: if the feature does not say where
+    # the object is, nothing downstream can servo to it.
+    matrices = {
+        "proprio (6)": _stack(rows, "proprio"),
+        "vision (512)": _stack(rows, "vision"),
+        "proprio+vision": np.concatenate(
+            [_stack(rows, "proprio"), _stack(rows, "vision")], axis=1
+        ),
+    }
+    if keep_connector and "connector" in rows[0]:
+        matrices[f"connector ({rows[0]['connector'].size})"] = _stack(
+            rows, "connector"
+        )
+    for label, matrix in matrices.items():
+        scores = _dual_ridge_r2(
+            matrix, target, swapped, episodes, seed=int(seed)
+        )
+        out[label] = scores
+        if np.isnan(scores["r2"]):
+            continue
+        print(
+            f"    {label:<24} object XY   R2 {scores['r2']:+.3f}"
+            f"   (control {scores['control_r2']:+.3f})"
+            f"   dir cos {scores['direction_cosine']:+.3f}"
+        )
+    # How much of any score is just the start cap. Starts are capped 5 cm from
+    # the object, so the end-effector pose alone predicts the object position
+    # well -- proprio is not a null here, it is the number the vision rows have
+    # to beat.
+    out["ee_to_object_median_m"] = float(
+        np.median(np.linalg.norm(target - ee, axis=1))
+    )
+    print(
+        f"    (median EE-to-object distance over these steps: "
+        f"{out['ee_to_object_median_m']*1000:.0f} mm -- proprio scores highly "
+        f"whenever this is small)"
+    )
+    return out
+
+
 def _probe_and_report(
     rows: Sequence[dict[str, Any]],
     args: argparse.Namespace,
@@ -489,6 +724,8 @@ def _probe_and_report(
                 [row["gripper_opening"] for row in rows]
             ),
             ee_z=np.array([row["ee_z"] for row in rows]),
+            target_xy=_stack(rows, "target_xy"),
+            ee_xy=_stack(rows, "ee_xy"),
         )
         print(f"\n[probe] wrote {features_path} before probing")
 
@@ -525,6 +762,62 @@ def _probe_and_report(
         label_key,
         keep_connector=keep_connector,
         max_steps_per_episode=int(args.max_steps_per_episode),
+    )
+
+    # Localization. The grasp probe above answers "does it know it is holding";
+    # this answers "does it know where to go", which the 7.5M-step run showed to
+    # be the live failure: the deterministic policy holds the correct height and
+    # misses by 0.40 m horizontally.
+    print("\n" + "=" * 74)
+    print("Linear probe: frozen features -> object location (XY)")
+    print("=" * 74)
+    approach = [
+        row
+        for row in rows
+        if not row["physical_grasp"] and not row["contact_loaded"]
+    ]
+    results["localization_approach"] = _report_localization(
+        "APPROACH STEPS  (free space, before any contact -- where servoing "
+        "happens)",
+        approach,
+        keep_connector=keep_connector,
+        max_steps_per_episode=int(args.max_steps_per_episode),
+        seed=int(args.seed),
+    )
+    results["localization_all"] = _report_localization(
+        "ALL STEPS",
+        rows,
+        keep_connector=keep_connector,
+        max_steps_per_episode=int(args.max_steps_per_episode),
+        seed=int(args.seed),
+    )
+    print(
+        "\n"
+        + "-" * 74
+        + "\n  Read VISION against PROPRIO, on approach steps, and read dir cos.\n"
+        "\n"
+        "  proprio is NOT a null. Starts are capped 5 cm from the object, so the\n"
+        "  gripper pose alone predicts the object position well and proprio will\n"
+        "  score high. It is the bar the vision rows have to clear, not zero.\n"
+        "\n"
+        "  vision alone scores well: the object IS localizable from what the\n"
+        "    residual is fed, so the servoing failure is RL rather than\n"
+        "    perception -- the information is there and the policy ignores it.\n"
+        "  vision ~ 0 but connector scores: the fixed random projection is\n"
+        "    destroying the object's position. Learn it, or widen it.\n"
+        "  both ~ 0: the frozen encoder does not localize the object at all, no\n"
+        "    head reading it can servo, and the encoder itself has to adapt --\n"
+        "    work for the action-expert LoRA, not for the residual.\n"
+        "\n"
+        "  proprio+vision usually reads BELOW proprio alone, and that is the\n"
+        "  kernel, not evidence that vision hurts: a dot-product similarity over\n"
+        "  512 mostly-uninformative dimensions swamps six informative ones. The\n"
+        "  residual is an MLP and does not have that problem. Read the row as a\n"
+        "  lower bound.\n"
+        "\n"
+        "  For scale: the trained policy's own action-to-target cosine is 0.11\n"
+        "  and the frozen prior's is 0.05, against a deterministic miss of\n"
+        "  0.40 m horizontally."
     )
 
     summary = args.output / "grasp_feature_probe.json"
@@ -705,6 +998,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "ee_z": float(saved["ee_z"][index]),
                 "proprio": saved["proprio"][index],
                 "vision": saved["vision"][index],
+                "target_xy": saved["target_xy"][index],
+                "ee_xy": saved["ee_xy"][index],
             }
             for index in range(int(saved["episode"].shape[0]))
         ]
