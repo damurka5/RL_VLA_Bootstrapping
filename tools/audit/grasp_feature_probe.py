@@ -252,10 +252,15 @@ class _Capture:
         }
         if self._keep_connector and connector_flat:
             # Overview + wrist only, matching _pool_vision; never the masked aux.
+            # Kept as [cameras*tokens, channels] rather than flattened: the 16
+            # tokens per camera are a ~4x4 spatial grid, so WHERE the object is
+            # lives in WHICH token carries it, and a reduction that respects
+            # that axis can keep position where one that flattens first cannot.
             cams = connector_flat[: max(1, min(2, len(connector_flat)))]
-            row["connector"] = np.concatenate(
-                [cam[world].reshape(-1).numpy() for cam in cams]
-            ).astype(np.float32)
+            row["connector"] = (
+                np.concatenate([cam[world].numpy() for cam in cams], axis=0)
+                .astype(np.float32)
+            )
         self.rows.append(row)
 
 
@@ -545,7 +550,101 @@ def _swap_targets_between_episodes(
 
 
 def _stack(rows: Sequence[dict[str, Any]], key: str) -> np.ndarray:
-    return np.stack([np.asarray(row[key], dtype=np.float32) for row in rows])
+    stacked = np.stack([np.asarray(row[key], dtype=np.float32) for row in rows])
+    # The connector is stored [N, cameras*tokens, channels]; probes want it flat.
+    return stacked.reshape(stacked.shape[0], -1) if stacked.ndim > 2 else stacked
+
+
+def _connector_reductions(
+    tokens: np.ndarray, seed: int
+) -> dict[str, np.ndarray]:
+    """Candidate replacements for the fixed random projection.
+
+    ``tokens`` is [N, cameras*tokens, channels]. The question these answer is
+    whether the projection fails because it is too NARROW or because it is
+    structurally wrong.
+
+    A fixed random projection retains only ``d_out/d_in`` of any linearly
+    decodable signal -- computed exactly, 512 of 30720 is 1.7%, and widening to
+    8192 still only reaches 27%. So width alone cannot fix it. The spatial
+    reductions instead keep the token axis, where position actually lives, and
+    reduce only channels.
+    """
+
+    rng = np.random.RandomState(seed)
+    count, places, channels = tokens.shape
+    flat = tokens.reshape(count, -1)
+
+    def random_projection(width: int) -> np.ndarray:
+        matrix = rng.randn(flat.shape[1], width).astype(np.float32)
+        matrix /= np.sqrt(flat.shape[1])
+        return flat @ matrix
+
+    def per_token_projection(width: int) -> np.ndarray:
+        # One channel reduction SHARED across tokens, applied per token, so the
+        # spatial grid survives intact and only the 960 channels are mixed.
+        matrix = rng.randn(channels, width).astype(np.float32)
+        matrix /= np.sqrt(channels)
+        return (tokens @ matrix).reshape(count, -1)
+
+    return {
+        "random 512 (shipped)": random_projection(512),
+        "random 2048": random_projection(2048),
+        f"channel-mean per token ({places})": tokens.mean(axis=2),
+        f"per-token random x8 ({places * 8})": per_token_projection(8),
+        f"per-token random x32 ({places * 32})": per_token_projection(32),
+        f"un-projected ({flat.shape[1]})": flat,
+    }
+
+
+def _report_reductions(
+    rows: Sequence[dict[str, Any]],
+    *,
+    max_steps_per_episode: int,
+    seed: int,
+) -> dict[str, Any]:
+    """Which reduction of the connector keeps the object's position?"""
+
+    rows = _subsample_per_episode(rows, int(max_steps_per_episode))
+    episodes = np.array([row["episode"] for row in rows])
+    if len(set(episodes.tolist())) < 6 or "connector" not in rows[0]:
+        return {}
+    tokens = np.stack(
+        [np.asarray(row["connector"], dtype=np.float32) for row in rows]
+    )
+    target = _stack(rows, "target_xy")
+    swapped = _swap_targets_between_episodes(
+        rows, np.random.RandomState(int(seed))
+    )
+    print("\n" + "=" * 74)
+    print("What should replace the fixed random projection?")
+    print("=" * 74)
+    print(
+        f"\n  approach steps {len(rows)}, "
+        f"episodes {len(set(episodes.tolist()))}\n"
+    )
+    out: dict[str, Any] = {}
+    for label, reduced in _connector_reductions(tokens, int(seed)).items():
+        scores = _dual_ridge_r2(
+            reduced, target, swapped, episodes, seed=int(seed)
+        )
+        out[label] = scores
+        if np.isnan(scores["r2"]):
+            continue
+        print(
+            f"    {label:<32} R2 {scores['r2']:+.3f}"
+            f"   (control {scores['control_r2']:+.3f})"
+            f"   dir cos {scores['direction_cosine']:+.3f}"
+        )
+    print(
+        "\n  If `random 2048` is no better than `random 512`, width is not the\n"
+        "  problem and the projection is structurally wrong -- a fixed random\n"
+        "  map keeps only d_out/d_in of any linear signal, 1.7% at the shipped\n"
+        "  512 of 30720. If a per-token or channel-mean reduction approaches\n"
+        "  `un-projected`, the fix is to stop flattening the spatial grid before\n"
+        "  reducing, which costs far fewer dimensions than widening."
+    )
+    return out
 
 
 def _subsample_per_episode(
@@ -819,6 +918,13 @@ def _probe_and_report(
         "  and the frozen prior's is 0.05, against a deterministic miss of\n"
         "  0.40 m horizontally."
     )
+
+    if keep_connector and "connector" in rows[0]:
+        results["reductions"] = _report_reductions(
+            approach,
+            max_steps_per_episode=int(args.max_steps_per_episode),
+            seed=int(args.seed),
+        )
 
     summary = args.output / "grasp_feature_probe.json"
     summary.write_text(json.dumps(results, indent=2, default=float))

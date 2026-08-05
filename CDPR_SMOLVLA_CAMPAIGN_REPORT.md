@@ -644,14 +644,57 @@ descends, and lifts. **The bottleneck is that it cannot localize the object
 horizontally.** Every success is exploration noise finding an object that was
 already within 5 cm, which is also why the cap has never promoted past 0.05 m.
 
-That points at the one measured deficiency left unaddressed. The residual's only
-view of the world is a **frozen random projection** of SmolVLA's connector
-tokens, and §4.9 measured it losing a lot: grasp state decodes at 0.904 from the
-un-projected connector and 0.682 through the projection. The campaign's earlier
-probe put target *position* at R² ≈ 0.44 from the connector before any
-projection. Whether the 512-d feature the residual actually receives retains
-enough to servo on has never been measured, and it is the next thing to measure
-— a regression probe for target XY, no training required.
+### 4.11 · The projection throws the object away
+
+The regression probe (`b2b3c5c`), 60 episodes, approach steps only, predicting
+the object's absolute XY with a control that gives each episode another
+episode's object:
+
+| feature | R² | control | **direction cosine** |
+|---|---:|---:|---:|
+| proprioception (6) | +0.099 | −0.008 | −0.064 |
+| **vision, as fed to the residual (512)** | +0.114 | +0.001 | **+0.004** |
+| proprio + vision | +0.121 | +0.000 | +0.011 |
+| **un-projected connector (30720)** | +0.206 | −0.031 | **+0.336** |
+
+**The connector knows where the object is. The projection discards it.** Not
+degrades — discards: the direction cosine goes from +0.336 to +0.004, which is
+zero.
+
+The arithmetic is exact and was checked rather than assumed. For isotropic
+features, the best linear predictor from a fixed random projection recovers only
+the component of the signal lying in the projection's row space, so the retained
+R² is `d_out / d_in`:
+
+| `d_out` | 512 | 1024 | 2048 | 4096 | 8192 |
+|---|---:|---:|---:|---:|---:|
+| retained | 0.017 | 0.035 | 0.066 | 0.135 | 0.264 |
+
+The residual is fed 512 of 30720 — **1.7%**. Widening will not rescue it: even
+8192 dims keeps only 27%, and by then the projection costs more than not
+projecting. The fault is structural, not width.
+
+Which closes the campaign's longest-running question. The residual's only view of
+the world contains essentially no information about where the object is, so it
+cannot servo, so the deterministic policy misses by 0.40 m horizontally, so the
+curriculum cap has never left 0.05 m, so deterministic validation has read ~0.001
+for 52M steps. Every success has been exploration noise finding an object that a
+5 cm start had already placed under the gripper.
+
+Note what this does *not* excuse: the grasp-state probe in §4.9 found the same
+projection passing 0.682 against the connector's 0.904, and that was read as
+"lossy" rather than as the same 1.7% arithmetic applied to a stronger signal.
+The measurement to explain it existed a week before it was made.
+
+The fix is to stop flattening the spatial grid before reducing. The connector is
+16 tokens × 960 channels per camera and the 16 tokens are a ~4×4 spatial layout,
+so position lives in *which* token carries the object — an axis that flattening
+destroys and a random matrix then mixes away. `b2b3c5c` compares candidate
+reductions on captured features, no training required: random 512 and 2048
+against a channel-mean per token, per-token channel projections, and the
+un-projected ceiling.
+
+
 
 ---
 
@@ -715,21 +758,20 @@ while `post_grasp_action_z_mean` held at +0.325. Both phases coexist and the
 state is stable. It bought no capability: the full-task numbers are level with
 the baseline.
 
-**The policy cannot localize the object in XY — the live bottleneck, and the
-only one that matters.** Measured, not inferred (§4.10): validation ends at
-0.2006 m height with a ceiling-pinned rate of 0.000, so the height is right and
-all 0.40 m of the miss is horizontal, from a 5 cm start, against ~56 mm of XY
-drift a random walk would produce. `policy_target_cosine_mean` 0.11,
-`prior_target_cosine_mean` 0.05, `residual_target_cosine_mean` 0.06 — near-blind,
-and the prior is blind too.
+**~~The policy cannot localize the object in XY~~ — CAUSE FOUND, see §4.11.**
+The residual is fed a fixed random projection of 30720 connector dims down to
+512, and a random projection retains only `d_out/d_in` of any linearly decodable
+signal — **1.7%**. Measured: the object's direction is decodable from the
+un-projected connector at cosine +0.336 and from the projection at **+0.004**.
+The residual's only view of the world does not say where the object is.
 
-The next measurement is a regression probe of the **512-d frozen random
-projection for target XY**, extending `tools/audit/grasp_feature_probe.py`. That
-feature is the residual's only view of the world, and it is already measured to
-lose a lot: grasp state decodes at 0.904 un-projected and 0.682 through the
-projection. If target XY does not survive it, no amount of RL will make the
-residual servo and the fix is the vision path — a learned or wider projection, or
-letting the LoRA reach the encoder. No training required to find out.
+**Replace the projection — the live work.** Widening cannot fix it (8192 dims
+still keeps 27%). The connector is 16 tokens × 960 channels per camera and the
+tokens are a ~4×4 spatial layout, so position lives in *which* token carries the
+object, and flattening before reducing destroys exactly that. `b2b3c5c` compares
+candidate reductions on captured features with no training. Whatever wins there
+is the change to make, and it is the first change in the campaign aimed at the
+approach rather than at the lift.
 
 **The 512-d vision projection is lossy.** The frozen random projection the
 residual is fed decodes grasp state at 0.682 where the un-projected connector
