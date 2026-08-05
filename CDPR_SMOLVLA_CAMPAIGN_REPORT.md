@@ -2,7 +2,7 @@
 
 CDPR · SmolVLA · GRPO · MJWarp backend
 
-- Prepared 2026-08-01, updated 2026-08-05, code `88b0b30`
+- Prepared 2026-08-01, updated 2026-08-05, code `a38dfb7`
 - Phase 0 `move_to_object`: **28M steps**, complete
 - Phase 1 `pick_up`: **~50M steps over 15 runs**, running
 - **Compute spent: ~96M GRPO environment steps across 25 runs**
@@ -76,13 +76,20 @@ lifting region sat 3.3 sigma out. Correcting the exploration estimator raised
 
 Two things that did **not** follow. `success | normal start` has sat at 0.17–0.22
 for ~14M steps across four runs against a 0.30 promote threshold, so the cap has
-not moved since 171k — and in the run that fixed the lift it *fell*, with grasp
-rate 0.331 → 0.217. The old invariant was "better at grasping, worse at lifting";
-this is the same tension with the sign flipped, and one shared residual still
-cannot hold sustained −z for the descent and sustained +z for the lift. The
-structural reason is now named: the GRPO return is the last active step's reward
-broadcast to every step, so both phases receive identical credit. `4d09e3d`
-splits it at the latch.
+not moved since 171k — and in the run that fixed the lift it *fell*, with
+ever-grasped worlds 0.231 → 0.187. The old invariant was "better at grasping,
+worse at lifting"; this is the same tension with the sign flipped, and one shared
+residual still cannot hold sustained −z for the descent and sustained +z for the
+lift.
+
+The structural reason is now named. The GRPO return is the last active step's
+reward broadcast to *every* step, so a descent action and a lift action receive
+identical credit while the task wants opposite z from them. Observability is not
+the obstacle — `gripper_opening` alone decodes grasp state at 0.898 (§4.9), so the
+residual can already tell which phase it is in; what it lacked was any gradient
+saying the two phases want different things. `a38dfb7` splits the return at the
+latch and is the next experiment.
+
 Deterministic validation remains 0.000–0.012 in every run of the campaign: the
 mean action has never completed the task.
 
@@ -613,18 +620,22 @@ took `success | pre-grasped` to 0.83, held.
 **The approach is the live bottleneck, and now it is also the price.**
 `success | normal start` 0.17–0.22 and the gate EMA 0.17–0.24 against a 0.30
 promote threshold, unmoved for ~14M steps across four runs, so the cap has sat at
-0.05 since 171k. `offset_marginal` made it worse rather than better — grasp rate
-0.331 → 0.217 while the lift was being fixed. Raising the promote gate to 0.40
+0.05 since 171k. `offset_marginal` made it worse rather than better — ever-grasped
+worlds 0.231 → 0.187 while the lift was being fixed. Raising the promote gate to 0.40
 was considered and rejected — the EMA has peaked at 0.302 in the entire campaign,
 so a 0.40 gate would freeze the cap at 3 cm permanently.
 
-**One residual cannot hold both phases — now the leading hypothesis.** The
-descent needs sustained −z, the lift sustained +z, and every run trades one
-against the other: the first eleven got better at grasping and worse at lifting,
-`offset_marginal` did the reverse. `residual_target_cosine_mean` has never left
-0.03–0.06. The observability explanation is eliminated (§4.9) — the residual can
-see the grasp — so what remains is representational capacity or gradient
-dominance between the phases, and neither is addressed by anything tried so far.
+**One residual cannot hold both phases — now the leading hypothesis, and being
+tested.** The descent needs sustained −z, the lift sustained +z, and every run
+trades one against the other: the first eleven got better at grasping and worse
+at lifting, `offset_marginal` did the reverse. `residual_target_cosine_mean` has
+never left 0.03–0.06. Observability is eliminated (§4.9) — the residual can see
+the grasp — which leaves the credit itself: one scalar per trajectory,
+broadcast to every step, so nothing in the gradient distinguishes the phases.
+`a38dfb7` (`split_credit_at_grasp`) scores the approach on the dense reward at
+the latch and the lift on the terminal reward. Untested at the time of writing;
+the number to watch is ever-grasped worlds recovering toward 0.23 *without*
+`post_grasp_action_z_mean` falling back below +0.30.
 
 **The 512-d vision projection is lossy.** The frozen random projection the
 residual is fed decodes grasp state at 0.682 where the un-projected connector
