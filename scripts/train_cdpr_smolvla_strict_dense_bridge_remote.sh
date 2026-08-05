@@ -20,6 +20,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/huggingface_public_models.sh
 source "$SCRIPT_DIR/huggingface_public_models.sh"
 configure_huggingface_public_models
+configure_huggingface_offline
 
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
 RUN_NAME="${RUN_NAME:-cdpr_smolvla_strict_dense_bridge_step_${START_STEP}_to_${MAX_TRAIN_STEPS}_${timestamp}}"

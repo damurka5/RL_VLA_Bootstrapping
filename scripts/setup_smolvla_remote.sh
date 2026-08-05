@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=scripts/huggingface_public_models.sh
 source "$SCRIPT_DIR/huggingface_public_models.sh"
 configure_huggingface_public_models
+configure_huggingface_offline
 
 if [[ ! -d "$REPO_ROOT" ]]; then
   echo "Repo root does not exist: $REPO_ROOT" >&2

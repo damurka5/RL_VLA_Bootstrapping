@@ -19,6 +19,32 @@ configure_huggingface_public_models() {
   esac
 }
 
+# Run entirely from the local cache. For a box that has lost outbound access to
+# huggingface.co but already holds the model files -- the usual case on a
+# long-lived training host, where every previous run populated ~/.cache.
+#
+# Setting RLVLA_HF_OFFLINE=1 exports both offline switches AND skips the
+# preflight, because a reachability check is exactly what cannot pass here.
+# Without HF_HUB_OFFLINE the preflight can be skipped and the run still dies
+# later inside AutoProcessor.from_pretrained, which reaches the network on its
+# own and reports the resulting failure as a missing repository.
+configure_huggingface_offline() {
+  case "${RLVLA_HF_OFFLINE:-0}" in
+    0)
+      ;;
+    1)
+      export HF_HUB_OFFLINE=1
+      export TRANSFORMERS_OFFLINE=1
+      export RLVLA_HF_PREFLIGHT=0
+      printf '[huggingface] offline: using the local cache only\n'
+      ;;
+    *)
+      echo "RLVLA_HF_OFFLINE must be 0 or 1." >&2
+      return 2
+      ;;
+  esac
+}
+
 huggingface_public_models_preflight() {
   local env_name="${1:-none}"
   local python_cmd=()
@@ -47,10 +73,13 @@ for repo_id in (
 '; then
     cat >&2 <<'EOF'
 [huggingface] Public-model preflight failed.
-Check outbound access to huggingface.co. If you intentionally use a private or
+Check outbound access to huggingface.co. If the host simply has no route out but
+the model files are already cached -- the usual case on a long-lived training
+box -- rerun with RLVLA_HF_OFFLINE=1, which pins huggingface_hub and transformers
+to the local cache and skips this check. If you intentionally use a private or
 gated checkpoint, set RLVLA_HF_PUBLIC_MODELS_ONLY=0, authenticate with
-`hf auth login`, and rerun. Set RLVLA_HF_PREFLIGHT=0 only for an offline run
-whose complete model files are already cached.
+`hf auth login`, and rerun. RLVLA_HF_PREFLIGHT=0 alone only silences this check;
+it does not stop the loader reaching the network later.
 EOF
     return 1
   fi
