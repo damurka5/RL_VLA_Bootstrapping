@@ -448,6 +448,7 @@ def _dual_ridge_r2(
         "r2": float("nan"),
         "control_r2": float("nan"),
         "direction_cosine": float("nan"),
+        "direction_spread": float("nan"),
         "alpha": 0.0,
         "episodes": int(unique.size),
     }
@@ -502,20 +503,24 @@ def _dual_ridge_r2(
                     )
                 )
         if not r2s:
-            return float("nan"), float("nan")
-        return float(np.mean(r2s)), float(np.mean(cosines) if cosines else np.nan)
+            return float("nan"), float("nan"), float("nan")
+        return (
+            float(np.mean(r2s)),
+            float(np.mean(cosines) if cosines else np.nan),
+            float(np.std(cosines) if cosines else np.nan),
+        )
 
     best = None
     fallback = None
     for alpha in (1e-2, 1e-1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6):
-        control, _ = score(control_targets, alpha)
-        real, cosine = score(targets, alpha)
+        control, _, _ = score(control_targets, alpha)
+        real, cosine, spread = score(targets, alpha)
         if np.isnan(control) or np.isnan(real):
             continue
         if fallback is None or abs(control) < abs(fallback[1]):
-            fallback = (real, control, cosine, alpha)
+            fallback = (real, control, cosine, spread, alpha)
         if abs(control) <= 0.05:
-            best = (real, control, cosine, alpha)
+            best = (real, control, cosine, spread, alpha)
             break
     chosen = best or fallback
     if chosen is None:
@@ -524,7 +529,9 @@ def _dual_ridge_r2(
         "r2": chosen[0],
         "control_r2": chosen[1],
         "direction_cosine": chosen[2],
-        "alpha": chosen[3],
+        # Across folds. A ranking whose gaps are inside this is not a ranking.
+        "direction_spread": chosen[3],
+        "alpha": chosen[4],
         "episodes": int(unique.size),
     }
 
@@ -591,7 +598,12 @@ def _connector_reductions(
         "random 512 (shipped)": random_projection(512),
         "random 2048": random_projection(2048),
         f"channel-mean per token ({places})": tokens.mean(axis=2),
+        f"per-token random x4 ({places * 4})": per_token_projection(4),
         f"per-token random x8 ({places * 8})": per_token_projection(8),
+        # 32 places x 16 = 512: the SAME width the residual takes today, so this
+        # one is a drop-in swap that keeps every tensor shape and lets a warm
+        # start still load.
+        f"per-token random x16 ({places * 16}) DROP-IN": per_token_projection(16),
         f"per-token random x32 ({places * 32})": per_token_projection(32),
         f"un-projected ({flat.shape[1]})": flat,
     }
@@ -635,6 +647,7 @@ def _report_reductions(
             f"    {label:<32} R2 {scores['r2']:+.3f}"
             f"   (control {scores['control_r2']:+.3f})"
             f"   dir cos {scores['direction_cosine']:+.3f}"
+            f" +-{scores['direction_spread']:.3f}"
         )
     print(
         "\n  If `random 2048` is no better than `random 512`, width is not the\n"
@@ -642,7 +655,12 @@ def _report_reductions(
         "  map keeps only d_out/d_in of any linear signal, 1.7% at the shipped\n"
         "  512 of 30720. If a per-token or channel-mean reduction approaches\n"
         "  `un-projected`, the fix is to stop flattening the spatial grid before\n"
-        "  reducing, which costs far fewer dimensions than widening."
+        "  reducing, which costs far fewer dimensions than widening.\n"
+        "\n"
+        "  Read the +- spread before the ranking: it is the standard deviation\n"
+        "  across folds, and gaps smaller than it are not real. The DROP-IN row\n"
+        "  is 512 wide, exactly what the residual takes today, so adopting it\n"
+        "  changes no tensor shape and a warm start still loads."
     )
     return out
 
@@ -774,6 +792,7 @@ def _report_localization(
             f"    {label:<24} object XY   R2 {scores['r2']:+.3f}"
             f"   (control {scores['control_r2']:+.3f})"
             f"   dir cos {scores['direction_cosine']:+.3f}"
+            f" +-{scores['direction_spread']:.3f}"
         )
     # How much of any score is just the start cap. Starts are capped 5 cm from
     # the object, so the end-effector pose alone predicts the object position
