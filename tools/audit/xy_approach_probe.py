@@ -122,8 +122,6 @@ from __future__ import annotations
 import argparse
 import csv
 import json
-import math
-import os
 import sys
 from argparse import Namespace
 from dataclasses import dataclass, field
@@ -190,6 +188,18 @@ def _load_checkpoint(path: Path) -> dict[str, Any]:
             "cannot be reproduced."
         )
     return payload
+
+
+def _checkpoint_has_lora(payload: Mapping[str, Any]) -> bool:
+    """Whether the checkpoint stores action-expert LoRA weights to restore.
+
+    ``save`` writes the key unconditionally and leaves it None/empty when no
+    adapter was attached, so presence of the key is not the question -- presence
+    of weights under it is.
+    """
+
+    state = payload.get("vla_lora")
+    return bool(state)
 
 
 def _probe_args(
@@ -444,6 +454,38 @@ def _build_world(
         run_dir=run_dir,
         device=device,
     )
+    # The action-expert LoRA, before the residual weights.
+    #
+    # The residual was trained on top of the ADAPTED prior, so running it
+    # against the stock SmolVLA is running it against an input it never saw.
+    # There is no error if this is skipped -- the shapes all match and every arm
+    # quietly measures a different policy -- which is why it is asserted rather
+    # than attempted. The recorded drift is small (`vla_lora/kl` ~0.0001 in
+    # every run), but "small enough to ignore" is a claim about the answer, and
+    # this probe exists because that class of claim has been wrong here before.
+    if _checkpoint_has_lora(payload):
+        if not bool(getattr(args, "train_vla_lora", False)):
+            raise RuntimeError(
+                "The checkpoint carries action-expert LoRA weights but its own "
+                "saved args have train_vla_lora False. The prior cannot be "
+                "reproduced; refusing to measure a different policy."
+            )
+        info = trainer.attach_vla_lora(runtime)
+        trainer._load_vla_lora_state(payload)
+        runtime.policy.eval()
+        print(
+            "[xy-probe] restored action-expert LoRA: "
+            f"{info['vla_lora/modules']:.0f} modules, "
+            f"{info['vla_lora/trainable_params']:.0f} params",
+            flush=True,
+        )
+    else:
+        print(
+            "[xy-probe] checkpoint carries no LoRA; prior is the stock frozen "
+            "SmolVLA",
+            flush=True,
+        )
+
     trainer._unwrap(trainer.actor).load_state_dict(payload["policy"])
     trainer.actor.eval()
 
@@ -701,8 +743,19 @@ class _ArmRunner:
         self.reset: Any = None
         self.decision = 0
         self.ever_grasped: Any = None
+        # Per-episode localization error, drawn on first use and cleared at each
+        # reset. See _make_oracle_xy_source for why it is not per-decision.
+        self.position_error: Any = None
+        self.horizon_decisions = 0
         self._original_action = None
         self._original_reset = None
+        # Whether the name was already an INSTANCE attribute before the patch.
+        # Both substituted names are ordinary class methods, so restoring by
+        # assignment would leave a bound method shadowing the class for the rest
+        # of the process -- harmless in one arm, but the probe runs several arms
+        # back to back over one live trainer.
+        self._owned_action = False
+        self._owned_reset = False
         self._rng: Any = None
 
     # -- installation ---------------------------------------------------
@@ -715,6 +768,10 @@ class _ArmRunner:
 
         self._original_action = trainer.deterministic_action_chunks_tensor
         self._original_reset = resetter.reset
+        self._owned_action = (
+            "deterministic_action_chunks_tensor" in vars(trainer)
+        )
+        self._owned_reset = "reset" in vars(resetter)
         self._rng = torch.Generator(device=self.world.device)
         self._rng.manual_seed(20260806 + self.seed_offset)
 
@@ -722,11 +779,17 @@ class _ArmRunner:
             reset = self._original_reset(**kwargs)
             self.reset = reset
             self.decision = 0
+            self.position_error = None
             self.ever_grasped = torch.zeros(
                 (int(self.world.layout.worlds_per_rank),),
                 dtype=torch.bool,
                 device=self.world.device,
             )
+            # The rollout budget is coupled to the approach-curriculum cap, so a
+            # scripted arm that runs out of steps and one that cannot do the
+            # task look identical in the success column. Recorded so they can be
+            # told apart.
+            self.horizon_decisions = int(reset.horizons.max().item())
             self.world.backend.pop_nonfinite_world_events()
             return reset
 
@@ -771,10 +834,16 @@ class _ArmRunner:
         return self
 
     def __exit__(self, *exc: Any) -> None:
-        self.world.collector.trainer.deterministic_action_chunks_tensor = (
-            self._original_action
-        )
-        self.world.collector.resetter.reset = self._original_reset
+        trainer = self.world.collector.trainer
+        resetter = self.world.collector.resetter
+        if self._owned_action:
+            trainer.deterministic_action_chunks_tensor = self._original_action
+        else:
+            vars(trainer).pop("deterministic_action_chunks_tensor", None)
+        if self._owned_reset:
+            resetter.reset = self._original_reset
+        else:
+            vars(resetter).pop("reset", None)
 
     # -- recording ------------------------------------------------------
 
@@ -831,6 +900,7 @@ class _ArmRunner:
             ),
             "episodes": int(success.numel()),
             "decisions": int(len(self.trace.rows)),
+            "horizon_decisions": int(self.horizon_decisions),
             "diverged_worlds": diverged,
         }
 
@@ -853,7 +923,17 @@ def _servo_xy(rel_xy: Any, step: float, torch: Any) -> Any:
 def _make_oracle_xy_source(
     world: _World, *, position_error_std: float = 0.0
 ) -> Callable[..., Any]:
-    """Keep the policy's z/yaw/gripper; replace only the XY channels."""
+    """Keep the policy's z/yaw/gripper; replace only the XY channels.
+
+    ``position_error_std`` corrupts the handed-over object position with an
+    error drawn ONCE PER EPISODE and held, not resampled each decision. A
+    feature that localizes badly is wrong in a consistent direction for as long
+    as the scene does not change; per-decision resampling would instead let the
+    servo average the error away over ~20 decisions and would price a bad
+    feature as far more usable than it is. This is the same distinction the z
+    arc turned on -- per-step i.i.d. noise explores a SUSTAINED bias only with
+    sigma/sqrt(N) -- applied to the input side.
+    """
 
     torch = world.torch
 
@@ -862,12 +942,14 @@ def _make_oracle_xy_source(
     ) -> Any:
         believed = target
         if position_error_std > 0.0:
-            believed = target + torch.randn(
-                target.shape,
-                dtype=target.dtype,
-                device=target.device,
-                generator=runner._rng,
-            ) * float(position_error_std)
+            if runner.position_error is None:
+                runner.position_error = torch.randn(
+                    target.shape,
+                    dtype=target.dtype,
+                    device=target.device,
+                    generator=runner._rng,
+                ) * float(position_error_std)
+            believed = target + runner.position_error
         rel_xy = (believed - low_dim.ee_position)[:, :2]
         command = _servo_xy(rel_xy, world.action_step_xyz, torch)
         out = chunk.clone()
@@ -1031,6 +1113,15 @@ def _analyze_policy_trace(
         # Least squares a_xy ~ A @ unit(rel_xy) + b, pooled. R^2 is how much of
         # the command the true direction explains: a policy that servos scores
         # high even at a small gain.
+        #
+        # The guard is load-bearing, not defensive. R^2 divides by the command's
+        # own variance, and a state-INDEPENDENT command has none -- so the ratio
+        # becomes float-noise over float-noise and comes out at 1.0, reporting
+        # "the object direction explains this perfectly" for a policy that
+        # ignores the object completely. That is the exact shape of a
+        # measurement that confirms whatever it is pointed at, so a command with
+        # no variance to explain reports NaN and the variance is published next
+        # to the score rather than left implicit.
         design = np.concatenate(
             [_unit(rel_xy[usable]), np.ones((flat.shape[0], 1))], axis=1
         )
@@ -1038,8 +1129,12 @@ def _analyze_policy_trace(
         residual = flat - design @ solution
         total = flat - flat.mean(axis=0)
         denom = float(np.sum(total**2))
+        variance = denom / float(flat.shape[0])
+        metrics["command_variance_per_sample"] = variance
         metrics["state_r2"] = (
-            float(1.0 - np.sum(residual**2) / denom) if denom > 0 else float("nan")
+            float(1.0 - np.sum(residual**2) / denom)
+            if variance > 1.0e-8
+            else float("nan")
         )
     else:
         metrics["command_mean_vector"] = []
@@ -1114,7 +1209,7 @@ def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
             writer.writerow({key: row.get(key, "") for key in keys})
 
 
-def _report_plant(rows: Sequence[Mapping[str, Any]]) -> None:
+def _report_plant(rows: Sequence[Mapping[str, Any]], *, steps: int) -> None:
     print("\nA -- XY plant response to a SUSTAINED command")
     print("--------------------------------------------")
     print(
@@ -1132,7 +1227,8 @@ def _report_plant(rows: Sequence[Mapping[str, Any]]) -> None:
     drift = max((abs(r["mean_m_per_step"]) for r in zeros), default=0.0)
     print(
         f"\n  Uncommanded drift at a=0: {drift * 1000.0:.4f} mm/step "
-        f"({drift * 1000.0 * 104:.1f} mm over a 104-step episode)."
+        f"({drift * 1000.0 * int(steps):.1f} mm over this arm's {int(steps)} "
+        "steps). The horizontal miss under\n  investigation is 400 mm."
     )
     print(
         "  A linear, sign-symmetric curve through zero means the XY plant is "
@@ -1156,6 +1252,13 @@ def _report_arms(rows: Sequence[Mapping[str, Any]]) -> None:
             f"{row['final_ee_z_m']:>8.3f} {row['min_ee_z_m']:>7.3f} "
             f"{row['reward_mean']:>8.3f} {row['diverged_worlds']:>9d}"
         )
+    horizon = max((int(row.get("horizon_decisions", 0)) for row in rows), default=0)
+    print(
+        f"\n  rollout budget: {horizon} decisions "
+        f"(~{horizon * 4} env steps), set by the approach-curriculum cap. A "
+        "scripted arm\n  that ran out of budget and one that cannot do the "
+        "task score the same here; the\n  ever-grasped column separates them."
+    )
     baseline = next((r for r in rows if r["arm"] == "policy"), None)
     oracle = next((r for r in rows if r["arm"] == "oracle_xy"), None)
     if baseline is not None and oracle is not None:
@@ -1191,6 +1294,7 @@ def _report_policy(metrics: Mapping[str, Any]) -> None:
         "command_mean_norm",
         "command_spread",
         "direction_concentration",
+        "command_variance_per_sample",
         "state_r2",
         "pre_tanh_abs_xy_mean",
         "tanh_slope_xy_mean",
@@ -1203,10 +1307,18 @@ def _report_policy(metrics: Mapping[str, Any]) -> None:
         print(f"  {key:<34} {float(value):+.4f}")
     print(f"  {'command_mean_vector':<34} {metrics.get('command_mean_vector')}")
     print(
-        "\n  mean_cosine vs sampled_cosine is the size of the noise artefact in "
-        "the campaign's\n  0.11-against-0.05 headline. command_mean_norm >> "
-        "command_spread with\n  direction_concentration near 1 is a fixed drift; "
-        "the reverse, with a high\n  state_r2, is a policy that servos."
+        "\n  Compare against the campaign only at DECISION 0. The trainer's "
+        "cosine is a\n  decision-0 probe, and the all-decisions figure is not "
+        "the same quantity: any\n  sustained drift ends up running away from "
+        "wherever the object was, so it goes\n  NEGATIVE over an episode while "
+        "reading ~0 at the start. A drift and a servo are\n  separated by "
+        "direction_concentration and state_r2, not by the pooled cosine."
+        "\n\n  mean_cosine vs sampled_cosine is the size of the noise artefact "
+        "in the\n  0.11-against-0.05 headline. command_mean_norm >> "
+        "command_spread with\n  direction_concentration near 1 is a fixed "
+        "drift; the reverse, with a high\n  state_r2, is a policy that servos. "
+        "state_r2 is NaN when the command has no\n  variance to explain -- read "
+        "command_variance_per_sample before trusting it."
     )
 
 
@@ -1358,7 +1470,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"diverged={row['diverged_worlds']}",
                 flush=True,
             )
-            if name == "policy":
+            if name == "policy" and runner.trace.rows:
                 policy_metrics = _analyze_policy_trace(
                     runner.trace, sigma=float(args.sigma), rng=rng
                 )
@@ -1375,7 +1487,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             summary["policy"] = policy_metrics
 
     if plant_rows:
-        _report_plant(plant_rows)
+        _report_plant(plant_rows, steps=int(args.plant_steps))
     if policy_metrics is not None and "policy" in legs:
         _report_policy(policy_metrics)
     if arm_rows and "oracle" in legs:
