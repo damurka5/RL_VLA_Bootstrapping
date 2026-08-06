@@ -780,10 +780,17 @@ class _ArmRunner:
         *,
         source: Callable[..., Any] | None,
         seed_offset: int = 0,
+        horizon_override: int = 0,
     ) -> None:
         self.world = world
         self.source = source
         self.seed_offset = int(seed_offset)
+        # Rewrite the rollout budget in place. `horizons` is the tensor
+        # validate_round reads for both its decision count and its per-step
+        # active mask, and nothing else consumes it -- the sparse-task evaluator
+        # is called with max_steps 10_000, so episode length is governed here
+        # and only here. Lets the horizon be varied without a training run.
+        self.horizon_override = max(0, int(horizon_override))
         self.trace = _Trace()
         self.reset: Any = None
         self.decision = 0
@@ -823,6 +830,8 @@ class _ArmRunner:
 
         def patched_reset(**kwargs: Any) -> Any:
             reset = self._original_reset(**kwargs)
+            if self.horizon_override:
+                reset.horizons.fill_(self.horizon_override)
             self.reset = reset
             self.decision = 0
             self.position_error = None
@@ -1587,6 +1596,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "cable-singularity reset. 1.0 restores the saturating servo."
         ),
     )
+    parser.add_argument(
+        "--horizon-decisions",
+        type=int,
+        default=0,
+        help=(
+            "Override the rollout budget in decisions (0 keeps the coupled "
+            "one). The budget is interpolated from the approach cap, so at the "
+            "stuck 0.05 m cap it is 17 decisions -- and C2 shows conversion "
+            "climbing with decisions remaining in every arm. This tests whether "
+            "a longer budget alone lifts success, without a training run. "
+            "curriculum_horizon_max is 26."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260806)
     args = parser.parse_args(argv)
 
@@ -1674,7 +1696,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         for index, (name, source) in enumerate(arms):
             print(f"[xy-probe] arm {name}", flush=True)
-            with _ArmRunner(world, source=source, seed_offset=index) as runner:
+            with _ArmRunner(
+                world,
+                source=source,
+                seed_offset=index,
+                horizon_override=int(args.horizon_decisions),
+            ) as runner:
                 row = runner.run(round_index=0)
             row["arm"] = name
             arm_rows.append(row)

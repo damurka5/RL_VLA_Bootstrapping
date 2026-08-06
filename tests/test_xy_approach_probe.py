@@ -996,6 +996,31 @@ class ArmRunnerTest(unittest.TestCase):
         self.assertEqual(runner.trace.stack("policy_mean0").shape, (6, 64, 5))
         self.assertEqual(runner.trace.stack("holding").shape, (6, 64))
 
+    def test_the_horizon_override_rewrites_the_budget_and_is_reported(self) -> None:
+        """C2 says conversion is budget-bound, so the budget has to be variable.
+
+        ``horizons`` is what validate_round reads for both its decision count
+        and its per-step active mask, so rewriting it in place is the whole
+        override -- and the reported figure has to follow it, or a longer run
+        would still be filed against the coupled budget.
+        """
+
+        collector = _FakeCollector(torch, worlds=64, decisions=4)
+        world = self._world(collector)
+        with probe._ArmRunner(
+            world, source=None, horizon_override=26
+        ) as runner:
+            summary = runner.run(round_index=0)
+        self.assertEqual(summary["horizon_decisions"], 26)
+        self.assertEqual(runner.horizon_decisions, 26)
+
+    def test_no_override_keeps_the_coupled_budget(self) -> None:
+        collector = _FakeCollector(torch, worlds=64, decisions=4)
+        world = self._world(collector)
+        with probe._ArmRunner(world, source=None) as runner:
+            summary = runner.run(round_index=0)
+        self.assertEqual(summary["horizon_decisions"], 4)
+
     def test_analysis_runs_end_to_end_on_a_recorded_trace(self) -> None:
         """The recorded shape and the analysis's expected shape must agree."""
 
