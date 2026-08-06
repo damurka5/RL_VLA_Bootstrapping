@@ -348,6 +348,100 @@ class StartDistanceCapTest(unittest.TestCase):
         self.assertNotIn("validation", calls[0])
 
 
+class GraspTimingTest(unittest.TestCase):
+    """Horizon starvation and bad grasps must not report alike.
+
+    ``oracle_xy`` reaches an ever-grasped rate of 0.85 and converts half of it.
+    Whether that is "the grasp latched too late to lift in the remaining budget"
+    or "grasps earned during an approach are worse" decides whether the fix is
+    the curriculum cap or the grasp itself, so the statistic has to separate
+    them on traces where the answer is built in.
+    """
+
+    def _trace_and_success(self, *, grasp_decision, converts):
+        """``grasp_decision[w]`` is when world w latches (-1 for never)."""
+
+        decisions = 16
+        worlds = len(grasp_decision)
+        rows = []
+        for step in range(decisions):
+            holding = np.array(
+                [
+                    1.0 if 0 <= g <= step else 0.0
+                    for g in grasp_decision
+                ],
+                dtype=np.float32,
+            )
+            rows.append(
+                {
+                    "ee_xyz": np.zeros((worlds, 3), dtype=np.float32),
+                    "target_xyz": np.zeros((worlds, 3), dtype=np.float32),
+                    "prior0": np.zeros((worlds, 5), dtype=np.float32),
+                    "policy_mean0": np.zeros((worlds, 5), dtype=np.float32),
+                    "holding": holding,
+                }
+            )
+        trace = probe._Trace()
+        trace.rows = rows
+        return trace, np.array(converts, dtype=bool)
+
+    def test_horizon_starvation_shows_conversion_climbing_with_budget(self) -> None:
+        # Early grasps convert, late ones do not -- the starvation signature.
+        grasp = [1] * 40 + [14] * 40
+        converts = [True] * 40 + [False] * 40
+        trace, success = self._trace_and_success(
+            grasp_decision=grasp, converts=converts
+        )
+        out = probe._grasp_timing(trace, success, horizon=16)
+        self.assertAlmostEqual(out["ever_grasped_rate"], 1.0, places=6)
+        self.assertAlmostEqual(out["conversion_given_grasp"], 0.5, places=6)
+        by = {
+            item["decisions_remaining"]: item
+            for item in out["conversion_by_decisions_remaining"]
+        }
+        self.assertAlmostEqual(by["0-4"]["conversion"], 0.0, places=6)
+        self.assertAlmostEqual(by["12-+"]["conversion"], 1.0, places=6)
+
+    def test_bad_grasps_show_conversion_flat_in_budget(self) -> None:
+        # Half convert regardless of when they latched.
+        grasp = [1, 1, 14, 14] * 20
+        converts = [True, False, True, False] * 20
+        trace, success = self._trace_and_success(
+            grasp_decision=grasp, converts=converts
+        )
+        out = probe._grasp_timing(trace, success, horizon=16)
+        by = {
+            item["decisions_remaining"]: item
+            for item in out["conversion_by_decisions_remaining"]
+        }
+        self.assertAlmostEqual(by["0-4"]["conversion"], 0.5, places=6)
+        self.assertAlmostEqual(by["12-+"]["conversion"], 0.5, places=6)
+
+    def test_worlds_that_never_grasp_are_excluded_not_counted_as_decision_zero(
+        self,
+    ) -> None:
+        """``argmax`` on an all-False row returns 0, which is a real decision.
+
+        Without the ``ever`` mask those worlds would land in the highest
+        decisions-remaining bucket with success False, manufacturing exactly the
+        flat-conversion signature that means "the grasps are bad".
+        """
+
+        grasp = [-1] * 60 + [2] * 20
+        converts = [False] * 60 + [True] * 20
+        trace, success = self._trace_and_success(
+            grasp_decision=grasp, converts=converts
+        )
+        out = probe._grasp_timing(trace, success, horizon=16)
+        self.assertAlmostEqual(out["ever_grasped_rate"], 0.25, places=6)
+        self.assertAlmostEqual(out["conversion_given_grasp"], 1.0, places=6)
+        counted = sum(
+            item["worlds"]
+            for item in out["conversion_by_decisions_remaining"]
+        )
+        self.assertEqual(counted, 20)
+
+
 class LoraDetectionTest(unittest.TestCase):
     """The adapted prior is part of the policy, not an optional extra.
 

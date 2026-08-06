@@ -792,6 +792,7 @@ class _ArmRunner:
         # reset. See _make_oracle_xy_source for why it is not per-decision.
         self.position_error: Any = None
         self.horizon_decisions = 0
+        self.world_success: Any = None
         self._original_action = None
         self._original_reset = None
         # Whether the name was already an INSTANCE attribute before the patch.
@@ -930,6 +931,7 @@ class _ArmRunner:
         result = collector.validate_round(round_index=round_index)
         diverged = int(self.world.backend.pop_nonfinite_world_events())
         success = result.candidate_success.reshape(-1).float()
+        self.world_success = success.detach().cpu().numpy().copy()
         return {
             "success_rate": float(success.mean().item()),
             "ever_grasped_rate": float(
@@ -1054,7 +1056,13 @@ def _make_full_oracle_source(
         aligned = torch.linalg.vector_norm(xy_err, dim=-1) < float(
             align_tolerance
         )
-        seated = aligned & (z_err.abs() < 0.005)
+        # Descended to or below the grasp height -- a HALF-SPACE, not a band.
+        # The realized step is ~0.0075 m (leg A puts the gain at 0.50), so a
+        # +-5 mm seating band is narrower than one step and the descent can pass
+        # straight through it without ever arming the close. The first run of
+        # this arm reached 0.022 m of the grasp point -- the closest of any arm
+        # -- and grasped 4% of the time, which is that bug and not the task.
+        seated = aligned & (z_err >= -0.008)
         engaged = holding | runner.ever_grasped
 
         a_xy = _servo_xy(xy_err, step, torch, max_command=max_command)
@@ -1066,8 +1074,13 @@ def _make_full_oracle_source(
             torch.full_like(z_err, float(lift_command)),
             torch.where(
                 aligned,
-                torch.clamp(z_err / step, -max_command, max_command),
-                torch.clamp(hover_err / step, -max_command, max_command),
+                # z is deliberately NOT capped by max_command. That cap exists
+                # to keep sustained LATERAL commands out of the cable-singularity
+                # regime; the z axis is the one the campaign has already
+                # characterized, and throttling the descent to 0.35 costs ~19 env
+                # steps of a 68-step budget for no safety it buys.
+                torch.clamp(z_err / step, -1.0, 1.0),
+                torch.clamp(hover_err / step, -1.0, 1.0),
             ),
         )
         # group_target_catalog_ids is per GROUP, not per world -- the resetter
@@ -1100,6 +1113,66 @@ def _make_full_oracle_source(
 # --------------------------------------------------------------------------
 # Leg B analysis
 # --------------------------------------------------------------------------
+
+
+def _grasp_timing(
+    trace: _Trace, success: np.ndarray, *, horizon: int
+) -> dict[str, Any]:
+    """Does a grasp become a success, and does WHEN it happens decide that?
+
+    ``oracle_xy`` reaches an ever-grasped rate of 0.85 -- essentially the
+    ``success | pre-grasped`` 0.83 the campaign measured -- while converting only
+    half of those grasps into successes. Two very different things produce that,
+    and they need opposite fixes:
+
+    * **Horizon starvation.** A world that latches at decision 12 of 17 has 20
+      env steps left, and at the measured ~1.3 mm/step loaded lift rate a 50 mm
+      lift needs about 38. The grasp is fine; the budget is not. The signature is
+      a conversion rate that climbs with decisions remaining.
+    * **Grasp quality.** Grasps earned during an approach are worse than the
+      seated ones a pre-grasped reset manufactures. The signature is a
+      conversion rate flat in decisions remaining.
+
+    The horizon here is 17 because the approach cap is stuck at 0.05 m and
+    ``curriculum_horizon_coupling_enabled`` interpolates the budget from the cap
+    -- so if it is starvation, the cap and the horizon are one bottleneck, not
+    two.
+    """
+
+    holding = trace.stack("holding") > 0.5  # [D, W]
+    decisions, worlds = holding.shape
+    ever = holding.any(axis=0)
+    # argmax on a boolean gives the first True, and 0 where there is none; the
+    # `ever` mask is what keeps those apart.
+    first = np.argmax(holding, axis=0)
+    remaining = int(horizon) - first
+
+    out: dict[str, Any] = {
+        "ever_grasped_rate": float(np.mean(ever)),
+        "success_rate": float(np.mean(success)),
+        "conversion_given_grasp": (
+            float(np.mean(success[ever])) if ever.any() else float("nan")
+        ),
+        "first_grasp_decision_mean": (
+            float(np.mean(first[ever])) if ever.any() else float("nan")
+        ),
+        "horizon_decisions": int(horizon),
+    }
+    buckets: list[dict[str, Any]] = []
+    edges = [(0, 4), (4, 8), (8, 12), (12, 100)]
+    for low, high in edges:
+        mask = ever & (remaining >= low) & (remaining < high)
+        buckets.append(
+            {
+                "decisions_remaining": f"{low}-{high if high < 100 else '+'}",
+                "worlds": int(mask.sum()),
+                "conversion": (
+                    float(np.mean(success[mask])) if mask.any() else float("nan")
+                ),
+            }
+        )
+    out["conversion_by_decisions_remaining"] = buckets
+    return out
 
 
 def _unit(vectors: np.ndarray, eps: float = 1.0e-9) -> np.ndarray:
@@ -1337,6 +1410,41 @@ def _report_arms(rows: Sequence[Mapping[str, Any]]) -> None:
         )
 
 
+def _report_timing(rows: Sequence[Mapping[str, Any]]) -> None:
+    if not rows:
+        return
+    print("\nC2 -- does a grasp become a success, and does timing decide it?")
+    print("---------------------------------------------------------------")
+    print(
+        f"{'arm':<26} {'grasped':>8} {'success':>8} {'convert':>8} "
+        f"{'1st grasp':>10}   conversion by decisions remaining"
+    )
+    for row in rows:
+        buckets = "  ".join(
+            f"{item['decisions_remaining']}:"
+            + (
+                "  n/a"
+                if item["worlds"] == 0
+                else f"{item['conversion']:.2f}({item['worlds']})"
+            )
+            for item in row["conversion_by_decisions_remaining"]
+        )
+        print(
+            f"{row['arm']:<26} {row['ever_grasped_rate']:>8.3f} "
+            f"{row['success_rate']:>8.3f} {row['conversion_given_grasp']:>8.3f} "
+            f"{row['first_grasp_decision_mean']:>10.1f}   {buckets}"
+        )
+    print(
+        "\n  A conversion rate that CLIMBS with decisions remaining is horizon "
+        "starvation:\n  the grasp is fine and the budget is not, and since the "
+        "budget is interpolated\n  from the approach cap, the stuck cap and the "
+        "short horizon are one bottleneck.\n  A conversion rate FLAT in "
+        "decisions remaining means grasps earned during an\n  approach are "
+        "simply worse than the seated ones a pre-grasped reset makes, and\n  no "
+        "amount of extra budget fixes it."
+    )
+
+
 def _report_policy(metrics: Mapping[str, Any]) -> None:
     print("\nB -- what the deterministic policy commands")
     print("------------------------------------------")
@@ -1532,6 +1640,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         summary["plant"] = plant_rows
 
     arm_rows: list[dict[str, Any]] = []
+    timing_rows: list[dict[str, Any]] = []
     policy_metrics: dict[str, Any] | None = None
     if needs_policy:
         rng = np.random.default_rng(int(args.seed))
@@ -1576,6 +1685,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"diverged={row['diverged_worlds']}",
                 flush=True,
             )
+            if runner.trace.rows and runner.world_success is not None:
+                timing = _grasp_timing(
+                    runner.trace,
+                    runner.world_success > 0.5,
+                    horizon=int(runner.horizon_decisions),
+                )
+                timing["arm"] = name
+                timing_rows.append(timing)
             if name == "policy" and runner.trace.rows:
                 policy_metrics = _analyze_policy_trace(
                     runner.trace, sigma=float(args.sigma), rng=rng
@@ -1589,6 +1706,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
         _write_csv(output / "arms.csv", arm_rows)
         summary["arms"] = arm_rows
+        summary["grasp_timing"] = timing_rows
         if policy_metrics is not None:
             summary["policy"] = policy_metrics
 
@@ -1598,6 +1716,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report_policy(policy_metrics)
     if arm_rows and "oracle" in legs:
         _report_arms(arm_rows)
+        _report_timing(timing_rows)
 
     (output / "summary.json").write_text(json.dumps(summary, indent=2))
     print(f"\nwrote {output}", flush=True)
