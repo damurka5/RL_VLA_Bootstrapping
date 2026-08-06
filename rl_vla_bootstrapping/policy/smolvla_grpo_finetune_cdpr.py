@@ -1731,6 +1731,84 @@ class SmolVLAGRPOTrainer:
             )
         return int(payload.get("global_step", 0))
 
+    def reset_residual_vision_columns(self, vision_dim: int) -> dict[str, float]:
+        """Zero the residual's first-layer weights on the vision block only.
+
+        For changing ``residual_vision_pooling`` under an already-trained
+        residual. The feature keeps its width, so the checkpoint still loads --
+        and that is the trap: the first layer's vision columns hold a mapping
+        learned for the OLD pooling, and applied to the new features they are
+        not merely stale but actively wrong. Swapping `flat_random` for
+        `per_token_random` on a resume cost normal-start success 0.206 -> 0.135,
+        ever-grasped 0.226 -> 0.067 and drove the aiming cosine to 0.003, which
+        was read as "the feature needs a fresh residual". It does not. It needs
+        the vision columns not to be a wrong answer.
+
+        Zeroing rather than re-randomising, and only these columns: the residual
+        starts out ignoring vision entirely, which is a policy it already knows
+        how to be (the proprioception path carries descend/close/lift, and the
+        grasp-state probe decodes "holding" from proprioception alone at 0.898),
+        and learns the new mapping up from nothing instead of down from noise.
+        Everything the residual knows that does not depend on vision survives.
+
+        The Adam moments for those columns go with them. On a weights-only warm
+        start the optimizer is fresh anyway, but on a full resume they would
+        carry momentum accumulated for the old mapping and take a large first
+        step in a direction that no longer means anything.
+        """
+
+        vision = int(vision_dim)
+        if vision <= 0:
+            return {}
+        base = self._unwrap(self.actor)
+        first = next(
+            (m for m in base.modules() if isinstance(m, nn.Linear)), None
+        )
+        if first is None:
+            raise RuntimeError(
+                "The residual actor has no Linear layer to reset."
+            )
+        expected = int(self.state_dim) + int(self.chunk_size) * int(
+            self.action_dim
+        )
+        if int(first.in_features) != expected:
+            raise RuntimeError(
+                "Refusing to zero vision columns: the residual's first layer "
+                f"takes {first.in_features} inputs, but state_dim "
+                f"{self.state_dim} + chunk {self.chunk_size} x action "
+                f"{self.action_dim} implies {expected}. The input layout is "
+                "not what this reset assumes."
+            )
+        if vision >= int(self.state_dim):
+            raise ValueError(
+                f"vision_dim {vision} leaves no proprioception in a "
+                f"{self.state_dim}-wide residual state."
+            )
+        # The collector builds the state as [proprioception ..., vision ...] and
+        # then the actor concatenates the flattened prior after it, so the
+        # vision block is the last `vision` columns of the state span.
+        start = int(self.state_dim) - vision
+        stop = int(self.state_dim)
+        with torch.no_grad():
+            magnitude = float(first.weight[:, start:stop].abs().mean().item())
+            first.weight[:, start:stop].zero_()
+            state = self.optimizer.state.get(first.weight)
+            moments = 0.0
+            if state:
+                for key in ("exp_avg", "exp_avg_sq"):
+                    tensor = state.get(key)
+                    if tensor is not None and tensor.shape == first.weight.shape:
+                        moments += float(
+                            tensor[:, start:stop].abs().mean().item()
+                        )
+                        tensor[:, start:stop].zero_()
+        return {
+            "vision_reset/columns": float(vision),
+            "vision_reset/first_column": float(start),
+            "vision_reset/mean_abs_weight_cleared": magnitude,
+            "vision_reset/mean_abs_moment_cleared": moments,
+        }
+
     def load_weights_only(self, checkpoint_path: "Path | str") -> None:
         """Warm-start from a checkpoint's WEIGHTS only.
 

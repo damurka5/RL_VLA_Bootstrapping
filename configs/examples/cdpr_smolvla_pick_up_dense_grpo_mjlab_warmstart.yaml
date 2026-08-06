@@ -411,7 +411,17 @@ task:
     # exists -- an early cap is exactly what this gate is here to prevent.
     random_workspace_start_distance_promote_pass_rate: 0.30
     random_workspace_start_distance_demote_pass_rate: 0.12
-    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    # 0.95, not 0.9. The per-update grasp rate carries about twice the spread
+    # binomial sampling on ~510 normal-start worlds explains (0.037 against
+    # 0.018), so a 10-update effective window leaves the average close enough to
+    # the threshold for two good updates to cross it.
+    random_workspace_start_distance_pass_rate_ema_decay: 0.95
+    # The EMA must hold at or above the promote threshold for this many
+    # consecutive updates before the cap moves. Every promotion of the 10M run
+    # fired on a first touch and landed below the line at the new rung
+    # (0.312 -> 0.243, 0.300 -> 0.219), which is a promotion the evidence did
+    # not support. 1 restores the old single-crossing behaviour.
+    random_workspace_start_distance_promote_dwell_updates: 5
     # 15, not 5: at 5 the cap could advance every ~30k steps, far faster than the
     # EMA can reflect whether the last level was learned. The EMA is also
     # re-seeded on every cap change (17a83f7), so a promotion is judged on what
@@ -596,7 +606,21 @@ training:
       # it buys, at least over 2.7M steps. Testing it properly means a fresh
       # residual rather than a resume, which is a different and much longer
       # experiment.
-      residual_vision_pooling: flat_random
+      # per_token_random: reduce CHANNELS per token with one shared projection
+      # and keep the 16-token spatial grid, instead of flattening the grid and
+      # mixing it away with a random matrix. Measured over 120 episodes at this
+      # same 512 width, direction cosine to the object: flat_random +0.090,
+      # per_token_random +0.389, un-projected 30720-d ceiling +0.412. Flattening
+      # first is what threw the object position away, and widening cannot undo
+      # it -- a fixed random projection retains d_out/d_in, so 8192 dims still
+      # keep only 27%.
+      #
+      # Requires RLVLA_SMOLVLA_RESET_VISION_COLUMNS=1 on the warm start. The
+      # feature keeps its width, so the checkpoint loads clean and the residual's
+      # first-layer vision columns silently keep a mapping learned for the old
+      # pooling -- which is how the previous attempt at this swap regressed
+      # everything it touched.
+      residual_vision_pooling: per_token_random
       residual_scale: 1.0
       hidden_dim: 1024
       train_vla_lora: true

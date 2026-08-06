@@ -699,10 +699,32 @@ class ApproachDistanceCurriculum:
         self.cooldown_updates = max(
             int(number("random_workspace_start_distance_cooldown_updates", 5)), 1
         )
+        # Consecutive updates the EMA must HOLD at or above the promote
+        # threshold before the cap moves. 1 reproduces the old single-crossing
+        # behaviour.
+        #
+        # Every promotion of the 10M run fired the moment the EMA first touched
+        # the threshold, and the rate at the new rung was well below it:
+        # 0.312 -> 0.243 and 0.300 -> 0.219. The measured per-update spread of
+        # the rate is 0.037 against the 0.018 that binomial sampling on ~510
+        # normal-start worlds explains, so the signal carries about twice the
+        # noise a count would, and two consecutive high updates are enough to
+        # tip a threshold the average is sitting just under. A dwell turns
+        # "touched the line once" into "stayed above it", which is the claim the
+        # promotion is supposed to rest on.
+        self.promote_dwell_updates = max(
+            int(
+                number(
+                    "random_workspace_start_distance_promote_dwell_updates", 1
+                )
+            ),
+            1,
+        )
         self.cap = self.initial
         self.pass_rate_ema = 0.0
         self._cooldown = 0
         self._reseed_ema = False
+        self._dwell = 0
 
     def current_cap(self) -> float:
         return self.cap if self.enabled else float("inf")
@@ -761,7 +783,16 @@ class ApproachDistanceCurriculum:
             self._cooldown -= 1
             return
         changed = False
-        if self.pass_rate_ema >= self.promote_threshold and self.cap < self.final:
+        if self.pass_rate_ema >= self.promote_threshold:
+            self._dwell += 1
+        else:
+            # One update back under the line restarts the count: the point is a
+            # sustained level, not an accumulated tally of good updates.
+            self._dwell = 0
+        if (
+            self._dwell >= self.promote_dwell_updates
+            and self.cap < self.final
+        ):
             self.cap = self._step_cap(+1)
             changed = True
         elif self.pass_rate_ema <= self.demote_threshold and self.cap > self.initial:
@@ -770,6 +801,7 @@ class ApproachDistanceCurriculum:
         if changed:
             self._cooldown = self.cooldown_updates
             self._reseed_ema = True
+            self._dwell = 0
 
     def restart(self) -> bool:
         """Drop the cap back to ``initial`` and forget the pass-rate history.
@@ -794,6 +826,7 @@ class ApproachDistanceCurriculum:
         self.pass_rate_ema = 0.0
         self._reseed_ema = True
         self._cooldown = self.cooldown_updates
+        self._dwell = 0
         return True
 
     def state_dict(self) -> dict[str, float]:
@@ -802,6 +835,7 @@ class ApproachDistanceCurriculum:
             "pass_rate_ema": float(self.pass_rate_ema),
             "cooldown": float(self._cooldown),
             "reseed_ema": float(self._reseed_ema),
+            "dwell": float(self._dwell),
         }
 
     def load_state_dict(self, state: Mapping[str, Any] | None) -> None:
@@ -815,6 +849,9 @@ class ApproachDistanceCurriculum:
         self.pass_rate_ema = float(state.get("pass_rate_ema", self.pass_rate_ema))
         self._cooldown = int(float(state.get("cooldown", 0)))
         self._reseed_ema = bool(float(state.get("reseed_ema", 0.0)))
+        # Absent in checkpoints written before the dwell existed; 0 is the safe
+        # restore either way, costing at most one extra qualifying update.
+        self._dwell = max(int(float(state.get("dwell", 0.0))), 0)
 
 
 class PreliftedStageCurriculum:
@@ -1019,6 +1056,21 @@ class PerInstructionApproachCurriculum:
             entry = state.get(name)
             if isinstance(entry, Mapping):
                 item.load_state_dict(entry)
+
+
+def _flag_env(name: str) -> bool:
+    """A 0/1 environment switch, refusing anything it cannot read as either.
+
+    Silently treating a typo as "off" is how RLVLA_HF_OFFLINE=true would look
+    exactly like not setting it at all.
+    """
+
+    raw = os.environ.get(name, "0").strip().lower()
+    if raw in {"1", "true", "yes", "on"}:
+        return True
+    if raw in {"", "0", "false", "no", "off"}:
+        return False
+    raise SystemExit(f"{name} must be 0 or 1, got {raw!r}.")
 
 
 def _task_metadata(args: Any) -> dict[str, Any]:
@@ -1348,6 +1400,39 @@ def main(argv: Sequence[str] | None = None) -> None:
                 dist_ctx,
                 f"[smolvla-mjwarp] resumed {checkpoint} at global step "
                 f"{global_step}",
+            )
+
+        # Changing residual_vision_pooling under a trained residual. Set
+        # RLVLA_SMOLVLA_RESET_VISION_COLUMNS=1 alongside the new pooling: the
+        # feature keeps its width so the checkpoint loads clean, and the first
+        # layer's vision columns then hold a mapping learned for the old
+        # pooling, which is worse than no mapping at all. Only meaningful with a
+        # warm start or resume; on a fresh run there is nothing to reset.
+        if _flag_env("RLVLA_SMOLVLA_RESET_VISION_COLUMNS"):
+            if not (warmstart_checkpoint or args.resume_checkpoint):
+                raise SystemExit(
+                    "RLVLA_SMOLVLA_RESET_VISION_COLUMNS needs a warm start or "
+                    "a resume; a fresh residual has nothing to reset."
+                )
+            if vision_feature_dim <= 0:
+                raise SystemExit(
+                    "RLVLA_SMOLVLA_RESET_VISION_COLUMNS requires "
+                    "residual_vision_features with a positive "
+                    "residual_vision_dim."
+                )
+            reset_info = trainer.reset_residual_vision_columns(
+                vision_feature_dim
+            )
+            _log(
+                dist_ctx,
+                "[smolvla-mjwarp] zeroed the residual's "
+                f"{vision_feature_dim} vision input columns "
+                f"(from index {reset_info['vision_reset/first_column']:.0f}); "
+                "cleared mean |w| "
+                f"{reset_info['vision_reset/mean_abs_weight_cleared']:.5f}, "
+                "mean |Adam moment| "
+                f"{reset_info['vision_reset/mean_abs_moment_cleared']:.5f}. "
+                f"Pooling is {getattr(args, 'residual_vision_pooling', '?')}.",
             )
 
         curriculum = RankLocalCurriculum(
