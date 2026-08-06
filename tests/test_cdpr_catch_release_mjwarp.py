@@ -2439,7 +2439,7 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
             concatenate_collector_rounds,
         )
 
-        def make(prelifted):
+        def make(prelifted, ever_grasped=None):
             return CollectorRound(
                 records={"advantage": torch.zeros((2,))},
                 loss_mask=torch.ones((2,)),
@@ -2449,19 +2449,105 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
                 group_shell_ids=torch.zeros((2,), dtype=torch.int64),
                 metrics={"rollout_time_s": 1.0},
                 group_prelifted=prelifted,
+                candidate_ever_grasped=ever_grasped,
             )
 
         first = torch.tensor([True, False])
         second = torch.tensor([False, True])
         merged = concatenate_collector_rounds([make(first), make(second)])
-        self.assertEqual(len(merged), 8)
+        self.assertEqual(len(merged), 9)
         self.assertTrue(
-            torch.equal(merged[-1], torch.tensor([True, False, False, True]))
+            torch.equal(merged[7], torch.tensor([True, False, False, True]))
         )
         # A round without the mask disables the split rather than guessing,
         # so the gate falls back to counting every world.
         partial = concatenate_collector_rounds([make(first), make(None)])
-        self.assertIsNone(partial[-1])
+        self.assertIsNone(partial[7])
+
+    def test_rounds_carry_the_grasp_outcome_through_concatenation(self):
+        """The approach cap promotes on this, so it has to survive the merge.
+
+        The gate reads the grasp rate rather than full-task success: success
+        also requires the lift, whose conversion is governed by the rollout
+        budget left after the grasp lands, so gating the approach on it made the
+        cap wait on a skill the approach cannot influence.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            CollectorRound,
+            concatenate_collector_rounds,
+        )
+
+        def make(ever_grasped):
+            return CollectorRound(
+                records={"advantage": torch.zeros((2,))},
+                loss_mask=torch.ones((2,)),
+                candidate_rewards=torch.zeros((2, 8)),
+                candidate_success=torch.zeros((2, 8), dtype=torch.bool),
+                group_instruction_ids=torch.zeros((2,), dtype=torch.int64),
+                group_shell_ids=torch.zeros((2,), dtype=torch.int64),
+                metrics={"rollout_time_s": 1.0},
+                group_prelifted=torch.zeros((2,), dtype=torch.bool),
+                candidate_ever_grasped=ever_grasped,
+            )
+
+        first = torch.zeros((2, 8), dtype=torch.bool)
+        first[0] = True
+        second = torch.zeros((2, 8), dtype=torch.bool)
+        merged = concatenate_collector_rounds([make(first), make(second)])
+        self.assertEqual(tuple(merged[8].shape), (4, 8))
+        self.assertEqual(int(merged[8].sum().item()), 8)
+        # Absent on any round disables it rather than guessing, and the gate
+        # then skips the instruction instead of feeding the curriculum a zero
+        # it would ratchet down on.
+        partial = concatenate_collector_rounds([make(first), make(None)])
+        self.assertIsNone(partial[8])
+
+    def test_the_grasp_gate_counts_only_normal_start_groups(self):
+        """A pre-grasped world grasps at env step 0 by construction.
+
+        Counting it would make the approach cap promote on the pre-grasped
+        fraction knob rather than on anything the policy learned.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            instruction_outcome_counts,
+        )
+
+        successes = torch.zeros((2, 4), dtype=torch.bool)
+        ever_grasped = torch.ones((2, 4), dtype=torch.bool)
+        counts = instruction_outcome_counts(
+            successes,
+            torch.zeros((2,), dtype=torch.int64),
+            {"pick_up": 0},
+            torch.tensor([True, False]),
+            ever_grasped,
+        )
+        # Group 0 is pre-grasped and excluded; only group 1's four candidates
+        # count, and all four grasped.
+        self.assertEqual(counts["instruction_worlds_normal_start/pick_up"], 4.0)
+        self.assertEqual(counts["instruction_grasps_normal_start/pick_up"], 4.0)
+
+    def test_the_grasp_key_is_absent_when_no_outcome_is_supplied(self):
+        """Absence has to be visible, or the gate divides by a missing count."""
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            instruction_outcome_counts,
+        )
+
+        counts = instruction_outcome_counts(
+            torch.zeros((2, 4), dtype=torch.bool),
+            torch.zeros((2,), dtype=torch.int64),
+            {"pick_up": 0},
+            torch.zeros((2,), dtype=torch.bool),
+        )
+        self.assertNotIn("instruction_grasps_normal_start/pick_up", counts)
 
     def test_the_new_metric_names_survive_the_rank_reduction(self):
         """Means are divided back down at the update boundary; counts are not."""

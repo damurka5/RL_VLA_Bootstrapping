@@ -986,6 +986,36 @@ def _servo_xy(
     return torch.clamp(rel_xy / float(step), -limit, limit)
 
 
+def _make_sampled_source(world: _World, *, sigma: float) -> Callable[..., Any]:
+    """The deterministic mean plus the trainer's exploration noise.
+
+    The approach curriculum's promote gate does not read the deterministic rate
+    this probe otherwise reports. It reads the SAMPLED, normal-start pass rate
+    (smolvla_grpo_mjwarp_cdpr.py, instruction_successes_normal_start), so the
+    number that decides whether the cap ever moves is this one -- and comparing
+    a deterministic 0.33 against a 0.30 gate is comparing two different
+    quantities.
+
+    Reproduces sample_action_chunks_tensor: mean + N(0, sigma) per dimension,
+    clamped to the action box. The per-episode offset is deliberately omitted;
+    it is gated on already holding the object and configured only for z, so it
+    does not touch the approach rate this gate is about.
+    """
+
+    torch = world.torch
+
+    def source(*, runner: "_ArmRunner", chunk: Any, **_: Any) -> Any:
+        noise = torch.randn(
+            chunk.shape,
+            dtype=chunk.dtype,
+            device=chunk.device,
+            generator=runner._rng,
+        )
+        return torch.clamp(chunk + noise * float(sigma), -1.0, 1.0)
+
+    return source
+
+
 def _make_oracle_xy_source(
     world: _World,
     *,
@@ -1666,7 +1696,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     policy_metrics: dict[str, Any] | None = None
     if needs_policy:
         rng = np.random.default_rng(int(args.seed))
-        arms: list[tuple[str, Callable[..., Any] | None]] = [("policy", None)]
+        arms: list[tuple[str, Callable[..., Any] | None]] = [
+            ("policy", None),
+            # What the promote gate actually reads.
+            (
+                "policy_sampled",
+                _make_sampled_source(world, sigma=float(args.sigma)),
+            ),
+        ]
         if "oracle" in legs:
             servo_cap = float(args.servo_max_command)
             arms.append(

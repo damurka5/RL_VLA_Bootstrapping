@@ -328,8 +328,16 @@ class StartDistanceCapTest(unittest.TestCase):
         source = inspect.getsource(mod.BatchedReverseFrontierResetter)
         self.assertIn('self.random_start_max_goal_distance = float("inf")', source)
 
-    def test_the_trainer_caps_only_the_training_resetter(self) -> None:
-        """If this ever changes, the finding it encodes is stale."""
+    def test_the_trainer_caps_the_validation_resetter_too(self) -> None:
+        """The regression guard for the bug this whole probe surfaced.
+
+        For 52M steps the cap reached the training resetter only, so held-out
+        validation ran full-workspace starts (and, through the coupling's
+        uncapped branch, the full 26-decision budget) while training ran 5 cm
+        starts and 17 decisions. Every validation number the campaign steered by
+        was measuring a task the policy is never trained on. If the validation
+        call site is ever dropped again, that silently comes back.
+        """
 
         import inspect
 
@@ -339,13 +347,66 @@ class StartDistanceCapTest(unittest.TestCase):
         calls = [
             line.strip()
             for line in lines
-            if "set_random_start_max_goal_distance" in line
+            if "set_random_start_max_goal_distance(" in line
             and not line.strip().startswith("#")
         ]
         self.assertEqual(
-            len(calls), 1, msg=f"expected one cap call site, found {calls}"
+            len(calls), 2, msg=f"expected two cap call sites, found {calls}"
         )
-        self.assertNotIn("validation", calls[0])
+        self.assertTrue(
+            any("validation" in line for line in calls),
+            msg=f"no validation-resetter cap call among {calls}",
+        )
+
+
+@unittest.skipIf(torch is None, "torch is unavailable")
+class SampledSourceTest(unittest.TestCase):
+    """The promote gate reads the sampled rate, so the probe has to produce it.
+
+    Reporting only the deterministic rate invites exactly the comparison that
+    was made once already: a deterministic 0.33 held up against a 0.30 gate that
+    is fed a sampled number.
+    """
+
+    def _world(self):
+        return probe._World(
+            torch=torch,
+            device=torch.device("cpu"),
+            args=SimpleNamespace(),
+            payload={},
+            project=None,
+            task_metadata={},
+            backend=None,
+            layout=SimpleNamespace(worlds_per_rank=4, group_size=2),
+            resetter=None,
+            action_step_xyz=0.015,
+        )
+
+    def test_noise_is_added_at_the_configured_width(self) -> None:
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(3)
+        source = probe._make_sampled_source(self._world(), sigma=0.333)
+        chunk = torch.zeros((20000, 1, 5))
+        out = source(runner=SimpleNamespace(_rng=generator), chunk=chunk)
+        self.assertAlmostEqual(float(out.std()), 0.333, delta=0.02)
+        self.assertAlmostEqual(float(out.mean()), 0.0, delta=0.02)
+
+    def test_the_action_box_is_respected(self) -> None:
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(3)
+        source = probe._make_sampled_source(self._world(), sigma=0.333)
+        chunk = torch.full((5000, 1, 5), 0.95)
+        out = source(runner=SimpleNamespace(_rng=generator), chunk=chunk)
+        self.assertLessEqual(float(out.max()), 1.0)
+        self.assertGreaterEqual(float(out.min()), -1.0)
+
+    def test_it_is_not_the_deterministic_arm(self) -> None:
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(3)
+        source = probe._make_sampled_source(self._world(), sigma=0.333)
+        chunk = torch.full((100, 1, 5), 0.2)
+        out = source(runner=SimpleNamespace(_rng=generator), chunk=chunk)
+        self.assertFalse(torch.allclose(out, chunk))
 
 
 class GraspTimingTest(unittest.TestCase):

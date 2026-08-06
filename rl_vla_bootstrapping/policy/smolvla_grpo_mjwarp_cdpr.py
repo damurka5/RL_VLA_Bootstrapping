@@ -1598,6 +1598,29 @@ def main(argv: Sequence[str] | None = None) -> None:
                 previous_scene_object_max = scene_object_range[1]
             start_distance_caps = approach_curriculum.caps_by_instruction_id()
             resetter.set_random_start_max_goal_distance(start_distance_caps)
+            # The VALIDATION resetter needs the same cap, and for 52M steps it
+            # did not get it.
+            #
+            # An uncapped resetter keeps its `inf` default, which the setter
+            # documents as "restoring the full-workspace start distribution",
+            # while `random_workspace_min_goal_xy_distance` (0.10) sets a floor
+            # underneath it. Training starts were therefore <= the earned cap
+            # (0.05 m) and validation starts >= 0.10 m: two distributions with no
+            # overlap at any point. The uncapped branch of the horizon coupling
+            # then also gave validation the full 26-decision budget against
+            # training's 17, so the two differed in start distance AND episode
+            # length.
+            #
+            # That is the whole of the `deterministic validation 0.001` and
+            # `final_xy_distance 0.39-0.42 m` this run has logged since the
+            # beginning, and both were read as facts about the policy. Measured
+            # with tools/audit/xy_approach_probe.py on step_7505256: the same
+            # checkpoint, the same validate_round, the same seed, with the cap
+            # applied scores success 0.266-0.328 and final distance 0.15-0.19 m.
+            if validation_collector is not None:
+                validation_collector.resetter.set_random_start_max_goal_distance(
+                    start_distance_caps
+                )
             profile_limit = int(args.mjwarp_profile_updates)
             profile_this_update = bool(args.mjwarp_profile_timers) and (
                 profile_limit <= 0
@@ -1646,6 +1669,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 shell_ids,
                 rollout_metrics,
                 prelifted_groups,
+                ever_grasped_groups,
             ) = (
                 concatenate_collector_rounds(rounds)
             )
@@ -1744,6 +1768,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     for name in configured_instruction_names
                 },
                 prelifted_groups,
+                ever_grasped_groups,
             )
             local_metrics = {
                 **rollout_metrics,
@@ -1783,22 +1808,39 @@ def main(argv: Sequence[str] | None = None) -> None:
             # The counts are global sums, so every rank computes the same rates
             # and moves the caps identically. Affects the next update's caps.
             #
-            # Measured over the normal-start groups only. What this gate is for
-            # is deciding whether the policy can reach the object from the
-            # current start distance, and a pre-grasped start answers no part of
-            # that question -- it begins holding the object. The unsuffixed
-            # instruction_successes/{name} stays in the metrics as the run's
-            # overall outcome; it is just not what promotes the cap.
+            # Measured over the normal-start groups only, and on the GRASP rate
+            # rather than full-task success.
+            #
+            # A pre-grasped start answers no part of the question this gate
+            # asks, so it is excluded -- it begins holding the object. But
+            # success was the wrong quantity for the same reason: it also
+            # requires the lift, and conversion from grasp to success is ~0.6
+            # and governed by how much rollout budget is left after the grasp
+            # lands (measured on step_7505256 with
+            # tools/audit/xy_approach_probe.py -- conversion climbs from 0.13 to
+            # ~0.8 with decisions remaining, along a curve that is identical
+            # whether the policy is handed a perfect object position or a 20 cm
+            # error). Gating the APPROACH curriculum on that made the cap wait
+            # on a skill the approach cannot influence, and it never moved off
+            # 0.05 m in 171k steps: the sampled normal-start success rate sat at
+            # ~0.21 against a 0.30 promote gate while the grasp rate was already
+            # roughly double it.
+            #
+            # This is the same split the per-instruction caps and the prelifted
+            # stage each needed: one curriculum, one skill, one measurement of
+            # that skill. The lift has its own curriculum already.
+            #
+            # instruction_successes_normal_start/{name} stays in the metrics as
+            # the run's outcome; it is just no longer what promotes the cap.
             instruction_pass_rates = {}
             for name in configured_instruction_names:
                 worlds_for_name = synchronized_metrics.get(
                     f"instruction_worlds_normal_start/{name}", 0.0
                 )
-                if worlds_for_name > 0.0:
+                grasp_key = f"instruction_grasps_normal_start/{name}"
+                if worlds_for_name > 0.0 and grasp_key in synchronized_metrics:
                     instruction_pass_rates[name] = (
-                        synchronized_metrics.get(
-                            f"instruction_successes_normal_start/{name}", 0.0
-                        )
+                        synchronized_metrics.get(grasp_key, 0.0)
                         / worlds_for_name
                     )
             approach_curriculum.observe(instruction_pass_rates)

@@ -166,6 +166,7 @@ def instruction_outcome_counts(
     task_ids: Any,
     instruction_ids: Mapping[str, int],
     prelifted_groups: Any | None = None,
+    ever_grasped: Any | None = None,
 ) -> dict[str, float]:
     """Per-instruction success/world counts, whole-run and approach-only.
 
@@ -206,6 +207,10 @@ def instruction_outcome_counts(
         counts[f"instruction_worlds_normal_start/{name}"] = float(
             approach.sum().item() * candidates
         )
+        if ever_grasped is not None:
+            counts[f"instruction_grasps_normal_start/{name}"] = float(
+                ever_grasped[approach].sum().item()
+            )
     return counts
 
 
@@ -2026,6 +2031,15 @@ class CollectorRound:
     # it has to be excluded from that rate or the cap promotes on evidence about
     # a different task.
     group_prelifted: Any | None = None
+    # Per-candidate "this world earned a grasp at some point", shaped like
+    # candidate_success. The approach curriculum promotes on this rather than on
+    # full-task success: its question is whether the policy can REACH an object
+    # from the current start distance, and success also requires the lift, which
+    # is a separate skill with its own curriculum. Measured on step_7505256,
+    # conversion from grasp to success is ~0.6 and is governed by the remaining
+    # rollout budget, so gating the approach on success made the cap wait on a
+    # skill the approach cannot influence.
+    candidate_ever_grasped: Any | None = None
     # Capped decision-0 subsample of SmolVLA inputs for the LoRA grad-through-VLA
     # update (None unless the collector was asked to store it).
     vla_records: dict[str, Any] | None = None
@@ -3218,6 +3232,9 @@ class RankLocalMJWarpGRPOCollector:
             metrics=metrics,
             vla_records=vla_records,
             group_prelifted=prelifted_group_mask,
+            candidate_ever_grasped=(first_grasp_step >= 0).reshape(
+                self.layout.groups_per_rank, group_size
+            ),
         )
 
     def validate_round(
@@ -3479,7 +3496,9 @@ class RankLocalMJWarpGRPOCollector:
 
 def concatenate_collector_rounds(
     rounds: Sequence[CollectorRound],
-) -> tuple[dict[str, Any], Any, Any, Any, Any, Any, dict[str, float], Any]:
+) -> tuple[
+    dict[str, Any], Any, Any, Any, Any, Any, dict[str, float], Any, Any
+]:
     if not rounds:
         raise ValueError("At least one collector round is required.")
     import torch
@@ -3492,6 +3511,11 @@ def concatenate_collector_rounds(
     mask = torch.cat([item.loss_mask for item in rounds], dim=0)
     rewards = torch.cat([item.candidate_rewards for item in rounds], dim=0)
     successes = torch.cat([item.candidate_success for item in rounds], dim=0)
+    ever_grasped = (
+        torch.cat([item.candidate_ever_grasped for item in rounds], dim=0)
+        if all(item.candidate_ever_grasped is not None for item in rounds)
+        else None
+    )
     task_ids = torch.cat([item.group_instruction_ids for item in rounds], dim=0)
     shell_ids = torch.cat([item.group_shell_ids for item in rounds], dim=0)
     prelifted_groups = (
@@ -3526,4 +3550,5 @@ def concatenate_collector_rounds(
         shell_ids,
         metrics,
         prelifted_groups,
+        ever_grasped,
     )
