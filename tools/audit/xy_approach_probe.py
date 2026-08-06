@@ -1,0 +1,1390 @@
+"""Why the pick_up policy never servos horizontally: plant, command, or knowledge?
+
+The campaign's Z arc is finished and its conclusion (§4.10/§4.11) is that the
+approach fails because the residual's 512-d random projection throws the object
+position away. That conclusion is a chain -- *the feature is blind, so the policy
+cannot servo, so it misses by 0.40 m, so the cap never promotes* -- and every
+link of it was measured except the last inference. This probe tests the chain by
+breaking it in three different places and seeing which break matters.
+
+Three legs. Each states what it would show and what result kills the hypothesis
+it is testing. They are deliberately arranged so that at most one can survive.
+
+**A -- the XY plant (`--legs plant`).** The one axis never measured. Every plant
+number in the campaign is z-only. Drive constant ``a_x`` / ``a_y`` open-loop from
+real pick_up resets and report the realized metres per env step against the
+commanded amplitude, both signs, free-flying and holding an object.
+
+    Shows: the XY gain curve. The ideal is a straight line through the origin
+    with slope ``action_step_xyz`` (0.015 m/step). The controller re-anchors its
+    target to the MEASURED end-effector every step
+    (mjlab_mjwarp_backend.py:1136), which is exactly the structure that produced
+    the z dead zone -- there is no integral term, so a command whose realized
+    motion falls below the cable/friction threshold produces nothing at all and
+    stays producing nothing.
+
+    Kills the hypothesis if: the curve is linear from zero and symmetric between
+    signs. Then XY is not dead-zoned, 60M steps were not aimed at the wrong axis,
+    and the miss is not the plant's fault. This is the expected reading -- the
+    deterministic policy already achieves ~0.40 m of horizontal travel inside one
+    episode, which a dead plant could not do -- so leg A's job is to CLOSE the
+    hypothesis rather than open it.
+
+    The reading that would change everything: nonzero drift at ``a_xy = 0``. An
+    uncommanded sideways bias would explain a 40 cm run on its own and would
+    demote the entire observability story to a secondary effect. That arm is why
+    zero is in the sweep.
+
+**B -- what the checkpoint actually commands (`--legs policy`).** Records the
+deterministic mean action, the frozen prior, the true direction to the object and
+the end-effector track, every decision of every world.
+
+    Shows: whether the mean XY command is aimed at the object, aimed anywhere, or
+    a constant. Three statistics separate those. ``mean_cosine`` is the alignment
+    of the MEAN action (see below). ``direction_concentration`` is
+    ``|mean over worlds of unit(a_xy)|`` -- 1.0 means every world is commanded the
+    same way in world frame regardless of where its object is, i.e. a fixed drift;
+    0.0 means the commands point every which way. ``state_r2`` regresses ``a_xy``
+    on the true relative direction, so a policy that servos scores high even if
+    its gain is small.
+
+    Note on the campaign's headline. ``policy_target_cosine_mean`` 0.11 against
+    the prior's 0.05 is quoted as the central evidence, but the two are not
+    computed the same way: the policy cosine is taken on ``actions``
+    (mjwarp_rank_local_collector.py:2592) -- POST exploration noise, sigma 0.333
+    -- while the prior cosine is taken on the clean prior. The block comment
+    above them (line 2455) states the opposite. A noise-attenuated number and a
+    clean one are not comparable, and the attenuation depends on the mean action's
+    MAGNITUDE, which was never reported next to it. This leg recomputes both on
+    the mean and reports the sampled version alongside, so the size of that
+    artefact is visible rather than argued.
+
+    Kills "the policy never learned to servo" if: the mean-action cosine comes
+    back high (>= 0.4) while the sampled one reads ~0.11. Then the policy does aim
+    and the headline was a measurement artefact.
+
+**C -- hand it the answer (`--legs oracle`).** The decisive leg, and the one the
+campaign never ran. Same resets, same reward, same grasp detector, same horizon,
+same everything -- one substitution.
+
+    ``oracle_xy`` keeps the checkpoint's own ``a_z``, ``a_yaw`` and ``a_gripper``
+    and replaces ONLY the two XY channels with a proportional servo on the true
+    object position. That isolates horizontal localization and nothing else.
+
+    Shows: whether removing the single link claimed to be broken fixes the task.
+    The campaign already measured what this arm should score --
+    ``success | pre-grasped`` is 0.83, the rate the policy achieves when it starts
+    at the object -- so the prediction is sharp: **if object localization is the
+    binding constraint, ``oracle_xy`` lands near 0.83 while ``policy`` sits at
+    ~0.00.**
+
+    Kills the diagnosis if: ``oracle_xy`` does not lift success far above
+    ``policy``. Then localization is NOT the binding constraint, §4.10/§4.11 is
+    aimed at the wrong thing, and the planned ``per_token_random`` re-run would
+    have bought a better feature for a policy that still cannot use it.
+
+    ``oracle_xy_err_*`` corrupts the handed-over object position with Gaussian
+    error of a known std. It turns the diagnosis into a spec: the localization
+    accuracy at which success falls off is the accuracy any replacement feature
+    has to deliver. Without it "the feature must be better" has no number in it.
+
+    ``full_oracle`` is a scripted servo-descend-close-lift through the TRAINING
+    env (not the render harness), as the check on the check. If even it fails,
+    the task is not solvable in the configured horizon with the current geometry
+    and every conclusion above is moot. Compare it against the known blockers:
+    the 0.0075 m pad offset and the 0.18 m controller floor.
+
+Two guards against known ways these numbers mislead, both cheap:
+
+* Realized start distance is reported from the reset itself, never from the
+  logged cap. The approach curriculum lives on a base class and a subclass has
+  silently overridden it before.
+* ``_contain_nonfinite_worlds`` (mjlab_mjwarp_backend.py:1176) restores a
+  diverged world to its calibrated base pose mid-episode. A world that got reset
+  would end far from its object for reasons having nothing to do with the policy,
+  which is a live alternative reading of "ends 0.40 m away". The count is
+  reported per arm.
+
+Leg A needs no SmolVLA forward and no policy, so it skips loading the runtime and
+runs in a fraction of the time. Legs B and C share one build.
+
+Usage::
+
+    RLVLA_HF_OFFLINE=1 MUJOCO_GL=egl conda run --no-capture-output -n cdpr-mjlab \\
+      python tools/audit/xy_approach_probe.py \\
+        --checkpoint runs/<run>/smolvla_grpo_adapter.pt \\
+        --config configs/examples/cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml \\
+        --output runs/xy_approach_probe
+"""
+
+from __future__ import annotations
+
+import argparse
+import csv
+import json
+import math
+import os
+import sys
+from argparse import Namespace
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Mapping, Sequence
+
+import numpy as np
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Amplitudes for the leg-A sweep. Signed and straddling zero: the zero arm is the
+# uncommanded-drift control, and the negative arms are what would expose a
+# rectifying plant (one direction moves, the other does not), which is the
+# failure mode that would produce a monotone sideways run all by itself.
+DEFAULT_PLANT_SWEEP = (
+    -0.60, -0.30, -0.20, -0.10, -0.05, 0.0, 0.05, 0.10, 0.20, 0.30, 0.60,
+)
+# Object-position error stds for the oracle_xy pricing arms, in metres. 0.02 is
+# roughly the grasp tolerance; 0.20 is most of the workspace.
+DEFAULT_LOCALIZATION_ERRORS = (0.02, 0.05, 0.10, 0.20)
+
+
+# --------------------------------------------------------------------------
+# Build
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class _World:
+    """Everything a leg needs, built once and shared."""
+
+    torch: Any
+    device: Any
+    args: Namespace
+    payload: Mapping[str, Any]
+    project: Any
+    task_metadata: dict[str, Any]
+    backend: Any
+    layout: Any
+    resetter: Any
+    runtime: Any = None
+    trainer: Any = None
+    collector: Any = None
+    grasp_offset: float = 0.0075
+    action_step_xyz: float = 0.015
+    action_step_gripper: float = 0.05
+    fitted_gripper: Any = None
+
+
+def _load_checkpoint(path: Path) -> dict[str, Any]:
+    import torch
+
+    try:
+        payload = torch.load(path, map_location="cpu", weights_only=False)
+    except TypeError:  # pragma: no cover - PyTorch before weights_only.
+        payload = torch.load(path, map_location="cpu")
+    if not isinstance(payload, dict) or "policy" not in payload:
+        raise ValueError(f"{path} is not a GRPO policy checkpoint.")
+    if not isinstance(payload.get("args"), Mapping):
+        raise ValueError(
+            f"{path} has no saved training arguments, so its MJWarp runtime "
+            "cannot be reproduced."
+        )
+    return payload
+
+
+def _probe_args(
+    payload: Mapping[str, Any],
+    *,
+    config_path: Path,
+    xml_path: Path,
+    device: str,
+    worlds: int,
+    group_size: int,
+    microbatch: int,
+) -> Namespace:
+    """The checkpoint's own arguments, with only the batch shape narrowed."""
+
+    values = dict(payload["args"])
+    values.update(
+        {
+            "config": str(config_path),
+            "device": str(device),
+            "distributed": False,
+            "simulator_backend": "mjlab_mjwarp",
+            "worlds_per_rank": int(worlds),
+            "groups_per_rank": int(worlds) // int(group_size),
+            "grpo_group_size": int(group_size),
+            "mjwarp_xml_path": str(xml_path),
+            "smolvla_inference_microbatch_size": int(microbatch),
+            "smolvla_compile_model": False,
+            "resume_checkpoint": None,
+        }
+    )
+    return Namespace(**values)
+
+
+def _build_world(
+    *,
+    checkpoint: Path,
+    config_path: Path,
+    device_str: str,
+    worlds: int,
+    group_size: int,
+    microbatch: int,
+    load_policy: bool,
+    run_dir: Path,
+) -> _World:
+    """Reproduce the training stack. ``load_policy`` False skips SmolVLA."""
+
+    import torch
+
+    from rl_vla_bootstrapping.core.config import load_project_config
+    from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+        _FITTED_GRIPPER,
+        BatchedReverseFrontierResetter,
+        RankLocalCurriculum,
+        RankLocalMJWarpGRPOCollector,
+    )
+    from rl_vla_bootstrapping.policy.rank_local_grpo import RankLocalGroupLayout
+    from rl_vla_bootstrapping.simulation.cdpr_backend import (
+        CDPRBackendConfig,
+        create_cdpr_backend,
+    )
+    from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+        BatchedCatchReleaseDenseReward,
+        BatchedMoveToDistanceReward,
+    )
+
+    if not torch.cuda.is_available():
+        raise RuntimeError(
+            "This probe measures the MJWarp plant training runs on; it needs a "
+            "CUDA GPU in the cdpr-mjlab environment."
+        )
+    device = torch.device(device_str)
+    project = load_project_config(config_path)
+    if str(project.simulator.backend) != "mjlab_mjwarp":
+        raise ValueError(
+            f"Expected an mjlab_mjwarp config, got {project.simulator.backend!r}."
+        )
+    xml_path = project.resolve_path(project.simulator.fixed_scene_xml)
+    if xml_path is None:
+        raise ValueError("The config does not define simulator.fixed_scene_xml.")
+
+    payload = _load_checkpoint(checkpoint)
+    args = _probe_args(
+        payload,
+        config_path=config_path,
+        xml_path=xml_path,
+        device=str(device),
+        worlds=worlds,
+        group_size=group_size,
+        microbatch=microbatch,
+    )
+    task_metadata = dict(project.task.metadata or {})
+
+    layout = RankLocalGroupLayout(
+        worlds_per_rank=int(args.worlds_per_rank),
+        groups_per_rank=int(args.groups_per_rank),
+        group_size=int(args.grpo_group_size),
+    )
+    layout.validate()
+
+    backend_config = CDPRBackendConfig(
+        backend="mjlab_mjwarp",
+        worlds_per_rank=int(args.worlds_per_rank),
+        groups_per_rank=int(args.groups_per_rank),
+        grpo_group_size=int(args.grpo_group_size),
+        hold_steps=int(args.hold_steps),
+        action_step_xyz=float(args.action_step_xyz),
+        action_step_yaw=float(args.action_step_yaw),
+        action_step_gripper=float(args.action_step_gripper),
+        lock_non_commanded_axes=bool(args.lock_non_commanded_axes),
+        lock_non_commanded_axes_threshold=float(
+            args.lock_non_commanded_axes_threshold
+        ),
+        render_width=int(args.render_width),
+        render_height=int(args.render_height),
+        object_slots=int(args.object_slots),
+        nconmax=int(args.mjwarp_nconmax),
+        njmax=int(args.mjwarp_njmax),
+        nccdmax=args.mjwarp_nccdmax,
+        device=str(device),
+        xml_path=Path(args.mjwarp_xml_path),
+        **(
+            {
+                "workspace_z": (
+                    float(args.controller_workspace_z_bounds[0]),
+                    float(args.controller_workspace_z_bounds[1]),
+                )
+            }
+            if getattr(args, "controller_workspace_z_bounds", None)
+            else {}
+        ),
+    )
+    print(
+        f"[xy-probe] allocating {layout.worlds_per_rank} worlds "
+        f"({layout.groups_per_rank} groups of {layout.group_size}) on {device}",
+        flush=True,
+    )
+    backend = create_cdpr_backend(backend_config)
+
+    curriculum = RankLocalCurriculum(
+        device=device,
+        promotion_success=float(args.reverse_frontier_promotion_success),
+        demotion_success=float(args.reverse_frontier_demotion_success),
+        validation_rollouts_per_shell=int(
+            args.reverse_frontier_validation_episodes
+        ),
+        min_updates=int(args.reverse_frontier_min_train_updates),
+        saturation_abort_threshold=float(
+            args.reverse_frontier_saturation_abort_threshold
+        ),
+    )
+    extra_state = dict(payload.get("extra_state") or {})
+    curriculum_state = extra_state.get("curriculum")
+    if not isinstance(curriculum_state, Mapping):
+        curriculum_state = extra_state.get("complex_runtime")
+    if isinstance(curriculum_state, Mapping):
+        curriculum.restore(curriculum_state)
+
+    # The validation resetter, exactly as training builds it: frontier only, no
+    # rehearsal, balanced catalogs, validation seed. Held-out validation is the
+    # regime whose 0.001 and 0.40 m this probe is explaining, so the arms have to
+    # share its reset distribution or they are answering a different question.
+    resetter = BatchedReverseFrontierResetter(
+        backend=backend,
+        layout=layout,
+        curriculum=curriculum,
+        rank=0,
+        base_seed=int(args.validation_seed),
+        instruction_types=args.instruction_types,
+        allowed_objects=args.allowed_objects,
+        frontier_probability=1.0,
+        rehearsal_probability=0.0,
+        balanced_target_catalogs=True,
+        task_metadata=task_metadata,
+    )
+    _restore_approach_curriculum(
+        resetter,
+        args=args,
+        task_metadata=task_metadata,
+        extra_state=extra_state,
+    )
+
+    world = _World(
+        torch=torch,
+        device=device,
+        args=args,
+        payload=payload,
+        project=project,
+        task_metadata=task_metadata,
+        backend=backend,
+        layout=layout,
+        resetter=resetter,
+        grasp_offset=float(
+            task_metadata.get("pick_grasp_height_offset", 0.0075)
+        ),
+        action_step_xyz=float(args.action_step_xyz),
+        action_step_gripper=float(args.action_step_gripper),
+        fitted_gripper=torch.tensor(
+            _FITTED_GRIPPER, dtype=torch.float32, device=device
+        ),
+    )
+    if not load_policy:
+        return world
+
+    from rl_vla_bootstrapping.policy.smolvla_cdpr import load_smolvla_runtime
+    from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
+        SmolVLAGRPOTrainer,
+    )
+
+    print(
+        f"[xy-probe] loading frozen SmolVLA {args.base_checkpoint}", flush=True
+    )
+    runtime = load_smolvla_runtime(
+        checkpoint=str(args.base_checkpoint),
+        device=str(device),
+        mixed_precision=str(args.mixed_precision),
+        image_size=int(args.image_size),
+        state_dim=int(args.state_dim),
+        image_feature_keys=(
+            None
+            if args.image_feature_keys is None
+            else tuple(args.image_feature_keys)
+        ),
+        include_wrist=bool(args.include_wrist),
+        include_aux_camera=bool(args.include_aux_camera),
+        mask_empty_aux_camera=bool(
+            getattr(args, "mask_empty_aux_camera", False)
+        ),
+        chunk_size=int(args.chunk_size),
+        action_dim=int(args.action_dim),
+        action_indices=(
+            None
+            if args.smolvla_action_indices is None
+            else tuple(int(value) for value in args.smolvla_action_indices)
+        ),
+        action_normalization=str(args.smolvla_action_normalization),
+        model_image_size=(
+            None
+            if int(args.smolvla_model_image_size) <= 0
+            else int(args.smolvla_model_image_size)
+        ),
+        compile_model=False,
+        compile_mode=str(args.smolvla_compile_mode),
+        vision_pooling=str(
+            getattr(args, "residual_vision_pooling", "flat_random")
+        ),
+    )
+    trainer = SmolVLAGRPOTrainer(
+        args=args,
+        state_dim=int(payload["state_dim"]),
+        action_dim=int(payload["action_dim"]),
+        chunk_size=int(payload["chunk_size"]),
+        run_dir=run_dir,
+        device=device,
+    )
+    trainer._unwrap(trainer.actor).load_state_dict(payload["policy"])
+    trainer.actor.eval()
+
+    include_relative_target = bool(
+        getattr(args, "residual_relative_target", False)
+    )
+    vision_feature_dim = (
+        int(getattr(args, "residual_vision_dim", 0))
+        if bool(getattr(args, "residual_vision_features", False))
+        else 0
+    )
+    move_to_reward = None
+    catch_release_reward = None
+    reward_mode = str(
+        task_metadata.get("reward_mode", "sparse_binary")
+    ).strip().lower()
+    instructions = tuple(args.instruction_types or ())
+    if reward_mode == "dense":
+        if "move_to_object" in instructions:
+            move_to_reward = BatchedMoveToDistanceReward.from_metadata(
+                task_metadata
+            )
+        if {"put_into_plate", "put_into_bowl", "pick_up"}.intersection(
+            instructions
+        ):
+            catch_release_reward = (
+                BatchedCatchReleaseDenseReward.from_metadata(task_metadata)
+            )
+    collector = RankLocalMJWarpGRPOCollector(
+        backend=backend,
+        smolvla_runtime=runtime,
+        trainer=trainer,
+        resetter=resetter,
+        layout=layout,
+        actions_per_policy_decision=int(args.replan_every),
+        smolvla_microbatch_size=int(args.smolvla_inference_microbatch_size),
+        move_to_distance_reward=move_to_reward,
+        catch_release_dense_reward=catch_release_reward,
+        include_relative_target=include_relative_target,
+        vision_feature_dim=vision_feature_dim,
+        dynamic_sampling=False,
+        group_selection="uniform",
+    )
+    world.runtime = runtime
+    world.trainer = trainer
+    world.collector = collector
+    return world
+
+
+def _restore_approach_curriculum(
+    resetter: Any,
+    *,
+    args: Namespace,
+    task_metadata: Mapping[str, Any],
+    extra_state: Mapping[str, Any],
+) -> None:
+    """Put the earned start-distance cap back on the resetter.
+
+    Reported separately from the realized start distance on purpose. The cap is
+    what the trainer logs; the realized distance is what the resetter produces,
+    and the two have disagreed before because the curriculum lives on a base
+    class a subclass can override.
+    """
+
+    from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+        PerInstructionApproachCurriculum,
+        PreliftedStageCurriculum,
+    )
+
+    names = tuple(args.instruction_types or ("pick_up",))
+    approach = PerInstructionApproachCurriculum(
+        task_metadata, instruction_types=names
+    )
+    approach.load_state_dict(extra_state.get("approach_curriculum"))
+    caps = approach.caps_by_instruction_id()
+    resetter.set_random_start_max_goal_distance(caps)
+    prelifted = PreliftedStageCurriculum(task_metadata)
+    prelifted.load_state_dict(extra_state.get("prelifted_curriculum"))
+    if prelifted.enabled:
+        resetter.set_prelifted_group_fraction(prelifted.current_fraction())
+    print(
+        f"[xy-probe] restored approach caps (m): "
+        f"{ {k: round(float(v), 4) for k, v in caps.items()} }",
+        flush=True,
+    )
+
+
+# --------------------------------------------------------------------------
+# Leg A -- the XY plant
+# --------------------------------------------------------------------------
+
+
+def _run_plant_arm(
+    world: _World,
+    *,
+    axis: int,
+    amplitude: float,
+    steps: int,
+    round_index: int,
+    allow_prelifted: bool,
+) -> dict[str, Any]:
+    """Hold one constant XY command open-loop and measure realized motion.
+
+    No SmolVLA, no policy, no reward -- this is a kinematic question about the
+    plant and nothing else. The gripper channel commands "hold whatever you have"
+    so a loaded arm does not drop its object and turn into the free arm.
+    """
+
+    torch = world.torch
+    backend = world.backend
+    reset = world.resetter.reset(
+        update_index=0, round_index=round_index, allow_prelifted=allow_prelifted
+    )
+    worlds = int(world.layout.worlds_per_rank)
+    active = torch.ones((worlds,), dtype=torch.bool, device=world.device)
+
+    backend.pop_nonfinite_world_events()
+    action = torch.zeros((worlds, 5), dtype=torch.float32, device=world.device)
+    action[:, axis] = float(amplitude)
+    track: list[Any] = []
+    low_dim = backend.low_dim_observations()
+    track.append(low_dim.ee_position.detach().float().clone())
+    for _ in range(int(steps)):
+        # Hold the current commanded opening: delta 0 leaves _controller_gripper
+        # untouched, which is exactly "keep holding".
+        action[:, 4] = 0.0
+        low_dim = backend.step(action, active)
+        track.append(low_dim.ee_position.detach().float().clone())
+    diverged = int(backend.pop_nonfinite_world_events())
+
+    positions = torch.stack(track, dim=0)  # [steps+1, worlds, 3]
+    deltas = (positions[1:] - positions[:-1])[..., axis]  # [steps, worlds]
+
+    # Exclude samples pinned against the workspace clamp: there the realized
+    # motion is zero for a reason that has nothing to do with the gain, and
+    # including them would manufacture a dead zone at large amplitudes.
+    bound = float(
+        max(
+            backend.config.workspace_x
+            if axis == 0
+            else backend.config.workspace_y
+        )
+    )
+    margin = 0.02
+    near_clamp = positions[:-1, :, axis].abs() > (bound - margin)
+    # Drop the first decision's worth of steps as controller transient.
+    warmup = min(4, int(steps) - 1)
+    usable = torch.zeros_like(near_clamp, dtype=torch.bool)
+    usable[warmup:] = True
+    usable &= ~near_clamp
+
+    selected = deltas[usable]
+    count = int(selected.numel())
+    if count == 0:
+        return {
+            "axis": "xy"[axis],
+            "amplitude": float(amplitude),
+            "loaded": bool(allow_prelifted),
+            "samples": 0,
+            "mean_m_per_step": float("nan"),
+            "median_m_per_step": float("nan"),
+            "std_m_per_step": float("nan"),
+            "gain_fraction": float("nan"),
+            "clamped_fraction": 1.0,
+            "diverged_worlds": diverged,
+        }
+    ideal = float(world.action_step_xyz) * float(amplitude)
+    mean = float(selected.mean().item())
+    return {
+        "axis": "xy"[axis],
+        "amplitude": float(amplitude),
+        "loaded": bool(allow_prelifted),
+        "samples": count,
+        "mean_m_per_step": mean,
+        "median_m_per_step": float(selected.median().item()),
+        "std_m_per_step": float(selected.std().item()) if count > 1 else 0.0,
+        # Realized over commanded. 1.0 is a perfect plant; 0.0 is a dead zone.
+        "gain_fraction": (mean / ideal) if ideal != 0.0 else float("nan"),
+        "clamped_fraction": float(near_clamp[warmup:].float().mean().item()),
+        "diverged_worlds": diverged,
+    }
+
+
+def _run_plant_leg(
+    world: _World,
+    *,
+    sweep: Sequence[float],
+    steps: int,
+    loaded: bool,
+) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    conditions = [False, True] if loaded else [False]
+    round_index = 0
+    for allow_prelifted in conditions:
+        for axis in (0, 1):
+            for amplitude in sweep:
+                row = _run_plant_arm(
+                    world,
+                    axis=axis,
+                    amplitude=float(amplitude),
+                    steps=int(steps),
+                    round_index=round_index,
+                    allow_prelifted=allow_prelifted,
+                )
+                round_index += 1
+                rows.append(row)
+                print(
+                    f"[xy-probe][plant] {'loaded' if allow_prelifted else 'free '} "
+                    f"a_{row['axis']}={amplitude:+.2f}  "
+                    f"realized={row['mean_m_per_step'] * 1000.0:+8.3f} mm/step  "
+                    f"gain={row['gain_fraction']:+.3f}  "
+                    f"clamped={row['clamped_fraction']:.2f}  "
+                    f"n={row['samples']}",
+                    flush=True,
+                )
+    return rows
+
+
+# --------------------------------------------------------------------------
+# Legs B and C -- action sources over the real validation loop
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class _Trace:
+    """Per-decision record, batched over worlds and kept on the host."""
+
+    rows: list[dict[str, np.ndarray]] = field(default_factory=list)
+
+    def stack(self, key: str) -> np.ndarray:
+        return np.stack([row[key] for row in self.rows], axis=0)
+
+
+class _ArmRunner:
+    """Runs ``collector.validate_round`` with the action source substituted.
+
+    Substituting rather than reimplementing is the point. The reset, the reward,
+    the grasp detector, the horizon, the termination and the reported metrics are
+    the trainer's own code, so an arm differs from the deterministic policy in
+    exactly one respect -- the five numbers it commands -- and nothing else can
+    drift between this probe and training.
+    """
+
+    def __init__(
+        self,
+        world: _World,
+        *,
+        source: Callable[..., Any] | None,
+        seed_offset: int = 0,
+    ) -> None:
+        self.world = world
+        self.source = source
+        self.seed_offset = int(seed_offset)
+        self.trace = _Trace()
+        self.reset: Any = None
+        self.decision = 0
+        self.ever_grasped: Any = None
+        self._original_action = None
+        self._original_reset = None
+        self._rng: Any = None
+
+    # -- installation ---------------------------------------------------
+
+    def __enter__(self) -> "_ArmRunner":
+        collector = self.world.collector
+        trainer = collector.trainer
+        resetter = collector.resetter
+        torch = self.world.torch
+
+        self._original_action = trainer.deterministic_action_chunks_tensor
+        self._original_reset = resetter.reset
+        self._rng = torch.Generator(device=self.world.device)
+        self._rng.manual_seed(20260806 + self.seed_offset)
+
+        def patched_reset(**kwargs: Any) -> Any:
+            reset = self._original_reset(**kwargs)
+            self.reset = reset
+            self.decision = 0
+            self.ever_grasped = torch.zeros(
+                (int(self.world.layout.worlds_per_rank),),
+                dtype=torch.bool,
+                device=self.world.device,
+            )
+            self.world.backend.pop_nonfinite_world_events()
+            return reset
+
+        def patched_action(*, states: Any, priors: Any, action_count: int) -> Any:
+            chunk = self._original_action(
+                states=states, priors=priors, action_count=action_count
+            )
+            low_dim = self.world.backend.low_dim_observations()
+            rows = torch.arange(
+                low_dim.object_positions.shape[0], device=self.world.device
+            )
+            target = low_dim.object_positions[
+                rows, self.reset.task_state.target_slots
+            ]
+            holding = self.reset.physical_grasp.to(dtype=torch.bool)
+            self.ever_grasped |= holding
+            commanded = (
+                chunk
+                if self.source is None
+                else self.source(
+                    runner=self,
+                    chunk=chunk,
+                    priors=priors,
+                    low_dim=low_dim,
+                    target=target,
+                    holding=holding,
+                )
+            )
+            self._record(
+                low_dim=low_dim,
+                target=target,
+                priors=priors,
+                policy_chunk=chunk,
+                commanded=commanded,
+                holding=holding,
+            )
+            self.decision += 1
+            return commanded
+
+        trainer.deterministic_action_chunks_tensor = patched_action
+        resetter.reset = patched_reset
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.world.collector.trainer.deterministic_action_chunks_tensor = (
+            self._original_action
+        )
+        self.world.collector.resetter.reset = self._original_reset
+
+    # -- recording ------------------------------------------------------
+
+    def _record(
+        self,
+        *,
+        low_dim: Any,
+        target: Any,
+        priors: Any,
+        policy_chunk: Any,
+        commanded: Any,
+        holding: Any,
+    ) -> None:
+        def host(value: Any) -> np.ndarray:
+            return value.detach().float().cpu().numpy().copy()
+
+        self.trace.rows.append(
+            {
+                "decision": np.full(
+                    (int(low_dim.ee_position.shape[0]),),
+                    float(self.decision),
+                    dtype=np.float32,
+                ),
+                "ee_xyz": host(low_dim.ee_position),
+                "target_xyz": host(target),
+                "gripper_opening": host(low_dim.gripper_opening),
+                # Action index 0 of each chunk only: that is the decision the
+                # campaign's cosine metrics are taken at, and keeping the whole
+                # chunk would quadruple the trace for no extra question.
+                "prior0": host(priors[:, 0]),
+                "policy_mean0": host(policy_chunk[:, 0]),
+                "commanded0": host(commanded[:, 0]),
+                "holding": host(holding.to(dtype=self.world.torch.float32)),
+            }
+        )
+
+    def run(self, *, round_index: int) -> dict[str, Any]:
+        collector = self.world.collector
+        result = collector.validate_round(round_index=round_index)
+        diverged = int(self.world.backend.pop_nonfinite_world_events())
+        success = result.candidate_success.reshape(-1).float()
+        return {
+            "success_rate": float(success.mean().item()),
+            "ever_grasped_rate": float(
+                self.ever_grasped.float().mean().item()
+            ),
+            "final_distance_m": float(
+                result.final_xy_distance.reshape(-1).mean().item()
+            ),
+            "final_ee_z_m": float(result.final_ee_z.reshape(-1).mean().item()),
+            "min_ee_z_m": float(result.min_ee_z.reshape(-1).mean().item()),
+            "reward_mean": float(
+                result.candidate_rewards.reshape(-1).mean().item()
+            ),
+            "episodes": int(success.numel()),
+            "decisions": int(len(self.trace.rows)),
+            "diverged_worlds": diverged,
+        }
+
+
+# -- the action sources -------------------------------------------------
+
+
+def _servo_xy(rel_xy: Any, step: float, torch: Any) -> Any:
+    """Proportional XY servo at the controller's own natural gain.
+
+    ``rel / step`` commands exactly the displacement needed and saturates at
+    +-1 when further away than one step, so it is parameter-free: there is no
+    gain to tune and therefore no way for a badly chosen one to be mistaken for
+    a policy failure.
+    """
+
+    return torch.clamp(rel_xy / float(step), -1.0, 1.0)
+
+
+def _make_oracle_xy_source(
+    world: _World, *, position_error_std: float = 0.0
+) -> Callable[..., Any]:
+    """Keep the policy's z/yaw/gripper; replace only the XY channels."""
+
+    torch = world.torch
+
+    def source(
+        *, runner: "_ArmRunner", chunk: Any, low_dim: Any, target: Any, **_: Any
+    ) -> Any:
+        believed = target
+        if position_error_std > 0.0:
+            believed = target + torch.randn(
+                target.shape,
+                dtype=target.dtype,
+                device=target.device,
+                generator=runner._rng,
+            ) * float(position_error_std)
+        rel_xy = (believed - low_dim.ee_position)[:, :2]
+        command = _servo_xy(rel_xy, world.action_step_xyz, torch)
+        out = chunk.clone()
+        out[:, :, 0] = command[:, None, 0]
+        out[:, :, 1] = command[:, None, 1]
+        return out
+
+    return source
+
+
+def _make_full_oracle_source(
+    world: _World, *, align_tolerance: float = 0.010, lift_command: float = 0.60
+) -> Callable[..., Any]:
+    """Scripted servo -> descend -> close -> lift, through the training env.
+
+    The ceiling arm. ``lift_command`` is 0.60 because the measured loaded plant
+    needs a sustained a_z of ~0.30 before it moves at all (§4.9) -- a scripted
+    lift at 0.10 would fail for the reason the campaign already understands and
+    would say nothing about the approach.
+    """
+
+    torch = world.torch
+
+    def source(
+        *,
+        runner: "_ArmRunner",
+        chunk: Any,
+        low_dim: Any,
+        target: Any,
+        holding: Any,
+        **_: Any,
+    ) -> Any:
+        step = float(world.action_step_xyz)
+        grasp_point = target.clone()
+        grasp_point[:, 2] = grasp_point[:, 2] + float(world.grasp_offset)
+        xy_err = (grasp_point - low_dim.ee_position)[:, :2]
+        z_err = grasp_point[:, 2] - low_dim.ee_position[:, 2]
+        aligned = torch.linalg.vector_norm(xy_err, dim=-1) < float(
+            align_tolerance
+        )
+        seated = aligned & (z_err.abs() < 0.005)
+        engaged = holding | runner.ever_grasped
+
+        a_xy = _servo_xy(xy_err, step, torch)
+        # Stay on a hover plane until aligned, so the gripper does not descend
+        # into the desk beside the object and push it away.
+        hover_err = (grasp_point[:, 2] + 0.05) - low_dim.ee_position[:, 2]
+        a_z = torch.where(
+            engaged,
+            torch.full_like(z_err, float(lift_command)),
+            torch.where(
+                aligned,
+                torch.clamp(z_err / step, -1.0, 1.0),
+                torch.clamp(hover_err / step, -1.0, 1.0),
+            ),
+        )
+        # group_target_catalog_ids is per GROUP, not per world -- the resetter
+        # draws one target catalog for each group of eight and broadcasts it.
+        catalog = runner.reset.group_target_catalog_ids.reshape(-1).long()
+        catalog = catalog.repeat_interleave(int(world.layout.group_size))
+        fitted = world.fitted_gripper.index_select(0, catalog)
+        commanded_open = world.backend._controller_gripper
+        goal = torch.where(
+            engaged | seated,
+            (fitted - (0.001 / 0.03)).clamp(0.0, 1.0),
+            torch.ones_like(fitted),
+        )
+        a_grip = torch.clamp(
+            (goal - commanded_open) / float(world.action_step_gripper),
+            -1.0,
+            1.0,
+        )
+        out = torch.zeros_like(chunk)
+        out[:, :, 0] = a_xy[:, None, 0]
+        out[:, :, 1] = a_xy[:, None, 1]
+        out[:, :, 2] = a_z[:, None]
+        out[:, :, 3] = 0.0
+        out[:, :, 4] = a_grip[:, None]
+        return out
+
+    return source
+
+
+# --------------------------------------------------------------------------
+# Leg B analysis
+# --------------------------------------------------------------------------
+
+
+def _unit(vectors: np.ndarray, eps: float = 1.0e-9) -> np.ndarray:
+    norms = np.linalg.norm(vectors, axis=-1, keepdims=True)
+    return vectors / np.maximum(norms, eps)
+
+
+def _cosine(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+    return np.sum(_unit(a) * _unit(b), axis=-1)
+
+
+def _analyze_policy_trace(
+    trace: _Trace, *, sigma: float, rng: np.random.Generator
+) -> dict[str, Any]:
+    """Everything leg B asks, from one recorded run of the real policy."""
+
+    ee = trace.stack("ee_xyz")  # [D, W, 3]
+    target = trace.stack("target_xyz")
+    prior = trace.stack("prior0")  # [D, W, 5]
+    mean = trace.stack("policy_mean0")
+    holding = trace.stack("holding") > 0.5
+
+    rel_xy = (target - ee)[..., :2]
+    mean_xy = mean[..., :2]
+    prior_xy = prior[..., :2]
+
+    # Approach steps only. A world already holding its object has no meaningful
+    # "direction to the object", and half the TRAINING groups start pre-grasped
+    # -- which is exactly why the campaign's absolute cosines move with the
+    # prelifted fraction. Validation runs allow_prelifted=False, so this filter
+    # should barely bite; it is here so the number cannot silently pick up the
+    # same contamination if the arm is ever re-run on training resets.
+    approach = ~holding
+    far = np.linalg.norm(rel_xy, axis=-1) > 0.005
+    usable = approach & far
+
+    sampled_xy = mean_xy + rng.normal(0.0, sigma, size=mean_xy.shape)
+
+    def pooled(values: np.ndarray) -> float:
+        selected = values[usable]
+        return float(np.mean(selected)) if selected.size else float("nan")
+
+    first = usable[0]
+    metrics: dict[str, Any] = {
+        # The mean action's alignment -- the number the campaign meant to quote.
+        "mean_cosine_all_decisions": pooled(_cosine(mean_xy, rel_xy)),
+        "mean_cosine_decision0": float(
+            np.mean(_cosine(mean_xy[0], rel_xy[0])[first])
+        ),
+        "prior_cosine_all_decisions": pooled(_cosine(prior_xy, rel_xy)),
+        # The alignment the trainer actually logs: same mean, plus exploration
+        # noise. If this reads ~0.11 while the row above reads much higher, the
+        # campaign's headline comparison was an artefact of the noise.
+        "sampled_cosine_all_decisions": pooled(_cosine(sampled_xy, rel_xy)),
+        "mean_xy_magnitude": pooled(np.linalg.norm(mean_xy, axis=-1)),
+        "prior_xy_magnitude": pooled(np.linalg.norm(prior_xy, axis=-1)),
+    }
+
+    # Is the command state-dependent at all? Compare the length of the AVERAGE
+    # command against the average deviation from it. A constant drift has all its
+    # length in the mean; a servo has it in the spread.
+    flat = mean_xy[usable]
+    if flat.size:
+        grand = flat.mean(axis=0)
+        metrics["command_mean_vector"] = [float(v) for v in grand]
+        metrics["command_mean_norm"] = float(np.linalg.norm(grand))
+        metrics["command_spread"] = float(
+            np.mean(np.linalg.norm(flat - grand, axis=-1))
+        )
+        # 1.0 = every world commanded the same way in world frame regardless of
+        # its object, i.e. a fixed drift. 0.0 = no preferred direction.
+        metrics["direction_concentration"] = float(
+            np.linalg.norm(_unit(flat).mean(axis=0))
+        )
+        # Least squares a_xy ~ A @ unit(rel_xy) + b, pooled. R^2 is how much of
+        # the command the true direction explains: a policy that servos scores
+        # high even at a small gain.
+        design = np.concatenate(
+            [_unit(rel_xy[usable]), np.ones((flat.shape[0], 1))], axis=1
+        )
+        solution, *_ = np.linalg.lstsq(design, flat, rcond=None)
+        residual = flat - design @ solution
+        total = flat - flat.mean(axis=0)
+        denom = float(np.sum(total**2))
+        metrics["state_r2"] = (
+            float(1.0 - np.sum(residual**2) / denom) if denom > 0 else float("nan")
+        )
+    else:
+        metrics["command_mean_vector"] = []
+
+    # tanh headroom. The actor computes tanh(prior + scale * tanh(net)), so the
+    # pre-tanh sum is recoverable from the prior and the emitted mean, and the
+    # residual's OWN saturation with it: |pre_tanh - prior| = scale means the
+    # residual's inner tanh is pinned and its gradient is gone.
+    clipped = np.clip(mean, -1.0 + 1e-6, 1.0 - 1e-6)
+    pre_tanh = np.arctanh(clipped)
+    effective_residual = pre_tanh - prior
+    metrics["pre_tanh_abs_xy_mean"] = float(
+        np.mean(np.abs(pre_tanh[..., :2])[usable])
+    )
+    metrics["tanh_slope_xy_mean"] = float(
+        np.mean((1.0 - clipped[..., :2] ** 2)[usable])
+    )
+    metrics["tanh_saturated_fraction_xy"] = float(
+        np.mean(((1.0 - clipped[..., :2] ** 2) < 0.1)[usable])
+    )
+    metrics["residual_abs_xy_mean"] = float(
+        np.mean(np.abs(effective_residual[..., :2])[usable])
+    )
+
+    # Where it starts, where it ends, and whether it ran into the wall. The start
+    # distance is read off the reset, not off the logged curriculum cap.
+    start = np.linalg.norm(rel_xy[0], axis=-1)
+    last = ee[-1]
+    metrics["start_xy_distance_mean_m"] = float(np.mean(start))
+    metrics["start_xy_distance_p95_m"] = float(np.percentile(start, 95))
+    metrics["start_xy_distance_max_m"] = float(np.max(start))
+    metrics["final_xy_distance_mean_m"] = float(
+        np.mean(np.linalg.norm((target - ee)[-1][..., :2], axis=-1))
+    )
+    metrics["net_xy_travel_mean_m"] = float(
+        np.mean(np.linalg.norm((last - ee[0])[..., :2], axis=-1))
+    )
+    metrics["path_xy_length_mean_m"] = float(
+        np.mean(np.sum(np.linalg.norm(np.diff(ee[..., :2], axis=0), axis=-1), axis=0))
+    )
+    travel = (last - ee[0])[..., :2]
+    metrics["travel_direction_concentration"] = float(
+        np.linalg.norm(_unit(travel).mean(axis=0))
+    )
+    metrics["travel_cosine_to_object"] = float(
+        np.mean(_cosine(travel, rel_xy[0]))
+    )
+    metrics["final_at_xy_clamp_fraction"] = float(
+        np.mean(np.max(np.abs(last[..., :2]), axis=-1) > 0.26)
+    )
+    return metrics
+
+
+# --------------------------------------------------------------------------
+# Reporting
+# --------------------------------------------------------------------------
+
+
+def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    if not rows:
+        return
+    keys: list[str] = []
+    for row in rows:
+        for key in row:
+            if key not in keys:
+                keys.append(key)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="") as handle:
+        writer = csv.DictWriter(handle, fieldnames=keys)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({key: row.get(key, "") for key in keys})
+
+
+def _report_plant(rows: Sequence[Mapping[str, Any]]) -> None:
+    print("\nA -- XY plant response to a SUSTAINED command")
+    print("--------------------------------------------")
+    print(
+        f"{'cond':<7} {'axis':<5} {'a':>6} {'realized mm/step':>17} "
+        f"{'gain':>7} {'clamped':>8}"
+    )
+    for row in rows:
+        print(
+            f"{'loaded' if row['loaded'] else 'free':<7} "
+            f"{row['axis']:<5} {row['amplitude']:>+6.2f} "
+            f"{row['mean_m_per_step'] * 1000.0:>17.3f} "
+            f"{row['gain_fraction']:>+7.3f} {row['clamped_fraction']:>8.2f}"
+        )
+    zeros = [r for r in rows if r["amplitude"] == 0.0]
+    drift = max((abs(r["mean_m_per_step"]) for r in zeros), default=0.0)
+    print(
+        f"\n  Uncommanded drift at a=0: {drift * 1000.0:.4f} mm/step "
+        f"({drift * 1000.0 * 104:.1f} mm over a 104-step episode)."
+    )
+    print(
+        "  A linear, sign-symmetric curve through zero means the XY plant is "
+        "healthy and\n  the horizontal miss is not the plant's fault. A dead "
+        "zone, an asymmetry between\n  signs, or a nonzero drift at a=0 each "
+        "point somewhere very different."
+    )
+
+
+def _report_arms(rows: Sequence[Mapping[str, Any]]) -> None:
+    print("\nC -- success when the object position is handed over")
+    print("----------------------------------------------------")
+    print(
+        f"{'arm':<26} {'success':>8} {'grasped':>8} {'final d (m)':>12} "
+        f"{'final z':>8} {'min z':>7} {'reward':>8} {'diverged':>9}"
+    )
+    for row in rows:
+        print(
+            f"{row['arm']:<26} {row['success_rate']:>8.3f} "
+            f"{row['ever_grasped_rate']:>8.3f} {row['final_distance_m']:>12.3f} "
+            f"{row['final_ee_z_m']:>8.3f} {row['min_ee_z_m']:>7.3f} "
+            f"{row['reward_mean']:>8.3f} {row['diverged_worlds']:>9d}"
+        )
+    baseline = next((r for r in rows if r["arm"] == "policy"), None)
+    oracle = next((r for r in rows if r["arm"] == "oracle_xy"), None)
+    if baseline is not None and oracle is not None:
+        print(
+            f"\n  policy {baseline['success_rate']:.3f} -> oracle_xy "
+            f"{oracle['success_rate']:.3f}. The campaign's own "
+            "`success | pre-grasped` is 0.83,\n  which is what oracle_xy should "
+            "reach if horizontal localization is the whole gap.\n  If it does "
+            "not, localization is not the binding constraint and the projection "
+            "is\n  not the thing to fix."
+        )
+
+
+def _report_policy(metrics: Mapping[str, Any]) -> None:
+    print("\nB -- what the deterministic policy commands")
+    print("------------------------------------------")
+    for key in (
+        "start_xy_distance_mean_m",
+        "start_xy_distance_p95_m",
+        "start_xy_distance_max_m",
+        "final_xy_distance_mean_m",
+        "net_xy_travel_mean_m",
+        "path_xy_length_mean_m",
+        "final_at_xy_clamp_fraction",
+        "travel_direction_concentration",
+        "travel_cosine_to_object",
+        "mean_cosine_decision0",
+        "mean_cosine_all_decisions",
+        "prior_cosine_all_decisions",
+        "sampled_cosine_all_decisions",
+        "mean_xy_magnitude",
+        "prior_xy_magnitude",
+        "command_mean_norm",
+        "command_spread",
+        "direction_concentration",
+        "state_r2",
+        "pre_tanh_abs_xy_mean",
+        "tanh_slope_xy_mean",
+        "tanh_saturated_fraction_xy",
+        "residual_abs_xy_mean",
+    ):
+        value = metrics.get(key)
+        if value is None:
+            continue
+        print(f"  {key:<34} {float(value):+.4f}")
+    print(f"  {'command_mean_vector':<34} {metrics.get('command_mean_vector')}")
+    print(
+        "\n  mean_cosine vs sampled_cosine is the size of the noise artefact in "
+        "the campaign's\n  0.11-against-0.05 headline. command_mean_norm >> "
+        "command_spread with\n  direction_concentration near 1 is a fixed drift; "
+        "the reverse, with a high\n  state_r2, is a policy that servos."
+    )
+
+
+# --------------------------------------------------------------------------
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=ROOT
+        / "configs"
+        / "examples"
+        / "cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml",
+    )
+    parser.add_argument(
+        "--output", type=Path, default=ROOT / "runs" / "xy_approach_probe"
+    )
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--worlds", type=int, default=512)
+    parser.add_argument("--group-size", type=int, default=8)
+    parser.add_argument("--smolvla-microbatch", type=int, default=256)
+    parser.add_argument(
+        "--legs",
+        default="plant,policy,oracle",
+        help="Comma-separated subset of plant,policy,oracle.",
+    )
+    parser.add_argument(
+        "--plant-sweep",
+        type=float,
+        nargs="+",
+        default=list(DEFAULT_PLANT_SWEEP),
+        help="Sustained XY amplitudes for leg A. Keep 0.0 in it.",
+    )
+    parser.add_argument(
+        "--plant-steps",
+        type=int,
+        default=64,
+        help="Env steps per leg-A arm.",
+    )
+    parser.add_argument(
+        "--plant-skip-loaded",
+        action="store_true",
+        help="Free-flying arms only; skip the pre-grasped (loaded) condition.",
+    )
+    parser.add_argument(
+        "--localization-errors",
+        type=float,
+        nargs="*",
+        default=list(DEFAULT_LOCALIZATION_ERRORS),
+        help="Object-position error stds (m) for the oracle_xy pricing arms.",
+    )
+    parser.add_argument(
+        "--skip-full-oracle",
+        action="store_true",
+        help="Skip the scripted ceiling arm.",
+    )
+    parser.add_argument(
+        "--sigma",
+        type=float,
+        default=0.333,
+        help=(
+            "Exploration std used to reconstruct the trainer's SAMPLED cosine "
+            "from the mean. exp(-1.10), the pick_up max_log_std ceiling."
+        ),
+    )
+    parser.add_argument("--seed", type=int, default=20260806)
+    args = parser.parse_args(argv)
+
+    legs = {name.strip() for name in str(args.legs).split(",") if name.strip()}
+    unknown = legs.difference({"plant", "policy", "oracle"})
+    if unknown:
+        parser.error(f"Unknown legs: {sorted(unknown)}")
+    if args.worlds % args.group_size:
+        parser.error("--worlds must be a multiple of --group-size.")
+
+    checkpoint = args.checkpoint.expanduser().resolve()
+    config_path = args.config.expanduser().resolve()
+    if not checkpoint.is_file():
+        parser.error(f"Checkpoint does not exist: {checkpoint}")
+    if not config_path.is_file():
+        parser.error(f"Config does not exist: {config_path}")
+    output = args.output.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+
+    needs_policy = bool(legs & {"policy", "oracle"})
+    world = _build_world(
+        checkpoint=checkpoint,
+        config_path=config_path,
+        device_str=str(args.device),
+        worlds=int(args.worlds),
+        group_size=int(args.group_size),
+        microbatch=int(args.smolvla_microbatch),
+        load_policy=needs_policy,
+        run_dir=output,
+    )
+
+    summary: dict[str, Any] = {
+        "checkpoint": str(checkpoint),
+        "config": str(config_path),
+        "worlds": int(args.worlds),
+    }
+
+    plant_rows: list[dict[str, Any]] = []
+    if "plant" in legs:
+        plant_rows = _run_plant_leg(
+            world,
+            sweep=tuple(args.plant_sweep),
+            steps=int(args.plant_steps),
+            loaded=not bool(args.plant_skip_loaded),
+        )
+        _write_csv(output / "plant_xy.csv", plant_rows)
+        summary["plant"] = plant_rows
+
+    arm_rows: list[dict[str, Any]] = []
+    policy_metrics: dict[str, Any] | None = None
+    if needs_policy:
+        rng = np.random.default_rng(int(args.seed))
+        arms: list[tuple[str, Callable[..., Any] | None]] = [("policy", None)]
+        if "oracle" in legs:
+            arms.append(("oracle_xy", _make_oracle_xy_source(world)))
+            for error in args.localization_errors:
+                arms.append(
+                    (
+                        f"oracle_xy_err_{float(error):.02f}m",
+                        _make_oracle_xy_source(
+                            world, position_error_std=float(error)
+                        ),
+                    )
+                )
+            if not args.skip_full_oracle:
+                arms.append(("full_oracle", _make_full_oracle_source(world)))
+
+        for index, (name, source) in enumerate(arms):
+            print(f"[xy-probe] arm {name}", flush=True)
+            with _ArmRunner(world, source=source, seed_offset=index) as runner:
+                row = runner.run(round_index=0)
+            row["arm"] = name
+            arm_rows.append(row)
+            print(
+                f"[xy-probe][{name}] success={row['success_rate']:.3f} "
+                f"grasped={row['ever_grasped_rate']:.3f} "
+                f"final_d={row['final_distance_m']:.3f} m "
+                f"diverged={row['diverged_worlds']}",
+                flush=True,
+            )
+            if name == "policy":
+                policy_metrics = _analyze_policy_trace(
+                    runner.trace, sigma=float(args.sigma), rng=rng
+                )
+                np.savez_compressed(
+                    output / "policy_trace.npz",
+                    **{
+                        key: runner.trace.stack(key)
+                        for key in runner.trace.rows[0]
+                    },
+                )
+        _write_csv(output / "arms.csv", arm_rows)
+        summary["arms"] = arm_rows
+        if policy_metrics is not None:
+            summary["policy"] = policy_metrics
+
+    if plant_rows:
+        _report_plant(plant_rows)
+    if policy_metrics is not None and "policy" in legs:
+        _report_policy(policy_metrics)
+    if arm_rows and "oracle" in legs:
+        _report_arms(arm_rows)
+
+    (output / "summary.json").write_text(json.dumps(summary, indent=2))
+    print(f"\nwrote {output}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
