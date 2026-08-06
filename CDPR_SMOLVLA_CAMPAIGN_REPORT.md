@@ -765,8 +765,20 @@ signal — **1.7%**. Measured: the object's direction is decodable from the
 un-projected connector at cosine +0.336 and from the projection at **+0.004**.
 The residual's only view of the world does not say where the object is.
 
-**~~Replace the projection~~ — DONE, `residual_vision_pooling`.** Measured over
-120 episodes, at the identical 512 width:
+**~~Replace the projection~~ — TRIED, REVERTED.** The feature measurement held
+up; what was inferred from it did not. Swapped in on a resume from
+`split_credit`, 2.73M steps: `success | normal start` 0.206 → 0.135, ever-grasped
+worlds 0.226 → 0.067, `policy_target_cosine_mean` 0.111 → **0.003**, the cap
+demoted 0.05 → 0.03, and 79% of validation episodes ended pinned at the ceiling
+against 0% before. The residual had spent 20M steps learning a mapping from the
+old feature; replacing it reset that path to noise, and with vision unusable the
+state-independent optimum is "command up" — post-grasp z ran to 0.811 against the
+0.30 the plant needs, the pre-grasped half of the groups paid for it
+(`success | pre-grasped` held at 0.83), and the approach half collapsed. The
+cosine sat flat at ~0.00 for the whole run, which is what rules out "needs
+longer". Testing the feature properly needs a fresh residual, not a resume.
+
+The measurement itself, over 120 episodes at the identical 512 width:
 
 | reduction | dims | direction cosine |
 |---|---:|---:|
