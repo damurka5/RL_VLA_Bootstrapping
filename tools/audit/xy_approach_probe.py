@@ -1,120 +1,106 @@
 """Why the pick_up policy never servos horizontally: plant, command, or knowledge?
 
-The campaign's Z arc is finished and its conclusion (§4.10/§4.11) is that the
-approach fails because the residual's 512-d random projection throws the object
-position away. That conclusion is a chain -- *the feature is blind, so the policy
-cannot servo, so it misses by 0.40 m, so the cap never promotes* -- and every
-link of it was measured except the last inference. This probe tests the chain by
-breaking it in three different places and seeing which break matters.
+Written to test the campaign's §4.10/§4.11 chain -- *the projection is blind, so
+the policy cannot servo, so it misses by 0.40 m, so the cap never promotes* -- by
+breaking it in three places. FIRST RUN, 512 worlds, step 7505256. What it found
+is recorded here, because two of the three legs came back against the premise
+they were written to test.
 
-Three legs. Each states what it would show and what result kills the hypothesis
-it is testing. They are deliberately arranged so that at most one can survive.
+**The headline: held-out validation measures a different task.** The approach
+curriculum's cap reaches the resetter through
+``set_random_start_max_goal_distance``, and the trainer calls that on the
+TRAINING resetter only -- never on ``validation_resetter``, whose cap therefore
+stays at the ``inf`` default that "restores the full-workspace start
+distribution". With ``random_workspace_min_goal_xy_distance: 0.10`` also in
+force, validation starts are >= 0.10 m from the goal while training starts are
+<= 0.05 m. The two distributions do not overlap at any point. Run through the
+trainer's own ``validate_round`` with the earned cap restored, the same
+deterministic checkpoint scores **success 0.266, final distance 0.190 m** --
+against the 0.001 and 0.39-0.42 m the run has logged for 52M steps. Reproduce
+either side with ``--start-distance-cap``.
 
-**A -- the XY plant (`--legs plant`).** The one axis never measured. Every plant
-number in the campaign is z-only. Drive constant ``a_x`` / ``a_y`` open-loop from
-real pick_up resets and report the realized metres per env step against the
-commanded amplitude, both signs, free-flying and holding an object.
+**A -- the XY plant (`--legs plant`).** Sustained ``a_x``/``a_y``, signed,
+through zero, free and loaded, open-loop from real resets.
 
-    Shows: the XY gain curve. The ideal is a straight line through the origin
-    with slope ``action_step_xyz`` (0.015 m/step). The controller re-anchors its
-    target to the MEASURED end-effector every step
-    (mjlab_mjwarp_backend.py:1136), which is exactly the structure that produced
-    the z dead zone -- there is no integral term, so a command whose realized
-    motion falls below the cable/friction threshold produces nothing at all and
-    stays producing nothing.
+    MEASURED: gain 0.44-0.54 flat across every amplitude from 0.05 to 0.60, both
+    signs, both axes, free and loaded alike; drift at ``a = 0`` is 0.012 mm/step,
+    0.8 mm over an episode against the 400 mm under investigation. No dead zone,
+    no rectification, no uncommanded bias. The XY-plant hypothesis is dead and
+    the z arc was not aimed at the wrong axis.
 
-    Kills the hypothesis if: the curve is linear from zero and symmetric between
-    signs. Then XY is not dead-zoned, 60M steps were not aimed at the wrong axis,
-    and the miss is not the plant's fault. This is the expected reading -- the
-    deterministic policy already achieves ~0.40 m of horizontal travel inside one
-    episode, which a dead plant could not do -- so leg A's job is to CLOSE the
-    hypothesis rather than open it.
+    The one substantive reading: the realized gain is ~0.50, not 1.0. The
+    effective step is ~0.0075 m, half the nominal ``action_step_xyz``. That
+    halves the reach of any horizon budget and is why the oracle arms need
+    ``--servo-max-command``.
 
-    The reading that would change everything: nonzero drift at ``a_xy = 0``. An
-    uncommanded sideways bias would explain a 40 cm run on its own and would
-    demote the entire observability story to a secondary effect. That arm is why
-    zero is in the sweep.
+**B -- what the checkpoint commands (`--legs policy`).** The deterministic mean
+action, the prior, the true direction and the end-effector track, every decision.
 
-**B -- what the checkpoint actually commands (`--legs policy`).** Records the
-deterministic mean action, the frozen prior, the true direction to the object and
-the end-effector track, every decision of every world.
+    MEASURED: not a blind drift. ``direction_concentration`` 0.34 (a fixed drift
+    reads ~1.0), ``command_spread`` 0.70 against ``command_mean_norm`` 0.30 (a
+    fixed drift is the reverse), ``travel_cosine_to_object`` +0.47 -- the net
+    displacement over an episode points TOWARD the object -- and
+    ``mean_cosine_decision0`` +0.23 against the prior's +0.13. It is a weak,
+    noisy, partially aimed servo, not a policy that ignores the object.
+    ``tanh_saturated_fraction_xy`` is 0.000, so the composed action is nowhere
+    near its bounds and the gradient is not being squashed.
 
-    Shows: whether the mean XY command is aimed at the object, aimed anywhere, or
-    a constant. Three statistics separate those. ``mean_cosine`` is the alignment
-    of the MEAN action (see below). ``direction_concentration`` is
-    ``|mean over worlds of unit(a_xy)|`` -- 1.0 means every world is commanded the
-    same way in world frame regardless of where its object is, i.e. a fixed drift;
-    0.0 means the commands point every which way. ``state_r2`` regresses ``a_xy``
-    on the true relative direction, so a policy that servos scores high even if
-    its gain is small.
+    ``state_r2`` 0.009 is the honest limit: a linear read of the true direction
+    explains almost none of the command. The aiming is real but small next to a
+    0.76 command magnitude.
 
-    Note on the campaign's headline. ``policy_target_cosine_mean`` 0.11 against
-    the prior's 0.05 is quoted as the central evidence, but the two are not
-    computed the same way: the policy cosine is taken on ``actions``
-    (mjwarp_rank_local_collector.py:2592) -- POST exploration noise, sigma 0.333
-    -- while the prior cosine is taken on the clean prior. The block comment
-    above them (line 2455) states the opposite. A noise-attenuated number and a
-    clean one are not comparable, and the attenuation depends on the mean action's
-    MAGNITUDE, which was never reported next to it. This leg recomputes both on
-    the mean and reports the sampled version alongside, so the size of that
-    artefact is visible rather than argued.
+    Note on the campaign's headline, which stands. ``policy_target_cosine_mean``
+    is taken on ``actions`` (mjwarp_rank_local_collector.py:2592) -- POST
+    exploration noise at sigma 0.333 -- while ``prior_target_cosine`` is taken on
+    the clean prior, and the block comment above them (line 2455) says the
+    opposite. 0.11-against-0.05 compares a noise-attenuated quantity with a clean
+    one. This leg reports both forms.
 
-    Kills "the policy never learned to servo" if: the mean-action cosine comes
-    back high (>= 0.4) while the sampled one reads ~0.11. Then the policy does aim
-    and the headline was a measurement artefact.
+**C -- hand it the answer (`--legs oracle`).** Same resets, reward, grasp
+detector and horizon; only the two XY channels are replaced by a servo on the
+true object position.
 
-**C -- hand it the answer (`--legs oracle`).** The decisive leg, and the one the
-campaign never ran. Same resets, same reward, same grasp detector, same horizon,
-same everything -- one substitution.
+    FIRST RUN WAS INSTRUMENT-BOUND, and is the reason ``--servo-max-command``
+    exists. ``full_oracle`` -- the designated ceiling -- scored LOWEST of every
+    arm (0.012, ever-grasped 0.010), the oracle arms ended farther out and higher
+    than the untouched policy, and they diverged 35-54 worlds of 512 against the
+    policy arm's 8. A ceiling arm below its own baseline is a broken instrument,
+    not a finding. The mechanism: the parameter-free servo saturates at +-1 for
+    anything past 1.5 cm, the plant realizes only half of it (leg A), so the
+    saturated command is held long enough to drive the cable configuration
+    singular -- and ``_contain_nonfinite_worlds`` then restores that world to its
+    calibrated base pose, mid-episode, far from its object.
 
-    ``oracle_xy`` keeps the checkpoint's own ``a_z``, ``a_yaw`` and ``a_gripper``
-    and replaces ONLY the two XY channels with a proportional servo on the true
-    object position. That isolates horizontal localization and nothing else.
+    So the pre-registered falsifier -- ``oracle_xy`` not beating ``policy`` means
+    localization is not the constraint -- DID NOT FIRE, because its precondition
+    failed. Re-run with the command cap before reading it.
 
-    Shows: whether removing the single link claimed to be broken fixes the task.
-    The campaign already measured what this arm should score --
-    ``success | pre-grasped`` is 0.83, the rate the policy achieves when it starts
-    at the object -- so the prediction is sharp: **if object localization is the
-    binding constraint, ``oracle_xy`` lands near 0.83 while ``policy`` sits at
-    ~0.00.**
+    What survived: the ``oracle_xy_err_*`` ladder degrades monotonically in both
+    success (0.188, 0.125, 0.074, 0.070, 0.047) and ever-grasped (0.340, 0.238,
+    0.121, 0.084, 0.051) as the handed-over position is corrupted by 0 to 0.20 m.
+    The substitution does something real, and localization accuracy does matter,
+    inside an arm that is otherwise confounded.
 
-    Kills the diagnosis if: ``oracle_xy`` does not lift success far above
-    ``policy``. Then localization is NOT the binding constraint, §4.10/§4.11 is
-    aimed at the wrong thing, and the planned ``per_token_random`` re-run would
-    have bought a better feature for a policy that still cannot use it.
+Guards, both of which earned their place on the first run:
 
-    ``oracle_xy_err_*`` corrupts the handed-over object position with Gaussian
-    error of a known std. It turns the diagnosis into a spec: the localization
-    accuracy at which success falls off is the accuracy any replacement feature
-    has to deliver. Without it "the feature must be better" has no number in it.
+* Realized start distance comes from the reset itself, never from the logged cap
+  -- which is how the validation-cap finding surfaced at all.
+* Diverged-world counts are reported per arm, which is what exposed leg C as
+  instrument-bound rather than informative.
 
-    ``full_oracle`` is a scripted servo-descend-close-lift through the TRAINING
-    env (not the render harness), as the check on the check. If even it fails,
-    the task is not solvable in the configured horizon with the current geometry
-    and every conclusion above is moot. Compare it against the known blockers:
-    the 0.0075 m pad offset and the 0.18 m controller floor.
-
-Two guards against known ways these numbers mislead, both cheap:
-
-* Realized start distance is reported from the reset itself, never from the
-  logged cap. The approach curriculum lives on a base class and a subclass has
-  silently overridden it before.
-* ``_contain_nonfinite_worlds`` (mjlab_mjwarp_backend.py:1176) restores a
-  diverged world to its calibrated base pose mid-episode. A world that got reset
-  would end far from its object for reasons having nothing to do with the policy,
-  which is a live alternative reading of "ends 0.40 m away". The count is
-  reported per arm.
-
-Leg A needs no SmolVLA forward and no policy, so it skips loading the runtime and
-runs in a fraction of the time. Legs B and C share one build.
+Leg A needs no SmolVLA forward and no policy, so it skips loading the runtime.
+Legs B and C share one build.
 
 Usage::
 
     RLVLA_HF_OFFLINE=1 MUJOCO_GL=egl conda run --no-capture-output -n cdpr-mjlab \\
       python tools/audit/xy_approach_probe.py \\
         --checkpoint runs/<run>/smolvla_grpo_adapter.pt \\
-        --config configs/examples/cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml \\
         --output runs/xy_approach_probe
+
+Reproduce the run's own held-out validation (uncapped starts)::
+
+    ... --legs policy --start-distance-cap inf
 """
 
 from __future__ import annotations
@@ -290,6 +276,7 @@ def _build_world(
     microbatch: int,
     load_policy: bool,
     run_dir: Path,
+    start_distance_cap: float | None = None,
 ) -> _World:
     """Reproduce the training stack. ``load_policy`` False skips SmolVLA."""
 
@@ -426,6 +413,7 @@ def _build_world(
         args=args,
         task_metadata=task_metadata,
         extra_state=extra_state,
+        cap_override=start_distance_cap,
     )
 
     world = _World(
@@ -588,6 +576,7 @@ def _restore_approach_curriculum(
     args: Namespace,
     task_metadata: Mapping[str, Any],
     extra_state: Mapping[str, Any],
+    cap_override: float | None = None,
 ) -> None:
     """Put the earned start-distance cap back on the resetter.
 
@@ -595,6 +584,13 @@ def _restore_approach_curriculum(
     what the trainer logs; the realized distance is what the resetter produces,
     and the two have disagreed before because the curriculum lives on a base
     class a subclass can override.
+
+    ``cap_override`` forces a cap instead of restoring the checkpoint's. A
+    non-finite value disables the cap entirely, which is what the TRAINING
+    validator does by omission: ``set_random_start_max_goal_distance`` is called
+    on the training resetter only (smolvla_grpo_mjwarp_cdpr.py:1600) and never
+    on ``validation_resetter``, whose cap therefore stays at its ``inf``
+    default. Passing ``inf`` here reproduces held-out validation exactly.
     """
 
     from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
@@ -608,6 +604,8 @@ def _restore_approach_curriculum(
     )
     approach.load_state_dict(extra_state.get("approach_curriculum"))
     caps = approach.caps_by_instruction_id()
+    if cap_override is not None:
+        caps = {key: float(cap_override) for key in caps}
     resetter.set_random_start_max_goal_distance(caps)
     prelifted = PreliftedStageCurriculum(task_metadata)
     prelifted.load_state_dict(extra_state.get("prelifted_curriculum"))
@@ -955,20 +953,33 @@ class _ArmRunner:
 # -- the action sources -------------------------------------------------
 
 
-def _servo_xy(rel_xy: Any, step: float, torch: Any) -> Any:
+def _servo_xy(
+    rel_xy: Any, step: float, torch: Any, *, max_command: float = 1.0
+) -> Any:
     """Proportional XY servo at the controller's own natural gain.
 
-    ``rel / step`` commands exactly the displacement needed and saturates at
-    +-1 when further away than one step, so it is parameter-free: there is no
-    gain to tune and therefore no way for a badly chosen one to be mistaken for
-    a policy failure.
+    ``rel / step`` commands exactly the displacement needed and saturates when
+    further away than one step, so the proportional part is parameter-free.
+
+    ``max_command`` caps that saturation, and the default is NOT 1.0 for a
+    measured reason. Leg A puts the realized XY gain at ~0.50, so a saturated
+    +-1 command is held for twice as many steps as the geometry suggests, and
+    the backend restores any world whose cable configuration goes singular
+    "under a large action" (mjlab_mjwarp_backend.py:1176) to its calibrated base
+    pose -- mid-episode, far from its object. An arm that saturates therefore
+    manufactures its own failures and reports them as the substitution not
+    helping. Keep this inside the range leg A measured as linear.
     """
 
-    return torch.clamp(rel_xy / float(step), -1.0, 1.0)
+    limit = abs(float(max_command))
+    return torch.clamp(rel_xy / float(step), -limit, limit)
 
 
 def _make_oracle_xy_source(
-    world: _World, *, position_error_std: float = 0.0
+    world: _World,
+    *,
+    position_error_std: float = 0.0,
+    max_command: float = 1.0,
 ) -> Callable[..., Any]:
     """Keep the policy's z/yaw/gripper; replace only the XY channels.
 
@@ -998,7 +1009,9 @@ def _make_oracle_xy_source(
                 ) * float(position_error_std)
             believed = target + runner.position_error
         rel_xy = (believed - low_dim.ee_position)[:, :2]
-        command = _servo_xy(rel_xy, world.action_step_xyz, torch)
+        command = _servo_xy(
+            rel_xy, world.action_step_xyz, torch, max_command=max_command
+        )
         out = chunk.clone()
         out[:, :, 0] = command[:, None, 0]
         out[:, :, 1] = command[:, None, 1]
@@ -1008,7 +1021,11 @@ def _make_oracle_xy_source(
 
 
 def _make_full_oracle_source(
-    world: _World, *, align_tolerance: float = 0.010, lift_command: float = 0.60
+    world: _World,
+    *,
+    align_tolerance: float = 0.010,
+    lift_command: float = 0.60,
+    max_command: float = 1.0,
 ) -> Callable[..., Any]:
     """Scripted servo -> descend -> close -> lift, through the training env.
 
@@ -1040,7 +1057,7 @@ def _make_full_oracle_source(
         seated = aligned & (z_err.abs() < 0.005)
         engaged = holding | runner.ever_grasped
 
-        a_xy = _servo_xy(xy_err, step, torch)
+        a_xy = _servo_xy(xy_err, step, torch, max_command=max_command)
         # Stay on a hover plane until aligned, so the gripper does not descend
         # into the desk beside the object and push it away.
         hover_err = (grasp_point[:, 2] + 0.05) - low_dim.ee_position[:, 2]
@@ -1049,8 +1066,8 @@ def _make_full_oracle_source(
             torch.full_like(z_err, float(lift_command)),
             torch.where(
                 aligned,
-                torch.clamp(z_err / step, -1.0, 1.0),
-                torch.clamp(hover_err / step, -1.0, 1.0),
+                torch.clamp(z_err / step, -max_command, max_command),
+                torch.clamp(hover_err / step, -max_command, max_command),
             ),
         )
         # group_target_catalog_ids is per GROUP, not per world -- the resetter
@@ -1261,14 +1278,15 @@ def _report_plant(rows: Sequence[Mapping[str, Any]], *, steps: int) -> None:
     print("--------------------------------------------")
     print(
         f"{'cond':<7} {'axis':<5} {'a':>6} {'realized mm/step':>17} "
-        f"{'gain':>7} {'clamped':>8}"
+        f"{'gain':>7} {'clamped':>8} {'diverged':>9}"
     )
     for row in rows:
         print(
             f"{'loaded' if row['loaded'] else 'free':<7} "
             f"{row['axis']:<5} {row['amplitude']:>+6.2f} "
             f"{row['mean_m_per_step'] * 1000.0:>17.3f} "
-            f"{row['gain_fraction']:>+7.3f} {row['clamped_fraction']:>8.2f}"
+            f"{row['gain_fraction']:>+7.3f} {row['clamped_fraction']:>8.2f} "
+            f"{row['diverged_worlds']:>9d}"
         )
     zeros = [r for r in rows if r["amplitude"] == 0.0]
     drift = max((abs(r["mean_m_per_step"]) for r in zeros), default=0.0)
@@ -1437,6 +1455,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             "from the mean. exp(-1.10), the pick_up max_log_std ceiling."
         ),
     )
+    parser.add_argument(
+        "--start-distance-cap",
+        type=float,
+        default=None,
+        help=(
+            "Override the checkpoint's approach-curriculum cap (m). Omit to "
+            "restore what the checkpoint earned. Pass a non-positive value or "
+            "inf to DISABLE the cap, which is what held-out validation does by "
+            "omission -- set_random_start_max_goal_distance is called on the "
+            "training resetter only, never on validation_resetter -- so `inf` "
+            "reproduces the run's own validation start distribution."
+        ),
+    )
+    parser.add_argument(
+        "--servo-max-command",
+        type=float,
+        default=0.35,
+        help=(
+            "Cap on the oracle arms' commanded magnitude. Leg A measures the "
+            "realized XY gain at ~0.50, so a saturated +-1 command is held "
+            "twice as long as the geometry implies and drives worlds into the "
+            "cable-singularity reset. 1.0 restores the saturating servo."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260806)
     args = parser.parse_args(argv)
 
@@ -1456,6 +1498,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
 
+    start_cap = args.start_distance_cap
+    if start_cap is not None and (start_cap <= 0.0 or start_cap == float("inf")):
+        start_cap = float("inf")
     needs_policy = bool(legs & {"policy", "oracle"})
     world = _build_world(
         checkpoint=checkpoint,
@@ -1466,6 +1511,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         microbatch=int(args.smolvla_microbatch),
         load_policy=needs_policy,
         run_dir=output,
+        start_distance_cap=start_cap,
     )
 
     summary: dict[str, Any] = {
@@ -1491,18 +1537,31 @@ def main(argv: Sequence[str] | None = None) -> int:
         rng = np.random.default_rng(int(args.seed))
         arms: list[tuple[str, Callable[..., Any] | None]] = [("policy", None)]
         if "oracle" in legs:
-            arms.append(("oracle_xy", _make_oracle_xy_source(world)))
+            servo_cap = float(args.servo_max_command)
+            arms.append(
+                (
+                    "oracle_xy",
+                    _make_oracle_xy_source(world, max_command=servo_cap),
+                )
+            )
             for error in args.localization_errors:
                 arms.append(
                     (
                         f"oracle_xy_err_{float(error):.02f}m",
                         _make_oracle_xy_source(
-                            world, position_error_std=float(error)
+                            world,
+                            position_error_std=float(error),
+                            max_command=servo_cap,
                         ),
                     )
                 )
             if not args.skip_full_oracle:
-                arms.append(("full_oracle", _make_full_oracle_source(world)))
+                arms.append(
+                    (
+                        "full_oracle",
+                        _make_full_oracle_source(world, max_command=servo_cap),
+                    )
+                )
 
         for index, (name, source) in enumerate(arms):
             print(f"[xy-probe] arm {name}", flush=True)

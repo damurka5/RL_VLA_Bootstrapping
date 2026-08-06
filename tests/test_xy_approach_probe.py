@@ -273,6 +273,81 @@ class HuggingFaceEnvironmentTest(unittest.TestCase):
             self.assertIn(name, shell, msg=f"{name} is no longer in the helper")
 
 
+class StartDistanceCapTest(unittest.TestCase):
+    """The cap override has to be able to reproduce held-out validation.
+
+    ``set_random_start_max_goal_distance`` is called on the training resetter
+    only (smolvla_grpo_mjwarp_cdpr.py) and never on ``validation_resetter``, so
+    validation runs at the resetter's ``inf`` default -- the full-workspace
+    start distribution -- while training runs at the earned cap. Reproducing the
+    run's own validation therefore means DISABLING the cap, and the override has
+    to make that reachable from the command line.
+    """
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.caps = None
+
+        def set_random_start_max_goal_distance(self, value) -> None:
+            self.caps = value
+
+        def set_prelifted_group_fraction(self, value) -> None:
+            pass
+
+    def _restore(self, override):
+        recorder = self._Recorder()
+        probe._restore_approach_curriculum(
+            recorder,
+            args=SimpleNamespace(instruction_types=("pick_up",)),
+            task_metadata={},
+            extra_state={},
+            cap_override=override,
+        )
+        return recorder.caps
+
+    def test_an_override_replaces_every_instruction_cap(self) -> None:
+        caps = self._restore(0.05)
+        self.assertTrue(caps)
+        self.assertTrue(all(value == 0.05 for value in caps.values()))
+
+    def test_infinity_is_representable_so_validation_can_be_reproduced(self) -> None:
+        caps = self._restore(float("inf"))
+        self.assertTrue(all(value == float("inf") for value in caps.values()))
+
+    def test_no_override_leaves_the_checkpoint_caps_alone(self) -> None:
+        caps = self._restore(None)
+        self.assertIsNotNone(caps)
+
+    def test_the_resetter_default_really_is_uncapped(self) -> None:
+        """The premise of the whole override: unset means full workspace."""
+
+        import inspect
+
+        from rl_vla_bootstrapping.policy import mjwarp_rank_local_collector as mod
+
+        source = inspect.getsource(mod.BatchedReverseFrontierResetter)
+        self.assertIn('self.random_start_max_goal_distance = float("inf")', source)
+
+    def test_the_trainer_caps_only_the_training_resetter(self) -> None:
+        """If this ever changes, the finding it encodes is stale."""
+
+        import inspect
+
+        from rl_vla_bootstrapping.policy import smolvla_grpo_mjwarp_cdpr as mod
+
+        lines = inspect.getsource(mod).splitlines()
+        calls = [
+            line.strip()
+            for line in lines
+            if "set_random_start_max_goal_distance" in line
+            and not line.strip().startswith("#")
+        ]
+        self.assertEqual(
+            len(calls), 1, msg=f"expected one cap call site, found {calls}"
+        )
+        self.assertNotIn("validation", calls[0])
+
+
 class LoraDetectionTest(unittest.TestCase):
     """The adapted prior is part of the policy, not an optional extra.
 
@@ -556,10 +631,28 @@ class OracleSourceTest(unittest.TestCase):
 
     def test_servo_saturates_beyond_one_step_and_is_proportional_inside(self) -> None:
         rel = torch.tensor([[0.15, 0.0], [0.0075, 0.0], [-0.15, 0.0]])
-        out = probe._servo_xy(rel, 0.015, torch)
+        out = probe._servo_xy(rel, 0.015, torch, max_command=1.0)
         self.assertAlmostEqual(float(out[0, 0]), 1.0, places=6)
         self.assertAlmostEqual(float(out[1, 0]), 0.5, places=6)
         self.assertAlmostEqual(float(out[2, 0]), -1.0, places=6)
+
+    def test_the_command_cap_binds_without_touching_the_linear_region(self) -> None:
+        """The cap keeps the arm out of the regime that resets worlds.
+
+        A saturated sustained command drives the cable configuration singular
+        and the backend restores that world to its base pose mid-episode, far
+        from its object -- so an uncapped arm manufactures failures and reports
+        them as the substitution not helping. The cap must bite on the far
+        commands and leave the near ones proportional, or it trades one artefact
+        for another.
+        """
+
+        rel = torch.tensor([[0.20, 0.0], [0.0030, 0.0], [-0.20, 0.0]])
+        out = probe._servo_xy(rel, 0.015, torch, max_command=0.35)
+        self.assertAlmostEqual(float(out[0, 0]), 0.35, places=6)
+        self.assertAlmostEqual(float(out[2, 0]), -0.35, places=6)
+        # 0.003 / 0.015 = 0.2, inside the cap and therefore untouched.
+        self.assertAlmostEqual(float(out[1, 0]), 0.2, places=6)
 
     def test_oracle_xy_replaces_only_the_xy_channels(self) -> None:
         world = self._world()
