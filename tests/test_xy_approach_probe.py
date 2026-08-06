@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import sys
 import unittest
 from pathlib import Path
@@ -187,6 +188,89 @@ class AnalysisDiscriminatesTest(unittest.TestCase):
                 0.5,
                 msg=f"{key} does not separate a servo from a drift",
             )
+
+
+class HuggingFaceEnvironmentTest(unittest.TestCase):
+    """``RLVLA_HF_OFFLINE=1`` on the command line has to actually do something.
+
+    It is read by ``scripts/huggingface_public_models.sh``, which only the
+    launchers source -- so a tool invoked directly inherits neither the offline
+    pin nor the credential strip, and the run dies after the weights have loaded
+    with a 401 on a public repo. Checked by calling the mirror against a
+    scratch environment rather than by trusting that the variable is honoured.
+    """
+
+    def setUp(self) -> None:
+        self._saved = {
+            name: os.environ.get(name)
+            for name in (
+                "RLVLA_HF_OFFLINE",
+                "RLVLA_HF_PUBLIC_MODELS_ONLY",
+                "HF_TOKEN",
+                "HUGGING_FACE_HUB_TOKEN",
+                "HF_HUB_OFFLINE",
+                "TRANSFORMERS_OFFLINE",
+                "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            )
+        }
+        for name in self._saved:
+            os.environ.pop(name, None)
+
+    def tearDown(self) -> None:
+        for name, value in self._saved.items():
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+    def test_offline_sets_both_switches_the_loader_reads(self) -> None:
+        os.environ["RLVLA_HF_OFFLINE"] = "1"
+        probe._configure_huggingface()
+        self.assertEqual(os.environ.get("HF_HUB_OFFLINE"), "1")
+        self.assertEqual(os.environ.get("TRANSFORMERS_OFFLINE"), "1")
+
+    def test_offline_is_off_by_default(self) -> None:
+        probe._configure_huggingface()
+        self.assertIsNone(os.environ.get("HF_HUB_OFFLINE"))
+        self.assertIsNone(os.environ.get("TRANSFORMERS_OFFLINE"))
+
+    def test_an_inherited_token_is_dropped(self) -> None:
+        os.environ["HF_TOKEN"] = "stale"
+        os.environ["HUGGING_FACE_HUB_TOKEN"] = "stale"
+        probe._configure_huggingface()
+        self.assertIsNone(os.environ.get("HF_TOKEN"))
+        self.assertIsNone(os.environ.get("HUGGING_FACE_HUB_TOKEN"))
+        self.assertEqual(
+            os.environ.get("HF_HUB_DISABLE_IMPLICIT_TOKEN"), "1"
+        )
+
+    def test_a_genuinely_private_checkpoint_can_opt_out(self) -> None:
+        os.environ["RLVLA_HF_PUBLIC_MODELS_ONLY"] = "0"
+        os.environ["HF_TOKEN"] = "wanted"
+        probe._configure_huggingface()
+        self.assertEqual(os.environ.get("HF_TOKEN"), "wanted")
+
+    def test_a_typo_in_either_switch_is_refused_not_ignored(self) -> None:
+        os.environ["RLVLA_HF_OFFLINE"] = "true"
+        with self.assertRaises(SystemExit):
+            probe._configure_huggingface()
+        os.environ["RLVLA_HF_OFFLINE"] = "0"
+        os.environ["RLVLA_HF_PUBLIC_MODELS_ONLY"] = "yes"
+        with self.assertRaises(SystemExit):
+            probe._configure_huggingface()
+
+    def test_it_matches_the_shell_helper_it_mirrors(self) -> None:
+        """The shell script stays the source of truth for the variable names."""
+
+        shell = (ROOT / "scripts" / "huggingface_public_models.sh").read_text()
+        for name in (
+            "HF_HUB_OFFLINE",
+            "TRANSFORMERS_OFFLINE",
+            "HF_HUB_DISABLE_IMPLICIT_TOKEN",
+            "HF_TOKEN",
+            "HUGGING_FACE_HUB_TOKEN",
+        ):
+            self.assertIn(name, shell, msg=f"{name} is no longer in the helper")
 
 
 class LoraDetectionTest(unittest.TestCase):

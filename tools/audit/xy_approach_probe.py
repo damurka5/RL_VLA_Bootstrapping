@@ -119,16 +119,63 @@ Usage::
 
 from __future__ import annotations
 
-import argparse
-import csv
-import json
+import os
 import sys
-from argparse import Namespace
-from dataclasses import dataclass, field
-from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
 
-import numpy as np
+
+def _configure_huggingface() -> None:
+    """Mirror both halves of ``scripts/huggingface_public_models.sh``.
+
+    Only the launchers source that script, so a tool run directly gets neither
+    half and ``RLVLA_HF_OFFLINE=1`` on the command line does nothing at all --
+    it is read by the shell helper, not by huggingface_hub. The failure lands
+    after the weights have finished loading, inside the processor fetch, and
+    reports as a 401/RepositoryNotFound on a public repo, which reads as a
+    missing model and is not one.
+
+    ``RLVLA_HF_PUBLIC_MODELS_ONLY`` (default 1) drops an inherited credential so
+    the anonymous fetch stays anonymous. ``RLVLA_HF_OFFLINE`` (default 0) pins
+    huggingface_hub and transformers to the local cache, for a box that holds
+    the model files but has lost its route to huggingface.co.
+
+    Called at import, before anything else here imports huggingface_hub: both
+    switches are read into module constants on first import, so setting them
+    later is silently too late.
+    """
+
+    public_only = os.environ.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1")
+    if public_only not in {"0", "1"}:
+        raise SystemExit("RLVLA_HF_PUBLIC_MODELS_ONLY must be 0 or 1.")
+    if public_only == "1":
+        removed = [
+            name
+            for name in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN")
+            if os.environ.pop(name, None)
+        ]
+        os.environ["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+        if removed:
+            print(f"[huggingface] ignoring inherited {', '.join(removed)}")
+
+    offline = os.environ.get("RLVLA_HF_OFFLINE", "0")
+    if offline not in {"0", "1"}:
+        raise SystemExit("RLVLA_HF_OFFLINE must be 0 or 1.")
+    if offline == "1":
+        os.environ["HF_HUB_OFFLINE"] = "1"
+        os.environ["TRANSFORMERS_OFFLINE"] = "1"
+        print("[huggingface] offline: using the local cache only")
+
+
+_configure_huggingface()
+
+import argparse  # noqa: E402
+import csv  # noqa: E402
+import json  # noqa: E402
+from argparse import Namespace  # noqa: E402
+from dataclasses import dataclass, field  # noqa: E402
+from pathlib import Path  # noqa: E402
+from typing import Any, Callable, Mapping, Sequence  # noqa: E402
+
+import numpy as np  # noqa: E402
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
