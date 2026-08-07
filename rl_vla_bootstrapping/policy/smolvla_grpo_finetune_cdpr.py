@@ -477,6 +477,26 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "reward. Episodes that never grasp are unchanged."
         ),
     )
+    parser.add_argument(
+        "--grpo-min-group-reward-std",
+        type=float,
+        default=0.0,
+        help=(
+            "Drop GRPO groups whose candidates scored within this of each "
+            "other. The advantage divides the centred reward by the group std "
+            "floored at 1e-6, so a group that separated nothing still emits "
+            "advantages clipped at --grpo-clip-advantage-abs (6.0) -- rollout "
+            "noise at full scale. Measured over the 10M pick_up run, 41 of 128 "
+            "groups per update had a std under 0.05, 31 of them pre-grasped "
+            "groups where no candidate lifted and the eight rewards are "
+            "near-identical by construction. This is DAPO's dynamic sampling "
+            "for a dense reward: the existing reward_span > 1e-6 test is the "
+            "literal all-right-or-all-wrong translation and never fires. With "
+            "--split-credit-at-grasp the test is applied per return stream, so "
+            "a group that separated the approach but not the lift keeps its "
+            "approach gradient. 0 disables it."
+        ),
+    )
     parser.add_argument("--max-grad-norm", type=float, default=1.0)
     parser.add_argument("--grpo-group-size", type=int, default=2)
     parser.add_argument("--grpo-group-selection", choices=("uniform", "best", "softmax"), default="uniform")

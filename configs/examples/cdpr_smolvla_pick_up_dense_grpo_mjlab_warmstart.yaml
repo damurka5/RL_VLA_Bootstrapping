@@ -834,6 +834,23 @@ training:
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
+      # DAPO's dynamic sampling, for a dense reward. Groups whose eight
+      # candidates scored within 0.05 of each other separated nothing, but the
+      # advantage divides by the group std floored at 1e-6 and then clips at
+      # grpo_clip_advantage_abs above -- so they emit full-magnitude gradients
+      # made of rollout noise. Measured over the 10M run: 41 of 128 groups per
+      # update, 31 of them pre-grasped groups where no candidate lifted and the
+      # rewards are near-identical by construction. About a third of every
+      # update.
+      #
+      # The existing reward_span > 1e-6 filter is the literal translation of
+      # DAPO's all-correct-or-all-wrong test and never fires on a dense reward:
+      # informative_groups has equalled groups_collected on every update of
+      # every run. This is the threshold that does.
+      #
+      # Applied per return stream under split_credit_at_grasp, so a group that
+      # separated the approach but not the lift keeps its approach gradient.
+      grpo_min_group_reward_std: 0.05
       grpo_trajectory_groups: true
       grpo_dynamic_sampling: true
       grpo_dynamic_min_pass_rate: 0.10

@@ -2093,6 +2093,7 @@ class RankLocalMJWarpGRPOCollector:
         vla_update_max_records: int = 128,
         episode_offset_after_grasp: bool = False,
         split_credit_at_grasp: bool = False,
+        min_group_reward_std: float = 0.0,
         profile: bool = False,
     ) -> None:
         layout.validate()
@@ -2110,6 +2111,26 @@ class RankLocalMJWarpGRPOCollector:
         # terminal reward, instead of giving every step of an episode the same
         # scalar. See the two-advantage block in collect_round.
         self.split_credit_at_grasp = bool(split_credit_at_grasp)
+        # Drop groups whose eight candidates scored within this of each other.
+        #
+        # The advantage is the centred reward divided by the group std floored
+        # at 1e-6, so a group that separated nothing contributes gradients of
+        # the same magnitude as one that separated a success from a failure --
+        # clipped at advantage_clip_abs, which is 6.0. Measured over the 10M
+        # run, 41 of 128 groups per update had a reward std under 0.05 and 31 of
+        # those were pre-grasped ones, which are near-identical by construction
+        # whenever none of the eight lifts. About a third of every update was
+        # rollout noise amplified to full scale.
+        #
+        # This is DAPO's dynamic sampling, for a dense reward: DAPO drops groups
+        # whose samples are all-correct or all-wrong because their advantage is
+        # exactly zero; the dense analogue is a group whose spread is below the
+        # noise floor. The existing `reward_span > 1e-6` test is the literal
+        # translation and never fires -- informative_groups has equalled
+        # groups_collected on every update of every run.
+        #
+        # 0.0 keeps every group, which is the behaviour before this existed.
+        self.min_group_reward_std = max(0.0, float(min_group_reward_std))
         # >0 appends a frozen fixed-projection SmolVLA vision feature of this
         # width to the residual state so the residual can localize the target.
         self.vision_feature_dim = max(0, int(vision_feature_dim))
@@ -2913,6 +2934,26 @@ class RankLocalMJWarpGRPOCollector:
                 & (pass_rate < self.dynamic_max_pass_rate)
             )
         informative_world = informative_group.repeat_interleave(group_size)
+        # Degeneracy is per RETURN STREAM, not per group. With
+        # split_credit_at_grasp there are two returns per world -- the reward at
+        # the latch for the approach, the terminal reward for the lift -- and a
+        # group can separate one while separating nothing on the other. Masking
+        # both on a single test would throw away usable approach gradient
+        # because the lift was uniform, which is the exact pairing pre-grasped
+        # groups produce.
+        if self.min_group_reward_std > 0.0:
+            degenerate_terminal = (
+                rewards_by_group.std(dim=1, unbiased=False)
+                < self.min_group_reward_std
+            )
+        else:
+            degenerate_terminal = torch.zeros_like(
+                informative_group, dtype=torch.bool
+            )
+        usable_terminal_world = (
+            informative_world
+            & ~degenerate_terminal.repeat_interleave(group_size)
+        )
 
         records = {
             key: torch.cat(values, dim=0)
@@ -2920,6 +2961,8 @@ class RankLocalMJWarpGRPOCollector:
         }
         record_valid = torch.cat(valid_masks, dim=0)
         record_world = records.pop("world_index")
+        record_post = None
+        usable_pre_world = usable_terminal_world
         if self.split_credit_at_grasp:
             # Two returns per world instead of one.
             #
@@ -2941,11 +2984,23 @@ class RankLocalMJWarpGRPOCollector:
             pre_returns = torch.where(
                 first_grasp_step >= 0, reward_at_first_grasp, candidate_rewards
             )
+            pre_returns_by_group = pre_returns.reshape(
+                self.layout.groups_per_rank, group_size
+            )
             pre_advantage = torch_group_advantages(
-                pre_returns.reshape(self.layout.groups_per_rank, group_size),
+                pre_returns_by_group,
                 normalize=self.normalize_advantage,
                 clip_abs=self.advantage_clip_abs,
             ).reshape(-1)
+            if self.min_group_reward_std > 0.0:
+                degenerate_pre = (
+                    pre_returns_by_group.std(dim=1, unbiased=False)
+                    < self.min_group_reward_std
+                )
+                usable_pre_world = (
+                    informative_world
+                    & ~degenerate_pre.repeat_interleave(group_size)
+                )
             record_post = records.pop("post_grasp_record").to(dtype=torch.bool)
             records["advantage"] = torch.where(
                 record_post,
@@ -2956,9 +3011,15 @@ class RankLocalMJWarpGRPOCollector:
             records["advantage"] = world_advantage.index_select(
                 0, record_world
             )
-        loss_mask = record_valid & informative_world.index_select(
-            0, record_world
-        )
+        if record_post is None:
+            record_usable = usable_terminal_world.index_select(0, record_world)
+        else:
+            record_usable = torch.where(
+                record_post,
+                usable_terminal_world.index_select(0, record_world),
+                usable_pre_world.index_select(0, record_world),
+            )
+        loss_mask = record_valid & record_usable
         vla_records = None
         if vla_capture is not None:
             world_idx = vla_capture.pop("world_index")
@@ -3217,6 +3278,19 @@ class RankLocalMJWarpGRPOCollector:
             "group_reward_std_mean_normal_start": group_std_mean(
                 ~prelifted_group_mask
             ),
+            # What the filter actually removed this round. dropped_groups is the
+            # terminal stream; dropped_groups_pre is the approach stream, which
+            # with split credit is a different set. records_dropped is the
+            # gradient that would otherwise have been rollout noise.
+            "filtered_groups_terminal": float(
+                degenerate_terminal.sum().item()
+            ),
+            "filtered_records": float(
+                (record_valid & ~record_usable).sum().item()
+            ),
+            "filtered_record_fraction": float(
+                (record_valid & ~record_usable).sum().item()
+            ) / max(1.0, float(record_valid.sum().item())),
             "degenerate_reward_groups": float(degenerate_group.sum().item()),
             "degenerate_reward_groups_prelifted": float(
                 (degenerate_group & prelifted_group_mask).sum().item()

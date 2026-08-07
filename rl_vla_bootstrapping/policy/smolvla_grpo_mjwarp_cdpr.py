@@ -1553,6 +1553,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             split_credit_at_grasp=bool(
                 getattr(args, "split_credit_at_grasp", False)
             ),
+            min_group_reward_std=float(
+                getattr(args, "grpo_min_group_reward_std", 0.0)
+            ),
             profile=bool(args.mjwarp_profile_timers),
         )
         validation_collector = None
