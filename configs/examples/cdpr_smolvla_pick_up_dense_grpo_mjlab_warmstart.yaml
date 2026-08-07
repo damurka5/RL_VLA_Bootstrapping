@@ -186,7 +186,24 @@ task:
     # in grasp->success conversion (0.205 against 0.177) at an identical
     # ever-grasp rate, which is exactly the transfer it was built for. The lift
     # is still the only unlearned half of the task, so it gets half the batch.
-    pick_up_prelifted_group_fraction: 0.5
+    pick_up_prelifted_group_fraction: 0.35
+    # Groups starting ALIGNED at the grasp point with the gripper OPEN: pads
+    # bracketing the object, nothing held. They must close and lift.
+    #
+    # The pre-grasped stage proved the principle -- give a phase its own dense
+    # signal instead of waiting for the policy to discover it behind a
+    # low-probability prefix -- and success from a pre-grasped start is 0.83
+    # against 0.13 for the full task. The descend-and-close transition never got
+    # it, and it is the phase with the least gradient per update: it only
+    # happens after an approach that succeeds 22-49% of the time, and it is
+    # where the pressing failure lives (grasp quality and lift anti-correlated
+    # at -0.786). Conversion given a grasp sits at ~0.6.
+    #
+    # Taken out of the pre-grasped share rather than added on top: 0.50 -> 0.35
+    # pre-grasped + 0.20 aligned leaves 0.45 running the whole task, so the
+    # approach still gets the largest share and neither handed-over stage can
+    # become the task.
+    pick_up_aligned_group_fraction: 0.20
     # FIXED at 0.5. Do not anneal it. This was tried and it is a measured
     # regression, not an untested worry.
     #

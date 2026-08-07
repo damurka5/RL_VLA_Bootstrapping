@@ -2036,7 +2036,9 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         metadata.update(overrides)
         return metadata
 
-    def _resetter(self, torch, *, groups, fraction, instruction="pick_up"):
+    def _resetter(
+        self, torch, *, groups, fraction, instruction="pick_up", **overrides
+    ):
         from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
             BatchedReverseFrontierResetter,
             RankLocalCurriculum,
@@ -2056,9 +2058,147 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
             base_seed=17,
             instruction_types=(instruction,),
             allowed_objects=self._OBJECTS,
-            task_metadata=self._metadata(fraction),
+            task_metadata=self._metadata(fraction, **overrides),
         )
         return backend, resetter
+
+    # -- aligned starts: at the grasp point, gripper OPEN ------------------
+
+    def _aligned(self, torch, *, groups=64, aligned=0.5, prelifted=0.0):
+        backend, resetter = self._resetter(
+            torch,
+            groups=groups,
+            fraction=prelifted,
+            pick_up_aligned_group_fraction=aligned,
+        )
+        reset = resetter.reset(update_index=0, round_index=0)
+        return backend, reset
+
+    def test_an_aligned_start_is_not_holding_anything(self):
+        """The whole point of the stage: the closing action is NOT handed over.
+
+        If aligned starts were folded into the caught path they would arrive
+        with the gripper shut and the grasp seeded, and the stage would train
+        the lift a second time instead of the descend-and-close it exists for.
+        """
+
+        import torch
+
+        _backend, reset = self._aligned(torch)
+        aligned = reset.aligned.to(dtype=torch.bool)
+        self.assertTrue(bool(aligned.any().item()), "no aligned starts drawn")
+        for name, flat in (
+            ("ever_grasped", reset.task_state.ever_grasped),
+            ("grasped", reset.task_state.grasped),
+            ("physical_grasp", reset.physical_grasp),
+            ("prelifted", reset.prelifted),
+        ):
+            self.assertFalse(
+                bool(flat.to(dtype=torch.bool)[aligned].any().item()),
+                f"aligned starts have {name} set",
+            )
+
+    def test_an_aligned_start_has_the_gripper_open(self):
+        import torch
+
+        backend, reset = self._aligned(torch)
+        aligned = reset.aligned.to(dtype=torch.bool)
+        openings = backend.gripper_openings[aligned]
+        self.assertTrue(
+            bool((openings > 0.99).all().item()),
+            f"aligned starts are not open: {openings.min().item()}",
+        )
+
+    def test_an_aligned_start_is_placed_at_the_grasp_point(self):
+        """Object XY, one centimetre above the grasp height."""
+
+        import torch
+
+        backend, reset = self._aligned(torch)
+        aligned = reset.aligned.to(dtype=torch.bool)
+        rows = torch.arange(backend.object_positions.shape[0])
+        target = backend.object_positions[rows, reset.task_state.target_slots]
+        ee = backend.ee_positions
+        xy_error = torch.linalg.vector_norm(
+            (ee - target)[:, :2][aligned], dim=-1
+        )
+        self.assertLess(float(xy_error.max()), 1.0e-5)
+        z_error = (ee[:, 2] - target[:, 2])[aligned] - (0.0075 + 0.01)
+        self.assertLess(float(z_error.abs().max()), 1.0e-5)
+
+    def test_aligned_and_pregrasped_starts_do_not_overlap(self):
+        """They partition the groups; overlap would shrink one silently."""
+
+        import torch
+
+        _backend, reset = self._aligned(torch, aligned=0.5, prelifted=0.5)
+        aligned = reset.aligned.to(dtype=torch.bool)
+        prelifted = reset.prelifted.to(dtype=torch.bool)
+        self.assertFalse(bool((aligned & prelifted).any().item()))
+        self.assertTrue(bool(aligned.any().item()))
+        self.assertTrue(bool(prelifted.any().item()))
+
+    def test_every_candidate_in_a_group_shares_the_aligned_stage(self):
+        """Same reason as the pre-grasped stage: GRPO normalizes within a group."""
+
+        import torch
+
+        groups = 64
+        _backend, reset = self._aligned(torch, groups=groups)
+        by_group = reset.aligned.reshape(groups, 8)
+        mixed = by_group.any(dim=1) & ~by_group.all(dim=1)
+        self.assertFalse(bool(mixed.any().item()))
+        self.assertTrue(bool(by_group[:, 0].any().item()))
+        self.assertFalse(bool(by_group[:, 0].all().item()))
+
+    def test_a_zero_fraction_leaves_the_starts_byte_identical(self):
+        """The knob must not perturb the RNG stream when it is off.
+
+        Every start this resetter produces comes off one generator, so drawing
+        for a disabled stage would silently change every other run's starts --
+        the reason the pre-grasped draw is guarded the same way.
+        """
+
+        import torch
+
+        backend_off, resetter_off = self._resetter(
+            torch, groups=16, fraction=0.5
+        )
+        reset_off = resetter_off.reset(update_index=0, round_index=0)
+        ee_off = backend_off.ee_positions.clone()
+
+        backend_zero, resetter_zero = self._resetter(
+            torch,
+            groups=16,
+            fraction=0.5,
+            pick_up_aligned_group_fraction=0.0,
+        )
+        reset_zero = resetter_zero.reset(update_index=0, round_index=0)
+        self.assertTrue(
+            torch.equal(backend_zero.ee_positions, ee_off),
+            "an explicit 0.0 changed the starts",
+        )
+        self.assertTrue(
+            torch.equal(reset_zero.prelifted, reset_off.prelifted)
+        )
+        self.assertFalse(bool(reset_zero.aligned.any().item()))
+
+    def test_validation_gets_no_aligned_starts(self):
+        """allow_prelifted=False means the FULL task, every stage off."""
+
+        import torch
+
+        _backend, resetter = self._resetter(
+            torch,
+            groups=16,
+            fraction=0.5,
+            pick_up_aligned_group_fraction=0.5,
+        )
+        reset = resetter.reset(
+            update_index=0, round_index=0, allow_prelifted=False
+        )
+        self.assertFalse(bool(reset.aligned.any().item()))
+        self.assertFalse(bool(reset.prelifted.any().item()))
 
     def test_every_candidate_in_a_group_shares_the_stage(self):
         """A mixed group would make GRPO score the spawn, not the actions.
@@ -2511,7 +2651,7 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         first = torch.tensor([True, False])
         second = torch.tensor([False, True])
         merged = concatenate_collector_rounds([make(first), make(second)])
-        self.assertEqual(len(merged), 9)
+        self.assertEqual(len(merged), 10)
         self.assertTrue(
             torch.equal(merged[7], torch.tensor([True, False, False, True]))
         )
@@ -2519,6 +2659,69 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         # so the gate falls back to counting every world.
         partial = concatenate_collector_rounds([make(first), make(None)])
         self.assertIsNone(partial[7])
+
+    def test_the_gate_mask_excludes_aligned_starts_as_well_as_pregrasped(self):
+        """An aligned start performs no approach either.
+
+        It begins at the grasp point with the gripper open, so scoring the
+        approach curriculum on it promotes the cap on episodes that skipped the
+        thing the cap measures -- the same reason pre-grasped starts were
+        excluded. It is a SEPARATE mask because it is not holding anything, so
+        the post-grasp diagnostics and the episode-offset gate must keep reading
+        group_prelifted.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            CollectorRound,
+            concatenate_collector_rounds,
+        )
+
+        def make(prelifted, skips):
+            return CollectorRound(
+                records={"advantage": torch.zeros((2,))},
+                loss_mask=torch.ones((2,)),
+                candidate_rewards=torch.zeros((2, 8)),
+                candidate_success=torch.zeros((2, 8), dtype=torch.bool),
+                group_instruction_ids=torch.zeros((2,), dtype=torch.int64),
+                group_shell_ids=torch.zeros((2,), dtype=torch.int64),
+                metrics={"rollout_time_s": 1.0},
+                group_prelifted=prelifted,
+                group_skips_approach=skips,
+            )
+
+        prelifted = torch.tensor([True, False])
+        skips = torch.tensor([True, True])  # group 1 is aligned, not holding
+        merged = concatenate_collector_rounds([make(prelifted, skips)])
+        self.assertTrue(torch.equal(merged[7], prelifted))
+        self.assertTrue(torch.equal(merged[9], skips))
+        # The two must not be the same object, or one knob moves both.
+        self.assertFalse(torch.equal(merged[7], merged[9]))
+
+    def test_the_gate_mask_falls_back_to_prelifted_when_absent(self):
+        """Checkpoints and rounds predating the aligned stage still work."""
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            CollectorRound,
+            concatenate_collector_rounds,
+        )
+
+        prelifted = torch.tensor([True, False])
+        item = CollectorRound(
+            records={"advantage": torch.zeros((2,))},
+            loss_mask=torch.ones((2,)),
+            candidate_rewards=torch.zeros((2, 8)),
+            candidate_success=torch.zeros((2, 8), dtype=torch.bool),
+            group_instruction_ids=torch.zeros((2,), dtype=torch.int64),
+            group_shell_ids=torch.zeros((2,), dtype=torch.int64),
+            metrics={"rollout_time_s": 1.0},
+            group_prelifted=prelifted,
+        )
+        merged = concatenate_collector_rounds([item])
+        self.assertTrue(torch.equal(merged[9], prelifted))
 
     def test_rounds_carry_the_grasp_outcome_through_concatenation(self):
         """The approach cap promotes on this, so it has to survive the merge.

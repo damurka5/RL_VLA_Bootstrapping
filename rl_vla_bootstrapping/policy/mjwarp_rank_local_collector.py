@@ -627,6 +627,13 @@ class BatchedReset:
     # object. They grasp at env step 0 by construction, so the post-grasp
     # diagnostics have to keep them apart from the worlds that earned a grasp.
     prelifted: Any | None = None
+    # Per-world mask of the starts placed at the grasp point with the gripper
+    # OPEN. Kept separate from `prelifted` because the two masks answer
+    # different questions and only one of the consumers wants both: an aligned
+    # start performs no approach (so the approach curriculum must not score it)
+    # but is not holding anything (so the post-grasp diagnostics and the
+    # episode-offset gate must not treat it as if it were).
+    aligned: Any | None = None
 
 
 class BatchedReverseFrontierResetter:
@@ -703,6 +710,24 @@ class BatchedReverseFrontierResetter:
         # different stages would score the spawn instead of the actions.
         self.pick_up_prelifted_group_fraction = min(
             1.0, max(0.0, number("pick_up_prelifted_group_fraction", 0.0))
+        )
+        # Groups that start ALIGNED at the grasp point with the gripper OPEN:
+        # pads bracketing the object, nothing held yet. They must close and lift.
+        #
+        # The pre-grasped stage gave the lift its own dense signal and it worked
+        # -- success from a pre-grasped start is 0.83 against 0.13 for the full
+        # task. The descend-and-close transition never got the same treatment,
+        # and it is the phase with the least gradient per update: it only
+        # happens after an approach that succeeds 22-49% of the time, and it is
+        # where the documented pressing failure lives (grasp quality and lift
+        # measured ANTI-correlated at -0.786, object_press_depth the metric
+        # added to watch it). Conversion given a grasp sits at ~0.6.
+        #
+        # Distinct from the pre-grasped stage in exactly one respect, and it is
+        # the whole point: the gripper is open and no grasp is seeded, so the
+        # closing action has to be learned rather than handed over.
+        self.pick_up_aligned_group_fraction = min(
+            1.0, max(0.0, number("pick_up_aligned_group_fraction", 0.0))
         )
         self.workspace_x_bounds = bounds(
             "ee_workspace_x_bounds", (-0.28, 0.28)
@@ -1760,6 +1785,27 @@ class BatchedReverseFrontierResetter:
             # therefore every start this resetter produces -- is byte-identical
             # to the run before this knob existed.
             prelifted_group = torch.zeros_like(pick_up_task)
+        aligned_fraction = (
+            float(self.pick_up_aligned_group_fraction)
+            if allow_prelifted
+            else 0.0
+        )
+        if aligned_fraction > 0.0:
+            # Drawn from the groups the pre-grasped stage did NOT take, so the
+            # two fractions partition rather than overlap and neither silently
+            # shrinks the other.
+            aligned_group = (
+                pick_up_task
+                & ~prelifted_group
+                & (
+                    torch.rand(
+                        (groups,), generator=generator, device=self.device
+                    )
+                    < aligned_fraction
+                )
+            )
+        else:
+            aligned_group = torch.zeros_like(pick_up_task)
         # From here on a pre-grasped start is just another caught start: it
         # takes the same end-effector-above-object pose, the same object yaw
         # aligned to the gripper, the same fitted (closed) opening, and the same
@@ -1777,6 +1823,13 @@ class BatchedReverseFrontierResetter:
             grasp_pose,
             ee_group,
         )
+        # Aligned starts reuse the same pose the shell curriculum already uses
+        # for this phase -- object XY, one centimetre above the grasp height, so
+        # the pads bracket the object without touching it. Deliberately NOT
+        # folded into caught_group: that path closes the gripper to the fitted
+        # opening and seeds grasped/ever_grasped/physical_grasp, which would
+        # hand over the very action this stage exists to train.
+        ee_group = torch.where(aligned_group[:, None], grasp_pose, ee_group)
         approach_direction_angle = (
             torch.rand((groups,), generator=generator, device=self.device)
             * (2.0 * torch.pi)
@@ -2014,6 +2067,7 @@ class BatchedReverseFrontierResetter:
             group_ids=group_ids.repeat_interleave(group_size),
             group_target_catalog_ids=target_catalog,
             prelifted=prelifted_group.repeat_interleave(group_size),
+            aligned=aligned_group.repeat_interleave(group_size),
         )
 
 
@@ -2031,6 +2085,12 @@ class CollectorRound:
     # it has to be excluded from that rate or the cap promotes on evidence about
     # a different task.
     group_prelifted: Any | None = None
+    # Per-group mask of the starts that performed NO approach -- pre-grasped and
+    # aligned alike. This is what the approach curriculum's pass rate must
+    # exclude; group_prelifted stays the "started holding" mask that the
+    # post-grasp diagnostics split on. Folding the two together would make the
+    # lift diagnostics move with the aligned fraction knob.
+    group_skips_approach: Any | None = None
     # Per-candidate "this world earned a grasp at some point", shaped like
     # candidate_success. The approach curriculum promotes on this rather than on
     # full-task success: its question is whether the policy can REACH an object
@@ -3076,6 +3136,15 @@ class RankLocalMJWarpGRPOCollector:
         prelifted_group_mask = prelifted_world.reshape(
             self.layout.groups_per_rank, group_size
         )[:, 0]
+        aligned_world = (
+            torch.zeros_like(prelifted_world)
+            if reset.aligned is None
+            else reset.aligned.to(dtype=torch.bool)
+        )
+        skips_approach_group_mask = (
+            (prelifted_world | aligned_world)
+            .reshape(self.layout.groups_per_rank, group_size)[:, 0]
+        )
 
         def group_std_mean(selected: Any) -> float:
             count = int(selected.sum().item())
@@ -3306,6 +3375,7 @@ class RankLocalMJWarpGRPOCollector:
             metrics=metrics,
             vla_records=vla_records,
             group_prelifted=prelifted_group_mask,
+            group_skips_approach=skips_approach_group_mask,
             candidate_ever_grasped=(first_grasp_step >= 0).reshape(
                 self.layout.groups_per_rank, group_size
             ),
@@ -3571,7 +3641,7 @@ class RankLocalMJWarpGRPOCollector:
 def concatenate_collector_rounds(
     rounds: Sequence[CollectorRound],
 ) -> tuple[
-    dict[str, Any], Any, Any, Any, Any, Any, dict[str, float], Any, Any
+    dict[str, Any], Any, Any, Any, Any, Any, dict[str, float], Any, Any, Any
 ]:
     if not rounds:
         raise ValueError("At least one collector round is required.")
@@ -3596,6 +3666,11 @@ def concatenate_collector_rounds(
         torch.cat([item.group_prelifted for item in rounds], dim=0)
         if all(item.group_prelifted is not None for item in rounds)
         else None
+    )
+    skips_approach_groups = (
+        torch.cat([item.group_skips_approach for item in rounds], dim=0)
+        if all(item.group_skips_approach is not None for item in rounds)
+        else prelifted_groups
     )
     metrics: dict[str, float] = {}
     for key in rounds[0].metrics:
@@ -3625,4 +3700,5 @@ def concatenate_collector_rounds(
         metrics,
         prelifted_groups,
         ever_grasped,
+        skips_approach_groups,
     )

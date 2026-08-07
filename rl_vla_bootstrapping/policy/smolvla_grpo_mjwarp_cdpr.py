@@ -1782,6 +1782,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 rollout_metrics,
                 prelifted_groups,
                 ever_grasped_groups,
+                skips_approach_groups,
             ) = (
                 concatenate_collector_rounds(rounds)
             )
@@ -1879,7 +1880,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                     name: int(INSTRUCTION_TO_ID[name])
                     for name in configured_instruction_names
                 },
-                prelifted_groups,
+                # The gate excludes every start that performed no approach --
+                # pre-grasped AND aligned -- not just the pre-grasped ones. An
+                # aligned start begins at the grasp point, so scoring the
+                # approach curriculum on it would promote the cap on episodes
+                # that skipped the thing the cap measures.
+                skips_approach_groups,
                 ever_grasped_groups,
             )
             local_metrics = {
