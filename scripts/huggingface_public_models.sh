@@ -70,16 +70,28 @@ for repo_id in (
 ):
     info = api.model_info(repo_id, token=False)
     print(f"[huggingface] anonymous access OK: {info.id}")
+
+# model_info only reads repo metadata. The loader fetches the PROCESSOR, which
+# lives behind different endpoints and has failed on its own while the check
+# above passed -- the run then died inside AutoProcessor.from_pretrained about a
+# minute in, on both ranks, with an error that reads as a missing model. Take
+# the same path the trainer takes, so a preflight that passes means something.
+from transformers import AutoProcessor
+
+AutoProcessor.from_pretrained("HuggingFaceTB/SmolVLM2-500M-Video-Instruct")
+print("[huggingface] processor loads: SmolVLM2-500M-Video-Instruct")
 '; then
     cat >&2 <<'EOF'
 [huggingface] Public-model preflight failed.
 Check outbound access to huggingface.co. If the host simply has no route out but
 the model files are already cached -- the usual case on a long-lived training
-box -- rerun with RLVLA_HF_OFFLINE=1, which pins huggingface_hub and transformers
-to the local cache and skips this check. If you intentionally use a private or
-gated checkpoint, set RLVLA_HF_PUBLIC_MODELS_ONLY=0, authenticate with
-`hf auth login`, and rerun. RLVLA_HF_PREFLIGHT=0 alone only silences this check;
-it does not stop the loader reaching the network later.
+box, and the state this box has been in -- rerun with RLVLA_HF_OFFLINE=1, which
+pins huggingface_hub and transformers to the local cache and skips this check.
+If you intentionally use a private or gated checkpoint, set
+RLVLA_HF_PUBLIC_MODELS_ONLY=0, authenticate with `hf auth login`, and rerun.
+RLVLA_HF_PREFLIGHT=0 alone only silences this check; it does not stop the loader
+reaching the network later, which is the failure this check exists to move
+forward in time.
 EOF
     return 1
   fi
