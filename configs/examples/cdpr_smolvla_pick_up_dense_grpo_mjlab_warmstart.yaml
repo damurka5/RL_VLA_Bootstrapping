@@ -550,7 +550,8 @@ training:
       # --- MUST MATCH THE MOVE-TO RUN (warm-start loads weights strictly) ---
       residual_relative_target: false
       residual_vision_features: true
-      residual_vision_dim: 512
+      # 1024 = 512 flat_random + 512 per_token_random, side by side.
+      residual_vision_dim: 1024
       # HOW the connector tokens become that 512-d feature, and it is the
       # difference between a policy that can aim and one that cannot.
       #
@@ -606,21 +607,33 @@ training:
       # it buys, at least over 2.7M steps. Testing it properly means a fresh
       # residual rather than a resume, which is a different and much longer
       # experiment.
-      # per_token_random: reduce CHANNELS per token with one shared projection
-      # and keep the 16-token spatial grid, instead of flattening the grid and
-      # mixing it away with a random matrix. Measured over 120 episodes at this
-      # same 512 width, direction cosine to the object: flat_random +0.090,
-      # per_token_random +0.389, un-projected 30720-d ceiling +0.412. Flattening
-      # first is what threw the object position away, and widening cannot undo
-      # it -- a fixed random projection retains d_out/d_in, so 8192 dims still
-      # keep only 27%.
+      # BOTH poolings, side by side: [flat_random 512 | per_token_random 512].
       #
-      # Requires RLVLA_SMOLVLA_RESET_VISION_COLUMNS=1 on the warm start. The
-      # feature keeps its width, so the checkpoint loads clean and the residual's
-      # first-layer vision columns silently keep a mapping learned for the old
-      # pooling -- which is how the previous attempt at this swap regressed
-      # everything it touched.
-      residual_vision_pooling: per_token_random
+      # Replacing one with the other has failed twice. The residual's first
+      # layer holds a mapping learned for the outgoing feature, and there is no
+      # way to remove an input from a trained MLP without shifting the hidden
+      # activations every later layer was calibrated on. The second attempt
+      # measured the damage directly: handed a PERFECT object position via the
+      # probe's oracle_xy arm, ever-grasped fell 0.92 -> 0.30, ceiling-pinned
+      # validation went 0.0001 -> 0.55-0.76, and the aiming cosine went negative
+      # (-0.042) and kept falling. What broke was not vision.
+      #
+      # Adding removes nothing. flat_random keeps its columns at their existing
+      # offsets and the new block is appended after and zero-initialised, so the
+      # composed policy computes an IDENTICAL function on step 0 and the new
+      # path can only earn its way in. If per_token_random is worthless the run
+      # degrades to today's baseline instead of to wreckage.
+      #
+      # Why it is worth the width: the connector is 16 tokens x 960 channels per
+      # camera and the 16 tokens are a ~4x4 spatial grid, so WHERE the object is
+      # lives in WHICH token carries it. flat_random flattens that grid to 30720
+      # and random-projects to 512, retaining d_out/d_in = 1.7% -- direction
+      # cosine +0.090. per_token_random squeezes channels only and keeps the
+      # token axis as position in the vector -- +0.389, against an un-projected
+      # ceiling of +0.412.
+      #
+      # Needs RLVLA_SMOLVLA_EXPAND_VISION_COLUMNS=1 on the warm start.
+      residual_vision_pooling: dual_random
       residual_scale: 1.0
       hidden_dim: 1024
       train_vla_lora: true

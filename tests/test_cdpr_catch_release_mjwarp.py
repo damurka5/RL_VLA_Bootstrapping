@@ -70,6 +70,56 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
             "reverse_frontier_profile", config.task.metadata
         )
 
+    def test_consecutive_phases_can_load_each_others_residual(self):
+        """The handoff contract, now that the width is allowed to change.
+
+        Each phase warm-starts from the previous one's adapter through a strict
+        state-dict load, so the residual's input width has to either MATCH or be
+        reachable by the one documented expansion: adding a second vision
+        pooling doubles the vision block, and the loader zero-fills the appended
+        columns (RLVLA_SMOLVLA_EXPAND_VISION_COLUMNS). Anything else is a load
+        that fails on the first step of a booked run.
+
+        Pinning every phase to one number, as this used to, cannot express that
+        -- and pinning nothing would let phase 2 silently stop being loadable
+        from phase 1, which is exactly what changing pick_up alone did.
+        """
+
+        widths = []
+        for path in STAGED_CONFIGS:
+            config = load_project_config(path)
+            args = config.training.rl.args
+            widths.append(
+                (
+                    config.project.name,
+                    int(args["residual_vision_dim"]),
+                    str(args.get("residual_vision_pooling", "flat_random")),
+                )
+            )
+        for (earlier_name, earlier, _), (later_name, later, later_pool) in zip(
+            widths, widths[1:]
+        ):
+            with self.subTest(handoff=f"{earlier_name} -> {later_name}"):
+                if later == earlier:
+                    continue
+                self.assertEqual(
+                    later_pool,
+                    "dual_random",
+                    msg=(
+                        f"{later_name} widens the residual to {later} without "
+                        "dual_random; there is no loader path for that."
+                    ),
+                )
+                self.assertEqual(
+                    later,
+                    2 * earlier,
+                    msg=(
+                        f"{later_name} takes {later} vision inputs against "
+                        f"{earlier_name}'s {earlier}; the expansion appends "
+                        "exactly one more pooling of the same width."
+                    ),
+                )
+
     def test_every_staged_config_keeps_the_move_to_stability_fixes(self):
         """Each phase hands weights to the next through a strict load.
 
@@ -86,7 +136,13 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
             args = config.training.rl.args
             with self.subTest(config=config.project.name):
                 self.assertTrue(args["residual_vision_features"])
-                self.assertEqual(args["residual_vision_dim"], 512)
+                # Width is checked across phases below, not pinned here: the
+                # residual gained a second vision pooling and the two grasp
+                # phases carry it while move_to still predates it.
+                self.assertIn(args["residual_vision_dim"], (512, 1024))
+                pooling = args.get("residual_vision_pooling", "flat_random")
+                if pooling == "dual_random":
+                    self.assertEqual(args["residual_vision_dim"] % 2, 0)
                 self.assertTrue(args["train_vla_lora"])
                 self.assertEqual(args["lora_rank"], 16)
                 self.assertTrue(args["lora_include_mlp"])

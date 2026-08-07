@@ -1381,12 +1381,36 @@ def main(argv: Sequence[str] | None = None) -> None:
         ).strip()
         if warmstart_checkpoint and not args.resume_checkpoint:
             resolved_warmstart = _resolve_checkpoint(warmstart_checkpoint)
-            trainer.load_weights_only(resolved_warmstart)
+            # RLVLA_SMOLVLA_EXPAND_VISION_COLUMNS=1 accepts a checkpoint whose
+            # residual state is narrower than this run's, because a second
+            # vision pooling was ADDED alongside the trained one rather than
+            # swapped for it. The first layer is widened with zeros at the end
+            # of the old state span, so step 0 computes an identical function.
+            expand = _flag_env("RLVLA_SMOLVLA_EXPAND_VISION_COLUMNS")
+            expand_info = trainer.load_weights_only(
+                resolved_warmstart, expand_vision_columns=expand
+            )
             _log(
                 dist_ctx,
                 f"[smolvla-mjwarp] warm-started weights from {resolved_warmstart} "
                 "(fresh optimizer / curriculum / global step 0)",
             )
+            if expand and expand_info.get("vision_expand/inserted", 0.0) > 0:
+                _log(
+                    dist_ctx,
+                    "[smolvla-mjwarp] widened the residual's first layer with "
+                    f"{expand_info['vision_expand/inserted']:.0f} zero columns "
+                    f"at index {expand_info['vision_expand/at_column']:.0f}; "
+                    f"the {expand_info['vision_expand/prior_width']:.0f}-wide "
+                    "prior block moved to the end intact. Step 0 is unchanged.",
+                )
+            elif expand:
+                _log(
+                    dist_ctx,
+                    "[smolvla-mjwarp] RLVLA_SMOLVLA_EXPAND_VISION_COLUMNS is "
+                    "set but the checkpoint already matches this width; "
+                    "nothing was inserted.",
+                )
         if args.resume_checkpoint:
             checkpoint = _resolve_checkpoint(args.resume_checkpoint)
             global_step = trainer.load(

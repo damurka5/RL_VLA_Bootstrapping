@@ -1829,7 +1829,97 @@ class SmolVLAGRPOTrainer:
             "vision_reset/mean_abs_moment_cleared": moments,
         }
 
-    def load_weights_only(self, checkpoint_path: "Path | str") -> None:
+    def expand_residual_vision_columns(
+        self, policy_state: Mapping[str, Any]
+    ) -> tuple[dict[str, Any], dict[str, float]]:
+        """Widen a narrower checkpoint's first layer with zero columns.
+
+        For ADDING a second vision pooling alongside the trained one rather than
+        replacing it. Replacing has failed twice: the first layer's vision
+        columns hold a mapping learned for the outgoing feature, and there is no
+        way to remove an input from a trained MLP without shifting the hidden
+        activations that every later layer was calibrated on. The second attempt
+        measured it directly -- handed a perfect object position, ever-grasped
+        fell 0.92 -> 0.30, so the damage was not to vision at all.
+
+        Adding removes nothing. The input becomes
+
+            [ proprio | flat_random | per_token_random | prior ]
+
+        with the first three of those being the residual state. The checkpoint's
+        columns keep their exact offsets, the appended block is zero, and a zero
+        column contributes exactly zero -- so the network computes an IDENTICAL
+        function on step 0 and the new path can only earn its way in by
+        gradient.
+
+        The insertion point is derived, not configured: the prior block is
+        ``chunk_size * action_dim`` wide and sits last, so the checkpoint's state
+        span is whatever precedes it, and the new columns go at its end.
+        Returns the rewritten state dict and what it did.
+        """
+
+        base = self._unwrap(self.actor)
+        first_name = next(
+            (
+                name
+                for name, module in base.named_modules()
+                if isinstance(module, nn.Linear)
+            ),
+            None,
+        )
+        if first_name is None:
+            raise RuntimeError("The residual actor has no Linear layer.")
+        key = f"{first_name}.weight"
+        if key not in policy_state:
+            raise RuntimeError(
+                f"Checkpoint has no {key}; cannot widen its first layer."
+            )
+        saved = policy_state[key]
+        target = dict(base.state_dict())[key]
+        if tuple(saved.shape) == tuple(target.shape):
+            return dict(policy_state), {"vision_expand/inserted": 0.0}
+        if saved.shape[0] != target.shape[0]:
+            raise RuntimeError(
+                f"{key} differs in OUTPUT width ({saved.shape[0]} vs "
+                f"{target.shape[0]}); this is not a vision-width change."
+            )
+        prior_width = int(self.chunk_size) * int(self.action_dim)
+        old_state = int(saved.shape[1]) - prior_width
+        new_state = int(target.shape[1]) - prior_width
+        inserted = new_state - old_state
+        if inserted <= 0 or old_state <= 0:
+            raise RuntimeError(
+                f"Refusing to widen {key}: checkpoint state span {old_state}, "
+                f"model state span {new_state}, prior span {prior_width}."
+            )
+        if new_state != int(self.state_dim):
+            raise RuntimeError(
+                f"{key} implies a state span of {new_state} but state_dim is "
+                f"{self.state_dim}; the input layout is not what this assumes."
+            )
+        widened = torch.zeros_like(target)
+        with torch.no_grad():
+            # Old state columns keep their offsets ...
+            widened[:, :old_state] = saved[:, :old_state]
+            # ... the appended block stays zero ...
+            # ... and the prior block moves to the end, still intact. Losing
+            # this slice would delete the residual's access to the action it is
+            # a residual ON, and nothing about the shapes would complain.
+            widened[:, new_state:] = saved[:, old_state:]
+        rewritten = dict(policy_state)
+        rewritten[key] = widened
+        return rewritten, {
+            "vision_expand/inserted": float(inserted),
+            "vision_expand/at_column": float(old_state),
+            "vision_expand/prior_width": float(prior_width),
+        }
+
+    def load_weights_only(
+        self,
+        checkpoint_path: "Path | str",
+        *,
+        expand_vision_columns: bool = False,
+    ) -> dict[str, float]:
         """Warm-start from a checkpoint's WEIGHTS only.
 
         Loads the residual (+ log_std) and the LoRA tensors, but deliberately
@@ -1840,6 +1930,13 @@ class SmolVLAGRPOTrainer:
         by the checkpoint's stalled state. Simulator-metadata is not checked
         because only architecture-shaped weights are transferred; a mismatched
         state_dim / chunk / LoRA rank surfaces as a load_state_dict error.
+
+        ``expand_vision_columns`` allows one specific mismatch: a checkpoint
+        whose residual state is NARROWER than this model's, because a second
+        vision pooling has been added alongside the trained one. The first
+        layer is widened with zero columns at the end of the old state span --
+        see expand_residual_vision_columns. Every other tensor must still match
+        exactly.
         """
 
         try:
@@ -1852,7 +1949,13 @@ class SmolVLAGRPOTrainer:
             raise KeyError(
                 f"Warm-start checkpoint {checkpoint_path} has no 'policy' weights."
             )
-        self._unwrap(self.actor).load_state_dict(payload["policy"])
+        policy_state = payload["policy"]
+        info: dict[str, float] = {}
+        if expand_vision_columns:
+            policy_state, info = self.expand_residual_vision_columns(
+                policy_state
+            )
+        self._unwrap(self.actor).load_state_dict(policy_state)
         lora_state = payload.get("vla_lora")
         runtime = getattr(self, "vla_runtime", None)
         if lora_state:
@@ -1866,6 +1969,7 @@ class SmolVLAGRPOTrainer:
         self.gradient_step = 0
         self.loaded_extra_state = {}
         self.bootstrap_source = "grpo_warmstart_weights"
+        return info
 
     def _vla_lora_state_dict(self) -> dict[str, Any] | None:
         """Only the LoRA tensors from the frozen runtime, or None if unused."""

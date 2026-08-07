@@ -1,0 +1,11 @@
+<mujoco model="cdpr_contact_audit">
+  <compiler autolimits="true"/>
+  <option timestep="0.002" solver="Newton" iterations="50"/>
+  <include file="/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/robots/cdpr/cdpr_mujoco/cdpr.xml"/>
+  <worldbody>
+    <body name="audit_table" pos="0 0 0">
+      <geom name="audit_table_top" type="box" size="0.45 0.35 0.015" friction="1.0 0.01 0.001" rgba="0.70 0.70 0.66 1"/>
+    </body>
+  </worldbody>
+  <include file="/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/robots/cdpr/cdpr_mujoco/stable_objects/ycb_apple.xml"/>
+</mujoco>

@@ -567,10 +567,14 @@ class SmolVLARuntime:
         self.compile_model = bool(compile_model)
         self.compile_mode = str(compile_mode)
         self.vision_pooling = str(vision_pooling)
-        if self.vision_pooling not in ("flat_random", "per_token_random"):
+        if self.vision_pooling not in (
+            "flat_random",
+            "per_token_random",
+            "dual_random",
+        ):
             raise ValueError(
-                "vision_pooling must be 'flat_random' or 'per_token_random', "
-                f"got {self.vision_pooling!r}."
+                "vision_pooling must be 'flat_random', 'per_token_random' or "
+                f"'dual_random', got {self.vision_pooling!r}."
             )
         self._original_sample_actions = original_sample_actions
         self._compile_fallback_used = False
@@ -1007,8 +1011,19 @@ class SmolVLARuntime:
         measured on the 15360-dim tokens). Changing the seed/dims invalidates
         existing checkpoints."""
 
-        proj = getattr(self, "_vision_proj", None)
-        if proj is not None and proj.shape == (in_dim, out_dim):
+        # Keyed by shape, not a single slot. dual_random needs TWO projections
+        # alive at once -- (30720, 512) for the flattened half and (960, 16) for
+        # the per-token half -- and a one-slot cache keyed on a shape match
+        # would rebuild whichever one it was not holding on every single
+        # forward. The values are unchanged for a single-pooling run: the seed
+        # is fixed, so each shape gets its own deterministic matrix.
+        cache = getattr(self, "_vision_proj_cache", None)
+        if cache is None:
+            cache = {}
+            self._vision_proj_cache = cache
+        key = (int(in_dim), int(out_dim), str(device))
+        proj = cache.get(key)
+        if proj is not None:
             return proj
         generator = torch.Generator(device="cpu")
         generator.manual_seed(20260723)
@@ -1016,7 +1031,7 @@ class SmolVLARuntime:
             torch.randn(in_dim, out_dim, generator=generator)
             / float(in_dim) ** 0.5
         ).to(device=device, dtype=torch.float32)
-        self._vision_proj = proj
+        cache[key] = proj
         return proj
 
     def _pool_vision(self, captured: list[Any], out_dim: int) -> Any:
@@ -1044,21 +1059,64 @@ class SmolVLARuntime:
         warm start still loads. Measured at that identical width: cosine +0.39
         against an un-projected ceiling of +0.41.
 
-        Note what a mode change means: the feature keeps its shape but not its
-        meaning, so a residual carrying weights trained against the other mode
-        has to relearn its vision path. It does not have to relearn anything
-        else.
+        ``dual_random`` -- BOTH, side by side, each at half the width:
+        ``[flat_random 512 | per_token_random 512]`` at
+        ``residual_vision_dim: 1024``. Swapping one for the other has now failed
+        twice, because the residual's first layer holds a mapping learned for
+        the outgoing feature and there is no way to remove an input from a
+        trained MLP without shifting the hidden activations every later layer
+        was calibrated on. Measured on the second attempt: handed a PERFECT
+        object position, ever-grasped fell 0.92 -> 0.30, so what broke was not
+        vision. Adding removes nothing. flat_random stays first so its columns
+        keep their offsets, the loader zero-fills the appended block, and the
+        composed policy computes an identical function on step 0.
+
+        Note what a mode SWAP means, as opposed to an addition: the feature
+        keeps its shape but not its meaning, so a residual carrying weights
+        trained against the other mode has to relearn its vision path -- and,
+        measured twice, takes the rest of the policy down with it.
         """
 
         import torch
 
-        cams = captured[: max(1, min(2, len(captured)))]
         # The connector tokens are created under the runtime's inference_mode, so
-        # copy them into fresh NORMAL tensors before use: an inference tensor is
-        # contagious and, once concatenated into the residual state, would make
-        # that state unusable for backward in the GRPO update.
+        # the halves copy them into fresh NORMAL tensors before use: an inference
+        # tensor is contagious and, once concatenated into the residual state,
+        # would make that state unusable for backward in the GRPO update.
         with torch.inference_mode(False), torch.no_grad():
-            if self.vision_pooling == "per_token_random":
+            if self.vision_pooling == "dual_random":
+                # Both summaries of the same connector tokens, side by side:
+                # flat_random FIRST so a checkpoint trained on it keeps its
+                # existing columns at their existing offsets, and the new
+                # per_token_random block is appended after. The residual's
+                # loader zero-fills the appended columns, so the composed policy
+                # computes an identical function on step 0 and the new path can
+                # only earn its way in.
+                half = int(out_dim) // 2
+                if int(out_dim) % 2:
+                    raise ValueError(
+                        f"dual_random needs an even residual_vision_dim, got "
+                        f"{out_dim}."
+                    )
+                flat = self._pool_vision_single(captured, half, "flat_random")
+                per_token = self._pool_vision_single(
+                    captured, half, "per_token_random"
+                )
+                return torch.cat([flat, per_token], dim=-1)
+            return self._pool_vision_single(
+                captured, int(out_dim), self.vision_pooling
+            )
+
+    def _pool_vision_single(
+        self, captured: list[Any], out_dim: int, mode: str
+    ) -> Any:
+        """One pooling. Split out so dual_random can call it twice."""
+
+        import torch
+
+        cams = captured[: max(1, min(2, len(captured)))]
+        with torch.inference_mode(False), torch.no_grad():
+            if mode == "per_token_random":
                 parts = []
                 for cam in cams:
                     buf = torch.empty(

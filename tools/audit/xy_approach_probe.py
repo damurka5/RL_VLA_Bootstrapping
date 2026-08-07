@@ -1298,10 +1298,24 @@ def _analyze_policy_trace(
         # measurement that confirms whatever it is pointed at, so a command with
         # no variance to explain reports NaN and the variance is published next
         # to the score rather than left implicit.
+        # Normal equations on a 3x3, not lstsq. The design matrix is
+        # [unit_x, unit_y, 1], so the Gram matrix is 3x3 and the fit is exact
+        # arithmetic either way -- while np.linalg.lstsq dispatches to LAPACK's
+        # threaded gelsd, which segfaults on a box that has loaded two OpenMP
+        # runtimes (the state KMP_DUPLICATE_LIB_OK papers over and warns may
+        # crash). A 3x3 solve costs nothing and does not go near that path.
         design = np.concatenate(
             [_unit(rel_xy[usable]), np.ones((flat.shape[0], 1))], axis=1
         )
-        solution, *_ = np.linalg.lstsq(design, flat, rcond=None)
+        gram = design.T @ design
+        rhs = design.T @ flat
+        try:
+            solution = np.linalg.solve(gram, rhs)
+        except np.linalg.LinAlgError:
+            # Degenerate directions (every world pointing the same way) make
+            # the Gram matrix singular; the pseudo-inverse gives the same
+            # minimum-norm answer lstsq would have.
+            solution = np.linalg.pinv(gram) @ rhs
         residual = flat - design @ solution
         total = flat - flat.mean(axis=0)
         denom = float(np.sum(total**2))
