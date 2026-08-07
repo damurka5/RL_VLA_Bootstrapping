@@ -70,6 +70,48 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
             "reverse_frontier_profile", config.task.metadata
         )
 
+    def test_every_staged_config_actually_parses(self):
+        """Every value a staged config emits must be one the parser accepts.
+
+        The configs are rendered into a torchrun command and handed to
+        smolvla_grpo_mjwarp_cdpr, so an unknown flag or a value outside an
+        argparse `choices` list is not caught anywhere until the launcher exits
+        2 -- after both ranks have spun up on a booked box. That is how
+        `--residual-vision-pooling dual_random` shipped: the runtime's own
+        validation was updated and the parser's choices list was not, and no
+        test compared the two.
+
+        Parsing the generated command is the general guard, not a check for
+        that one flag: it validates every argument of every phase against the
+        parser that will actually receive them.
+        """
+
+        from rl_vla_bootstrapping.pipeline.bootstrap import BootstrapPipeline
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            parse_args,
+        )
+
+        for path in STAGED_CONFIGS:
+            config = load_project_config(path)
+            with self.subTest(config=config.project.name):
+                plan = BootstrapPipeline(config).build_stage_plans(
+                    ROOT / "runs" / "parse_unit", ["rl"]
+                )[0]
+                command = list(plan.command)
+                # Drop the launcher prefix: everything up to and including the
+                # `-m <module>` pair is torchrun's, not the trainer's.
+                module_index = command.index("-m")
+                argv = command[module_index + 2 :]
+                self.assertTrue(argv, "no trainer arguments were generated")
+                try:
+                    parse_args(argv)
+                except SystemExit as error:  # argparse exits on a bad value
+                    self.fail(
+                        f"{config.project.name} generates arguments the "
+                        f"trainer's parser rejects (exit {error.code}); run "
+                        "the command by hand to see which."
+                    )
+
     def test_consecutive_phases_can_load_each_others_residual(self):
         """The handoff contract, now that the width is allowed to change.
 

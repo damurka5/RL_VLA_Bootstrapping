@@ -341,7 +341,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--residual-vision-dim", type=int, default=512)
     parser.add_argument(
         "--residual-vision-pooling",
-        choices=("flat_random", "per_token_random"),
+        choices=("flat_random", "per_token_random", "dual_random"),
         default="flat_random",
         help=(
             "How SmolVLA's connector tokens are reduced to the residual's "
@@ -351,10 +351,15 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "measured on MJWarp it drops the object's direction from cosine "
             "+0.41 (un-projected) to +0.09. per_token_random reduces channels "
             "only, sharing one projection across tokens and keeping the 4x4 "
-            "spatial grid where position lives: +0.39 at the SAME 512 width, so "
-            "no tensor shape changes and a warm start still loads. The feature "
-            "keeps its shape but not its meaning, so a residual trained against "
-            "the other mode relearns its vision path -- and nothing else."
+            "spatial grid where position lives: +0.39 at the SAME 512 width. "
+            "dual_random feeds BOTH, side by side at half the width each, "
+            "because SWAPPING one for the other has destroyed the policy twice "
+            "-- handed a perfect object position after the second attempt, "
+            "ever-grasped fell 0.92 to 0.30, which is damage to "
+            "descend/close/lift and not to vision. Adding removes nothing: the "
+            "flat_random block keeps its offsets, the appended block is "
+            "zero-initialised by --RLVLA_SMOLVLA_EXPAND_VISION_COLUMNS, and "
+            "step 0 computes an identical function."
         ),
     )
     # --- SmolVLA action-expert LoRA fine-tune (off by default) ---
