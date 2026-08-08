@@ -43,21 +43,26 @@ def _load():
 tool = _load()
 
 
-def _rows(*, far_success_cos, far_failure_cos, count=60):
+def _rows(*, far_success_cos, far_failure_cos, count=60, spread_starts=True):
+    """Episodes across a range of start distances, so quartiles populate."""
+
     rng = np.random.RandomState(0)
     rows = []
     for index in range(count):
+        start = (
+            0.02 + 0.10 * (index / max(count - 1, 1))
+            if spread_starts
+            else 0.04
+        )
         rows.append(
             {
                 "round": 0,
                 "world": index,
                 "success": True,
                 "ever_grasped": True,
-                "start_distance_m": 0.10,
+                "start_distance_m": start,
                 "far_start": True,
-                "cosine_decision0": float(
-                    rng.normal(far_success_cos, 0.02)
-                ),
+                "cosine_decision0": float(rng.normal(far_success_cos, 0.02)),
                 "tracked": False,
             }
         )
@@ -67,11 +72,9 @@ def _rows(*, far_success_cos, far_failure_cos, count=60):
                 "world": count + index,
                 "success": False,
                 "ever_grasped": False,
-                "start_distance_m": 0.10,
+                "start_distance_m": start,
                 "far_start": True,
-                "cosine_decision0": float(
-                    rng.normal(far_failure_cos, 0.02)
-                ),
+                "cosine_decision0": float(rng.normal(far_failure_cos, 0.02)),
                 "tracked": False,
             }
         )
@@ -88,39 +91,71 @@ class SeedCheckTest(unittest.TestCase):
             tool._report(rows, far_start_m=0.06)
         return buffer.getvalue()
 
-    def test_a_real_seed_separates_success_from_failure(self) -> None:
-        text = self._report(
-            _rows(far_success_cos=0.60, far_failure_cos=0.05)
-        )
-        self.assertIn("success, far", text)
-        self.assertIn("+0.60", text)
-        self.assertIn("+0.05", text)
+    def _gaps(self, text):
+        gaps = []
+        for line in text.splitlines():
+            parts = line.split()
+            if len(parts) == 6 and "-" in parts[0] and parts[1].isdigit():
+                try:
+                    gaps.append(float(parts[-1]))
+                except ValueError:
+                    pass
+        return gaps
 
-    def test_luck_shows_as_matching_rows(self) -> None:
-        """The case the whole check exists for.
+    def test_a_real_seed_shows_a_positive_gap_in_every_quartile(self) -> None:
+        text = self._report(_rows(far_success_cos=0.60, far_failure_cos=0.05))
+        gaps = self._gaps(text)
+        self.assertEqual(len(gaps), 4, msg=text)
+        for gap in gaps:
+            self.assertGreater(gap, 0.4)
 
-        Successes and failures from the same far starts aiming identically
-        means the successes are a random walk. The report must make that
-        visible rather than showing only the success row.
+    def test_luck_shows_as_a_gap_of_zero_inside_every_quartile(self) -> None:
+        """The case the whole check exists to be able to give.
+
+        Successes and failures aiming identically at matched start distance
+        means the successes are a random walk that ended on the object.
+        """
+
+        text = self._report(_rows(far_success_cos=0.055, far_failure_cos=0.055))
+        gaps = self._gaps(text)
+        self.assertEqual(len(gaps), 4, msg=text)
+        for gap in gaps:
+            self.assertLess(abs(gap), 0.03)
+
+    def test_quartiles_populate_even_when_every_start_is_close(self) -> None:
+        """A fixed far/near boundary left both groups empty against a 0.05 cap.
+
+        The check reported n/a and answered nothing. Quartiles of the OBSERVED
+        distance cannot do that.
         """
 
         text = self._report(
-            _rows(far_success_cos=0.055, far_failure_cos=0.055)
+            _rows(far_success_cos=0.5, far_failure_cos=0.05, spread_starts=False)
         )
-        lines = [line for line in text.splitlines() if "far (>=" in line]
-        self.assertEqual(len(lines), 2, msg=text)
-        values = [float(line.split()[-2]) for line in lines]
-        self.assertAlmostEqual(values[0], values[1], delta=0.02)
+        self.assertIn("by start-distance quartile", text)
+        self.assertNotIn("no episodes", text)
+
+    def test_the_start_distribution_is_printed(self) -> None:
+        """So a cap that makes the split meaningless is visible immediately."""
+
+        text = self._report(_rows(far_success_cos=0.5, far_failure_cos=0.05))
+        self.assertIn("start distance:", text)
+        self.assertIn("median", text)
+
+    def test_it_points_at_the_comparable_training_metric(self) -> None:
+        """residual_target_cosine_mean is the WRONG baseline and was quoted.
+
+        It is the residual's own direction with the prior subtracted off; this
+        measures the composed action. Against 0.055 a reading of 0.32 looks like
+        a breakthrough, and it is not.
+        """
+
+        text = self._report(_rows(far_success_cos=0.5, far_failure_cos=0.05))
+        self.assertIn("policy_target_cosine_mean", text)
+        self.assertIn("NOT against", text)
 
     def test_empty_input_does_not_crash(self) -> None:
         self.assertIn("no episodes", self._report([]))
-
-    def test_groups_with_no_episodes_report_na_rather_than_a_number(self) -> None:
-        rows = _rows(far_success_cos=0.5, far_failure_cos=0.05)
-        for row in rows:
-            row["far_start"] = True
-        text = self._report(rows)
-        self.assertIn("n/a", text)
 
 
 @unittest.skipIf(torch is None, "torch is unavailable")

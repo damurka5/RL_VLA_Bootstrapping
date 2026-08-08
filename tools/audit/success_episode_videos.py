@@ -14,11 +14,16 @@ one. Frames are teed off the exact tensors the policy was given -- the backend's
 own ``render_policy_cameras`` is wrapped, not called a second time -- so the
 video is what the policy saw, not a re-render from a different angle.
 
-**Its decision-0 aiming cosine**, the same quantity the trainer logs, reported
-separately for successes and failures and split by start distance. That is the
-number the loop stands on: if successful far-start episodes aim no better than
-the run's ~0.055 average, they are not carrying a signal worth imitating and the
-pipeline has no seed.
+**Its decision-0 aiming cosine**, reported for successes against failures WITHIN
+quartiles of start distance. Stratifying is the point: episodes that began nearer
+the object succeed more often for reasons that have nothing to do with aiming, so
+an overall gap proves nothing and a gap that survives inside a bucket does.
+
+Compare the level against ``policy_target_cosine_mean`` (~0.09-0.11 sampled) or
+leg B's ``mean_cosine_decision0`` (~0.23) -- NOT against
+``residual_target_cosine_mean`` (~0.055), which is the residual's own direction
+with the prior subtracted off. This measures the composed action, which is what
+the gripper follows.
 
 Frames are kept only for a tracked SUBSET of worlds (``--track-worlds``), on the
 host, because 512 worlds x ~104 steps of RGB does not fit anywhere. Rounds are
@@ -229,11 +234,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--far-start-m",
         type=float,
-        default=0.06,
+        default=0.0,
         help=(
-            "Episodes starting at least this far from the object count as FAR. "
-            "The seed check is whether far-start SUCCESSES aim better than the "
-            "run's average; close-start successes are explained by proximity."
+            "Only labels the videos far/near. The seed check itself stratifies "
+            "by QUARTILE of the observed start distance, because a fixed "
+            "boundary does not survive the approach curriculum -- 0.06 m "
+            "against a 0.05 m cap put every episode on one side and left the "
+            "check unanswered. 0 uses the median."
         ),
     )
     parser.add_argument(
@@ -299,6 +306,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         commanded = trace.stack("commanded0")
         rel0 = (target[0] - ee[0])[:, :2]
         start = np.linalg.norm(rel0, axis=-1)
+        far_boundary = (
+            float(args.far_start_m)
+            if float(args.far_start_m) > 0.0
+            else float(np.median(start))
+        )
         cos0 = probe._cosine(commanded[0][:, :2], rel0)
         success = runner.world_success > 0.5
         grasped = (trace.stack("holding") > 0.5).any(axis=0)
@@ -311,7 +323,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "success": bool(success[world_index]),
                     "ever_grasped": bool(grasped[world_index]),
                     "start_distance_m": float(start[world_index]),
-                    "far_start": bool(start[world_index] >= args.far_start_m),
+                    "far_start": bool(start[world_index] >= far_boundary),
                     "cosine_decision0": float(cos0[world_index]),
                     "tracked": world_index in frames,
                 }
@@ -334,7 +346,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             stack = frames.get(world_index) or []
             if not stack:
                 continue
-            far = "far" if start[world_index] >= args.far_start_m else "near"
+            far = "far" if start[world_index] >= far_boundary else "near"
             name = (
                 f"r{round_index:02d}_w{world_index:03d}_{far}"
                 f"_d{start[world_index] * 1000:.0f}mm"
@@ -371,43 +383,90 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _report(rows: Sequence[dict[str, Any]], *, far_start_m: float) -> None:
-    """Is a successful far-start episode aiming, or lucky?"""
+    """Is a successful episode aiming, or did it start on top of the object?
+
+    Stratified by start distance, because a fixed far/near threshold does not
+    survive the approach curriculum: the cap has sat at 0.03-0.13 m across runs,
+    so any absolute boundary either puts every episode on one side (which is
+    what a 0.06 m default did against a 0.05 m cap -- both `far` groups empty
+    and the check silently unanswered) or splits somewhere meaningless.
+
+    Quartiles of the observed start distance always populate, and comparing
+    success against failure WITHIN a quartile controls the confound directly:
+    episodes that began nearer the object succeed more often for reasons that
+    have nothing to do with aiming.
+    """
 
     if not rows:
         print("no episodes")
         return
     cos = np.array([row["cosine_decision0"] for row in rows])
     success = np.array([row["success"] for row in rows], dtype=bool)
-    far = np.array([row["far_start"] for row in rows], dtype=bool)
+    start = np.array([row["start_distance_m"] for row in rows])
 
-    print("\nSEED CHECK -- decision-0 aiming cosine by outcome and start")
-    print("-----------------------------------------------------------")
-    print(f"{'group':<28} {'episodes':>9} {'cosine':>9} {'+-':>7}")
-    for label, mask in (
-        ("all", np.ones_like(success)),
-        ("success", success),
-        ("failure", ~success),
-        (f"success, far (>={far_start_m:.2f} m)", success & far),
-        (f"success, near (<{far_start_m:.2f} m)", success & ~far),
-        (f"failure, far (>={far_start_m:.2f} m)", (~success) & far),
-    ):
-        count = int(mask.sum())
-        if not count:
-            print(f"{label:<28} {count:>9}       n/a")
-            continue
-        print(
-            f"{label:<28} {count:>9} {cos[mask].mean():>+9.3f} "
-            f"{cos[mask].std():>7.3f}"
-        )
+    print("\nSEED CHECK -- decision-0 aiming cosine")
+    print("--------------------------------------")
     print(
-        "\n  The loop needs `success, far` to aim materially better than "
-        "`failure, far`.\n  If the two match, those successes are a random "
-        "walk that happened to end on the\n  object -- at the 0.13 m cap the "
-        "budget allows ~0.78 m of travel, which is ample\n  for that -- and "
-        "imitating them teaches luck rather than approach.\n"
-        "\n  Compare the absolute level against the run's own "
-        "residual_target_cosine_mean\n  (~0.055 across every run so far). "
-        "Successes at that level are not a seed."
+        f"  start distance: min {start.min()*1000:.0f} mm, median "
+        f"{np.median(start)*1000:.0f} mm, p95 {np.percentile(start,95)*1000:.0f} "
+        f"mm, max {start.max()*1000:.0f} mm"
+    )
+    print(
+        f"  episodes {len(rows)}, success {success.mean():.3f}\n"
+    )
+
+    def line(label: str, mask: np.ndarray) -> None:
+        count = int(mask.sum())
+        if count < 2:
+            print(f"    {label:<30} {count:>7}        n/a")
+            return
+        mean = float(cos[mask].mean())
+        stderr = float(cos[mask].std() / np.sqrt(count))
+        print(f"    {label:<30} {count:>7} {mean:>+9.3f} +-{stderr:.3f}")
+
+    print(f"    {'group':<30} {'episodes':>7} {'cosine':>9}")
+    line("all", np.ones_like(success))
+    line("success", success)
+    line("failure", ~success)
+
+    # Stratified. Quartiles of start distance, so each bucket holds episodes
+    # that began at comparable range and the only thing left varying is whether
+    # they succeeded.
+    edges = np.quantile(start, [0.0, 0.25, 0.5, 0.75, 1.0])
+    print("\n  by start-distance quartile (success vs failure, matched range):")
+    print(
+        f"    {'range (mm)':<30} {'n succ':>7} {'cos succ':>9} "
+        f"{'n fail':>7} {'cos fail':>9} {'gap':>7}"
+    )
+    for index in range(4):
+        low, high = edges[index], edges[index + 1]
+        inside = (start >= low) & (
+            start <= high if index == 3 else start < high
+        )
+        succ = inside & success
+        fail = inside & ~success
+        label = f"{low*1000:.0f}-{high*1000:.0f}"
+        if int(succ.sum()) < 2 or int(fail.sum()) < 2:
+            print(f"    {label:<30} {int(succ.sum()):>7} {'n/a':>9} "
+                  f"{int(fail.sum()):>7} {'n/a':>9} {'n/a':>7}")
+            continue
+        cs, cf = float(cos[succ].mean()), float(cos[fail].mean())
+        print(
+            f"    {label:<30} {int(succ.sum()):>7} {cs:>+9.3f} "
+            f"{int(fail.sum()):>7} {cf:>+9.3f} {cs - cf:>+7.3f}"
+        )
+
+    print(
+        "\n  The loop needs the GAP to be positive and to survive inside a "
+        "quartile. A gap\n  that exists overall but vanishes within every "
+        "bucket is the proximity confound:\n  episodes that started nearer "
+        "succeeded more often, and aiming had nothing to do\n  with it.\n"
+        "\n  Compare the absolute level against policy_target_cosine_mean "
+        "(~0.09-0.11 sampled)\n  or leg B's mean_cosine_decision0 (~0.23), "
+        "NOT against residual_target_cosine_mean\n  (~0.055) -- that one is "
+        "the RESIDUAL's own direction with the prior subtracted\n  off, and "
+        "this is the composed action. They are different quantities and only "
+        "the\n  composed one is what the gripper follows."
     )
 
 
