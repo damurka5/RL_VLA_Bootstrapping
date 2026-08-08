@@ -1473,26 +1473,29 @@ def _report_arms(rows: Sequence[Mapping[str, Any]]) -> None:
     print("\nC -- success when the object position is handed over")
     print("----------------------------------------------------")
     print(
-        f"{'arm':<26} {'cmd cos':>8} {'success':>8} {'grasped':>8} "
-        f"{'final d (m)':>12} {'final z':>8} {'reward':>8} {'diverged':>9}"
+        f"{'arm':<26} {'cos@d0':>8} {'cos pool':>9} {'success':>8} "
+        f"{'grasped':>8} {'final d (m)':>12} {'reward':>8} {'diverged':>9}"
     )
     for row in rows:
         print(
             f"{row['arm']:<26} "
-            f"{row.get('command_cosine', float('nan')):>8.3f} "
+            f"{row.get('command_cosine_decision0', float('nan')):>8.3f} "
+            f"{row.get('command_cosine', float('nan')):>9.3f} "
             f"{row['success_rate']:>8.3f} "
             f"{row['ever_grasped_rate']:>8.3f} {row['final_distance_m']:>12.3f} "
-            f"{row['final_ee_z_m']:>8.3f} "
             f"{row['reward_mean']:>8.3f} {row['diverged_worlds']:>9d}"
         )
     print(
-        "\n  cmd cos is the commanded action's own 2-D alignment with the true "
-        "direction --\n  the same quantity the trainer logs as "
-        "policy_target_cosine_mean, so the arms and the\n  policy sit on one "
-        "axis. Read grasped against it: that curve is the SPEC. The feature\n  "
-        "probe puts what is decodable from the residual's input at ~0.07, so an "
-        "arm whose\n  cmd cos is near 0.07 is the best any head reading that "
-        "feature could do."
+        "\n  cos@d0 is the SPEC axis: the commanded action's 2-D alignment with "
+        "the true\n  direction at decision 0, which is where the trainer takes "
+        "policy_target_cosine_mean\n  and the only place the two are "
+        "comparable. Read `grasped` against it.\n"
+        "\n  cos pool is the same cosine averaged over the whole episode, and it "
+        "is NOT a\n  second opinion: an arm servoing to a CORRUPTED point "
+        "reaches that point, so the\n  direction to the true object flips "
+        "behind it and the pooled figure goes negative\n  no matter how good "
+        "the aim was at the start. It is printed only so nobody reads\n  it as "
+        "the spec by mistake."
     )
     horizon = max((int(row.get("horizon_decisions", 0)) for row in rows), default=0)
     print(
