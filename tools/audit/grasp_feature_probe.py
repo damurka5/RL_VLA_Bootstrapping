@@ -684,6 +684,145 @@ def _dual_ridge_r2(
     }
 
 
+def _mlp_r2(
+    features: np.ndarray,
+    targets: np.ndarray,
+    control_targets: np.ndarray,
+    episodes: np.ndarray,
+    *,
+    seed: int = 0,
+    folds: int = 5,
+    hidden: int = 1024,
+    epochs: int = 300,
+    weight_decay: float = 1.0e-4,
+) -> dict[str, float]:
+    """Held-out R^2 of a NONLINEAR map feature -> 2-D target, folded by episode.
+
+    Same folds, same episode-swap control and same reported quantities as
+    ``_dual_ridge_r2``, so the two are directly comparable; the only difference
+    is the hypothesis class. That matters because every localization number in
+    this campaign is from a LINEAR probe, and the thing that has to learn the
+    map is a two-hidden-layer MLP -- so "+0.389 linear" and "the residual can
+    learn it" are different claims, and a 5.2M-step run has now failed to move
+    the residual's aim off 0.055 while being fed that feature.
+
+    The architecture mirrors the residual's own first three layers (two hidden
+    layers of ``hidden``, ReLU) so a failure here is a statement about what the
+    residual could learn, not about a probe that was too small.
+
+    The control is trained IDENTICALLY -- same width, same epochs, same
+    schedule -- on the swapped targets. An MLP with 1024 hidden units on a few
+    thousand samples can memorize, and a control that scores well is how that
+    shows up. Read the control before the score.
+    """
+
+    import torch
+
+    unique = np.unique(episodes)
+    nan = {
+        "r2": float("nan"),
+        "control_r2": float("nan"),
+        "direction_cosine": float("nan"),
+        "direction_spread": float("nan"),
+        "train_r2": float("nan"),
+        "episodes": int(unique.size),
+    }
+    if unique.size < 6:
+        return nan
+    rng = np.random.RandomState(seed)
+    order = rng.permutation(unique.size)
+    fold_count = max(2, min(int(folds), unique.size))
+    assignments = np.array_split(unique[order], fold_count)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    features32 = np.ascontiguousarray(features, dtype=np.float32)
+
+    def fit(values: np.ndarray) -> tuple[list[float], list[float], list[float]]:
+        r2s: list[float] = []
+        train_r2s: list[float] = []
+        cosines: list[float] = []
+        for index, held in enumerate(assignments):
+            test = np.isin(episodes, held)
+            train = ~test
+            if train.sum() < 8 or test.sum() < 2:
+                continue
+            mean = features32[train].mean(axis=0, keepdims=True)
+            scale = np.maximum(features32[train].std(axis=0, keepdims=True), 1e-8)
+            x_train = torch.as_tensor(
+                (features32[train] - mean) / scale, device=device
+            )
+            x_test = torch.as_tensor(
+                (features32[test] - mean) / scale, device=device
+            )
+            centre = values[train].mean(axis=0, keepdims=True)
+            y_train = torch.as_tensor(
+                (values[train] - centre).astype(np.float32), device=device
+            )
+            y_test_np = values[test]
+
+            torch.manual_seed(int(seed) + index)
+            model = torch.nn.Sequential(
+                torch.nn.Linear(x_train.shape[1], hidden),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden, hidden),
+                torch.nn.ReLU(),
+                torch.nn.Linear(hidden, 2),
+            ).to(device)
+            optimizer = torch.optim.AdamW(
+                model.parameters(), lr=1.0e-3, weight_decay=weight_decay
+            )
+            model.train()
+            for _ in range(int(epochs)):
+                optimizer.zero_grad(set_to_none=True)
+                loss = torch.nn.functional.mse_loss(model(x_train), y_train)
+                loss.backward()
+                optimizer.step()
+            model.eval()
+            with torch.no_grad():
+                predicted = model(x_test).cpu().numpy() + centre
+                fitted = model(x_train).cpu().numpy() + centre
+
+            truth = y_test_np
+            residual = ((truth - predicted) ** 2).sum()
+            total = ((truth - centre) ** 2).sum()
+            r2s.append(float(1.0 - residual / max(total, 1.0e-12)))
+            train_truth = values[train]
+            train_residual = ((train_truth - fitted) ** 2).sum()
+            train_total = ((train_truth - centre) ** 2).sum()
+            train_r2s.append(
+                float(1.0 - train_residual / max(train_total, 1.0e-12))
+            )
+            norms = np.linalg.norm(predicted, axis=1) * np.linalg.norm(
+                truth, axis=1
+            )
+            keep = norms > 1.0e-9
+            if keep.any():
+                cosines.append(
+                    float(
+                        (
+                            (predicted[keep] * truth[keep]).sum(axis=1)
+                            / norms[keep]
+                        ).mean()
+                    )
+                )
+        return r2s, train_r2s, cosines
+
+    real, train_real, cosines = fit(targets)
+    control, _, _ = fit(control_targets)
+    if not real:
+        return nan
+    return {
+        "r2": float(np.mean(real)),
+        "control_r2": float(np.mean(control)) if control else float("nan"),
+        "direction_cosine": float(np.mean(cosines)) if cosines else float("nan"),
+        "direction_spread": float(np.std(cosines)) if cosines else float("nan"),
+        # Held-out far below train is the MLP memorizing rather than learning
+        # the map; the control catches it too, and both are printed.
+        "train_r2": float(np.mean(train_real)),
+        "episodes": int(unique.size),
+    }
+
+
 def _swap_targets_between_episodes(
     rows: Sequence[dict[str, Any]], rng: np.random.RandomState
 ) -> np.ndarray:
@@ -910,6 +1049,10 @@ def _report_localization(
     keep_connector: bool,
     max_steps_per_episode: int,
     seed: int,
+    pooling: str = "flat_random",
+    mlp: bool = False,
+    mlp_hidden: int = 1024,
+    mlp_epochs: int = 300,
 ) -> dict[str, Any]:
     """Can the feature say WHERE the object is, relative to the gripper?"""
 
@@ -922,6 +1065,18 @@ def _report_localization(
         return {"steps": len(rows)}
     ee = _stack(rows, "ee_xy")
     target = _stack(rows, "target_xy")
+    episode_count = len(set(episodes.tolist()))
+    if mlp and episode_count < 100:
+        # The object is fixed within an episode, so its steps are one training
+        # point wearing many hats and the effective sample size is the EPISODE
+        # count. On a synthetic task an MLP scores 0.55 at 30 episodes with a
+        # train R2 of 1.00 -- pure memorization -- and 0.94 at 120. A negative
+        # result from too few episodes says nothing about the feature.
+        print(
+            f"    WARNING: {episode_count} episodes is too few for the MLP "
+            "probe; it will memorize. Re-run with --episodes 150 or more "
+            "before reading the MLP rows as evidence."
+        )
     rng = np.random.RandomState(int(seed))
     swapped = _swap_targets_between_episodes(rows, rng)
     out: dict[str, Any] = {"steps": len(rows)}
@@ -936,13 +1091,21 @@ def _report_localization(
     #
     # Absolute XY answers the question anyway: if the feature does not say where
     # the object is, nothing downstream can servo to it.
+    vision = _stack(rows, "vision")
+    proprio = _stack(rows, "proprio")
     matrices = {
-        "proprio (6)": _stack(rows, "proprio"),
-        "vision (512)": _stack(rows, "vision"),
-        "proprio+vision": np.concatenate(
-            [_stack(rows, "proprio"), _stack(rows, "vision")], axis=1
-        ),
+        "proprio (6)": proprio,
+        f"vision ({vision.shape[1]})": vision,
+        "proprio+vision": np.concatenate([proprio, vision], axis=1),
     }
+    if str(pooling) == "dual_random" and vision.shape[1] % 2 == 0:
+        # The two halves, scored separately on the SAME episodes and folds.
+        # This is the comparison the campaign has only ever made across
+        # separate captures: flat_random keeps its columns first, so the split
+        # is exactly where the loader puts it.
+        half = vision.shape[1] // 2
+        matrices[f"  ^ flat half ({half})"] = vision[:, :half]
+        matrices[f"  ^ per_token half ({half})"] = vision[:, half:]
     if keep_connector and "connector" in rows[0]:
         matrices[f"connector ({rows[0]['connector'].size})"] = _stack(
             rows, "connector"
@@ -955,10 +1118,31 @@ def _report_localization(
         if np.isnan(scores["r2"]):
             continue
         print(
-            f"    {label:<24} object XY   R2 {scores['r2']:+.3f}"
+            f"    {label:<26} linear  R2 {scores['r2']:+.3f}"
             f"   (control {scores['control_r2']:+.3f})"
             f"   dir cos {scores['direction_cosine']:+.3f}"
             f" +-{scores['direction_spread']:.3f}"
+        )
+        if not mlp:
+            continue
+        nonlinear = _mlp_r2(
+            matrix,
+            target,
+            swapped,
+            episodes,
+            seed=int(seed),
+            hidden=int(mlp_hidden),
+            epochs=int(mlp_epochs),
+        )
+        out[f"{label} [mlp]"] = nonlinear
+        if np.isnan(nonlinear["r2"]):
+            continue
+        print(
+            f"    {'':<26} MLP     R2 {nonlinear['r2']:+.3f}"
+            f"   (control {nonlinear['control_r2']:+.3f})"
+            f"   dir cos {nonlinear['direction_cosine']:+.3f}"
+            f" +-{nonlinear['direction_spread']:.3f}"
+            f"   [train R2 {nonlinear['train_r2']:+.3f}]"
         )
     # How much of any score is just the start cap. Starts are capped 5 cm from
     # the object, so the end-effector pose alone predicts the object position
@@ -1071,7 +1255,7 @@ def _probe_and_report(
     # be the live failure: the deterministic policy holds the correct height and
     # misses by 0.40 m horizontally.
     print("\n" + "=" * 74)
-    print("Linear probe: frozen features -> object location (XY)")
+    print("Probe: frozen features -> object location (XY)")
     print("=" * 74)
     approach = [
         row
@@ -1085,6 +1269,10 @@ def _probe_and_report(
         keep_connector=keep_connector,
         max_steps_per_episode=int(args.max_steps_per_episode),
         seed=int(args.seed),
+        pooling=str(getattr(args, "vision_pooling", "flat_random")),
+        mlp=bool(getattr(args, "mlp_probe", False)),
+        mlp_hidden=int(getattr(args, "mlp_hidden", 1024)),
+        mlp_epochs=int(getattr(args, "mlp_epochs", 300)),
     )
     results["localization_all"] = _report_localization(
         "ALL STEPS",
@@ -1092,6 +1280,10 @@ def _probe_and_report(
         keep_connector=keep_connector,
         max_steps_per_episode=int(args.max_steps_per_episode),
         seed=int(args.seed),
+        pooling=str(getattr(args, "vision_pooling", "flat_random")),
+        mlp=bool(getattr(args, "mlp_probe", False)),
+        mlp_hidden=int(getattr(args, "mlp_hidden", 1024)),
+        mlp_epochs=int(getattr(args, "mlp_epochs", 300)),
     )
     print(
         "\n"
@@ -1204,8 +1396,17 @@ def _build_runtime(harness: Any, config_path: Path, device: str) -> tuple[Any, i
         # No torch.compile: this runs a handful of single-frame forwards, so
         # compilation would cost more than it saves.
         compile_model=False,
+        # Without this the probe scored whatever load_smolvla_runtime defaults
+        # to (flat_random) no matter what the config asked for -- so a run
+        # configured for per_token_random or dual_random was measured on the
+        # feature it had replaced.
+        vision_pooling=str(
+            rl_args.get("residual_vision_pooling", "flat_random")
+        ),
     )
-    return runtime, vision_dim, state_dim
+    return runtime, vision_dim, state_dim, str(
+        rl_args.get("residual_vision_pooling", "flat_random")
+    )
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -1329,6 +1530,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             "captures are merged."
         ),
     )
+    parser.add_argument(
+        "--mlp-probe",
+        action="store_true",
+        help=(
+            "Also fit a NONLINEAR probe -- two hidden layers of --mlp-hidden, "
+            "the residual's own shape -- on the same folds with the same "
+            "episode-swap control. Every localization number in this campaign "
+            "is linear, and the thing that has to learn the map is an MLP, so "
+            "'+0.389 linear' and 'the residual can learn it' are different "
+            "claims. A 5.2M-step run has now failed to move the residual's aim "
+            "off 0.055 while being fed that feature, which makes the "
+            "difference worth measuring rather than assuming."
+        ),
+    )
+    parser.add_argument("--mlp-hidden", type=int, default=1024)
+    parser.add_argument(
+        "--mlp-epochs",
+        type=int,
+        default=300,
+        help="Full-batch AdamW steps per fold. Train R^2 is printed so an "
+        "under-trained probe is visible as a low one.",
+    )
     parser.add_argument("--seed", type=int, default=20260803)
     parser.add_argument(
         "--output", type=Path, default=ROOT / "runs" / "grasp_feature_probe"
@@ -1383,9 +1606,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     harness = _load_harness()
-    runtime, vision_dim, state_dim = _build_runtime(
+    runtime, vision_dim, state_dim, pooling = _build_runtime(
         harness, args.config, args.device
     )
+    args.vision_pooling = pooling
+    print(f"[probe] vision pooling from the config: {pooling} ({vision_dim}-d)")
     capture = _Capture(
         harness,
         runtime=runtime,
