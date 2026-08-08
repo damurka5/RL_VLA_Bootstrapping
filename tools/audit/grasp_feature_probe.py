@@ -1457,6 +1457,55 @@ def _build_runtime(harness: Any, config_path: Path, device: str) -> tuple[Any, i
     )
 
 
+def rows_from_feature_files(paths: Sequence[Any]) -> tuple[list[dict[str, Any]], bool]:
+    """Rebuild probe rows from saved captures, decompressing each array ONCE.
+
+    np.load on an .npz is lazy and every ``saved[key]`` decompresses the whole
+    array again. This used to index inside a per-row loop, so each field was
+    decompressed once per row -- 4320 rows against a 4320 x 30720 connector is
+    thousands of full 530 MB decompressions, and it OOM-killed the box twice.
+    On a small capture the same code only looks slow, which is why the property
+    is tested by counting lookups rather than by watching memory.
+
+    The row values are VIEWS into the materialized arrays, not copies.
+    """
+
+    rows: list[dict[str, Any]] = []
+    offset = 0
+    has_connector = True
+    for path in paths:
+        saved = np.load(path)
+        arrays = {key: saved[key] for key in saved.files}
+        count = int(arrays["episode"].shape[0])
+        local = [
+            {
+                # Offset so two shards' episode 0 do not merge into one
+                # episode -- which would silently break every fold split.
+                "episode": int(arrays["episode"][index]) + offset,
+                "missed": bool(arrays["missed"][index]),
+                "physical_grasp": bool(arrays["physical_grasp"][index]),
+                "contact_loaded": bool(arrays["contact_loaded"][index]),
+                "gripper_opening": float(arrays["gripper_opening"][index]),
+                "ee_z": float(arrays["ee_z"][index]),
+                "proprio": arrays["proprio"][index],
+                "vision": arrays["vision"][index],
+                "target_xy": arrays["target_xy"][index],
+                "ee_xy": arrays["ee_xy"][index],
+            }
+            for index in range(count)
+        ]
+        if "connector" in arrays:
+            connector = arrays["connector"]
+            for index, row in enumerate(local):
+                row["connector"] = connector[index]
+        else:
+            has_connector = False
+        rows.extend(local)
+        offset = max(row["episode"] for row in rows) + 1
+        print(f"[probe] loaded {count} steps from {path}")
+    return rows, has_connector
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -1631,37 +1680,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.from_features is not None:
-        rows = []
-        offset = 0
-        has_connector = True
-        for path in args.from_features:
-            saved = np.load(path)
-            count = int(saved["episode"].shape[0])
-            local = [
-                {
-                    # Offset so two shards' episode 0 do not merge into one
-                    # episode -- which would silently break every fold split.
-                    "episode": int(saved["episode"][index]) + offset,
-                    "missed": bool(saved["missed"][index]),
-                    "physical_grasp": bool(saved["physical_grasp"][index]),
-                    "contact_loaded": bool(saved["contact_loaded"][index]),
-                    "gripper_opening": float(saved["gripper_opening"][index]),
-                    "ee_z": float(saved["ee_z"][index]),
-                    "proprio": saved["proprio"][index],
-                    "vision": saved["vision"][index],
-                    "target_xy": saved["target_xy"][index],
-                    "ee_xy": saved["ee_xy"][index],
-                }
-                for index in range(count)
-            ]
-            if "connector" in saved:
-                for index, row in enumerate(local):
-                    row["connector"] = saved["connector"][index]
-            else:
-                has_connector = False
-            rows.extend(local)
-            offset = max(row["episode"] for row in rows) + 1
-            print(f"[probe] loaded {count} steps from {path}")
+        rows, has_connector = rows_from_feature_files(args.from_features)
         print(
             f"[probe] re-probing {len(rows)} steps over "
             f"{len({row['episode'] for row in rows})} episodes"

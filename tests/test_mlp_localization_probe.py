@@ -366,6 +366,113 @@ class MlpMemoryTest(unittest.TestCase):
         self.assertLess(default, 30720)
 
 
+class FromFeaturesLoadsEachArrayOnceTest(unittest.TestCase):
+    """np.load on an .npz is lazy, and every lookup decompresses again.
+
+    The loader indexed `saved[key][row]` inside a per-row loop, so each field
+    was decompressed once per row -- 4320 rows against a 4320 x 30720 connector
+    is thousands of full 530 MB decompressions. It OOM-killed the box twice, and
+    on a small capture it would only have looked slow, which is exactly why this
+    counts lookups instead of watching memory.
+    """
+
+    ROWS = 40
+
+    def _write(self, path):
+        rng = np.random.RandomState(0)
+        np.savez_compressed(
+            path,
+            episode=np.repeat(np.arange(self.ROWS // 4), 4),
+            missed=np.zeros(self.ROWS),
+            physical_grasp=np.zeros(self.ROWS),
+            contact_loaded=np.zeros(self.ROWS),
+            gripper_opening=np.ones(self.ROWS),
+            ee_z=np.full(self.ROWS, 0.21),
+            proprio=rng.normal(size=(self.ROWS, 6)).astype(np.float32),
+            vision=rng.normal(size=(self.ROWS, 8)).astype(np.float32),
+            target_xy=rng.normal(size=(self.ROWS, 2)).astype(np.float32),
+            ee_xy=rng.normal(size=(self.ROWS, 2)).astype(np.float32),
+            connector=rng.normal(size=(self.ROWS, 8)).astype(np.float32),
+        )
+
+    def _counted_load(self, counter):
+        real_load = np.load
+
+        class _Counting:
+            def __init__(self, inner):
+                self._inner = inner
+                self.files = inner.files
+
+            def __contains__(self, key):
+                return key in self._inner.files
+
+            def __getitem__(self, key):
+                counter[key] = counter.get(key, 0) + 1
+                return self._inner[key]
+
+        def fake_load(path, *args, **kwargs):
+            return _Counting(real_load(path, *args, **kwargs))
+
+        return fake_load
+
+    def test_each_array_is_fetched_once_regardless_of_row_count(self) -> None:
+        import tempfile
+        from unittest import mock
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "features.npz"
+            self._write(path)
+            counter: dict[str, int] = {}
+            with mock.patch.object(
+                probe.np, "load", self._counted_load(counter)
+            ):
+                rows, has_connector = probe.rows_from_feature_files([path])
+
+        self.assertEqual(len(rows), self.ROWS)
+        self.assertTrue(has_connector)
+        self.assertTrue(counter, "the loader never read the archive")
+        worst = max(counter.values())
+        self.assertEqual(
+            worst,
+            1,
+            msg=(
+                "an array was decompressed more than once: "
+                + ", ".join(
+                    f"{k}x{v}" for k, v in counter.items() if v > 1
+                )
+            ),
+        )
+
+    def test_the_rows_are_views_into_the_materialized_arrays(self) -> None:
+        """Copies would put the memory back, one row at a time."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "features.npz"
+            self._write(path)
+            rows, _ = probe.rows_from_feature_files([path])
+
+        self.assertIs(rows[0]["connector"].base, rows[-1]["connector"].base)
+        self.assertIs(rows[0]["vision"].base, rows[-1]["vision"].base)
+
+    def test_two_shards_do_not_merge_their_episode_zero(self) -> None:
+        """The offset is what keeps the fold split honest across shards."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as directory:
+            first = Path(directory) / "a.npz"
+            second = Path(directory) / "b.npz"
+            self._write(first)
+            self._write(second)
+            rows, _ = probe.rows_from_feature_files([first, second])
+
+        episodes = {row["episode"] for row in rows}
+        self.assertEqual(len(rows), 2 * self.ROWS)
+        self.assertEqual(len(episodes), 2 * (self.ROWS // 4))
+
+
 class PoolingPassthroughTest(unittest.TestCase):
     """The probe scored flat_random no matter what the config asked for.
 
