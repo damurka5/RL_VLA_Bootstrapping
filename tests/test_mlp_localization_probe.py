@@ -211,6 +211,100 @@ class MlpProbeDiscriminatesTest(unittest.TestCase):
         self.assertTrue(np.isnan(out["r2"]))
 
 
+@unittest.skipIf(torch is None, "torch is unavailable")
+class AbsoluteTargetShortcutTest(unittest.TestCase):
+    """Why the localization block must also score the RELATIVE vector.
+
+    When starts are capped near the object, absolute object XY is decodable
+    from the end-effector pose alone -- "the object is where the gripper is" is
+    right to within the cap while the gripper roams a workspace ten times
+    wider. That is a shortcut, not localization, and it carries nothing about
+    WHICH WAY to move.
+
+    A linear probe is held back from it by the alpha sweep. An MLP takes it: on
+    the real capture, proprioception -- six numbers containing no object at all
+    -- scored 0.847 direction cosine on absolute XY, above the un-projected
+    30720-d connector. Reproduced here on synthetic data so the shortcut is
+    pinned rather than remembered.
+    """
+
+    CAP = 0.05
+    SPREAD = 0.25
+
+    def _capture(self):
+        rng = np.random.RandomState(7)
+        objects = np.repeat(
+            rng.uniform(-self.SPREAD, self.SPREAD, size=(EPISODES, 2)),
+            PER_EPISODE,
+            axis=0,
+        )
+        angle = rng.uniform(0.0, 2 * np.pi, size=len(objects))
+        radius = rng.uniform(0.0, self.CAP, size=len(objects))
+        offset = np.stack(
+            [radius * np.cos(angle), radius * np.sin(angle)], axis=1
+        )
+        ee = objects - offset
+        episodes = _episode_ids()
+        # "proprio": the end-effector pose and nothing else.
+        proprio = np.concatenate([ee, rng.normal(0, 1e-3, (len(ee), 4))], axis=1)
+        control_objects = np.repeat(
+            objects[::PER_EPISODE][np.random.RandomState(8).permutation(EPISODES)],
+            PER_EPISODE,
+            axis=0,
+        )
+        return proprio, ee, objects, control_objects, episodes
+
+    def test_proprio_fakes_localization_on_the_absolute_target(self) -> None:
+        proprio, _ee, objects, control, episodes = self._capture()
+        out = probe._mlp_r2(
+            proprio, objects, control, episodes, seed=0, hidden=64, epochs=400
+        )
+        self.assertGreater(
+            out["direction_cosine"],
+            0.7,
+            msg="the shortcut this block exists to expose did not appear",
+        )
+
+    def test_the_relative_target_removes_the_shortcut(self) -> None:
+        """Proprioception must collapse here, or the block proves nothing."""
+
+        proprio, ee, objects, control, episodes = self._capture()
+        out = probe._mlp_r2(
+            proprio,
+            objects - ee,
+            control - ee,
+            episodes,
+            seed=0,
+            hidden=64,
+            epochs=400,
+        )
+        self.assertLess(abs(out["direction_cosine"]), 0.35)
+        self.assertLess(out["r2"], 0.3)
+
+    def test_a_feature_carrying_the_offset_still_scores_on_relative(self) -> None:
+        """And the block is not simply impossible to pass."""
+
+        _proprio, ee, objects, control, episodes = self._capture()
+        rng = np.random.RandomState(9)
+        features = np.concatenate(
+            [objects - ee, rng.normal(0, 1e-3, (len(ee), 6))], axis=1
+        )
+        out = probe._mlp_r2(
+            features,
+            objects - ee,
+            control - ee,
+            episodes,
+            seed=0,
+            hidden=64,
+            # 2000, not 400: at 400 this same feature reads 0.81 and at 3000 it
+            # reads 0.91. The budget is not a free parameter -- too small a one
+            # produces a false negative shaped exactly like a useless feature.
+            epochs=2000,
+        )
+        self.assertGreater(out["direction_cosine"], 0.85)
+        self.assertGreater(out["train_r2"], 0.9)
+
+
 class PoolingPassthroughTest(unittest.TestCase):
     """The probe scored flat_random no matter what the config asked for.
 

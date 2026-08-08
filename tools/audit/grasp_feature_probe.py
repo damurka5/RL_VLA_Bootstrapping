@@ -693,7 +693,7 @@ def _mlp_r2(
     seed: int = 0,
     folds: int = 5,
     hidden: int = 1024,
-    epochs: int = 300,
+    epochs: int = 2000,
     weight_decay: float = 1.0e-4,
 ) -> dict[str, float]:
     """Held-out R^2 of a NONLINEAR map feature -> 2-D target, folded by episode.
@@ -1052,7 +1052,7 @@ def _report_localization(
     pooling: str = "flat_random",
     mlp: bool = False,
     mlp_hidden: int = 1024,
-    mlp_epochs: int = 300,
+    mlp_epochs: int = 2000,
 ) -> dict[str, Any]:
     """Can the feature say WHERE the object is, relative to the gripper?"""
 
@@ -1110,40 +1110,60 @@ def _report_localization(
         matrices[f"connector ({rows[0]['connector'].size})"] = _stack(
             rows, "connector"
         )
-    for label, matrix in matrices.items():
-        scores = _dual_ridge_r2(
-            matrix, target, swapped, episodes, seed=int(seed)
-        )
-        out[label] = scores
-        if np.isnan(scores["r2"]):
-            continue
-        print(
-            f"    {label:<26} linear  R2 {scores['r2']:+.3f}"
-            f"   (control {scores['control_r2']:+.3f})"
-            f"   dir cos {scores['direction_cosine']:+.3f}"
-            f" +-{scores['direction_spread']:.3f}"
-        )
-        if not mlp:
-            continue
-        nonlinear = _mlp_r2(
-            matrix,
-            target,
-            swapped,
-            episodes,
-            seed=int(seed),
-            hidden=int(mlp_hidden),
-            epochs=int(mlp_epochs),
-        )
-        out[f"{label} [mlp]"] = nonlinear
-        if np.isnan(nonlinear["r2"]):
-            continue
-        print(
-            f"    {'':<26} MLP     R2 {nonlinear['r2']:+.3f}"
-            f"   (control {nonlinear['control_r2']:+.3f})"
-            f"   dir cos {nonlinear['direction_cosine']:+.3f}"
-            f" +-{nonlinear['direction_spread']:.3f}"
-            f"   [train R2 {nonlinear['train_r2']:+.3f}]"
-        )
+    def score_block(suffix: str, values: np.ndarray, control: np.ndarray) -> None:
+        for label, matrix in matrices.items():
+            scores = _dual_ridge_r2(
+                matrix, values, control, episodes, seed=int(seed)
+            )
+            out[f"{label}{suffix}"] = scores
+            if np.isnan(scores["r2"]):
+                continue
+            print(
+                f"    {label:<26} linear  R2 {scores['r2']:+.3f}"
+                f"   (control {scores['control_r2']:+.3f})"
+                f"   dir cos {scores['direction_cosine']:+.3f}"
+                f" +-{scores['direction_spread']:.3f}"
+            )
+            if not mlp:
+                continue
+            nonlinear = _mlp_r2(
+                matrix,
+                values,
+                control,
+                episodes,
+                seed=int(seed),
+                hidden=int(mlp_hidden),
+                epochs=int(mlp_epochs),
+            )
+            out[f"{label}{suffix} [mlp]"] = nonlinear
+            if np.isnan(nonlinear["r2"]):
+                continue
+            print(
+                f"    {'':<26} MLP     R2 {nonlinear['r2']:+.3f}"
+                f"   (control {nonlinear['control_r2']:+.3f})"
+                f"   dir cos {nonlinear['direction_cosine']:+.3f}"
+                f" +-{nonlinear['direction_spread']:.3f}"
+                f"   [train R2 {nonlinear['train_r2']:+.3f}]"
+            )
+
+    print("    -- absolute object XY --")
+    score_block("", target, swapped)
+    # The RELATIVE vector, and it is the one that decides whether a policy can
+    # servo. Absolute XY is decodable from the end-effector pose alone whenever
+    # the start cap is small -- the object is within ~5 cm of a gripper that
+    # roams +-0.25 m -- so "the object is where the gripper is" scores ~0.9 R2
+    # while carrying nothing about WHICH WAY to move. A linear probe is held
+    # back from that shortcut by the alpha sweep; an MLP takes it every time,
+    # which is why proprioception (six numbers containing no object at all)
+    # scored 0.847 direction cosine here, ABOVE the un-projected connector.
+    #
+    # On (object - ee) that shortcut is worthless: the reset places the object
+    # in a roughly uniform direction within the cap, so the end-effector pose
+    # predicts the offset at ~0. Proprioception is therefore the interpretable
+    # null on these rows -- if it does not collapse, the block is not measuring
+    # what it claims and nothing below it can be read.
+    print("\n    -- relative (object - ee): the servo direction --")
+    score_block("_relative", target - ee, swapped - ee)
     # How much of any score is just the start cap. Starts are capped 5 cm from
     # the object, so the end-effector pose alone predicts the object position
     # well -- proprio is not a null here, it is the number the vision rows have
@@ -1272,7 +1292,7 @@ def _probe_and_report(
         pooling=str(getattr(args, "vision_pooling", "flat_random")),
         mlp=bool(getattr(args, "mlp_probe", False)),
         mlp_hidden=int(getattr(args, "mlp_hidden", 1024)),
-        mlp_epochs=int(getattr(args, "mlp_epochs", 300)),
+        mlp_epochs=int(getattr(args, "mlp_epochs", 2000)),
     )
     results["localization_all"] = _report_localization(
         "ALL STEPS",
@@ -1283,7 +1303,7 @@ def _probe_and_report(
         pooling=str(getattr(args, "vision_pooling", "flat_random")),
         mlp=bool(getattr(args, "mlp_probe", False)),
         mlp_hidden=int(getattr(args, "mlp_hidden", 1024)),
-        mlp_epochs=int(getattr(args, "mlp_epochs", 300)),
+        mlp_epochs=int(getattr(args, "mlp_epochs", 2000)),
     )
     print(
         "\n"
@@ -1548,9 +1568,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--mlp-epochs",
         type=int,
-        default=300,
-        help="Full-batch AdamW steps per fold. Train R^2 is printed so an "
-        "under-trained probe is visible as a low one.",
+        default=2000,
+        help=(
+            "Full-batch AdamW steps per fold. NOT a free parameter: on a "
+            "synthetic task whose answer is known, the probe reads direction "
+            "cosine 0.81 at 400 steps, 0.87 at 1200 and 0.91 at 3000 -- so a "
+            "short budget produces a false negative that looks exactly like a "
+            "feature carrying nothing. Train R^2 is printed beside every score; "
+            "if it is not close to 1, the probe is under-trained and the "
+            "held-out number means nothing yet."
+        ),
     )
     parser.add_argument("--seed", type=int, default=20260803)
     parser.add_argument(
