@@ -409,6 +409,144 @@ class SampledSourceTest(unittest.TestCase):
         self.assertFalse(torch.allclose(out, chunk))
 
 
+@unittest.skipIf(torch is None, "torch is unavailable")
+class VisionAblationTest(unittest.TestCase):
+    """Destroy the vision input and nothing else.
+
+    The decisive test of where the policy's aim comes from. Its decision-0
+    cosine reads ~0.19-0.40 while the feature probe puts the decodable
+    direction at ~0.07; those cannot both describe aiming from vision. A
+    success-vs-failure comparison cannot separate them, because selecting on
+    success selects on alignment for ANY policy including a blind one.
+
+    The ablation only answers it if it is surgical. Touch a proprioception
+    column and the policy loses its own pose; touch a prior column and it loses
+    the action it is a residual on; either way a collapse would be read as
+    "vision mattered".
+    """
+
+    PROPRIO = 6
+    VISION = 12
+    STATE = PROPRIO + VISION
+
+    def _world(self):
+        return probe._World(
+            torch=torch,
+            device=torch.device("cpu"),
+            args=SimpleNamespace(),
+            payload={},
+            project=None,
+            task_metadata={},
+            backend=None,
+            layout=SimpleNamespace(worlds_per_rank=8, group_size=2),
+            resetter=None,
+            trainer=SimpleNamespace(state_dim=self.STATE),
+            collector=SimpleNamespace(vision_feature_dim=self.VISION),
+            action_step_xyz=0.015,
+        )
+
+    def _runner(self):
+        generator = torch.Generator(device="cpu")
+        generator.manual_seed(5)
+        return SimpleNamespace(_rng=generator)
+
+    def _states(self):
+        states = torch.arange(8 * self.STATE, dtype=torch.float32)
+        return states.reshape(8, self.STATE)
+
+    def test_zero_blanks_only_the_vision_block(self) -> None:
+        transform = probe._make_vision_ablation(self._world(), mode="zero")
+        states = self._states()
+        out = transform(runner=self._runner(), states=states)
+        self.assertEqual(float(out[:, self.PROPRIO :].abs().sum()), 0.0)
+        self.assertTrue(
+            torch.equal(out[:, : self.PROPRIO], states[:, : self.PROPRIO])
+        )
+
+    def test_shuffle_preserves_the_feature_distribution_exactly(self) -> None:
+        """The point of shuffling: only the correspondence is destroyed.
+
+        Zeroing is off-distribution -- the residual has never seen an all-zero
+        vision feature -- so a collapse there could be shock rather than lost
+        information. A permutation keeps every value the batch contained.
+        """
+
+        transform = probe._make_vision_ablation(self._world(), mode="shuffle")
+        states = self._states()
+        out = transform(runner=self._runner(), states=states)
+        before = torch.sort(states[:, self.PROPRIO :].flatten()).values
+        after = torch.sort(out[:, self.PROPRIO :].flatten()).values
+        self.assertTrue(torch.equal(before, after))
+
+    def test_shuffle_actually_moves_the_rows(self) -> None:
+        transform = probe._make_vision_ablation(self._world(), mode="shuffle")
+        states = self._states()
+        out = transform(runner=self._runner(), states=states)
+        self.assertFalse(
+            torch.equal(out[:, self.PROPRIO :], states[:, self.PROPRIO :])
+        )
+
+    def test_shuffle_leaves_proprioception_with_its_own_world(self) -> None:
+        """Permuting proprioception too would ablate the pose, not vision."""
+
+        transform = probe._make_vision_ablation(self._world(), mode="shuffle")
+        states = self._states()
+        out = transform(runner=self._runner(), states=states)
+        self.assertTrue(
+            torch.equal(out[:, : self.PROPRIO], states[:, : self.PROPRIO])
+        )
+
+    def test_the_input_is_not_modified_in_place(self) -> None:
+        """validate_round reuses the state tensor after the policy call."""
+
+        transform = probe._make_vision_ablation(self._world(), mode="zero")
+        states = self._states()
+        before = states.clone()
+        transform(runner=self._runner(), states=states)
+        self.assertTrue(torch.equal(states, before))
+
+    def test_a_run_without_a_vision_feature_is_refused(self) -> None:
+        world = self._world()
+        world.collector = SimpleNamespace(vision_feature_dim=0)
+        with self.assertRaises(ValueError):
+            probe._make_vision_ablation(world, mode="shuffle")
+
+    def test_an_unknown_mode_is_refused(self) -> None:
+        transform = probe._make_vision_ablation(self._world(), mode="nonsense")
+        with self.assertRaises(ValueError):
+            transform(runner=self._runner(), states=self._states())
+
+    def test_the_transform_runs_before_the_policy_forward(self) -> None:
+        """A post-hoc edit of the ACTION cannot answer what the policy does
+        without the feature; the intervention has to be on the input."""
+
+        collector = _FakeCollector(torch, worlds=64, decisions=3)
+        world = probe._World(
+            torch=torch,
+            device=torch.device("cpu"),
+            args=SimpleNamespace(),
+            payload={},
+            project=None,
+            task_metadata={},
+            backend=collector.backend,
+            layout=SimpleNamespace(worlds_per_rank=64, group_size=8),
+            resetter=collector.resetter,
+            collector=collector,
+            action_step_xyz=0.015,
+        )
+        seen: list = []
+
+        def transform(*, runner, states):
+            seen.append(states.clone())
+            return states * 0.0
+
+        with probe._ArmRunner(
+            world, source=None, state_transform=transform
+        ) as runner:
+            runner.run(round_index=0)
+        self.assertEqual(len(seen), 3)
+
+
 class CommandCosineTest(unittest.TestCase):
     """The ladder priced localization in metres; the logs report a cosine.
 

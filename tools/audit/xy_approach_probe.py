@@ -787,9 +787,15 @@ class _ArmRunner:
         source: Callable[..., Any] | None,
         seed_offset: int = 0,
         horizon_override: int = 0,
+        state_transform: Callable[..., Any] | None = None,
     ) -> None:
         self.world = world
         self.source = source
+        # Applied to the residual's INPUT before the forward, unlike `source`
+        # which rewrites the action after it. An ablation has to happen here:
+        # the question is what the policy does without the feature, and a
+        # post-hoc edit of the action cannot answer that.
+        self.state_transform = state_transform
         self.seed_offset = int(seed_offset)
         # Rewrite the rollout budget in place. `horizons` is the tensor
         # validate_round reads for both its decision count and its per-step
@@ -855,6 +861,8 @@ class _ArmRunner:
             return reset
 
         def patched_action(*, states: Any, priors: Any, action_count: int) -> Any:
+            if self.state_transform is not None:
+                states = self.state_transform(runner=self, states=states)
             chunk = self._original_action(
                 states=states, priors=priors, action_count=action_count
             )
@@ -1020,6 +1028,67 @@ def _make_sampled_source(world: _World, *, sigma: float) -> Callable[..., Any]:
         return torch.clamp(chunk + noise * float(sigma), -1.0, 1.0)
 
     return source
+
+
+def _make_vision_ablation(world: _World, *, mode: str) -> Callable[..., Any]:
+    """Destroy the residual's vision input, leaving everything else intact.
+
+    The decisive test of whether the policy's aim comes from vision at all. Its
+    decision-0 cosine reads ~0.19-0.40 while the feature probe puts the
+    decodable direction at ~0.07, and those cannot both describe a policy that
+    is aiming from vision -- so either the probe underestimates the encoder, or
+    the aim has a non-visual source. A constant drift toward the workspace
+    interior would produce a positive cosine with no perception at all, because
+    the resetter clamps the end-effector to the workspace and the object is then
+    biased inward.
+
+    Nothing else can separate those. A success-vs-failure comparison cannot:
+    ANY policy whose success depends on being aimed shows a gap there, including
+    a blind one, because selecting on success selects on alignment.
+
+    Two modes, and they fail differently on purpose.
+
+    ``zero`` blanks the block. Harsh and off-distribution -- the residual has
+    never seen an all-zero vision feature, so a collapse could be shock rather
+    than lost information.
+
+    ``shuffle`` permutes the block ACROSS WORLDS within the batch. The marginal
+    distribution of the feature is exactly preserved and only its correspondence
+    to this world's scene is destroyed, which is the ablation that isolates
+    information rather than distribution. Read this one first.
+    """
+
+    torch = world.torch
+    vision_dim = int(getattr(world.collector, "vision_feature_dim", 0))
+    if vision_dim <= 0:
+        raise ValueError(
+            "The residual takes no vision feature, so there is nothing to "
+            "ablate. Check residual_vision_features in the config."
+        )
+    state_dim = int(world.trainer.state_dim)
+    start = state_dim - vision_dim
+    if start <= 0:
+        raise ValueError(
+            f"vision_dim {vision_dim} leaves no proprioception in a "
+            f"{state_dim}-wide residual state."
+        )
+
+    def transform(*, runner: "_ArmRunner", states: Any) -> Any:
+        out = states.clone()
+        if mode == "zero":
+            out[:, start:state_dim] = 0.0
+        elif mode == "shuffle":
+            order = torch.randperm(
+                states.shape[0], generator=runner._rng, device=states.device
+            )
+            out[:, start:state_dim] = states.index_select(0, order)[
+                :, start:state_dim
+            ]
+        else:
+            raise ValueError(f"Unknown ablation mode {mode!r}.")
+        return out
+
+    return transform
 
 
 def _make_oracle_xy_source(
@@ -1629,7 +1698,12 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--legs",
         default="plant,policy,oracle",
-        help="Comma-separated subset of plant,policy,oracle.",
+        help=(
+            "Comma-separated subset of plant,policy,oracle,ablation. "
+            "`ablation` destroys the residual's vision input -- shuffled "
+            "across worlds, and zeroed -- to test whether the policy's aim "
+            "comes from vision at all."
+        ),
     )
     parser.add_argument(
         "--plant-sweep",
@@ -1711,7 +1785,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     legs = {name.strip() for name in str(args.legs).split(",") if name.strip()}
-    unknown = legs.difference({"plant", "policy", "oracle"})
+    unknown = legs.difference({"plant", "policy", "oracle", "ablation"})
     if unknown:
         parser.error(f"Unknown legs: {sorted(unknown)}")
     if args.worlds % args.group_size:
@@ -1729,7 +1803,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     start_cap = args.start_distance_cap
     if start_cap is not None and (start_cap <= 0.0 or start_cap == float("inf")):
         start_cap = float("inf")
-    needs_policy = bool(legs & {"policy", "oracle"})
+    needs_policy = bool(legs & {"policy", "oracle", "ablation"})
     world = _build_world(
         checkpoint=checkpoint,
         config_path=config_path,
@@ -1764,20 +1838,37 @@ def main(argv: Sequence[str] | None = None) -> int:
     policy_metrics: dict[str, Any] | None = None
     if needs_policy:
         rng = np.random.default_rng(int(args.seed))
-        arms: list[tuple[str, Callable[..., Any] | None]] = [
-            ("policy", None),
+        arms: list[tuple[str, Callable[..., Any] | None, Callable[..., Any] | None]] = [
+            ("policy", None, None),
             # What the promote gate actually reads.
             (
                 "policy_sampled",
                 _make_sampled_source(world, sigma=float(args.sigma)),
+                None,
             ),
         ]
+        if "ablation" in legs:
+            # Read vision_shuffled first: it preserves the feature's marginal
+            # distribution exactly and destroys only its correspondence to the
+            # scene, so a collapse there is lost INFORMATION. vision_zeroed is
+            # off-distribution and a collapse there could be shock.
+            arms.append(
+                (
+                    "vision_shuffled",
+                    None,
+                    _make_vision_ablation(world, mode="shuffle"),
+                )
+            )
+            arms.append(
+                ("vision_zeroed", None, _make_vision_ablation(world, mode="zero"))
+            )
         if "oracle" in legs:
             servo_cap = float(args.servo_max_command)
             arms.append(
                 (
                     "oracle_xy",
                     _make_oracle_xy_source(world, max_command=servo_cap),
+                    None,
                 )
             )
             for error in args.localization_errors:
@@ -1789,6 +1880,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             position_error_std=float(error),
                             max_command=servo_cap,
                         ),
+                        None,
                     )
                 )
             if not args.skip_full_oracle:
@@ -1796,16 +1888,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                     (
                         "full_oracle",
                         _make_full_oracle_source(world, max_command=servo_cap),
+                        None,
                     )
                 )
 
-        for index, (name, source) in enumerate(arms):
+        for index, (name, source, transform) in enumerate(arms):
             print(f"[xy-probe] arm {name}", flush=True)
             with _ArmRunner(
                 world,
                 source=source,
                 seed_offset=index,
                 horizon_override=int(args.horizon_decisions),
+                state_transform=transform,
             ) as runner:
                 row = runner.run(round_index=0)
             row["arm"] = name
@@ -1848,7 +1942,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report_plant(plant_rows, steps=int(args.plant_steps))
     if policy_metrics is not None and "policy" in legs:
         _report_policy(policy_metrics)
-    if arm_rows and "oracle" in legs:
+    if arm_rows and bool(legs & {"oracle", "ablation"}):
         _report_arms(arm_rows)
         _report_timing(timing_rows)
 
