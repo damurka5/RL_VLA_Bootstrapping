@@ -386,6 +386,41 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default="lm_expert",
         help="Qualified-path substring selecting the action expert (not the VLM).",
     )
+    _bool_arg(
+        parser,
+        "train_vla_vision_lora",
+        default=False,
+        help_text=(
+            "Also attach LoRA to the VLM's VISION tower, not just the action "
+            "expert. Everything measured points here: the frozen connector "
+            "decodes the gripper->object direction at ~0.07 cosine, the "
+            "un-projected 30720-d version is no better, and the task needs "
+            "localization to ~2 cm. Nothing downstream can create information "
+            "the encoder never produced. Costs a full backward through the "
+            "vision tower on every LoRA update -- expect to lower "
+            "--vla-microbatch-size."
+        ),
+    )
+    parser.add_argument(
+        "--lora-vision-name-contains",
+        default="vision_model",
+        help=(
+            "Qualified-path substring selecting the VLM vision tower. If it "
+            "matches nothing the attach RAISES and prints the linear modules "
+            "that do contain the substring, so the right value is one glance "
+            "away rather than a guess."
+        ),
+    )
+    parser.add_argument(
+        "--lora-vision-leaf-names",
+        default="q_proj,k_proj,v_proj,out_proj",
+        help=(
+            "Comma-separated leaf names to wrap in the vision tower. NOT the "
+            "expert's list: a SigLIP-style tower uses out_proj rather than "
+            "o_proj and fc1/fc2 rather than gate/up/down_proj, so reusing the "
+            "expert names matches almost nothing."
+        ),
+    )
     parser.add_argument("--vla-lr", type=float, default=1.0e-5)
     parser.add_argument("--vla-kl-coef", type=float, default=0.1)
     parser.add_argument("--vla-microbatch-size", type=int, default=16)
@@ -1515,6 +1550,60 @@ class SmolVLAGRPOTrainer:
                 "LoRA attach matched no action-expert linears; check "
                 "--lora-expert-name-contains against the SmolVLA module names."
             )
+        # The VLM's own vision tower, optionally.
+        #
+        # Everything measured says this is where the ceiling is. The frozen
+        # connector's features decode the direction from gripper to object at
+        # ~0.07 cosine, the un-projected 30720-d version is no better, and the
+        # task needs localization to ~2 cm (grasp 0.74 at 2 cm, 0.40 at 5 cm).
+        # No reduction, width or head downstream can create information the
+        # encoder never produced -- which is why per_token_random and
+        # dual_random both changed nothing. SmolVLA's published numbers
+        # (LIBERO 87.3, SO-100 78.3) are all POST fine-tuning on the target
+        # embodiment; a frozen encoder on a novel one owes us nothing.
+        #
+        # Leaf names differ from the expert's: the SigLIP-style tower uses
+        # out_proj rather than o_proj and fc1/fc2 rather than gate/up/down, so
+        # reusing the expert list silently matches almost nothing. That is the
+        # failure this raises on rather than trains through.
+        vision_replaced: list[str] = []
+        if bool(getattr(args, "train_vla_vision_lora", False)):
+            vision_leaves = [
+                name.strip()
+                for name in str(
+                    getattr(args, "lora_vision_leaf_names", "")
+                ).split(",")
+                if name.strip()
+            ]
+            vision_replaced = attach_lora(
+                runtime.policy,
+                target_leaf_names=tuple(vision_leaves),
+                name_contains=(
+                    str(getattr(args, "lora_vision_name_contains", "vision")),
+                ),
+                rank=int(args.lora_rank),
+                alpha=float(args.lora_alpha),
+                dropout=float(args.lora_dropout),
+            )
+            if not vision_replaced:
+                wanted = str(
+                    getattr(args, "lora_vision_name_contains", "vision")
+                )
+                candidates = sorted(
+                    {
+                        name
+                        for name, module in runtime.policy.named_modules()
+                        if isinstance(module, nn.Linear) and wanted in name
+                    }
+                )[:20]
+                raise RuntimeError(
+                    "Vision LoRA matched no linears. Wanted leaf names "
+                    f"{vision_leaves} under paths containing {wanted!r}. "
+                    "Linear modules that DO contain that substring: "
+                    + (", ".join(candidates) if candidates else "(none)")
+                    + ". Set --lora-vision-name-contains and "
+                    "--lora-vision-leaf-names from that list."
+                )
         freeze_all_but_lora(runtime.policy)
         runtime.policy.to(self.device)
         self.vla_runtime = runtime
@@ -1527,6 +1616,7 @@ class SmolVLAGRPOTrainer:
         )
         return {
             "vla_lora/modules": float(len(replaced)),
+            "vla_lora/vision_modules": float(len(vision_replaced)),
             "vla_lora/trainable_params": float(count_trainable(runtime.policy)),
         }
 

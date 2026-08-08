@@ -1371,8 +1371,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             _log(
                 dist_ctx,
                 "[smolvla-mjwarp] LoRA on action expert: "
-                f"{lora_info['vla_lora/modules']:.0f} modules, "
-                f"{lora_info['vla_lora/trainable_params']:.0f} trainable params",
+                f"{lora_info['vla_lora/modules']:.0f} modules"
+                + (
+                    f" + vision tower: "
+                    f"{lora_info.get('vla_lora/vision_modules', 0.0):.0f} modules"
+                    if lora_info.get("vla_lora/vision_modules", 0.0) > 0
+                    else ""
+                )
+                + f", {lora_info['vla_lora/trainable_params']:.0f} trainable "
+                "params",
             )
         simulator_metadata = _runtime_metadata(args, backend)
         global_step = 0

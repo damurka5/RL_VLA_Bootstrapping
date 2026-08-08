@@ -130,3 +130,111 @@ class LoRATests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class VisionTowerLoRATest(unittest.TestCase):
+    """LoRA on the VLM vision tower, and the failure that would be silent.
+
+    Every measurement points at the encoder: the frozen connector decodes the
+    gripper->object direction at ~0.07 cosine, the un-projected 30720-d version
+    is no better, and the task needs localization to ~2 cm. Nothing downstream
+    can create information the encoder never produced.
+
+    The trap is the leaf names. A SigLIP-style vision tower uses ``out_proj``
+    rather than ``o_proj`` and ``fc1``/``fc2`` rather than
+    ``gate_proj``/``up_proj``/``down_proj``, so reusing the action expert's list
+    wraps almost nothing -- and a run would then train an empty adapter for days
+    while reporting a healthy module count from the expert half.
+    """
+
+    def _tower(self):
+        import torch.nn as nn
+
+        class Attention(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.q_proj = nn.Linear(8, 8)
+                self.k_proj = nn.Linear(8, 8)
+                self.v_proj = nn.Linear(8, 8)
+                self.out_proj = nn.Linear(8, 8)
+
+        class Expert(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.q_proj = nn.Linear(8, 8)
+                self.o_proj = nn.Linear(8, 8)
+
+        class Root(nn.Module):
+            def __init__(self):
+                super().__init__()
+                self.vision_model = Attention()
+                self.lm_expert = Expert()
+
+        return Root()
+
+    def test_the_vision_tower_leaf_names_are_wrapped(self):
+        from rl_vla_bootstrapping.policy.lora import attach_lora
+
+        root = self._tower()
+        replaced = attach_lora(
+            root,
+            target_leaf_names=("q_proj", "k_proj", "v_proj", "out_proj"),
+            name_contains=("vision_model",),
+            rank=2,
+            alpha=4.0,
+        )
+        self.assertEqual(len(replaced), 4)
+        self.assertTrue(all("vision_model" in name for name in replaced))
+
+    def test_the_expert_leaf_names_miss_the_vision_tower(self):
+        """The silent failure this configuration exists to avoid."""
+
+        from rl_vla_bootstrapping.policy.lora import attach_lora
+
+        root = self._tower()
+        replaced = attach_lora(
+            root,
+            # The action expert's list, applied to the vision tower.
+            target_leaf_names=("q_proj", "k_proj", "v_proj", "o_proj"),
+            name_contains=("vision_model",),
+            rank=2,
+            alpha=4.0,
+        )
+        # q/k/v match by coincidence; out_proj -- the one that mixes heads --
+        # does not, and o_proj matches nothing at all.
+        self.assertNotIn(
+            "vision_model.out_proj", [name for name in replaced]
+        )
+
+    def test_the_two_groups_do_not_overlap(self):
+        from rl_vla_bootstrapping.policy.lora import attach_lora
+
+        root = self._tower()
+        expert = attach_lora(
+            root,
+            target_leaf_names=("q_proj", "o_proj"),
+            name_contains=("lm_expert",),
+            rank=2,
+            alpha=4.0,
+        )
+        vision = attach_lora(
+            root,
+            target_leaf_names=("q_proj", "out_proj"),
+            name_contains=("vision_model",),
+            rank=2,
+            alpha=4.0,
+        )
+        self.assertTrue(set(expert).isdisjoint(set(vision)))
+        self.assertTrue(all("lm_expert" in name for name in expert))
+        self.assertTrue(all("vision_model" in name for name in vision))
+
+    def test_the_flag_and_its_filters_exist_and_default_off(self):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import (
+            parse_args,
+        )
+
+        args = parse_args(["--device", "cpu", "--no-distributed"])
+        self.assertFalse(args.train_vla_vision_lora)
+        self.assertEqual(args.lora_vision_name_contains, "vision_model")
+        self.assertIn("out_proj", args.lora_vision_leaf_names)
+        self.assertNotIn("o_proj,", args.lora_vision_leaf_names)
