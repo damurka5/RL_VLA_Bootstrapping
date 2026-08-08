@@ -409,6 +409,95 @@ class SampledSourceTest(unittest.TestCase):
         self.assertFalse(torch.allclose(out, chunk))
 
 
+class CommandCosineTest(unittest.TestCase):
+    """The ladder priced localization in metres; the logs report a cosine.
+
+    "5 cm of position error" cannot be read against
+    `residual_target_cosine_mean = 0.055`. Measuring the alignment each arm
+    actually COMMANDED puts the arms and the policy on one axis, which is what
+    turns the ladder into a spec for how well the feature has to localize.
+    """
+
+    def _trace(self, command_fn, decisions=6, worlds=64, holding=False):
+        rng = np.random.default_rng(4)
+        object_xy = rng.uniform(-0.2, 0.2, size=(worlds, 2))
+        rows = []
+        for _ in range(decisions):
+            ee = np.zeros((worlds, 3), dtype=np.float32)
+            ee[:, 2] = 0.21
+            target = np.zeros((worlds, 3), dtype=np.float32)
+            target[:, :2] = object_xy
+            target[:, 2] = 0.20
+            commanded = np.zeros((worlds, 5), dtype=np.float32)
+            commanded[:, :2] = command_fn(object_xy - ee[:, :2])
+            rows.append(
+                {
+                    "ee_xyz": ee,
+                    "target_xyz": target,
+                    "commanded0": commanded,
+                    "holding": np.full(
+                        (worlds,), 1.0 if holding else 0.0, dtype=np.float32
+                    ),
+                }
+            )
+        trace = probe._Trace()
+        trace.rows = rows
+        return trace
+
+    def test_a_perfect_servo_reads_one(self) -> None:
+        trace = self._trace(lambda rel: rel / np.linalg.norm(rel, axis=-1, keepdims=True))
+        self.assertAlmostEqual(
+            probe._command_cosine(trace)["command_cosine"], 1.0, places=5
+        )
+
+    def test_an_inverted_servo_reads_minus_one(self) -> None:
+        trace = self._trace(lambda rel: -rel)
+        self.assertAlmostEqual(
+            probe._command_cosine(trace)["command_cosine"], -1.0, places=5
+        )
+
+    def test_a_constant_command_reads_about_zero(self) -> None:
+        """Objects lie in every direction, so a fixed command averages out."""
+
+        trace = self._trace(lambda rel: np.tile(np.array([1.0, 0.0]), (len(rel), 1)))
+        self.assertLess(
+            abs(probe._command_cosine(trace)["command_cosine"]), 0.2
+        )
+
+    def test_a_corrupted_servo_lands_between(self) -> None:
+        """The ladder's whole point: more error, lower cosine, monotonically."""
+
+        rng = np.random.default_rng(11)
+        previous = 1.1
+        for sigma in (0.02, 0.05, 0.10, 0.20):
+            trace = self._trace(
+                lambda rel, s=sigma: rel + rng.normal(0.0, s, size=rel.shape)
+            )
+            value = probe._command_cosine(trace)["command_cosine"]
+            self.assertLess(value, previous)
+            self.assertGreater(value, -0.5)
+            previous = value
+
+    def test_holding_steps_are_excluded(self) -> None:
+        """A world already holding has no meaningful direction to the object."""
+
+        trace = self._trace(lambda rel: rel, holding=True)
+        self.assertTrue(
+            np.isnan(probe._command_cosine(trace)["command_cosine"])
+        )
+
+    def test_the_ladder_reaches_the_region_the_feature_sits_in(self) -> None:
+        """A spec that only covers the comfortable end answers nothing.
+
+        The feature probe puts the decodable direction at ~0.07 cosine. At the
+        ~3.8 cm start distance, cos ~ d/sqrt(d^2+sigma^2), so reaching 0.07
+        needs sigma around 0.5 m -- the ladder has to go that far or it cannot
+        say whether what the encoder offers is survivable.
+        """
+
+        self.assertGreaterEqual(max(probe.DEFAULT_LOCALIZATION_ERRORS), 0.5)
+
+
 class GraspTimingTest(unittest.TestCase):
     """Horizon starvation and bad grasps must not report alike.
 

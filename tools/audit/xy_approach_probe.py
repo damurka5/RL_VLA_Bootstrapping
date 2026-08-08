@@ -176,7 +176,13 @@ DEFAULT_PLANT_SWEEP = (
 )
 # Object-position error stds for the oracle_xy pricing arms, in metres. 0.02 is
 # roughly the grasp tolerance; 0.20 is most of the workspace.
-DEFAULT_LOCALIZATION_ERRORS = (0.02, 0.05, 0.10, 0.20)
+# Object-position error stds for the oracle_xy pricing arms, in metres. The
+# large end is not padding: at the ~3.8 cm start distance these caps produce,
+# an error of sigma maps to a commanded cosine of roughly d/sqrt(d^2+sigma^2) --
+# 0.02 m is ~0.89, 0.20 m is ~0.19, and the ~0.07 the feature probe says is
+# decodable needs sigma around 0.5 m. Without arms down there the ladder cannot
+# say whether 0.07 is survivable; it would only show the comfortable end.
+DEFAULT_LOCALIZATION_ERRORS = (0.02, 0.05, 0.10, 0.20, 0.35, 0.60)
 
 
 # --------------------------------------------------------------------------
@@ -1154,6 +1160,40 @@ def _make_full_oracle_source(
 # --------------------------------------------------------------------------
 
 
+def _command_cosine(trace: _Trace) -> dict[str, float]:
+    """The alignment of the action each arm actually COMMANDED.
+
+    Turns the localization ladder from a spec in metres into a spec in the
+    quantity the training logs report. `oracle_xy_err_0.05m` says "5 cm of
+    position error"; nobody can read that against `residual_target_cosine_mean
+    = 0.055`. Measuring the commanded action's own 2-D cosine against the true
+    direction puts the arms and the policy on one axis, so the ladder answers
+    the question it was built for: what alignment does the task need?
+
+    Approach steps only, and the same cosine the trainer computes -- 2-D XY of
+    the action against the direction to the object -- so the policy arm's value
+    is directly comparable to the number the run logs.
+    """
+
+    ee = trace.stack("ee_xyz")
+    target = trace.stack("target_xyz")
+    commanded = trace.stack("commanded0")
+    holding = trace.stack("holding") > 0.5
+
+    rel = (target - ee)[..., :2]
+    usable = (~holding) & (np.linalg.norm(rel, axis=-1) > 0.005)
+    if not usable.any():
+        return {"command_cosine": float("nan"), "command_cosine_decision0": float("nan")}
+    cosines = _cosine(commanded[..., :2], rel)
+    first = usable[0]
+    return {
+        "command_cosine": float(np.mean(cosines[usable])),
+        "command_cosine_decision0": (
+            float(np.mean(cosines[0][first])) if first.any() else float("nan")
+        ),
+    }
+
+
 def _grasp_timing(
     trace: _Trace, success: np.ndarray, *, horizon: int
 ) -> dict[str, Any]:
@@ -1433,16 +1473,27 @@ def _report_arms(rows: Sequence[Mapping[str, Any]]) -> None:
     print("\nC -- success when the object position is handed over")
     print("----------------------------------------------------")
     print(
-        f"{'arm':<26} {'success':>8} {'grasped':>8} {'final d (m)':>12} "
-        f"{'final z':>8} {'min z':>7} {'reward':>8} {'diverged':>9}"
+        f"{'arm':<26} {'cmd cos':>8} {'success':>8} {'grasped':>8} "
+        f"{'final d (m)':>12} {'final z':>8} {'reward':>8} {'diverged':>9}"
     )
     for row in rows:
         print(
-            f"{row['arm']:<26} {row['success_rate']:>8.3f} "
+            f"{row['arm']:<26} "
+            f"{row.get('command_cosine', float('nan')):>8.3f} "
+            f"{row['success_rate']:>8.3f} "
             f"{row['ever_grasped_rate']:>8.3f} {row['final_distance_m']:>12.3f} "
-            f"{row['final_ee_z_m']:>8.3f} {row['min_ee_z_m']:>7.3f} "
+            f"{row['final_ee_z_m']:>8.3f} "
             f"{row['reward_mean']:>8.3f} {row['diverged_worlds']:>9d}"
         )
+    print(
+        "\n  cmd cos is the commanded action's own 2-D alignment with the true "
+        "direction --\n  the same quantity the trainer logs as "
+        "policy_target_cosine_mean, so the arms and the\n  policy sit on one "
+        "axis. Read grasped against it: that curve is the SPEC. The feature\n  "
+        "probe puts what is decodable from the residual's input at ~0.07, so an "
+        "arm whose\n  cmd cos is near 0.07 is the best any head reading that "
+        "feature could do."
+    )
     horizon = max((int(row.get("horizon_decisions", 0)) for row in rows), default=0)
     print(
         f"\n  rollout budget: {horizon} decisions "
@@ -1763,6 +1814,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"diverged={row['diverged_worlds']}",
                 flush=True,
             )
+            if runner.trace.rows:
+                row.update(_command_cosine(runner.trace))
             if runner.trace.rows and runner.world_success is not None:
                 timing = _grasp_timing(
                     runner.trace,
