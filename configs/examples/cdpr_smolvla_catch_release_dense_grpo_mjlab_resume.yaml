@@ -365,11 +365,7 @@ training:
       # connector-token projection would throw away the only part of the
       # observation that actually localizes the target.)
       residual_vision_features: true
-      # Must match pick_up: phase 2 loads phase 1's adapter through a STRICT
-      # state-dict load, so a width disagreement fails outright. 1024 =
-      # 512 flat_random + 512 per_token_random, side by side.
-      residual_vision_dim: 1024
-      residual_vision_pooling: dual_random
+      residual_vision_dim: 512
       # Must match the move-to phase: the checkpoint carries action-expert LoRA
       # weights, and loading refuses to drop them.
       train_vla_lora: true

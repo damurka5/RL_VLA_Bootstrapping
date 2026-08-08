@@ -307,9 +307,24 @@ class ConfigWiringTest(unittest.TestCase):
                         return found
             return None
 
-        self.assertEqual(find(raw, "residual_vision_pooling"), "dual_random")
-        # Both halves at the width each was measured at.
-        self.assertEqual(find(raw, "residual_vision_dim"), 1024)
+        # NOT pinned to dual_random. That mode was tried and measured to add
+        # nothing -- 5.2M steps carrying both poolings left the aiming cosine
+        # where flat_random had it -- because the encoder's signal is coarse
+        # and a better reduction of a coarse signal is still coarse. The config
+        # is back on flat_random; what this guards is that whichever mode is
+        # configured, the WIDTH is consistent with it, since dual_random splits
+        # the width in half and per_token_random needs it divisible by the 32
+        # connector tokens.
+        pooling = find(raw, "residual_vision_pooling") or "flat_random"
+        dim = int(find(raw, "residual_vision_dim"))
+        self.assertIn(
+            pooling, ("flat_random", "per_token_random", "dual_random")
+        )
+        if pooling == "dual_random":
+            self.assertEqual(dim % 2, 0)
+            self.assertEqual((dim // 2) % 32, 0)
+        elif pooling == "per_token_random":
+            self.assertEqual(dim % 32, 0)
 
     def test_the_runtime_accepts_the_mode(self) -> None:
         from rl_vla_bootstrapping.policy.smolvla_cdpr import SmolVLARuntime

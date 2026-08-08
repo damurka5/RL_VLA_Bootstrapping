@@ -574,6 +574,10 @@ lift.
 
 ### 4.10 · Splitting the credit — both phases held, and what that exposed
 
+> **Superseded in part by §4.12.** The 0.40 m miss quoted below is real, but
+> it was measured on validation episodes that started >= 0.10 m away, not
+> from the 5 cm cap this section assumes. The credit split itself stands.
+
 `split_credit_at_grasp` gives the approach the dense reward at the moment the
 grasp latched and leaves the lift with the terminal reward, so neither segment's
 gradient carries the other's outcome. Resumed from `offset_marginal`, 2.49M steps.
@@ -646,6 +650,13 @@ already within 5 cm, which is also why the cap has never promoted past 0.05 m.
 
 ### 4.11 · The projection throws the object away
 
+> **Superseded by §4.15.** The 1.7% arithmetic is correct and the
+> conclusion drawn from it is not. Replacing the projection destroyed the
+> policy twice and ADDING the better one alongside changed nothing in 5.2M
+> steps, because the encoder's signal is coarse rather than well-encoded and
+> discarded. The +0.389 measurement also does not reproduce once the probe's
+> pooling passthrough is fixed.
+
 The regression probe (`b2b3c5c`), 60 episodes, approach steps only, predicting
 the object's absolute XY with a control that gives each episode another
 episode's object:
@@ -696,6 +707,153 @@ un-projected ceiling.
 
 
 
+### 4.12 · Held-out validation was measuring a different task
+
+The number the campaign steered by for 52M steps was not about the policy.
+
+`set_random_start_max_goal_distance` has one call site and it is the TRAINING
+resetter. `validation_resetter` is built from the same kwargs and then left
+alone, so its cap stayed at the `inf` default the setter documents as "restoring
+the full-workspace start distribution", while
+`random_workspace_min_goal_xy_distance: 0.10` sets a floor underneath it.
+Training starts were <= the earned cap (0.05 m); validation starts were >= 0.10 m.
+**The two distributions never overlapped.** The coupling's uncapped branch then
+also handed validation the full 26-decision budget against training's 17.
+
+Same checkpoint, same `validate_round`, same seed, with the cap applied:
+
+| | logged in training | with the cap |
+|---|---:|---:|
+| deterministic success | 0.001 | **0.266 - 0.328** |
+| final distance | 0.39-0.42 m | **0.15 - 0.19 m** |
+
+So §4.10's "the deterministic policy misses by 0.40 m horizontally, from a start
+capped 5 cm away" is wrong in its second clause, and everything inferred from it
+needs re-reading. The policy was never failing to close a 5 cm gap.
+
+Fixed in the trainer, with a regression test that fails if the validation call
+site is dropped again.
+
+### 4.13 · Three fixes that moved the cap for the first time
+
+The cap had not left 0.05 m in 171k steps. Three changes, and it climbed through
+six rungs to 0.13 in the next run.
+
+**Horizon.** `curriculum_horizon_min` 16 -> 26 (flat at the ceiling). The 16 came
+from "5 cm of lift at 0.015 per step", and 0.015 is the COMMANDED step. The
+plant's realized XY gain measures **0.44-0.54**, flat across every amplitude and
+both signs, free and loaded alike -- so the effective step is ~0.0075 m and a
+50 mm lift needs ~38 env steps against the ~3 decisions budgeted. The coupling
+itself was the deeper error: built for move_to, where a longer approach needs
+more steps, it starved the LIFT, whose step requirement does not shrink with
+start distance. Conversion-given-grasp climbs 0.13 -> 0.8 with decisions
+remaining along a curve that is *identical* whether the policy is handed a
+perfect object position or a 20 cm error.
+
+**The promote gate reads the grasp rate, not full-task success.** Conversion from
+grasp to success is ~0.6 and set by the budget left after the latch, so gating
+the APPROACH curriculum on success made the cap wait on a skill the approach
+cannot influence. Same split the per-instruction caps and the prelifted stage
+each needed.
+
+**A dwell on the gate.** Every promotion of the 10M run fired the moment the EMA
+first touched the threshold and landed below it at the new rung (0.312 -> 0.243,
+0.300 -> 0.219). The per-update rate spreads 0.037 against the 0.018 binomial
+sampling on ~510 normal-start worlds explains, so two good updates can tip an
+average sitting just under the line. The EMA must now hold for five consecutive
+updates; `ema_decay` 0.9 -> 0.95.
+
+**A third of every update was rollout noise.** The advantage divides the centred
+reward by the group std floored at 1e-6 and clips at 6.0, so a group whose eight
+candidates all did the same thing emits full-magnitude gradients made of noise.
+41 of 128 groups per update had a std under 0.05, 31 of them pre-grasped groups
+where nothing lifted. The collector already computed that and wired it to a
+dashboard; `grpo_min_group_reward_std` now wires it to `loss_mask`, per return
+stream. This is DAPO's dynamic sampling for a dense reward -- the existing
+`reward_span > 1e-6` test is the literal all-correct-or-all-wrong translation and
+never fired.
+
+### 4.14 · What the task costs, in metres
+
+The oracle arm of `tools/audit/xy_approach_probe.py` keeps the policy's own z,
+yaw and gripper and replaces ONLY the two XY channels with a servo on the true
+object position, then corrupts that position by a known error.
+
+| localization error | ever-grasped |
+|---:|---:|
+| perfect | **0.924** |
+| 2 cm | 0.738 |
+| 5 cm | 0.398 |
+| 10 cm | 0.275 |
+| 20 cm | 0.188 |
+
+**Grasp rate falls off a cliff between 2 and 5 cm.** That is the spec: to hold
+>= 0.7 the object has to be located to ~2 cm. For scale, handing over a perfect
+position takes ever-grasped from 0.486 to 0.924 on the same checkpoint.
+
+One caveat on reading the ladder as a proxy for the policy's own information: the
+policy sits at decision-0 cosine +0.231 with ever-grasped 0.510, while the oracle
+arms near that alignment grasp 0.19-0.28. The policy *outperforms* a servo with
+its own aim, because it wins by not moving much from a start already 3.8 cm away
+while a corrupted servo drives confidently to the wrong place. Bad information is
+worse than none.
+
+### 4.15 · The vision feature is coarse, not absent -- and it is load-bearing
+
+Two readings of the vision feature were made and the first was wrong. Both are
+recorded because the first was acted on.
+
+**The wrong reading.** A feature probe extended with a nonlinear head put the
+gripper->object direction at ~0.07 cosine decodable from the residual's input and
+~0.05 from the un-projected 30720-d connector, against a task needing ~2 cm. The
+conclusion drawn was that the frozen encoder does not carry the direction at all.
+Three things were wrong with it: the capture came from the scripted oracle rather
+than the policy's own state distribution; the relative-target control was
+contaminated (control cosine 0.35-0.47, ABOVE the real one); and a decoder
+looking for a global continuous features->direction map scores badly on a signal
+that is coarse or local.
+
+**The measurement that settled it.** Shuffle the residual's vision block ACROSS
+WORLDS -- preserving its marginal distribution exactly, destroying only its
+correspondence to the scene -- at a 0.13 m cap:
+
+| arm | cos@d0 | success | ever-grasped |
+|---|---:|---:|---:|
+| policy | 0.111 | 0.053 | 0.162 |
+| **vision_shuffled** | 0.028 | **0.000** | 0.035 |
+| **vision_zeroed** | 0.058 | **0.000** | 0.000 |
+
+**Vision is load-bearing.** Both the aim and the grasp collapse without it.
+
+Note what does NOT show this. Successful episodes aim better than failures
+(+0.404 against +0.182, surviving three of four start-distance quartiles), and
+that is not evidence of aiming: ANY policy whose success depends on being aimed
+produces that gap, including a blind one, because selecting on success selects on
+alignment. Only the ablation separates them.
+
+**The corrected picture: the encoder localizes COARSELY, ~3-5 cm.** Read the
+ladder in §4.14 against the policy's own grasp rate -- 0.51 at a 5 cm cap, 0.16
+at 13 cm -- and that is where it lands. Enough to work from a close start, not
+enough further out, against a task needing ~2 cm.
+
+Which finally explains the projection results. `per_token_random` was measured at
++0.389 direction cosine against `flat_random`'s +0.090 and was expected to be the
+fix. Swapping to it destroyed the policy twice; adding it alongside (a
+`dual_random` block, zero-initialised so step 0 was provably unchanged) ran 5.2M
+steps and left the aiming cosine exactly where `flat_random` had it. A better
+REDUCTION of a coarse signal is still coarse. The +0.389 also did not reproduce
+on a capture where the probe's pooling passthrough was fixed -- `_build_runtime`
+had never forwarded `residual_vision_pooling`, so every measurement it produced
+since that mode existed was taken on `flat_random`.
+
+**Also learned the hard way: you cannot remove an input from a trained MLP.**
+Zeroing the residual's vision columns to swap the pooling shifts the hidden
+activations every later layer was calibrated on. Measured after the second
+attempt: handed a PERFECT object position, ever-grasped fell 0.92 -> 0.30, which
+is damage to descend/close/lift and not to vision at all. Adding columns removes
+nothing and is the only safe form.
+
+
 ---
 
 ## 5. Eliminated, with evidence
@@ -726,6 +884,26 @@ path. It is simply not this bug, at ~7% of groups.
 ---
 
 ## 6. Open
+
+**The encoder is the remaining lever, and it is an experiment.** Vision is
+load-bearing (§4.15) and coarse; the task needs ~2 cm (§4.14). LoRA on the VLM's
+vision tower (`--train-vla-vision-lora`) is the only change identified that acts
+on that, and it is a long shot on RL gradient alone: the signal reaching the
+tower is one advantage per episode through a flow-matching expert, and
+`vla_lora/kl` has read ~0.0001 in every run, meaning even the action-expert
+adapter barely moves. Judge it on `cos@d0` and ever-grasped, and abandon it if
+`vla_lora/kl` stays at 0.0001 -- that means the update is not reaching the tower
+and nothing else about the run signifies.
+
+**Self-imitation is the structure that could make the encoder learnable.** RL's
+scalar reward is a poor teacher for a representation; dense per-step supervision
+is what VLA fine-tuning uses, and the policy's own successful episodes are a
+source of it that needs no demonstrations. Before building it, check it has a
+seed: `tools/audit/success_episode_videos.py` compares the aiming cosine of
+successes against failures within start-distance quartiles. Note the trap
+recorded there -- that comparison alone cannot prove aiming, because selecting on
+success selects on alignment.
+
 
 **~~`log_std_mean` is exactly −1.19375~~ — RESOLVED, see §1.** The parameter was
 saturated on both clamp bounds, not frozen; `clamp()` has zero gradient outside
@@ -796,9 +974,10 @@ residual's vision path relearns.
 This is the first change in the campaign aimed at the approach rather than the
 lift, and the first with a mechanism measured before the run rather than after.
 
-**The 512-d vision projection is lossy.** The frozen random projection the
-residual is fed decodes grasp state at 0.682 where the un-projected connector
-manages 0.904. Independent of the lift question, and untested as a change.
+**The 512-d vision projection is lossy, and it does not matter.** The frozen
+projection decodes grasp state at 0.682 where the un-projected connector
+manages 0.904 -- but widening or restructuring it has now been tested three
+ways and changed nothing (§4.15). The loss is downstream of the real limit.
 
 **~~The train/validation gap~~ — EXPLAINED, see §4.10.** Training normal-start
 success ~0.21 against deterministic 0.001 is not a generalization gap. The
