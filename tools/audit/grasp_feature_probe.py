@@ -735,7 +735,16 @@ def _mlp_r2(
     assignments = np.array_split(unique[order], fold_count)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    features32 = np.ascontiguousarray(features, dtype=np.float32)
+    # One copy, on the device, and every fold's standardization happens there.
+    #
+    # The host version of this OOM-killed a 180-episode capture: the connector
+    # is 4320 x 30720 float32 (~530 MB), and building `(train - mean) / scale`
+    # per fold made another one of those per fold on top of the capture, the
+    # stacked copy and the ridge probe's N x N gram. A 44 GB card does not
+    # notice 530 MB; host RAM did.
+    features_t = torch.as_tensor(
+        np.ascontiguousarray(features, dtype=np.float32), device=device
+    )
 
     def fit(values: np.ndarray) -> tuple[list[float], list[float], list[float]]:
         r2s: list[float] = []
@@ -746,14 +755,18 @@ def _mlp_r2(
             train = ~test
             if train.sum() < 8 or test.sum() < 2:
                 continue
-            mean = features32[train].mean(axis=0, keepdims=True)
-            scale = np.maximum(features32[train].std(axis=0, keepdims=True), 1e-8)
-            x_train = torch.as_tensor(
-                (features32[train] - mean) / scale, device=device
+            train_idx = torch.as_tensor(
+                np.flatnonzero(train), dtype=torch.long, device=device
             )
-            x_test = torch.as_tensor(
-                (features32[test] - mean) / scale, device=device
+            test_idx = torch.as_tensor(
+                np.flatnonzero(test), dtype=torch.long, device=device
             )
+            raw_train = features_t.index_select(0, train_idx)
+            mean = raw_train.mean(dim=0, keepdim=True)
+            scale = raw_train.std(dim=0, keepdim=True).clamp_min(1e-8)
+            x_train = (raw_train - mean) / scale
+            del raw_train
+            x_test = (features_t.index_select(0, test_idx) - mean) / scale
             centre = values[train].mean(axis=0, keepdims=True)
             y_train = torch.as_tensor(
                 (values[train] - centre).astype(np.float32), device=device
@@ -781,6 +794,9 @@ def _mlp_r2(
             with torch.no_grad():
                 predicted = model(x_test).cpu().numpy() + centre
                 fitted = model(x_train).cpu().numpy() + centre
+            del x_train, x_test, model, optimizer
+            if device.type == "cuda":
+                torch.cuda.empty_cache()
 
             truth = y_test_np
             residual = ((truth - predicted) ** 2).sum()
@@ -809,6 +825,9 @@ def _mlp_r2(
 
     real, train_real, cosines = fit(targets)
     control, _, _ = fit(control_targets)
+    del features_t
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
     if not real:
         return nan
     return {
@@ -1053,6 +1072,7 @@ def _report_localization(
     mlp: bool = False,
     mlp_hidden: int = 1024,
     mlp_epochs: int = 2000,
+    mlp_max_features: int = 4096,
 ) -> dict[str, Any]:
     """Can the feature say WHERE the object is, relative to the gripper?"""
 
@@ -1125,6 +1145,12 @@ def _report_localization(
                 f" +-{scores['direction_spread']:.3f}"
             )
             if not mlp:
+                continue
+            if matrix.shape[1] > int(mlp_max_features):
+                print(
+                    f"    {'':<26} MLP     skipped: {matrix.shape[1]} features "
+                    f"> --mlp-max-features {int(mlp_max_features)}"
+                )
                 continue
             nonlinear = _mlp_r2(
                 matrix,
@@ -1293,6 +1319,7 @@ def _probe_and_report(
         mlp=bool(getattr(args, "mlp_probe", False)),
         mlp_hidden=int(getattr(args, "mlp_hidden", 1024)),
         mlp_epochs=int(getattr(args, "mlp_epochs", 2000)),
+        mlp_max_features=int(getattr(args, "mlp_max_features", 4096)),
     )
     results["localization_all"] = _report_localization(
         "ALL STEPS",
@@ -1304,6 +1331,7 @@ def _probe_and_report(
         mlp=bool(getattr(args, "mlp_probe", False)),
         mlp_hidden=int(getattr(args, "mlp_hidden", 1024)),
         mlp_epochs=int(getattr(args, "mlp_epochs", 2000)),
+        mlp_max_features=int(getattr(args, "mlp_max_features", 4096)),
     )
     print(
         "\n"
@@ -1565,6 +1593,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--mlp-hidden", type=int, default=1024)
+    parser.add_argument(
+        "--mlp-max-features",
+        type=int,
+        default=4096,
+        help=(
+            "Skip the MLP probe for feature blocks wider than this. The 30720-d "
+            "connector needs ~530 MB per copy and OOM-killed a 180-episode "
+            "capture; it is a ceiling reference whose linear row already "
+            "answers the question, while the rows that matter -- the "
+            "residual's actual 1024-d input and the 6-d proprioception null -- "
+            "are far below the cap. Raise it only with the host RAM to spare."
+        ),
+    )
     parser.add_argument(
         "--mlp-epochs",
         type=int,

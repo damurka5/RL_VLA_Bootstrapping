@@ -305,6 +305,67 @@ class AbsoluteTargetShortcutTest(unittest.TestCase):
         self.assertGreater(out["train_r2"], 0.9)
 
 
+@unittest.skipIf(torch is None, "torch is unavailable")
+class MlpMemoryTest(unittest.TestCase):
+    """Standardizing on the device, and not probing the widest blocks.
+
+    The host version built `(train - mean) / scale` per fold, which for the
+    30720-d connector is ~530 MB per fold on top of the capture, the stacked
+    copy and the ridge probe's N x N gram. It OOM-killed a 180-episode run.
+    """
+
+    def _fixture(self, width):
+        rng = np.random.RandomState(5)
+        episodes = _episode_ids()
+        targets = _targets(rng)
+        control = _swapped(targets, np.random.RandomState(6))
+        features = rng.normal(0.0, 1.0, size=(len(episodes), width))
+        features[:, :2] += targets
+        return features, targets, control, episodes
+
+    def test_the_device_standardization_gives_the_same_answer(self) -> None:
+        """A refactor for memory must not move the numbers it reports."""
+
+        features, targets, control, episodes = self._fixture(24)
+        first = probe._mlp_r2(
+            features, targets, control, episodes, seed=3, hidden=32, epochs=300
+        )
+        second = probe._mlp_r2(
+            features, targets, control, episodes, seed=3, hidden=32, epochs=300
+        )
+        self.assertAlmostEqual(first["r2"], second["r2"], places=5)
+        self.assertAlmostEqual(
+            first["direction_cosine"], second["direction_cosine"], places=5
+        )
+
+    def test_the_input_array_is_not_mutated(self) -> None:
+        """In-place standardization would corrupt every later feature block."""
+
+        features, targets, control, episodes = self._fixture(24)
+        before = features.copy()
+        probe._mlp_r2(
+            features, targets, control, episodes, seed=3, hidden=32, epochs=100
+        )
+        self.assertTrue(np.array_equal(features, before))
+
+    def test_wide_blocks_are_skipped_rather_than_attempted(self) -> None:
+        import inspect
+
+        source = inspect.getsource(probe._report_localization)
+        self.assertIn("mlp_max_features", source)
+        self.assertIn("MLP     skipped", source)
+
+    def test_the_cap_leaves_the_rows_that_matter_in(self) -> None:
+        """1024 residual input and 6-d proprio must stay under the default."""
+
+        import inspect
+
+        signature = inspect.signature(probe._report_localization)
+        default = signature.parameters["mlp_max_features"].default
+        self.assertGreaterEqual(default, 1024 + 6)
+        self.assertLess(default, 30720)
+
+
 class PoolingPassthroughTest(unittest.TestCase):
     """The probe scored flat_random no matter what the config asked for.
 
