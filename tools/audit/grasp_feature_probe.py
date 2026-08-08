@@ -661,14 +661,14 @@ def _dual_ridge_r2(
     best = None
     fallback = None
     for alpha in (1e-2, 1e-1, 1.0, 10.0, 100.0, 1e3, 1e4, 1e5, 1e6):
-        control, _, _ = score(control_targets, alpha)
+        control, control_cosine, _ = score(control_targets, alpha)
         real, cosine, spread = score(targets, alpha)
         if np.isnan(control) or np.isnan(real):
             continue
         if fallback is None or abs(control) < abs(fallback[1]):
-            fallback = (real, control, cosine, spread, alpha)
+            fallback = (real, control, cosine, spread, alpha, control_cosine)
         if abs(control) <= 0.05:
-            best = (real, control, cosine, spread, alpha)
+            best = (real, control, cosine, spread, alpha, control_cosine)
             break
     chosen = best or fallback
     if chosen is None:
@@ -680,6 +680,12 @@ def _dual_ridge_r2(
         # Across folds. A ranking whose gaps are inside this is not a ranking.
         "direction_spread": chosen[3],
         "alpha": chosen[4],
+        # The control's OWN direction cosine -- the chance level for this
+        # feature and target, not an assumed zero. It matters most on the
+        # relative block, where the control shares its -ee term with the real
+        # label and so is not a clean null: a real cosine has to beat THIS, not
+        # beat 0.
+        "control_direction_cosine": chosen[5],
         "episodes": int(unique.size),
     }
 
@@ -824,7 +830,7 @@ def _mlp_r2(
         return r2s, train_r2s, cosines
 
     real, train_real, cosines = fit(targets)
-    control, _, _ = fit(control_targets)
+    control, _, control_cosines = fit(control_targets)
     del features_t
     if device.type == "cuda":
         torch.cuda.empty_cache()
@@ -838,6 +844,9 @@ def _mlp_r2(
         # Held-out far below train is the MLP memorizing rather than learning
         # the map; the control catches it too, and both are printed.
         "train_r2": float(np.mean(train_real)),
+        "control_direction_cosine": (
+            float(np.mean(control_cosines)) if control_cosines else float("nan")
+        ),
         "episodes": int(unique.size),
     }
 
@@ -1143,6 +1152,7 @@ def _report_localization(
                 f"   (control {scores['control_r2']:+.3f})"
                 f"   dir cos {scores['direction_cosine']:+.3f}"
                 f" +-{scores['direction_spread']:.3f}"
+                f"   (control cos {scores.get('control_direction_cosine', float('nan')):+.3f})"
             )
             if not mlp:
                 continue
@@ -1169,6 +1179,7 @@ def _report_localization(
                 f"   (control {nonlinear['control_r2']:+.3f})"
                 f"   dir cos {nonlinear['direction_cosine']:+.3f}"
                 f" +-{nonlinear['direction_spread']:.3f}"
+                f"   (control cos {nonlinear.get('control_direction_cosine', float('nan')):+.3f})"
                 f"   [train R2 {nonlinear['train_r2']:+.3f}]"
             )
 
