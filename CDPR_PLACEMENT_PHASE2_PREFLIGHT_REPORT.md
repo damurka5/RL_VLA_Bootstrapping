@@ -151,6 +151,29 @@ step  ee_z   opening  obj_z   settled  Lf     Rf     physical_grasp  terminated
 A held object, a settled flag, a detector that has not warmed up, and the episode
 is over.
 
+**Fixed and measured.** The reset now seeds the counter to
+`_GRASP_PERSISTENCE_STEPS` on caught starts, with a regression test that pins the
+counter and `physical_grasp` to agree rather than to a literal. Re-running the
+same six episodes:
+
+| arm | before | after |
+|---|---|---|
+| as configured | plate 1/1/1, bowl 14/14/15 env steps | **identical** |
+| `--reseat-held-object` | plate **1**/1/32, bowl 14/44/42 | plate **35**/1/32, bowl 14/44/42 |
+
+The as-configured column does not move at all, and that is the fix behaving
+correctly rather than failing: with the pads unloaded `persistent_candidate` is
+false, so `_update_physical_grasp` zeroes the counter on step 1 regardless of
+what the reset seeded. The counter is a floor for a grasp the physics already
+supports, never a head start for a world that has to earn one.
+
+Where the grip **is** real, a plate episode goes from dying on env step 1 to
+surviving 35 — through the traverse, the descent and into a genuine release
+attempt. So bug 4 is real and now closed, but it is entirely masked by bug 1
+until the seating opening is fixed. Do not expect this commit alone to change a
+training run. (The remaining step-1 plate failure is the banana, which never
+latches — see below.)
+
 ## Also observed, lower confidence
 
 * **The banana never latches.** Bilateral contact for 3 steps at 1.2–1.4 N with
@@ -195,8 +218,9 @@ numbers are CPU-physics and the run is MJWarp:
    `BatchedTaskThresholds.release_opening` — the floor is what breaks the orange
    and tomato, and what makes the seeded start read as already-released.
 3. `put_plate_release_height: 0.045 → 0.10`.
-4. Seed `bilateral_contact_steps` to `_GRASP_PERSISTENCE_STEPS` on caught starts,
-   with a regression test.
+4. ~~Seed `bilateral_contact_steps` to `_GRASP_PERSISTENCE_STEPS` on caught
+   starts, with a regression test.~~ **Done** — needs no measurement, and it is
+   inert until 1 lands. See "the fourth bug" above for the before/after.
 5. Re-confirm the banana's orientation-slip rejection; export
    `relative_orientation_slip_rad` to telemetry so it can be read rather than
    inferred.
@@ -326,15 +350,17 @@ arms and against the object for grasp arms, and it detects which from the trace
 rather than from the arm name. It also drops the `~holding` gate for placement —
 holding is the normal state there, and keeping the gate would discard every step.
 
-## What is NOT applied
+## What is and is not applied
 
-Nothing in this report has been committed to the training path. The probe leg is
-new; `configs/`, `cdpr_object_catalog.py`, `cdpr_batched_tasks.py` and
-`mjwarp_rank_local_collector.py` are untouched.
+Applied: fix 4, the `bilateral_contact_steps` seeding in
+`mjwarp_rank_local_collector.py`, plus its regression test and the new
+`--legs placement` arm in `tools/audit/xy_approach_probe.py`.
 
-That is deliberate. Fixes 1–3 depend on contact openings measured on **CPU**
-physics, and the run is MJWarp. Landing one of the four (say the
-`bilateral_contact_steps` seeding, which needs no measurement) while the other
-three wait would leave M0 measuring a state neither this report nor the config
-describes. Re-measure on MJWarp first; the fixes then follow from the numbers in
-one commit. Say the word and I will write them.
+Not applied: fixes 1–3. `configs/`, `cdpr_object_catalog.py` and
+`cdpr_batched_tasks.py` are untouched. They depend on contact openings measured
+on **CPU** physics while the run is MJWarp, so re-measure first; the three then
+follow from the numbers in one commit.
+
+Fix 4 was safe to land ahead of them precisely because it is inert without them —
+measured, not assumed: the as-configured arm is byte-identical before and after.
+It cannot move a training run on its own, and it cannot mask what M0 measures.

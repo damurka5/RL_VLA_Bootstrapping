@@ -2058,8 +2058,29 @@ class BatchedReverseFrontierResetter:
             grasp_eligible=(placement_task | pick_up_task).repeat_interleave(
                 group_size
             ),
-            bilateral_contact_steps=torch.zeros(
-                (worlds,), dtype=torch.int64, device=self.device
+            # Seeded to the persistence threshold on caught starts, NOT to zero.
+            # This reset also seeds physical_grasp=True, and _update_physical_grasp
+            # recomputes it from `bilateral_contact_steps >= _GRASP_PERSISTENCE_STEPS`
+            # -- so with a zero counter a start that is genuinely holding the
+            # object reads grasped=False for its first two env steps. On a
+            # placement episode, where target_has_settled is already true at the
+            # carried hover height, that is exactly enough for wrong_place_settled
+            # to fire on env step 1 of 64, with 46 N on one pad and 22 N on the
+            # other. Measured 2026-08-09; see CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md.
+            #
+            # The counter is only ever a floor: the first _update_physical_grasp
+            # resets it to zero for any world whose pads are NOT actually loaded,
+            # so this cannot manufacture a grasp that the physics does not
+            # support. It only stops the detector from denying one it does.
+            bilateral_contact_steps=torch.where(
+                caught,
+                torch.full(
+                    (worlds,),
+                    int(_GRASP_PERSISTENCE_STEPS),
+                    dtype=torch.int64,
+                    device=self.device,
+                ),
+                torch.zeros((worlds,), dtype=torch.int64, device=self.device),
             ),
             previous_relative_position=previous_relative_position,
             previous_relative_quaternion=previous_relative_quaternion,

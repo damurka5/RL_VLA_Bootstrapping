@@ -601,6 +601,86 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
                 self.assertTrue(bool((xy_distance >= 0.10).all().item()))
                 self.assertTrue(bool((reset.horizons >= 21).all().item()))
 
+    def test_a_caught_start_seeds_the_counter_that_reproduces_its_grasp(self):
+        """`physical_grasp=True` and a zero persistence counter contradict.
+
+        `_update_physical_grasp` recomputes `physical_grasp` from
+        `bilateral_contact_steps >= _GRASP_PERSISTENCE_STEPS`, so a reset that
+        seeds the flag but not the counter hands the detector a state it will
+        deny for the next two env steps. On a placement episode
+        `target_has_settled` is already true at the carried hover height, and
+        that denial is enough for `wrong_place_settled` to terminate the episode
+        on env step 1 of 64 with both pads loaded. Measured 2026-08-09.
+
+        Asserted as agreement between the two fields rather than against a
+        literal, so raising `_GRASP_PERSISTENCE_STEPS` cannot silently
+        reintroduce the gap.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            _GRASP_PERSISTENCE_STEPS,
+            BatchedReverseFrontierResetter,
+            RankLocalCurriculum,
+        )
+        from rl_vla_bootstrapping.policy.rank_local_grpo import (
+            RankLocalGroupLayout,
+        )
+
+        layout = RankLocalGroupLayout(
+            worlds_per_rank=8, groups_per_rank=1, group_size=8
+        )
+        metadata = {
+            "random_workspace_gripper_start": True,
+            "placement_start_with_caught_object": True,
+            "random_workspace_min_goal_xy_distance": 0.10,
+            "random_workspace_horizon_low": 21,
+            "random_workspace_horizon_high": 32,
+            "ee_workspace_x_bounds": [-0.28, 0.28],
+            "ee_workspace_y_bounds": [-0.28, 0.28],
+            "ee_workspace_z_bounds": [0.19, 0.32],
+        }
+        objects = (
+            "robocasa_apple",
+            "robocasa_banana",
+            "robocasa_plate",
+            "robocasa_bowl",
+        )
+        for instruction in ("put_into_plate", "put_into_bowl", "pick_up"):
+            with self.subTest(instruction=instruction):
+                backend = self._fake_backend(torch)
+                resetter = BatchedReverseFrontierResetter(
+                    backend=backend,
+                    layout=layout,
+                    curriculum=RankLocalCurriculum(device=backend.device),
+                    rank=0,
+                    base_seed=17,
+                    instruction_types=(instruction,),
+                    allowed_objects=objects,
+                    task_metadata=metadata,
+                )
+                reset = resetter.reset(update_index=0, round_index=0)
+                caught = reset.physical_grasp.to(dtype=torch.bool)
+                warmed = reset.bilateral_contact_steps >= int(
+                    _GRASP_PERSISTENCE_STEPS
+                )
+                self.assertTrue(bool(torch.equal(warmed, caught)))
+                # And nothing is warmed that was not seeded as holding: the
+                # counter is a floor for a real grasp, never a head start for a
+                # world that has to earn one.
+                self.assertTrue(
+                    bool(
+                        (reset.bilateral_contact_steps[~caught] == 0)
+                        .all()
+                        .item()
+                    )
+                )
+                if instruction == "pick_up":
+                    self.assertFalse(bool(caught.any().item()))
+                else:
+                    self.assertTrue(bool(caught.all().item()))
+
     def test_release_radius_wrong_drop_and_grasp_lift_rewards(self):
         import torch
 
