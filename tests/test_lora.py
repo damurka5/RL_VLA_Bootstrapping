@@ -238,3 +238,51 @@ class VisionTowerLoRATest(unittest.TestCase):
         self.assertEqual(args.lora_vision_name_contains, "vision_model")
         self.assertIn("out_proj", args.lora_vision_leaf_names)
         self.assertNotIn("o_proj,", args.lora_vision_leaf_names)
+
+    def test_the_pick_up_config_actually_enables_the_vision_tower(self):
+        """A 3.6M-step run was spent believing it was on when it was not.
+
+        The instruction was "add these two lines to the config by hand", the
+        lines never arrived, and the only symptom was vla_lora/vision_modules
+        sitting at 0 in a metric nobody thought to check. The flag belongs in
+        the config, and this is what keeps it there.
+        """
+
+        from pathlib import Path
+
+        import yaml
+
+        root = Path(__file__).resolve().parents[1]
+        raw = yaml.safe_load(
+            (
+                root
+                / "configs"
+                / "examples"
+                / "cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml"
+            ).read_text()
+        )
+
+        def find(node, key):
+            if isinstance(node, dict):
+                for name, value in node.items():
+                    if name == key:
+                        return value
+                    found = find(value, key)
+                    if found is not None:
+                        return found
+            return None
+
+        self.assertIs(find(raw, "train_vla_vision_lora"), True)
+        # The vision backward is the expensive part; 16 is the expert-only size.
+        self.assertLessEqual(int(find(raw, "vla_microbatch_size")), 8)
+
+    def test_the_startup_log_states_the_vision_status_either_way(self):
+        """Silence read as "it attached" once already."""
+
+        import inspect
+
+        from rl_vla_bootstrapping.policy import smolvla_grpo_mjwarp_cdpr as mod
+
+        source = inspect.getsource(mod)
+        self.assertIn("vision tower ADAPTED", source)
+        self.assertIn("vision tower NOT adapted", source)

@@ -1368,18 +1368,23 @@ def main(argv: Sequence[str] | None = None) -> None:
         lora_info: dict[str, float] = {}
         if train_vla_lora:
             lora_info = trainer.attach_vla_lora(runtime)
+            # State the vision-tower status either way. A 3.6M-step run was
+            # spent believing the tower was being adapted when the flag had not
+            # been set: the only symptom was vla_lora/vision_modules sitting at
+            # 0 in a metric nobody thought to check, because the log line only
+            # mentioned the tower when it HAD attached.
+            vision_modules = lora_info.get("vla_lora/vision_modules", 0.0)
+            vision_state = (
+                f"vision tower ADAPTED ({vision_modules:.0f} modules)"
+                if vision_modules > 0
+                else "vision tower NOT adapted (--train-vla-vision-lora is off)"
+            )
             _log(
                 dist_ctx,
                 "[smolvla-mjwarp] LoRA on action expert: "
-                f"{lora_info['vla_lora/modules']:.0f} modules"
-                + (
-                    f" + vision tower: "
-                    f"{lora_info.get('vla_lora/vision_modules', 0.0):.0f} modules"
-                    if lora_info.get("vla_lora/vision_modules", 0.0) > 0
-                    else ""
-                )
-                + f", {lora_info['vla_lora/trainable_params']:.0f} trainable "
-                "params",
+                f"{lora_info['vla_lora/modules']:.0f} modules; "
+                f"{vision_state}; "
+                f"{lora_info['vla_lora/trainable_params']:.0f} trainable params",
             )
         simulator_metadata = _runtime_metadata(args, backend)
         global_step = 0

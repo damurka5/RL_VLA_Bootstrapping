@@ -639,6 +639,23 @@ training:
       residual_scale: 1.0
       hidden_dim: 1024
       train_vla_lora: true
+      # Adapt the VLM's VISION tower, not just the action expert.
+      #
+      # Vision is load-bearing -- shuffling the residual's vision block across
+      # worlds takes success 0.053 -> 0.000 and ever-grasped 0.162 -> 0.035 --
+      # and coarse: the oracle ladder gives ever-grasped 0.74 at 2 cm of
+      # localization error and 0.40 at 5 cm, while the policy grasps 0.51 at a
+      # 5 cm cap and 0.16 at 13 cm, which puts its effective error at ~3-5 cm.
+      # Sharpening a coarse signal the policy already uses is the remaining
+      # lever; no reduction of that signal can help, which is what three
+      # projection experiments established.
+      #
+      # An experiment, not a fix: the gradient reaching the tower is one
+      # advantage per episode through a flow-matching expert, and vla_lora/kl
+      # has read ~1e-4 in every run. Judge it on policy_target_cosine_mean and
+      # physical_grasp_rate, and abandon it if vla_lora/kl does not move --
+      # that means the update is not reaching the tower.
+      train_vla_vision_lora: true
       lora_rank: 16
       lora_alpha: 32.0
       lora_dropout: 0.0
@@ -647,7 +664,9 @@ training:
       # ---------------------------------------------------------------------
       vla_lr: 1.0e-5
       vla_kl_coef: 0.1
-      vla_microbatch_size: 16
+      # 4, not 16: the vision LoRA adds a full backward through the tower on
+      # every update.
+      vla_microbatch_size: 4
       vla_update_max_records: 128
       include_wrist: true
       include_aux_camera: true
