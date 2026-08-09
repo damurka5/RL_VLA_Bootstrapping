@@ -183,6 +183,12 @@ DEFAULT_PLANT_SWEEP = (
 # decodable needs sigma around 0.5 m. Without arms down there the ladder cannot
 # say whether 0.07 is survivable; it would only show the comfortable end.
 DEFAULT_LOCALIZATION_ERRORS = (0.02, 0.05, 0.10, 0.20, 0.35, 0.60)
+# Receptacle-position error stds for the oracle_place ladder, in metres. The
+# question this phase exists to answer is whether the encoder's measured 3-5 cm
+# clears a 0.091 m (plate) / 0.057 m (bowl) radius, so the rungs bracket that
+# band rather than the workspace: 0.03 and 0.05 straddle the encoder's own
+# range, 0.08 is the first rung where even the plate should fail.
+DEFAULT_PLACEMENT_ERRORS = (0.01, 0.02, 0.03, 0.05, 0.08)
 
 
 # --------------------------------------------------------------------------
@@ -210,6 +216,9 @@ class _World:
     action_step_xyz: float = 0.015
     action_step_gripper: float = 0.05
     fitted_gripper: Any = None
+    plate_release_height: float = 0.045
+    bowl_release_height: float = 0.10
+    bowl_instruction_id: int = -1
 
 
 def _load_checkpoint(path: Path) -> dict[str, Any]:
@@ -294,6 +303,9 @@ def _build_world(
         BatchedReverseFrontierResetter,
         RankLocalCurriculum,
         RankLocalMJWarpGRPOCollector,
+    )
+    from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+        INSTRUCTION_TO_ID,
     )
     from rl_vla_bootstrapping.policy.rank_local_grpo import RankLocalGroupLayout
     from rl_vla_bootstrapping.simulation.cdpr_backend import (
@@ -440,6 +452,15 @@ def _build_world(
         fitted_gripper=torch.tensor(
             _FITTED_GRIPPER, dtype=torch.float32, device=device
         ),
+        # Read from the same metadata the reward reads, so the placement arm's
+        # hover point cannot drift from the one the dense term rewards.
+        plate_release_height=float(
+            task_metadata.get("put_plate_release_height", 0.045)
+        ),
+        bowl_release_height=float(
+            task_metadata.get("put_bowl_release_height", 0.10)
+        ),
+        bowl_instruction_id=int(INSTRUCTION_TO_ID["put_into_bowl"]),
     )
     if not load_policy:
         return world
@@ -810,6 +831,15 @@ class _ArmRunner:
         # Per-episode localization error, drawn on first use and cleared at each
         # reset. See _make_oracle_xy_source for why it is not per-decision.
         self.position_error: Any = None
+        # Placement arms only: a once-per-episode latch, so the release is
+        # committed rather than re-opened and re-closed as the servo drifts.
+        self.releasing: Any = None
+        # What the arm is aiming at, when that is NOT the target object. For
+        # placement the target rides the gripper, so a cosine against it is a
+        # cosine against ~(0, 0, -0.0075) -- pure noise that would read as an
+        # aiming metric. The placement sources publish the receptacle hover
+        # here so `_command_cosine` scores the direction that matters.
+        self.goal_xyz: Any = None
         self.horizon_decisions = 0
         self.world_success: Any = None
         self._original_action = None
@@ -852,6 +882,8 @@ class _ArmRunner:
                 dtype=torch.bool,
                 device=self.world.device,
             )
+            self.releasing = torch.zeros_like(self.ever_grasped)
+            self.goal_xyz = None
             # The rollout budget is coupled to the approach-curriculum cap, so a
             # scripted arm that runs out of steps and one that cannot do the
             # task look identical in the success column. Recorded so they can be
@@ -938,6 +970,9 @@ class _ArmRunner:
                 ),
                 "ee_xyz": host(low_dim.ee_position),
                 "target_xyz": host(target),
+                "goal_xyz": host(
+                    target if self.goal_xyz is None else self.goal_xyz
+                ),
                 "gripper_opening": host(low_dim.gripper_opening),
                 # Action index 0 of each chunk only: that is the decision the
                 # campaign's cosine metrics are taken at, and keeping the whole
@@ -1224,6 +1259,124 @@ def _make_full_oracle_source(
     return source
 
 
+def _placement_hover(world: _World, runner: "_ArmRunner", low_dim: Any) -> Any:
+    """The point the placement reward's dense term pulls toward.
+
+    Reproduces `evaluate_active_sparse_tasks`'s own construction rather than
+    re-deriving it: receptacle XY, receptacle Z plus this instruction's release
+    height, plus the grasp offset because `ee_position` tracks a body riding
+    that far above the pads. Getting the offset wrong here would put the hover
+    a whole gripper-length low -- the same mistake the reward carried until
+    `catch_release_distance_include_z` was added.
+    """
+
+    torch = world.torch
+    task_state = runner.reset.task_state
+    rows = torch.arange(
+        low_dim.object_positions.shape[0], device=world.device
+    )
+    reference = low_dim.object_positions[
+        rows, task_state.reference_slots.clamp_min(0)
+    ]
+    is_bowl = task_state.instruction_ids.to(torch.int64) == int(
+        world.bowl_instruction_id
+    )
+    release_height = torch.where(
+        is_bowl,
+        torch.full_like(reference[:, 2], float(world.bowl_release_height)),
+        torch.full_like(reference[:, 2], float(world.plate_release_height)),
+    )
+    hover = reference.clone()
+    hover[:, 2] = reference[:, 2] + release_height + float(world.grasp_offset)
+    return hover
+
+
+def _make_placement_oracle_source(
+    world: _World,
+    *,
+    position_error_std: float = 0.0,
+    max_command: float = 1.0,
+    align_tolerance: float = 0.010,
+) -> Callable[..., Any]:
+    """Servo the HELD object to the receptacle hover point, then open.
+
+    The placement counterpart of ``_make_full_oracle_source``. Two things make
+    it a different arm rather than a parameterisation of that one:
+
+    * the goal is the RECEPTACLE (``reference_slots``), not the target object.
+      The target rides the gripper, so its position is proprioception and
+      handing it over would price nothing;
+    * the terminal action is an OPEN, and it has to be a committed one. The
+      object leaves the pads well below the reward's release threshold, so an
+      oracle that opens one increment and waits reproduces the wrong-drop race
+      instead of measuring past it.
+
+    ``position_error_std`` corrupts the handed-over RECEPTACLE position, drawn
+    once per episode and held -- see ``_make_oracle_xy_source`` for why it is
+    not resampled per decision.
+    """
+
+    torch = world.torch
+
+    def source(
+        *, runner: "_ArmRunner", chunk: Any, low_dim: Any, **_: Any
+    ) -> Any:
+        step = float(world.action_step_xyz)
+        hover = _placement_hover(world, runner, low_dim)
+        # The TRUE hover, published before any corruption: the ladder's whole
+        # purpose is to score the commanded action against the direction that
+        # was actually correct, not against the one the arm believed.
+        runner.goal_xyz = hover
+        if position_error_std > 0.0:
+            if runner.position_error is None:
+                runner.position_error = torch.randn(
+                    hover.shape,
+                    dtype=hover.dtype,
+                    device=hover.device,
+                    generator=runner._rng,
+                ) * float(position_error_std)
+            # Z is corrupted too. A feature that localizes the receptacle badly
+            # is not selectively right about its height, and leaving Z exact
+            # would price the error as more survivable than it is.
+            hover = hover + runner.position_error
+
+        err = hover - low_dim.ee_position
+        aligned = torch.linalg.vector_norm(err[:, :2], dim=-1) < float(
+            align_tolerance
+        )
+        # Latch: once the open has begun it does not stop, even if the servo
+        # drifts back out of tolerance. Re-closing mid-release is what turns a
+        # correct placement into a hover, and the arm exists to measure the
+        # release.
+        runner.releasing = aligned | runner.releasing
+
+        a_xy = _servo_xy(err[:, :2], step, torch, max_command=max_command)
+        # z is not capped by max_command for the same reason the grasp oracle
+        # does not cap it: that cap guards the cable-singularity regime against
+        # sustained LATERAL commands.
+        a_z = torch.clamp(err[:, 2] / step, -1.0, 1.0)
+        # Hold station while releasing rather than chasing the hover point --
+        # the object is leaving, and lateral motion during the drop is what
+        # puts it outside the radius.
+        a_xy = torch.where(runner.releasing[:, None], torch.zeros_like(a_xy), a_xy)
+        a_z = torch.where(runner.releasing, torch.zeros_like(a_z), a_z)
+        a_grip = torch.where(
+            runner.releasing,
+            torch.ones_like(a_z),
+            -torch.ones_like(a_z),
+        )
+
+        out = torch.zeros_like(chunk)
+        out[:, :, 0] = a_xy[:, None, 0]
+        out[:, :, 1] = a_xy[:, None, 1]
+        out[:, :, 2] = a_z[:, None]
+        out[:, :, 3] = 0.0
+        out[:, :, 4] = a_grip[:, None]
+        return out
+
+    return source
+
+
 # --------------------------------------------------------------------------
 # Leg B analysis
 # --------------------------------------------------------------------------
@@ -1246,11 +1399,21 @@ def _command_cosine(trace: _Trace) -> dict[str, float]:
 
     ee = trace.stack("ee_xyz")
     target = trace.stack("target_xyz")
+    goal = trace.stack("goal_xyz")
     commanded = trace.stack("commanded0")
     holding = trace.stack("holding") > 0.5
 
-    rel = (target - ee)[..., :2]
-    usable = (~holding) & (np.linalg.norm(rel, axis=-1) > 0.005)
+    rel = (goal - ee)[..., :2]
+    # The `~holding` gate exists because for an APPROACH the steps after the
+    # grasp are transport, not aiming, and pooling them makes the cosine read
+    # the lift. When the goal is not the target object -- placement, where the
+    # object rides the gripper and the receptacle is what is being aimed at --
+    # holding is the normal state and gating on it would discard every usable
+    # step. Detected from the trace rather than passed in, so an arm cannot be
+    # scored under the wrong convention by being wired up wrongly.
+    goal_is_target = bool(np.allclose(goal, target))
+    free = ~holding if goal_is_target else np.ones_like(holding)
+    usable = free & (np.linalg.norm(rel, axis=-1) > 0.005)
     if not usable.any():
         return {"command_cosine": float("nan"), "command_cosine_decision0": float("nan")}
     cosines = _cosine(commanded[..., :2], rel)
@@ -1699,10 +1862,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         "--legs",
         default="plant,policy,oracle",
         help=(
-            "Comma-separated subset of plant,policy,oracle,ablation. "
-            "`ablation` destroys the residual's vision input -- shuffled "
-            "across worlds, and zeroed -- to test whether the policy's aim "
-            "comes from vision at all."
+            "Comma-separated subset of plant,policy,oracle,ablation,"
+            "placement. `ablation` destroys the residual's vision input -- "
+            "shuffled across worlds, and zeroed -- to test whether the "
+            "policy's aim comes from vision at all. `placement` is the "
+            "put_into_plate/put_into_bowl counterpart of `oracle`: it hands "
+            "over the RECEPTACLE position and prices how accurately it has to "
+            "be known. Run it on a placement config -- on a pick_up config "
+            "every episode is a pick_up and the arm servos to a receptacle "
+            "slot that is not the goal."
         ),
     )
     parser.add_argument(
@@ -1729,6 +1897,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         nargs="*",
         default=list(DEFAULT_LOCALIZATION_ERRORS),
         help="Object-position error stds (m) for the oracle_xy pricing arms.",
+    )
+    parser.add_argument(
+        "--placement-errors",
+        type=float,
+        nargs="*",
+        default=list(DEFAULT_PLACEMENT_ERRORS),
+        help=(
+            "Receptacle-position error stds (m) for the oracle_place ladder. "
+            "Deliberately a finer, shorter ladder than --localization-errors: "
+            "the success radii are 0.091 (plate) and 0.057 (bowl), so the "
+            "question is where between 1 and 8 cm the curve breaks, and arms "
+            "out at 0.35 m would only confirm that half a metre is too much."
+        ),
     )
     parser.add_argument(
         "--skip-full-oracle",
@@ -1785,7 +1966,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     legs = {name.strip() for name in str(args.legs).split(",") if name.strip()}
-    unknown = legs.difference({"plant", "policy", "oracle", "ablation"})
+    unknown = legs.difference(
+        {"plant", "policy", "oracle", "ablation", "placement"}
+    )
     if unknown:
         parser.error(f"Unknown legs: {sorted(unknown)}")
     if args.worlds % args.group_size:
@@ -1803,7 +1986,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     start_cap = args.start_distance_cap
     if start_cap is not None and (start_cap <= 0.0 or start_cap == float("inf")):
         start_cap = float("inf")
-    needs_policy = bool(legs & {"policy", "oracle", "ablation"})
+    needs_policy = bool(legs & {"policy", "oracle", "ablation", "placement"})
     world = _build_world(
         checkpoint=checkpoint,
         config_path=config_path,
@@ -1891,6 +2074,30 @@ def main(argv: Sequence[str] | None = None) -> int:
                         None,
                     )
                 )
+        if "placement" in legs:
+            servo_cap = float(args.servo_max_command)
+            # The ceiling arm first, then the ladder. `oracle_place` at or near
+            # zero means the ladder measures nothing, because every rung of it
+            # is this arm plus noise -- read it before reading anything else.
+            arms.append(
+                (
+                    "oracle_place",
+                    _make_placement_oracle_source(world, max_command=servo_cap),
+                    None,
+                )
+            )
+            for error in args.placement_errors:
+                arms.append(
+                    (
+                        f"oracle_place_err_{float(error):.02f}m",
+                        _make_placement_oracle_source(
+                            world,
+                            position_error_std=float(error),
+                            max_command=servo_cap,
+                        ),
+                        None,
+                    )
+                )
 
         for index, (name, source, transform) in enumerate(arms):
             print(f"[xy-probe] arm {name}", flush=True)
@@ -1942,7 +2149,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report_plant(plant_rows, steps=int(args.plant_steps))
     if policy_metrics is not None and "policy" in legs:
         _report_policy(policy_metrics)
-    if arm_rows and bool(legs & {"oracle", "ablation"}):
+    if arm_rows and bool(legs & {"oracle", "ablation", "placement"}):
         _report_arms(arm_rows)
         _report_timing(timing_rows)
 
