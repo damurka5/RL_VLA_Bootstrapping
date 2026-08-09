@@ -57,42 +57,49 @@ no-op. Fixed in `80f6c35`.
 
 ## 2. Where it stands
 
+Phase 1 is **paused, not solved.** The limit is measured and it is the frozen
+encoder's spatial resolution; §4.12-§4.16 record how that was established and
+the three interventions that failed against it.
+
 | | move-to | pick-up |
 |---|---:|---:|
-| steps | 28M (complete) | ~52M over 16 runs, running |
-| best validation success | 7.3% (at 7.4M) | 1.2% |
-| `validation/reward_mean` | — | 0.16 |
-| **success \| pre-grasped** | — | **0.83 held** (`split_credit`) |
-| success \| normal start | — | 0.21 at the 5 cm cap |
-| `post_grasp_action_z_mean` | — | **+0.33**, above the +0.30 lift threshold |
-| `post_grasp_rise` (pre-grasped) | — | 44–48 mm against a 50 mm bar |
-| deterministic validation | — | **0.001**, and 0.40 m *horizontally* from the object |
-| validation final / min ee_z | — | 0.201 / 0.174 m — height is correct |
-| curriculum cap | reached 0.23 | 0.05 |
+| steps | 28M (complete) | ~70M over 20 runs, paused |
+| curriculum cap | reached 0.23 | **0.10**, demotes above it |
+| ever-grasped, normal start @ 0.10 | — | 0.27 |
+| success, normal start @ 0.10 | — | 0.09 |
+| deterministic validation @ 0.10 | — | 0.11-0.14 |
+| **success \| pre-grasped** | — | **0.83** |
+| `policy_target_cosine_mean` | — | **0.107**, flat over 2.9M steps |
+| handed a perfect object XY | — | **ever-grasped 0.49 -> 0.92** |
 
-The pre-grasped lift is solved as far as sampled success goes, and §4.9 explains
-why it took so long: the loaded z axis is dead-zoned below `a_z ≈ 0.2`, and
-per-step Gaussian noise explores sustained bias with std `sigma/sqrt(N)`, so the
-lifting region sat 3.3 sigma out. Correcting the exploration estimator raised
-`post_grasp_action_z_mean` for the first time in the campaign.
+**The one-line diagnosis.** The policy can descend, close and lift; it cannot
+localize the object well enough to get there. Handing it the true object XY takes
+ever-grasped from 0.49 to 0.92, and the oracle ladder prices the task at ~2 cm of
+localization error (0.74 ever-grasped at 2 cm, 0.40 at 5 cm). The frozen SmolVLA
+encoder supplies roughly **3-5 cm**. That is enough to work from a 5 cm start and
+not from 13 cm, which is exactly where the curriculum stalls.
 
-Splitting the GRPO return at the latch (§4.10) then recovered the approach the
-lift work had cost, without giving the lift back — the first time both phases
-hold at once, and a stable plateau rather than a peak. On the full task it is a
-wash against the baseline: normal-start success 0.206 against 0.202, ever-grasped
-0.226 against 0.234.
+**Three ways of attacking it have now failed, and each failed informatively.**
 
-**Which is the finding.** Deterministic validation has read 0.000–0.012 all
-campaign, and the metric beside it says why: the policy ends every validation
-episode **0.40 m from the grasp point**, from a start capped at 5 cm. Direct
-measurement (`95b4759`) shows the height is **correct** — it ends at 0.2006 m,
-descends to 0.174 m, and not one episode of 1024 finishes near the ceiling — so
-**all 0.40 m of the miss is horizontal**. The Z arc is finished; the policy
-reaches the right height, descends and lifts. **What it cannot do is localize the
-object in XY**: `policy_target_cosine_mean` is 0.11 and the frozen prior's is
-0.05, both 2-D XY cosines against the direction to the object. Every success is
-exploration noise finding an object already within 5 cm, which is why the cap has
-never left 0.05 m. §4.10 has the decomposition.
+1. **Better reductions of the feature.** `per_token_random` measured +0.389
+   direction cosine against `flat_random`'s +0.090 and was expected to be the
+   fix. Swapping to it destroyed the policy twice; adding it alongside, zero-
+   initialised so step 0 was provably unchanged, ran 5.2M steps and left the
+   aiming cosine where `flat_random` had it. A better reduction of a coarse
+   signal is still coarse (§4.15).
+2. **Adapting the encoder with RL.** LoRA on the VLM vision tower attached (48
+   modules) and moved (`vla_lora/kl` 3.7e-5 -> 1.16e-4), and the policy got
+   steadily WORSE as it moved -- the first curriculum demotion of the campaign
+   (§4.16).
+3. **Everything downstream.** The plant, the reward, the credit assignment, the
+   horizon, the promote gate and a third of the gradient that was rollout noise
+   were each found and fixed (§4.13). They moved the cap from 0.05 to 0.10 and
+   then stopped mattering.
+
+**What is NOT the problem**, each measured rather than argued: the XY plant (gain
+0.44-0.54, flat, symmetric, no dead zone), the grasp detector, grasp-state
+observability, the reward ladder, and the vision feature being *absent* --
+ablating it takes success to zero, so it is load-bearing and merely coarse.
 
 ### Step accounting
 
@@ -854,6 +861,59 @@ is damage to descend/close/lift and not to vision at all. Adding columns removes
 nothing and is the only safe form.
 
 
+### 4.16 · RL degrades the encoder rather than sharpening it
+
+The last intervention against the resolution limit, and the clearest negative in
+the campaign because the thing being tested demonstrably ran.
+
+`--train-vla-vision-lora` attached **48 modules** in the VLM vision tower
+(trainable params 3.42M -> 4.60M) and the adapter MOVED: `vla_lora/kl` rose
+3.7e-5 -> 4.9e-5 -> 7.4e-5 -> 1.16e-4 across quarters, against ~1e-4 flat in
+every prior run. So this is not another silent no-op.
+
+Against the immediately preceding run, same config otherwise:
+
+| | baseline | + vision LoRA |
+|---|---:|---:|
+| gate rate @ cap 0.10 | 0.268 | **0.150** |
+| normal-start success @ 0.10 | 0.092 | **0.038** |
+| validation @ 0.10 | 0.108-0.136 | **0.141 -> 0.026** |
+| cap | climbed to 0.10, held | climbed to 0.10, **demoted to 0.08** |
+
+And the aim fell monotonically as the adapter moved:
+
+```
+policy_target_cosine     LoRA  +0.1110  +0.0863  +0.0832  +0.0741
+                         base  +0.1147  +0.1041  +0.1110  +0.1064
+residual_target_cosine   LoRA  +0.0494  +0.0382  +0.0377  +0.0219
+                         base  +0.0587  +0.0641  +0.0641  +0.0530
+```
+
+**The mechanism is the one that broke the pooling swaps, running continuously.**
+The vision tower feeds BOTH the frozen prior and the residual's vision feature,
+so every LoRA step perturbs the residual's input distribution *and* the prior it
+adds to at the same time, and the residual's learned mapping decays underneath
+it. Nothing restrains that: `vla_kl_coef` constrains the ACTION -- and by that
+measure the prior looks stable, KL ~1e-4 -- while the FEATURE has no constraint
+at all. `prior_action_norm_mean` drifted 1.61 -> 1.94 against the baseline's
+1.59 -> 1.67, so the prior was inflating even while its KL read small.
+
+One advantage scalar per episode, routed through a flow-matching action expert,
+is a poor teacher for a representation. That is why VLA fine-tuning uses dense
+supervision, and it is the argument for self-imitation in §6.
+
+**What went right:** the curriculum DEMOTED, 0.10 -> 0.08, for the first time in
+the campaign. It detected the regression and backed off instead of sitting at a
+rung it could not hold -- the grasp-rate gate and the promote dwell from §4.13
+working as intended.
+
+**Untested variant, deliberately not run:** a KL or L2 penalty on the connector
+OUTPUT against the frozen reference, which is the one change that addresses the
+mechanism above rather than its symptoms. It was not attempted because a third
+try at the same lever without new evidence is the pattern this campaign has paid
+for repeatedly.
+
+
 ---
 
 ## 5. Eliminated, with evidence
@@ -885,24 +945,38 @@ path. It is simply not this bug, at ~7% of groups.
 
 ## 6. Open
 
-**The encoder is the remaining lever, and it is an experiment.** Vision is
-load-bearing (§4.15) and coarse; the task needs ~2 cm (§4.14). LoRA on the VLM's
-vision tower (`--train-vla-vision-lora`) is the only change identified that acts
-on that, and it is a long shot on RL gradient alone: the signal reaching the
-tower is one advantage per episode through a flow-matching expert, and
-`vla_lora/kl` has read ~0.0001 in every run, meaning even the action-expert
-adapter barely moves. Judge it on `cos@d0` and ever-grasped, and abandon it if
-`vla_lora/kl` stays at 0.0001 -- that means the update is not reaching the tower
-and nothing else about the run signifies.
+**~~The encoder is the remaining lever~~ — TRIED, and it made things worse.**
+See §4.16. LoRA on the vision tower attached and moved, and the policy degraded
+monotonically as it did. RL's scalar advantage is not a teacher a representation
+can learn from, and the tower feeds the prior and the residual's feature at once
+so adapting it moves the ground under both.
 
-**Self-imitation is the structure that could make the encoder learnable.** RL's
-scalar reward is a poor teacher for a representation; dense per-step supervision
-is what VLA fine-tuning uses, and the policy's own successful episodes are a
-source of it that needs no demonstrations. Before building it, check it has a
-seed: `tools/audit/success_episode_videos.py` compares the aiming cosine of
-successes against failures within start-distance quartiles. Note the trap
+**The resolution limit stands, unsolved.** ~3-5 cm available against ~2 cm
+needed. Everything downstream of it has been measured and fixed; nothing
+downstream can close it.
+
+**Self-imitation is the remaining structure.** RL's scalar reward is a poor
+teacher for a representation -- §4.16 is that stated as a measurement -- while
+dense per-step supervision is what VLA fine-tuning uses, and the policy's own
+successful episodes are a source of it that needs no demonstrations. Before
+building it, check it has a seed: `tools/audit/success_episode_videos.py`
+compares the aiming cosine of successes against failures within start-distance
+quartiles, on a checkpoint at a cap where far starts exist. Note the trap
 recorded there -- that comparison alone cannot prove aiming, because selecting on
-success selects on alignment.
+success selects on alignment for any policy, including a blind one.
+
+**A feature-space constraint is the untried variant.** A KL or L2 penalty on the
+connector output against the frozen reference addresses §4.16's mechanism
+directly. Not attempted: a third try at the same lever without new evidence is
+the pattern this campaign has paid for.
+
+**Phase 2 (`put_into_plate` / `put_into_bowl`) starts from a different premise.**
+It begins with the object already held, so it does not need the localization
+phase 1 is blocked on -- it needs the gripper carried to a receptacle whose
+position has the same encoding problem, but with a much larger success radius
+(plate 0.091 m, bowl 0.057 m against pick_up's ~2 cm). Whether ~3-5 cm of
+localization suffices at a 9 cm radius is the question that phase answers, and it
+is a genuinely different one.
 
 
 **~~`log_std_mean` is exactly −1.19375~~ — RESOLVED, see §1.** The parameter was
