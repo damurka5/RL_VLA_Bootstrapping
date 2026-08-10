@@ -63,6 +63,20 @@ class ObjectVariant:
     mass: float
     inertia: tuple[float, float, float]
     rest_height: float
+    # The gripper opening at which the pads FIRST make bilateral contact with
+    # this object, measured on MJWarp by closing on a pad-centred body until the
+    # physics reports contact (2026-08-10; see
+    # CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md). It is not a mesh-bounds
+    # number, and the earlier values -- which were -- overstated it by 0.15-0.33
+    # on every catalog. Two things derive from it and both broke: the
+    # caught-object reset seats the fingers at `fitted - 0.033`, which held
+    # nothing, and the reward's release test is `max(0.55, fitted + 0.04)`,
+    # which for the orange sat 0.37 above the opening where the object actually
+    # leaves the pads -- more than the ~0.30 the gripper can travel before the
+    # object settles, so a placement 1.2 mm from the bowl centre scored as a
+    # wrong drop. Re-measure with
+    # `render_cdpr_task_reference_episodes.py --reseat-held-object` if the
+    # gripper or the meshes change; do not derive it from geometry.
     fitted_gripper_opening: float
     primitives: tuple[PrimitiveSpec, ...]
 
@@ -96,7 +110,7 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         mass=0.12,
         inertia=(0.0000874, 0.0000900, 0.0000794),
         rest_height=0.03456,
-        fitted_gripper_opening=0.785,
+        fitted_gripper_opening=0.632,
         primitives=(PrimitiveSpec("sphere_0", (0.0345, 0.0, 0.0)),),
     ),
     "robocasa_banana": ObjectVariant(
@@ -113,7 +127,7 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         mass=0.12,
         inertia=(0.000090, 0.000368, 0.000370),
         rest_height=0.03908,
-        fitted_gripper_opening=0.368,
+        fitted_gripper_opening=0.315,
         primitives=(
             PrimitiveSpec(
                 "box_0",
@@ -187,7 +201,7 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         mass=0.10,
         inertia=(0.000040, 0.000040, 0.000040),
         rest_height=0.02814,
-        fitted_gripper_opening=0.685,
+        fitted_gripper_opening=0.432,
         primitives=(PrimitiveSpec("sphere_0", (0.029, 0.0, 0.0)),),
     ),
     "robocasa_orange": ObjectVariant(
@@ -204,7 +218,7 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         mass=0.13,
         inertia=(0.000050, 0.000050, 0.000050),
         rest_height=0.02783,
-        fitted_gripper_opening=0.768,
+        fitted_gripper_opening=0.435,
         primitives=(PrimitiveSpec("sphere_0", (0.029, 0.0, 0.0)),),
     ),
     "robocasa_potato": ObjectVariant(
@@ -221,7 +235,7 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         mass=0.15,
         inertia=(0.000197, 0.0000962, 0.000191),
         rest_height=0.03208,
-        fitted_gripper_opening=0.602,
+        fitted_gripper_opening=0.449,
         primitives=(
             PrimitiveSpec(
                 "capsule_0",
@@ -244,7 +258,7 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
         mass=0.22,
         inertia=(0.000343, 0.000269, 0.000471),
         rest_height=0.04520,
-        fitted_gripper_opening=0.80,
+        fitted_gripper_opening=0.747,
         primitives=(
             PrimitiveSpec("cylinder_0", (0.038, 0.045, 0.0)),
             PrimitiveSpec("capsule_0", (0.006, 0.018, 0.0), (0.047, 0.0, 0.0)),

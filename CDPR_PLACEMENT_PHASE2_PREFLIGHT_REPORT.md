@@ -289,6 +289,66 @@ numbers are CPU-physics and the run is MJWarp:
    instruction's tolerance. Without this the first curriculum rung is vacuous
    and every placement success number is the reset's, not the policy's.
 
+## Fixes 1, 3 and 6 applied — and what M0 says afterwards
+
+`fitted_gripper_opening` re-measured on **MJWarp** and written into the catalog;
+`put_plate_release_height` 0.045 → 0.10; per-instruction first rung
+(`random_workspace_start_distance_initial_by_instruction`: bowl 0.12, plate
+0.15), honoured by both the trainer and the reference harness.
+
+**Fix 2 turned out to be unnecessary and was not made.** I proposed decoupling
+the release threshold and dropping the hard 0.55 floor. Deriving it from the
+corrected constant is enough on its own: the threshold is
+`max(0.55, fitted + 0.04)` and the seeded opening is `fitted − 0.033`, so both
+move together. Against the measured contact openings the gap between the
+threshold and the opening at which the object leaves the pads is now
+0.040–0.235 — all inside the ~0.30 the gripper travels before the object
+settles — and `released` is false at t=0 for every catalog. One constant per
+catalog, no reward change. Smaller diff than advertised.
+
+The MJWarp sweep also **corrects a claim in this report.** I wrote that the
+wrong-drop race is "lost by arithmetic ... which is all six". That was measured
+on CPU and over-generalised. On MJWarp, with only the seating repaired and the
+production thresholds untouched, apple, potato and tomato already **succeed**
+(reward 3.478–3.479) and only the orange loses the race — its gap was 0.373
+against a ~0.30 budget, while tomato's 0.293 squeaks in. The mechanism was
+right; "all six" was not. Contact openings agreed CPU-to-MJWarp within 0.04,
+which is what flipped tomato across the line.
+
+### M0, and the two things still in the way
+
+| arm | old 0.03 cap | honest per-instruction cap |
+|---|---|---|
+| as configured | **4/8** (was 0/6) | **0/8** |
+| `--reseat-held-object` | — | 1/8, and the failure mode changes |
+
+Raising the first rung to a real start distance costs everything. That is not a
+regression, it is the first honest measurement — at 0.03 the traverse was ~3 cm
+and the task was mostly the reset. Two separate causes, separated by the reseat
+arm:
+
+**(a) The seeded grip does not survive a real carry.** At the honest cap all
+eight episodes take the wrong-drop penalty, and most drop *mid-traverse* with
+the object still 0.08–0.14 m from the receptacle. Reseating — 0.007 more
+squeeze (`contact − 0.04` rather than `contact − 0.033`) plus a settle step —
+stops the dropping outright: tomato and orange then carry the object to the end
+of the budget. So this is a constant, `_GRASP_SQUEEZE = 0.001/0.03`, not a
+design problem. It was invisible at a 3 cm traverse and only appears over 20–40
+steps of transport. **Not changed here**: the same constant seeds pick_up's
+pre-grasped stage, so it is a judgement call rather than a measurement.
+
+**(b) Once the grip holds, the horizon binds.** The reseat arm's plate episodes
+run to 88/88 env steps without finishing; the one success (bowl, tomato) needs
+**66**. At a realized XY gain of ~0.0075 m/step a 0.15 m traverse is ~20 env
+steps before the raise, descend, open and settle are paid. The coupled horizon
+gives 84–88 here. The margin is thin, and the scripted oracle is deliberately
+slow (damped servo, settles at every phase), so a policy could be faster — but
+this is exactly what M1 exists to price, and it should be read before assuming
+so.
+
+**Do not launch on this.** The oracle is 0/8 at the start distribution training
+would use.
+
 ## The measurement plan, pre-registered
 
 Once 1–4 land, run these **in this order**. Each states what it shows and what

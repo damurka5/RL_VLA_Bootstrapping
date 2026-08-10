@@ -1399,7 +1399,12 @@ def _command_cosine(trace: _Trace) -> dict[str, float]:
 
     ee = trace.stack("ee_xyz")
     target = trace.stack("target_xyz")
-    goal = trace.stack("goal_xyz")
+    # A trace without a goal is a grasp-arm trace: the goal IS the target.
+    goal = (
+        trace.stack("goal_xyz")
+        if trace.rows and "goal_xyz" in trace.rows[0]
+        else target
+    )
     commanded = trace.stack("commanded0")
     holding = trace.stack("holding") > 0.5
 

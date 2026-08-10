@@ -990,9 +990,59 @@ class PerInstructionApproachCurriculum:
     ) -> None:
         names = tuple(instruction_types) or (ACTIVE_INSTRUCTION_TYPES[0],)
         self.instruction_names = names
-        self._by_name = {
-            name: ApproachDistanceCurriculum(metadata) for name in names
-        }
+        # Per-instruction FIRST RUNG. The cap is a distance from the goal, and
+        # the goal's success radius is not the same size for every instruction:
+        # pick_up's grasp tolerance is ~0.02 m, put_into_bowl's radius is 0.057
+        # and put_into_plate's is 0.091. A shared initial of 0.03 is therefore a
+        # real approach for pick_up and is INSIDE THE TARGET for both placement
+        # tasks -- measured realized start-to-hover distance 0.0245-0.0300 m,
+        # so the first rung was solved by opening the gripper. A run launched
+        # against it reported success=144/1024 after a single gradient step.
+        #
+        # Left alone it does not merely waste the rung: the per-instruction gate
+        # promotes on that free success rate, so the caps climb past the radius
+        # and the rate then FALLS -- surfacing millions of steps later as a
+        # regression rather than as the first honest measurement.
+        #
+        # An instruction absent from the map keeps the shared initial.
+        raw_initials = metadata.get(
+            "random_workspace_start_distance_initial_by_instruction"
+        )
+        initials: dict[str, float] = {}
+        if isinstance(raw_initials, Mapping):
+            for key, value in raw_initials.items():
+                try:
+                    initials[str(key)] = max(float(value), 0.0)
+                except (TypeError, ValueError):
+                    continue
+        self._by_name = {}
+        for name in names:
+            override = initials.get(name)
+            if override is None:
+                self._by_name[name] = ApproachDistanceCurriculum(metadata)
+                continue
+            scoped = dict(metadata)
+            scoped["random_workspace_start_distance_initial"] = override
+            # An explicit ladder outranks initial/final/increment inside
+            # ApproachDistanceCurriculum, so overriding the initial alone would
+            # be a silent no-op whenever a ladder is configured. Clip the ladder
+            # from below instead, so the override means the same thing either
+            # way.
+            ladder = scoped.get("random_workspace_start_distance_ladder")
+            if isinstance(ladder, (list, tuple)):
+                kept: list[float] = []
+                for rung in ladder:
+                    try:
+                        rung = float(rung)
+                    except (TypeError, ValueError):
+                        kept = []
+                        break
+                    if rung >= override:
+                        kept.append(rung)
+                scoped["random_workspace_start_distance_ladder"] = (
+                    [override, *kept] if kept else []
+                )
+            self._by_name[name] = ApproachDistanceCurriculum(scoped)
 
     @property
     def enabled(self) -> bool:

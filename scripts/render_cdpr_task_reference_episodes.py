@@ -1348,6 +1348,28 @@ def main() -> int:
     if cap is None:
         cap = float(metadata.get("random_workspace_start_distance_initial", 0.03))
 
+    # The trainer's first rung is PER INSTRUCTION
+    # (PerInstructionApproachCurriculum), because a cap is a distance from the
+    # goal and the success radii differ by instruction -- 0.02 m of grasp
+    # tolerance for pick_up against 0.057/0.091 m for the receptacles. Reading
+    # only the shared scalar here would start this check inside the placement
+    # radius while training starts outside it, so the oracle would be scored on
+    # a strictly easier task than the run. That is exactly the shape of the bug
+    # that made validation measure a different task for 52M steps; do not
+    # collapse this back to one number.
+    raw_by_instruction = (
+        metadata.get("random_workspace_start_distance_initial_by_instruction")
+        or {}
+    )
+
+    def cap_for(instruction_type: str) -> float:
+        if args.start_distance_cap is not None:
+            return float(args.start_distance_cap)
+        try:
+            return max(float(raw_by_instruction[instruction_type]), 0.0)
+        except (KeyError, TypeError, ValueError):
+            return float(cap)
+
     output_root = args.output
     if output_root.exists() and not args.keep_existing:
         shutil.rmtree(output_root)
@@ -1376,6 +1398,9 @@ def main() -> int:
             )
         ),
         "start_distance_cap_m": float(cap),
+        "start_distance_cap_m_by_instruction": {
+            name: cap_for(name) for name in args.instructions
+        },
         "pick_grasp_height_offset_m": grasp_height_offset,
         "controller_workspace_z_floor_m": z_floor,
         "measured_finger_pad_offset_below_ee_base_m": 0.0075,
@@ -1416,7 +1441,9 @@ def main() -> int:
                 int(metadata.get("min_scene_objects", 1)),
                 int(metadata.get("max_scene_objects", 2)),
             )
-            resetter.set_random_start_max_goal_distance(float(cap))
+            resetter.set_random_start_max_goal_distance(
+                cap_for(instruction_type)
+            )
 
             for episode in range(int(args.episodes_per_instruction)):
                 result = run_episode(

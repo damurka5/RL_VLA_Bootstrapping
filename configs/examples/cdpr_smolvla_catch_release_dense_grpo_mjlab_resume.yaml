@@ -185,7 +185,19 @@ task:
     # XY-only shaping left the release height unconstrained while the frozen
     # prior pushes +Z, so the gripper drifted up and dropped from height.
     catch_release_distance_include_z: true
-    put_plate_release_height: 0.045
+    # 0.10, not 0.045. target_has_settled is `target_z <= desk + rest_height +
+    # wrong_drop_settle_margin`, which for an orange is 0.15 + 0.0278 + 0.045 =
+    # 0.223. At 0.045 the plate's CARRIED hover point put the object at
+    # 0.16 + 0.045 = 0.205 -- 18 mm BELOW the height at which the reward
+    # declares it has come to rest on the desk. So target_has_settled was true
+    # at t=0 while the object was still gripped, and put_into_plate terminated
+    # on env step 1 of 64 with both pads loaded. Measured on MJWarp and on the
+    # CPU reference; raising it to the bowl's value took the plate 0/3 -> 2/3.
+    #
+    # It cannot simply be lowered instead: an object resting CORRECTLY on the
+    # plate also sits at ~0.205, so the carried object has to hover materially
+    # above where it will come to rest or the two states are indistinguishable.
+    put_plate_release_height: 0.10
     put_bowl_release_height: 0.10
 
     # Placement: distance is gripper-to-receptacle XY distance. Success also
@@ -246,6 +258,17 @@ task:
     # left the Z offset alone larger than the cap itself.
     curriculum_cap_includes_z: true
     random_workspace_start_distance_initial: 0.03
+    # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
+    # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
+    # (bowl 0.057, plate 0.091), so the first rung is solved by opening the
+    # gripper and every success number it produces is the reset's, not the
+    # policy's. Measured realized start-to-hover distance at 0.03: 0.0245-0.0300 m.
+    # These start just outside each radius and leave ~0.06 m of real approach;
+    # the min-distance floor is min(0.10, 0.5 * cap), so at 0.12 the starts span
+    # 0.06-0.12 m and at 0.15 they span 0.075-0.15 m.
+    random_workspace_start_distance_initial_by_instruction:
+      put_into_bowl: 0.12
+      put_into_plate: 0.15
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
     # 0.30/0.12/15, NOT 0.03/0.01/5. The old pair was fitted while a resetter

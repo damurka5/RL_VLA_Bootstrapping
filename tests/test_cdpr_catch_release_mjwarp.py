@@ -889,6 +889,71 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
 
         return curriculum, cap, feed
 
+    def test_placement_starts_outside_its_own_success_radius(self):
+        """The first rung must be a task, not the reward predicate already met.
+
+        The cap is a distance from the goal and the success radius is not the
+        same size for every instruction: pick_up's grasp tolerance is ~0.02 m,
+        put_into_bowl's radius is 0.057 and put_into_plate's is 0.091. A shared
+        0.03 initial is a real approach for pick_up and is INSIDE the target for
+        both placement tasks -- realized start-to-hover distance measured at
+        0.0245-0.0300 m, i.e. release-and-succeed. Asserted against the
+        shipped config's own numbers rather than literals, so changing either
+        the radius or the rung has to be a deliberate edit here too.
+        """
+
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        config = load_project_config(CONFIG).task.metadata
+        radii = {
+            "put_into_bowl": float(config["put_bowl_xy_tolerance"]),
+            "put_into_plate": float(config["put_plate_xy_tolerance"]),
+        }
+        curriculum = self._curriculum(
+            ("put_into_plate", "put_into_bowl", "pick_up"), metadata=config
+        )
+        caps = curriculum.caps_by_instruction_id()
+        for name, radius in radii.items():
+            with self.subTest(instruction=name):
+                cap = caps[INSTRUCTION_TO_ID[name]]
+                self.assertGreater(cap, radius)
+        # pick_up is deliberately NOT covered by the override: its tolerance is
+        # far smaller than either radius, and widening its first rung would undo
+        # the close starts the approach curriculum exists to manufacture.
+        self.assertLess(
+            caps[INSTRUCTION_TO_ID["pick_up"]],
+            min(radii.values()),
+        )
+
+    def test_a_per_instruction_rung_survives_an_explicit_ladder(self):
+        """Overriding the initial must not be a silent no-op under a ladder.
+
+        `ApproachDistanceCurriculum` lets an explicit ladder outrank
+        initial/final/increment, so the per-instruction override has to clip the
+        ladder from below rather than set a field the ladder ignores.
+        """
+
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        metadata = {
+            **self.METADATA,
+            "random_workspace_start_distance_curriculum_enabled": True,
+            "random_workspace_start_distance_ladder": [0.03, 0.05, 0.20],
+            "random_workspace_start_distance_initial_by_instruction": {
+                "put_into_bowl": 0.12,
+            },
+        }
+        caps = self._curriculum(
+            ("put_into_bowl", "pick_up"), metadata=metadata
+        ).caps_by_instruction_id()
+        self.assertAlmostEqual(caps[INSTRUCTION_TO_ID["put_into_bowl"]], 0.12)
+        # The un-overridden instruction still starts at the ladder's own foot.
+        self.assertAlmostEqual(caps[INSTRUCTION_TO_ID["pick_up"]], 0.03)
+
     def test_a_pass_rate_inside_the_band_holds_the_cap(self):
         """The gate must be able to say no.
 
