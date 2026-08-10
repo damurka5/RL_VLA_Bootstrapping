@@ -635,7 +635,26 @@ def seat_held_object(
     backend.set_free_body_poses(
         backend.object_body_ids, positions, low_dim.object_quaternions
     )
-    opening = float(backend.controller_state()["gripper"][0])
+    # Start FULLY OPEN, not from the opening the reset already seeded. The reset
+    # seeds `fitted - CAUGHT_START_GRIP_SQUEEZE`, so a loop starting there can
+    # only ever find a contact opening at or below it -- and when contact is
+    # already present at the seeded value it breaks on the first decrement and
+    # reports that value, which is a LOWER BOUND, not a measurement.
+    #
+    # This is not hypothetical: it silently corrupted two of the six catalog
+    # constants. The MJWarp sweep that produced `fitted_gripper_opening`
+    # reported `closing_increments=1` for the banana and the mug (against 6-15
+    # for the rest), so both were bracketed from the wrong side. The banana's
+    # 0.315 is why it seats at 175/183 N against 3-17 N for every other object,
+    # is ejected at reset, and fails every placement episode with the pads never
+    # both loading. Re-measure any catalog whose `closing_increments` is 1.
+    opening = 1.0
+    backend.set_gripper_openings(
+        torch.full((worlds,), opening, device=backend.device)
+    )
+    backend.set_free_body_poses(
+        backend.object_body_ids, positions, low_dim.object_quaternions
+    )
     closed_steps = 0
     while opening > 0.0:
         opening = max(0.0, opening - 0.02)

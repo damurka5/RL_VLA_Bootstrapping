@@ -384,6 +384,60 @@ measurements. **M0 must be re-run on MJWarp before the squeeze change is judged
 either way.** Do not read the local 0/8 as evidence that it failed, and do not
 read a local pass as evidence that it worked.
 
+## M0 on MJWarp: the gating is closed, for objects that fit the gripper
+
+Re-run on the training engine at the honest per-instruction cap, with every fix
+above applied and no override flags. **4/8.**
+
+| instruction | catalog | held until | ended | success | XY error | radius | reward |
+|---|---|---|---|---|---|---|---|
+| bowl | potato | 56 | 62 | **yes** | 0.0019 | 0.057 | 3.310 |
+| bowl | potato | 35 | 43 | **yes** | 0.0013 | 0.057 | 3.474 |
+| plate | potato | 59 | 65 | **yes** | 0.0011 | 0.091 | 3.293 |
+| plate | potato | 30 | 37 | **yes** | 0.0019 | 0.091 | 3.467 |
+| bowl | banana | 0 | 1 | no | 0.1009 | 0.057 | 0.184 |
+| bowl | banana | 0 | 3 | no | 0.1512 | 0.057 | 0.346 |
+| plate | banana | 0 | 1 | no | 0.1208 | 0.091 | 0.148 |
+| plate | banana | 0 | 3 | no | 0.0667 | 0.091 | 0.127 |
+
+**Every non-banana episode succeeds, landing 1.1–1.9 mm from the receptacle
+centre against radii of 57 and 91 mm, and carrying the object 30–59 env steps to
+get there.** The five gates are closed. Placement is reachable, on the training
+engine, at a start distance that is a real task.
+
+Every banana episode fails with `held_until = 0` — the pads never both load, at
+any step.
+
+### That banana failure is a bug in this report's own measurement
+
+`seat_held_object` began its closing sweep at **the opening the reset had
+already seeded** rather than at fully open. When contact is already present
+there, it breaks on the first decrement and reports that value — a lower bound
+presented as a measurement. The MJWarp sweep that produced the catalog constants
+reported `closing_increments = 1` for **banana and mug**, against 6–15 for every
+other catalog. Both constants were bracketed from the wrong side. Fixed; the
+sweep now starts fully open, and the docstring says to re-measure any catalog
+reporting `closing_increments = 1`.
+
+Re-bracketed properly, banana and mug report contact at **0.98** — i.e. the pads
+touch them even with the gripper fully open, in the orientation the caught reset
+seeds. Tomato, as a control, takes 30 increments down to 0.40 and is unaffected.
+
+So the finding is not that these two were mismeasured by a little. **The banana
+and the mug are wider than the gripper's open gap in the seeded pose.** The
+0.315 constant is why the banana seats at 175/183 N against 3–17 N for every
+other object, is ejected at reset, and never loads a pad afterwards.
+
+Do **not** write 0.98 into the catalog for them: the release threshold is
+`max(0.55, fitted + 0.04)`, which clamps at 1.0, so `released` could never fire
+and every episode would fail differently. They need either a seeded orientation
+that presents their narrow axis to the pads, or removal from the placement pool.
+
+`gripper-geometry-mismatch` already records that banana grasps only when the
+approach yaw is perpendicular to its long axis, and explicitly says not to drop
+it pre-emptively — so this is a scope decision, not a measurement, and it is
+left open here.
+
 ## The measurement plan, pre-registered
 
 Once 1–4 land, run these **in this order**. Each states what it shows and what
