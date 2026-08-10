@@ -532,6 +532,66 @@ They stay in `scene_object_pool` and `distractor_object_pool` — still valid
 clutter, and removing them there would shift the visual distribution the
 warm-start weights were trained against.
 
+## M1 and M2: the phase's question, answered
+
+Run on the phase-1 reference checkpoint
+(`cdpr_smolvla_pick_up_resume_mjwarp_w512_20260805_111708/rl/step_7505256`) with
+the config naming the task. Validity checks first, because the previous two runs
+failed them silently: `grasped` is **0.887–0.893** across every arm and first
+grasp lands at decision **2.0–2.2**, which is a start that is already holding the
+object. `oracle_place` reaches `cos@d0` **0.679** against the policy's 0.188. The
+substitution is real and the episodes are placement.
+
+| arm | cos@d0 | success | final d (m) | reward |
+|---|---|---|---|---|
+| policy | 0.188 | 0.137 | 0.138 | 1.119 |
+| `oracle_place` | 0.679 | **0.453** | 0.087 | 2.081 |
+| `oracle_place_err_0.01m` | 0.676 | 0.467 | 0.059 | 2.122 |
+| `oracle_place_err_0.02m` | 0.665 | 0.395 | 0.064 | 1.914 |
+| `oracle_place_err_0.03m` | 0.646 | 0.398 | 0.066 | 1.918 |
+| `oracle_place_err_0.05m` | 0.586 | 0.309 | 0.093 | 1.648 |
+| `oracle_place_err_0.08m` | 0.458 | 0.207 | 0.111 | 1.319 |
+
+**The ladder falls monotonically with localization error, and `cos@d0` falls
+with it.** That is a localization curve. The previous run's inverted ladder was
+an artefact and is gone.
+
+Note the pooled `success` column understates the placement result: the placement
+arms hand `pick_up` episodes straight back to the policy, and `pick_up` is a
+third of the round. `_report_arms` now prints success per instruction; read
+`success_put_into_bowl` there, not this column.
+
+### Does 3–5 cm of localization suffice at a 57/91 mm radius?
+
+**Yes.** Against the `oracle_place` ceiling of 0.453, the arms at the encoder's
+measured range retain:
+
+| error | success | fraction of ceiling |
+|---|---|---|
+| 0.03 m | 0.398 | **88%** |
+| 0.05 m | 0.309 | **68%** |
+| 0.08 m | 0.207 | 46% |
+
+Graceful degradation, not a cliff. This is the contrast the phase was built to
+draw: the same 3–5 cm of encoder error is *fatal* for `pick_up`, whose grasp
+tolerance is ~0.02 m, and costs placement 12–32% of its ceiling at radii of
+0.057 and 0.091. **The encoder limit is specific to the tolerance, not general.**
+
+And the number that matters most for what to do next: `oracle_place_err_0.05m`
+scores **0.309 against the policy's 0.137**. The policy is 2.3x below what its
+own measured localization ability already permits. That gap is not perception —
+it is that this checkpoint has never been trained on a placement instruction.
+Which is what a training run fixes, and cannot be closed by any further probe.
+
+### The horizon question, closed
+
+`oracle_place` puts 434 of ~450 episodes in the "12+ decisions remaining"
+bucket at first grasp and converts 0.53 there. The budget is not binding for
+placement — first grasp is at decision 2 because the object starts held, so
+essentially the whole horizon remains. The earlier concern came from M0's
+scripted oracle needing 30–59 env steps of an 84–88 step budget, which was a
+damped phase-by-phase servo, not a bound on the task.
+
 ## The measurement plan, pre-registered
 
 Once 1–4 land, run these **in this order**. Each states what it shows and what
@@ -598,6 +658,9 @@ instructions it has never trained on.
   rests on.
 
 ### The launch gate — when preflighting stops
+
+**PASSED 2026-08-10. Preflighting is over; launch.** The gate below is kept as
+written so it can be checked against what actually happened.
 
 Preflighting has to end, and it should end on a stated condition rather than on
 running out of things to check. **One M1 run. If it passes, launch. If it fails,

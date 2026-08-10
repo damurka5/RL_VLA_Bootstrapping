@@ -1809,6 +1809,32 @@ def _report_arms(rows: Sequence[Mapping[str, Any]]) -> None:
             f"{row['ever_grasped_rate']:>8.3f} {row['final_distance_m']:>12.3f} "
             f"{row['reward_mean']:>8.3f} {row['diverged_worlds']:>9d}"
         )
+    # Per instruction, printed only when a run actually mixes them. A pooled
+    # success rate over three instructions is not a number about any task, and
+    # an arm that acts on only one of them is diluted by the rest -- the
+    # placement arms hand pick_up episodes straight back to the policy, so their
+    # pooled column understates the placement result by roughly the pick_up
+    # share. This is the column the launch gate is written against.
+    names = [
+        name
+        for name in INSTRUCTION_TO_ID
+        if any(f"success_{name}" in row for row in rows)
+    ]
+    if len(names) > 1:
+        print("\n  success by instruction")
+        header = "  " + f"{'arm':<26}" + "".join(f"{n[:14]:>16}" for n in names)
+        print(header)
+        for row in rows:
+            cells = "".join(
+                f"{row.get(f'success_{name}', float('nan')):>16.3f}"
+                for name in names
+            )
+            print(f"  {row['arm']:<26}{cells}")
+        counts = ", ".join(
+            f"{name} {int(rows[0].get(f'success_{name}__episodes', 0))}"
+            for name in names
+        )
+        print(f"    episodes: {counts}")
     print(
         "\n  cos@d0 is the SPEC axis: the commanded action's 2-D alignment with "
         "the true\n  direction at decision 0, which is where the trainer takes "
