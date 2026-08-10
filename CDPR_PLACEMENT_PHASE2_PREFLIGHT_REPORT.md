@@ -438,6 +438,52 @@ approach yaw is perpendicular to its long axis, and explicitly says not to drop
 it pre-emptively — so this is a scope decision, not a measurement, and it is
 left open here.
 
+## M1 ran, and the pre-registered falsifier fired — on the arm, not the task
+
+`oracle_place` scored **0.031** against the policy's **0.277**. The ceiling arm
+came in nine times *worse* than the thing it was supposed to bound. Per this
+report's own pre-registration that means the ladder measures nothing, and it
+does. Two readings in that table are impossible and both are my errors:
+
+| arm | success |
+|---|---|
+| `oracle_place` | 0.031 |
+| `oracle_place_err_0.01m` | 0.059 |
+| `oracle_place_err_0.02m` | 0.070 |
+| `oracle_place_err_0.03m` | 0.080 |
+| `oracle_place_err_0.05m` | **0.090** |
+| `oracle_place_err_0.08m` | 0.082 |
+
+**The ladder improves monotonically as localization gets worse.** A localization
+ladder cannot do that. It is the signature of a broken gate, not a finding.
+
+**Cause 1 — the release gate was 6–9× tighter than the task.**
+`align_tolerance` was a flat `0.010 m`, copied from the grasp oracle's mental
+model, against success radii of **0.057** and **0.091**. The zero-error arm had
+to servo within 1 cm of the true hover point before it would open its gripper;
+it rarely got there (`final d` 0.056 m), so it never released and hovered to
+timeout. Every noisier arm believed it had arrived sooner, released, and — since
+the real radius is generous — sometimes succeeded. The ladder was measuring how
+often noise tripped the gate. Now a fraction (0.4) of each instruction's own
+radius.
+
+**Cause 2 — the arm drove `pick_up` episodes too.** The phase-2 config keeps
+`pick_up` in as rehearsal, so a third of every round is an instruction this arm
+has nothing to say about, driven by a servo-to-receptacle-then-open script.
+Non-container episodes now pass the policy's own chunk through untouched.
+
+**Cause 3, in the reporting rather than the arm** — a pooled success rate over a
+three-instruction run is not a number about any task. `run()` now returns
+`success_<instruction>` and an episode count per instruction, so the placement
+figure can be read on its own.
+
+Note what did work: `cos@d0` was **0.937** for `oracle_place` against 0.220 for
+the policy, so the servo aims correctly and the substitution machinery is sound.
+The arm knew where to go and would not let go.
+
+**M1 has not yet produced a usable measurement.** Re-run it before reading
+anything into the localization question.
+
 ## The measurement plan, pre-registered
 
 Once 1–4 land, run these **in this order**. Each states what it shows and what

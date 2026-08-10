@@ -167,6 +167,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
+    INSTRUCTION_TO_ID,
+)
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (  # noqa: E402
     CAUGHT_START_GRIP_SQUEEZE as _CAUGHT_START_GRIP_SQUEEZE,
 )
@@ -223,6 +226,9 @@ class _World:
     plate_release_height: float = 0.045
     bowl_release_height: float = 0.10
     bowl_instruction_id: int = -1
+    plate_instruction_id: int = -1
+    plate_radius: float = 0.091
+    bowl_radius: float = 0.057
 
 
 def _load_checkpoint(path: Path) -> dict[str, Any]:
@@ -307,9 +313,6 @@ def _build_world(
         BatchedReverseFrontierResetter,
         RankLocalCurriculum,
         RankLocalMJWarpGRPOCollector,
-    )
-    from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
-        INSTRUCTION_TO_ID,
     )
     from rl_vla_bootstrapping.policy.rank_local_grpo import RankLocalGroupLayout
     from rl_vla_bootstrapping.simulation.cdpr_backend import (
@@ -465,6 +468,9 @@ def _build_world(
             task_metadata.get("put_bowl_release_height", 0.10)
         ),
         bowl_instruction_id=int(INSTRUCTION_TO_ID["put_into_bowl"]),
+        plate_instruction_id=int(INSTRUCTION_TO_ID["put_into_plate"]),
+        plate_radius=float(task_metadata.get("put_plate_xy_tolerance", 0.091)),
+        bowl_radius=float(task_metadata.get("put_bowl_xy_tolerance", 0.057)),
     )
     if not load_policy:
         return world
@@ -994,8 +1000,26 @@ class _ArmRunner:
         diverged = int(self.world.backend.pop_nonfinite_world_events())
         success = result.candidate_success.reshape(-1).float()
         self.world_success = success.detach().cpu().numpy().copy()
+        # Per-instruction, because a mixed run's pooled success rate is not a
+        # number about any task. The phase-2 config runs three instructions, so
+        # an arm that only acts on placement is diluted by a third of pick_up
+        # episodes it never touched -- and the pooled figure then reads as the
+        # arm failing rather than as the arm being asked the wrong question.
+        by_instruction: dict[str, float] = {}
+        ids = getattr(
+            getattr(self.reset, "task_state", None), "instruction_ids", None
+        )
+        if ids is not None:
+            ids = ids.reshape(-1)
+            for name, index in INSTRUCTION_TO_ID.items():
+                mask = ids == int(index)
+                count = int(mask.sum().item())
+                if count:
+                    by_instruction[name] = float(success[mask].mean().item())
+                    by_instruction[f"{name}__episodes"] = float(count)
         return {
             "success_rate": float(success.mean().item()),
+            **{f"success_{key}": value for key, value in by_instruction.items()},
             "ever_grasped_rate": float(
                 self.ever_grasped.float().mean().item()
             ),
@@ -1300,7 +1324,7 @@ def _make_placement_oracle_source(
     *,
     position_error_std: float = 0.0,
     max_command: float = 1.0,
-    align_tolerance: float = 0.010,
+    align_fraction: float = 0.4,
 ) -> Callable[..., Any]:
     """Servo the HELD object to the receptacle hover point, then open.
 
@@ -1317,7 +1341,19 @@ def _make_placement_oracle_source(
 
     ``position_error_std`` corrupts the handed-over RECEPTACLE position, drawn
     once per episode and held -- see ``_make_oracle_xy_source`` for why it is
-    not resampled per decision.
+    not resampled per decision. The corrupted point drives the release decision
+    as well as the servo, deliberately: a policy that localizes badly servos to
+    the wrong place and lets go there, and an arm that released on the TRUE
+    position would be measuring a different, easier agent.
+
+    ``align_fraction`` sets the release gate as a fraction of the instruction's
+    OWN success radius, not as an absolute. The first version of this arm used a
+    flat 0.010 m, which is 6-9x tighter than the 0.057/0.091 m the task actually
+    scores -- the zero-error arm then almost never reached its own gate, never
+    released, and hovered to timeout, while every noisier arm released more often
+    and scored HIGHER. A ladder that improves monotonically with localization
+    error is not a localization ladder; it was measuring how often noise happened
+    to trip the gate. Keep this a fraction of the radius.
     """
 
     torch = world.torch
@@ -1326,6 +1362,16 @@ def _make_placement_oracle_source(
         *, runner: "_ArmRunner", chunk: Any, low_dim: Any, **_: Any
     ) -> Any:
         step = float(world.action_step_xyz)
+        instruction = runner.reset.task_state.instruction_ids.to(torch.int64)
+        is_bowl = instruction == int(world.bowl_instruction_id)
+        is_plate = instruction == int(world.plate_instruction_id)
+        # A placement oracle has nothing to say about pick_up, and a run mixes
+        # instructions -- the phase-2 config keeps pick_up in as rehearsal, so a
+        # third of every round is one. Driving those with a servo-to-receptacle
+        # -then-open script does not just score zero on them, it buries the
+        # placement signal this arm exists to produce. Hand them back to the
+        # policy untouched and read the per-instruction breakdown.
+        is_container = is_bowl | is_plate
         hover = _placement_hover(world, runner, low_dim)
         # The TRUE hover, published before any corruption: the ladder's whole
         # purpose is to score the commanded action against the direction that
@@ -1345,8 +1391,13 @@ def _make_placement_oracle_source(
             hover = hover + runner.position_error
 
         err = hover - low_dim.ee_position
-        aligned = torch.linalg.vector_norm(err[:, :2], dim=-1) < float(
-            align_tolerance
+        radius = torch.where(
+            is_bowl,
+            torch.full_like(err[:, 0], float(world.bowl_radius)),
+            torch.full_like(err[:, 0], float(world.plate_radius)),
+        )
+        aligned = torch.linalg.vector_norm(err[:, :2], dim=-1) < (
+            radius * float(align_fraction)
         )
         # Latch: once the open has begun it does not stop, even if the servo
         # drifts back out of tolerance. Re-closing mid-release is what turns a
@@ -1370,13 +1421,16 @@ def _make_placement_oracle_source(
             -torch.ones_like(a_z),
         )
 
-        out = torch.zeros_like(chunk)
+        out = chunk.clone()
         out[:, :, 0] = a_xy[:, None, 0]
         out[:, :, 1] = a_xy[:, None, 1]
         out[:, :, 2] = a_z[:, None]
         out[:, :, 3] = 0.0
         out[:, :, 4] = a_grip[:, None]
-        return out
+        # Non-placement episodes keep the policy's own chunk, and the latch is
+        # held down for them so they cannot be counted as "released" later.
+        runner.releasing &= is_container
+        return torch.where(is_container[:, None, None], out, chunk)
 
     return source
 
