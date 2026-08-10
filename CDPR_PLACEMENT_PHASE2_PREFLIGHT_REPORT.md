@@ -484,6 +484,54 @@ The arm knew where to go and would not let go.
 **M1 has not yet produced a usable measurement.** Re-run it before reading
 anything into the localization question.
 
+## The probe was running pick_up all along — and that corrects the section above
+
+The re-run came back with **every arm identical to the policy**: `cos@d0` 0.220
+against the policy's 0.221, success 0.271–0.312 across `oracle_place` and all
+five error rungs, `grasped` ~0.47 everywhere. A substitution that changes nothing
+is not a substitution.
+
+The tell was in C2: `1st grasp` at **8.6 decisions** and `grasped` 0.47. A
+placement episode starts already holding the object, so first grasp is decision
+0–1 and `grasped` is ~1.0. These were approach-then-grasp episodes. **The probe
+was running `pick_up`.**
+
+`_probe_args` rebuilds the whole argument namespace from `payload["args"]` — the
+saved args of the run that produced the checkpoint — while `task_metadata` comes
+from `--config`. So a phase-1 pick_up checkpoint probed against the phase-2
+config ran **pick_up episodes scored by the placement reward**, with the phase-1
+object pool. Fixed: the config now supplies `instruction_types` and
+`allowed_objects`, and the probe prints both when they override the checkpoint.
+
+### Correcting the previous section
+
+The section above attributes the inverted ladder mainly to `align_tolerance`
+being 6–9× tighter than the success radius. **That was wrong as a diagnosis of
+what was observed.** There were no placement episodes in either run, so the
+release gate never got the chance to be the problem. Cause 2 — the arm acting on
+episodes it had nothing to say about — was not one of three contributing factors,
+it was the entire explanation, and it was larger than described: not a third of
+the round, all of it.
+
+The `align_tolerance` change stands on its own merits (a 0.010 m release gate
+against a 0.057 m radius is indefensible whatever else is true) and so does the
+per-instruction success breakdown. But neither has yet been shown to fix
+anything, and I presented a corrected arm as though the fix were confirmed. It
+was not, and M1 still has not produced a usable number.
+
+## Placement pool: banana and mug removed
+
+Requested and applied. Both report first pad contact at **0.98** when bracketed
+from a fully open gripper — the pads touch them even wide open in the seeded
+orientation. Banana seats at 175/183 N against 3–17 N for every other catalog,
+is ejected at reset, and went 0/4 on MJWarp with the pads never both loading;
+the mug never settles and times out. `target_object_pool` and
+`catchable_object_pool` are now apple, tomato, orange, potato.
+
+They stay in `scene_object_pool` and `distractor_object_pool` — still valid
+clutter, and removing them there would shift the visual distribution the
+warm-start weights were trained against.
+
 ## The measurement plan, pre-registered
 
 Once 1–4 land, run these **in this order**. Each states what it shows and what
@@ -548,6 +596,46 @@ instructions it has never trained on.
 * **Falsified if**: — nothing. This arm cannot be falsified because it is
   descriptive, and that is exactly why it must not be the arm any conclusion
   rests on.
+
+### The launch gate — when preflighting stops
+
+Preflighting has to end, and it should end on a stated condition rather than on
+running out of things to check. **One M1 run. If it passes, launch. If it fails,
+launch anyway with the failure written down.**
+
+Pass is: `oracle_place` reaches `success_put_into_bowl` **≥ 0.5** on placement
+episodes it actually drove — the probe now prints the instruction types it
+resolved, so the first line of output confirms that before any number is read.
+M0 has already shown 4/4 on well-measured catalogs, so this is a check that the
+probe agrees with the harness, not a new question about the task.
+
+If `oracle_place` clears 0.5, the ladder is worth reading and gives the
+localization price for free in the same run. If it does not, the remaining
+suspect is the horizon, and that is a **training** question rather than a
+preflight one: the coupled budget grows with the curriculum cap, so a policy
+that shortens the traverse buys its own headroom in a way a fixed scripted
+oracle cannot.
+
+What has been established is enough to train on. Five gates were closed, and
+each was a config or constant error that would have silently wasted a run:
+geometry, release threshold, plate hover, persistence counter, curriculum rung.
+None of the open items can be settled by another probe:
+
+* **the banana/mug geometry** — resolved by removing them from the pool;
+* **the horizon** — only a real run shows whether the policy finds a shorter path
+  than a damped scripted servo;
+* **whether 3–5 cm of localization suffices at a 57/91 mm radius** — the actual
+  research question, and a training run answers it more directly than any oracle
+  arm, because the policy's own success rate against its own start distribution
+  *is* the measurement.
+
+The thing to watch in the run, in priority order:
+`validation/by_instruction/put_into_bowl/success_rate` against
+`curriculum/start_max_goal_distance_m/put_into_bowl` — success climbing while
+the cap climbs is the result; success climbing while the cap sits at 0.12 is the
+reset being solved again. Then `filtered_record_fraction` near 0.34, and
+`ever_grasped` near 1.0 on placement groups (it starts caught; if it is not ~1.0
+the object is being dropped and the grip constant is wrong again).
 
 ### The trap this plan is built to avoid
 

@@ -89,23 +89,36 @@ task:
   metadata:
     instruction_sampling: uniform_cycle
     reward_mode: dense
+    # Banana and mug dropped 2026-08-10. Measured: bracketed from a fully open
+    # gripper, both report first pad contact at 0.98 -- the pads touch them even
+    # wide open, in the orientation the caught reset seeds, because they are
+    # wider than the gripper's open gap (0.0969 m) along that axis. The banana
+    # seats at 175/183 N against 3-17 N for every other catalog, is ejected at
+    # reset, and failed 4/4 placement episodes on MJWarp with the pads never
+    # both loading; the mug never settles and times out silently.
+    #
+    # This is a geometry fact, not a difficulty setting: no squeeze or reward
+    # change reaches it, and their `fitted_gripper_opening` cannot be corrected
+    # to 0.98 either -- the release test is max(0.55, fitted + 0.04), which
+    # would clamp past 1.0 and make `released` unreachable. Restoring them needs
+    # a seeded yaw that presents their narrow axis to the pads.
+    #
+    # They stay in scene_object_pool and distractor_object_pool: they are still
+    # valid clutter, and removing them there would change the visual
+    # distribution the warm-start weights were trained on.
     target_object_pool:
       [
         robocasa_apple,
-        robocasa_banana,
         robocasa_tomato,
         robocasa_orange,
         robocasa_potato,
-        robocasa_mug,
       ]
     catchable_object_pool:
       [
         robocasa_apple,
-        robocasa_banana,
         robocasa_tomato,
         robocasa_orange,
         robocasa_potato,
-        robocasa_mug,
       ]
     container_object_pool: [robocasa_plate, robocasa_bowl]
     required_scene_object_pool: [robocasa_plate, robocasa_bowl]

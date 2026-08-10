@@ -351,6 +351,35 @@ def _build_world(
     )
     task_metadata = dict(project.task.metadata or {})
 
+    # The checkpoint's saved args carry the instructions and object pool of the
+    # run that PRODUCED it, and `_probe_args` rebuilds the whole namespace from
+    # them. The reward and the reset metadata, meanwhile, come from --config
+    # above. Leaving that split in place means a phase-1 pick_up checkpoint
+    # probed against the phase-2 config runs pick_up episodes scored by the
+    # placement reward -- which is exactly what happened, and it made the
+    # placement oracle look nine times worse than the policy while it was in
+    # fact never handed a placement episode at all. The config names the task;
+    # the checkpoint only supplies the weights.
+    config_instructions = tuple(project.task.instruction_types or ())
+    config_objects = tuple(project.task.target_objects or ())
+    if config_instructions and tuple(
+        args.instruction_types or ()
+    ) != config_instructions:
+        print(
+            "[xy-probe] instruction_types from --config: "
+            f"{list(config_instructions)} "
+            f"(checkpoint said {list(args.instruction_types or ())})",
+            flush=True,
+        )
+        args.instruction_types = list(config_instructions)
+    if config_objects and tuple(args.allowed_objects or ()) != config_objects:
+        print(
+            f"[xy-probe] allowed_objects from --config: {list(config_objects)} "
+            f"(checkpoint said {list(args.allowed_objects or ())})",
+            flush=True,
+        )
+        args.allowed_objects = list(config_objects)
+
     layout = RankLocalGroupLayout(
         worlds_per_rank=int(args.worlds_per_rank),
         groups_per_rank=int(args.groups_per_rank),
