@@ -2447,6 +2447,9 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
             _FITTED_GRIPPER,
         )
+        from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+            CAUGHT_START_GRIP_SQUEEZE,
+        )
 
         groups = 32
         backend, resetter = self._resetter(torch, groups=groups, fraction=0.5)
@@ -2480,7 +2483,7 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         fitted = torch.tensor(
             _FITTED_GRIPPER, dtype=torch.float32
         ).index_select(0, reset.group_target_catalog_ids)
-        expected_opening = (fitted - (0.001 / 0.03)).clamp(
+        expected_opening = (fitted - CAUGHT_START_GRIP_SQUEEZE).clamp(
             0.0, 1.0
         ).repeat_interleave(8)
         openings = backend.gripper_openings

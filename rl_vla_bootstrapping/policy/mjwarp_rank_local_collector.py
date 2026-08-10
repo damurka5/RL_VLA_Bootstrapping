@@ -22,6 +22,7 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     ACTIVE_CDPR_CATALOGS,
     BOWL_CATALOG,
+    CAUGHT_START_GRIP_SQUEEZE,
     CATALOG_TO_ID,
     GRASPABLE_CDPR_CATALOGS,
     INACTIVE_CATALOG_ID,
@@ -1918,7 +1919,7 @@ class BatchedReverseFrontierResetter:
             torch.zeros_like(fitted),
             torch.where(
                 caught_group,
-                (fitted - (0.001 / 0.03)).clamp(0.0, 1.0),
+                (fitted - CAUGHT_START_GRIP_SQUEEZE).clamp(0.0, 1.0),
                 torch.ones_like(fitted),
             ),
         )

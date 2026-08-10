@@ -97,6 +97,7 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (  # noqa: E402
     ACTIVE_CDPR_CATALOGS,
+    CAUGHT_START_GRIP_SQUEEZE,
     OBJECT_VARIANTS,
 )
 from rl_vla_bootstrapping.simulation.mujoco_reference_batched_backend import (  # noqa: E402
@@ -112,7 +113,7 @@ ACTION_NAMES = ("x", "y", "z", "yaw", "gripper")
 CAMERA_LABELS = {"overview": "OVERVIEW", "ee_camera": "WRIST (ee_camera)"}
 # The reset seats a caught object with the fingers this far inside the fitted
 # opening; the oracle closes to the same depth so the pads load identically.
-_GRASP_SQUEEZE = 0.001 / 0.03
+_GRASP_SQUEEZE = CAUGHT_START_GRIP_SQUEEZE
 
 
 # --------------------------------------------------------------------- oracle

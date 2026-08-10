@@ -349,6 +349,41 @@ so.
 **Do not launch on this.** The oracle is 0/8 at the start distribution training
 would use.
 
+### The squeeze constant, applied — and why the local M0 can no longer judge it
+
+`0.001/0.03 = 0.0333` was inlined in five places. It is now
+`CAUGHT_START_GRIP_SQUEEZE = 0.04` in `cdpr_object_catalog.py`, next to the
+`fitted_gripper_opening` it is measured against, and imported everywhere.
+
+Measured effect on CPU — last env step at which both pads are still loaded:
+
+| episode | before | after | drop-point XY error |
+|---|---|---|---|
+| plate / tomato | 28 | **47** | 0.042 → 0.021 |
+| plate / orange | 22 | 22 | 0.103 → 0.091 |
+| bowl / tomato | 34 | **47** | 0.0072 → 0.0051 |
+| bowl / orange | 23 | **28** | 0.093 → 0.015 |
+| banana ×4 | 1–3 | 1–3 | unchanged |
+
+The grip holds ~40–70% longer and the object is dropped much closer to the
+receptacle. Banana is untouched, as expected — its failure is the orientation
+gate, not squeeze.
+
+But M0 stays 0/8 locally, and **that number is no longer trustworthy on this
+machine.** The catalog now carries **MJWarp** contact openings, and the CPU's are
+0.02–0.04 *lower* (tomato 0.412 vs 0.432, potato 0.409 vs 0.449, apple 0.592 vs
+0.632). Production closes to `fitted − 0.04`, so against CPU physics it now
+under-grips by exactly that gap, while the `--reseat-held-object` arm re-measures
+per episode and does not. That is why reseat reaches the receptacle and the
+production reset does not, on this box.
+
+So the CPU harness has served its purpose and is now the wrong instrument: it
+was the right tool while the constants were engine-independent arithmetic, and
+it stopped being one the moment the constants became engine-specific
+measurements. **M0 must be re-run on MJWarp before the squeeze change is judged
+either way.** Do not read the local 0/8 as evidence that it failed, and do not
+read a local pass as evidence that it worked.
+
 ## The measurement plan, pre-registered
 
 Once 1–4 land, run these **in this order**. Each states what it shows and what

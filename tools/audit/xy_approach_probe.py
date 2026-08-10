@@ -167,6 +167,10 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (  # noqa: E402
+    CAUGHT_START_GRIP_SQUEEZE as _CAUGHT_START_GRIP_SQUEEZE,
+)
+
 # Amplitudes for the leg-A sweep. Signed and straddling zero: the zero arm is the
 # uncommanded-drift control, and the negative arms are what would expose a
 # rectifying plant (one direction moves, the other does not), which is the
@@ -1240,7 +1244,7 @@ def _make_full_oracle_source(
         commanded_open = world.backend._controller_gripper
         goal = torch.where(
             engaged | seated,
-            (fitted - (0.001 / 0.03)).clamp(0.0, 1.0),
+            (fitted - _CAUGHT_START_GRIP_SQUEEZE).clamp(0.0, 1.0),
             torch.ones_like(fitted),
         )
         a_grip = torch.clamp(

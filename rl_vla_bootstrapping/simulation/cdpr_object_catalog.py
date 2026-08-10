@@ -46,6 +46,25 @@ ID_TO_CATALOG = {index: name for name, index in CATALOG_TO_ID.items()}
 INACTIVE_CATALOG_ID = -1
 
 
+# How far inside first contact a caught-object start closes the fingers. The
+# companion to `ObjectVariant.fitted_gripper_opening`: that value is the opening
+# at which the pads first touch, and this is the squeeze that turns a touch into
+# a grip.
+#
+# 0.04, not the 0.001/0.03 = 0.0333 that was inlined in five places. Measured
+# 2026-08-10: at 0.0333 the object is carried fine over the ~3 cm traverse the
+# old curriculum rung produced, and falls out mid-traverse once the rung is a
+# real distance -- all eight M0 episodes took the wrong-drop penalty, most with
+# the object still 0.08-0.14 m from the receptacle. Reseating at 0.04 stops the
+# dropping outright and the failures become horizon failures instead. The
+# difference is 6.7e-3 of opening, ~1.3 mm of pad travel, and it was invisible
+# until the carry got long enough to expose it.
+#
+# It is measured against contact, so it moves with `fitted_gripper_opening`:
+# re-measure both together if the gripper or the meshes change.
+CAUGHT_START_GRIP_SQUEEZE = 0.04
+
+
 @dataclass(frozen=True)
 class PrimitiveSpec:
     primitive: str
