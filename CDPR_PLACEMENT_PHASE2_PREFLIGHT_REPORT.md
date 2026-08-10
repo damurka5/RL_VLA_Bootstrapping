@@ -11,6 +11,12 @@ would say nothing about localization.
 
 ## How this was measured
 
+**Confirmed on MJWarp.** M0 was re-run on the training engine and reproduces the
+CPU result: `put_into_plate` terminates on env step **1** of 64 in all three
+episodes, `put_into_bowl` at 7/14/12. The gating failure is not a CPU-physics
+artefact. (The report's prediction was that the *direction* is solver-independent
+and the exact contact openings are not; the direction held.)
+
 `scripts/render_cdpr_task_reference_episodes.py` against the phase-2 config
 (`cdpr_smolvla_catch_release_dense_grpo_mjlab_resume.yaml`), scripted oracle,
 production resetter + production reward + the trainer's own
@@ -174,6 +180,59 @@ until the seating opening is fixed. Do not expect this commit alone to change a
 training run. (The remaining step-1 plate failure is the banana, which never
 latches — see below.)
 
+## The fifth bug: the placement curriculum starts inside its own success radius
+
+Found from a training launch, not from the harness, and it is the one that would
+have done the most damage.
+
+`random_workspace_start_distance_initial: 0.03` is a **single scalar shared by
+all three instructions**. The caps that follow are per-instruction
+(`_start_cap_table`), but they all start here. Realized start distance to the
+release hover point, read from the reset rather than from the logged cap —
+`manifest.json` → `episodes[].start.ee_to_placement_hover_m`:
+
+| instruction | realized start distance | success radius |
+|---|---|---|
+| `put_into_plate` | 0.0292, 0.0300, 0.0300 | **0.091** |
+| `put_into_bowl` | 0.0300, 0.0300, 0.0245 | **0.057** |
+
+The caught object starts **already inside the receptacle's success radius**, held
+above it. For `put_into_bowl` the task at the initial cap is: open the gripper.
+Nothing else. For `pick_up`, whose tolerance is ~2 cm, a 3 cm start is a genuine
+approach — the same number means opposite things for the two instructions.
+
+This is the shape of trap #1 and of the shaping-window-vs-success-radius bug: a
+knob calibrated on one instruction, silently inherited by another whose scale is
+different. The placement caps must **start above their own success radius** —
+~0.12 for the bowl, ~0.15 for the plate — or better, be expressed as a multiple
+of each instruction's own tolerance. Until then the curriculum's first rung has
+no task in it.
+
+### What this cost, and what it nearly cost
+
+A 15M-step run was launched and stopped at update 1 (4676 steps), reporting
+`success=144/1024`. That is not learning — there has been one gradient step. It
+is the reset: release, and the object falls the 2–3 cm into a receptacle it is
+already over.
+
+The composition is consistent with that reading, though the log is not broken
+down by instruction so this is arithmetic rather than proof. Of ~1024 episodes
+under `uniform_cycle` over three instructions, ~341 are `put_into_bowl`; the
+plate contributes ~0 because it terminates on env step 1; `pick_up` contributes
+at roughly its phase-1 rate. 144 is ~42% of the bowl third.
+
+Had this run continued, it would have reported a healthy and rising placement
+success rate, the per-instruction gate would have promoted the placement caps
+briskly past 0.057, and success would then have **fallen** as the starts finally
+moved outside the radius — after millions of steps, and reading as a regression
+rather than as the first honest measurement. Trap #6 in the phase brief warns
+that a success-vs-failure gap is not evidence of skill; this is the same warning
+one level up. **A success rate is not evidence of skill either, if the reset
+already satisfies the predicate.**
+
+Verify before trusting any placement number: `ee_to_placement_hover_m` from the
+reset, against the instruction's own radius. Never the logged cap.
+
 ## Also observed, lower confidence
 
 * **The banana never latches.** Bilateral contact for 3 steps at 1.2–1.4 N with
@@ -224,6 +283,11 @@ numbers are CPU-physics and the run is MJWarp:
 5. Re-confirm the banana's orientation-slip rejection; export
    `relative_orientation_slip_rad` to telemetry so it can be read rather than
    inferred.
+6. Give the placement instructions their own
+   `random_workspace_start_distance_initial` above their own success radius
+   (~0.12 bowl, ~0.15 plate), or express the cap as a multiple of each
+   instruction's tolerance. Without this the first curriculum rung is vacuous
+   and every placement success number is the reset's, not the policy's.
 
 ## The measurement plan, pre-registered
 
