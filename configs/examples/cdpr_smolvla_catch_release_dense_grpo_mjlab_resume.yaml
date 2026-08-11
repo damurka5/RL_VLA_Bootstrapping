@@ -106,6 +106,11 @@ task:
     # They stay in scene_object_pool and distractor_object_pool: they are still
     # valid clutter, and removing them there would change the visual
     # distribution the warm-start weights were trained on.
+    # This is the knob that ACTUALLY excludes them on the MJWarp path.
+    # target_object_pool below is read only by validate_cdpr_policy and
+    # openvla_oft, so editing that alone left banana as the target in every
+    # reference episode.
+    excluded_target_catalogs: [robocasa_banana, robocasa_mug]
     target_object_pool:
       [
         robocasa_apple,
@@ -160,8 +165,23 @@ task:
     # The new phase never uses the near-goal shell-0 spawn.
     random_workspace_gripper_start: true
     placement_start_with_caught_object: true
-    ee_workspace_x_bounds: [-0.28, 0.28]
-    ee_workspace_y_bounds: [-0.28, 0.28]
+    # +/-0.19, not +/-0.28. The overview camera does NOT cover the workspace,
+    # and the episode is only well posed if it frames the receptacle, the object
+    # and the gripper at once. Computed from the MJCF camera
+    # (cdpr.xml:97 -- pos 0 -0.5412341 0.5125, 30 deg downward, fovy 45, 320x240
+    # so hfov 57.8): the largest symmetric xy envelope entirely in frame is
+    #
+    #   z=0.16 (objects on the desk)   0.240 m, 0.220 at a 10% frame margin
+    #   z=0.19 (gripper, band bottom)  0.235 m, 0.215
+    #   z=0.32 (gripper, band top)     0.210 m, 0.195   <- binding
+    #
+    # The corner binds, not the edges (+/-x alone reaches 0.28). At +/-0.28 the
+    # gripper leaves the frame over most of the workspace boundary and the near
+    # edge y=-0.28 is below the frame entirely, so those episodes ask the policy
+    # to servo to something it cannot see. 0.19 keeps every element inside the
+    # central 80% of the image across the whole Z band.
+    ee_workspace_x_bounds: [-0.19, 0.19]
+    ee_workspace_y_bounds: [-0.19, 0.19]
     # Narrowed from [0.30, 0.48]. The approach curriculum caps the start's XY
     # distance only, while the reward is 3-D: with a 0.18 m Z spread a "3 cm"
     # start was really up to ~0.18 m away, so the easy regime the curriculum
@@ -170,6 +190,13 @@ task:
     # Lowered with the corrected grasp offset; see the pick_up config. The old
     # [0.29, 0.40] sat 10-21 cm above the real grasp point.
     ee_workspace_z_bounds: [0.19, 0.32]
+    # Stage 4: at the far rung the gripper starts LOW, as though it had just
+    # lifted the object off the desk, instead of already at the receptacle
+    # hover height. Objects rest at z ~0.19-0.21 and the pads sit 0.0075 below
+    # ee_base, so 0.20-0.25 is "just picked up" without driving the fingers
+    # into the desk. Below this cap the normal band applies.
+    placement_far_rung_z_bounds: [0.20, 0.25]
+    placement_far_rung_min_cap: 0.09
     random_workspace_min_goal_xy_distance: 0.10
     random_workspace_horizon_low: 24
     random_workspace_horizon_high: 32

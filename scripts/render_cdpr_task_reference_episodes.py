@@ -1381,10 +1381,24 @@ def main() -> int:
         metadata.get("random_workspace_start_distance_initial_by_instruction")
         or {}
     )
+    # A per-instruction LADDER outranks the per-instruction initial, exactly as
+    # it does in PerInstructionApproachCurriculum -- reading only the initial
+    # here would put this check on a different first rung than the run, which is
+    # the same disagreement that had the probe measuring pick_up.
+    raw_ladders = (
+        metadata.get("random_workspace_start_distance_ladder_by_instruction")
+        or {}
+    )
 
     def cap_for(instruction_type: str) -> float:
         if args.start_distance_cap is not None:
             return float(args.start_distance_cap)
+        rungs = raw_ladders.get(instruction_type)
+        if isinstance(rungs, (list, tuple)) and len(rungs) >= 2:
+            try:
+                return max(min(float(rung) for rung in rungs), 0.0)
+            except (TypeError, ValueError):
+                pass
         try:
             return max(float(raw_by_instruction[instruction_type]), 0.0)
         except (KeyError, TypeError, ValueError):

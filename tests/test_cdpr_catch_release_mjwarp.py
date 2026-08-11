@@ -50,9 +50,18 @@ class CDPRCatchReleaseConfigTests(unittest.TestCase):
         )
         self.assertEqual(config.simulator.worlds_per_rank, 512)
         self.assertEqual(config.simulator.groups_per_rank, 64)
-        self.assertEqual(
-            config.task.metadata["ee_workspace_x_bounds"], [-0.28, 0.28]
-        )
+        # Bounded by what the OVERVIEW CAMERA can frame, not by a literal. The
+        # episode is only well posed if the receptacle, the object and the
+        # gripper are all visible; measured from cdpr.xml:97 the largest
+        # symmetric xy envelope entirely in frame is 0.210 m at the top of the
+        # gripper's Z band (0.195 with a 10% frame margin), against a workspace
+        # that used to be declared as +/-0.28. Assert the invariant so widening
+        # the workspace has to come with a camera that covers it.
+        camera_envelope_m = 0.195
+        for axis in ("ee_workspace_x_bounds", "ee_workspace_y_bounds"):
+            low, high = config.task.metadata[axis]
+            self.assertLessEqual(abs(float(low)), camera_envelope_m, axis)
+            self.assertLessEqual(abs(float(high)), camera_envelope_m, axis)
         # Weights-only handoff: the phase must not pin a resume checkpoint, or
         # it would also restore the previous phase's curriculum caps/optimizer.
         self.assertNotIn("--resume-checkpoint", command)

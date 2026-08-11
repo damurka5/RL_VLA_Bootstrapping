@@ -739,6 +739,22 @@ class BatchedReverseFrontierResetter:
         self.workspace_z_bounds = bounds(
             "ee_workspace_z_bounds", (0.30, 0.48)
         )
+        # The far placement rung starts the gripper LOW, as if it had just
+        # lifted the object off the desk, rather than already at the receptacle
+        # hover height. Without this the Z confinement centres every rung on
+        # `reference_z + release_height`, so the largest rung is far in XY and
+        # already at the right height -- which is not the state a real
+        # grasp-then-carry leaves the gripper in, and it is the one stage that
+        # should rehearse the carry.
+        #
+        # Applied to container groups whose cap has reached
+        # `placement_far_rung_min_cap`; below that the normal band is used.
+        self.placement_far_rung_z_bounds = bounds(
+            "placement_far_rung_z_bounds", self.workspace_z_bounds
+        )
+        self.placement_far_rung_min_cap = max(
+            number("placement_far_rung_min_cap", float("inf")), 0.0
+        )
         self.random_start_min_goal_distance = max(
             number("random_workspace_min_goal_xy_distance", 0.10), 0.0
         )
@@ -829,10 +845,26 @@ class BatchedReverseFrontierResetter:
         self.device = backend.device
         instruction_ids = resolve_mjwarp_instruction_ids(instruction_types)
         catalog_ids = resolve_mjwarp_catalog_ids(allowed_objects)
+        # Catalogs that stay in the SCENE but are never chosen as the language
+        # target. `target_object_pool` in the config does not do this -- nothing
+        # on the MJWarp path reads it (only validate_cdpr_policy and openvla_oft
+        # do), so editing it silently changes nothing and the excluded object
+        # keeps being trained on. Verified empirically: banana was still the
+        # target in every reference episode after being removed from that pool.
+        #
+        # Removing an object from `task.target_objects` instead would drop it
+        # from the scene entirely and shift the visual distribution the
+        # warm-start weights were trained against, which is a different and
+        # larger change than "do not ask for this one".
+        excluded = {
+            str(name)
+            for name in (metadata.get("excluded_target_catalogs") or ())
+        }
         graspable_ids = tuple(
             value
             for value in catalog_ids
             if ACTIVE_CDPR_CATALOGS[value] in GRASPABLE_CDPR_CATALOGS
+            and ACTIVE_CDPR_CATALOGS[value] not in excluded
         )
         if not graspable_ids:
             move_to_id = INSTRUCTION_TO_ID["move_to_object"]
@@ -1660,19 +1692,40 @@ class BatchedReverseFrontierResetter:
                     .clamp_min(0.0)
                     .sqrt()
                 )
-                low = torch.maximum(
-                    goal_z - z_allowance,
+                # The far rung gets its own, lower band -- see
+                # placement_far_rung_z_bounds. Selected per group from that
+                # group's own cap, so the rungs below it are untouched.
+                far_rung = is_container & (
+                    max_goal_distance >= float(self.placement_far_rung_min_cap)
+                )
+                band_low = torch.where(
+                    far_rung,
+                    torch.full_like(goal_z, self.placement_far_rung_z_bounds[0]),
                     torch.full_like(goal_z, self.workspace_z_bounds[0]),
                 )
-                high = torch.minimum(
-                    goal_z + z_allowance,
+                band_high = torch.where(
+                    far_rung,
+                    torch.full_like(goal_z, self.placement_far_rung_z_bounds[1]),
                     torch.full_like(goal_z, self.workspace_z_bounds[1]),
+                )
+                # On the far rung the band is the START distribution, not a
+                # clamp around the goal: the point is to begin low and carry up
+                # to the receptacle, so the z_allowance window is not applied.
+                low = torch.where(
+                    far_rung,
+                    band_low,
+                    torch.maximum(goal_z - z_allowance, band_low),
+                )
+                high = torch.where(
+                    far_rung,
+                    band_high,
+                    torch.minimum(goal_z + z_allowance, band_high),
                 )
                 # If the allowed band misses the workspace entirely, sit at the
                 # reachable height closest to the goal rather than inverting the
                 # clamp.
-                fallback = goal_z.clamp(
-                    self.workspace_z_bounds[0], self.workspace_z_bounds[1]
+                fallback = torch.minimum(
+                    torch.maximum(goal_z, band_low), band_high
                 )
                 confined = torch.where(
                     low <= high,
