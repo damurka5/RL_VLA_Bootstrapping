@@ -271,6 +271,27 @@ task:
     # left the Z offset alone larger than the cap itself.
     curriculum_cap_includes_z: true
     random_workspace_start_distance_initial: 0.03
+    # Explicit per-instruction rungs for placement, replacing the geometric
+    # climb. Stage 1 (0.01) is "you are holding the object over the receptacle,
+    # let go" -- deliberately inside the success radius, because the skill being
+    # taught there is the RELEASE, not the approach. Stages 2-4 then move the
+    # start outside the radius so the approach has to be learned:
+    #
+    #   0.01  release only
+    #   0.03  2-3 cm, a few decisions to centre, release still nearly free
+    #   0.06  4-6 cm, outside the bowl radius, must centre
+    #   0.10  the far rung, and as far as vision is aligned with motion
+    #
+    # 0.10 is the ceiling on purpose. The previous run let the cap run to 0.34,
+    # where the traverse alone is ~45 env steps of a 64-step budget and the
+    # receptacle is far outside the frame the policy is aiming with.
+    #
+    # Stage 1 is only safe BECAUSE the gate now reads placement success rather
+    # than the grasp rate: a rung the reset already satisfies is a teaching
+    # signal when the curriculum can leave it, and a trap when it cannot.
+    random_workspace_start_distance_ladder_by_instruction:
+      put_into_bowl: [0.01, 0.03, 0.06, 0.10]
+      put_into_plate: [0.01, 0.03, 0.06, 0.10]
     # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
     # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
     # (bowl 0.057, plate 0.091), so the first rung is solved by opening the

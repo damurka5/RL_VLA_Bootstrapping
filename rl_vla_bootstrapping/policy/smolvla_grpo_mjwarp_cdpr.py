@@ -1015,8 +1015,33 @@ class PerInstructionApproachCurriculum:
                     initials[str(key)] = max(float(value), 0.0)
                 except (TypeError, ValueError):
                     continue
+        # A whole ladder per instruction, which the shared `..._ladder` cannot
+        # express: placement wants an explicit release-only first rung and a
+        # hard 0.10 ceiling, while pick_up wants its own geometric climb.
+        raw_ladders = metadata.get(
+            "random_workspace_start_distance_ladder_by_instruction"
+        )
+        ladders: dict[str, list[float]] = {}
+        if isinstance(raw_ladders, Mapping):
+            for key, value in raw_ladders.items():
+                if not isinstance(value, (list, tuple)):
+                    continue
+                rungs: list[float] = []
+                for rung in value:
+                    try:
+                        rungs.append(max(float(rung), 0.0))
+                    except (TypeError, ValueError):
+                        rungs = []
+                        break
+                if len(rungs) >= 2:
+                    ladders[str(key)] = rungs
         self._by_name = {}
         for name in names:
+            if name in ladders:
+                scoped = dict(metadata)
+                scoped["random_workspace_start_distance_ladder"] = ladders[name]
+                self._by_name[name] = ApproachDistanceCurriculum(scoped)
+                continue
             override = initials.get(name)
             if override is None:
                 self._by_name[name] = ApproachDistanceCurriculum(metadata)
@@ -2012,15 +2037,38 @@ def main(argv: Sequence[str] | None = None) -> None:
             #
             # instruction_successes_normal_start/{name} stays in the metrics as
             # the run's outcome; it is just no longer what promotes the cap.
+            # ...but ONLY for instructions whose approach is gated by a grasp it
+            # has to earn. A placement episode starts with the object already
+            # between the pads, so its grasp rate is ~1.0 by construction, sails
+            # over the 0.30 promote gate on literally every update, and the cap
+            # advances on its cooldown alone -- which is the exact failure
+            # (17a83f7) this block was written to fix, reintroduced for a
+            # different instruction. Measured over a 5M-step run: put_into_bowl
+            # 0.12 -> 0.34 and put_into_plate 0.15 -> 0.34, both pinned at the
+            # ceiling from ~2M steps onward, while instruction_successes for
+            # both stayed at exactly 0 and validation stayed at 0.0000 across
+            # all 19 checkpoints.
+            #
+            # The rule the comment above states is right; it was applied to the
+            # wrong set. One curriculum, one skill, one measurement of THAT
+            # skill: for pick_up the approach's skill is the grasp, and for
+            # placement it is the placement itself -- there is no downstream
+            # skill the approach cannot influence, because the grasp is handed
+            # over at reset.
+            placement_names = {"put_into_plate", "put_into_bowl"}
             instruction_pass_rates = {}
             for name in configured_instruction_names:
                 worlds_for_name = synchronized_metrics.get(
                     f"instruction_worlds_normal_start/{name}", 0.0
                 )
-                grasp_key = f"instruction_grasps_normal_start/{name}"
-                if worlds_for_name > 0.0 and grasp_key in synchronized_metrics:
+                gate_key = (
+                    f"instruction_successes_normal_start/{name}"
+                    if name in placement_names
+                    else f"instruction_grasps_normal_start/{name}"
+                )
+                if worlds_for_name > 0.0 and gate_key in synchronized_metrics:
                     instruction_pass_rates[name] = (
-                        synchronized_metrics.get(grasp_key, 0.0)
+                        synchronized_metrics.get(gate_key, 0.0)
                         / worlds_for_name
                     )
             approach_curriculum.observe(instruction_pass_rates)

@@ -889,17 +889,12 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
 
         return curriculum, cap, feed
 
-    def test_placement_starts_outside_its_own_success_radius(self):
-        """The first rung must be a task, not the reward predicate already met.
+    def test_pick_up_keeps_its_own_close_first_rung(self):
+        """Placement's rungs must not widen pick_up's.
 
-        The cap is a distance from the goal and the success radius is not the
-        same size for every instruction: pick_up's grasp tolerance is ~0.02 m,
-        put_into_bowl's radius is 0.057 and put_into_plate's is 0.091. A shared
-        0.03 initial is a real approach for pick_up and is INSIDE the target for
-        both placement tasks -- realized start-to-hover distance measured at
-        0.0245-0.0300 m, i.e. release-and-succeed. Asserted against the
-        shipped config's own numbers rather than literals, so changing either
-        the radius or the rung has to be a deliberate edit here too.
+        pick_up's grasp tolerance is ~0.02 m against placement radii of 0.057
+        and 0.091, so a first rung sized for placement would destroy the close
+        starts the approach curriculum exists to manufacture.
         """
 
         from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
@@ -907,24 +902,12 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
         )
 
         config = load_project_config(CONFIG).task.metadata
-        radii = {
-            "put_into_bowl": float(config["put_bowl_xy_tolerance"]),
-            "put_into_plate": float(config["put_plate_xy_tolerance"]),
-        }
-        curriculum = self._curriculum(
+        caps = self._curriculum(
             ("put_into_plate", "put_into_bowl", "pick_up"), metadata=config
-        )
-        caps = curriculum.caps_by_instruction_id()
-        for name, radius in radii.items():
-            with self.subTest(instruction=name):
-                cap = caps[INSTRUCTION_TO_ID[name]]
-                self.assertGreater(cap, radius)
-        # pick_up is deliberately NOT covered by the override: its tolerance is
-        # far smaller than either radius, and widening its first rung would undo
-        # the close starts the approach curriculum exists to manufacture.
+        ).caps_by_instruction_id()
         self.assertLess(
             caps[INSTRUCTION_TO_ID["pick_up"]],
-            min(radii.values()),
+            float(config["put_bowl_xy_tolerance"]),
         )
 
     def test_a_per_instruction_rung_survives_an_explicit_ladder(self):
@@ -953,6 +936,67 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
         self.assertAlmostEqual(caps[INSTRUCTION_TO_ID["put_into_bowl"]], 0.12)
         # The un-overridden instruction still starts at the ladder's own foot.
         self.assertAlmostEqual(caps[INSTRUCTION_TO_ID["pick_up"]], 0.03)
+
+    def test_placement_gets_its_own_ladder_and_a_release_only_first_rung(self):
+        """Stage 1 is deliberately inside the success radius, and must be.
+
+        The skill on the first rung is the RELEASE, not the approach, so the
+        start sits over the receptacle. That is only safe because the promote
+        gate reads placement success -- on the grasp rate the rung is satisfied
+        at reset and the cap runs to its ceiling, which is what a 5M-step run
+        did while scoring exactly zero. Asserted against the shipped config.
+        """
+
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID,
+        )
+
+        config = load_project_config(CONFIG).task.metadata
+        caps = self._curriculum(
+            ("put_into_plate", "put_into_bowl", "pick_up"), metadata=config
+        ).caps_by_instruction_id()
+        for name, radius_key in (
+            ("put_into_bowl", "put_bowl_xy_tolerance"),
+            ("put_into_plate", "put_plate_xy_tolerance"),
+        ):
+            with self.subTest(instruction=name):
+                self.assertLess(
+                    caps[INSTRUCTION_TO_ID[name]],
+                    float(config[radius_key]),
+                    "the first placement rung teaches the release, so it "
+                    "starts inside the success radius",
+                )
+        ladders = config[
+            "random_workspace_start_distance_ladder_by_instruction"
+        ]
+        for name in ("put_into_bowl", "put_into_plate"):
+            rungs = [float(v) for v in ladders[name]]
+            self.assertEqual(rungs, sorted(rungs))
+            # The ceiling is what keeps the receptacle inside the frame the
+            # policy aims with; the previous run ran to 0.34 and learned nothing.
+            self.assertLessEqual(max(rungs), 0.10 + 1.0e-9)
+            self.assertGreater(
+                max(rungs), float(config["put_bowl_xy_tolerance"])
+            )
+
+    def test_the_placement_gate_reads_success_not_the_handed_over_grasp(self):
+        """Placement starts grasped, so a grasp-rate gate is always open.
+
+        Regression for a 5M-step run: put_into_bowl 0.12 -> 0.34 and
+        put_into_plate 0.15 -> 0.34, both pinned at the ceiling from ~2M steps,
+        while instruction_successes for both stayed at exactly 0.
+        """
+
+        import inspect
+
+        from rl_vla_bootstrapping.policy import smolvla_grpo_mjwarp_cdpr
+
+        source = inspect.getsource(smolvla_grpo_mjwarp_cdpr)
+        marker = 'placement_names = {"put_into_plate", "put_into_bowl"}'
+        self.assertIn(marker, source)
+        gate = source[source.index(marker) : source.index(marker) + 900]
+        self.assertIn("instruction_successes_normal_start", gate)
+        self.assertIn("instruction_grasps_normal_start", gate)
 
     def test_a_pass_rate_inside_the_band_holds_the_cap(self):
         """The gate must be able to say no.
