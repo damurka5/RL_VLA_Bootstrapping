@@ -898,6 +898,59 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
 
         return curriculum, cap, feed
 
+    def test_the_group_std_filter_is_configured_on_every_staged_phase(self):
+        """A knob nothing reads is the campaign's most expensive failure mode.
+
+        `filtered_record_fraction` logged 0.0000 on every update of all three
+        phase-2 runs because `grpo_min_group_reward_std` was set in the pick_up
+        config and never carried into this one. The advantage divides by a group
+        std floored at 1e-6, so a group that separated nothing still emits
+        advantages clipped at 6.0 -- rollout noise at full scale, on roughly a
+        third of groups. Asserted across the staged configs so the next phase
+        cannot drop it either.
+        """
+
+        # The grasp phases only. move_to also has it unset, but the 41-of-128
+        # measurement behind 0.05 was taken on a reward with a grasp ladder in
+        # it, and move_to's dense distance curve separates its groups
+        # differently -- turning it on there would be a guess, and this campaign
+        # has paid for enough of those.
+        for path in (PICK_UP_CONFIG, CONFIG):
+            with self.subTest(config=path.name):
+                args = load_project_config(path).training.rl.args
+                self.assertGreater(
+                    float(args.get("grpo_min_group_reward_std", 0.0)),
+                    0.0,
+                    "the GRPO group-std filter must be on",
+                )
+
+    def test_the_bowl_climbs_in_smaller_relative_steps_than_the_plate(self):
+        """The bowl's radius is 0.057 against the plate's 0.091.
+
+        An identical step in metres is a bigger step relative to what the bowl
+        has to hit, and the 6.7M run measured the cost: the bowl fell 0.331 ->
+        0.093 across the two promotions that took it to 0.10 and needed 3M
+        steps to recover, while the plate absorbed the same jumps.
+        """
+
+        metadata = load_project_config(CONFIG).task.metadata
+        ladders = metadata[
+            "random_workspace_start_distance_ladder_by_instruction"
+        ]
+
+        def largest_relative_step(rungs):
+            rungs = [float(v) for v in rungs]
+            return max(
+                (b - a) / a for a, b in zip(rungs, rungs[1:]) if a > 0.0
+            )
+
+        bowl = largest_relative_step(ladders["put_into_bowl"])
+        plate = largest_relative_step(ladders["put_into_plate"])
+        self.assertLess(bowl, plate)
+        # Two promotions can land between consecutive validation points, so the
+        # rung the run never measures is the one that matters.
+        self.assertLessEqual(bowl, 1.0 + 1.0e-9)
+
     def test_pick_up_keeps_its_own_close_first_rung(self):
         """Placement's rungs must not widen pick_up's.
 

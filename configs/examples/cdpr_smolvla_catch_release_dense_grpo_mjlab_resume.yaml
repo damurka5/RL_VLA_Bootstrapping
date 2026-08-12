@@ -316,8 +316,23 @@ task:
     # Stage 1 is only safe BECAUSE the gate now reads placement success rather
     # than the grasp rate: a rung the reset already satisfies is a teaching
     # signal when the curriculum can leave it, and a trap when it cannot.
+    # The bowl gets a FINER ladder than the plate. Measured over the 6.7M run:
+    # both climbed 0.01 -> 0.10 by ~3M, but the bowl's validation success went
+    # 0.331 -> 0.151 -> 0.093 across the two promotions that took it there and
+    # needed 3M steps to recover to 0.19, while the plate absorbed the same
+    # jumps and kept climbing to 0.57. The difference is the success radius --
+    # 0.057 against 0.091 -- so an identical step in metres is a far bigger
+    # step relative to what the bowl has to hit.
+    #
+    # The cap is sampled ~38 updates apart at validation cadence against a
+    # 15-update cooldown, so TWO promotions can land between one validation
+    # point and the next: the bowl went 0.01 -> 0.06 without the run ever
+    # measuring it at 0.03. Finer rungs bound what a double promotion can cost
+    # -- the largest relative jump falls from +200% to +100%, and every rung
+    # above 0.02 moves by 25-50%. Raising the cooldown would also work but it
+    # is shared with pick_up, which is not the instruction with the problem.
     random_workspace_start_distance_ladder_by_instruction:
-      put_into_bowl: [0.01, 0.03, 0.06, 0.10]
+      put_into_bowl: [0.01, 0.02, 0.03, 0.045, 0.06, 0.08, 0.10]
       put_into_plate: [0.01, 0.03, 0.06, 0.10]
     # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
     # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
@@ -508,6 +523,20 @@ training:
       grpo_group_selection: uniform
       grpo_normalize_group_advantage: true
       grpo_clip_advantage_abs: 6.0
+      # 0.05, carried over from the pick_up config where it was measured. It was
+      # missing here, and filtered_record_fraction logged 0.0000 for every
+      # update of all three phase-2 runs -- the filter has been off for the
+      # whole phase.
+      #
+      # The advantage divides the centred reward by the group std floored at
+      # 1e-6, so a group whose eight candidates separated nothing still emits
+      # advantages clipped at grpo_clip_advantage_abs (6.0): rollout noise at
+      # full scale. The existing reward_span > 1e-6 test is the literal
+      # all-right-or-all-wrong translation and never fires on a dense reward.
+      # Measured over the 10M pick_up run, 41 of 128 groups per update had a
+      # std under 0.05. Expect filtered_record_fraction ~0.34; if it stays at
+      # 0.0000 the knob is not reaching the collector.
+      grpo_min_group_reward_std: 0.05
       grpo_trajectory_groups: true
       grpo_dynamic_sampling: true
       grpo_dynamic_min_pass_rate: 0.10
