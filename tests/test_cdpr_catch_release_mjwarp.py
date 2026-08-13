@@ -783,6 +783,65 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
                 )
                 self.assertTrue(bool((reach <= 0.10 + 1.0e-6).all().item()))
 
+    def test_an_uncaught_start_gets_a_horizon_floor_and_a_caught_one_does_not(
+        self,
+    ):
+        """The grasp prefix costs ~30 env steps the approach cap knows nothing about.
+
+        Measured on the reference harness: at the near rungs' 64-step budget a
+        grasp-then-carry scores 0/6 with every episode running to the end and
+        nothing terminating; with the floor it is 6/6 at 78-128 steps. Raising
+        the budget for everyone would pay that cost on every carry-only rung,
+        which is most of the run -- so the floor must be targeted, and that is
+        what this asserts.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+            RankLocalCurriculum,
+        )
+        from rl_vla_bootstrapping.policy.rank_local_grpo import (
+            RankLocalGroupLayout,
+        )
+
+        base = {
+            "random_workspace_gripper_start": True,
+            "placement_start_with_caught_object": True,
+            "random_workspace_start_distance_curriculum_enabled": True,
+            "curriculum_horizon_coupling_enabled": True,
+            "curriculum_horizon_min": 16,
+            "curriculum_horizon_max": 32,
+            "placement_grasp_horizon_min_decisions": 32,
+        }
+
+        def horizons(fraction):
+            backend = self._fake_backend(torch)
+            resetter = BatchedReverseFrontierResetter(
+                backend=backend,
+                layout=RankLocalGroupLayout(
+                    worlds_per_rank=8, groups_per_rank=1, group_size=8
+                ),
+                curriculum=RankLocalCurriculum(device=backend.device),
+                rank=0,
+                base_seed=31,
+                instruction_types=("put_into_bowl",),
+                allowed_objects=("robocasa_apple", "robocasa_bowl"),
+                task_metadata={
+                    **base,
+                    "placement_caught_object_fraction": fraction,
+                },
+            )
+            resetter.set_random_start_max_goal_distance(0.01)
+            return resetter.reset(update_index=0, round_index=0).horizons
+
+        caught = horizons(1.0)
+        uncaught = horizons(0.0)
+        self.assertTrue(bool((uncaught >= 32).all().item()))
+        # And the carry-only rung keeps the short, cap-coupled budget.
+        self.assertTrue(bool((caught < 32).all().item()))
+
     def test_the_caught_fraction_defaults_to_every_group_holding(self):
         """Stages 1-4 must be untouched until the anneal is switched on."""
 

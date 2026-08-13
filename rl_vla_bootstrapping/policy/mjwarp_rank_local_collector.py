@@ -714,6 +714,12 @@ class BatchedReverseFrontierResetter:
             number("placement_grasp_object_max_distance", 0.10),
             self.placement_grasp_object_min_distance,
         )
+        # 32 decisions = 128 env steps. The oracle needs 77-119 for a
+        # grasp-then-carry, against 35-47 for the carry alone, so this is the
+        # measured cost of the grasp prefix plus headroom -- not a guess.
+        self.placement_grasp_horizon_min_decisions = max(
+            int(number("placement_grasp_horizon_min_decisions", 32)), 1
+        )
         # Fraction of pick_up GRPO groups that start with the object ALREADY
         # grasped at its rest height on the desk, so the only task left is the
         # 5 cm lift. pick_up plateaus at a ~0.30 grasp rate while
@@ -1518,6 +1524,31 @@ class BatchedReverseFrontierResetter:
             # byte-identical to the run before this knob existed.
             uncaught_container = torch.zeros_like(is_container)
         held_group = placement_task & ~grasp_learning & ~uncaught_container
+        # A horizon FLOOR for those groups, and for those groups only. The
+        # budget is otherwise coupled to the approach cap, which is a statement
+        # about how far the gripper starts from its goal -- and a stage-5
+        # episode has to make a grasp first, which costs the same ~30 env steps
+        # no matter how close the receptacle is. Measured on the reference
+        # harness: at the near rungs' 64-step budget stage 5 scores 0/6 with
+        # every episode running to the end and nothing terminating, while at
+        # 128 steps it is 4/6 at reward 3.28-3.49, taking 77-119 steps.
+        #
+        # Trap #2 of the campaign in a new place: the coupled budget starves
+        # the phase whose step cost does not shrink with distance. Raising the
+        # floor for everyone would instead pay that cost on every carry-only
+        # rung, which is most of the run.
+        if bool(uncaught_container.any().item()):
+            horizon_group = torch.where(
+                uncaught_container,
+                torch.maximum(
+                    horizon_group,
+                    torch.full_like(
+                        horizon_group,
+                        int(self.placement_grasp_horizon_min_decisions),
+                    ),
+                ),
+                horizon_group,
+            )
         shell_zero = shell_group == 0
 
         placement_goal = target_position.clone()
