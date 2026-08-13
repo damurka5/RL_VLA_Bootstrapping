@@ -696,6 +696,24 @@ class BatchedReverseFrontierResetter:
         self.force_caught_container_start = flag(
             "placement_start_with_caught_object", False
         )
+        # Curriculum stages 5-6. 1.0 = every placement episode starts already
+        # holding the object (stages 1-4); 0.0 = every one starts with it on the
+        # desk and has to grasp it first. Annealed downward by the trainer once
+        # the carry-only rungs are passed, the same shape as
+        # pick_up_prelifted_group_fraction.
+        self.caught_container_fraction = min(
+            1.0, max(0.0, number("placement_caught_object_fraction", 1.0))
+        )
+        # Where the object sits relative to the receptacle on those stages.
+        # The max is the stage-6 reach; the min keeps it out of the receptacle
+        # itself, where "grasp it" and "it is already placed" would overlap.
+        self.placement_grasp_object_min_distance = max(
+            number("placement_grasp_object_min_distance", 0.06), 0.0
+        )
+        self.placement_grasp_object_max_distance = max(
+            number("placement_grasp_object_max_distance", 0.10),
+            self.placement_grasp_object_min_distance,
+        )
         # Fraction of pick_up GRPO groups that start with the object ALREADY
         # grasped at its rest height on the desk, so the only task left is the
         # 5 cm lift. pick_up plateaus at a ~0.30 grasp rate while
@@ -912,6 +930,15 @@ class BatchedReverseFrontierResetter:
         self.pick_up_prelifted_group_fraction = min(
             1.0, max(0.0, float(fraction))
         )
+
+    def set_caught_container_fraction(self, fraction: float) -> None:
+        """Set the share of placement groups that start already holding.
+
+        Sampled per group inside reset(), so a change here takes effect on the
+        next batch and never mixes stages within a group.
+        """
+
+        self.caught_container_fraction = min(1.0, max(0.0, float(fraction)))
 
     def set_random_start_max_goal_distance(
         self, value: float | Mapping[int, float]
@@ -1471,7 +1498,26 @@ class BatchedReverseFrontierResetter:
         ) & (shell_group >= 5)
         if self.force_caught_container_start:
             grasp_learning &= ~is_container
-        held_group = placement_task & ~grasp_learning
+        # Curriculum stages 5-6: a fraction of container groups start with the
+        # object ON THE DESK near the receptacle and the gripper above it, so
+        # the episode is grasp-then-carry rather than carry-only. Drawn per
+        # GROUP so all eight GRPO candidates share a stage and are comparable.
+        #
+        # Deliberately NOT routed through `grasp_learning`: that path is gated
+        # on `shell_group >= 5`, which belongs to the Reverse Frontier shell
+        # machinery this phase disables, so reusing it would make the stage
+        # silently depend on a system that is switched off.
+        if self.caught_container_fraction < 1.0:
+            uncaught_container = is_container & (
+                torch.rand((groups,), generator=generator, device=self.device)
+                >= float(self.caught_container_fraction)
+            )
+        else:
+            # Draw nothing while the stage is off, so the generator stream --
+            # and therefore every start this resetter produces -- is
+            # byte-identical to the run before this knob existed.
+            uncaught_container = torch.zeros_like(is_container)
+        held_group = placement_task & ~grasp_learning & ~uncaught_container
         shell_zero = shell_group == 0
 
         placement_goal = target_position.clone()
@@ -1865,6 +1911,46 @@ class BatchedReverseFrontierResetter:
         # aligned to the gripper, the same fitted (closed) opening, and the same
         # grasped/ever_grasped/physical_grasp seeding.
         caught_group = caught_group | prelifted_group
+        # Stages 5-6, applied AFTER the caught paths so it cannot be overwritten
+        # by them: object at its rest height on the desk, a sampled distance
+        # from the receptacle, and the gripper hovering above it -- the state a
+        # pick_up leaves behind, which is exactly what stage 5 has to continue
+        # from. `uncaught_container` is disjoint from `caught_group` by
+        # construction (held_group excludes it), so nothing here races.
+        if bool(uncaught_container.any().item()):
+            grasp_span = float(self.placement_grasp_object_max_distance) - float(
+                self.placement_grasp_object_min_distance
+            )
+            object_distance = float(
+                self.placement_grasp_object_min_distance
+            ) + torch.rand(
+                (groups,), generator=generator, device=self.device
+            ) * max(grasp_span, 0.0)
+            uncaught_object = reference.clone()
+            uncaught_object[:, :2] = (
+                reference[:, :2] + random_direction * object_distance[:, None]
+            )
+            uncaught_object[:, 0] = uncaught_object[:, 0].clamp(
+                self.workspace_x_bounds[0], self.workspace_x_bounds[1]
+            )
+            uncaught_object[:, 1] = uncaught_object[:, 1].clamp(
+                self.workspace_y_bounds[0], self.workspace_y_bounds[1]
+            )
+            uncaught_object[:, 2] = self.support_surface_z + rest_height[:, 0]
+            object_positions_group[:, 0] = torch.where(
+                uncaught_container[:, None],
+                uncaught_object,
+                object_positions_group[:, 0],
+            )
+            # One centimetre above the grasp height, pads bracketing the object
+            # without touching it -- the same pose the aligned pick_up stage
+            # uses, so the two curricula hand off in the same state.
+            uncaught_ee = uncaught_object.clone()
+            uncaught_ee[:, 2] += grasp_offset + 0.01
+            ee_group = torch.where(
+                uncaught_container[:, None], uncaught_ee, ee_group
+            )
+
         caught_object_position = object_positions_group[:, 0].clone()
         caught_ee = caught_object_position.clone()
         caught_ee[:, 2] += grasp_offset

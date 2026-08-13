@@ -690,6 +690,134 @@ class CDPRCatchReleaseRewardTests(unittest.TestCase):
                 else:
                     self.assertTrue(bool(caught.all().item()))
 
+    def test_an_uncaught_placement_start_is_a_grasp_then_carry(self):
+        """Curriculum stages 5-6: object on the desk, gripper above it.
+
+        The whole point is that the episode is NOT already holding: it must
+        grasp first and then carry. So the reset must leave the object at its
+        rest height, the gripper bracketing it, and -- critically -- the grasp
+        flags FALSE, or the reward would hand over the skill the stage exists
+        to train.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+            RankLocalCurriculum,
+        )
+        from rl_vla_bootstrapping.policy.rank_local_grpo import (
+            RankLocalGroupLayout,
+        )
+
+        layout = RankLocalGroupLayout(
+            worlds_per_rank=8, groups_per_rank=1, group_size=8
+        )
+        metadata = {
+            "random_workspace_gripper_start": True,
+            "placement_start_with_caught_object": True,
+            "placement_caught_object_fraction": 0.0,
+            "placement_grasp_object_min_distance": 0.06,
+            "placement_grasp_object_max_distance": 0.10,
+            "random_workspace_min_goal_xy_distance": 0.10,
+            "ee_workspace_x_bounds": [-0.19, 0.19],
+            "ee_workspace_y_bounds": [-0.19, 0.19],
+            "ee_workspace_z_bounds": [0.19, 0.32],
+        }
+        objects = (
+            "robocasa_apple",
+            "robocasa_tomato",
+            "robocasa_plate",
+            "robocasa_bowl",
+        )
+        for instruction in ("put_into_bowl", "put_into_plate"):
+            with self.subTest(instruction=instruction):
+                backend = self._fake_backend(torch)
+                resetter = BatchedReverseFrontierResetter(
+                    backend=backend,
+                    layout=layout,
+                    curriculum=RankLocalCurriculum(device=backend.device),
+                    rank=0,
+                    base_seed=23,
+                    instruction_types=(instruction,),
+                    allowed_objects=objects,
+                    task_metadata=metadata,
+                )
+                reset = resetter.reset(update_index=0, round_index=0)
+                target = backend.object_positions[:, 0]
+                ee = backend.ee_positions
+
+                # Nothing is handed over.
+                self.assertFalse(
+                    bool(reset.task_state.ever_grasped.any().item())
+                )
+                self.assertFalse(bool(reset.physical_grasp.any().item()))
+                # The object is on the desk, not riding the gripper.
+                self.assertTrue(
+                    torch.allclose(
+                        target[:, 2],
+                        reset.task_state.support_surface_z
+                        + reset.task_state.target_rest_height,
+                        atol=1.0e-6,
+                    )
+                )
+                # And the gripper brackets it rather than sitting at the
+                # receptacle: same XY, one pad offset plus a centimetre above.
+                self.assertTrue(
+                    torch.allclose(target[:, :2], ee[:, :2], atol=1.0e-6)
+                )
+                self.assertTrue(
+                    torch.allclose(
+                        ee[:, 2],
+                        target[:, 2]
+                        + float(resetter.pick_grasp_height_offset)
+                        + 0.01,
+                        atol=1.0e-6,
+                    )
+                )
+                # The object sits within reach of the receptacle, so the carry
+                # after the grasp is the length stage 6 asks for.
+                reference = backend.object_positions[:, 1]
+                reach = torch.linalg.vector_norm(
+                    target[:, :2] - reference[:, :2], dim=-1
+                )
+                self.assertTrue(bool((reach <= 0.10 + 1.0e-6).all().item()))
+
+    def test_the_caught_fraction_defaults_to_every_group_holding(self):
+        """Stages 1-4 must be untouched until the anneal is switched on."""
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+            RankLocalCurriculum,
+        )
+        from rl_vla_bootstrapping.policy.rank_local_grpo import (
+            RankLocalGroupLayout,
+        )
+
+        backend = self._fake_backend(torch)
+        resetter = BatchedReverseFrontierResetter(
+            backend=backend,
+            layout=RankLocalGroupLayout(
+                worlds_per_rank=8, groups_per_rank=1, group_size=8
+            ),
+            curriculum=RankLocalCurriculum(device=backend.device),
+            rank=0,
+            base_seed=23,
+            instruction_types=("put_into_bowl",),
+            allowed_objects=("robocasa_apple", "robocasa_bowl"),
+            task_metadata={
+                "random_workspace_gripper_start": True,
+                "placement_start_with_caught_object": True,
+            },
+        )
+        self.assertEqual(resetter.caught_container_fraction, 1.0)
+        reset = resetter.reset(update_index=0, round_index=0)
+        self.assertTrue(bool(reset.task_state.ever_grasped.all().item()))
+        resetter.set_caught_container_fraction(0.0)
+        self.assertEqual(resetter.caught_container_fraction, 0.0)
+
     def test_release_radius_wrong_drop_and_grasp_lift_rewards(self):
         import torch
 

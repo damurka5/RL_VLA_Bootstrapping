@@ -2267,7 +2267,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         _report_plant(plant_rows, steps=int(args.plant_steps))
     if policy_metrics is not None and "policy" in legs:
         _report_policy(policy_metrics)
-    if arm_rows and bool(legs & {"oracle", "ablation", "placement"}):
+    # Any leg that produced arms, `policy` included. Gating this on the
+    # substitution legs meant a plain `--legs policy` validation run computed
+    # every success rate, wrote them to summary.json, and printed none of them.
+    if arm_rows:
         _report_arms(arm_rows)
         _report_timing(timing_rows)
 
