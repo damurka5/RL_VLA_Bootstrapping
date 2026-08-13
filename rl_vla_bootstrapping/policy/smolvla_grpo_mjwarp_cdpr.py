@@ -967,6 +967,69 @@ class PreliftedStageCurriculum:
         self._cooldown = int(float(state.get("cooldown", 0)))
 
 
+class PlacementCaughtStageCurriculum(PreliftedStageCurriculum):
+    """Anneal placement off the handed-over grasp (curriculum stages 5-6).
+
+    The mirror of ``PreliftedStageCurriculum``: that one shrinks the share of
+    pick_up groups whose grasp is handed over, this one shrinks the share of
+    placement groups whose object starts between the pads. Same shape, same
+    cooldown-and-restore behaviour, different key prefix and a different
+    measurement driving it.
+
+    It is driven by PLACEMENT SUCCESS, not by the grasp rate. That distinction
+    is the one that cost a 5M-step run: placement starts already grasped, so a
+    grasp-rate gate is satisfied at reset and never closes.
+
+    Deliberately gated on the *carry* being learned rather than on the approach
+    cap being maxed. A run can sit at the top rung with mediocre success, and
+    handing it a grasp to make as well would be adding a second unsolved skill
+    to an unsolved one -- which is exactly how pick_up rehearsal died.
+    """
+
+    def __init__(self, metadata: Mapping[str, Any]) -> None:
+        def number(key: str, default: float) -> float:
+            try:
+                return float(metadata.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        super().__init__(metadata)
+        self.enabled = bool(
+            metadata.get("placement_caught_curriculum_enabled", False)
+        )
+        self.initial = min(
+            max(number("placement_caught_object_fraction", 1.0), 0.0), 1.0
+        )
+        self.minimum = min(
+            max(number("placement_caught_fraction_min", 0.25), 0.0),
+            self.initial,
+        )
+        self.step = max(number("placement_caught_fraction_step", 0.10), 1.0e-6)
+        # 0.60/0.35 against the measured profile: the 15M checkpoint scores
+        # 0.94/0.86 (plate/bowl) at the near rung and 0.85/0.82 at 0.06, so a
+        # 0.60 bar is comfortably inside what a trained carry reaches, while
+        # 0.35 restores the stage before the skill is gone rather than after.
+        self.reduce_above = number("placement_caught_reduce_success", 0.60)
+        self.restore_below = number("placement_caught_restore_success", 0.35)
+        self.ema_decay = min(
+            max(number("placement_caught_success_ema_decay", 0.9), 0.0), 0.999
+        )
+        self.cooldown_updates = max(
+            int(number("placement_caught_cooldown_updates", 15)), 1
+        )
+        self.fraction = self.initial
+        self.success_ema = 0.0
+        self._seeded = False
+        self._cooldown = 0
+
+    def metrics(self) -> dict[str, float]:
+        return {
+            "curriculum/placement_caught_fraction": float(self.fraction),
+            "curriculum/placement_caught_success_ema": float(self.success_ema),
+            "curriculum/placement_caught_enabled": float(self.enabled),
+        }
+
+
 class PerInstructionApproachCurriculum:
     """One success-gated approach curriculum per configured instruction.
 
@@ -1733,6 +1796,16 @@ def main(argv: Sequence[str] | None = None) -> None:
         prelifted_curriculum.load_state_dict(
             trainer.loaded_extra_state.get("prelifted_curriculum")
         )
+        placement_caught_curriculum = PlacementCaughtStageCurriculum(
+            task_metadata
+        )
+        placement_caught_curriculum.load_state_dict(
+            trainer.loaded_extra_state.get("placement_caught_curriculum")
+        )
+        if placement_caught_curriculum.enabled:
+            resetter.set_caught_container_fraction(
+                placement_caught_curriculum.current_fraction()
+            )
         if prelifted_curriculum.enabled:
             resetter.set_prelifted_group_fraction(
                 prelifted_curriculum.current_fraction()
@@ -2087,6 +2160,24 @@ def main(argv: Sequence[str] | None = None) -> None:
                 resetter.set_prelifted_group_fraction(
                     prelifted_curriculum.current_fraction()
                 )
+            # Placement's own stage anneal. Driven by the mean of the two
+            # placement instructions' success rates -- not the grasp rate, which
+            # a caught start satisfies at reset, and not the pooled rate, which
+            # pick_up would drag around.
+            placement_rates = [
+                instruction_pass_rates[name]
+                for name in ("put_into_plate", "put_into_bowl")
+                if name in instruction_pass_rates
+            ]
+            placement_caught_curriculum.observe(
+                sum(placement_rates) / len(placement_rates)
+                if placement_rates
+                else None
+            )
+            if placement_caught_curriculum.enabled:
+                resetter.set_caught_container_fraction(
+                    placement_caught_curriculum.current_fraction()
+                )
             if (
                 synchronized_metrics["contact_capacity_overflow_ranks"] > 0
                 or synchronized_metrics["constraint_capacity_overflow_ranks"] > 0
@@ -2112,6 +2203,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                     # split; it is the widest cap in the run.
                     **approach_curriculum.metrics(),
                     **prelifted_curriculum.metrics(),
+                    **placement_caught_curriculum.metrics(),
                     # -1 sentinel means the cap is disabled (uncapped start).
                     "curriculum/start_max_goal_distance_m": (
                         float(max(start_distance_caps.values()))
@@ -2254,6 +2346,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         "curriculum": curriculum.snapshot(),
                         "approach_curriculum": approach_curriculum.state_dict(),
                         "prelifted_curriculum": prelifted_curriculum.state_dict(),
+                        "placement_caught_curriculum": placement_caught_curriculum.state_dict(),
                         "validation": {
                             "last_step": int(last_validation_step),
                         },

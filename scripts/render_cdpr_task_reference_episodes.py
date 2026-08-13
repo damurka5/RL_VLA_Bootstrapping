@@ -316,11 +316,26 @@ def _placement_phases() -> tuple[OraclePhase, ...]:
     )
 
 
-def oracle_phases(instruction_type: str) -> tuple[OraclePhase, ...]:
+def oracle_phases(
+    instruction_type: str, *, starts_grasped: bool = True
+) -> tuple[OraclePhase, ...]:
     if instruction_type == "pick_up":
         return _pick_up_phases()
     if instruction_type in ("put_into_plate", "put_into_bowl"):
-        return _placement_phases()
+        if starts_grasped:
+            return _placement_phases()
+        # Curriculum stages 5-6: the object is on the desk and the grasp is
+        # still to be made, so the reference episode is pick_up's approach and
+        # close followed by the placement carry. Reusing pick_up's own phases
+        # rather than writing a second approach keeps the two curricula
+        # measured by the same motion -- and the lift/hold tail is dropped
+        # because the placement phases raise to transit height themselves.
+        approach = tuple(
+            phase
+            for phase in _pick_up_phases()
+            if phase.name in ("align_above_object", "descend_to_grasp_point", "close_fingers")
+        )
+        return approach + _placement_phases()
     raise ValueError(f"No oracle defined for instruction {instruction_type!r}.")
 
 
@@ -776,7 +791,10 @@ def run_episode(
         support_surface_z=float(support_surface_z),
         lift_success_height=float(reward_config.pick_lift_success_height),
     )
-    phases = oracle_phases(instruction_type)
+    phases = oracle_phases(
+        instruction_type,
+        starts_grasped=bool(task_state.grasped[world].item()),
+    )
     phase_index = 0
     phase_steps = 0
 
