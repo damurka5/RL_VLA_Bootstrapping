@@ -1,4 +1,65 @@
-# Phase 2 preflight — is `put_into_plate` / `put_into_bowl` reachable?
+# Phase 2 — `put_into_plate` / `put_into_bowl`
+
+## Outcome: placement is learnable by RL alone on a frozen VLA prior
+
+15M steps, no demonstrations, no behaviour cloning. Held-out validation:
+
+| instruction | start | final | peak |
+|---|---|---|---|
+| `put_into_plate` | 0.000 | **0.710** | 0.778 @ 12.0M |
+| `put_into_bowl` | 0.000 | **0.320** | 0.387 @ 14.3M |
+| overall | 0.059 | **0.360** | 0.375 |
+
+Both were still trending up at 15M — the bowl roughly doubled over the last
+third (0.192 @ 6.8M → 0.32 final). **This is the phase's contribution, and it is
+positive: the frozen SmolVLA prior plus a trainable residual learns placement
+from reward alone.**
+
+The plate/bowl gap is in the direction the M2 localization ladder predicted. The
+plate's success radius is 0.091 m against the bowl's 0.057, and the ladder showed
+graceful degradation with receptacle-position error rather than a cliff — the
+harder target scores lower without failing. That is consistent with localization
+being the binding constraint at these radii, which is the phase's research
+question answered in the affirmative: **3–5 cm of encoder accuracy is enough when
+the tolerance is 5.7–9.1 cm, and is fatal only at pick_up's ~2 cm.**
+
+## The negative result: rehearsal did not protect `pick_up`
+
+`pick_up` was kept in the mix specifically so the phase-1 grasp would not be
+forgotten. It was forgotten anyway. Compared **at matched curriculum cap**, so
+this is not a harder-task artefact:
+
+| pick_up cap | early (<5M) | late (≥10M) |
+|---|---|---|
+| 0.07 | 0.183 | **0.035** |
+| 0.11 | 0.062 | **0.022** |
+
+And `physical_grasp_rate`, which is cap-independent, fell monotonically through
+the run: 0.664 → 0.472 → 0.301 → 0.182 → **0.148**. The policy stopped closing on
+objects at all. Final `pick_up` validation is **0.027** against 0.183 at the
+warm start.
+
+So interleaving a task the policy *can* learn with one it cannot does not
+preserve the second — it costs it entirely. The shared residual and the shared
+action-expert LoRA are the plausible mechanism, and the per-instruction curricula
+did not prevent it: pick_up's own cap oscillated 0.05–0.13 under its demote gate
+for the whole run without the skill recovering.
+
+This is worth stating plainly because the campaign's framing assumed rehearsal
+was close to free. It is not, and any future phase mixing a solved and an
+unsolved instruction should expect to pay for it.
+
+## Known-inert during this run
+
+`filtered_record_fraction` logged **0.0000 on all 15M steps** —
+`grpo_min_group_reward_std` was never set in this config. The GRPO group-std
+filter was off for the entire run, so a share of every update was rollout noise
+amplified by a near-zero group std. Fixed in 468938d for the next run, together
+with a finer bowl ladder; neither is reflected in the numbers above.
+
+---
+
+# Preflight record (what it took to get here)
 
 Answering the one thing asked for first: **F3 reproduces at HEAD, and success is
 currently unreachable for any policy, oracle included.** The oracle scores
