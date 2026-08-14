@@ -191,6 +191,14 @@ class _Recording:
     states: Any = None  # [D, W, state_dim]
     priors: Any = None  # [D, W, actions_per_decision, 5]
 
+    # The rung of the recording plan this round was collected at. NaN when the
+    # recording predates the field, which is why every consumer must treat it
+    # as unknown rather than as zero. Stored because a dataset pooled across
+    # caps reports a source success rate that describes no actual collection
+    # condition: placement runs ~0.93 at cap 0.01 and ~0.55 at 0.10, and one
+    # averaged number hides which of the two a slice came from.
+    start_distance_cap: float = float("nan")
+
     _OPTIONAL_ARRAYS = ("states", "priors")
     _REQUIRED_ARRAYS = (
         "actions", "active", "success", "terminated", "caught_target",
@@ -206,6 +214,7 @@ class _Recording:
         ("diverged_worlds", np.int64),
         ("pick_lift_success_height", np.float64),
     )
+    _OPTIONAL_SCALARS = (("start_distance_cap", np.float64, float("nan")),)
 
     @property
     def has_observations(self) -> bool:
@@ -254,6 +263,8 @@ class _Recording:
                 payload[name] = value
         for name, caster in self._SCALARS:
             payload[name] = caster(getattr(self, name))
+        for name, caster, _ in self._OPTIONAL_SCALARS:
+            payload[name] = caster(getattr(self, name))
         np.savez_compressed(path, **payload)
 
     @classmethod
@@ -275,6 +286,10 @@ class _Recording:
             kwargs[name] = fields.get(name)
         for name, caster in cls._SCALARS:
             kwargs[name] = caster(fields[name]).item()
+        for name, caster, default in cls._OPTIONAL_SCALARS:
+            kwargs[name] = (
+                caster(fields[name]).item() if name in fields else default
+            )
         return cls(**kwargs)
 
 
@@ -1070,8 +1085,24 @@ def _replay_report(
     return report
 
 
+def _group_label(recording: _Recording, fallback: str) -> str:
+    """Which rung of the recording plan a round came from.
+
+    Prefers the cap stored in the recording. Recordings written before that
+    field existed fall back to a caller-supplied label -- in practice the
+    input file's parent directory -- which is honest about being provenance
+    rather than a measured cap.
+    """
+
+    cap = float(recording.start_distance_cap)
+    if np.isnan(cap):
+        return fallback
+    return "cap_inf" if np.isinf(cap) else f"cap_{cap:g}"
+
+
 def _build_dataset(
     recordings: Sequence[_Recording],
+    labels: Sequence[str] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Successful episodes only, truncated at the step that made them succeed.
 
@@ -1093,7 +1124,15 @@ def _build_dataset(
     chunks and misalign the action head.
     """
 
-    usable = [rec for rec in recordings if rec.has_observations]
+    names = list(labels or [f"input_{i}" for i in range(len(recordings))])
+    if len(names) != len(recordings):
+        raise ValueError("labels must be one per recording.")
+    paired = [
+        (rec, _group_label(rec, name))
+        for rec, name in zip(recordings, names)
+        if rec.has_observations
+    ]
+    usable = [rec for rec, _ in paired]
     if not usable:
         raise ValueError(
             "No recording carries observations. Re-record with a build that "
@@ -1109,9 +1148,10 @@ def _build_dataset(
     instruction_texts: list[str] = []
     episode_uids: list[str] = []
     decision_indices: list[int] = []
+    groups: list[str] = []
     episodes_kept = 0
 
-    for rec in usable:
+    for rec, group in paired:
         per_decision = int(rec.actions_per_decision)
         success = rec.episode_success
         first = rec.first_success_step
@@ -1120,7 +1160,7 @@ def _build_dataset(
                 continue
             episodes_kept += 1
             last_decision = int(first[world]) // per_decision
-            uid = f"r{int(rec.round_index)}w{world}"
+            uid = f"{group}/r{int(rec.round_index)}w{world}"
             for decision in range(last_decision + 1):
                 start = decision * per_decision
                 stop = start + per_decision
@@ -1132,6 +1172,7 @@ def _build_dataset(
                 instruction_texts.append(str(rec.instructions[world]))
                 episode_uids.append(uid)
                 decision_indices.append(decision)
+                groups.append(group)
 
     if not states:
         raise ValueError("No successful episodes to build a dataset from.")
@@ -1143,25 +1184,28 @@ def _build_dataset(
         "action_mask": np.stack(masks).astype(bool),
         "instruction_id": np.asarray(instruction_ids, dtype=np.int64),
         "instruction_text": np.asarray(instruction_texts, dtype="U256"),
-        "episode_uid": np.asarray(episode_uids, dtype="U32"),
+        "episode_uid": np.asarray(episode_uids, dtype="U48"),
         "decision_index": np.asarray(decision_indices, dtype=np.int64),
+        # Carried per row so a consumer can filter or reweight by rung without
+        # re-reading the recordings. The near rungs are cheap and easy; the far
+        # ones are scarce and biased, and pooling them silently is the whole
+        # selection-bias trap.
+        "source_group": np.asarray(groups, dtype="U32"),
     }
 
     # The source success rate travels with every slice. A dataset drawn from a
     # 0.06 source is mostly luck; one drawn from 0.93 is mostly skill, and the
     # two must never be pooled without saying so.
-    per_slice: dict[str, Any] = {}
-    for instruction_id in sorted(set(instruction_ids)):
-        name = _instruction_name(instruction_id)
-        rows = int((dataset["instruction_id"] == instruction_id).sum())
+    def slice_stats(
+        instruction_id: int, subset: Sequence[tuple[_Recording, str]]
+    ) -> dict[str, Any]:
         source_episodes = 0
         source_successes = 0
-        for rec in usable:
+        for rec, _ in subset:
             mask = rec.instruction_ids == instruction_id
             source_episodes += int(mask.sum())
             source_successes += int((rec.episode_success & mask).sum())
-        per_slice[name] = {
-            "decisions": rows,
+        return {
             "episodes": source_successes,
             "source_episodes": source_episodes,
             "source_success_rate": (
@@ -1170,6 +1214,37 @@ def _build_dataset(
                 else 0.0
             ),
         }
+
+    per_slice: dict[str, Any] = {}
+    all_groups = sorted({group for _, group in paired})
+    for instruction_id in sorted(set(instruction_ids)):
+        name = _instruction_name(instruction_id)
+        entry = slice_stats(instruction_id, paired)
+        entry["decisions"] = int(
+            (dataset["instruction_id"] == instruction_id).sum()
+        )
+        entry["decisions_per_episode"] = (
+            round(entry["decisions"] / entry["episodes"], 2)
+            if entry["episodes"]
+            else None
+        )
+        # Pooling across rungs reports a rate that describes no collection
+        # condition that ever ran. Placement is ~0.93 at the near rung and
+        # ~0.55 at the far one; the average of those is not a fact about
+        # either.
+        by_group: dict[str, Any] = {}
+        for group in all_groups:
+            subset = [pair for pair in paired if pair[1] == group]
+            group_entry = slice_stats(instruction_id, subset)
+            if not group_entry["source_episodes"]:
+                continue
+            rows = (dataset["instruction_id"] == instruction_id) & (
+                dataset["source_group"] == group
+            )
+            group_entry["decisions"] = int(rows.sum())
+            by_group[group] = group_entry
+        entry["by_group"] = by_group
+        per_slice[name] = entry
 
     stats = {
         "recordings": len(usable),
@@ -1348,11 +1423,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.mode == "dataset":
         if not args.inputs:
             parser.error("--mode dataset needs --inputs.")
-        recordings = [
-            _Recording.from_npz(path.expanduser().resolve())
-            for path in args.inputs
-        ]
-        dataset, stats = _build_dataset(recordings)
+        resolved = [path.expanduser().resolve() for path in args.inputs]
+        recordings = [_Recording.from_npz(path) for path in resolved]
+        # Provenance for recordings written before start_distance_cap was
+        # stored. The harvest writes one directory per rung, so the parent
+        # name is the rung -- but it is a filesystem convention, not a
+        # measurement, and _group_label prefers the stored cap when present.
+        dataset, stats = _build_dataset(
+            recordings, [path.parent.name for path in resolved]
+        )
         np.savez_compressed(output / "demonstrations.npz", **dataset)
         stats["inputs"] = [str(path) for path in args.inputs]
         (output / "dataset.json").write_text(
@@ -1365,13 +1444,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{stats['dead_action_fraction']:.3f}",
             flush=True,
         )
-        for name, slice_stats in stats["by_instruction"].items():
+        for name, entry in stats["by_instruction"].items():
             print(
-                f"[sil][dataset] {name}: {slice_stats['episodes']} episodes "
-                f"({slice_stats['decisions']} decisions) drawn from a "
-                f"{slice_stats['source_success_rate']:.3f} source rate",
+                f"[sil][dataset] {name}: {entry['episodes']} episodes "
+                f"({entry['decisions']} decisions, "
+                f"{entry['decisions_per_episode']} per episode) pooled source "
+                f"rate {entry['source_success_rate']:.3f}",
                 flush=True,
             )
+            for group, group_entry in entry["by_group"].items():
+                print(
+                    f"[sil][dataset]     {group}: "
+                    f"{group_entry['episodes']}/"
+                    f"{group_entry['source_episodes']} = "
+                    f"{group_entry['source_success_rate']:.3f}",
+                    flush=True,
+                )
         print(f"[sil] wrote {output / 'demonstrations.npz'}", flush=True)
         return 0
 
@@ -1479,6 +1567,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 deterministic_kernels=bool(args.deterministic_kernels),
             ) as recorder:
                 recording = recorder.run(round_index=round_index)
+            # NaN when no override was passed: the round then ran at whatever
+            # cap the checkpoint earned, which this tool does not know and must
+            # not invent a number for.
+            recording.start_distance_cap = (
+                float("nan") if start_cap is None else float(start_cap)
+            )
             summary["determinism"] = recorder.determinism
             path = output / f"record_{index:02d}.npz"
             recording.to_npz(path)

@@ -360,23 +360,23 @@ class DatasetBuildTests(unittest.TestCase):
         self.assertEqual(stats["episodes_kept"], 3)
 
     def test_decisions_are_truncated_at_the_success(self) -> None:
-        dataset, stats = _build_dataset([self.recording])
+        dataset, stats = _build_dataset([self.recording], ["rung"])
         # World 0 succeeds at env step 3 -> decision 0 only (steps 0-3).
         # World 2 succeeds at env step 5 -> decisions 0 and 1.
         # World 4 succeeds at env step 2 -> decision 0 only.
         self.assertEqual(stats["decisions"], 4)
         uids = dataset["episode_uid"].tolist()
-        self.assertEqual(uids.count("r0w0"), 1)
-        self.assertEqual(uids.count("r0w2"), 2)
-        self.assertEqual(uids.count("r0w4"), 1)
+        self.assertEqual(uids.count("rung/r0w0"), 1)
+        self.assertEqual(uids.count("rung/r0w2"), 2)
+        self.assertEqual(uids.count("rung/r0w4"), 1)
 
     def test_actions_after_termination_are_masked_not_dropped(self) -> None:
-        dataset, _ = _build_dataset([self.recording])
+        dataset, _ = _build_dataset([self.recording], ["rung"])
         # Every chunk keeps its full width so the action head stays aligned.
         self.assertEqual(
             dataset["action"].shape[1], self.recording.actions_per_decision
         )
-        rows = dataset["episode_uid"] == "r0w4"
+        rows = dataset["episode_uid"] == "rung/r0w4"
         # World 4 terminated at env step 2, so steps 3 of that chunk is dead.
         self.assertEqual(dataset["action_mask"][rows][0].tolist(),
                          [True, True, True, False])
@@ -387,6 +387,38 @@ class DatasetBuildTests(unittest.TestCase):
         self.assertEqual(plate["source_episodes"], 4)
         self.assertEqual(plate["episodes"], 2)
         self.assertEqual(plate["source_success_rate"], 0.5)
+
+    def test_rungs_are_reported_separately_not_pooled(self) -> None:
+        # Two rungs whose plate rates are 0.5 and 0.0. The pooled figure is
+        # 0.25, which describes neither, so both must survive in by_group.
+        easy = _with_observations(_synthetic())
+        easy.start_distance_cap = 0.01
+        hard = _with_observations(_synthetic())
+        hard.start_distance_cap = 0.10
+        hard.success = np.zeros_like(hard.success)
+        hard.success[5, 2] = True  # one bowl success, no plate successes
+
+        dataset, stats = _build_dataset([easy, hard])
+        plate = stats["by_instruction"]["put_into_plate"]
+        self.assertEqual(
+            plate["by_group"]["cap_0.01"]["source_success_rate"], 0.5
+        )
+        self.assertEqual(
+            plate["by_group"]["cap_0.1"]["source_success_rate"], 0.0
+        )
+        self.assertEqual(plate["source_success_rate"], 0.25)
+        # And the rung is carried per row, so a consumer can drop one.
+        self.assertEqual(
+            set(dataset["source_group"].tolist()), {"cap_0.01", "cap_0.1"}
+        )
+
+    def test_a_recording_without_a_cap_falls_back_to_its_label(self) -> None:
+        dataset, _ = _build_dataset(
+            [self.recording], ["sil_harvest_0.06"]
+        )
+        self.assertEqual(
+            set(dataset["source_group"].tolist()), {"sil_harvest_0.06"}
+        )
 
     def test_a_verdict_only_recording_is_refused(self) -> None:
         # The recordings written before observation capture existed carry no
@@ -412,8 +444,21 @@ class RoundTripTests(unittest.TestCase):
                 if isinstance(original, np.ndarray):
                     self.assertTrue(np.array_equal(original, copied))
                     self.assertEqual(original.dtype, copied.dtype)
+                elif isinstance(original, float) and np.isnan(original):
+                    # NaN is the "no cap recorded" sentinel and never equals
+                    # itself, so round-tripping it needs an explicit check.
+                    self.assertTrue(np.isnan(copied))
                 else:
                     self.assertEqual(original, copied)
+
+    def test_a_recorded_cap_survives_the_round_trip(self) -> None:
+        recording = _synthetic()
+        recording.start_distance_cap = 0.03
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record.npz"
+            recording.to_npz(path)
+            restored = _Recording.from_npz(path)
+        self.assertEqual(restored.start_distance_cap, 0.03)
 
 
 if __name__ == "__main__":
