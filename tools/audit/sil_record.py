@@ -1,0 +1,916 @@
+#!/usr/bin/env python3
+"""Record the deterministic policy's own episodes, and replay them.
+
+Phase 3 (self-imitation) needs a dataset of trajectories the campaign's own RL
+checkpoints produced, and part 3 of it needs to re-simulate smoothed action
+sequences and keep only what still succeeds. Both halves are the same machine:
+run one validation round, capture exactly what physics executed, then run it
+again feeding those actions back.
+
+Why this is a sibling of ``xy_approach_probe`` rather than a sixth leg inside
+it. The probe measures a policy; this records one. It imports the probe's
+``_build_world`` so there is still exactly one place that reproduces the
+training stack -- the campaign has been bitten twice by a second builder
+drifting from the first -- but the recording concerns are its own.
+
+Why the probe's existing ``policy_trace.npz`` is not enough. It stores
+``commanded0``, action index 0 of each chunk, which was the right call for a
+cosine metric and is a deliberate documented choice. But the env steps the
+WHOLE chunk::
+
+    for action_index in range(self.actions_per_policy_decision):
+        low_dim = self.backend.step(actions[:, action_index], step_active)
+
+so three of every four executed actions are absent from that trace, along with
+the per-step active mask. An episode terminates on success
+(``terminated = success | wrong_place_settled | timeout``) and the policy keeps
+emitting actions into a frozen world afterwards, so without the mask every
+successful episode's demonstration would be padded with actions that moved
+nothing. Both are silent dataset poisoners, which is why recording happens at
+the two points below and not at the chunk producer.
+
+
+Interception points
+-------------------
+
+``backend.step(actions, active_mask)`` -- the executed command and the mask, as
+physics received them. This is the only place that is ground truth about what
+the plant was driven with; anything upstream is what the policy *intended*.
+
+``evaluate_active_sparse_tasks(...)`` -- patched in the collector's module
+namespace, called through, never reimplemented. Its keyword arguments carry the
+post-grasp-update ``ee_position``, ``object_positions``, ``gripper_opening``
+and ``caught_target`` that production actually scores, and its return carries
+``success`` and ``terminated``. Relabeling and survival must be decided by this
+function and nothing else: ``robots/cdpr/cdpr_dataset/cdpr_lchol_spec.py``
+already contains a second, independent implementation of these predicates
+(``_grab_predicate``, ``_pick_predicate``, ...) keyed off a dict the MJWarp
+collector never builds, and this campaign has paid for that class of
+duplication more than once.
+
+The two paths report ``active`` independently, so they cross-check each other;
+a disagreement is raised rather than averaged away.
+
+
+Replay is a seeded re-run, not a state restore
+----------------------------------------------
+
+The reset is a pure function of its seed::
+
+    base_seed + rank * 1_000_003 + update_index * 10_000_019 + round_index * 100_003
+
+so replaying does not need MuJoCo state serialization: rebuild the same world
+at the same ``--start-distance-cap`` and the same ``--round-index``, and the
+starts are identical by construction. Actions are substituted at
+``backend.step``, so physics sees the recorded bytes exactly.
+
+Be honest about what that measures. Identical actions into an identical reset
+should reproduce the trajectory bitwise, so ``--mode replay`` against an
+unmodified recording is expected to survive at 100%. It is a PLUMBING test --
+chunk ordering, world ordering, horizon, mask, npz round-trip -- and not
+evidence that the recordings are valid training targets. It is worth running
+because an off-by-one here would silently corrupt every downstream number, and
+it is worthless as a claim about recording fidelity on its own. That is what
+``--repeat`` is for: two identical recording runs measure the simulator's own
+determinism, and any replay survival at or above that floor is indistinguishable
+from noise.
+
+The policy stays loaded in replay mode even though its output is discarded, so
+that a record arm and a replay arm differ in exactly one respect -- the five
+numbers handed to the plant -- and nothing else can drift between them.
+
+
+Usage
+-----
+
+Record twice at the near rung, which is arms A and B together::
+
+    RLVLA_HF_OFFLINE=1 MUJOCO_GL=egl conda run -n cdpr-mjlab \\
+    python tools/audit/sil_record.py --mode record --repeat 2 \\
+        --checkpoint runs/.../step_15000502/smolvla_grpo_adapter.pt \\
+        --config configs/examples/cdpr_smolvla_catch_release_dense_grpo_mjlab_resume.yaml \\
+        --start-distance-cap 0.01 --output tools/audit/out/sil_cap001
+
+Replay the first recording, which is arm C::
+
+    ... --mode replay --actions tools/audit/out/sil_cap001/record_00.npz \\
+        --start-distance-cap 0.01 --output tools/audit/out/sil_cap001_replay
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[2]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+# Imported before anything here can reach huggingface_hub. The probe configures
+# both offline switches at import time, and they are read into module constants
+# on the hub's first import, so setting them afterwards is silently too late.
+from tools.audit.xy_approach_probe import _build_world  # noqa: E402
+
+import argparse  # noqa: E402
+import csv  # noqa: E402
+import json  # noqa: E402
+from dataclasses import dataclass  # noqa: E402
+from typing import Any, Mapping, Sequence  # noqa: E402
+
+import numpy as np  # noqa: E402
+
+from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
+    ACTIVE_INSTRUCTION_TYPES,
+)
+
+
+# --------------------------------------------------------------------------
+# Recording
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class _Recording:
+    """One validation round, as physics executed it.
+
+    Per env step, shaped ``[S, W, ...]`` where ``S`` is
+    ``max_decisions * actions_per_policy_decision`` and ``W`` is worlds. Per
+    episode, shaped ``[W, ...]``. Nothing here is derived: every array is a
+    tensor that production produced, copied to the host.
+    """
+
+    # Per env step.
+    actions: np.ndarray  # [S, W, 5] what backend.step received
+    active: np.ndarray  # [S, W] bool, the step_active mask
+    success: np.ndarray  # [S, W] bool, already masked by active upstream
+    terminated: np.ndarray  # [S, W] bool
+    caught_target: np.ndarray  # [S, W] bool
+    ee_xyz: np.ndarray  # [S, W, 3]
+    gripper_opening: np.ndarray  # [S, W]
+    object_xyz: np.ndarray  # [S, W, K, 3]
+
+    # Per episode.
+    instruction_ids: np.ndarray  # [W]
+    target_slots: np.ndarray  # [W]
+    reference_slots: np.ndarray  # [W]
+    second_reference_slots: np.ndarray  # [W]
+    horizons: np.ndarray  # [W] in decisions
+    initial_target_xyz: np.ndarray  # [W, 3]
+    support_surface_z: np.ndarray  # [W]
+    release_threshold: np.ndarray  # [W]
+    target_rest_height: np.ndarray  # [W]
+    physical_grasp_at_reset: np.ndarray  # [W] bool
+    instructions: np.ndarray  # [W] unicode
+
+    # Round-level.
+    actions_per_decision: int
+    round_index: int
+    diverged_worlds: int
+    pick_lift_success_height: float
+
+    @property
+    def worlds(self) -> int:
+        return int(self.actions.shape[1])
+
+    @property
+    def episode_success(self) -> np.ndarray:
+        """Per-world verdict, latched exactly as ``validate_round`` latches it.
+
+        ``candidate_success.logical_or_(result.success)`` over every env step,
+        and ``result.success`` was already ``&= active`` inside the predicate.
+        """
+
+        return self.success.any(axis=0)
+
+    @property
+    def first_success_step(self) -> np.ndarray:
+        """Env step of first success, or -1. The demonstration ends here.
+
+        An episode terminates on success, so there is nothing after this step
+        but a frozen world -- the actions past it must not enter the dataset.
+        """
+
+        any_success = self.success.any(axis=0)
+        first = np.argmax(self.success, axis=0).astype(np.int64)
+        return np.where(any_success, first, -1)
+
+    @property
+    def episode_length(self) -> np.ndarray:
+        """Env steps this world was actually stepped for."""
+
+        return self.active.sum(axis=0).astype(np.int64)
+
+    def to_npz(self, path: Path) -> None:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = {
+            name: getattr(self, name)
+            for name in (
+                "actions", "active", "success", "terminated", "caught_target",
+                "ee_xyz", "gripper_opening", "object_xyz",
+                "instruction_ids", "target_slots", "reference_slots",
+                "second_reference_slots", "horizons", "initial_target_xyz",
+                "support_surface_z", "release_threshold", "target_rest_height",
+                "physical_grasp_at_reset", "instructions",
+            )
+        }
+        payload["actions_per_decision"] = np.int64(self.actions_per_decision)
+        payload["round_index"] = np.int64(self.round_index)
+        payload["diverged_worlds"] = np.int64(self.diverged_worlds)
+        payload["pick_lift_success_height"] = np.float64(
+            self.pick_lift_success_height
+        )
+        np.savez_compressed(path, **payload)
+
+    @classmethod
+    def from_npz(cls, path: Path) -> "_Recording":
+        with np.load(path, allow_pickle=False) as data:
+            fields = {key: data[key] for key in data.files}
+        return cls(
+            **{
+                key: value
+                for key, value in fields.items()
+                if key
+                not in {
+                    "actions_per_decision", "round_index", "diverged_worlds",
+                    "pick_lift_success_height",
+                }
+            },
+            actions_per_decision=int(fields["actions_per_decision"]),
+            round_index=int(fields["round_index"]),
+            diverged_worlds=int(fields["diverged_worlds"]),
+            pick_lift_success_height=float(fields["pick_lift_success_height"]),
+        )
+
+
+class _RoundRecorder:
+    """Runs one ``validate_round``, capturing what the plant executed.
+
+    ``playback`` substitutes recorded actions at ``backend.step``. Everything
+    else -- reset, reward, grasp detector, horizon, termination, predicate --
+    stays the trainer's own code.
+    """
+
+    def __init__(
+        self,
+        world: Any,
+        *,
+        playback: np.ndarray | None = None,
+        horizon_override: int = 0,
+    ) -> None:
+        self.world = world
+        self.playback = playback
+        self.horizon_override = max(0, int(horizon_override))
+        self.reset: Any = None
+        self.env_step = 0
+        self._rows_step: list[dict[str, np.ndarray]] = []
+        self._rows_eval: list[dict[str, np.ndarray]] = []
+        # Saved originals plus whether the name was already an INSTANCE
+        # attribute before the patch. Both patched names are ordinary methods,
+        # so restoring by assignment would leave a bound method shadowing the
+        # class for the rest of the process. The probe's _ArmRunner takes the
+        # same care for the same reason; several arms run back to back over one
+        # live trainer.
+        self._original_step: Any = None
+        self._original_reset: Any = None
+        self._original_predicate: Any = None
+        self._owned_step = False
+        self._owned_reset = False
+        self._collector_module: Any = None
+
+    # -- installation ---------------------------------------------------
+
+    def __enter__(self) -> "_RoundRecorder":
+        import rl_vla_bootstrapping.policy.mjwarp_rank_local_collector as module
+
+        torch = self.world.torch
+        backend = self.world.backend
+        resetter = self.world.collector.resetter
+        self._collector_module = module
+
+        self._original_step = backend.step
+        self._original_reset = resetter.reset
+        self._original_predicate = module.evaluate_active_sparse_tasks
+        self._owned_step = "step" in vars(backend)
+        self._owned_reset = "reset" in vars(resetter)
+
+        def patched_reset(**kwargs: Any) -> Any:
+            reset = self._original_reset(**kwargs)
+            if self.horizon_override:
+                reset.horizons.fill_(self.horizon_override)
+            self.reset = reset
+            self.env_step = 0
+            self._rows_step.clear()
+            self._rows_eval.clear()
+            # Cable-singularity blowups are a real outcome here, not an
+            # exception: a diverged world is neither a success nor a usable
+            # demonstration, and its count belongs next to the survival rate.
+            backend.pop_nonfinite_world_events()
+            return reset
+
+        def patched_step(actions: Any, active_mask: Any) -> Any:
+            if self.playback is not None:
+                if self.env_step >= self.playback.shape[0]:
+                    raise RuntimeError(
+                        f"Playback ran past the recording at env step "
+                        f"{self.env_step} of {self.playback.shape[0]}. The "
+                        "replay horizon does not match the recorded one; pass "
+                        "the same --horizon-decisions and --start-distance-cap."
+                    )
+                actions = torch.as_tensor(
+                    self.playback[self.env_step],
+                    dtype=actions.dtype,
+                    device=actions.device,
+                )
+            self._rows_step.append(
+                {
+                    "actions": _host_float(actions),
+                    "active": _host_bool(active_mask),
+                }
+            )
+            self.env_step += 1
+            return self._original_step(actions, active_mask)
+
+        def patched_predicate(**kwargs: Any) -> Any:
+            result = self._original_predicate(**kwargs)
+            self._rows_eval.append(
+                {
+                    "success": _host_bool(result.success),
+                    "terminated": _host_bool(result.terminated),
+                    "active": _host_bool(kwargs["active_mask"]),
+                    "caught_target": _host_bool(kwargs["caught_target"]),
+                    "ee_xyz": _host_float(kwargs["ee_position"]),
+                    "gripper_opening": _host_float(kwargs["gripper_opening"]),
+                    "object_xyz": _host_float(kwargs["object_positions"]),
+                }
+            )
+            return result
+
+        backend.step = patched_step
+        resetter.reset = patched_reset
+        module.evaluate_active_sparse_tasks = patched_predicate
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        backend = self.world.backend
+        resetter = self.world.collector.resetter
+        if self._owned_step:
+            backend.step = self._original_step
+        else:
+            vars(backend).pop("step", None)
+        if self._owned_reset:
+            resetter.reset = self._original_reset
+        else:
+            vars(resetter).pop("reset", None)
+        self._collector_module.evaluate_active_sparse_tasks = (
+            self._original_predicate
+        )
+
+    # -- running --------------------------------------------------------
+
+    def run(self, *, round_index: int) -> _Recording:
+        collector = self.world.collector
+        collector.validate_round(round_index=round_index)
+        diverged = int(self.world.backend.pop_nonfinite_world_events())
+
+        if len(self._rows_step) != len(self._rows_eval):
+            raise RuntimeError(
+                f"Recorded {len(self._rows_step)} plant steps but "
+                f"{len(self._rows_eval)} predicate evaluations. They are "
+                "called once each per env step in validate_round, so a "
+                "mismatch means the loop changed shape and the arrays below "
+                "would be misaligned."
+            )
+        if not self._rows_step:
+            raise RuntimeError("The round executed no env steps.")
+
+        def stack(rows: Sequence[Mapping[str, np.ndarray]], key: str) -> np.ndarray:
+            return np.stack([row[key] for row in rows], axis=0)
+
+        active_from_step = stack(self._rows_step, "active")
+        active_from_eval = stack(self._rows_eval, "active")
+        # Independent readings of the same mask, from the two ends of one env
+        # step. Equal by construction in production; unequal means one of the
+        # two interception points is not where this file claims it is, which
+        # would make every per-step array here misindexed.
+        if not np.array_equal(active_from_step, active_from_eval):
+            raise RuntimeError(
+                "The active mask handed to the plant and the one handed to the "
+                "success predicate disagree. The recording is misaligned."
+            )
+
+        task_state = self.reset.task_state
+        catch_release = getattr(
+            self.world.collector, "catch_release_dense_reward", None
+        )
+        return _Recording(
+            actions=stack(self._rows_step, "actions"),
+            active=active_from_step,
+            success=stack(self._rows_eval, "success"),
+            terminated=stack(self._rows_eval, "terminated"),
+            caught_target=stack(self._rows_eval, "caught_target"),
+            ee_xyz=stack(self._rows_eval, "ee_xyz"),
+            gripper_opening=stack(self._rows_eval, "gripper_opening"),
+            object_xyz=stack(self._rows_eval, "object_xyz"),
+            instruction_ids=_host_int(task_state.instruction_ids),
+            target_slots=_host_int(task_state.target_slots),
+            reference_slots=_host_int(task_state.reference_slots),
+            second_reference_slots=_host_int(task_state.second_reference_slots),
+            horizons=_host_int(self.reset.horizons),
+            initial_target_xyz=_host_float(task_state.initial_target_positions),
+            support_surface_z=_host_float(task_state.support_surface_z),
+            release_threshold=_host_float(task_state.release_threshold),
+            target_rest_height=(
+                _host_float(task_state.target_rest_height)
+                if task_state.target_rest_height is not None
+                else np.zeros(
+                    (int(task_state.instruction_ids.shape[0]),),
+                    dtype=np.float32,
+                )
+            ),
+            physical_grasp_at_reset=_host_bool(self.reset.physical_grasp),
+            instructions=np.asarray(list(self.reset.instructions), dtype="U256"),
+            actions_per_decision=int(
+                self.world.collector.actions_per_policy_decision
+            ),
+            round_index=int(round_index),
+            diverged_worlds=diverged,
+            pick_lift_success_height=float(
+                getattr(catch_release, "pick_lift_success_height", 0.05)
+            ),
+        )
+
+
+def _host_float(value: Any) -> np.ndarray:
+    return value.detach().float().cpu().numpy().copy()
+
+
+def _host_int(value: Any) -> np.ndarray:
+    return value.detach().to("cpu").numpy().astype(np.int64).copy()
+
+
+def _host_bool(value: Any) -> np.ndarray:
+    import torch
+
+    return value.detach().to(dtype=torch.bool).cpu().numpy().copy()
+
+
+# --------------------------------------------------------------------------
+# Reporting
+# --------------------------------------------------------------------------
+
+
+def _instruction_name(instruction_id: int) -> str:
+    if 0 <= int(instruction_id) < len(ACTIVE_INSTRUCTION_TYPES):
+        return ACTIVE_INSTRUCTION_TYPES[int(instruction_id)]
+    return f"id_{int(instruction_id)}"
+
+
+def _episode_rows(recording: _Recording) -> list[dict[str, Any]]:
+    """One row per world. The unit the dataset is selected on."""
+
+    success = recording.episode_success
+    first = recording.first_success_step
+    length = recording.episode_length
+    # Peak lift above the RESET height, while the object was held. The same two
+    # quantities the pick_up predicate multiplies together, kept apart on
+    # purpose: reported as measurements, not as a reimplemented predicate.
+    grasped = recording.caught_target & (recording.gripper_opening <= 0.94)
+    lift = (
+        recording.object_xyz[
+            :, np.arange(recording.worlds), recording.target_slots, 2
+        ]
+        - recording.initial_target_xyz[None, :, 2]
+    )
+    held_lift = np.where(grasped & recording.active, lift, -np.inf)
+    peak_held_lift = held_lift.max(axis=0)
+    peak_held_lift = np.where(np.isfinite(peak_held_lift), peak_held_lift, 0.0)
+
+    rows: list[dict[str, Any]] = []
+    for world in range(recording.worlds):
+        rows.append(
+            {
+                "world": world,
+                "instruction": _instruction_name(
+                    recording.instruction_ids[world]
+                ),
+                "success": bool(success[world]),
+                "first_success_env_step": int(first[world]),
+                "env_steps_active": int(length[world]),
+                "horizon_decisions": int(recording.horizons[world]),
+                "grasped_at_reset": bool(
+                    recording.physical_grasp_at_reset[world]
+                ),
+                "ever_grasped": bool(
+                    (grasped[:, world] & recording.active[:, world]).any()
+                ),
+                "peak_held_lift_m": round(float(peak_held_lift[world]), 5),
+                "instruction_text": str(recording.instructions[world]),
+            }
+        )
+    return rows
+
+
+def _slice_summary(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    """Per-instruction success, with the denominator kept visible.
+
+    Selecting on success selects on alignment for any policy, including a blind
+    one, so a dataset slice is not interpretable without the rate it was drawn
+    from. Every consumer of this file should carry the source rate forward.
+    """
+
+    summary: dict[str, Any] = {}
+    for name in sorted({str(row["instruction"]) for row in rows}):
+        subset = [row for row in rows if row["instruction"] == name]
+        successes = [row for row in subset if row["success"]]
+        summary[name] = {
+            "episodes": len(subset),
+            "successes": len(successes),
+            "source_success_rate": (
+                round(len(successes) / len(subset), 4) if subset else 0.0
+            ),
+            "mean_env_steps_to_success": (
+                round(
+                    float(
+                        np.mean(
+                            [row["first_success_env_step"] for row in successes]
+                        )
+                    ),
+                    2,
+                )
+                if successes
+                else None
+            ),
+        }
+    return summary
+
+
+def _pick_up_prefix_report(recording: _Recording) -> dict[str, Any]:
+    """Can a placement episode be relabelled as ``pick_up``?
+
+    The brief calls this the strongest relabel in the set. It may instead be a
+    gate the reset already satisfies. ``pick_success`` is
+    ``grasped & (target_lift >= pick_lift_success_height)`` with ``target_lift``
+    measured from ``initial_target_positions`` captured AT RESET -- and
+    placement episodes start already grasped. So either the carry lifts the
+    object past the threshold, in which case the relabelled trajectories
+    contain no grasp acquisition at all and would train pick_up on demos that
+    skip the only hard part; or it does not, and the relabel yields nothing.
+
+    Both readings matter and neither is what the brief assumes, so this reports
+    the two components rather than a verdict. The relabel itself, if it
+    survives this, must go through ``evaluate_active_sparse_tasks`` with
+    rewritten instruction ids -- never through the arithmetic here.
+    """
+
+    placement = np.isin(
+        recording.instruction_ids,
+        [
+            ACTIVE_INSTRUCTION_TYPES.index("put_into_plate"),
+            ACTIVE_INSTRUCTION_TYPES.index("put_into_bowl"),
+        ],
+    )
+    grasped = recording.caught_target & (recording.gripper_opening <= 0.94)
+    lift = (
+        recording.object_xyz[
+            :, np.arange(recording.worlds), recording.target_slots, 2
+        ]
+        - recording.initial_target_xyz[None, :, 2]
+    )
+    held_lift = np.where(grasped & recording.active, lift, -np.inf)
+    peak = held_lift.max(axis=0)
+    peak = np.where(np.isfinite(peak), peak, 0.0)
+
+    threshold = float(recording.pick_lift_success_height)
+    subset = placement & recording.episode_success
+    return {
+        "pick_lift_success_height_m": threshold,
+        "placement_episodes": int(placement.sum()),
+        "successful_placement_episodes": int(subset.sum()),
+        "grasped_at_reset_fraction": round(
+            float(recording.physical_grasp_at_reset[placement].mean()), 4
+        )
+        if placement.any()
+        else 0.0,
+        "peak_held_lift_m_mean": round(float(peak[subset].mean()), 5)
+        if subset.any()
+        else None,
+        "peak_held_lift_m_p90": round(float(np.percentile(peak[subset], 90)), 5)
+        if subset.any()
+        else None,
+        "would_relabel_as_pick_up": int((peak[subset] >= threshold).sum()),
+        "would_relabel_fraction": round(
+            float((peak[subset] >= threshold).mean()), 4
+        )
+        if subset.any()
+        else 0.0,
+    }
+
+
+def _determinism_report(
+    first: _Recording, second: _Recording
+) -> dict[str, Any]:
+    """The null. Two identical runs; anything that differs is the simulator.
+
+    Without this number a replay survival of, say, 0.97 is unreadable -- it
+    could be a recording bug or it could be the floor. If this comes back
+    anything other than exact agreement, the seeded-replay design does not hold
+    and part 3 needs state serialization instead.
+    """
+
+    steps = min(first.actions.shape[0], second.actions.shape[0])
+    return {
+        "env_steps": [int(first.actions.shape[0]), int(second.actions.shape[0])],
+        "same_step_count": bool(
+            first.actions.shape[0] == second.actions.shape[0]
+        ),
+        "same_instruction_ids": bool(
+            np.array_equal(first.instruction_ids, second.instruction_ids)
+        ),
+        "same_horizons": bool(np.array_equal(first.horizons, second.horizons)),
+        "success_agreement": round(
+            float(
+                (first.episode_success == second.episode_success).mean()
+            ),
+            5,
+        ),
+        "success_rate": [
+            round(float(first.episode_success.mean()), 5),
+            round(float(second.episode_success.mean()), 5),
+        ],
+        "actions_bitwise_identical": bool(
+            np.array_equal(
+                first.actions[:steps], second.actions[:steps]
+            )
+        ),
+        "max_abs_action_delta": float(
+            np.abs(
+                first.actions[:steps] - second.actions[:steps]
+            ).max()
+        ),
+        "max_abs_ee_delta_m": float(
+            np.abs(first.ee_xyz[:steps] - second.ee_xyz[:steps]).max()
+        ),
+    }
+
+
+def _replay_report(
+    source: _Recording, replay: _Recording
+) -> dict[str, Any]:
+    """Arm C. Survival is agreement with the recording that produced it."""
+
+    kept = source.episode_success
+    survived = kept & replay.episode_success
+    steps = min(source.actions.shape[0], replay.actions.shape[0])
+    report: dict[str, Any] = {
+        "same_instruction_ids": bool(
+            np.array_equal(source.instruction_ids, replay.instruction_ids)
+        ),
+        "same_horizons": bool(
+            np.array_equal(source.horizons, replay.horizons)
+        ),
+        "actions_fed_bitwise_identical": bool(
+            np.array_equal(source.actions[:steps], replay.actions[:steps])
+        ),
+        "recorded_successes": int(kept.sum()),
+        "survived": int(survived.sum()),
+        "survival_rate": (
+            round(float(survived.sum() / kept.sum()), 5) if kept.any() else None
+        ),
+        "max_abs_ee_delta_m": float(
+            np.abs(source.ee_xyz[:steps] - replay.ee_xyz[:steps]).max()
+        ),
+        # A survivor that succeeds at a different step did not reproduce the
+        # trajectory; it reached the same verdict by a different route. Under a
+        # bitwise replay this must be zero.
+        "successes_at_a_different_step": int(
+            (
+                (source.first_success_step != replay.first_success_step)
+                & survived
+            ).sum()
+        ),
+    }
+    by_instruction: dict[str, Any] = {}
+    for instruction_id in sorted(set(source.instruction_ids.tolist())):
+        mask = source.instruction_ids == instruction_id
+        kept_here = kept & mask
+        if not kept_here.any():
+            continue
+        by_instruction[_instruction_name(instruction_id)] = {
+            "recorded_successes": int(kept_here.sum()),
+            "survived": int((survived & mask).sum()),
+            "survival_rate": round(
+                float((survived & mask).sum() / kept_here.sum()), 5
+            ),
+        }
+    report["by_instruction"] = by_instruction
+    return report
+
+
+def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
+    if not rows:
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+# --------------------------------------------------------------------------
+# Entry point
+# --------------------------------------------------------------------------
+
+
+def main(argv: Sequence[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(
+        description=__doc__,
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument("--checkpoint", type=Path, required=True)
+    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--mode",
+        choices=("record", "replay"),
+        default="record",
+        help=(
+            "record runs the deterministic policy and writes the executed "
+            "actions; replay feeds a recording's actions back through the same "
+            "reset and rescores with the production predicate."
+        ),
+    )
+    parser.add_argument(
+        "--actions",
+        type=Path,
+        default=None,
+        help="Recording npz to replay. Required for --mode replay.",
+    )
+    parser.add_argument(
+        "--repeat",
+        type=int,
+        default=1,
+        help=(
+            "Recording runs. 2 gives the determinism null: two runs that "
+            "differ in nothing, so any disagreement is the simulator's own "
+            "and is the noise floor under every survival number downstream."
+        ),
+    )
+    parser.add_argument("--round-index", type=int, default=0)
+    parser.add_argument("--device", default="cuda:0")
+    parser.add_argument("--worlds", type=int, default=512)
+    parser.add_argument("--group-size", type=int, default=8)
+    parser.add_argument("--smolvla-microbatch", type=int, default=256)
+    parser.add_argument(
+        "--start-distance-cap",
+        type=float,
+        default=None,
+        help=(
+            "Override the checkpoint's approach-curriculum cap (m). This is "
+            "the recording plan's rung. Must match between a recording and "
+            "its replay, or the resets differ and the comparison is void."
+        ),
+    )
+    parser.add_argument(
+        "--horizon-decisions",
+        type=int,
+        default=0,
+        help=(
+            "Override the rollout budget in decisions (0 keeps the coupled "
+            "one). Smoothing tends to shrink command magnitude, so a smoothed "
+            "episode can fail for want of budget rather than for want of "
+            "skill; this separates the two."
+        ),
+    )
+    parser.add_argument(
+        "--metadata-override",
+        nargs="+",
+        default=[],
+        metavar="KEY=VALUE",
+        help="Same contract as the probe's flag of the same name.",
+    )
+    args = parser.parse_args(argv)
+
+    checkpoint = args.checkpoint.expanduser().resolve()
+    config_path = args.config.expanduser().resolve()
+    if not checkpoint.is_file():
+        parser.error(f"Checkpoint does not exist: {checkpoint}")
+    if not config_path.is_file():
+        parser.error(f"Config does not exist: {config_path}")
+    if args.mode == "replay" and args.actions is None:
+        parser.error("--mode replay needs --actions.")
+    if args.repeat < 1:
+        parser.error("--repeat must be at least 1.")
+    output = args.output.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+
+    start_cap = args.start_distance_cap
+    if start_cap is not None and (start_cap <= 0.0 or start_cap == float("inf")):
+        start_cap = float("inf")
+
+    world = _build_world(
+        checkpoint=checkpoint,
+        config_path=config_path,
+        device_str=str(args.device),
+        worlds=int(args.worlds),
+        group_size=int(args.group_size),
+        microbatch=int(args.smolvla_microbatch),
+        # The policy stays loaded in replay too, even though its output is
+        # discarded, so a record arm and a replay arm differ in exactly one
+        # respect: the five numbers handed to the plant.
+        load_policy=True,
+        run_dir=output,
+        start_distance_cap=start_cap,
+        metadata_overrides=list(args.metadata_override or []),
+    )
+
+    summary: dict[str, Any] = {
+        "checkpoint": str(checkpoint),
+        "config": str(config_path),
+        "mode": str(args.mode),
+        "worlds": int(args.worlds),
+        "round_index": int(args.round_index),
+        "start_distance_cap": (
+            None if start_cap is None else float(start_cap)
+        ),
+        "horizon_decisions_override": int(args.horizon_decisions),
+    }
+
+    if args.mode == "record":
+        recordings: list[_Recording] = []
+        for index in range(int(args.repeat)):
+            print(f"[sil] recording run {index}", flush=True)
+            with _RoundRecorder(
+                world, horizon_override=int(args.horizon_decisions)
+            ) as recorder:
+                recording = recorder.run(round_index=int(args.round_index))
+            path = output / f"record_{index:02d}.npz"
+            recording.to_npz(path)
+            recordings.append(recording)
+            rows = _episode_rows(recording)
+            _write_csv(output / f"episodes_{index:02d}.csv", rows)
+            slices = _slice_summary(rows)
+            summary[f"run_{index:02d}"] = {
+                "npz": str(path),
+                "env_steps": int(recording.actions.shape[0]),
+                "actions_per_decision": recording.actions_per_decision,
+                "diverged_worlds": recording.diverged_worlds,
+                "overall_success_rate": round(
+                    float(recording.episode_success.mean()), 5
+                ),
+                "by_instruction": slices,
+            }
+            for name, stats in slices.items():
+                print(
+                    f"[sil][run {index}] {name}: "
+                    f"{stats['successes']}/{stats['episodes']} "
+                    f"= {stats['source_success_rate']:.3f}",
+                    flush=True,
+                )
+
+        summary["pick_up_prefix"] = _pick_up_prefix_report(recordings[0])
+        if len(recordings) >= 2:
+            null = _determinism_report(recordings[0], recordings[1])
+            summary["determinism_null"] = null
+            print(
+                f"[sil][null] success_agreement="
+                f"{null['success_agreement']:.5f} "
+                f"actions_identical={null['actions_bitwise_identical']} "
+                f"max_ee_delta={null['max_abs_ee_delta_m']:.3e} m",
+                flush=True,
+            )
+    else:
+        source = _Recording.from_npz(args.actions.expanduser().resolve())
+        print(
+            f"[sil] replaying {source.actions.shape[0]} env steps "
+            f"from {args.actions}",
+            flush=True,
+        )
+        with _RoundRecorder(
+            world,
+            playback=source.actions,
+            horizon_override=int(args.horizon_decisions),
+        ) as recorder:
+            replay = recorder.run(round_index=int(args.round_index))
+        replay.to_npz(output / "replay.npz")
+        _write_csv(output / "episodes_replay.csv", _episode_rows(replay))
+        report = _replay_report(source, replay)
+        summary["source"] = str(args.actions)
+        summary["replay"] = report
+        summary["replay_diverged_worlds"] = replay.diverged_worlds
+        print(
+            f"[sil][replay] survived {report['survived']}/"
+            f"{report['recorded_successes']} "
+            f"rate={report['survival_rate']} "
+            f"max_ee_delta={report['max_abs_ee_delta_m']:.3e} m",
+            flush=True,
+        )
+
+    (output / "summary.json").write_text(
+        json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    print(f"[sil] wrote {output / 'summary.json'}", flush=True)
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
