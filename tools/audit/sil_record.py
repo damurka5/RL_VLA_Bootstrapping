@@ -1163,6 +1163,119 @@ def _group_label(recording: _Recording, fallback: str) -> str:
     return "cap_inf" if np.isinf(cap) else f"cap_{cap:g}"
 
 
+SMOOTH_CHANNELS: Mapping[str, tuple[int, ...]] = {
+    "xyz": (0, 1, 2),
+    "xyz_yaw": (0, 1, 2, 3),
+    "all": (0, 1, 2, 3, 4),
+}
+
+
+def _smooth_actions(
+    actions: np.ndarray,
+    active: np.ndarray,
+    *,
+    method: str,
+    window: int,
+    alpha: float,
+    channels: str,
+) -> np.ndarray:
+    """Filter each episode's action sequence along the env-step axis.
+
+    Three things this must not do, each of which would quietly corrupt the
+    survival number it exists to produce.
+
+    It must not smooth across episode boundaries. Every world is an independent
+    trajectory, so filtering runs per world.
+
+    It must not pull the tail of a live episode toward the dead actions after
+    it. A world stops being stepped once it terminates and the policy keeps
+    emitting into a frozen world, so only the active steps are filtered and the
+    frozen remainder is left exactly as recorded -- it is fed back but moves
+    nothing.
+
+    It must not pull the ends toward zero. Edge padding, not zero padding: the
+    first actions are the approach and the last are the release, and a filter
+    that fades them out would be testing a different trajectory rather than a
+    smoother one.
+
+    The gripper channel is excluded by default. It is closer to a discrete
+    open/close than to a continuous path, and averaging it delays the grasp and
+    softens the release that ``container_ok`` requires -- which would show up as
+    a survival loss attributable to the filter's reach rather than to smoothing.
+    """
+
+    if method not in {"none", "moving_average", "ema", "median"}:
+        raise ValueError(f"Unknown smoothing method {method!r}.")
+    if channels not in SMOOTH_CHANNELS:
+        raise ValueError(f"Unknown smoothing channels {channels!r}.")
+    smoothed = actions.copy()
+    if method == "none":
+        return smoothed
+
+    columns = list(SMOOTH_CHANNELS[channels])
+    width = max(1, int(window))
+    if width % 2 == 0:
+        width += 1  # centred filters need an odd window
+    pad = width // 2
+
+    for world in range(actions.shape[1]):
+        live = active[:, world]
+        count = int(live.sum())
+        if count < 2:
+            continue
+        block = smoothed[live, world]
+        segment = block[:, columns].astype(np.float64)
+
+        if method == "ema":
+            # Causal on purpose: a controller can only filter samples it has
+            # already seen, so a centred filter would flatter the method by
+            # using the future.
+            filtered = np.empty_like(segment)
+            accumulator = segment[0].copy()
+            for step in range(segment.shape[0]):
+                accumulator = alpha * segment[step] + (1.0 - alpha) * accumulator
+                filtered[step] = accumulator
+        else:
+            padded = np.pad(segment, ((pad, pad), (0, 0)), mode="edge")
+            if method == "moving_average":
+                kernel = np.ones(width) / float(width)
+                filtered = np.stack(
+                    [
+                        np.convolve(padded[:, index], kernel, mode="valid")
+                        for index in range(segment.shape[1])
+                    ],
+                    axis=1,
+                )
+            else:
+                windows = np.lib.stride_tricks.sliding_window_view(
+                    padded, width, axis=0
+                )
+                filtered = np.median(windows, axis=-1)
+
+        block[:, columns] = filtered.astype(actions.dtype)
+        smoothed[live, world] = block
+    return smoothed
+
+
+def _smoothness(actions: np.ndarray, active: np.ndarray) -> dict[str, float]:
+    """How jagged the commanded sequences are, over live steps only.
+
+    Reported next to survival because survival on its own is gameable: the
+    identity filter survives perfectly and smooths nothing. A method is only
+    interesting where both columns move.
+    """
+
+    both = active[1:] & active[:-1]
+    if not both.any():
+        return {"mean_abs_step_delta": 0.0, "max_abs_step_delta": 0.0}
+    delta = np.abs(actions[1:] - actions[:-1])
+    selected = delta[both]
+    return {
+        "mean_abs_step_delta": round(float(selected.mean()), 6),
+        "max_abs_step_delta": round(float(selected.max()), 6),
+    }
+
+
 def _build_dataset(
     recordings: Sequence[_Recording],
     labels: Sequence[str] | None = None,
@@ -1464,6 +1577,43 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Same contract as the probe's flag of the same name.",
     )
     parser.add_argument(
+        "--smooth",
+        choices=("none", "moving_average", "ema", "median"),
+        default="none",
+        help=(
+            "Filter the recorded actions before replaying them. `none` is the "
+            "control and must be run first: the controller re-anchors its "
+            "target to the measured EE pose every step, so a replay is not "
+            "guaranteed to reproduce its recording, and a survival rate for a "
+            "real filter means nothing until the identity filter has been "
+            "shown to survive at 1.0."
+        ),
+    )
+    parser.add_argument(
+        "--smooth-window",
+        type=int,
+        default=5,
+        help="Window for moving_average and median. Forced odd.",
+    )
+    parser.add_argument(
+        "--smooth-alpha",
+        type=float,
+        default=0.5,
+        help="EMA weight on the current sample. 1.0 is a no-op.",
+    )
+    parser.add_argument(
+        "--smooth-channels",
+        choices=tuple(SMOOTH_CHANNELS),
+        default="xyz",
+        help=(
+            "Which action channels to filter. The gripper is excluded by "
+            "default: it is closer to a discrete open/close than a continuous "
+            "path, and averaging it delays the grasp and softens the release "
+            "the container predicate requires, which would read as a survival "
+            "loss caused by smoothing rather than by the filter's reach."
+        ),
+    )
+    parser.add_argument(
         "--seed-torch",
         type=int,
         default=None,
@@ -1697,24 +1847,62 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
     else:
         source = _Recording.from_npz(args.actions.expanduser().resolve())
+        played = _smooth_actions(
+            source.actions,
+            source.active,
+            method=str(args.smooth),
+            window=int(args.smooth_window),
+            alpha=float(args.smooth_alpha),
+            channels=str(args.smooth_channels),
+        )
+        before = _smoothness(source.actions, source.active)
+        after = _smoothness(played, source.active)
+        smoothing = {
+            "method": str(args.smooth),
+            "window": int(args.smooth_window),
+            "alpha": float(args.smooth_alpha),
+            "channels": str(args.smooth_channels),
+            "step_delta_before": before["mean_abs_step_delta"],
+            "step_delta_after": after["mean_abs_step_delta"],
+            # Survival on its own is gameable -- the identity filter survives
+            # perfectly and smooths nothing -- so the reduction it bought is
+            # published beside it. A method is only interesting where both move.
+            "step_delta_reduction": (
+                round(
+                    1.0
+                    - after["mean_abs_step_delta"]
+                    / before["mean_abs_step_delta"],
+                    5,
+                )
+                if before["mean_abs_step_delta"]
+                else 0.0
+            ),
+            "actions_changed": bool(
+                not np.array_equal(played, source.actions)
+            ),
+        }
         print(
             f"[sil] replaying {source.actions.shape[0]} env steps "
-            f"from {args.actions}",
+            f"from {args.actions} (smooth={args.smooth}, "
+            f"step delta {before['mean_abs_step_delta']:.5f} -> "
+            f"{after['mean_abs_step_delta']:.5f})",
             flush=True,
         )
         with _RoundRecorder(
             world,
-            playback=source.actions,
+            playback=played,
             horizon_override=int(args.horizon_decisions),
             torch_seed=args.seed_torch,
             deterministic_kernels=bool(args.deterministic_kernels),
         ) as recorder:
             replay = recorder.run(round_index=int(args.round_index))
         summary["determinism"] = recorder.determinism
+        replay.start_distance_cap = source.start_distance_cap
         replay.to_npz(output / "replay.npz")
         _write_csv(output / "episodes_replay.csv", _episode_rows(replay))
         report = _replay_report(source, replay)
         summary["source"] = str(args.actions)
+        summary["smoothing"] = smoothing
         summary["replay"] = report
         summary["replay_diverged_worlds"] = replay.diverged_worlds
         print(
@@ -1724,6 +1912,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"max_ee_delta={report['max_abs_ee_delta_m']:.3e} m",
             flush=True,
         )
+        for name, entry in report["by_instruction"].items():
+            print(
+                f"[sil][replay]     {name}: {entry['survived']}/"
+                f"{entry['recorded_successes']} = {entry['survival_rate']}",
+                flush=True,
+            )
 
     (output / "summary.json").write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"

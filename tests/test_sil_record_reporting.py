@@ -31,6 +31,8 @@ from tools.audit.sil_record import (
     _replay_report,
     _reset_identity_report,
     _slice_summary,
+    _smooth_actions,
+    _smoothness,
 )
 
 PLATE, BOWL, PICK = 4, 3, 8
@@ -462,6 +464,113 @@ class ObjectMixTests(unittest.TestCase):
         # Plate worlds are 0, 1, 4, 5 -> apples 0/1/4, bananas 5.
         self.assertEqual(plate["robocasa_apple"]["kept"], 2)
         self.assertEqual(plate["robocasa_banana"]["kept"], 0)
+
+
+class SmoothingTests(unittest.TestCase):
+    """The filter that feeds part 3's survival number."""
+
+    def setUp(self) -> None:
+        self.recording = _synthetic()
+        # A jagged xy signal so smoothing has something to remove.
+        rng = np.random.default_rng(0)
+        self.actions = rng.uniform(
+            -1.0, 1.0, size=self.recording.actions.shape
+        ).astype(np.float32)
+        self.active = self.recording.active
+
+    def test_none_is_an_exact_identity(self) -> None:
+        # The control. If this ever changes an action, every survival rate
+        # measured against it is uninterpretable.
+        out = _smooth_actions(
+            self.actions, self.active, method="none", window=5,
+            alpha=0.5, channels="xyz",
+        )
+        self.assertTrue(np.array_equal(out, self.actions))
+
+    def test_the_gripper_channel_is_untouched_by_default(self) -> None:
+        out = _smooth_actions(
+            self.actions, self.active, method="moving_average", window=5,
+            alpha=0.5, channels="xyz",
+        )
+        self.assertTrue(np.array_equal(out[..., 4], self.actions[..., 4]))
+        self.assertTrue(np.array_equal(out[..., 3], self.actions[..., 3]))
+        self.assertFalse(np.array_equal(out[..., 0], self.actions[..., 0]))
+
+    def test_all_channels_reaches_the_gripper(self) -> None:
+        out = _smooth_actions(
+            self.actions, self.active, method="moving_average", window=5,
+            alpha=0.5, channels="all",
+        )
+        self.assertFalse(np.array_equal(out[..., 4], self.actions[..., 4]))
+
+    def test_dead_steps_are_left_exactly_as_recorded(self) -> None:
+        # World 4 terminates at env step 2, so steps 3+ ran against a frozen
+        # world. Filtering them would pull the live tail toward dead values.
+        out = _smooth_actions(
+            self.actions, self.active, method="moving_average", window=5,
+            alpha=0.5, channels="xyz",
+        )
+        dead = ~self.active
+        self.assertTrue(np.array_equal(out[dead], self.actions[dead]))
+
+    def test_episodes_do_not_bleed_into_each_other(self) -> None:
+        # Changing one world's actions must not move any other world's.
+        perturbed = self.actions.copy()
+        perturbed[:, 0, :] = 0.0
+        first = _smooth_actions(
+            self.actions, self.active, method="moving_average", window=5,
+            alpha=0.5, channels="xyz",
+        )
+        second = _smooth_actions(
+            perturbed, self.active, method="moving_average", window=5,
+            alpha=0.5, channels="xyz",
+        )
+        self.assertTrue(np.array_equal(first[:, 1:], second[:, 1:]))
+
+    def test_filters_stay_inside_the_action_range(self) -> None:
+        for method in ("moving_average", "ema", "median"):
+            with self.subTest(method=method):
+                out = _smooth_actions(
+                    self.actions, self.active, method=method, window=5,
+                    alpha=0.5, channels="all",
+                )
+                self.assertLessEqual(float(np.abs(out).max()), 1.0)
+
+    def test_every_filter_reduces_the_step_delta(self) -> None:
+        before = _smoothness(self.actions, self.active)
+        for method in ("moving_average", "ema", "median"):
+            with self.subTest(method=method):
+                out = _smooth_actions(
+                    self.actions, self.active, method=method, window=5,
+                    alpha=0.3, channels="xyz",
+                )
+                after = _smoothness(out, self.active)
+                self.assertLess(
+                    after["mean_abs_step_delta"],
+                    before["mean_abs_step_delta"],
+                )
+
+    def test_a_constant_signal_survives_every_filter_unchanged(self) -> None:
+        # Edge padding, not zero padding: a filter that faded the ends would
+        # move a constant, and the ends are the approach and the release.
+        constant = np.full_like(self.actions, 0.4)
+        for method in ("moving_average", "median"):
+            with self.subTest(method=method):
+                out = _smooth_actions(
+                    constant, self.active, method=method, window=5,
+                    alpha=0.5, channels="xyz",
+                )
+                live = self.active
+                self.assertTrue(
+                    np.allclose(out[live], constant[live], atol=1e-6)
+                )
+
+    def test_an_unknown_method_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            _smooth_actions(
+                self.actions, self.active, method="butterworth", window=5,
+                alpha=0.5, channels="xyz",
+            )
 
 
 class RoundTripTests(unittest.TestCase):
