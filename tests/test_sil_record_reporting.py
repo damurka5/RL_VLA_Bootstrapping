@@ -20,6 +20,7 @@ import numpy as np
 
 from tools.audit.sil_record import (
     _Recording,
+    _build_dataset,
     _determinism_report,
     _divergence,
     _episode_rows,
@@ -325,6 +326,76 @@ class ResetIdentityTests(unittest.TestCase):
         self.assertTrue(report["same_horizons"])
         self.assertTrue(report["same_grasp_at_reset"])
         self.assertEqual(report["max_initial_target_delta_m"], 0.0)
+
+
+def _with_observations(recording: _Recording) -> _Recording:
+    """Attach per-decision states and priors to the fixture.
+
+    Eight env steps at four actions per decision is two decisions, so world 0
+    (success at env step 3) spans both and world 4 (success at env step 2) only
+    the first.
+    """
+
+    steps, worlds = recording.actions.shape[0], recording.worlds
+    per_decision = recording.actions_per_decision
+    decisions = steps // per_decision
+    recording.states = (
+        np.arange(decisions * worlds * 3, dtype=np.float32).reshape(
+            decisions, worlds, 3
+        )
+    )
+    recording.priors = np.zeros(
+        (decisions, worlds, per_decision, 5), dtype=np.float32
+    )
+    return recording
+
+
+class DatasetBuildTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.recording = _with_observations(_synthetic())
+
+    def test_only_successful_episodes_contribute(self) -> None:
+        _, stats = _build_dataset([self.recording])
+        # Worlds 0, 2 and 4 succeed; 1, 3 and 5 do not.
+        self.assertEqual(stats["episodes_kept"], 3)
+
+    def test_decisions_are_truncated_at_the_success(self) -> None:
+        dataset, stats = _build_dataset([self.recording])
+        # World 0 succeeds at env step 3 -> decision 0 only (steps 0-3).
+        # World 2 succeeds at env step 5 -> decisions 0 and 1.
+        # World 4 succeeds at env step 2 -> decision 0 only.
+        self.assertEqual(stats["decisions"], 4)
+        uids = dataset["episode_uid"].tolist()
+        self.assertEqual(uids.count("r0w0"), 1)
+        self.assertEqual(uids.count("r0w2"), 2)
+        self.assertEqual(uids.count("r0w4"), 1)
+
+    def test_actions_after_termination_are_masked_not_dropped(self) -> None:
+        dataset, _ = _build_dataset([self.recording])
+        # Every chunk keeps its full width so the action head stays aligned.
+        self.assertEqual(
+            dataset["action"].shape[1], self.recording.actions_per_decision
+        )
+        rows = dataset["episode_uid"] == "r0w4"
+        # World 4 terminated at env step 2, so steps 3 of that chunk is dead.
+        self.assertEqual(dataset["action_mask"][rows][0].tolist(),
+                         [True, True, True, False])
+
+    def test_source_success_rate_travels_with_each_slice(self) -> None:
+        _, stats = _build_dataset([self.recording])
+        plate = stats["by_instruction"]["put_into_plate"]
+        self.assertEqual(plate["source_episodes"], 4)
+        self.assertEqual(plate["episodes"], 2)
+        self.assertEqual(plate["source_success_rate"], 0.5)
+
+    def test_a_verdict_only_recording_is_refused(self) -> None:
+        # The recordings written before observation capture existed carry no
+        # input side. Building a dataset from them would produce actions with
+        # nothing to condition on, which must fail loudly rather than emit an
+        # unusable file.
+        with self.assertRaises(ValueError) as caught:
+            _build_dataset([_synthetic()])
+        self.assertIn("observations", str(caught.exception))
 
 
 class RoundTripTests(unittest.TestCase):

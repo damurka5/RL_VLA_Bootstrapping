@@ -177,6 +177,40 @@ class _Recording:
     diverged_worlds: int
     pick_lift_success_height: float
 
+    # Per DECISION, not per env step: the policy is consulted once per chunk
+    # and the plant is stepped ``actions_per_decision`` times from it. Optional
+    # so the recordings written before observation capture existed stay
+    # loadable -- they carry verdicts that are still valid, and re-harvesting
+    # them would cost GPU time to reproduce data we already have.
+    #
+    # ``states`` is the residual's actual input, proprioception with the frozen
+    # vision feature already concatenated. ``priors`` is load-bearing and easy
+    # to overlook: the actor computes ``action = tanh(prior + residual)``, so
+    # fitting the residual to a recorded action is impossible without the prior
+    # that action was produced against.
+    states: Any = None  # [D, W, state_dim]
+    priors: Any = None  # [D, W, actions_per_decision, 5]
+
+    _OPTIONAL_ARRAYS = ("states", "priors")
+    _REQUIRED_ARRAYS = (
+        "actions", "active", "success", "terminated", "caught_target",
+        "ee_xyz", "gripper_opening", "object_xyz",
+        "instruction_ids", "target_slots", "reference_slots",
+        "second_reference_slots", "horizons", "initial_target_xyz",
+        "support_surface_z", "release_threshold", "target_rest_height",
+        "physical_grasp_at_reset", "instructions",
+    )
+    _SCALARS = (
+        ("actions_per_decision", np.int64),
+        ("round_index", np.int64),
+        ("diverged_worlds", np.int64),
+        ("pick_lift_success_height", np.float64),
+    )
+
+    @property
+    def has_observations(self) -> bool:
+        return self.states is not None and self.priors is not None
+
     @property
     def worlds(self) -> int:
         return int(self.actions.shape[1])
@@ -212,43 +246,36 @@ class _Recording:
     def to_npz(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
         payload = {
-            name: getattr(self, name)
-            for name in (
-                "actions", "active", "success", "terminated", "caught_target",
-                "ee_xyz", "gripper_opening", "object_xyz",
-                "instruction_ids", "target_slots", "reference_slots",
-                "second_reference_slots", "horizons", "initial_target_xyz",
-                "support_surface_z", "release_threshold", "target_rest_height",
-                "physical_grasp_at_reset", "instructions",
-            )
+            name: getattr(self, name) for name in self._REQUIRED_ARRAYS
         }
-        payload["actions_per_decision"] = np.int64(self.actions_per_decision)
-        payload["round_index"] = np.int64(self.round_index)
-        payload["diverged_worlds"] = np.int64(self.diverged_worlds)
-        payload["pick_lift_success_height"] = np.float64(
-            self.pick_lift_success_height
-        )
+        for name in self._OPTIONAL_ARRAYS:
+            value = getattr(self, name)
+            if value is not None:
+                payload[name] = value
+        for name, caster in self._SCALARS:
+            payload[name] = caster(getattr(self, name))
         np.savez_compressed(path, **payload)
 
     @classmethod
     def from_npz(cls, path: Path) -> "_Recording":
         with np.load(path, allow_pickle=False) as data:
             fields = {key: data[key] for key in data.files}
-        return cls(
-            **{
-                key: value
-                for key, value in fields.items()
-                if key
-                not in {
-                    "actions_per_decision", "round_index", "diverged_worlds",
-                    "pick_lift_success_height",
-                }
-            },
-            actions_per_decision=int(fields["actions_per_decision"]),
-            round_index=int(fields["round_index"]),
-            diverged_worlds=int(fields["diverged_worlds"]),
-            pick_lift_success_height=float(fields["pick_lift_success_height"]),
-        )
+        missing = [
+            name for name in cls._REQUIRED_ARRAYS if name not in fields
+        ]
+        if missing:
+            raise ValueError(f"{path} is missing {missing}; not a recording.")
+        kwargs: dict[str, Any] = {
+            name: fields[name] for name in cls._REQUIRED_ARRAYS
+        }
+        # Absent rather than empty: a recording written before observation
+        # capture existed is still a valid verdict record, and compare/replay
+        # work on it unchanged. Only dataset extraction needs the observations.
+        for name in cls._OPTIONAL_ARRAYS:
+            kwargs[name] = fields.get(name)
+        for name, caster in cls._SCALARS:
+            kwargs[name] = caster(fields[name]).item()
+        return cls(**kwargs)
 
 
 def _apply_determinism(
@@ -361,11 +388,14 @@ class _RoundRecorder:
         # class for the rest of the process. The probe's _ArmRunner takes the
         # same care for the same reason; several arms run back to back over one
         # live trainer.
+        self._rows_decision: list[dict[str, np.ndarray]] = []
         self._original_step: Any = None
         self._original_reset: Any = None
         self._original_predicate: Any = None
+        self._original_action: Any = None
         self._owned_step = False
         self._owned_reset = False
+        self._owned_action = False
         self._collector_module: Any = None
 
     # -- installation ---------------------------------------------------
@@ -375,14 +405,19 @@ class _RoundRecorder:
 
         torch = self.world.torch
         backend = self.world.backend
+        trainer = self.world.collector.trainer
         resetter = self.world.collector.resetter
         self._collector_module = module
 
         self._original_step = backend.step
         self._original_reset = resetter.reset
         self._original_predicate = module.evaluate_active_sparse_tasks
+        self._original_action = trainer.deterministic_action_chunks_tensor
         self._owned_step = "step" in vars(backend)
         self._owned_reset = "reset" in vars(resetter)
+        self._owned_action = (
+            "deterministic_action_chunks_tensor" in vars(trainer)
+        )
 
         def patched_reset(**kwargs: Any) -> Any:
             reset = self._original_reset(**kwargs)
@@ -392,6 +427,7 @@ class _RoundRecorder:
             self.env_step = 0
             self._rows_step.clear()
             self._rows_eval.clear()
+            self._rows_decision.clear()
             # Cable-singularity blowups are a real outcome here, not an
             # exception: a diverged world is neither a success nor a usable
             # demonstration, and its count belongs next to the survival rate.
@@ -436,13 +472,35 @@ class _RoundRecorder:
             )
             return result
 
+        def patched_action(
+            *, states: Any, priors: Any, action_count: int
+        ) -> Any:
+            chunk = self._original_action(
+                states=states, priors=priors, action_count=action_count
+            )
+            # The input side of the demonstration. `states` already carries the
+            # frozen vision feature concatenated onto proprioception, so this is
+            # literally what the residual saw, not a reconstruction of it. The
+            # prior is captured with it because `action = tanh(prior +
+            # residual)` -- a recorded action alone does not determine a
+            # residual target.
+            self._rows_decision.append(
+                {
+                    "states": _host_float(states),
+                    "priors": _host_float(priors),
+                }
+            )
+            return chunk
+
         backend.step = patched_step
         resetter.reset = patched_reset
         module.evaluate_active_sparse_tasks = patched_predicate
+        trainer.deterministic_action_chunks_tensor = patched_action
         return self
 
     def __exit__(self, *exc: Any) -> None:
         backend = self.world.backend
+        trainer = self.world.collector.trainer
         resetter = self.world.collector.resetter
         if self._owned_step:
             backend.step = self._original_step
@@ -452,6 +510,10 @@ class _RoundRecorder:
             resetter.reset = self._original_reset
         else:
             vars(resetter).pop("reset", None)
+        if self._owned_action:
+            trainer.deterministic_action_chunks_tensor = self._original_action
+        else:
+            vars(trainer).pop("deterministic_action_chunks_tensor", None)
         self._collector_module.evaluate_active_sparse_tasks = (
             self._original_predicate
         )
@@ -500,7 +562,29 @@ class _RoundRecorder:
         catch_release = getattr(
             self.world.collector, "catch_release_dense_reward", None
         )
+        per_decision = int(self.world.collector.actions_per_policy_decision)
+        decisions = len(self._rows_decision)
+        # The plant is stepped once per action in the chunk, so the two
+        # counters are locked together. If they drift, the per-decision arrays
+        # cannot be indexed from an env step and every demonstration built from
+        # them would pair the wrong observation with the wrong action.
+        if decisions and decisions * per_decision != len(self._rows_step):
+            raise RuntimeError(
+                f"Captured {decisions} decisions and {len(self._rows_step)} "
+                f"env steps at {per_decision} actions per decision; expected "
+                f"{decisions * per_decision}."
+            )
         return _Recording(
+            states=(
+                stack(self._rows_decision, "states")
+                if self._rows_decision
+                else None
+            ),
+            priors=(
+                stack(self._rows_decision, "priors")
+                if self._rows_decision
+                else None
+            ),
             actions=stack(self._rows_step, "actions"),
             active=active_from_step,
             success=stack(self._rows_eval, "success"),
@@ -986,6 +1070,122 @@ def _replay_report(
     return report
 
 
+def _build_dataset(
+    recordings: Sequence[_Recording],
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """Successful episodes only, truncated at the step that made them succeed.
+
+    One row per policy DECISION, because that is the unit the policy emits: a
+    state, the prior it was conditioned on, and the chunk of actions the plant
+    then executed from it.
+
+    Two truncations, both load-bearing:
+
+    An episode terminates on success, so every decision after ``first_success``
+    ran against a frozen world. Those are not demonstrations of anything and
+    are dropped entirely.
+
+    The decision that *contains* the success is kept, but the world usually
+    terminated partway through its chunk -- so the actions after that point
+    were also executed against a frozen world. They are kept in place and
+    marked in ``action_mask`` rather than dropped, so the chunk keeps its shape
+    and the loss can ignore the dead tail. Dropping them would silently shorten
+    chunks and misalign the action head.
+    """
+
+    usable = [rec for rec in recordings if rec.has_observations]
+    if not usable:
+        raise ValueError(
+            "No recording carries observations. Re-record with a build that "
+            "captures `states` and `priors`; verdict-only recordings cannot "
+            "train anything."
+        )
+
+    states: list[np.ndarray] = []
+    priors: list[np.ndarray] = []
+    actions: list[np.ndarray] = []
+    masks: list[np.ndarray] = []
+    instruction_ids: list[int] = []
+    instruction_texts: list[str] = []
+    episode_uids: list[str] = []
+    decision_indices: list[int] = []
+    episodes_kept = 0
+
+    for rec in usable:
+        per_decision = int(rec.actions_per_decision)
+        success = rec.episode_success
+        first = rec.first_success_step
+        for world in range(rec.worlds):
+            if not success[world]:
+                continue
+            episodes_kept += 1
+            last_decision = int(first[world]) // per_decision
+            uid = f"r{int(rec.round_index)}w{world}"
+            for decision in range(last_decision + 1):
+                start = decision * per_decision
+                stop = start + per_decision
+                states.append(rec.states[decision, world])
+                priors.append(rec.priors[decision, world])
+                actions.append(rec.actions[start:stop, world])
+                masks.append(rec.active[start:stop, world])
+                instruction_ids.append(int(rec.instruction_ids[world]))
+                instruction_texts.append(str(rec.instructions[world]))
+                episode_uids.append(uid)
+                decision_indices.append(decision)
+
+    if not states:
+        raise ValueError("No successful episodes to build a dataset from.")
+
+    dataset = {
+        "state": np.stack(states).astype(np.float32),
+        "prior": np.stack(priors).astype(np.float32),
+        "action": np.stack(actions).astype(np.float32),
+        "action_mask": np.stack(masks).astype(bool),
+        "instruction_id": np.asarray(instruction_ids, dtype=np.int64),
+        "instruction_text": np.asarray(instruction_texts, dtype="U256"),
+        "episode_uid": np.asarray(episode_uids, dtype="U32"),
+        "decision_index": np.asarray(decision_indices, dtype=np.int64),
+    }
+
+    # The source success rate travels with every slice. A dataset drawn from a
+    # 0.06 source is mostly luck; one drawn from 0.93 is mostly skill, and the
+    # two must never be pooled without saying so.
+    per_slice: dict[str, Any] = {}
+    for instruction_id in sorted(set(instruction_ids)):
+        name = _instruction_name(instruction_id)
+        rows = int((dataset["instruction_id"] == instruction_id).sum())
+        source_episodes = 0
+        source_successes = 0
+        for rec in usable:
+            mask = rec.instruction_ids == instruction_id
+            source_episodes += int(mask.sum())
+            source_successes += int((rec.episode_success & mask).sum())
+        per_slice[name] = {
+            "decisions": rows,
+            "episodes": source_successes,
+            "source_episodes": source_episodes,
+            "source_success_rate": (
+                round(source_successes / source_episodes, 4)
+                if source_episodes
+                else 0.0
+            ),
+        }
+
+    stats = {
+        "recordings": len(usable),
+        "recordings_without_observations": len(recordings) - len(usable),
+        "episodes_kept": episodes_kept,
+        "decisions": int(dataset["state"].shape[0]),
+        "state_dim": int(dataset["state"].shape[-1]),
+        "actions_per_decision": int(dataset["action"].shape[1]),
+        "dead_action_fraction": round(
+            float(1.0 - dataset["action_mask"].mean()), 5
+        ),
+        "by_instruction": per_slice,
+    }
+    return dataset, stats
+
+
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     if not rows:
         return
@@ -1021,7 +1221,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--mode",
-        choices=("record", "replay", "compare"),
+        choices=("record", "replay", "compare", "dataset"),
         default="record",
         help=(
             "record runs the deterministic policy and writes the executed "
@@ -1054,6 +1254,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             "differ in nothing, so any disagreement is the simulator's own "
             "and is the noise floor under every survival number downstream."
         ),
+    )
+    parser.add_argument(
+        "--rounds",
+        type=int,
+        default=1,
+        help=(
+            "Harvest N rounds at consecutive --round-index values. Different "
+            "round indices are different starts, which is where dataset "
+            "diversity comes from. Distinct from --repeat, which re-runs ONE "
+            "round index to measure noise; passing both above 1 is ambiguous "
+            "and is rejected."
+        ),
+    )
+    parser.add_argument(
+        "--inputs",
+        type=Path,
+        nargs="+",
+        default=[],
+        help="Recording npz files to build a dataset from (--mode dataset).",
     )
     parser.add_argument("--round-index", type=int, default=0)
     parser.add_argument("--device", default="cuda:0")
@@ -1115,8 +1334,46 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.repeat < 1:
         parser.error("--repeat must be at least 1.")
+    if args.rounds < 1:
+        parser.error("--rounds must be at least 1.")
+    if args.repeat > 1 and args.rounds > 1:
+        parser.error(
+            "--repeat re-runs one round index to measure noise; --rounds "
+            "walks consecutive round indices to harvest. Combining them makes "
+            "the output ambiguous. Pick one."
+        )
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+
+    if args.mode == "dataset":
+        if not args.inputs:
+            parser.error("--mode dataset needs --inputs.")
+        recordings = [
+            _Recording.from_npz(path.expanduser().resolve())
+            for path in args.inputs
+        ]
+        dataset, stats = _build_dataset(recordings)
+        np.savez_compressed(output / "demonstrations.npz", **dataset)
+        stats["inputs"] = [str(path) for path in args.inputs]
+        (output / "dataset.json").write_text(
+            json.dumps(stats, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        print(
+            f"[sil][dataset] {stats['episodes_kept']} episodes -> "
+            f"{stats['decisions']} decisions, state_dim "
+            f"{stats['state_dim']}, dead actions "
+            f"{stats['dead_action_fraction']:.3f}",
+            flush=True,
+        )
+        for name, slice_stats in stats["by_instruction"].items():
+            print(
+                f"[sil][dataset] {name}: {slice_stats['episodes']} episodes "
+                f"({slice_stats['decisions']} decisions) drawn from a "
+                f"{slice_stats['source_success_rate']:.3f} source rate",
+                flush=True,
+            )
+        print(f"[sil] wrote {output / 'demonstrations.npz'}", flush=True)
+        return 0
 
     # compare reads two npz files and builds nothing. Kept ahead of the world
     # build so the forensic can be re-run on a laptop against artefacts the GPU
@@ -1205,15 +1462,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.mode == "record":
         recordings: list[_Recording] = []
-        for index in range(int(args.repeat)):
-            print(f"[sil] recording run {index}", flush=True)
+        runs = max(int(args.repeat), int(args.rounds))
+        # --repeat pins the round index (the null); --rounds walks it (harvest).
+        # Exactly one of them is above 1, enforced above.
+        walking = int(args.rounds) > 1
+        for index in range(runs):
+            round_index = int(args.round_index) + (index if walking else 0)
+            print(
+                f"[sil] recording run {index} (round_index {round_index})",
+                flush=True,
+            )
             with _RoundRecorder(
                 world,
                 horizon_override=int(args.horizon_decisions),
                 torch_seed=args.seed_torch,
                 deterministic_kernels=bool(args.deterministic_kernels),
             ) as recorder:
-                recording = recorder.run(round_index=int(args.round_index))
+                recording = recorder.run(round_index=round_index)
             summary["determinism"] = recorder.determinism
             path = output / f"record_{index:02d}.npz"
             recording.to_npz(path)
@@ -1240,7 +1505,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
 
         summary["pick_up_prefix"] = _pick_up_prefix_report(recordings[0])
-        if len(recordings) >= 2:
+        # Only when the round index was held fixed. Two DIFFERENT round indices
+        # are different episodes, and reporting their disagreement as a
+        # determinism null would be a control that is not a null -- it would
+        # read as simulator noise while measuring the reset distribution.
+        if len(recordings) >= 2 and not walking:
             null = _determinism_report(recordings[0], recordings[1])
             summary["determinism_null"] = null
             print(
