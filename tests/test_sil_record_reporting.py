@@ -26,6 +26,7 @@ from tools.audit.sil_record import (
     _episode_rows,
     _first_decision_report,
     _flip_report,
+    _object_mix,
     _pick_up_prefix_report,
     _replay_report,
     _reset_identity_report,
@@ -428,6 +429,39 @@ class DatasetBuildTests(unittest.TestCase):
         with self.assertRaises(ValueError) as caught:
             _build_dataset([_synthetic()])
         self.assertIn("observations", str(caught.exception))
+
+
+class ObjectMixTests(unittest.TestCase):
+    """An object that cannot be grasped contributes attempts and no successes."""
+
+    def test_the_success_filter_narrows_the_object_pool(self) -> None:
+        recording = _synthetic()
+        # apple=0, banana=1. Worlds 0/2/4 succeed, 1/3/5 do not.
+        recording.target_catalog_ids = np.array(
+            [0, 0, 0, 1, 0, 1], dtype=np.int64
+        )
+        mix = _object_mix(recording)
+        self.assertEqual(mix["robocasa_apple"]["attempted"], 4)
+        self.assertEqual(mix["robocasa_apple"]["kept"], 3)
+        # Banana is attempted twice and never kept -- the shape of an object
+        # that is wider than the gripper's open gap.
+        self.assertEqual(mix["robocasa_banana"]["attempted"], 2)
+        self.assertEqual(mix["robocasa_banana"]["kept"], 0)
+        self.assertEqual(mix["robocasa_banana"]["rate"], 0.0)
+
+    def test_a_recording_without_catalog_ids_reports_nothing(self) -> None:
+        self.assertIsNone(_object_mix(_synthetic()))
+
+    def test_dataset_reports_the_object_mix_per_instruction(self) -> None:
+        recording = _with_observations(_synthetic())
+        recording.target_catalog_ids = np.array(
+            [0, 0, 0, 1, 0, 1], dtype=np.int64
+        )
+        _, stats = _build_dataset([recording], ["rung"])
+        plate = stats["by_instruction"]["put_into_plate"]["by_object"]
+        # Plate worlds are 0, 1, 4, 5 -> apples 0/1/4, bananas 5.
+        self.assertEqual(plate["robocasa_apple"]["kept"], 2)
+        self.assertEqual(plate["robocasa_banana"]["kept"], 0)
 
 
 class RoundTripTests(unittest.TestCase):

@@ -131,6 +131,9 @@ import numpy as np  # noqa: E402
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
     ACTIVE_INSTRUCTION_TYPES,
 )
+from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (  # noqa: E402
+    ACTIVE_CDPR_CATALOGS,
+)
 
 
 # --------------------------------------------------------------------------
@@ -191,6 +194,14 @@ class _Recording:
     states: Any = None  # [D, W, state_dim]
     priors: Any = None  # [D, W, actions_per_decision, 5]
 
+    # Which object each episode was asked to manipulate. Selecting on success
+    # selects on object as well as on skill: robocasa_banana and robocasa_mug
+    # are wider than the gripper's open gap in the seeded pose, so they cannot
+    # be grasped and cannot appear among the successes -- and a pick_up set
+    # harvested without recording this looks like "pick_up demonstrations"
+    # while being demonstrations of four objects out of six.
+    target_catalog_ids: Any = None  # [W]
+
     # The rung of the recording plan this round was collected at. NaN when the
     # recording predates the field, which is why every consumer must treat it
     # as unknown rather than as zero. Stored because a dataset pooled across
@@ -199,7 +210,7 @@ class _Recording:
     # averaged number hides which of the two a slice came from.
     start_distance_cap: float = float("nan")
 
-    _OPTIONAL_ARRAYS = ("states", "priors")
+    _OPTIONAL_ARRAYS = ("states", "priors", "target_catalog_ids")
     _REQUIRED_ARRAYS = (
         "actions", "active", "success", "terminated", "caught_target",
         "ee_xyz", "gripper_opening", "object_xyz",
@@ -589,7 +600,20 @@ class _RoundRecorder:
                 f"env steps at {per_decision} actions per decision; expected "
                 f"{decisions * per_decision}."
             )
+        # Per group in the reset, one entry per world here. Guarded rather than
+        # assumed: a shape that is already per-world must not be repeated again.
+        catalogs = getattr(self.reset, "group_target_catalog_ids", None)
+        worlds = int(self.world.layout.worlds_per_rank)
+        if catalogs is None:
+            catalog_ids = None
+        else:
+            catalog_ids = _host_int(catalogs).reshape(-1)
+            if catalog_ids.shape[0] != worlds:
+                catalog_ids = np.repeat(
+                    catalog_ids, worlds // max(catalog_ids.shape[0], 1)
+                )
         return _Recording(
+            target_catalog_ids=catalog_ids,
             states=(
                 stack(self._rows_decision, "states")
                 if self._rows_decision
@@ -660,6 +684,45 @@ def _instruction_name(instruction_id: int) -> str:
     if 0 <= int(instruction_id) < len(ACTIVE_INSTRUCTION_TYPES):
         return ACTIVE_INSTRUCTION_TYPES[int(instruction_id)]
     return f"id_{int(instruction_id)}"
+
+
+def _catalog_name(catalog_id: int) -> str:
+    if 0 <= int(catalog_id) < len(ACTIVE_CDPR_CATALOGS):
+        return ACTIVE_CDPR_CATALOGS[int(catalog_id)]
+    return f"catalog_{int(catalog_id)}"
+
+
+def _object_mix(
+    recording: _Recording, mask: np.ndarray | None = None
+) -> dict[str, Any] | None:
+    """Attempted versus kept, per object.
+
+    The gap between the two columns is the object selection the success filter
+    performs silently. An object that cannot be grasped at all contributes
+    attempts and no successes, so a dataset drawn from this pool is narrower
+    than the pool it was drawn from.
+    """
+
+    if recording.target_catalog_ids is None:
+        return None
+    kept = recording.episode_success
+    if mask is not None:
+        kept = kept & mask
+    mix: dict[str, Any] = {}
+    for catalog_id in sorted(set(recording.target_catalog_ids.tolist())):
+        selected = recording.target_catalog_ids == catalog_id
+        if mask is not None:
+            selected = selected & mask
+        attempted = int(selected.sum())
+        if not attempted:
+            continue
+        succeeded = int((selected & kept).sum())
+        mix[_catalog_name(catalog_id)] = {
+            "attempted": attempted,
+            "kept": succeeded,
+            "rate": round(succeeded / attempted, 4),
+        }
+    return mix
 
 
 def _episode_rows(recording: _Recording) -> list[dict[str, Any]]:
@@ -1244,6 +1307,24 @@ def _build_dataset(
             group_entry["decisions"] = int(rows.sum())
             by_group[group] = group_entry
         entry["by_group"] = by_group
+        mixes: dict[str, dict[str, int]] = {}
+        for rec, _ in paired:
+            mix = _object_mix(rec, rec.instruction_ids == instruction_id)
+            for catalog, counts in (mix or {}).items():
+                totals = mixes.setdefault(
+                    catalog, {"attempted": 0, "kept": 0}
+                )
+                totals["attempted"] += counts["attempted"]
+                totals["kept"] += counts["kept"]
+        entry["by_object"] = {
+            catalog: {
+                **counts,
+                "rate": round(counts["kept"] / counts["attempted"], 4)
+                if counts["attempted"]
+                else 0.0,
+            }
+            for catalog, counts in sorted(mixes.items())
+        } or None
         per_slice[name] = entry
 
     stats = {
@@ -1589,6 +1670,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     float(recording.episode_success.mean()), 5
                 ),
                 "by_instruction": slices,
+                "object_mix": _object_mix(recording),
             }
             for name, stats in slices.items():
                 print(
