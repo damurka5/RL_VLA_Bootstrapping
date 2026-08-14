@@ -280,6 +280,32 @@ def _apply_determinism(
     cuBLAS additionally needs ``CUBLAS_WORKSPACE_CONFIG=:4096:8`` in the
     environment, which this cannot set from inside the process after torch has
     initialized.
+
+    MEASURED, 2026-08-14, placement checkpoint step_15000502, cap 0.01, 512
+    worlds. It is the first cause, and it is worse than a probe artefact:
+    LeRobot's ``sample_actions`` runs
+    ``if noise is None: noise = self.sample_noise(...)`` and ``sample_noise`` is
+    a bare ``torch.normal`` with no ``generator=``. The wrapper never passes
+    ``noise``, so the prior is a fresh global-RNG draw on every forward and
+    every "deterministic" validation this campaign has quoted was sampling.
+
+    With ``--seed-torch`` the step-0 action is bitwise identical across 512
+    worlds and 5 dimensions -- max delta exactly 0.0 -- which also exonerates
+    bf16: the forward is deterministic given identical inputs, so
+    ``--deterministic-kernels`` was never needed.
+
+    What survives seeding is chaos, not arithmetic. MuJoCo Warp under pinned
+    actions diverges by a mean of 7.6e-06 m (max 7.7e-03 m) and flips **zero**
+    verdicts on its own. Fed back through the policy, that micron-scale noise
+    amplifies to 0.218 m of EE divergence and 34/512 = 6.6% flipped verdicts.
+    So a seeded validation round is reproducible in its first decision and not
+    in its outcome, and a single round at n=512 cannot resolve a slice whose
+    success rate is near or below that band -- which is the whole pick_up
+    column.
+
+    The consequence that matters for this file: with actions pinned the verdict
+    noise floor is zero (replay agreement 1.0, 0 flips), so a smoothing
+    survival rate measured by replay is clean and any loss belongs to smoothing.
     """
 
     import torch
