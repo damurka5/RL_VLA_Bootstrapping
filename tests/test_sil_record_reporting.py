@@ -21,9 +21,13 @@ import numpy as np
 from tools.audit.sil_record import (
     _Recording,
     _determinism_report,
+    _divergence,
     _episode_rows,
+    _first_decision_report,
+    _flip_report,
     _pick_up_prefix_report,
     _replay_report,
+    _reset_identity_report,
     _slice_summary,
 )
 
@@ -226,6 +230,101 @@ class ReplaySurvivalTests(unittest.TestCase):
         # would be 0/0 and would read as a total loss rather than as no data.
         report = _replay_report(self.source, self.source)
         self.assertNotIn("pick_up", report["by_instruction"])
+
+
+class FirstDecisionTests(unittest.TestCase):
+    """The discriminator: policy nondeterminism versus physics nondeterminism."""
+
+    def test_identical_first_actions_point_at_physics(self) -> None:
+        recording = _synthetic()
+        report = _first_decision_report(recording, recording)
+        self.assertTrue(report["identical"])
+        self.assertEqual(report["worlds_differing"], 0)
+        self.assertIn("physics diverges first", report["verdict"])
+
+    def test_a_perturbed_first_action_points_upstream_of_physics(self) -> None:
+        first = _synthetic()
+        second = copy.deepcopy(first)
+        second.actions = first.actions.copy()
+        second.actions[0, 2, 1] += 1e-7
+        report = _first_decision_report(first, second)
+        self.assertFalse(report["identical"])
+        self.assertEqual(report["worlds_differing"], 1)
+        # Not exactly 1e-7: actions are float32, whose resolution near these
+        # magnitudes is itself ~1e-7. That is the scale a nondeterministic
+        # reduction kernel perturbs the forward by, which is why the report
+        # publishes the magnitude rather than just a boolean.
+        self.assertAlmostEqual(report["max_abs_delta"], 1e-7, delta=1e-8)
+        self.assertIn("upstream of physics", report["verdict"])
+
+
+class DivergenceMaskingTests(unittest.TestCase):
+    def test_frozen_post_termination_tails_are_excluded(self) -> None:
+        # World 4 terminates at step 2. Planting a large difference in its
+        # frozen tail must not register as trajectory divergence, because the
+        # world was not being stepped -- that artefact is exactly what made the
+        # first version of this metric unreadable.
+        first = _synthetic()
+        second = copy.deepcopy(first)
+        second.ee_xyz = first.ee_xyz.copy()
+        second.ee_xyz[6, 4, 0] += 0.5
+
+        report = _divergence(first, second)
+        self.assertEqual(report["max_ee_delta_m_active"], 0.0)
+        self.assertEqual(report["max_ee_delta_m_unmasked"], 0.5)
+
+    def test_divergence_inside_the_active_window_is_reported(self) -> None:
+        first = _synthetic()
+        second = copy.deepcopy(first)
+        second.ee_xyz = first.ee_xyz.copy()
+        second.ee_xyz[1, 4, 0] += 0.25  # world 4 is still active at step 1
+
+        report = _divergence(first, second)
+        self.assertAlmostEqual(report["max_ee_delta_m_active"], 0.25, places=6)
+
+
+class FlipReportTests(unittest.TestCase):
+    def test_flips_are_counted_and_attributed_per_instruction(self) -> None:
+        first = _synthetic()
+        second = copy.deepcopy(first)
+        second.success = first.success.copy()
+        second.success[3, 0] = False  # world 0, a plate success, is lost
+
+        report = _flip_report(first, second)
+        self.assertEqual(report["flipped_total"], 1)
+        self.assertEqual(report["won_in_a_only"], 1)
+        self.assertEqual(report["won_in_b_only"], 0)
+        plate = report["by_instruction"]["put_into_plate"]
+        self.assertEqual(plate["success_a"], 2)
+        self.assertEqual(plate["success_b"], 1)
+        self.assertEqual(plate["flipped"], 1)
+
+    def test_a_run_against_itself_has_no_flips(self) -> None:
+        recording = _synthetic()
+        report = _flip_report(recording, recording)
+        self.assertEqual(report["flipped_total"], 0)
+        self.assertEqual(report["agreement"], 1.0)
+
+
+class ResetIdentityTests(unittest.TestCase):
+    def test_differing_instruction_ids_are_caught(self) -> None:
+        first = _synthetic()
+        second = copy.deepcopy(first)
+        second.instruction_ids = first.instruction_ids.copy()
+        second.instruction_ids[0] = PICK
+
+        report = _reset_identity_report(first, second)
+        self.assertFalse(report["same_instruction_ids"])
+        self.assertTrue(report["same_horizons"])
+
+    def test_identical_resets_report_clean(self) -> None:
+        recording = _synthetic()
+        report = _reset_identity_report(recording, recording)
+        self.assertTrue(report["same_instruction_ids"])
+        self.assertTrue(report["same_target_slots"])
+        self.assertTrue(report["same_horizons"])
+        self.assertTrue(report["same_grasp_at_reset"])
+        self.assertEqual(report["max_initial_target_delta_m"], 0.0)
 
 
 class RoundTripTests(unittest.TestCase):

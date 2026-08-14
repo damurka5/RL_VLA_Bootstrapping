@@ -95,6 +95,14 @@ Replay the first recording, which is arm C::
 
     ... --mode replay --actions tools/audit/out/sil_cap001/record_00.npz \\
         --start-distance-cap 0.01 --output tools/audit/out/sil_cap001_replay
+
+Diagnose two runs against each other. Pure numpy over the written npz files --
+no checkpoint, no CUDA, runs anywhere the artefacts do::
+
+    python tools/audit/sil_record.py --mode compare \\
+        --actions tools/audit/out/sil_cap001/record_00.npz \\
+        --against tools/audit/out/sil_cap001/record_01.npz \\
+        --output tools/audit/out/sil_cap001_compare
 """
 
 from __future__ import annotations
@@ -606,6 +614,181 @@ def _pick_up_prefix_report(recording: _Recording) -> dict[str, Any]:
     }
 
 
+def _divergence(
+    first: _Recording, second: _Recording
+) -> dict[str, Any]:
+    """Trajectory divergence, restricted to steps both runs actually stepped.
+
+    An unmasked max over ``[S, W, 3]`` is not a statement about the plant. A
+    world that terminated at different steps in the two runs has a frozen tail
+    whose difference is an artefact of the termination step, not of physics,
+    and failed episodes are free to wander. Both inflate the number without
+    saying anything. This masks to ``active & active`` and reports the
+    successful episodes separately, since those are the ones the dataset keeps.
+    """
+
+    steps = min(first.actions.shape[0], second.actions.shape[0])
+    both = first.active[:steps] & second.active[:steps]
+    action_delta = np.abs(first.actions[:steps] - second.actions[:steps])
+    ee_delta = np.linalg.norm(
+        first.ee_xyz[:steps] - second.ee_xyz[:steps], axis=-1
+    )
+    kept = first.episode_success & second.episode_success
+    both_kept = both & kept[None, :]
+
+    def summarize(mask: np.ndarray, values: np.ndarray) -> Any:
+        selected = values[mask]
+        return round(float(selected.max()), 8) if selected.size else None
+
+    return {
+        "compared_env_steps": int(steps),
+        "active_in_both_steps": int(both.sum()),
+        "max_abs_action_delta_active": summarize(
+            both[..., None].repeat(action_delta.shape[-1], axis=-1),
+            action_delta,
+        ),
+        "max_ee_delta_m_active": summarize(both, ee_delta),
+        "mean_ee_delta_m_active": (
+            round(float(ee_delta[both].mean()), 8) if both.any() else None
+        ),
+        "max_ee_delta_m_active_and_kept": summarize(both_kept, ee_delta),
+        # The unmasked figure the first version of this tool printed, kept so
+        # the two can be compared rather than silently replaced.
+        "max_ee_delta_m_unmasked": round(float(ee_delta.max()), 8),
+    }
+
+
+def _first_decision_report(
+    first: _Recording, second: _Recording
+) -> dict[str, Any]:
+    """Does the policy emit the same first action from the same reset?
+
+    This is the discriminator the aggregate deltas cannot give. Env step 0 is
+    taken from a reset that is a pure function of its seed, so the two runs
+    hand the policy an identical world. If the commanded action still differs
+    the nondeterminism is in the policy pipeline -- nondeterministic reduction
+    kernels in the SmolVLA forward, or the render feeding it -- and physics is
+    downstream of it. If it matches, physics diverged first and the policy is
+    only responding.
+
+    The magnitude separates the two cases that matter: ~1e-7 is float noise
+    chaotically amplified over a hundred steps, ~1e-2 is a different policy.
+    """
+
+    delta = np.abs(first.actions[0] - second.actions[0])
+    per_world = delta.max(axis=-1)
+    differing = per_world > 0.0
+    return {
+        "identical": bool(not differing.any()),
+        "worlds_differing": int(differing.sum()),
+        "worlds": int(per_world.shape[0]),
+        "max_abs_delta": float(per_world.max()),
+        "median_abs_delta_where_differing": (
+            float(np.median(per_world[differing])) if differing.any() else 0.0
+        ),
+        "verdict": (
+            "policy pipeline is deterministic; physics diverges first"
+            if not differing.any()
+            else (
+                "policy differs at step 0 from an identical reset -- the "
+                "nondeterminism is upstream of physics"
+            )
+        ),
+    }
+
+
+def _reset_identity_report(
+    first: _Recording, second: _Recording
+) -> dict[str, Any]:
+    """Are the two runs even the same episodes?
+
+    Everything downstream is void if not. The reset is seeded by
+    ``base_seed + rank*1_000_003 + update_index*10_000_019 + round_index*100_003``
+    and nothing else, so a mismatch here means the run was launched with a
+    different cap, round index or config -- not that the simulator is noisy.
+    """
+
+    return {
+        "same_instruction_ids": bool(
+            np.array_equal(first.instruction_ids, second.instruction_ids)
+        ),
+        "same_target_slots": bool(
+            np.array_equal(first.target_slots, second.target_slots)
+        ),
+        "same_horizons": bool(np.array_equal(first.horizons, second.horizons)),
+        "same_grasp_at_reset": bool(
+            np.array_equal(
+                first.physical_grasp_at_reset, second.physical_grasp_at_reset
+            )
+        ),
+        "max_initial_target_delta_m": float(
+            np.abs(
+                first.initial_target_xyz - second.initial_target_xyz
+            ).max()
+        ),
+    }
+
+
+def _flip_report(first: _Recording, second: _Recording) -> dict[str, Any]:
+    """Which episodes changed verdict, and were they marginal?
+
+    A flip concentrated at the end of the budget is an episode that only just
+    made it, and a coin-flip verdict on those is a different fact from a policy
+    that behaves differently. ``late_success_fraction`` is the success step as a
+    fraction of the episode's active length; near 1.0 means it succeeded on
+    almost its last available step.
+    """
+
+    a, b = first.episode_success, second.episode_success
+    only_a = a & ~b
+    only_b = ~a & b
+    flipped = only_a | only_b
+
+    steps = first.first_success_step.astype(np.float64)
+    length = np.maximum(first.episode_length.astype(np.float64), 1.0)
+    late = np.where(steps >= 0, steps / length, np.nan)
+
+    by_instruction: dict[str, Any] = {}
+    for instruction_id in sorted(set(first.instruction_ids.tolist())):
+        mask = first.instruction_ids == instruction_id
+        by_instruction[_instruction_name(instruction_id)] = {
+            "episodes": int(mask.sum()),
+            "success_a": int((a & mask).sum()),
+            "success_b": int((b & mask).sum()),
+            "flipped": int((flipped & mask).sum()),
+            "agreement": round(float((a[mask] == b[mask]).mean()), 5),
+        }
+
+    marginal = late[a & flipped]
+    robust = late[a & ~flipped]
+    return {
+        "flipped_total": int(flipped.sum()),
+        "won_in_a_only": int(only_a.sum()),
+        "won_in_b_only": int(only_b.sum()),
+        "agreement": round(float((a == b).mean()), 5),
+        "late_success_fraction_flipped": (
+            round(float(np.nanmean(marginal)), 4) if marginal.size else None
+        ),
+        "late_success_fraction_stable": (
+            round(float(np.nanmean(robust)), 4) if robust.size else None
+        ),
+        "by_instruction": by_instruction,
+    }
+
+
+def _compare_report(
+    first: _Recording, second: _Recording
+) -> dict[str, Any]:
+    """The whole forensic, from two npz files. No GPU, no simulator."""
+
+    return {
+        "reset_identity": _reset_identity_report(first, second),
+        "first_decision": _first_decision_report(first, second),
+        "divergence": _divergence(first, second),
+        "verdict_flips": _flip_report(first, second),
+    }
+
+
 def _determinism_report(
     first: _Recording, second: _Recording
 ) -> dict[str, Any]:
@@ -647,9 +830,15 @@ def _determinism_report(
                 first.actions[:steps] - second.actions[:steps]
             ).max()
         ),
+        # Unmasked, and therefore blunt: it includes failed episodes and the
+        # frozen tails of worlds that terminated at different steps. Read
+        # `divergence` and `first_decision` instead; this stays for continuity.
         "max_abs_ee_delta_m": float(
             np.abs(first.ee_xyz[:steps] - second.ee_xyz[:steps]).max()
         ),
+        "first_decision": _first_decision_report(first, second),
+        "divergence": _divergence(first, second),
+        "verdict_flips": _flip_report(first, second),
     }
 
 
@@ -679,6 +868,7 @@ def _replay_report(
         "max_abs_ee_delta_m": float(
             np.abs(source.ee_xyz[:steps] - replay.ee_xyz[:steps]).max()
         ),
+        "divergence": _divergence(source, replay),
         # A survivor that succeeds at a different step did not reproduce the
         # trajectory; it reached the same verdict by a different route. Under a
         # bitwise replay this must be zero.
@@ -726,24 +916,44 @@ def main(argv: Sequence[str] | None = None) -> int:
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("--checkpoint", type=Path, required=True)
-    parser.add_argument("--config", type=Path, required=True)
+    parser.add_argument(
+        "--checkpoint",
+        type=Path,
+        default=None,
+        help="Required for record and replay; unused by compare.",
+    )
+    parser.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="Required for record and replay; unused by compare.",
+    )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--mode",
-        choices=("record", "replay"),
+        choices=("record", "replay", "compare"),
         default="record",
         help=(
             "record runs the deterministic policy and writes the executed "
             "actions; replay feeds a recording's actions back through the same "
-            "reset and rescores with the production predicate."
+            "reset and rescores with the production predicate; compare is a "
+            "pure-numpy forensic over two existing npz files -- no GPU, no "
+            "simulator, no checkpoint -- answering whether the two runs are "
+            "the same episodes, whether the policy emitted the same first "
+            "action from the same reset, and which verdicts flipped."
         ),
     )
     parser.add_argument(
         "--actions",
         type=Path,
         default=None,
-        help="Recording npz to replay. Required for --mode replay.",
+        help="Recording npz. Required for replay and compare.",
+    )
+    parser.add_argument(
+        "--against",
+        type=Path,
+        default=None,
+        help="Second npz to compare --actions against. Required for compare.",
     )
     parser.add_argument(
         "--repeat",
@@ -790,6 +1000,55 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
+    if args.repeat < 1:
+        parser.error("--repeat must be at least 1.")
+    output = args.output.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+
+    # compare reads two npz files and builds nothing. Kept ahead of the world
+    # build so the forensic can be re-run on a laptop against artefacts the GPU
+    # box already wrote, without a checkpoint or a CUDA device in sight.
+    if args.mode == "compare":
+        if args.actions is None or args.against is None:
+            parser.error("--mode compare needs --actions and --against.")
+        first = _Recording.from_npz(args.actions.expanduser().resolve())
+        second = _Recording.from_npz(args.against.expanduser().resolve())
+        report = _compare_report(first, second)
+        report["a"] = str(args.actions)
+        report["b"] = str(args.against)
+        (output / "compare.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        identity = report["reset_identity"]
+        decision = report["first_decision"]
+        print(
+            "[sil][compare] same_episodes="
+            f"{identity['same_instruction_ids'] and identity['same_horizons']}",
+            flush=True,
+        )
+        print(
+            f"[sil][compare] step-0 actions identical={decision['identical']} "
+            f"differing_worlds={decision['worlds_differing']}/"
+            f"{decision['worlds']} max_delta={decision['max_abs_delta']:.3e}",
+            flush=True,
+        )
+        print(f"[sil][compare] {decision['verdict']}", flush=True)
+        print(
+            "[sil][compare] ee delta over active steps: "
+            f"max={report['divergence']['max_ee_delta_m_active']} "
+            f"mean={report['divergence']['mean_ee_delta_m_active']} m",
+            flush=True,
+        )
+        print(
+            f"[sil][compare] flipped {report['verdict_flips']['flipped_total']}"
+            f" agreement={report['verdict_flips']['agreement']}",
+            flush=True,
+        )
+        print(f"[sil] wrote {output / 'compare.json'}", flush=True)
+        return 0
+
+    if args.checkpoint is None or args.config is None:
+        parser.error(f"--mode {args.mode} needs --checkpoint and --config.")
     checkpoint = args.checkpoint.expanduser().resolve()
     config_path = args.config.expanduser().resolve()
     if not checkpoint.is_file():
@@ -798,10 +1057,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         parser.error(f"Config does not exist: {config_path}")
     if args.mode == "replay" and args.actions is None:
         parser.error("--mode replay needs --actions.")
-    if args.repeat < 1:
-        parser.error("--repeat must be at least 1.")
-    output = args.output.expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True)
 
     start_cap = args.start_distance_cap
     if start_cap is not None and (start_cap <= 0.0 or start_cap == float("inf")):
