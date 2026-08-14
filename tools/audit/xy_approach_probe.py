@@ -302,6 +302,7 @@ def _build_world(
     load_policy: bool,
     run_dir: Path,
     start_distance_cap: float | None = None,
+    metadata_overrides: Sequence[str] = (),
 ) -> _World:
     """Reproduce the training stack. ``load_policy`` False skips SmolVLA."""
 
@@ -350,6 +351,27 @@ def _build_world(
         microbatch=microbatch,
     )
     task_metadata = dict(project.task.metadata or {})
+    # Applied BEFORE the resetter and the reward are built, so both see the same
+    # value the trainer would -- the same contract as the reference harness's
+    # flag of the same name. Ablating a reset knob without editing a
+    # version-controlled config is the point: an override that only reached one
+    # of the two would be a control that is not a null, which this campaign has
+    # already paid for once.
+    for override in metadata_overrides or ():
+        key, _, raw = str(override).partition("=")
+        if not key or not raw:
+            raise SystemExit(
+                f"--metadata-override expects KEY=VALUE, got {override!r}"
+            )
+        lowered = raw.strip().lower()
+        if lowered in {"true", "false"}:
+            task_metadata[key] = lowered == "true"
+        else:
+            try:
+                task_metadata[key] = float(raw)
+            except ValueError:
+                task_metadata[key] = raw
+        print(f"[xy-probe] metadata override {key}={task_metadata[key]!r}", flush=True)
 
     # The checkpoint's saved args carry the instructions and object pool of the
     # run that PRODUCED it, and `_probe_args` rebuilds the whole namespace from
@@ -2080,6 +2102,20 @@ def main(argv: Sequence[str] | None = None) -> int:
             "curriculum_horizon_max is 26."
         ),
     )
+    parser.add_argument(
+        "--metadata-override",
+        nargs="+",
+        default=[],
+        metavar="KEY=VALUE",
+        help=(
+            "Override task.metadata entries (numeric, boolean or string), e.g. "
+            "placement_far_rung_min_cap=0.20. Applied before the resetter and "
+            "the reward are built, so both see the same value the trainer "
+            "would -- same contract as the reference harness's flag of the "
+            "same name. Use it to ablate a reset knob without editing a "
+            "version-controlled config."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=20260806)
     args = parser.parse_args(argv)
 
@@ -2115,6 +2151,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         load_policy=needs_policy,
         run_dir=output,
         start_distance_cap=start_cap,
+        metadata_overrides=list(args.metadata_override or []),
     )
 
     summary: dict[str, Any] = {
