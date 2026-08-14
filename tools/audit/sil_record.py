@@ -107,6 +107,7 @@ no checkpoint, no CUDA, runs anywhere the artefacts do::
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -250,6 +251,57 @@ class _Recording:
         )
 
 
+def _apply_determinism(
+    *, torch_seed: int | None, deterministic_kernels: bool
+) -> dict[str, Any]:
+    """Pin the two things that can make an identical round come out different.
+
+    Two candidate sources produce indistinguishable evidence at the magnitudes
+    observed, and they have opposite consequences:
+
+    A global RNG draw inside the forward. SmolVLA is a flow-matching policy and
+    its sampler starts from noise; if that noise comes from the global torch
+    generator, two rounds in one process get different draws and
+    ``deterministic_action_chunks_tensor`` is deterministic only in its
+    residual, not in the prior it adds to. That would make every
+    "deterministic" validation number this campaign has quoted stochastic.
+
+    Nondeterministic reduction order under bf16 autocast. The config sets
+    ``mixed_precision: bf16``, whose relative epsilon is ~4e-3, so a different
+    split-k or atomic ordering in one matmul lands in the same 1e-2 band a
+    fresh noise draw would. That is a noise floor to be measured, not a bug to
+    be fixed.
+
+    Seeding separates them. If the null passes with ``--seed-torch`` and failed
+    without it, the source is the RNG draw. If it still fails, the arithmetic
+    itself is unordered, and ``--deterministic-kernels`` is the follow-up --
+    with ``warn_only`` so an op lacking a deterministic implementation degrades
+    the coverage rather than killing the run. Note that fully deterministic
+    cuBLAS additionally needs ``CUBLAS_WORKSPACE_CONFIG=:4096:8`` in the
+    environment, which this cannot set from inside the process after torch has
+    initialized.
+    """
+
+    import torch
+
+    applied: dict[str, Any] = {
+        "torch_seed": None if torch_seed is None else int(torch_seed),
+        "deterministic_kernels": bool(deterministic_kernels),
+        "cublas_workspace_config": os.environ.get(
+            "CUBLAS_WORKSPACE_CONFIG", ""
+        ),
+    }
+    if torch_seed is not None:
+        torch.manual_seed(int(torch_seed))
+        if torch.cuda.is_available():
+            torch.cuda.manual_seed_all(int(torch_seed))
+    if deterministic_kernels:
+        torch.use_deterministic_algorithms(True, warn_only=True)
+        torch.backends.cudnn.deterministic = True
+        torch.backends.cudnn.benchmark = False
+    return applied
+
+
 class _RoundRecorder:
     """Runs one ``validate_round``, capturing what the plant executed.
 
@@ -264,10 +316,15 @@ class _RoundRecorder:
         *,
         playback: np.ndarray | None = None,
         horizon_override: int = 0,
+        torch_seed: int | None = None,
+        deterministic_kernels: bool = False,
     ) -> None:
         self.world = world
         self.playback = playback
         self.horizon_override = max(0, int(horizon_override))
+        self.torch_seed = torch_seed
+        self.deterministic_kernels = bool(deterministic_kernels)
+        self.determinism: dict[str, Any] = {}
         self.reset: Any = None
         self.env_step = 0
         self._rows_step: list[dict[str, np.ndarray]] = []
@@ -377,6 +434,13 @@ class _RoundRecorder:
 
     def run(self, *, round_index: int) -> _Recording:
         collector = self.world.collector
+        # Before the first forward of the round, so a seeded run starts each
+        # round from the same generator state rather than inheriting whatever
+        # the previous round left behind.
+        self.determinism = _apply_determinism(
+            torch_seed=self.torch_seed,
+            deterministic_kernels=self.deterministic_kernels,
+        )
         collector.validate_round(round_index=round_index)
         diverged = int(self.world.backend.pop_nonfinite_world_events())
 
@@ -998,6 +1062,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         metavar="KEY=VALUE",
         help="Same contract as the probe's flag of the same name.",
     )
+    parser.add_argument(
+        "--seed-torch",
+        type=int,
+        default=None,
+        help=(
+            "Seed torch's global RNG before each round. This is the experiment "
+            "that separates a stochastic prior from unordered bf16 arithmetic: "
+            "if the null passes with this and failed without it, the forward "
+            "was drawing noise from the global generator. Omit to reproduce "
+            "the trainer's own behaviour, which does not seed here."
+        ),
+    )
+    parser.add_argument(
+        "--deterministic-kernels",
+        action="store_true",
+        help=(
+            "Ask torch for deterministic algorithms (warn_only, so an "
+            "uncovered op degrades coverage instead of killing the run). The "
+            "follow-up when --seed-torch alone does not close the null. Fully "
+            "deterministic cuBLAS also needs CUBLAS_WORKSPACE_CONFIG=:4096:8 "
+            "set in the environment before launch."
+        ),
+    )
     args = parser.parse_args(argv)
 
     if args.repeat < 1:
@@ -1095,9 +1182,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         for index in range(int(args.repeat)):
             print(f"[sil] recording run {index}", flush=True)
             with _RoundRecorder(
-                world, horizon_override=int(args.horizon_decisions)
+                world,
+                horizon_override=int(args.horizon_decisions),
+                torch_seed=args.seed_torch,
+                deterministic_kernels=bool(args.deterministic_kernels),
             ) as recorder:
                 recording = recorder.run(round_index=int(args.round_index))
+            summary["determinism"] = recorder.determinism
             path = output / f"record_{index:02d}.npz"
             recording.to_npz(path)
             recordings.append(recording)
@@ -1144,8 +1235,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             world,
             playback=source.actions,
             horizon_override=int(args.horizon_decisions),
+            torch_seed=args.seed_torch,
+            deterministic_kernels=bool(args.deterministic_kernels),
         ) as recorder:
             replay = recorder.run(round_index=int(args.round_index))
+        summary["determinism"] = recorder.determinism
         replay.to_npz(output / "replay.npz")
         _write_csv(output / "episodes_replay.csv", _episode_rows(replay))
         report = _replay_report(source, replay)
