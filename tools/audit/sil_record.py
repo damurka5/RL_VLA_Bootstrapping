@@ -1779,6 +1779,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "horizon_decisions_override": int(args.horizon_decisions),
     }
 
+    summary_name = "summary.json"
     if args.mode == "record":
         recordings: list[_Recording] = []
         runs = max(int(args.repeat), int(args.rounds))
@@ -1898,13 +1899,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             replay = recorder.run(round_index=int(args.round_index))
         summary["determinism"] = recorder.determinism
         replay.start_distance_cap = source.start_distance_cap
-        replay.to_npz(output / "replay.npz")
-        _write_csv(output / "episodes_replay.csv", _episode_rows(replay))
+        # Named after the source, not a fixed "replay.npz". Smoothing a harvest
+        # means replaying every record_NN.npz of it, and a fixed name silently
+        # overwrites all but the last when they share an output directory --
+        # leaving a dataset built from one round while appearing to be built
+        # from the whole rung.
+        stem = args.actions.expanduser().resolve().stem
+        replay_path = output / f"replay_{stem}.npz"
+        replay.to_npz(replay_path)
+        _write_csv(output / f"episodes_{stem}.csv", _episode_rows(replay))
+        summary["replay_npz"] = str(replay_path)
         report = _replay_report(source, replay)
         summary["source"] = str(args.actions)
         summary["smoothing"] = smoothing
         summary["replay"] = report
         summary["replay_diverged_worlds"] = replay.diverged_worlds
+        summary_name = f"summary_{stem}.json"
         print(
             f"[sil][replay] survived {report['survived']}/"
             f"{report['recorded_successes']} "
@@ -1919,10 +1929,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flush=True,
             )
 
-    (output / "summary.json").write_text(
+    (output / summary_name).write_text(
         json.dumps(summary, indent=2, sort_keys=True), encoding="utf-8"
     )
-    print(f"[sil] wrote {output / 'summary.json'}", flush=True)
+    print(f"[sil] wrote {output / summary_name}", flush=True)
     return 0
 
 
