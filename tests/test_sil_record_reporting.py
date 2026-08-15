@@ -31,6 +31,7 @@ from tools.audit.sil_record import (
     _replay_report,
     _reset_identity_report,
     _slice_summary,
+    _instruction_windows,
     _smooth_actions,
     _smoothness,
 )
@@ -593,11 +594,56 @@ class SmoothingTests(unittest.TestCase):
                     np.allclose(out[live], constant[live], atol=1e-6)
                 )
 
+    def test_a_per_world_window_is_applied_per_world(self) -> None:
+        # World 0 gets a width-1 window, which is an identity; world 1 gets 5.
+        widths = np.ones((self.actions.shape[1],), dtype=np.int64)
+        widths[1:] = 5
+        out = _smooth_actions(
+            self.actions, self.active, method="moving_average", window=5,
+            alpha=0.5, channels="xyz", per_world_window=widths,
+        )
+        self.assertTrue(np.array_equal(out[:, 0], self.actions[:, 0]))
+        self.assertFalse(np.array_equal(out[:, 1], self.actions[:, 1]))
+
+    def test_a_wrongly_sized_window_table_is_refused(self) -> None:
+        with self.assertRaises(ValueError):
+            _smooth_actions(
+                self.actions, self.active, method="moving_average", window=5,
+                alpha=0.5, channels="xyz",
+                per_world_window=np.array([3, 5], dtype=np.int64),
+            )
+
+    def test_wider_windows_smooth_harder(self) -> None:
+        deltas = []
+        for width in (3, 5, 9, 15):
+            out = _smooth_actions(
+                self.actions, self.active, method="moving_average",
+                window=width, alpha=0.5, channels="xyz",
+            )
+            deltas.append(_smoothness(out, self.active)["mean_abs_step_delta"])
+        self.assertEqual(deltas, sorted(deltas, reverse=True))
+
     def test_an_unknown_method_is_refused(self) -> None:
         with self.assertRaises(ValueError):
             _smooth_actions(
                 self.actions, self.active, method="butterworth", window=5,
                 alpha=0.5, channels="xyz",
+            )
+
+
+class InstructionWindowTests(unittest.TestCase):
+    def test_named_instructions_take_their_override(self) -> None:
+        ids = np.array([PLATE, BOWL, PICK, PLATE], dtype=np.int64)
+        widths = _instruction_windows(
+            ids, default=5, overrides={"put_into_plate": 13, "pick_up": 3}
+        )
+        self.assertEqual(widths.tolist(), [13, 5, 3, 13])
+
+    def test_an_unknown_instruction_is_refused(self) -> None:
+        ids = np.array([PLATE], dtype=np.int64)
+        with self.assertRaises(ValueError):
+            _instruction_windows(
+                ids, default=5, overrides={"put_into_saucepan": 9}
             )
 
 

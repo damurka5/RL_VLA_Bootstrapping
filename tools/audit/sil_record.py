@@ -1170,6 +1170,35 @@ SMOOTH_CHANNELS: Mapping[str, tuple[int, ...]] = {
 }
 
 
+def _instruction_windows(
+    instruction_ids: np.ndarray, *, default: int, overrides: Mapping[str, int]
+) -> np.ndarray:
+    """Per-world filter width, from a per-instruction override table.
+
+    One global width is the wrong shape for this problem. The success
+    tolerances differ by task -- plate 0.091 m, bowl 0.057 m, pick_up roughly
+    2 cm of grasp precision -- and the measured survival tracks them: at
+    window 5 plate loses nothing at all while bowl is already down to 0.864.
+    A width that bowl can survive leaves plate smoothed far less than it could
+    be, and a width tuned for plate would gut bowl.
+
+    This is matching filter strength to a known physical tolerance, not
+    searching for whatever maximises the survival number.
+    """
+
+    widths = np.full(instruction_ids.shape, int(default), dtype=np.int64)
+    for name, width in overrides.items():
+        if name not in ACTIVE_INSTRUCTION_TYPES:
+            raise ValueError(
+                f"Unknown instruction {name!r} in the window table. Known: "
+                f"{list(ACTIVE_INSTRUCTION_TYPES)}"
+            )
+        widths[instruction_ids == ACTIVE_INSTRUCTION_TYPES.index(name)] = int(
+            width
+        )
+    return widths
+
+
 def _smooth_actions(
     actions: np.ndarray,
     active: np.ndarray,
@@ -1178,6 +1207,7 @@ def _smooth_actions(
     window: int,
     alpha: float,
     channels: str,
+    per_world_window: np.ndarray | None = None,
 ) -> np.ndarray:
     """Filter each episode's action sequence along the env-step axis.
 
@@ -1213,16 +1243,21 @@ def _smooth_actions(
         return smoothed
 
     columns = list(SMOOTH_CHANNELS[channels])
-    width = max(1, int(window))
-    if width % 2 == 0:
-        width += 1  # centred filters need an odd window
-    pad = width // 2
+    if per_world_window is not None and len(per_world_window) != actions.shape[1]:
+        raise ValueError("per_world_window must be one width per world.")
 
     for world in range(actions.shape[1]):
         live = active[:, world]
         count = int(live.sum())
         if count < 2:
             continue
+        width = max(
+            1,
+            int(window if per_world_window is None else per_world_window[world]),
+        )
+        if width % 2 == 0:
+            width += 1  # centred filters need an odd window
+        pad = width // 2
         block = smoothed[live, world]
         segment = block[:, columns].astype(np.float64)
 
@@ -1636,6 +1671,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Window for moving_average and median. Forced odd.",
     )
     parser.add_argument(
+        "--smooth-window-by-instruction",
+        nargs="+",
+        default=[],
+        metavar="NAME=WIDTH",
+        help=(
+            "Per-instruction window overriding --smooth-window, e.g. "
+            "put_into_plate=13 put_into_bowl=7. The success tolerances differ "
+            "by task (plate 0.091 m, bowl 0.057 m, pick_up ~2 cm), and the "
+            "measured survival tracks them, so one global width either "
+            "under-smooths the forgiving task or breaks the tight one."
+        ),
+    )
+    parser.add_argument(
         "--smooth-alpha",
         type=float,
         default=0.5,
@@ -1917,6 +1965,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{replay_round}. These are different episodes.",
                 flush=True,
             )
+        window_table: dict[str, int] = {}
+        for override in args.smooth_window_by_instruction or ():
+            name, _, raw = str(override).partition("=")
+            if not name or not raw:
+                parser.error(
+                    f"--smooth-window-by-instruction expects NAME=WIDTH, "
+                    f"got {override!r}"
+                )
+            window_table[name] = int(raw)
+        try:
+            per_world_window = (
+                _instruction_windows(
+                    source.instruction_ids,
+                    default=int(args.smooth_window),
+                    overrides=window_table,
+                )
+                if window_table
+                else None
+            )
+        except ValueError as error:
+            parser.error(str(error))
         played = _smooth_actions(
             source.actions,
             source.active,
@@ -1924,14 +1993,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             window=int(args.smooth_window),
             alpha=float(args.smooth_alpha),
             channels=str(args.smooth_channels),
+            per_world_window=per_world_window,
         )
         before = _smoothness(source.actions, source.active)
         after = _smoothness(played, source.active)
         smoothing = {
             "method": str(args.smooth),
             "window": int(args.smooth_window),
+            "window_by_instruction": dict(window_table),
             "alpha": float(args.smooth_alpha),
             "channels": str(args.smooth_channels),
+            # Per instruction, so a report can say what each slice was filtered
+            # with rather than quoting a global width that half the rows never
+            # saw.
+            "step_delta_by_instruction": {
+                _instruction_name(instruction_id): {
+                    "before": _smoothness(
+                        source.actions[:, source.instruction_ids == instruction_id],
+                        source.active[:, source.instruction_ids == instruction_id],
+                    )["mean_abs_step_delta"],
+                    "after": _smoothness(
+                        played[:, source.instruction_ids == instruction_id],
+                        source.active[:, source.instruction_ids == instruction_id],
+                    )["mean_abs_step_delta"],
+                }
+                for instruction_id in sorted(
+                    set(source.instruction_ids.tolist())
+                )
+            },
             "step_delta_before": before["mean_abs_step_delta"],
             "step_delta_after": after["mean_abs_step_delta"],
             # Survival on its own is gameable -- the identity filter survives
