@@ -1543,7 +1543,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         default=[],
         help="Recording npz files to build a dataset from (--mode dataset).",
     )
-    parser.add_argument("--round-index", type=int, default=0)
+    parser.add_argument(
+        "--round-index",
+        type=int,
+        default=None,
+        help=(
+            "Reset round index. Defaults to 0 when recording and to the "
+            "recording's own index when replaying -- replaying against a "
+            "different index feeds one episode set's actions into another's "
+            "starts, which the reset-identity check then rejects."
+        ),
+    )
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--worlds", type=int, default=512)
     parser.add_argument("--group-size", type=int, default=8)
@@ -1767,12 +1777,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         metadata_overrides=list(args.metadata_override or []),
     )
 
+    # None means "unspecified", which record resolves to 0 and replay resolves
+    # to the recording's own index.
+    first_round = 0 if args.round_index is None else int(args.round_index)
     summary: dict[str, Any] = {
         "checkpoint": str(checkpoint),
         "config": str(config_path),
         "mode": str(args.mode),
         "worlds": int(args.worlds),
-        "round_index": int(args.round_index),
+        "round_index": first_round,
         "start_distance_cap": (
             None if start_cap is None else float(start_cap)
         ),
@@ -1787,7 +1800,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Exactly one of them is above 1, enforced above.
         walking = int(args.rounds) > 1
         for index in range(runs):
-            round_index = int(args.round_index) + (index if walking else 0)
+            round_index = first_round + (index if walking else 0)
             print(
                 f"[sil] recording run {index} (round_index {round_index})",
                 flush=True,
@@ -1847,7 +1860,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flush=True,
             )
     else:
-        source = _Recording.from_npz(args.actions.expanduser().resolve())
+        source_path = args.actions.expanduser().resolve()
+        source = _Recording.from_npz(source_path)
+        # The reset is a pure function of its seed, and round_index is part of
+        # that seed. Replaying a recording against a different round index
+        # feeds one episode set's actions into another's starts -- the actions
+        # are valid, the world is not, and the survival rate that comes out is
+        # a number about nothing. It defaults to the recording's own index
+        # rather than to zero, because a default of zero is silently correct
+        # for record_00 and silently wrong for every other round.
+        replay_round = (
+            int(args.round_index)
+            if args.round_index is not None
+            else int(source.round_index)
+        )
+        if replay_round != int(source.round_index):
+            print(
+                f"[sil][replay] WARNING: replaying a recording made at "
+                f"round_index {source.round_index} against round_index "
+                f"{replay_round}. These are different episodes.",
+                flush=True,
+            )
         played = _smooth_actions(
             source.actions,
             source.active,
@@ -1896,15 +1929,34 @@ def main(argv: Sequence[str] | None = None) -> int:
             torch_seed=args.seed_torch,
             deterministic_kernels=bool(args.deterministic_kernels),
         ) as recorder:
-            replay = recorder.run(round_index=int(args.round_index))
+            replay = recorder.run(round_index=replay_round)
         summary["determinism"] = recorder.determinism
-        replay.start_distance_cap = source.start_distance_cap
-        # Named after the source, not a fixed "replay.npz". Smoothing a harvest
-        # means replaying every record_NN.npz of it, and a fixed name silently
-        # overwrites all but the last when they share an output directory --
-        # leaving a dataset built from one round while appearing to be built
-        # from the whole rung.
-        stem = args.actions.expanduser().resolve().stem
+        # Prefer the cap actually requested, so a replay of a recording written
+        # before the field existed still carries its rung forward to the
+        # dataset instead of falling back to a directory name.
+        replay.start_distance_cap = (
+            float(start_cap)
+            if start_cap is not None
+            else source.start_distance_cap
+        )
+        identity = _reset_identity_report(source, replay)
+        if not (
+            identity["same_instruction_ids"] and identity["same_horizons"]
+        ):
+            raise SystemExit(
+                "The replay drew a different reset than the recording it "
+                "replays: instruction ids or horizons differ. Its survival "
+                "rate would describe no episode that exists. Check that "
+                "--start-distance-cap and --round-index match the recording "
+                f"(round_index {source.round_index}, cap "
+                f"{source.start_distance_cap})."
+            )
+        # Named after the source's RUNG and stem, not the stem alone. Every
+        # rung numbers its rounds record_00..NN, so a stem-only name collides
+        # across rungs exactly as the fixed name collided across rounds: the
+        # last rung overwrites the rest and the dataset silently becomes one
+        # rung while presenting itself as the ladder.
+        stem = f"{source_path.parent.name}_{source_path.stem}"
         replay_path = output / f"replay_{stem}.npz"
         replay.to_npz(replay_path)
         _write_csv(output / f"episodes_{stem}.csv", _episode_rows(replay))
