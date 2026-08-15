@@ -1279,6 +1279,7 @@ def _smoothness(actions: np.ndarray, active: np.ndarray) -> dict[str, float]:
 def _build_dataset(
     recordings: Sequence[_Recording],
     labels: Sequence[str] | None = None,
+    keys: Sequence[str] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Successful episodes only, truncated at the step that made them succeed.
 
@@ -1301,14 +1302,25 @@ def _build_dataset(
     """
 
     names = list(labels or [f"input_{i}" for i in range(len(recordings))])
-    if len(names) != len(recordings):
-        raise ValueError("labels must be one per recording.")
+    # The uid key must be unique per SOURCE FILE, which the rung label is not:
+    # a whole harvest replays into one output directory, so every file there
+    # shares a parent name, and two families harvested at the same cap share a
+    # rung. A colliding uid merges distinct episodes, which puts parts of the
+    # same trajectory on both sides of the episode split.
+    unique = list(keys or [f"input_{i}" for i in range(len(recordings))])
+    if len(names) != len(recordings) or len(unique) != len(recordings):
+        raise ValueError("labels and keys must be one per recording.")
+    if len(set(unique)) != len(unique):
+        raise ValueError(
+            f"Dataset input keys are not unique: {sorted(unique)}. Episode "
+            "ids built from them would merge distinct episodes."
+        )
     paired = [
-        (rec, _group_label(rec, name))
-        for rec, name in zip(recordings, names)
+        (rec, _group_label(rec, name), key)
+        for rec, name, key in zip(recordings, names, unique)
         if rec.has_observations
     ]
-    usable = [rec for rec, _ in paired]
+    usable = [rec for rec, _, _ in paired]
     if not usable:
         raise ValueError(
             "No recording carries observations. Re-record with a build that "
@@ -1327,7 +1339,7 @@ def _build_dataset(
     groups: list[str] = []
     episodes_kept = 0
 
-    for rec, group in paired:
+    for rec, group, key in paired:
         per_decision = int(rec.actions_per_decision)
         success = rec.episode_success
         first = rec.first_success_step
@@ -1336,7 +1348,12 @@ def _build_dataset(
                 continue
             episodes_kept += 1
             last_decision = int(first[world]) // per_decision
-            uid = f"{group}/r{int(rec.round_index)}w{world}"
+            # The label, not just the rung. Two families harvested at the same
+            # cap produce the same group ("cap_0.03" for both sil_harvest_0.03
+            # and sil_pickup_0.03), so a rung-based uid collides across them --
+            # and a colliding uid silently merges two real episodes into one,
+            # which puts half of each on both sides of the episode split.
+            uid = f"{key}/r{int(rec.round_index)}w{world}"
             for decision in range(last_decision + 1):
                 start = decision * per_decision
                 stop = start + per_decision
@@ -1360,7 +1377,7 @@ def _build_dataset(
         "action_mask": np.stack(masks).astype(bool),
         "instruction_id": np.asarray(instruction_ids, dtype=np.int64),
         "instruction_text": np.asarray(instruction_texts, dtype="U256"),
-        "episode_uid": np.asarray(episode_uids, dtype="U48"),
+        "episode_uid": np.asarray(episode_uids, dtype="U128"),
         "decision_index": np.asarray(decision_indices, dtype=np.int64),
         # Carried per row so a consumer can filter or reweight by rung without
         # re-reading the recordings. The near rungs are cheap and easy; the far
@@ -1377,7 +1394,7 @@ def _build_dataset(
     ) -> dict[str, Any]:
         source_episodes = 0
         source_successes = 0
-        for rec, _ in subset:
+        for rec, *_ in subset:
             mask = rec.instruction_ids == instruction_id
             source_episodes += int(mask.sum())
             source_successes += int((rec.episode_success & mask).sum())
@@ -1392,7 +1409,7 @@ def _build_dataset(
         }
 
     per_slice: dict[str, Any] = {}
-    all_groups = sorted({group for _, group in paired})
+    all_groups = sorted({group for _, group, _ in paired})
     for instruction_id in sorted(set(instruction_ids)):
         name = _instruction_name(instruction_id)
         entry = slice_stats(instruction_id, paired)
@@ -1421,7 +1438,7 @@ def _build_dataset(
             by_group[group] = group_entry
         entry["by_group"] = by_group
         mixes: dict[str, dict[str, int]] = {}
-        for rec, _ in paired:
+        for rec, *_ in paired:
             mix = _object_mix(rec, rec.instruction_ids == instruction_id)
             for catalog, counts in (mix or {}).items():
                 totals = mixes.setdefault(
@@ -1587,6 +1604,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Same contract as the probe's flag of the same name.",
     )
     parser.add_argument(
+        "--video-worlds",
+        type=int,
+        default=0,
+        help=(
+            "Replay only: write an mp4 for the first N SURVIVING episodes. "
+            "Frames are teed off the backend's own render call, so the video "
+            "is what the policy was shown along the smoothed rollout rather "
+            "than a re-render. Watching is the fastest way to tell a smoothed "
+            "demonstration from a smoothed stumble."
+        ),
+    )
+    parser.add_argument("--video-fps", type=float, default=8.0)
+    parser.add_argument(
         "--smooth",
         choices=("none", "moving_average", "ema", "median"),
         default="none",
@@ -1671,7 +1701,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         # name is the rung -- but it is a filesystem convention, not a
         # measurement, and _group_label prefers the stored cap when present.
         dataset, stats = _build_dataset(
-            recordings, [path.parent.name for path in resolved]
+            recordings,
+            [path.parent.name for path in resolved],
+            # Directory AND stem. Neither alone is unique across both layouts
+            # this tool produces: a harvest writes record_00..NN into one
+            # directory PER RUNG, so stems repeat across rungs; replays of a
+            # whole harvest land in ONE directory, so parents repeat there.
+            [f"{path.parent.name}/{path.stem}" for path in resolved],
         )
         np.savez_compressed(output / "demonstrations.npz", **dataset)
         stats["inputs"] = [str(path) for path in args.inputs]
@@ -1922,6 +1958,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{after['mean_abs_step_delta']:.5f})",
             flush=True,
         )
+        # Which worlds to film has to be decided before the rollout, and the
+        # ones worth filming are the ones that survive -- which is not known
+        # until afterwards. The source's successes are the candidate set: a
+        # world that failed before smoothing cannot survive it, so filming
+        # those is guaranteed waste, and the survivors are a subset of these.
+        filmed: list[int] = []
+        if int(args.video_worlds) > 0:
+            filmed = [
+                int(w)
+                for w in np.flatnonzero(source.episode_success)[
+                    : int(args.video_worlds)
+                ]
+            ]
         with _RoundRecorder(
             world,
             playback=played,
@@ -1929,7 +1978,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             torch_seed=args.seed_torch,
             deterministic_kernels=bool(args.deterministic_kernels),
         ) as recorder:
-            replay = recorder.run(round_index=replay_round)
+            if filmed:
+                from tools.audit.success_episode_videos import _FrameTap
+
+                with _FrameTap(world.backend, filmed, True) as tap:
+                    replay = recorder.run(round_index=replay_round)
+                    captured = {w: list(f) for w, f in tap.frames.items()}
+            else:
+                captured = {}
+                replay = recorder.run(round_index=replay_round)
         summary["determinism"] = recorder.determinism
         # Prefer the cap actually requested, so a replay of a recording written
         # before the field existed still carries its rung forward to the
@@ -1978,6 +2035,42 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 f"[sil][replay]     {name}: {entry['survived']}/"
                 f"{entry['recorded_successes']} = {entry['survival_rate']}",
+                flush=True,
+            )
+        if captured:
+            from tools.audit.success_episode_videos import _Mp4
+
+            videos = output / "videos"
+            videos.mkdir(parents=True, exist_ok=True)
+            survived_mask = source.episode_success & replay.episode_success
+            written = 0
+            for filmed_world, frames in sorted(captured.items()):
+                if not frames:
+                    continue
+                # Name the file with the verdict. A dropped episode is the more
+                # informative thing to watch -- it shows what the filter broke.
+                verdict = (
+                    "kept" if survived_mask[filmed_world] else "dropped"
+                )
+                instruction = _instruction_name(
+                    replay.instruction_ids[filmed_world]
+                )
+                path = (
+                    videos
+                    / f"{stem}_w{filmed_world:03d}_{instruction}_{verdict}.mp4"
+                )
+                writer = _Mp4(
+                    path,
+                    fps=float(args.video_fps),
+                    height=int(frames[0].shape[0]),
+                    width=int(frames[0].shape[1]),
+                )
+                for frame in frames:
+                    writer.write(frame)
+                writer.close()
+                written += 1
+            print(
+                f"[sil][replay] wrote {written} videos to {videos}",
                 flush=True,
             )
 

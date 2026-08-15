@@ -363,23 +363,23 @@ class DatasetBuildTests(unittest.TestCase):
         self.assertEqual(stats["episodes_kept"], 3)
 
     def test_decisions_are_truncated_at_the_success(self) -> None:
-        dataset, stats = _build_dataset([self.recording], ["rung"])
+        dataset, stats = _build_dataset([self.recording], ["rung"], ["src"])
         # World 0 succeeds at env step 3 -> decision 0 only (steps 0-3).
         # World 2 succeeds at env step 5 -> decisions 0 and 1.
         # World 4 succeeds at env step 2 -> decision 0 only.
         self.assertEqual(stats["decisions"], 4)
         uids = dataset["episode_uid"].tolist()
-        self.assertEqual(uids.count("rung/r0w0"), 1)
-        self.assertEqual(uids.count("rung/r0w2"), 2)
-        self.assertEqual(uids.count("rung/r0w4"), 1)
+        self.assertEqual(uids.count("src/r0w0"), 1)
+        self.assertEqual(uids.count("src/r0w2"), 2)
+        self.assertEqual(uids.count("src/r0w4"), 1)
 
     def test_actions_after_termination_are_masked_not_dropped(self) -> None:
-        dataset, _ = _build_dataset([self.recording], ["rung"])
+        dataset, _ = _build_dataset([self.recording], ["rung"], ["src"])
         # Every chunk keeps its full width so the action head stays aligned.
         self.assertEqual(
             dataset["action"].shape[1], self.recording.actions_per_decision
         )
-        rows = dataset["episode_uid"] == "rung/r0w4"
+        rows = dataset["episode_uid"] == "src/r0w4"
         # World 4 terminated at env step 2, so steps 3 of that chunk is dead.
         self.assertEqual(dataset["action_mask"][rows][0].tolist(),
                          [True, True, True, False])
@@ -415,9 +415,37 @@ class DatasetBuildTests(unittest.TestCase):
             set(dataset["source_group"].tolist()), {"cap_0.01", "cap_0.1"}
         )
 
+    def test_duplicate_input_keys_are_refused(self) -> None:
+        # Two files with the same key would merge their episodes under one id,
+        # splitting one trajectory across train and validation.
+        with self.assertRaises(ValueError) as caught:
+            _build_dataset(
+                [self.recording, self.recording],
+                ["cap_0.03", "cap_0.03"],
+                ["same", "same"],
+            )
+        self.assertIn("not unique", str(caught.exception))
+
+    def test_episode_ids_are_unique_across_families_at_one_cap(self) -> None:
+        # sil_harvest_0.03 and sil_pickup_0.03 both label as cap_0.03, so the
+        # rung cannot carry the id; the source file must.
+        placement = _with_observations(_synthetic())
+        placement.start_distance_cap = 0.03
+        pickup = _with_observations(_synthetic())
+        pickup.start_distance_cap = 0.03
+        dataset, stats = _build_dataset(
+            [placement, pickup],
+            ["cap_0.03", "cap_0.03"],
+            ["replay_placement_00", "replay_pickup_00"],
+        )
+        uids = set(dataset["episode_uid"].tolist())
+        self.assertTrue(any(u.startswith("replay_placement_00/") for u in uids))
+        self.assertTrue(any(u.startswith("replay_pickup_00/") for u in uids))
+        self.assertEqual(stats["episodes_kept"], 6)
+
     def test_a_recording_without_a_cap_falls_back_to_its_label(self) -> None:
         dataset, _ = _build_dataset(
-            [self.recording], ["sil_harvest_0.06"]
+            [self.recording], ["sil_harvest_0.06"], ["src"]
         )
         self.assertEqual(
             set(dataset["source_group"].tolist()), {"sil_harvest_0.06"}
@@ -459,7 +487,7 @@ class ObjectMixTests(unittest.TestCase):
         recording.target_catalog_ids = np.array(
             [0, 0, 0, 1, 0, 1], dtype=np.int64
         )
-        _, stats = _build_dataset([recording], ["rung"])
+        _, stats = _build_dataset([recording], ["rung"], ["src"])
         plate = stats["by_instruction"]["put_into_plate"]["by_object"]
         # Plate worlds are 0, 1, 4, 5 -> apples 0/1/4, bananas 5.
         self.assertEqual(plate["robocasa_apple"]["kept"], 2)
