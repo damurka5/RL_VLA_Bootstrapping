@@ -44,8 +44,21 @@ import os
 from typing import Any, Sequence
 
 
+# Two-sided 95% critical values of t, indexed by degrees of freedom. Four
+# rounds gives df=3 and a critical value of 3.18, which is the honest cost of
+# pairing on so few samples: the test is correct but underpowered, and saying
+# so is better than borrowing power from a model that ignores round-to-round
+# variance.
+_T_CRITICAL = {1: 12.71, 2: 4.30, 3: 3.18, 4: 2.78, 5: 2.57, 6: 2.45,
+               7: 2.36, 8: 2.31, 9: 2.26, 10: 2.23}
+
+
+def _t_critical(df: int) -> float:
+    return _T_CRITICAL.get(int(df), 2.0)
+
+
 def _collect(directory: str) -> dict[str, Any]:
-    """Pool per-instruction counts over every run_NN in a record summary."""
+    """Per-round and pooled counts per instruction, from a record summary."""
 
     paths = sorted(glob.glob(os.path.join(directory, "summary*.json")))
     if not paths:
@@ -62,14 +75,60 @@ def _collect(directory: str) -> dict[str, Any]:
             rounds += 1
             for name, entry in (run.get("by_instruction") or {}).items():
                 bucket = totals.setdefault(
-                    name, {"episodes": 0, "successes": 0, "rates": []}
+                    name,
+                    {"episodes": 0, "successes": 0, "rates": [],
+                     "per_round_episodes": []},
                 )
                 bucket["episodes"] += int(entry["episodes"])
                 bucket["successes"] += int(entry["successes"])
                 bucket["rates"].append(float(entry["source_success_rate"]))
+                bucket["per_round_episodes"].append(int(entry["episodes"]))
     if not totals:
         raise SystemExit(f"No record-mode runs found under {directory!r}.")
     return {"rounds": rounds, "by_instruction": totals}
+
+
+def _paired(base_rates: Sequence[float], cand_rates: Sequence[float]) -> dict[str, Any]:
+    """Paired difference across rounds -- the correct test for shared resets.
+
+    Round index seeds the reset, so round i of the baseline and round i of the
+    candidate are the SAME episodes. Pairing removes the between-round
+    variance, which is the dominant noise here: at cap 0.10 the plate rate
+    swings 0.466 to 0.690 across rounds while the policy difference is a few
+    points.
+
+    The earlier version of this file added a constant derived from the 6.6%
+    verdict-flip rate to every comparison. That is wrong at small rates -- it
+    put a +-0.047 band around a task whose rate is 0.03, so a collapse from
+    0.033 to exactly 0.000 in four independent rounds of 664 episodes read as
+    "not resolved" when its probability under the null is about 2e-10.
+    """
+
+    n = min(len(base_rates), len(cand_rates))
+    deltas = [cand_rates[i] - base_rates[i] for i in range(n)]
+    if n < 2:
+        return {"n": n, "mean": deltas[0] if deltas else 0.0, "t": None,
+                "resolved": False, "all_same_sign": True, "deltas": deltas}
+    mean = sum(deltas) / n
+    variance = sum((d - mean) ** 2 for d in deltas) / (n - 1)
+    stderr = math.sqrt(variance / n) if variance > 0.0 else 0.0
+    if stderr == 0.0:
+        # Every round moved by the identical amount. Degenerate but decisive
+        # when that amount is non-zero.
+        t: float | None = None if mean == 0.0 else math.inf
+    else:
+        t = mean / stderr
+    resolved = t is not None and abs(t) > _t_critical(n - 1)
+    return {
+        "n": n,
+        "mean": mean,
+        "stderr": stderr,
+        "t": t,
+        "resolved": resolved,
+        "all_same_sign": all(d > 0 for d in deltas)
+        or all(d < 0 for d in deltas),
+        "deltas": deltas,
+    }
 
 
 def _rate(bucket: dict[str, Any]) -> float:
@@ -82,24 +141,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--baseline", required=True)
     parser.add_argument("--candidate", required=True)
-    parser.add_argument(
-        "--noise",
-        type=float,
-        default=0.066,
-        help=(
-            "Measured per-episode verdict noise: the fraction that flips "
-            "between two identical runs. Used only to widen the reported "
-            "uncertainty, never to adjust a rate."
-        ),
-    )
     args = parser.parse_args(argv)
 
     base = _collect(args.baseline)
     cand = _collect(args.candidate)
 
     header = (
-        f"{'instruction':<20}{'RL-only':>18}{'SIL-SFT':>18}"
-        f"{'delta':>9}{'+-':>8}{'resolved':>10}"
+        f"{'instruction':<18}{'RL-only':>16}{'SIL-SFT':>16}"
+        f"{'delta':>9}{'t':>8}{'signs':>7}{'resolved':>10}"
     )
     print(f"baseline  {args.baseline}  ({base['rounds']} rounds)")
     print(f"candidate {args.candidate}  ({cand['rounds']} rounds)")
@@ -113,46 +162,56 @@ def main(argv: Sequence[str] | None = None) -> int:
         b = base["by_instruction"].get(name)
         c = cand["by_instruction"].get(name)
         if b is None or c is None:
-            print(f"{name:<20}{'absent from one side':>63}")
+            print(f"{name:<18}{'absent from one side':>58}")
             continue
-        if b["episodes"] != c["episodes"]:
+        if b["per_round_episodes"] != c["per_round_episodes"]:
             # Different denominators mean different resets, and a delta across
             # them measures the reset distribution rather than the policy.
             print(
-                f"{name:<20}{'episode counts differ':>40} "
-                f"{b['episodes']} vs {c['episodes']} -- not comparable"
+                f"{name:<18}{'per-round episode counts differ':>50} "
+                f"-- not comparable"
             )
             continue
         rb, rc = _rate(b), _rate(c)
-        # Binomial spread on each side, widened by the measured verdict noise.
-        # A lower bound on the uncertainty, not a confidence interval: the two
-        # runs share resets, so their errors are correlated in ways this does
-        # not model.
-        var = (
-            rb * (1.0 - rb) / max(b["episodes"], 1)
-            + rc * (1.0 - rc) / max(c["episodes"], 1)
-            + 2.0 * float(args.noise) ** 2 / max(base["rounds"], 1)
-        )
-        spread = math.sqrt(var)
-        delta = rc - rb
-        print(
-            f"{name:<20}"
-            f"{b['successes']:>6}/{b['episodes']:<5}{rb:>6.3f}"
-            f"{c['successes']:>6}/{c['episodes']:<5}{rc:>6.3f}"
-            f"{delta:>+9.3f}{spread:>8.3f}"
-            f"{('yes' if abs(delta) > 2.0 * spread else 'no'):>10}"
+        paired = _paired(b["rates"], c["rates"])
+        t_text = (
+            "inf" if paired["t"] == math.inf
+            else ("--" if paired["t"] is None else f"{paired['t']:.2f}")
         )
         print(
-            f"{'':<20}per-round  "
+            f"{name:<18}"
+            f"{b['successes']:>5}/{b['episodes']:<4}{rb:>6.3f}"
+            f"{c['successes']:>5}/{c['episodes']:<4}{rc:>6.3f}"
+            f"{rc - rb:>+9.3f}{t_text:>8}"
+            f"{('all' if paired['all_same_sign'] else 'mixed'):>7}"
+            f"{('yes' if paired['resolved'] else 'no'):>10}"
+        )
+        print(
+            f"{'':<18}per-round  "
             f"{[round(v, 3) for v in b['rates']]} -> "
             f"{[round(v, 3) for v in c['rates']]}"
         )
+        if c["successes"] == 0 and b["successes"] > 0:
+            # Not a small effect. Zero successes in every round, against a
+            # non-zero baseline, is a skill that stopped existing.
+            print(
+                f"{'':<18}COLLAPSE: 0/{c['episodes']} against a "
+                f"{rb:.3f} baseline -- the skill is gone, not degraded."
+            )
 
     print()
     print(
-        "`resolved` is |delta| > 2 sigma with sigma widened by the measured "
-        f"{args.noise:.3f} verdict-flip rate. Report these separately from "
-        "the RL-only result; they are an extension, not a replacement."
+        "Paired by round index, because the round index seeds the reset and "
+        "round i of each side is the same episodes. `t` is the paired t "
+        f"statistic; `resolved` is |t| > {_t_critical(base['rounds'] - 1):.2f} "
+        f"(95%, df={max(base['rounds'] - 1, 1)}). `signs` says whether every "
+        "round moved the same way -- with four rounds the test is honest but "
+        "underpowered, so a consistent sign at |t| just under the bar means "
+        "run more rounds, not that there is no effect."
+    )
+    print(
+        "Report these separately from the RL-only result; they are an "
+        "extension, not a replacement."
     )
     return 0
 
