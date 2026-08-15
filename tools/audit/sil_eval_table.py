@@ -191,12 +191,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{[round(v, 3) for v in b['rates']]} -> "
             f"{[round(v, 3) for v in c['rates']]}"
         )
-        if c["successes"] == 0 and b["successes"] > 0:
-            # Not a small effect. Zero successes in every round, against a
-            # non-zero baseline, is a skill that stopped existing.
+        # A skill that stopped existing, not one that got worse. Keyed on the
+        # ratio rather than on exactly zero: at cap 0.01 the candidate scored
+        # 1/664 against a 0.066 baseline, and an == 0 test would have stayed
+        # silent on a 97% loss because of a single lucky episode.
+        if b["successes"] >= 10 and rb > 0.0 and rc <= 0.1 * rb:
             print(
-                f"{'':<18}COLLAPSE: 0/{c['episodes']} against a "
-                f"{rb:.3f} baseline -- the skill is gone, not degraded."
+                f"{'':<18}COLLAPSE: {c['successes']}/{c['episodes']} = "
+                f"{rc:.3f} against a {rb:.3f} baseline -- "
+                f"{rc / rb * 100.0:.0f}% of the original rate."
             )
 
     print()
