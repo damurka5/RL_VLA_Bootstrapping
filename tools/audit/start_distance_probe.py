@@ -146,6 +146,141 @@ def build_recording_backend(torch: Any, *, object_slots: int = 4) -> Any:
 
 
 # --------------------------------------------------------------------------
+# Camera framing
+# --------------------------------------------------------------------------
+
+
+def load_overview_camera(xml_path: Path) -> dict[str, Any]:
+    """Read the fixed overview camera out of the MJCF the run actually loads.
+
+    Parsed rather than hard-coded: the numbers below decide whether an episode
+    is well posed at all, and a copy of them in this file would go stale the
+    first time the camera is dollied -- which has already happened once
+    (cdpr.xml carries the note about the 2x dolly and the 10 cm raise).
+    ``<include>`` is followed because the scene the config names is a wrapper.
+    """
+
+    import xml.etree.ElementTree as ET
+
+    seen: set[Path] = set()
+    stack = [Path(xml_path)]
+    while stack:
+        path = stack.pop(0)
+        resolved = path.resolve()
+        if resolved in seen or not resolved.is_file():
+            continue
+        seen.add(resolved)
+        root = ET.parse(resolved).getroot()
+        for camera in root.iter("camera"):
+            if camera.get("name") != "overview":
+                continue
+            pos = [float(value) for value in camera.get("pos", "0 0 0").split()]
+            axes = [
+                float(value)
+                for value in camera.get(
+                    "xyaxes", "1 0 0 0 1 0"
+                ).split()
+            ]
+            return {
+                "pos": pos,
+                "right": axes[:3],
+                "up": axes[3:6],
+                "fovy_deg": float(camera.get("fovy", "45")),
+                "source": str(resolved),
+            }
+        for include in root.iter("include"):
+            target = include.get("file")
+            if target:
+                stack.append(resolved.parent / target)
+    raise SystemExit(
+        f"No camera named 'overview' found in {xml_path} or its includes."
+    )
+
+
+def overview_in_frame(
+    torch: Any, points: Any, camera: Mapping[str, Any], *, aspect: float
+) -> Any:
+    """Per-point mask: is this world point inside the overview image?
+
+    MuJoCo cameras look down their own -z, and ``xyaxes`` gives the image right
+    and up vectors, so the forward direction is -(right x up). fovy is
+    VERTICAL; the horizontal half-angle follows from the render aspect, which is
+    why a 320x240 render and a 320x320 render do not frame the same workspace.
+    """
+
+    import math as _math
+
+    device = points.device
+    def vector(key: str) -> Any:
+        raw = torch.tensor(
+            camera[key], dtype=torch.float32, device=device
+        )
+        return raw / raw.norm().clamp_min(1.0e-9)
+
+    origin = torch.tensor(camera["pos"], dtype=torch.float32, device=device)
+    right = vector("right")
+    up = vector("up")
+    forward = -torch.linalg.cross(right, up)
+    half_v = _math.tan(_math.radians(float(camera["fovy_deg"])) / 2.0)
+    half_h = float(aspect) * half_v
+
+    offset = points - origin
+    depth = offset @ forward
+    horizontal = offset @ right
+    vertical = offset @ up
+    safe = depth.clamp_min(1.0e-6)
+    return (
+        (depth > 0.0)
+        & ((horizontal / safe).abs() <= half_h)
+        & ((vertical / safe).abs() <= half_v)
+    )
+
+
+# The wrist camera hangs off ee_stab, which carries a ball joint, so its
+# realized orientation is not a pure function of the commanded pose and an
+# "exact" projection here would be exact about the wrong thing. What IS
+# orientation-free is the angle from straight down between the camera and the
+# object: the object must lie within the half-FOV of the optical axis, and the
+# axis is itself tilted 15 degrees off nadir, so anything beyond tilt +
+# half-diagonal-FOV is out of frame no matter which way the wrist happens to be
+# hanging. Reported as a bound, and labelled as one.
+_WRIST_TILT_DEG = 15.0
+_WRIST_FOVY_DEG = 60.0
+_WRIST_OFFSET_EE_FRAME = (0.0, 0.05, 0.045)
+
+
+def wrist_angle_from_nadir(torch: Any, ee: Any, objects: Any) -> Any:
+    """Angle between straight down and the camera->object ray, in degrees."""
+
+    import math as _math
+
+    camera = ee.clone()
+    # Only the height offset is applied: the 5 cm forward offset rotates with
+    # the yaw, which the caller does not model, and including it with the wrong
+    # yaw would be worse than leaving a 5 cm lever arm out of a bound.
+    camera[:, 2] = camera[:, 2] + float(_WRIST_OFFSET_EE_FRAME[2])
+    offset = objects - camera
+    planar = torch.linalg.vector_norm(offset[:, :2], dim=-1)
+    drop = (-offset[:, 2]).clamp_min(1.0e-6)
+    return torch.rad2deg(torch.atan2(planar, drop))
+
+
+def wrist_bounds_deg(aspect: float) -> tuple[float, float]:
+    """(certainly in frame below this, certainly out of frame above this)."""
+
+    import math as _math
+
+    half_v = _math.tan(_math.radians(_WRIST_FOVY_DEG) / 2.0)
+    half_h = float(aspect) * half_v
+    half_diagonal = _math.degrees(_math.atan(_math.hypot(half_h, half_v)))
+    half_narrow = _math.degrees(_math.atan(half_v))
+    return (
+        max(half_narrow - _WRIST_TILT_DEG, 0.0),
+        half_diagonal + _WRIST_TILT_DEG,
+    )
+
+
+# --------------------------------------------------------------------------
 # Config reading
 # --------------------------------------------------------------------------
 
@@ -169,6 +304,17 @@ def _apply_overrides(
         lowered = raw.strip().lower()
         if lowered in {"true", "false"}:
             metadata[key] = lowered == "true"
+        elif "," in raw:
+            # The knobs worth sweeping here -- ee_workspace_{x,y,z}_bounds --
+            # are all two-element lists, and a scalar-only override silently
+            # wrote a float where the resetter expects a pair and then read the
+            # config value anyway. A sweep that quietly does nothing is the
+            # worst kind: it produces identical numbers for every arm and they
+            # look like a robustness result.
+            try:
+                metadata[key] = [float(part) for part in raw.split(",")]
+            except ValueError:
+                metadata[key] = [part.strip() for part in raw.split(",")]
         else:
             try:
                 metadata[key] = float(raw)
@@ -237,6 +383,8 @@ def measure_rung(
     rounds: int,
     grasp_offset: float,
     read_back: bool,
+    camera: Mapping[str, Any] | None = None,
+    aspect: float = 4.0 / 3.0,
 ) -> dict[str, Any]:
     """Reset ``rounds`` times at one cap table and pool the realized starts.
 
@@ -323,16 +471,29 @@ def measure_rung(
             if reset.aligned is not None
             else torch.zeros(worlds, dtype=torch.bool)
         )
-        rows.append(
-            {
-                "instruction_ids": reset.task_state.instruction_ids.to("cpu"),
-                "planar": planar.to("cpu"),
-                "spatial": spatial.to("cpu"),
-                "caught": caught.to("cpu"),
-                "prelifted": prelifted.to("cpu"),
-                "aligned": aligned.to("cpu"),
-            }
-        )
+        row = {
+            "instruction_ids": reset.task_state.instruction_ids.to("cpu"),
+            "planar": planar.to("cpu"),
+            "spatial": spatial.to("cpu"),
+            "caught": caught.to("cpu"),
+            "prelifted": prelifted.to("cpu"),
+            "aligned": aligned.to("cpu"),
+        }
+        if camera is not None:
+            # Framing is measured against the GOAL SLOT, not slot 0: for a
+            # placement task the thing that has to be in shot is the receptacle,
+            # and for move_to the target is a random active slot rather than the
+            # first one.
+            row["ee_in_overview"] = overview_in_frame(
+                torch, ee, camera, aspect=aspect
+            ).to("cpu")
+            row["goal_in_overview"] = overview_in_frame(
+                torch, goal, camera, aspect=aspect
+            ).to("cpu")
+            row["wrist_angle_deg"] = wrist_angle_from_nadir(
+                torch, ee, goal
+            ).to("cpu")
+        rows.append(row)
 
     def pooled(key: str) -> Any:
         return torch.cat([row[key] for row in rows], dim=0)
@@ -357,6 +518,31 @@ def measure_rung(
         mine_prelifted = prelifted[mask]
         mine_aligned = aligned[mask]
         plain = ~(mine_caught | mine_prelifted | mine_aligned)
+        framing: dict[str, Any] = {}
+        if "ee_in_overview" in rows[0]:
+            ee_in = pooled("ee_in_overview")[mask]
+            goal_in = pooled("goal_in_overview")[mask]
+            angle = pooled("wrist_angle_deg")[mask]
+            certainly_in, certainly_out = wrist_bounds_deg(4.0 / 3.0)
+            framing = {
+                "ee_in_overview": round(
+                    float(ee_in.float().mean().item()), 4
+                ),
+                "goal_in_overview": round(
+                    float(goal_in.float().mean().item()), 4
+                ),
+                "both_in_overview": round(
+                    float((ee_in & goal_in).float().mean().item()), 4
+                ),
+                "wrist_angle_median_deg": round(_percentile(angle, 0.50), 2),
+                "wrist_angle_p95_deg": round(_percentile(angle, 0.95), 2),
+                "goal_certainly_in_wrist": round(
+                    float((angle <= certainly_in).float().mean().item()), 4
+                ),
+                "goal_certainly_out_of_wrist": round(
+                    float((angle >= certainly_out).float().mean().item()), 4
+                ),
+            }
         # 1e-4 m of slack: the pull-in clamps the start back into the workspace
         # box after placing it on the annulus (:1721), so a start in a corner can
         # land a float epsilon outside its cap without the cap being wrong.
@@ -384,6 +570,7 @@ def measure_rung(
                 "aligned": round(float(mine_aligned.float().mean().item()), 4),
                 "curriculum": round(float(plain.float().mean().item()), 4),
             },
+            "framing": framing,
         }
     return per_instruction
 
@@ -648,6 +835,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         read_back = False
 
     grasp_offset = float(metadata.get("pick_grasp_height_offset", 0.0075))
+    scene_xml = project.resolve_path(project.simulator.fixed_scene_xml)
+    camera = None if scene_xml is None else load_overview_camera(Path(scene_xml))
+    aspect = float(project.simulator.render_width) / float(
+        project.simulator.render_height
+    )
+    if camera is not None:
+        certainly_in, certainly_out = wrist_bounds_deg(aspect)
+        print(
+            f"[p0] overview camera from {camera['source']}: "
+            f"pos={camera['pos']} fovy={camera['fovy_deg']} "
+            f"aspect={aspect:.3f}; wrist bounds: certainly in below "
+            f"{certainly_in:.1f} deg, certainly out above "
+            f"{certainly_out:.1f} deg from nadir",
+            flush=True,
+        )
     # Every rung of every instruction is visited, and the OTHER instructions are
     # pinned at their own first rung meanwhile. Sweeping all of them together
     # would confound "this instruction's cap moved" with "the mix moved".
@@ -685,6 +887,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rounds=int(args.rounds),
                 grasp_offset=grasp_offset,
                 read_back=read_back,
+                camera=camera,
+                aspect=aspect,
             )
             row = measured.get(name)
             if row is None:
@@ -709,6 +913,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"aligned={source['aligned']:.2f}",
                 flush=True,
             )
+            frame = row.get("framing") or {}
+            if frame:
+                print(
+                    f"[p0] {'':<16} {'':<6}      framing: "
+                    f"ee_in_overview={frame['ee_in_overview']:.4f} "
+                    f"goal_in_overview={frame['goal_in_overview']:.4f} "
+                    f"both={frame['both_in_overview']:.4f}  "
+                    f"wrist angle med={frame['wrist_angle_median_deg']:.1f} "
+                    f"p95={frame['wrist_angle_p95_deg']:.1f} deg, "
+                    f"goal certainly out of wrist="
+                    f"{frame['goal_certainly_out_of_wrist']:.4f}",
+                    flush=True,
+                )
 
     rungs_by_instruction = {
         name: rows for name, rows in rungs_by_instruction.items() if rows

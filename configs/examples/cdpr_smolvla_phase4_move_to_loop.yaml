@@ -267,7 +267,38 @@ task:
     # vision feature to move inward can the policy keep succeeding as the cap
     # widens, which is what forces the vision->direction map to be learned.
     random_workspace_start_distance_initial: 0.03
-    random_workspace_start_distance_final: 0.34
+    # PHASE 4: 0.19, not 0.34. This is the ladder TOP, and it is set by the
+    # wrist camera rather than by reach.
+    #
+    # The wrist camera hangs off the end-effector with a 15 degree tilt and
+    # fovy 60, so the target has to lie within roughly 59 degrees of straight
+    # down to be in frame at all (that bound is deliberately generous -- the ball
+    # joint means the realized orientation is not a pure function of the
+    # commanded pose, so anything tighter would be precise about the wrong
+    # thing). The angle is atan(xy offset / height above the object), and the cap
+    # is what bounds the offset. Measured per rung on the reset distribution,
+    # fraction of starts whose target is CERTAINLY out of the wrist frame:
+    #
+    #   cap  0.03..0.19  0.0000     <- the whole ladder below the top
+    #   cap  0.21        0.0039
+    #   cap  0.25        0.0195
+    #   cap  0.29        0.1055
+    #   cap  0.33        0.1875
+    #
+    # 0.19 is the last rung where the target is never certainly out of frame,
+    # and the bound is conservative, so the true out-of-frame fraction is higher
+    # at every rung above it. Training past 0.19 means training on episodes
+    # where the wrist may not see what the instruction names. The overview
+    # camera keeps the target in frame at every rung (1.0000 throughout), so the
+    # scene is never fully blind -- but the policy would be servoing on one
+    # camera.
+    #
+    # Consequence to keep in mind: this value also anchors the horizon coupling
+    # (_horizon_cap_final), so the 32-decision budget is now reached at cap 0.19
+    # instead of 0.34. And the validation resetter takes the earned cap too
+    # (smolvla_grpo_mjwarp_cdpr.py:1892), so validation follows the ladder
+    # rather than testing 0.5 m starts the policy never saw.
+    random_workspace_start_distance_final: 0.19
     random_workspace_start_distance_increment: 0.02
     # 0.30/0.12, not 0.03/0.01. The 0.03 gate was fitted to a broken regime: the
     # resetter was discarding the cap, so the realized start was ~0.13 m at every
@@ -304,7 +335,22 @@ task:
     # keeps descent in the task without making it the whole task. NOTE: this
     # also makes the uncapped validation start distribution easier, so
     # validation/success_rate is NOT comparable across this change.
-    ee_workspace_z_bounds: [0.27, 0.47]
+    #
+    # PHASE 4: ceiling 0.47 -> 0.40, because above 0.441 m the gripper is out of
+    # the overview frame ENTIRELY -- not near the edge, out, even at x=y=0. The
+    # overview camera sits at (0, -0.541, 0.5125) looking 30 degrees down with
+    # fovy 45; solving b/d = tan(22.5) on the optical axis puts the exit at
+    # z = 0.441, and the in-frame xy half-width collapses 0.196 (z=0.40) ->
+    # 0.161 (0.42) -> 0.009 (0.44). The old band spent its top 14% there.
+    #
+    # Measured on the reset distribution, not derived: at the far cap the
+    # fraction of starts with the gripper inside the overview image goes
+    # 0.8672 -> 0.9961 from this change alone, and over_cap stays 0.0000 at
+    # every rung. Tightening ee_workspace_x/y to 0.19 as well reaches 1.0000
+    # but costs over_cap 0.0078 on the first rung: the object grid reaches
+    # 0.205 and the pull-in then clamps starts off their own annulus. Not worth
+    # 0.4%. tools/audit/start_distance_probe.py reports both.
+    ee_workspace_z_bounds: [0.27, 0.40]
 
 simulation:
   entrypoint:

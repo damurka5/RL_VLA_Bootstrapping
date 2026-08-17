@@ -301,5 +301,121 @@ class VerdictTests(unittest.TestCase):
         self.assertFalse(decision["pick_up"]["pass"])
 
 
+class MetadataOverrideTests(unittest.TestCase):
+    def test_list_valued_overrides_parse(self):
+        """A sweep that silently does nothing is the worst kind of sweep.
+
+        ee_workspace_*_bounds are two-element lists. A scalar-only override
+        wrote a float where the resetter expects a pair, the resetter fell back
+        to the config, and every arm of the framing sweep printed identical
+        numbers -- which reads as a robustness result rather than as a no-op.
+        """
+
+        from tools.audit.start_distance_probe import _apply_overrides
+
+        out = _apply_overrides({}, ["ee_workspace_z_bounds=0.27,0.40"])
+        self.assertEqual(out["ee_workspace_z_bounds"], [0.27, 0.40])
+
+    def test_scalar_and_bool_overrides_still_parse(self):
+        from tools.audit.start_distance_probe import _apply_overrides
+
+        out = _apply_overrides(
+            {},
+            [
+                "random_workspace_gripper_start=false",
+                "placement_far_rung_min_cap=0.09",
+            ],
+        )
+        self.assertIs(out["random_workspace_gripper_start"], False)
+        self.assertEqual(out["placement_far_rung_min_cap"], 0.09)
+
+
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "torch is required for the framing checks",
+)
+class OverviewFramingTests(unittest.TestCase):
+    """The camera the episode has to be well posed in front of."""
+
+    def _camera(self):
+        from tools.audit.start_distance_probe import load_overview_camera
+
+        return load_overview_camera(
+            ROOT / "robots" / "cdpr" / "cdpr_mujoco" / "cdpr_mjwarp_smoke.xml"
+        )
+
+    def test_the_camera_is_read_through_the_include(self):
+        """The config names a wrapper scene; the camera lives in cdpr.xml."""
+
+        camera = self._camera()
+        self.assertTrue(camera["source"].endswith("cdpr.xml"))
+        self.assertEqual(camera["fovy_deg"], 45.0)
+        self.assertAlmostEqual(camera["pos"][2], 0.5125, places=4)
+
+    def test_the_gripper_leaves_the_frame_above_the_measured_ceiling(self):
+        """0.441 m on the optical axis is why the z ceiling came down to 0.40.
+
+        Checked either side of the exit rather than at one point: a test that
+        only asserts "high is out" would also pass if everything were out.
+        """
+
+        import torch
+
+        from tools.audit.start_distance_probe import overview_in_frame
+
+        camera = self._camera()
+        points = torch.tensor(
+            [[0.0, 0.0, 0.40], [0.0, 0.0, 0.43], [0.0, 0.0, 0.46]],
+            dtype=torch.float32,
+        )
+        mask = overview_in_frame(torch, points, camera, aspect=4.0 / 3.0)
+        self.assertTrue(bool(mask[0]))
+        self.assertTrue(bool(mask[1]))
+        self.assertFalse(bool(mask[2]))
+
+    def test_the_object_envelope_is_in_frame(self):
+        """Objects reach 0.205 m; the grid comment claims that is covered."""
+
+        import torch
+
+        from tools.audit.start_distance_probe import overview_in_frame
+
+        camera = self._camera()
+        corners = torch.tensor(
+            [
+                [sx * 0.205, sy * 0.205, 0.19]
+                for sx in (-1.0, 1.0)
+                for sy in (-1.0, 1.0)
+            ],
+            dtype=torch.float32,
+        )
+        mask = overview_in_frame(torch, corners, camera, aspect=4.0 / 3.0)
+        self.assertTrue(bool(mask.all()), "object envelope left the frame")
+
+    def test_wrist_bounds_bracket_the_tilt(self):
+        from tools.audit.start_distance_probe import wrist_bounds_deg
+
+        certainly_in, certainly_out = wrist_bounds_deg(4.0 / 3.0)
+        self.assertLess(certainly_in, certainly_out)
+        # 15 deg tilt + a 43.9 deg half-diagonal at fovy 60, aspect 4:3.
+        self.assertAlmostEqual(certainly_out, 58.9, delta=0.3)
+
+    def test_wrist_angle_grows_with_offset_and_shrinks_with_height(self):
+        import torch
+
+        from tools.audit.start_distance_probe import wrist_angle_from_nadir
+
+        ee = torch.tensor(
+            [[0.0, 0.0, 0.30], [0.10, 0.0, 0.30], [0.10, 0.0, 0.40]],
+            dtype=torch.float32,
+        )
+        objects = torch.zeros((3, 3), dtype=torch.float32)
+        objects[:, 2] = 0.19
+        angle = wrist_angle_from_nadir(torch, ee, objects)
+        self.assertAlmostEqual(float(angle[0]), 0.0, places=4)
+        self.assertGreater(float(angle[1]), float(angle[0]))
+        self.assertLess(float(angle[2]), float(angle[1]))
+
+
 if __name__ == "__main__":
     unittest.main()
