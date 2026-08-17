@@ -301,6 +301,81 @@ class VerdictTests(unittest.TestCase):
         self.assertFalse(decision["pick_up"]["pass"])
 
 
+@unittest.skipUnless(
+    importlib.util.find_spec("torch") is not None,
+    "torch is required to inspect the resetter subclass",
+)
+class ResetterSubclassSignatureTests(unittest.TestCase):
+    """A subclass that overrides reset() must accept everything the base does.
+
+    BatchedRandomWorkspaceMoveToResetter overrode reset() without
+    allow_prelifted, which the base grew for the pre-grasped pick_up stage.
+    Training calls reset() with two keywords, so a move_to run trained happily
+    for 197k steps and then died at its first validation, where validate_round
+    passes allow_prelifted=False. Signature drift in an override is silent until
+    the one caller that uses the new parameter runs, and here that caller runs
+    once every 200k steps.
+    """
+
+    def test_the_override_accepts_every_base_parameter(self):
+        import inspect
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+        )
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            BatchedRandomWorkspaceMoveToResetter,
+        )
+
+        base = inspect.signature(BatchedReverseFrontierResetter.reset)
+        override = inspect.signature(BatchedRandomWorkspaceMoveToResetter.reset)
+        missing = sorted(
+            set(base.parameters) - set(override.parameters)
+        )
+        self.assertEqual(missing, [], f"override drops {missing}")
+
+    def test_the_override_forwards_every_base_parameter(self):
+        """Accepting a parameter and then dropping it is the quieter failure."""
+
+        import inspect
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            BatchedReverseFrontierResetter,
+        )
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            BatchedRandomWorkspaceMoveToResetter,
+        )
+
+        source = inspect.getsource(BatchedRandomWorkspaceMoveToResetter.reset)
+        for name in inspect.signature(
+            BatchedReverseFrontierResetter.reset
+        ).parameters:
+            if name == "self":
+                continue
+            self.assertIn(f"{name}={name}", source, f"{name} is not forwarded")
+
+    def test_validate_round_calls_reset_the_way_the_override_allows(self):
+        """Pinned to the actual call site, not to a remembered one."""
+
+        import inspect
+
+        from rl_vla_bootstrapping.policy import mjwarp_rank_local_collector
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            BatchedRandomWorkspaceMoveToResetter,
+        )
+
+        source = inspect.getsource(
+            mjwarp_rank_local_collector.RankLocalMJWarpGRPOCollector.validate_round
+        )
+        self.assertIn("allow_prelifted=False", source)
+        signature = inspect.signature(
+            BatchedRandomWorkspaceMoveToResetter.reset
+        )
+        signature.bind(
+            None, update_index=0, round_index=0, allow_prelifted=False
+        )
+
+
 class MetadataOverrideTests(unittest.TestCase):
     def test_list_valued_overrides_parse(self):
         """A sweep that silently does nothing is the worst kind of sweep.

@@ -131,9 +131,27 @@ class BatchedRandomWorkspaceMoveToResetter(BatchedReverseFrontierResetter):
                 "instruction_types=[move_to_object]."
             )
 
-    def reset(self, *, update_index: int, round_index: int) -> Any:
+    def reset(
+        self,
+        *,
+        update_index: int,
+        round_index: int,
+        allow_prelifted: bool = True,
+    ) -> Any:
+        # allow_prelifted is forwarded rather than dropped, and the signature
+        # has to keep tracking the base class. It was added to the base for the
+        # pre-grasped pick_up stage and not mirrored here, so training -- which
+        # calls reset() with two keywords -- ran fine for 197k steps and the run
+        # died at its FIRST validation, where validate_round passes
+        # allow_prelifted=False (mjwarp_rank_local_collector.py:3646). Nothing
+        # about move_to depends on the flag (both stages it gates are masked to
+        # pick_up_task), so this is a signature bug and not a behavioural one --
+        # which is exactly why nothing caught it until an hour of GPU time had
+        # been spent.
         reset = super().reset(
-            update_index=update_index, round_index=round_index
+            update_index=update_index,
+            round_index=round_index,
+            allow_prelifted=allow_prelifted,
         )
         # This schedule runs no Reverse Frontier shells; -1 is the "no shell"
         # sentinel the validation and video tooling reads.
