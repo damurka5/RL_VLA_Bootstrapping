@@ -635,6 +635,43 @@ class BatchedReset:
     # but is not holding anything (so the post-grasp diagnostics and the
     # episode-offset gate must not treat it as if it were).
     aligned: Any | None = None
+    # Per-world point the approach cap is a radius around: the goal slot's XY and
+    # the height that instruction's dense term pulls toward. None when the
+    # random-workspace start is off, because then there is no cap.
+    #
+    # Published because auditing the cap from outside otherwise means rebuilding
+    # this point, and rebuilding it is where the mistake lives: for a placement
+    # task the receptacle's own centre sits a release height (0.10) plus the
+    # gripper hang below the point the curriculum uses, which is more than every
+    # rung on the ladder -- so an audit that measures to the receptacle reports a
+    # 100% cap violation for a reset that is exactly right.
+    curriculum_goal_xyz: Any | None = None
+
+
+def goal_slots_for_reset(torch: Any, reset: BatchedReset) -> Any:
+    """Slot the reward shapes toward, per world.
+
+    Placement tasks are rewarded on the gripper->receptacle distance while the
+    target object is already held, so their goal is the reference slot. Every
+    other task drives toward the target object itself.
+
+    Module level so audits share this definition instead of restating it. A
+    placement episode starts holding its target, so measuring against the
+    TARGET reads gripper slop and the post-release retreat -- it read -0.40
+    once (phase-3 report §9.7) before the geometry was fixed, and a second
+    copy of this rule is a second chance to get it backwards.
+    """
+
+    instruction_ids = reset.task_state.instruction_ids
+    reference_slots = reset.task_state.reference_slots
+    is_container = (
+        instruction_ids == INSTRUCTION_TO_ID["put_into_plate"]
+    ) | (instruction_ids == INSTRUCTION_TO_ID["put_into_bowl"])
+    return torch.where(
+        is_container & (reference_slots >= 0),
+        reference_slots,
+        reset.task_state.target_slots,
+    )
 
 
 class BatchedReverseFrontierResetter:
@@ -1576,6 +1613,10 @@ class BatchedReverseFrontierResetter:
         placement_goal = torch.where(
             between[:, None], between_goal, placement_goal
         )
+        # None outside the random-workspace path: there is no approach cap there,
+        # so there is no point for it to be a radius around, and publishing a
+        # plausible-looking zero would be worse than publishing nothing.
+        curriculum_goal_group: Any = None
         if self.random_workspace_gripper_start:
             # The move-to target is a RANDOM active slot (the named catalog is
             # swapped into target_slot_group), so the curriculum must measure
@@ -1728,38 +1769,55 @@ class BatchedReverseFrontierResetter:
                         too_far[:, None], pulled, ee_group[:, :2]
                     )
 
+            # The point the cap is a radius around. XY is the goal slot the
+            # curriculum measures against; Z is the height that instruction's
+            # dense term pulls toward -- the move-to hover height, the grasp
+            # point (object + the gripper hang), or the receptacle release
+            # height (+ the same hang). NOT the goal object's own centre: for a
+            # placement task those differ by the release height (0.10) plus the
+            # hang, which is larger than every rung on the ladder, so measuring
+            # the cap against the receptacle centre reports "the 3-D cap is
+            # violated in 100% of worlds" for a reset that is behaving exactly
+            # as designed.
+            #
+            # Computed unconditionally so it can be reported even when the Z
+            # confinement is off, and hoisted out of that branch so there is one
+            # definition rather than one per consumer. Pure arithmetic on
+            # tensors already in hand: no generator draw, so the reset stream is
+            # byte-identical to before this was exposed.
+            grasp_z = (
+                random_goal[:, 2] + float(self.pick_grasp_height_offset)
+            )
+            container_z = (
+                reference[:, 2]
+                + torch.where(
+                    is_bowl,
+                    torch.full_like(
+                        reference[:, 2], float(self.bowl_release_height)
+                    ),
+                    torch.full_like(
+                        reference[:, 2], float(self.plate_release_height)
+                    ),
+                )
+                + float(self.pick_grasp_height_offset)
+            )
+            goal_z = torch.where(
+                is_container,
+                container_z,
+                torch.where(
+                    move_to_mask,
+                    torch.full_like(grasp_z, float(self.move_to_approach_z)),
+                    grasp_z,
+                ),
+            )
+            curriculum_goal_group = torch.stack(
+                (random_goal[:, 0], random_goal[:, 1], goal_z), dim=-1
+            )
+
             if self.curriculum_cap_includes_z and any_curriculum:
                 # Confine the start height so the cap bounds the 3-D distance the
                 # reward actually measures, not just its XY projection. Without
                 # this the Z spread alone can exceed the cap several times over.
-                # goal_z is the height each instruction's dense term pulls toward:
-                # the move-to hover height, the grasp point (object + the gripper
-                # hang), or the receptacle release height (+ the same hang).
-                grasp_z = (
-                    random_goal[:, 2] + float(self.pick_grasp_height_offset)
-                )
-                container_z = (
-                    reference[:, 2]
-                    + torch.where(
-                        is_bowl,
-                        torch.full_like(
-                            reference[:, 2], float(self.bowl_release_height)
-                        ),
-                        torch.full_like(
-                            reference[:, 2], float(self.plate_release_height)
-                        ),
-                    )
-                    + float(self.pick_grasp_height_offset)
-                )
-                goal_z = torch.where(
-                    is_container,
-                    container_z,
-                    torch.where(
-                        move_to_mask,
-                        torch.full_like(grasp_z, float(self.move_to_approach_z)),
-                        grasp_z,
-                    ),
-                )
                 planar = torch.linalg.vector_norm(
                     ee_group[:, :2] - random_goal[:, :2], dim=-1
                 )
@@ -2260,6 +2318,11 @@ class BatchedReverseFrontierResetter:
             group_target_catalog_ids=target_catalog,
             prelifted=prelifted_group.repeat_interleave(group_size),
             aligned=aligned_group.repeat_interleave(group_size),
+            curriculum_goal_xyz=(
+                None
+                if curriculum_goal_group is None
+                else curriculum_goal_group.repeat_interleave(group_size, dim=0)
+            ),
         )
 
 
@@ -2465,24 +2528,9 @@ class RankLocalMJWarpGRPOCollector:
             self.torch.cuda.synchronize(self.device)
 
     def _goal_slots(self, reset: BatchedReset) -> Any:
-        """Slot the reward shapes toward, per world.
+        """Slot the reward shapes toward, per world."""
 
-        Placement tasks are rewarded on the gripper->receptacle distance while
-        the target object is already held, so their goal is the reference slot.
-        Every other task drives toward the target object itself.
-        """
-
-        torch = self.torch
-        instruction_ids = reset.task_state.instruction_ids
-        reference_slots = reset.task_state.reference_slots
-        is_container = (
-            instruction_ids == INSTRUCTION_TO_ID["put_into_plate"]
-        ) | (instruction_ids == INSTRUCTION_TO_ID["put_into_bowl"])
-        return torch.where(
-            is_container & (reference_slots >= 0),
-            reference_slots,
-            reset.task_state.target_slots,
-        )
+        return goal_slots_for_reset(self.torch, reset)
 
     def _update_physical_grasp(
         self,
