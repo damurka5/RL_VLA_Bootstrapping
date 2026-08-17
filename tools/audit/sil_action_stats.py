@@ -15,30 +15,29 @@ supposed to be responding to?
 So the numbers that decide it are:
 
 ``direction_concentration`` -- the length of the mean UNIT command. 1.0 means
-every world was commanded the same way in world frame no matter where its
-object was, i.e. a fixed drift wearing the costume of a policy. 0.0 means no
-preferred direction at all. The campaign has already been bitten by exactly
-this failure mode once.
+every world was commanded the same way in world frame. Context, not a verdict:
+where the arm sits systematically to one side of the goals, a genuine servo
+scores 0.82 on it, because aiming at them means pointing one way most of the
+time. High concentration is only damning when ``aim`` is also near zero.
 
-``cosine_gap`` -- the cosine between the commanded XY and the direction from
-the end effector to its own target, MINUS the same cosine against another
-world's target. The raw cosine alone is confounded: the shuffle permutes
-targets but not the arm, so an arm near the +x edge points -x toward almost
-any target, and a policy that merely drives toward the middle of the
-workspace scores well on it. The gap is aiming that survives being handed the
-wrong object. This is the discriminator; everything else is context.
+``aim`` -- the cosine between the commanded XY and the direction to the goal,
+minus the same cosine with the COMMANDS permuted across rows. The permutation
+keeps both marginal distributions and breaks only the pairing, so it prices
+exactly the alignment a policy gets for free from systematic geometry. The
+raw cosine is not a verdict on its own: a fixed drift that points where goals
+usually sit scores 0.78 on it while knowing nothing. This is the
+discriminator; everything else is context.
 
 ``cosine_by_object`` -- the same cosine split by object catalog. If the policy
 genuinely distinguishes objects, this is roughly flat across them. If one
 object carries the whole signal, the "aiming" is a bias toward wherever that
 object usually sits.
 
-The shuffle control is not optional, and it does not have to come back near
-zero to be doing its job. On a synthetic servo whose commands point exactly at
-their own targets it still reads 0.29, because the arm's own position
-constrains which directions point at anything at all. That is the amount of
-"aiming" available to a policy that has never seen an object, and subtracting
-it is the whole point.
+Calibrated on synthetic policies whose answer is known: ``aim`` reads +0.001
+for a pure fixed drift, +0.163 for half servo half drift, +0.327 for a true
+servo, -0.004 for uniform noise. Two earlier nulls -- pairing with another
+world's goal, and rotating the goal about the arm -- both certified the pure
+drift as aiming, and the docstring of ``_aiming`` records why.
 
 Recordings, not the dataset, are the input: geometry is what makes the
 question answerable, and ``demonstrations.npz`` stores the pooled vision
@@ -125,11 +124,8 @@ def _gather(
 
     actions: list[np.ndarray] = []
     relative: list[np.ndarray] = []
-    shuffled: list[np.ndarray] = []
-    rotated: list[np.ndarray] = []
     instructions: list[np.ndarray] = []
     catalogs: list[np.ndarray] = []
-    rng = np.random.default_rng(20260817)
 
     for path in paths:
         rec = _Recording.from_npz(Path(path))
@@ -138,12 +134,6 @@ def _gather(
         slots = _goal_slots(rec, goal)
         target = rec.object_xyz[:, rows, slots, :]  # [S, W, 3]
         rel = target - rec.ee_xyz
-        # Same commands, another world's target. The value a policy that
-        # ignores geometry would score, measured on this data rather than
-        # assumed to be zero.
-        permutation = rng.permutation(worlds)
-        rel_shuffled = target[:, permutation, :] - rec.ee_xyz
-
         live = rec.active.copy()
         if successes_only:
             live &= rec.episode_success[None, :]
@@ -153,21 +143,8 @@ def _gather(
         far = np.linalg.norm(rel[..., :2], axis=-1) > 0.01
         live &= far
 
-        # Rotate each goal direction by a random angle about the arm,
-        # preserving its distance. Its expectation is exactly zero by symmetry
-        # for ANY command distribution, so it says what "no alignment" scores
-        # here -- which the world shuffle cannot, since that keeps whatever
-        # alignment the arm's own position makes available.
-        angle = rng.uniform(0.0, 2.0 * np.pi, size=(steps, worlds))
-        cos_a, sin_a = np.cos(angle), np.sin(angle)
-        rel_rotated = rel.copy()
-        rel_rotated[..., 0] = rel[..., 0] * cos_a - rel[..., 1] * sin_a
-        rel_rotated[..., 1] = rel[..., 0] * sin_a + rel[..., 1] * cos_a
-
         actions.append(rec.actions[live])
         relative.append(rel[live])
-        shuffled.append(rel_shuffled[live])
-        rotated.append(rel_rotated[live])
         instructions.append(
             np.broadcast_to(rec.instruction_ids[None, :], (steps, worlds))[live]
         )
@@ -187,8 +164,6 @@ def _gather(
     return {
         "action": np.concatenate(actions).astype(np.float64),
         "relative": np.concatenate(relative).astype(np.float64),
-        "shuffled": np.concatenate(shuffled).astype(np.float64),
-        "rotated": np.concatenate(rotated).astype(np.float64),
         "instruction_id": np.concatenate(instructions),
         "catalog_id": np.concatenate(catalogs),
     }
@@ -197,50 +172,65 @@ def _gather(
 def _aiming(
     action: np.ndarray,
     relative: np.ndarray,
-    shuffled: np.ndarray,
-    rotated: np.ndarray | None = None,
+    rng: np.random.Generator,
+    permutations: int = 8,
 ) -> dict[str, Any]:
-    """The conditional statistics. These are what decide the question."""
+    """The conditional statistics. These are what decide the question.
+
+    The null permutes the COMMANDS across rows, keeping every row's own
+    geometry. That preserves both marginal distributions exactly -- the same
+    commands, the same goal directions -- and breaks only the pairing between
+    them, which is the thing being tested.
+
+    Two earlier nulls in this file were wrong and are gone, because the way
+    they were wrong is the lesson.
+
+    Pairing each command with ANOTHER world's goal seemed like the object
+    discrimination test, and is not: the arm tracks its own goal, so its own
+    goal direction is short and variable while another world's is long and
+    dominated by wherever the arm happens to sit. A pure fixed drift carrying
+    no goal information at all scored 0.383 on it -- indistinguishable from
+    the real recordings, which is how it nearly certified them.
+
+    Rotating the goal direction about the arm has expectation exactly zero by
+    symmetry, which sounds ideal and is useless: it destroys the systematic
+    geometry along with the pairing, so a fixed drift that happens to point
+    where goals usually are still scored 0.78 against it.
+
+    On synthetic policies with known answers, the command permutation reads
+    +0.001 for a pure drift, +0.163 for half servo half drift, +0.327 for a
+    true servo and -0.004 for uniform noise.
+    """
 
     command_xy = action[:, :2]
+    goal_xy = relative[:, :2]
     mean_vector = command_xy.mean(axis=0)
     spread = float(np.linalg.norm(command_xy - mean_vector, axis=-1).mean())
+    observed = float(np.mean(_cosine(command_xy, goal_xy)))
+    rows = command_xy.shape[0]
+    nulls = [
+        float(np.mean(_cosine(command_xy[rng.permutation(rows)], goal_xy)))
+        for _ in range(max(1, int(permutations)))
+    ]
+    null = float(np.mean(nulls))
     return {
-        "rows": int(action.shape[0]),
+        "rows": int(rows),
         "command_mean_vector": [round(float(v), 5) for v in mean_vector],
         "command_mean_norm": round(float(np.linalg.norm(mean_vector)), 5),
         "command_spread": round(spread, 5),
-        # 1.0 = one direction for every world regardless of its object.
+        # 1.0 = one direction for every world regardless of its goal.
         "direction_concentration": round(
             float(np.linalg.norm(_unit(command_xy).mean(axis=0))), 5
         ),
-        "target_cosine": round(
-            float(np.mean(_cosine(command_xy, relative[:, :2]))), 5
+        # Not a verdict on its own: a fixed drift pointing where goals usually
+        # sit scores high here while knowing nothing.
+        "target_cosine": round(observed, 5),
+        "permuted_cosine": round(null, 5),
+        "permutation_spread": round(
+            float(np.std(nulls)) if len(nulls) > 1 else 0.0, 5
         ),
-        # The control. The shuffle permutes targets but NOT the end effector,
-        # so it keeps whatever aiming comes from the workspace geometry rather
-        # than from the object: an arm near the +x edge points -x toward almost
-        # any target. A policy that only moves toward the middle scores high on
-        # both columns.
-        "shuffled_cosine": round(
-            float(np.mean(_cosine(command_xy, shuffled[:, :2]))), 5
-        ),
-        # Which makes this the discriminator, not the raw cosine: aiming that
-        # survives being told the wrong object is aiming at the workspace.
-        "cosine_gap": round(
-            float(
-                np.mean(_cosine(command_xy, relative[:, :2]))
-                - np.mean(_cosine(command_xy, shuffled[:, :2]))
-            ),
-            5,
-        ),
-        # Expectation exactly 0 under the null for any command distribution.
-        # If this is not near 0 the sample is too small to read the rest.
-        "rotated_cosine": (
-            round(float(np.mean(_cosine(command_xy, rotated[:, :2]))), 5)
-            if rotated is not None
-            else None
-        ),
+        # The discriminator: alignment that survives breaking the pairing.
+        "aim": round(observed - null, 5),
     }
 
 
@@ -382,6 +372,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
 
+    rng = np.random.default_rng(20260817)
     table = _gather(
         paths, successes_only=bool(args.successes_only), goal=str(args.goal)
     )
@@ -390,7 +381,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "successes_only": bool(args.successes_only),
         "goal": str(args.goal),
         "overall": {
-            **_aiming(table["action"], table["relative"], table["shuffled"], table["rotated"]),
+            **_aiming(table["action"], table["relative"], rng),
             "per_axis": _per_axis(table["action"]),
         },
     }
@@ -401,10 +392,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         if int(mask.sum()) < 50:
             continue
         name = _instruction_name(instruction_id)
-        entry = _aiming(
-            table["action"][mask], table["relative"][mask],
-            table["shuffled"][mask], table["rotated"][mask],
-        )
+        entry = _aiming(table["action"][mask], table["relative"][mask], rng)
         entry["per_axis"] = _per_axis(table["action"][mask])
         by_object: dict[str, Any] = {}
         for catalog_id in sorted(set(table["catalog_id"][mask].tolist())):
@@ -414,8 +402,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             if int(sub.sum()) < 50:
                 continue
             by_object[_catalog_name(catalog_id)] = _aiming(
-                table["action"][sub], table["relative"][sub],
-                table["shuffled"][sub], table["rotated"][sub],
+                table["action"][sub], table["relative"][sub], rng
             )
         entry["by_object"] = by_object
         by_instruction[name] = entry
@@ -447,14 +434,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     print(
         f"[actions] target_cosine={overall['target_cosine']} vs "
-        f"shuffled control {overall['shuffled_cosine']} "
-        f"-> gap {overall['cosine_gap']} "
-        f"(rotated null {overall['rotated_cosine']})"
+        f"permutation null {overall['permuted_cosine']} "
+        f"-> aim {overall['aim']} (+-{overall['permutation_spread']})"
     )
     print()
     header = (
         f"{'slice':<26}{'rows':>8}{'|mean|':>8}{'spread':>8}"
-        f"{'conc':>7}{'cos':>8}{'shuf':>8}{'gap':>8}{'rot':>8}"
+        f"{'conc':>7}{'cos':>8}{'null':>8}{'aim':>8}"
     )
     print(header)
     print("-" * len(header))
@@ -462,15 +448,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"{name:<26}{entry['rows']:>8}{entry['command_mean_norm']:>8.3f}"
             f"{entry['command_spread']:>8.3f}{entry['direction_concentration']:>7.3f}"
-            f"{entry['target_cosine']:>8.3f}{entry['shuffled_cosine']:>8.3f}"
-            f"{entry['cosine_gap']:>8.3f}{entry['rotated_cosine']:>8.3f}"
+            f"{entry['target_cosine']:>8.3f}{entry['permuted_cosine']:>8.3f}"
+            f"{entry['aim']:>8.3f}"
         )
         for catalog, sub in sorted(entry["by_object"].items()):
             print(
                 f"    {catalog:<22}{sub['rows']:>8}{sub['command_mean_norm']:>8.3f}"
                 f"{sub['command_spread']:>8.3f}{sub['direction_concentration']:>7.3f}"
-                f"{sub['target_cosine']:>8.3f}{sub['shuffled_cosine']:>8.3f}"
-                f"{sub['cosine_gap']:>8.3f}{sub['rotated_cosine']:>8.3f}"
+                f"{sub['target_cosine']:>8.3f}{sub['permuted_cosine']:>8.3f}"
+                f"{sub['aim']:>8.3f}"
             )
     print()
     print("commanded x histogram (all rows):")
