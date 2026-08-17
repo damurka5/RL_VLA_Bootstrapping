@@ -1,0 +1,489 @@
+project:
+  name: cdpr_smolvla_phase4_move_to_loop
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  env_vars:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_VERBOSITY: error
+    HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    NCCL_DEBUG: WARN
+  notes:
+    - PHASE 4, iteration 0. The RL leg of the iterative RL/SFT loop in CDPR_PHASE4_LOOP_DESIGN.md, on move_to_object.
+    - Deliberately a near-copy of cdpr_smolvla_move_to_distance_grpo_mjlab_scratch. Every number below is the product of a measured failure (see the comments); iteration 0 has to reproduce that run, or the loop's gain is measured against a baseline nobody has.
+    - Only four things differ - name, these notes, vision LoRA left OFF, and the loop-driver contract stated here.
+    - VISION LoRA IS OFF ON PURPOSE, and phase 4 turns it on at the FIRST SFT, not here. In RL the adapter sees vla_update_max_records (128) decision-0 records per update, through a PPO objective, through a ten-step flow-matching expert. In SFT it sees every decision of every demonstration under an MSE. If a vision adapter is going to earn its place anywhere it is there, and introducing it here would also change the one configuration that has actually run.
+    - M1 PASSED on this config - tools/audit/start_distance_probe.py, fake backend, 512 worlds x 6 rounds, all 16 rungs 0.03..0.33. Medians 0.0233..0.2342, over_cap 0.0000 in XY and in 3-D on every rung, ee_source curriculum 1.00. move_to takes the approach-curriculum path with no start override, unlike placement.
+    - Why move_to first, and not placement. Its success radius is 0.02 and the first rung is 0.03, so the rung is OUTSIDE the target - placement's ladder starts at 0.01 inside receptacle radii of 0.057/0.091, where the rung is solved by opening the fingers and the gate promotes on free successes. "The cap went up" is the loop's trigger, so a free rung fires it without the policy having learned anything.
+    - LOOP DRIVER CONTRACT. Iteration 0 launches with no resume and no warm start. From iteration 1 the driver passes the previous SFT checkpoint as --resume-checkpoint, never as a warm start - load_weights_only discards extra_state, and extra_state is where the approach-curriculum caps live, so a warm start drops the cap to the first rung and undoes the iteration that earned it. max_train_steps is a ceiling, not a plan; the driver stops the segment on a cap promotion.
+    - Fresh GRPO residual/readout initialization at global step zero; no adapter checkpoint is loaded.
+    - One torchrun rank owns one A40, a frozen SmolVLA replica, and complete rank-local GRPO groups.
+    - Only move_to_object is sampled; prompts use semantic object labels without RoboCasa variant numbers.
+    - Every GRPO group starts the gripper at a seeded random XY workspace position at Z=0.27 m, at least 0.12 m from its target; Reverse Frontier shells are disabled.
+    - The GPU reward is one bounded inverse-polynomial term on the 3-D distance to the hover point (target XY at Z=0.27 m), so its magnitude stays in [0, 1] and conditions the GRPO group advantage.
+    - Objects are drawn from a 3x3 candidate grid and the move-to target is a random active slot, so the goal is not pinned to one location.
+    - Scenes start with a single object and add a second at the configured curriculum step, which also restarts the start-distance curriculum; MJWarp slots three and four are never used.
+    - SmolVLA camera slot three is a masked empty camera (zeroed image plus padding mask) instead of a duplicated wrist view.
+    - Rank zero writes TensorBoard metrics; every 200k selected actions both ranks evaluate fixed held-out GPU scenes balanced across all eight objects and save the same policy checkpoint.
+
+embodiment:
+  name: cdpr_5dof_mjwarp
+  kind: mjlab_mjwarp
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+  dof: 5
+  extra_python_paths: [../../robots/cdpr]
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs: {}
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 1.0]
+
+task:
+  instruction_types: [move_to_object]
+  target_objects:
+    [
+      robocasa_apple,
+      robocasa_banana,
+      robocasa_tomato,
+      robocasa_orange,
+      robocasa_potato,
+      robocasa_mug,
+      robocasa_plate,
+      robocasa_bowl,
+    ]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    instruction_sampling: uniform_cycle
+    reward_mode: dense
+    target_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    distractor_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    scene_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    # Object-count curriculum for the 16M-step move-to phase: one object until
+    # 8M, then up to two (sampled uniformly per group, so single-object scenes
+    # stay in the mix as rehearsal). Slots three and four stay inactive -- a
+    # third object is the NEXT run, not a second threshold inside this one,
+    # because each unlock restarts the start-distance curriculum and two
+    # restarts in one run leaves neither stage enough steps to climb back.
+    min_scene_objects: 1
+    max_scene_objects: 2
+    # Step 0, i.e. two objects for the whole run. Measured, not assumed: in the
+    # 16M run the two-object phase (8-11M) scored the highest mean reward of the
+    # run (0.761 vs 0.696 / 0.723 single-object) at unchanged action->target
+    # cosine, so distractors cost nothing once they arrive on close starts. What
+    # DOES cost is deferring them -- with one object the instruction is
+    # meaningless, so every single-object step teaches object-agnostic servoing
+    # and no grounding at all. A warm start resets the cap to initial anyway, so
+    # the close starts that make target selection learnable are already there.
+    #
+    # NOTE on what this actually buys: object separation is >=0.16 m, so while
+    # the cap is under ~0.15 the named target is simply the nearest one and
+    # selection is not yet exercised. Grounding pressure begins as the cap
+    # approaches the separation; watch policy_target_cosine_mean from cap 0.15.
+    #
+    # A fixed threshold mid-run is what the two earlier attempts died on: the
+    # 2nd object at 5.7M degraded grounding (cosine 0.20->0.05, successes
+    # 72->17) because it arrived while the cap was still climbing. The unlock
+    # path still restarts the curriculum (ApproachDistanceCurriculum.restart)
+    # for any config that does stage it later; at step 0 there is nothing to
+    # restart, and previous_scene_object_max is seeded to 2 so no spurious
+    # restart fires on the first update.
+    scene_object_curriculum_steps: [0]
+    distance_reward_exponent: 2.0
+    success_distance: 0.02
+    success_bonus: 0.0
+    move_to_object_xy_reward_scale: 0.08
+    move_to_object_distance_reward_weight: 1.0
+    move_to_object_xy_tolerance: 0.02
+    move_to_object_xy_window_low: 0.0
+    move_to_object_xy_window_high: 0.02
+    move_to_object_excess_distance_penalty_weight: 0.0
+    move_to_object_too_close_penalty_weight: 0.0
+    move_to_object_success_bonus: 0.0
+    # A 2 cm Z band with a bounded-magnitude slope: the previous 1 cm band at
+    # weight 1.0 / scale 0.03 produced penalties of 1-2 that drowned the 0-1 XY
+    # distance term in every group advantage and stalled XY learning.
+    move_to_object_require_z_window: true
+    move_to_object_z_window_low: 0.26
+    move_to_object_z_window_high: 0.28
+    # Bounded 3-D shaping: a single inverse-polynomial term on the distance to
+    # the hover point (target XY, approach_z) replaces the XY term + linear
+    # Z-band penalty. Magnitude stays in [0, weight], which conditions the GRPO
+    # group-relative advantage far better. The z_penalty_* keys below are the
+    # inactive legacy fallback (used only when distance_include_z is false).
+    move_to_object_distance_include_z: true
+    # ee_position tracks ee_base, the cable-suspended base; the gripper hangs
+    # 0.08 m BELOW it (the reset places the EE at object_z + 0.08 when an object
+    # is held, and pick_grasp_height_offset is 0.08). So approach_z 0.22 put the
+    # grasp point at 0.14 -- 1 cm UNDER the 0.15 m desk -- and the policy was
+    # rewarded for driving the fingers through the table, which diverged the
+    # physics into NaN rewards. 0.27 puts the grasp point at 0.19, i.e. at the
+    # object centre band (0.160 plate .. 0.195 mug).
+    move_to_object_approach_z: 0.27
+    move_to_object_z_penalty_scale: 0.05
+    move_to_object_z_penalty_weight: 0.5
+    action_saturation_penalty_weight: 0.0
+    move_to_object_validation_distance_min: 0.0
+    move_to_object_validation_distance_threshold: 0.02
+    random_workspace_gripper_start: true
+    random_workspace_min_goal_xy_distance: 0.12
+    random_workspace_horizon_low: 32
+    random_workspace_horizon_high: 32
+    # Curriculum-coupled horizon: episode length (policy decisions) scales with
+    # the current start-distance cap instead of the fixed 32. The batched SmolVLA
+    # forward runs every decision, so a close start (cap 0.03) needs far fewer
+    # decisions than a far one -- horizon interpolates from curriculum_horizon_min
+    # at the initial cap to curriculum_horizon_max at the final cap. At cap 0.03
+    # that is ~8 decisions (32 env steps, ample for a ~2 cm reach) vs 32, so the
+    # rollout is ~4x cheaper AND yields ~4x more group-starts per update in the
+    # early phase; it grows to 32 as the cap reaches full reach. Validation keeps
+    # the full horizon (its cap is inf). Logged as curriculum/horizon_decisions.
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 8
+    curriculum_horizon_max: 32
+    # Reset-on-drift: end a trajectory after the EE moves away from the goal for
+    # `patience` consecutive env steps, freezing its GRPO return to `penalty`
+    # (the return is the last active step's reward, so a bare truncation would
+    # reward drifting by stopping the world at its closer pre-drift point). Kept
+    # OFF for now: with a vision-blind policy every world drifts, so all returns
+    # collapse to the penalty and the group contrast vanishes. Enable it together
+    # with the vision-aware residual, once policy_target_cosine_mean > 0 shows
+    # some worlds actually stay -- then it penalizes the drifters relative to
+    # them. Logged as `drift_terminations`.
+    # OFF: SmolVLA inference is batched over ALL worlds every decision regardless
+    # of the active mask, so terminating a drifting world early saves no compute
+    # but drops its remaining records -- with an early-drifting policy this killed
+    # ~1000/1024 trajectories per rollout and cut throughput ~5x (100s SmolVLA
+    # cost, ~1/8 the harvested steps) while starving exploration. Only reconsider
+    # once the policy reliably stays on target (drift_terminations small).
+    reset_on_drift_enabled: false
+    reset_on_drift_patience: 4
+    reset_on_drift_penalty: 0.0
+    # Approach (early-distance) curriculum, SUCCESS-GATED. The EE start begins
+    # within a small XY radius of the target so random exploration frequently
+    # lands near the goal and manufactures the dense success signal GRPO needs.
+    # The cap widens ONLY when the policy is actually solving the current
+    # difficulty -- the training group pass rate (EMA) crosses promote_pass_rate
+    # -- and narrows below demote_pass_rate, so it always sits at the edge of the
+    # policy's ability instead of advancing on wall-clock. A fixed step schedule
+    # failed: it widened regardless of mastery, so the easy regime was gone
+    # (cap ~0.12 by 900k) before the policy had any easy wins to learn from. The
+    # 0.12 min-goal floor is auto-relaxed to 0.5*cap while the cap is below it,
+    # so the early close starts stay feasible. Final 0.34 m ~ the 0.24*sqrt(2)
+    # workspace diagonal (full reach). Gate reads the rank-averaged pass rate so
+    # both ranks move the cap in lockstep; state persists across restarts.
+    # If the cap stays stuck at initial, that is the grounding signal: the frozen
+    # vision cannot localize the object even from 6 cm, and LoRA must extend
+    # beyond lm_expert. Logged: curriculum/start_max_goal_distance_m and
+    # curriculum/approach_pass_rate_ema.
+    random_workspace_start_distance_curriculum_enabled: true
+    # The cap used to bound the start's XY distance only, while the reward is a
+    # 3-D potential and ee_workspace_z_bounds spans 25 cm. Measured at cap 0.03:
+    # the true 3-D distance to the hover point averaged 0.126 m and only 10.8% of
+    # starts were actually inside the cap -- so the "easy foothold" the
+    # curriculum exists to manufacture never existed, and the policy had to solve
+    # a near-full-reach descent to score anything at the initial cap. With this
+    # on the same measurement is 0.029 m / 100%. At the final 0.34 cap the
+    # distribution is essentially unchanged (0.266 vs 0.270), so the Z
+    # randomization still forces descent to be learned -- just not before the
+    # policy can do anything at all.
+    curriculum_cap_includes_z: true
+    # 0.03, not 0.06: at 0.06 the EE must produce ~3-4 correct action steps to
+    # reach the 2 cm success window, which a not-yet-grounded policy never does,
+    # so pass_rate stayed 0 and the curriculum never promoted off the initial cap
+    # (800k steps, 0 successes). At 0.03 the annulus is [0.015, 0.03], so many
+    # starts sit at/just outside the window: random exploration scores often,
+    # giving the curriculum a foothold to climb from -- and only by USING the
+    # vision feature to move inward can the policy keep succeeding as the cap
+    # widens, which is what forces the vision->direction map to be learned.
+    random_workspace_start_distance_initial: 0.03
+    random_workspace_start_distance_final: 0.34
+    random_workspace_start_distance_increment: 0.02
+    # 0.30/0.12, not 0.03/0.01. The 0.03 gate was fitted to a broken regime: the
+    # resetter was discarding the cap, so the realized start was ~0.13 m at every
+    # setting and the pass rate could not exceed ~0.045 no matter what. With the
+    # cap actually reaching the simulator the same measurement is 0.41 at a 3 cm
+    # start and 0.06-0.20 out to 0.19 m -- so a 0.03 gate is below every value
+    # the metric can take, it is open on every update, and the "success-gated"
+    # curriculum degenerates into a fixed +0.02 per 6 updates. It marched
+    # 0.03 -> 0.19 m in 350k steps that way. 0.30 sits under the 0.41 an
+    # ungrounded policy already scores at the initial cap (so the first level
+    # still clears quickly) and above the 0.20 it scores at 0.05 (so the next one
+    # has to be earned). 0.12 sits just under the ~0.09 plateau a cap that has
+    # outrun the policy produces, so the controller can now pull back -- at 0.01
+    # demotion was unreachable. A cap that stalls here is real evidence about
+    # grounding rather than an artifact of the start distribution.
+    random_workspace_start_distance_promote_pass_rate: 0.30
+    random_workspace_start_distance_demote_pass_rate: 0.12
+    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    # 15, not 5: at decay 0.9 the EMA needs ~10 updates to reflect a level, so a
+    # 5-update cooldown decided on an average still dominated by the previous
+    # cap. The EMA is also re-seeded on every cap change (see
+    # ApproachDistanceCurriculum.observe), so these 15 updates measure the new
+    # difficulty only.
+    random_workspace_start_distance_cooldown_updates: 15
+    ee_workspace_x_bounds: [-0.24, 0.24]
+    ee_workspace_y_bounds: [-0.24, 0.24]
+    # Randomize the start height so the policy must learn descent, not just XY
+    # servoing: the EE begins anywhere in [0.27, 0.47] (grasp point 0.19..0.39)
+    # and is rewarded (via distance_include_z to the 0.27 hover point) for
+    # driving down to the object band. 0.27 is the hover/target height.
+    # Ceiling 0.52 -> 0.47: a 25 cm approach spent most of the episode's Z
+    # budget descending before any XY servoing could pay off, and the wrist
+    # camera at that altitude sees a footprint far wider than the target. 20 cm
+    # keeps descent in the task without making it the whole task. NOTE: this
+    # also makes the uncapped validation start distribution easier, so
+    # validation/success_rate is NOT comparable across this change.
+    ee_workspace_z_bounds: [0.27, 0.47]
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [robocasa_apple, robocasa_plate, robocasa_bowl]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  build_kwargs:
+    table_z: 0.15
+    ee_start: [0.0, 0.0, 0.40]
+  randomization:
+    random_scene_count: 256
+    max_objects: 4
+    use_domain_randomization: true
+
+simulator:
+  backend: mjlab_mjwarp
+  worlds_per_rank: 512
+  groups_per_rank: 64
+  nconmax: 256
+  njmax: 1024
+  render_width: 320
+  render_height: 240
+  object_slots: 4
+  fixed_scene_xml: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+
+policy:
+  type: smolvla_cdpr
+  base_checkpoint: lerobot/smolvla_base
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+  num_images_in_input: 3
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: false
+      bins: 256
+    export_filename: smolvla_action_codec.json
+
+training:
+  preview_before_rl: false
+  rl:
+    enabled: true
+    algorithm: smolvla_residual_grpo_mjwarp
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
+    args:
+      max_train_steps: 16000000
+      max_env_steps: 128
+      chunk_size: 8
+      replan_every: 4
+      image_size: 256
+      smolvla_model_image_size: 256
+      smolvla_compile_model: true
+      smolvla_compile_mode: max-autotune-no-cudagraphs
+      smolvla_inference_microbatch_size: 256
+      state_dim: 6
+      # No privileged target geometry in the observation: the residual and the
+      # frozen SmolVLA replica both see pure proprioception
+      # [ee_xyz, ee_yaw, gripper, 0]. The policy must localize the target from
+      # the overview + wrist cameras and the language instruction, exactly as it
+      # would on a real robot. (true feeds the residual an oracle EE->target
+      # vector that does not exist at deployment -- do not enable it.)
+      residual_relative_target: false
+      # Vision-aware residual: append a FROZEN fixed-random projection of
+      # SmolVLA's connector vision tokens (overview+wrist) to the trainable
+      # residual's state, so the residual can localize the target from vision.
+      # The frozen SmolVLA action head does not ground (action->target cosine ~0),
+      # but the connector tokens DO encode target XY (linear-probe R^2 ~ 0.44 on
+      # the un-pooled 16-token grid). SmolVLA still receives only the 6-dim
+      # proprioceptive state; the residual sees proprioception + this 512-dim
+      # frozen feature and learns the vision->direction map RL could not reach
+      # through the rank-16 action-expert LoRA alone. Fixed seed => reproducible
+      # across ranks/eval; changing residual_vision_dim invalidates checkpoints.
+      residual_vision_features: true
+      residual_vision_dim: 512
+      include_wrist: true
+      include_aux_camera: true
+      mask_empty_aux_camera: true
+      mixed_precision: bf16
+      smolvla_action_normalization: tanh
+      hidden_dim: 1024
+      # The frozen prior carries a task-blind +0.45 mean Z bias (see
+      # scripts/diagnose_smolvla_prior_scale.py). At scale 0.30 the residual
+      # cannot bring action_z <= 0, so the EE can never descend/hold and
+      # move-to is impossible; 1.0 gives the residual full per-axis authority.
+      residual_scale: 1.0
+      # SmolVLA action-expert LoRA (off by default; flip train_vla_lora to true
+      # to let RL gradients reach model.vlm_with_expert.lm_expert, vision + VLM
+      # frozen). See SMOLVLA_LORA_FINETUNE_PLAN.md before enabling.
+      train_vla_lora: true
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      # attn+MLP: 3.42M trainable (attention-only would be 1.29M). Measured
+      # cost vs no LoRA: -9.2% selected actions/s from the adapters running in
+      # every rollout forward.
+      lora_include_mlp: true
+      lora_expert_name_contains: lm_expert
+      vla_lr: 1.0e-5
+      vla_kl_coef: 0.1
+      # Measured peak VRAM on a ~46 GB A40 at 512 worlds (grad-through-VLA
+      # backward ON): mb 16 -> 37.7 GB, 32 -> 41.1 GB, 64 -> 45.5 GB (~99% of
+      # the card, unsafe), 128 -> OOM. Throughput is identical across all of
+      # them because the LoRA update is negligible next to the 95 s SmolVLA
+      # rollout, and every record is accumulated regardless of chunk size, so
+      # the gradient is unchanged. 16 is therefore strictly dominant: it fits
+      # under the rollout's existing allocator high-water mark (+0.3 GB).
+      vla_microbatch_size: 16
+      # Bounded by the microbatch, not by this, so raising it costs update
+      # time (more chunks) rather than VRAM.
+      vla_update_max_records: 128
+      learning_rate: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      init_log_std: -1.2
+      min_log_std: -5.0
+      # -1.10, not -0.3. At -0.3 the ceiling was never the binding constraint
+      # and the distribution diffused underneath it: over the 16M-step run
+      # log_std bottomed at -1.227 (3.6M) and then rose monotonically for 12M
+      # steps -- -1.15 at 7.6M, -1.10 at 11.3M, -1.00 at 13.7M, -0.895 at 16M --
+      # while entropy went 0.83 -> 4.15, the action->target cosine fell 0.25 ->
+      # 0.14, and validation collapsed from its 7.3% peak at 7.4M to 0.7%. The
+      # policy was healthy in [-1.23, -1.15] for its entire productive phase, so
+      # the ceiling now sits just above that band: it CANNOT diffuse out of the
+      # regime that worked. Raise this only with evidence that exploration, not
+      # diffusion, is the binding problem.
+      max_log_std: -1.10
+      clip_range_low: 0.20
+      clip_range_high: 0.28
+      # 0.0005 -> 0.0. Lowering it from 0.002 slowed the diffusion but did not
+      # stop it: nothing else pushes log_std down, so any net-positive entropy
+      # bonus wins on a long run. The approach curriculum supplies exploration by
+      # construction -- it starts the EE where random actions already score --
+      # so the bonus is buying noise, not coverage. max_log_std above is the
+      # backstop; this removes the pressure itself.
+      entropy_coef: 0.0
+      max_grad_norm: 1.0
+      grpo_group_size: 8
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.10
+      grpo_dynamic_max_pass_rate: 0.90
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 64
+      grpo_max_collection_seconds_per_update: 600
+      ppo_epochs: 4
+      minibatch_size: 512
+      microbatch_size: 512
+      complex_training_approach: none
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      hold_steps: 6
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      validation_every_steps: 200000
+      validation_episodes_per_instruction: 1024
+      validation_seed: 1000000
+      validation_video_count: 0
+      save_every_steps: 200000
+      mjwarp_profile_timers: true
+      mjwarp_profile_updates: 4
+      distributed: true
+      distributed_backend: nccl
+      distributed_timeout_seconds: 21600
+      progress: true
+      progress_only: true
+      device: cuda
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks: []

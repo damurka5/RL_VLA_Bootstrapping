@@ -305,12 +305,14 @@ def measure_rung(
         # sits exactly one grasp offset above its object (:1988), which is a
         # 1e-6 test, and the two pick_up stages announce themselves on the reset.
         target = objects[index, reset.task_state.target_slots]
+        # Compared component-wise rather than against a constructed offset
+        # vector: a fresh torch.tensor lands on the CPU while ee/target are on
+        # the rank's GPU, which is a device mismatch that the stub backend
+        # cannot reproduce and only shows up on the real one.
+        offset = ee - target
         caught = (
-            torch.linalg.vector_norm(
-                ee - (target + torch.tensor([0.0, 0.0, grasp_offset])), dim=-1
-            )
-            < 1.0e-5
-        )
+            torch.linalg.vector_norm(offset[:, :2], dim=-1) < 1.0e-5
+        ) & ((offset[:, 2] - grasp_offset).abs() < 1.0e-5)
         prelifted = (
             reset.prelifted
             if reset.prelifted is not None
