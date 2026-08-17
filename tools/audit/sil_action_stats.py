@@ -66,6 +66,10 @@ from tools.audit.sil_record import (  # noqa: E402
 )
 from tools.audit.xy_approach_probe import _cosine, _unit  # noqa: E402
 
+from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
+    ACTIVE_INSTRUCTION_TYPES,
+)
+
 import argparse  # noqa: E402
 import glob  # noqa: E402
 import json  # noqa: E402
@@ -76,7 +80,41 @@ import numpy as np  # noqa: E402
 AXES = ("x", "y", "z", "yaw", "gripper")
 
 
-def _gather(paths: Sequence[str], *, successes_only: bool) -> dict[str, np.ndarray]:
+# Instructions whose goal is the REFERENCE object, not the target object. A
+# placement episode starts already holding its target, so the end effector is
+# on top of it for the whole carry and "direction to the target" is a
+# centimetre of gripper slop. The thing being aimed at is the receptacle.
+_REFERENCE_GOAL_INSTRUCTIONS = frozenset(
+    {
+        "put_into_bowl",
+        "put_into_plate",
+        "move_left_of_object",
+        "move_right_of_object",
+        "move_between_objects",
+    }
+)
+
+
+def _goal_slots(rec: _Recording, mode: str) -> np.ndarray:
+    """Which object each world is aiming AT, per instruction."""
+
+    if mode == "object":
+        return rec.target_slots
+    if mode == "receptacle":
+        return rec.reference_slots
+    goal = rec.target_slots.copy()
+    for name in _REFERENCE_GOAL_INSTRUCTIONS:
+        if name not in ACTIVE_INSTRUCTION_TYPES:
+            continue
+        mask = rec.instruction_ids == ACTIVE_INSTRUCTION_TYPES.index(name)
+        valid = mask & (rec.reference_slots >= 0)
+        goal[valid] = rec.reference_slots[valid]
+    return goal
+
+
+def _gather(
+    paths: Sequence[str], *, successes_only: bool, goal: str
+) -> dict[str, np.ndarray]:
     """Flatten every live step of every recording into one table of rows.
 
     One row per executed env step, carrying the command and the geometry it
@@ -88,6 +126,7 @@ def _gather(paths: Sequence[str], *, successes_only: bool) -> dict[str, np.ndarr
     actions: list[np.ndarray] = []
     relative: list[np.ndarray] = []
     shuffled: list[np.ndarray] = []
+    rotated: list[np.ndarray] = []
     instructions: list[np.ndarray] = []
     catalogs: list[np.ndarray] = []
     rng = np.random.default_rng(20260817)
@@ -96,7 +135,8 @@ def _gather(paths: Sequence[str], *, successes_only: bool) -> dict[str, np.ndarr
         rec = _Recording.from_npz(Path(path))
         steps, worlds = rec.actions.shape[0], rec.worlds
         rows = np.arange(worlds)
-        target = rec.object_xyz[:, rows, rec.target_slots, :]  # [S, W, 3]
+        slots = _goal_slots(rec, goal)
+        target = rec.object_xyz[:, rows, slots, :]  # [S, W, 3]
         rel = target - rec.ee_xyz
         # Same commands, another world's target. The value a policy that
         # ignores geometry would score, measured on this data rather than
@@ -113,9 +153,21 @@ def _gather(paths: Sequence[str], *, successes_only: bool) -> dict[str, np.ndarr
         far = np.linalg.norm(rel[..., :2], axis=-1) > 0.01
         live &= far
 
+        # Rotate each goal direction by a random angle about the arm,
+        # preserving its distance. Its expectation is exactly zero by symmetry
+        # for ANY command distribution, so it says what "no alignment" scores
+        # here -- which the world shuffle cannot, since that keeps whatever
+        # alignment the arm's own position makes available.
+        angle = rng.uniform(0.0, 2.0 * np.pi, size=(steps, worlds))
+        cos_a, sin_a = np.cos(angle), np.sin(angle)
+        rel_rotated = rel.copy()
+        rel_rotated[..., 0] = rel[..., 0] * cos_a - rel[..., 1] * sin_a
+        rel_rotated[..., 1] = rel[..., 0] * sin_a + rel[..., 1] * cos_a
+
         actions.append(rec.actions[live])
         relative.append(rel[live])
         shuffled.append(rel_shuffled[live])
+        rotated.append(rel_rotated[live])
         instructions.append(
             np.broadcast_to(rec.instruction_ids[None, :], (steps, worlds))[live]
         )
@@ -136,12 +188,18 @@ def _gather(paths: Sequence[str], *, successes_only: bool) -> dict[str, np.ndarr
         "action": np.concatenate(actions).astype(np.float64),
         "relative": np.concatenate(relative).astype(np.float64),
         "shuffled": np.concatenate(shuffled).astype(np.float64),
+        "rotated": np.concatenate(rotated).astype(np.float64),
         "instruction_id": np.concatenate(instructions),
         "catalog_id": np.concatenate(catalogs),
     }
 
 
-def _aiming(action: np.ndarray, relative: np.ndarray, shuffled: np.ndarray) -> dict[str, Any]:
+def _aiming(
+    action: np.ndarray,
+    relative: np.ndarray,
+    shuffled: np.ndarray,
+    rotated: np.ndarray | None = None,
+) -> dict[str, Any]:
     """The conditional statistics. These are what decide the question."""
 
     command_xy = action[:, :2]
@@ -175,6 +233,13 @@ def _aiming(action: np.ndarray, relative: np.ndarray, shuffled: np.ndarray) -> d
                 - np.mean(_cosine(command_xy, shuffled[:, :2]))
             ),
             5,
+        ),
+        # Expectation exactly 0 under the null for any command distribution.
+        # If this is not near 0 the sample is too small to read the rest.
+        "rotated_cosine": (
+            round(float(np.mean(_cosine(command_xy, rotated[:, :2]))), 5)
+            if rotated is not None
+            else None
         ),
     }
 
@@ -293,6 +358,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "demonstrations."
         ),
     )
+    parser.add_argument(
+        "--goal",
+        choices=("auto", "object", "receptacle"),
+        default="auto",
+        help=(
+            "What each world is aiming at. `auto` uses the reference object "
+            "for put_into_* and the target object otherwise, because a "
+            "placement episode starts already HOLDING its target: the end "
+            "effector sits on it for the whole carry, so a cosine against it "
+            "measures gripper slop and post-release retreat rather than "
+            "aiming. The thing being aimed at there is the receptacle."
+        ),
+    )
     parser.add_argument("--no-plots", action="store_true")
     args = parser.parse_args(argv)
 
@@ -304,12 +382,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
 
-    table = _gather(paths, successes_only=bool(args.successes_only))
+    table = _gather(
+        paths, successes_only=bool(args.successes_only), goal=str(args.goal)
+    )
     report: dict[str, Any] = {
         "recordings": paths,
         "successes_only": bool(args.successes_only),
+        "goal": str(args.goal),
         "overall": {
-            **_aiming(table["action"], table["relative"], table["shuffled"]),
+            **_aiming(table["action"], table["relative"], table["shuffled"], table["rotated"]),
             "per_axis": _per_axis(table["action"]),
         },
     }
@@ -321,7 +402,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             continue
         name = _instruction_name(instruction_id)
         entry = _aiming(
-            table["action"][mask], table["relative"][mask], table["shuffled"][mask]
+            table["action"][mask], table["relative"][mask],
+            table["shuffled"][mask], table["rotated"][mask],
         )
         entry["per_axis"] = _per_axis(table["action"][mask])
         by_object: dict[str, Any] = {}
@@ -332,7 +414,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             if int(sub.sum()) < 50:
                 continue
             by_object[_catalog_name(catalog_id)] = _aiming(
-                table["action"][sub], table["relative"][sub], table["shuffled"][sub]
+                table["action"][sub], table["relative"][sub],
+                table["shuffled"][sub], table["rotated"][sub],
             )
         entry["by_object"] = by_object
         by_instruction[name] = entry
@@ -365,12 +448,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(
         f"[actions] target_cosine={overall['target_cosine']} vs "
         f"shuffled control {overall['shuffled_cosine']} "
-        f"-> gap {overall['cosine_gap']}"
+        f"-> gap {overall['cosine_gap']} "
+        f"(rotated null {overall['rotated_cosine']})"
     )
     print()
     header = (
         f"{'slice':<26}{'rows':>8}{'|mean|':>8}{'spread':>8}"
-        f"{'conc':>7}{'cos':>8}{'shuf':>8}{'gap':>8}"
+        f"{'conc':>7}{'cos':>8}{'shuf':>8}{'gap':>8}{'rot':>8}"
     )
     print(header)
     print("-" * len(header))
@@ -379,14 +463,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{name:<26}{entry['rows']:>8}{entry['command_mean_norm']:>8.3f}"
             f"{entry['command_spread']:>8.3f}{entry['direction_concentration']:>7.3f}"
             f"{entry['target_cosine']:>8.3f}{entry['shuffled_cosine']:>8.3f}"
-            f"{entry['cosine_gap']:>8.3f}"
+            f"{entry['cosine_gap']:>8.3f}{entry['rotated_cosine']:>8.3f}"
         )
         for catalog, sub in sorted(entry["by_object"].items()):
             print(
                 f"    {catalog:<22}{sub['rows']:>8}{sub['command_mean_norm']:>8.3f}"
                 f"{sub['command_spread']:>8.3f}{sub['direction_concentration']:>7.3f}"
                 f"{sub['target_cosine']:>8.3f}{sub['shuffled_cosine']:>8.3f}"
-                f"{sub['cosine_gap']:>8.3f}"
+                f"{sub['cosine_gap']:>8.3f}{sub['rotated_cosine']:>8.3f}"
             )
     print()
     print("commanded x histogram (all rows):")
