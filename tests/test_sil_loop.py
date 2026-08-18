@@ -225,6 +225,92 @@ if __name__ == "__main__":
     unittest.main()
 
 
+class LadderTopTests(unittest.TestCase):
+    """The top rung is a different question, and the first spec got it wrong.
+
+    Below the top, "stalled" means the EMA cannot reach the promote gate. At the
+    top there is no promotion to gate, and demanding the EMA sit under 0.30
+    would require the policy to get WORSE before the loop would help it.
+    Measured on iteration 0: at cap 0.19 the EMA reached 0.587 while success was
+    still climbing at +0.097 per 100 updates.
+    """
+
+    def test_a_high_ema_at_the_top_does_not_block_a_plateau(self):
+        history = _history(
+            (4_000_000, 0.19, 0.60),
+            (4_600_000, 0.19, 0.61),
+            (5_200_000, 0.19, 0.60),
+            (5_800_000, 0.19, 0.61),
+        )
+        decision = evaluate_trigger(
+            history,
+            policy=POLICY,
+            ladder_top=0.19,
+            last_sft_step=0,
+            cap_promoted_since_sft=False,
+        )
+        self.assertTrue(decision.fire, decision.blocked_by)
+        self.assertTrue(decision.at_ladder_top)
+
+    def test_the_real_iteration_zero_window_does_not_fire(self):
+        """The run as it actually stands: climbing, so the loop must wait."""
+
+        history = _history(
+            (4_000_000, 0.19, 0.41),
+            (4_600_000, 0.19, 0.47),
+            (5_200_000, 0.19, 0.52),
+            (5_800_000, 0.19, 0.59),
+        )
+        decision = evaluate_trigger(
+            history,
+            policy=POLICY,
+            ladder_top=0.19,
+            last_sft_step=0,
+            cap_promoted_since_sft=False,
+        )
+        self.assertFalse(decision.fire)
+        self.assertTrue(
+            any("still rising" in line for line in decision.blocked_by)
+        )
+
+    def test_below_the_top_a_high_ema_still_blocks(self):
+        """There the EMA crossing 0.30 means RL promotes on its own."""
+
+        history = _history(
+            (4_000_000, 0.09, 0.60),
+            (4_600_000, 0.09, 0.60),
+            (5_200_000, 0.09, 0.60),
+            (5_800_000, 0.09, 0.60),
+        )
+        decision = evaluate_trigger(
+            history,
+            policy=POLICY,
+            ladder_top=0.19,
+            cap_promoted_since_sft=True,
+        )
+        self.assertFalse(decision.fire)
+        self.assertTrue(
+            any("about to promote" in line for line in decision.blocked_by)
+        )
+
+    def test_noise_in_one_checkpoint_does_not_read_as_rising(self):
+        """Halves, not endpoints: a spike at either end must not decide."""
+
+        history = _history(
+            (4_000_000, 0.19, 0.60),
+            (4_600_000, 0.19, 0.58),
+            (5_200_000, 0.19, 0.59),
+            (5_800_000, 0.19, 0.62),
+        )
+        decision = evaluate_trigger(
+            history,
+            policy=POLICY,
+            ladder_top=0.19,
+            cap_promoted_since_sft=False,
+        )
+        self.assertTrue(decision.fire, decision.blocked_by)
+
+
 class HarvestCommandTests(unittest.TestCase):
     """The subprocess commands, checked without running anything."""
 

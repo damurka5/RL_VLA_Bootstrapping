@@ -169,6 +169,13 @@ class StallPolicy:
     # assumed, because a run whose promote threshold was retuned would
     # otherwise be judged against a bar it was never given.
     promote_pass_rate: float = 0.30
+    # How much the pass-rate EMA may improve across the window and still count
+    # as flat, comparing the two halves' means rather than the endpoints -- a
+    # single noisy checkpoint at either end should not decide an iteration.
+    #
+    # 0.02 against the +0.09-per-100-updates a genuinely climbing top rung was
+    # measured at, so a run in that state is nowhere near being called flat.
+    plateau_delta: float = 0.02
 
 
 @dataclass
@@ -226,12 +233,20 @@ def evaluate_trigger(
         sample.pass_rate_ema < float(policy.promote_pass_rate)
         for sample in window
     )
-    # Not merely below the bar -- not climbing toward it either. Compared
-    # across the window's own endpoints, because an EMA that is still rising
-    # will cross on its own and does not need a dataset.
-    ema_rising = len(window) >= 2 and (
-        window[-1].pass_rate_ema > window[0].pass_rate_ema + 1.0e-4
-    )
+    # Not merely below the bar -- not climbing toward it either. Halves rather
+    # than endpoints, so one noisy checkpoint cannot decide an iteration.
+    if len(window) >= 4:
+        half = len(window) // 2
+        first = sum(s.pass_rate_ema for s in window[:half]) / half
+        second = sum(s.pass_rate_ema for s in window[half:]) / (
+            len(window) - half
+        )
+        ema_rising = (second - first) > float(policy.plateau_delta)
+    else:
+        ema_rising = len(window) >= 2 and (
+            window[-1].pass_rate_ema
+            > window[0].pass_rate_ema + float(policy.plateau_delta)
+        )
 
     decision = TriggerDecision(
         fire=False,
@@ -260,19 +275,30 @@ def evaluate_trigger(
         else f"cap still for only {steps_still} steps "
         f"(needs {policy.cap_still_steps})",
     )
-    check(
-        ema_below,
-        f"pass-rate EMA below {policy.promote_pass_rate} across the window"
-        if ema_below
-        else f"pass-rate EMA reached {policy.promote_pass_rate} in the window; "
-        "RL is about to promote on its own",
-    )
+    # Only below the top rung. There, "the EMA cannot reach the promote gate"
+    # is what stalled means -- the cap is stuck because the policy cannot clear
+    # the rung. AT the top there is no promotion to gate, and requiring the EMA
+    # to sit under 0.30 would demand the policy get WORSE before the loop would
+    # help it. Measured on iteration 0: at cap 0.19 the EMA reached 0.587 while
+    # success was still climbing at +0.097 per 100 updates, and the trigger as
+    # first specified would have refused for the rest of the run. At the top,
+    # the plateau test below is the whole condition.
+    if not at_top:
+        check(
+            ema_below,
+            f"pass-rate EMA below {policy.promote_pass_rate} across the window"
+            if ema_below
+            else f"pass-rate EMA reached {policy.promote_pass_rate} in the "
+            "window; RL is about to promote on its own",
+        )
     check(
         not ema_rising,
-        "pass-rate EMA is flat or falling"
+        "pass-rate EMA is flat or falling across the window"
         if not ema_rising
         else f"pass-rate EMA is still rising "
-        f"({window[0].pass_rate_ema:.4f} -> {window[-1].pass_rate_ema:.4f})",
+        f"({window[0].pass_rate_ema:.4f} -> {window[-1].pass_rate_ema:.4f}, "
+        f"more than {policy.plateau_delta} across the window halves) -- RL is "
+        "still getting better on its own",
     )
     since_sft = int(latest.global_step - int(last_sft_step))
     check(
