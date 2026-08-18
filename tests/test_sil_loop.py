@@ -331,6 +331,8 @@ class HarvestCommandTests(unittest.TestCase):
                 smooth_window=5,
                 seed_torch=0,
                 frame_worlds=0,
+                lora_epochs=8,
+                lora_row_fraction=0.3,
                 dry_run=True,
             )
         finally:
@@ -388,3 +390,48 @@ class HarvestCommandTests(unittest.TestCase):
         self.assertTrue(replays)
         for command in replays:
             self.assertIn("--record-frames", command)
+
+    def test_the_sft_stage_receives_the_frames_and_the_dataset(self):
+        """The loop is only sequential if the SFT step gets both halves."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            replay = Path(tmp) / "replay"
+            replay.mkdir(parents=True)
+            for name in ("frames_a.npz", "frames_b.npz", "replay_a.npz"):
+                (replay / name).write_bytes(b"")
+            commands = self._commands(tmp)
+        sft = [c for c in commands if c[1].endswith("sil_sft.py")]
+        self.assertEqual(len(sft), 1)
+        self.assertIn("--frames", sft[0])
+        self.assertEqual(
+            sum(1 for part in sft[0] if part.endswith(".npz") and "frames_" in part),
+            2,
+        )
+        self.assertIn("demonstrations.npz", " ".join(sft[0]))
+
+    def test_the_report_does_not_claim_a_verdict(self):
+        """A single 512-world round cannot resolve five points; say so."""
+
+        import tempfile
+
+        from tools.audit import sil_loop
+
+        with tempfile.TemporaryDirectory() as tmp:
+            replay = Path(tmp) / "replay"
+            replay.mkdir(parents=True)
+            (replay / "frames_a.npz").write_bytes(b"")
+            original = sil_loop._run
+            sil_loop._run = lambda command, dry_run: None
+            try:
+                report = sil_loop.harvest_iteration(
+                    checkpoint=Path("ckpt.pt"), config=Path("cfg.yaml"),
+                    output=Path(tmp), instruction="move_to_object",
+                    rungs=[0.03], rounds=1, smooth_window=5, seed_torch=0,
+                    frame_worlds=0, lora_epochs=1, lora_row_fraction=0.3,
+                    dry_run=True,
+                )
+            finally:
+                sil_loop._run = original
+        self.assertIn("NOT EVALUATED", report["verdict"])

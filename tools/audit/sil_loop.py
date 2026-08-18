@@ -43,8 +43,15 @@ to point at a live run, and the way to see how far a run is from firing.
 ``harvest`` runs the collection half of one iteration: a ladder of record
 rounds, a smoothed replay of each with frames, and the pooled dataset.
 
-The SFT half is not here yet -- it needs sil_sft extended to train LoRA from
-frames, which is the next piece.
+``harvest`` then runs the SFT half: the residual on every row against the
+recorded priors, then LoRA through a grad-carrying forward from the frames,
+and writes a checkpoint shaped for ``--resume-checkpoint``.
+
+What it deliberately does NOT do is decide whether that checkpoint is an
+improvement. Phase 3 settled that a single 512-world round cannot resolve a
+difference below about five points, so the verdict needs paired rounds through
+sil_eval_table against the pre-SFT checkpoint -- run that before feeding the
+result back to RL.
 
 Usage::
 
@@ -405,6 +412,8 @@ def harvest_iteration(
     smooth_window: int,
     seed_torch: int,
     frame_worlds: int,
+    lora_epochs: int,
+    lora_row_fraction: float,
     dry_run: bool,
 ) -> dict[str, Any]:
     """Record a ladder, replay each round smoothed with frames, pool a dataset."""
@@ -474,12 +483,41 @@ def harvest_iteration(
         ],
         dry_run=dry_run,
     )
+    # The SFT half. Frames are passed explicitly for the same reason the
+    # dataset inputs are: no shell, so a glob would arrive verbatim.
+    frames = sorted(replay_dir.glob("frames_*.npz"))
+    if not frames and not dry_run:
+        raise SystemExit(
+            f"No frames_*.npz under {replay_dir}. The replay pass ran without "
+            "--record-frames, so there are no pictures to train LoRA from."
+        )
+    sft_dir = output / "sft"
+    _run(
+        [
+            python, str(ROOT / "tools" / "audit" / "sil_sft.py"),
+            "--dataset", str(dataset_dir / "demonstrations.npz"),
+            "--checkpoint", str(checkpoint),
+            "--frames", *[str(path) for path in frames],
+            "--lora-epochs", str(int(lora_epochs)),
+            "--lora-row-fraction", str(float(lora_row_fraction)),
+            "--output", str(sft_dir),
+        ],
+        dry_run=dry_run,
+    )
     return {
         "instruction": instruction,
         "rungs": [float(rung) for rung in rungs],
         "rounds_per_rung": int(rounds),
         "recorded": recorded,
         "dataset": str(dataset_dir / "demonstrations.npz"),
+        "frames": [str(path) for path in frames],
+        "sft_checkpoint": str(sft_dir / "sil_sft_adapter.pt"),
+        # Stated in the report rather than left implicit: the loop produces a
+        # candidate, not a verdict.
+        "verdict": (
+            "NOT EVALUATED -- compare against the pre-SFT checkpoint with "
+            "sil_eval_table over paired rounds before resuming RL from this."
+        ),
     }
 
 
@@ -539,6 +577,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--smooth-window", type=int, default=5)
     parser.add_argument("--seed-torch", type=int, default=0)
     parser.add_argument("--frame-worlds", type=int, default=0)
+    parser.add_argument("--lora-epochs", type=int, default=8)
+    parser.add_argument("--lora-row-fraction", type=float, default=0.3)
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -627,6 +667,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         smooth_window=int(args.smooth_window),
         seed_torch=int(args.seed_torch),
         frame_worlds=int(args.frame_worlds),
+        lora_epochs=int(args.lora_epochs),
+        lora_row_fraction=float(args.lora_row_fraction),
         dry_run=bool(args.dry_run),
     )
     report_payload["trigger"] = asdict(decision)
