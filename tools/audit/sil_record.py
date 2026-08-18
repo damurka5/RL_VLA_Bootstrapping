@@ -121,6 +121,7 @@ if str(ROOT) not in sys.path:
 from tools.audit.xy_approach_probe import _build_world  # noqa: E402
 
 import argparse  # noqa: E402
+import contextlib  # noqa: E402
 import csv  # noqa: E402
 import json  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
@@ -659,6 +660,103 @@ class _RoundRecorder:
                 getattr(catch_release, "pick_lift_success_height", 0.05)
             ),
         )
+
+
+class _DecisionFrameTap:
+    """Tee the camera tensors the policy was handed, for a subset of worlds.
+
+    Phase 4 trains LoRA, and LoRA needs a grad-through-VLA forward, which needs
+    the frames -- the dataset's 512-wide vision feature is a fixed random
+    projection taken under no_grad and cannot stand in for them.
+
+    Three decisions here, each of which is the difference between a usable
+    dataset and a large one.
+
+    FRAMES ARE TAPPED ON THE REPLAY, NOT THE HARVEST. The demonstration is the
+    SMOOTHED trajectory, so its observations are the smoothed rollout's, and
+    those only exist during the replay. Tapping the harvest would pair the
+    original run's pictures with the smoothed run's actions. The replay also
+    already knows which worlds succeeded, so the buffer can be narrowed to
+    them: a full round is 512 worlds x 2 cameras x 240 x 320 x 3 = 236 MB per
+    DECISION, which is the difference between 1.9 GB and 0.4 GB on a horizon of
+    eight.
+
+    UINT8, SELECTED ON THE GPU BEFORE THE TRANSFER. The backend hands out
+    float32 in [0, 1]; keeping that would quadruple the file and the copy for a
+    precision no camera delivers. The 1/255 round trip is far below the
+    micron-scale physics noise that already flips 6.6% of verdicts, and these
+    frames are training inputs, never a replay source.
+
+    ONE CALL PER DECISION, ASSERTED. ``validate_round`` renders once per policy
+    decision, so the frame count and the decision count are locked together. If
+    they ever drift, every frame would be paired with the wrong action, and the
+    dataset would look entirely normal while doing it.
+    """
+
+    def __init__(self, backend: Any, worlds: Sequence[int], torch: Any) -> None:
+        self.backend = backend
+        self.torch = torch
+        self.worlds = [int(w) for w in worlds]
+        self.overview: list[np.ndarray] = []
+        self.wrist: list[np.ndarray] = []
+        self._original = backend.render_policy_cameras
+        self._index: Any = None
+
+    def __enter__(self) -> "_DecisionFrameTap":
+        torch = self.torch
+
+        def to_uint8(camera: Any) -> np.ndarray:
+            if self._index is None:
+                self._index = torch.as_tensor(
+                    self.worlds, dtype=torch.int64, device=camera.device
+                )
+            picked = camera.index_select(0, self._index)
+            picked = picked.permute(0, 2, 3, 1).float() * 255.0
+            return (
+                picked.round().clamp(0.0, 255.0).to(torch.uint8).cpu().numpy()
+            )
+
+        def wrapped(*args: Any, **kwargs: Any) -> Any:
+            cameras = self._original(*args, **kwargs)
+            if self.worlds:
+                self.overview.append(to_uint8(cameras.overview))
+                self.wrist.append(to_uint8(cameras.wrist))
+            return cameras
+
+        self.backend.render_policy_cameras = wrapped
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        if "render_policy_cameras" in vars(self.backend):
+            del self.backend.render_policy_cameras
+        else:  # pragma: no cover - bound-method backends
+            self.backend.render_policy_cameras = self._original
+
+    def stack(self, *, decisions: int) -> dict[str, np.ndarray]:
+        """[decisions, worlds, H, W, 3] per camera, aligned to the decisions."""
+
+        if not self.worlds:
+            # Nothing was asked for, so nothing was captured and the render
+            # count says nothing about the decision count. Return empty rather
+            # than accusing the caller of a misalignment it did not cause.
+            empty = np.zeros((0, 0, 0, 0, 3), dtype=np.uint8)
+            return {
+                "overview": empty,
+                "wrist": empty.copy(),
+                "world_index": np.zeros((0,), dtype=np.int64),
+            }
+        if len(self.overview) != decisions:
+            raise RuntimeError(
+                f"Captured {len(self.overview)} camera renders against "
+                f"{decisions} recorded decisions. validate_round renders once "
+                "per decision, so a mismatch means every frame would be paired "
+                "with the wrong action."
+            )
+        return {
+            "overview": np.stack(self.overview, axis=0),
+            "wrist": np.stack(self.wrist, axis=0),
+            "world_index": np.asarray(self.worlds, dtype=np.int64),
+        }
 
 
 def _host_float(value: Any) -> np.ndarray:
@@ -1652,6 +1750,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--video-fps", type=float, default=8.0)
     parser.add_argument(
+        "--record-frames",
+        action="store_true",
+        help=(
+            "Replay only: write frames_<stem>.npz alongside the replay -- the "
+            "uint8 camera tensors the policy was handed, for the source's "
+            "successful worlds. This is what LoRA fine-tuning needs and the "
+            "512-wide vision feature cannot supply: that feature is a fixed "
+            "random projection taken under no_grad, so no gradient reaches the "
+            "vision tower through it."
+        ),
+    )
+    parser.add_argument(
+        "--frame-worlds",
+        type=int,
+        default=0,
+        help=(
+            "Cap on how many successful worlds keep frames (0 = all of them). "
+            "A round is ~236 MB per decision at 512 worlds and two cameras, so "
+            "this is the knob that decides whether a harvest fits on disk."
+        ),
+    )
+    parser.add_argument(
         "--smooth",
         choices=("none", "moving_average", "ema", "median"),
         default="none",
@@ -2060,6 +2180,22 @@ def main(argv: Sequence[str] | None = None) -> int:
                     : int(args.video_worlds)
                 ]
             ]
+        # The worlds whose FRAMES are kept for the dataset: the source's
+        # successes, capped. A world that failed before smoothing cannot
+        # survive it, so anything outside this set is guaranteed waste; the
+        # survivors are a subset and are filtered again at dataset build.
+        frame_worlds: list[int] = []
+        if bool(args.record_frames):
+            candidates = np.flatnonzero(source.episode_success)
+            limit = int(args.frame_worlds)
+            frame_worlds = [
+                int(w) for w in (candidates[:limit] if limit > 0 else candidates)
+            ]
+            if not frame_worlds:
+                raise SystemExit(
+                    "--record-frames was asked for but the source recording "
+                    "has no successful episodes to keep frames for."
+                )
         with _RoundRecorder(
             world,
             playback=played,
@@ -2067,15 +2203,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             torch_seed=args.seed_torch,
             deterministic_kernels=bool(args.deterministic_kernels),
         ) as recorder:
+            # Both taps wrap the same method, so they nest rather than compete:
+            # the inner one installs over the outer and calls through it.
+            frame_tap = (
+                _DecisionFrameTap(world.backend, frame_worlds, world.torch)
+                if frame_worlds
+                else None
+            )
             if filmed:
                 from tools.audit.success_episode_videos import _FrameTap
 
-                with _FrameTap(world.backend, filmed, True) as tap:
+                with contextlib.ExitStack() as stack:
+                    tap = stack.enter_context(
+                        _FrameTap(world.backend, filmed, True)
+                    )
+                    if frame_tap is not None:
+                        stack.enter_context(frame_tap)
                     replay = recorder.run(round_index=replay_round)
                     captured = {w: list(f) for w, f in tap.frames.items()}
             else:
                 captured = {}
-                replay = recorder.run(round_index=replay_round)
+                if frame_tap is not None:
+                    with frame_tap:
+                        replay = recorder.run(round_index=replay_round)
+                else:
+                    replay = recorder.run(round_index=replay_round)
         summary["determinism"] = recorder.determinism
         # Prefer the cap actually requested, so a replay of a recording written
         # before the field existed still carries its rung forward to the
@@ -2107,6 +2259,34 @@ def main(argv: Sequence[str] | None = None) -> int:
         replay.to_npz(replay_path)
         _write_csv(output / f"episodes_{stem}.csv", _episode_rows(replay))
         summary["replay_npz"] = str(replay_path)
+        if frame_tap is not None:
+            decisions = (
+                0 if replay.states is None else int(replay.states.shape[0])
+            )
+            payload = frame_tap.stack(decisions=decisions)
+            payload["round_index"] = np.asarray(
+                int(replay.round_index), dtype=np.int64
+            )
+            payload["start_distance_cap"] = np.asarray(
+                float(replay.start_distance_cap), dtype=np.float64
+            )
+            frames_path = output / f"frames_{stem}.npz"
+            np.savez_compressed(frames_path, **payload)
+            megabytes = frames_path.stat().st_size / (1024.0 * 1024.0)
+            summary["frames_npz"] = str(frames_path)
+            summary["frames"] = {
+                "worlds": int(payload["world_index"].shape[0]),
+                "decisions": decisions,
+                "height": int(payload["overview"].shape[2]),
+                "width": int(payload["overview"].shape[3]),
+                "megabytes": round(megabytes, 1),
+            }
+            print(
+                f"[sil][replay] frames {payload['overview'].shape[1]} worlds "
+                f"x {decisions} decisions x 2 cameras -> {megabytes:.1f} MB "
+                f"({frames_path.name})",
+                flush=True,
+            )
         report = _replay_report(source, replay)
         summary["source"] = str(args.actions)
         summary["smoothing"] = smoothing
