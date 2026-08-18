@@ -43,15 +43,16 @@ to point at a live run, and the way to see how far a run is from firing.
 ``harvest`` runs the collection half of one iteration: a ladder of record
 rounds, a smoothed replay of each with frames, and the pooled dataset.
 
-``harvest`` then runs the SFT half: the residual on every row against the
-recorded priors, then LoRA through a grad-carrying forward from the frames,
-and writes a checkpoint shaped for ``--resume-checkpoint``.
+``harvest`` runs a whole iteration: the ladder, the smoothed replays with
+frames, the pooled dataset, the two SFT stages, the action-drift measurement,
+and the verdict.
 
-What it deliberately does NOT do is decide whether that checkpoint is an
-improvement. Phase 3 settled that a single 512-world round cannot resolve a
-difference below about five points, so the verdict needs paired rounds through
-sil_eval_table against the pre-SFT checkpoint -- run that before feeding the
-result back to RL.
+The verdict is a paired-by-round test against the pre-SFT checkpoint, and the
+top rung's own harvest is reused as its baseline -- same checkpoint, same cap,
+same seed. A single 512-world round cannot separate less than about five
+points, so an unresolved result is reported as "no evidence" and the loop keeps
+the checkpoint it already had. ``resume_checkpoint`` in the report is what RL
+should resume from either way.
 
 Usage::
 
@@ -504,6 +505,51 @@ def harvest_iteration(
         ],
         dry_run=dry_run,
     )
+    # M4, on the demonstrations this iteration is about to train on. Run on the
+    # SMOOTHED replays and successes only, because that is what the dataset is
+    # built from -- measuring the harvest instead would score trajectories that
+    # never became demonstrations.
+    stats_dir = output / "stats"
+    _run(
+        [
+            python, str(ROOT / "tools" / "audit" / "sil_action_stats.py"),
+            "--recordings", *[str(path) for path in replays],
+            "--successes-only", "--no-plots",
+            "--output", str(stats_dir),
+        ],
+        dry_run=dry_run,
+    )
+
+    # The verdict. The top rung's harvest IS a record run of the pre-SFT
+    # checkpoint at that cap, so it is reused as the baseline rather than paid
+    # for twice -- same checkpoint, same cap, same seed, same rounds.
+    top_rung = max(rungs)
+    baseline_dir = harvest_dir / f"cap_{top_rung:.3f}"
+    candidate_dir = output / "eval" / "candidate"
+    sft_checkpoint = sft_dir / "sil_sft_adapter.pt"
+    _run(
+        [
+            python, tool, "--mode", "record",
+            "--rounds", str(int(rounds)),
+            "--seed-torch", str(int(seed_torch)),
+            "--start-distance-cap", str(float(top_rung)),
+            "--checkpoint", str(sft_checkpoint),
+            "--config", str(config),
+            "--output", str(candidate_dir),
+        ],
+        dry_run=dry_run,
+    )
+    verdict: dict[str, Any] = {"accepted": False, "reason": "dry run"}
+    drift: dict[str, Any] = {"halt": False, "reason": "dry run"}
+    if not dry_run:
+        verdict = accept_or_reject(
+            baseline_dir, candidate_dir, instruction=instruction
+        )
+        print(
+            f"[loop] verdict: {'ACCEPT' if verdict['accepted'] else 'REJECT'} "
+            f"-- {verdict.get('reason')}",
+            flush=True,
+        )
     return {
         "instruction": instruction,
         "rungs": [float(rung) for rung in rungs],
@@ -511,13 +557,197 @@ def harvest_iteration(
         "recorded": recorded,
         "dataset": str(dataset_dir / "demonstrations.npz"),
         "frames": [str(path) for path in frames],
-        "sft_checkpoint": str(sft_dir / "sil_sft_adapter.pt"),
-        # Stated in the report rather than left implicit: the loop produces a
-        # candidate, not a verdict.
-        "verdict": (
-            "NOT EVALUATED -- compare against the pre-SFT checkpoint with "
-            "sil_eval_table over paired rounds before resuming RL from this."
+        "sft_checkpoint": str(sft_checkpoint),
+        "action_stats": str(stats_dir / "action_stats.json"),
+        "baseline_dir": str(baseline_dir),
+        "candidate_dir": str(candidate_dir),
+        "verdict": verdict,
+        "drift": drift,
+        # The checkpoint RL should resume from. On a reject that is the one it
+        # already had: an unresolved difference is "no evidence", not "no
+        # effect", and accepting on it would let the loop drift on noise.
+        "resume_checkpoint": (
+            str(sft_checkpoint) if verdict.get("accepted") else str(checkpoint)
         ),
+    }
+
+
+# --------------------------------------------------------------------------
+# The verdict
+# --------------------------------------------------------------------------
+
+
+def select_candidate(
+    candidates: Sequence[Mapping[str, Any]]
+) -> Mapping[str, Any] | None:
+    """Which SFT epoch gets tested in simulation. Chosen BEFORE the rollout.
+
+    Not the best of three simulated points. Picking the maximum of three noisy
+    numbers and then testing that maximum inflates the result by exactly the
+    amount the selection gained -- with a per-round spread that swings the plate
+    rate 0.466 to 0.690 at one cap, that is not a small correction.
+
+    So the candidate is pre-registered by validation MSE, which costs nothing
+    and is computed without touching the simulator. The other epochs are still
+    rolled out and reported, but as diagnostics: they do not choose.
+    """
+
+    scored = [
+        item
+        for item in candidates
+        if item.get("val_mse") is not None
+        and not (isinstance(item["val_mse"], float) and item["val_mse"] != item["val_mse"])
+    ]
+    if not scored:
+        return None
+    return min(scored, key=lambda item: float(item["val_mse"]))
+
+
+def accept_or_reject(
+    baseline_dir: Path,
+    candidate_dir: Path,
+    *,
+    instruction: str,
+) -> dict[str, Any]:
+    """Paired-by-round test of one candidate against the pre-SFT checkpoint.
+
+    Both sides are read through sil_eval_table's own collector and paired test
+    rather than a copy of them, because the pairing is the whole point: round i
+    seeds the same resets on both sides, and an unpaired comparison measures
+    the between-round spread instead of the policy difference.
+    """
+
+    from tools.audit.sil_eval_table import _collect, _paired, _rate
+
+    base = _collect(str(baseline_dir))
+    cand = _collect(str(candidate_dir))
+    b = base["by_instruction"].get(instruction)
+    c = cand["by_instruction"].get(instruction)
+    if b is None or c is None:
+        return {
+            "accepted": False,
+            "reason": f"{instruction} is absent from one side of the comparison",
+        }
+    if b["per_round_episodes"] != c["per_round_episodes"]:
+        # Different denominators mean different resets, and a delta across them
+        # measures the reset distribution rather than the policy.
+        return {
+            "accepted": False,
+            "reason": "per-round episode counts differ; not comparable",
+            "baseline_episodes": b["per_round_episodes"],
+            "candidate_episodes": c["per_round_episodes"],
+        }
+    paired = _paired(b["rates"], c["rates"])
+    accepted = bool(
+        paired["resolved"]
+        and paired["all_same_sign"]
+        and float(paired["mean"]) > 0.0
+    )
+    return {
+        "accepted": accepted,
+        "instruction": instruction,
+        "baseline_rate": round(_rate(b), 5),
+        "candidate_rate": round(_rate(c), 5),
+        "delta": round(float(paired["mean"]), 5),
+        "t": paired["t"],
+        "resolved": paired["resolved"],
+        "all_same_sign": paired["all_same_sign"],
+        "rounds": paired["n"],
+        "deltas": [round(float(d), 5) for d in paired["deltas"]],
+        "reason": (
+            "candidate beats the pre-SFT checkpoint on a paired test"
+            if accepted
+            else "the difference does not resolve; keeping the pre-SFT "
+            "checkpoint. A single 512-world round cannot separate less than "
+            "about five points, so an unresolved result is 'no evidence', not "
+            "'no effect'."
+        ),
+    }
+
+
+# --------------------------------------------------------------------------
+# M4: is the loop eating itself?
+# --------------------------------------------------------------------------
+
+
+@dataclass
+class DriftPolicy:
+    """When to stop the loop because it is training on its own collapse."""
+
+    # aim must fall this much, twice running, before it counts as falling.
+    # The calibration is on synthetic policies: 0.000 knows nothing, 0.163 is
+    # half the rows aiming, 0.327 is a clean servo. 0.01 is well inside that
+    # scale and well outside the +-0.002 null spread.
+    aim_drop: float = 0.01
+    concentration_rise: float = 0.02
+
+
+def check_action_drift(
+    history: Sequence[Mapping[str, Any]], *, policy: DriftPolicy
+) -> dict[str, Any]:
+    """Halt when aim falls two iterations running while concentration rises.
+
+    Each iteration trains on its own successes, so a policy that is collapsing
+    toward a constant will keep producing demonstrations that agree with it.
+    aim is the measurement that sees this: cosine to the goal minus the same
+    cosine with the commands permuted across rows, which is the only null that
+    preserves both marginals and breaks only the pairing.
+
+    Concentration alone accuses nothing -- a genuine servo scores 0.82 when the
+    arm sits systematically to one side of its goals -- so it is read only
+    together with aim, and only in the rising direction.
+    """
+
+    rows = [
+        item
+        for item in history
+        if item.get("aim") is not None
+        and item.get("direction_concentration") is not None
+    ]
+    if len(rows) < 3:
+        return {
+            "halt": False,
+            "reason": f"only {len(rows)} iterations with action stats; "
+            "two consecutive falls need three points",
+        }
+    a, b, c = rows[-3], rows[-2], rows[-1]
+    falls = (
+        float(b["aim"]) < float(a["aim"]) - policy.aim_drop
+        and float(c["aim"]) < float(b["aim"]) - policy.aim_drop
+    )
+    rises = (
+        float(c["direction_concentration"])
+        > float(a["direction_concentration"]) + policy.concentration_rise
+    )
+    halt = bool(falls and rises)
+    return {
+        "halt": halt,
+        "aim": [round(float(x["aim"]), 5) for x in (a, b, c)],
+        "direction_concentration": [
+            round(float(x["direction_concentration"]), 5) for x in (a, b, c)
+        ],
+        "reason": (
+            "aim has fallen for two consecutive iterations while direction "
+            "concentration rose -- the loop is collapsing toward a constant "
+            "and the next dataset would teach it that constant"
+            if halt
+            else "aim is not in a sustained fall, or concentration is not "
+            "rising with it"
+        ),
+    }
+
+
+def read_action_stats(path: Path, instruction: str) -> dict[str, Any]:
+    """Pull aim and concentration for one instruction out of action_stats.json."""
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    entry = (payload.get("by_instruction") or {}).get(instruction)
+    if entry is None:
+        entry = payload.get("overall") or {}
+    return {
+        "aim": entry.get("aim"),
+        "direction_concentration": entry.get("direction_concentration"),
+        "rows": entry.get("rows"),
     }
 
 
@@ -674,11 +904,47 @@ def main(argv: Sequence[str] | None = None) -> int:
     report_payload["trigger"] = asdict(decision)
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
+
+    # State carried to the next iteration. Written whether the verdict accepted
+    # or not: a rejected iteration still consumed steps, and last_sft_step is
+    # what stops the trigger firing again immediately on the same stall.
+    stats_path = Path(report_payload["action_stats"])
+    entry: dict[str, Any] = {
+        "iteration": state.iteration + 1,
+        "global_step": decision.global_step,
+        "cap": decision.cap,
+        "accepted": bool(report_payload["verdict"].get("accepted")),
+    }
+    if stats_path.is_file():
+        entry.update(read_action_stats(stats_path, args.instruction))
+    state.history.append(entry)
+    state.iteration += 1
+    state.last_sft_step = int(decision.global_step)
+    state.cap_at_last_sft = float(decision.cap)
+    drift = check_action_drift(state.history, policy=DriftPolicy())
+    report_payload["drift"] = drift
+    if drift["halt"]:
+        print(
+            f"[loop] HALT: {drift['reason']}\n"
+            f"[loop]   aim {drift['aim']} "
+            f"concentration {drift['direction_concentration']}",
+            flush=True,
+        )
+    else:
+        print(f"[loop] drift check: {drift['reason']}", flush=True)
+    state.save(state_path)
+    print(f"[loop] state -> {state_path}", flush=True)
     (output / "harvest_report.json").write_text(
         json.dumps(report_payload, indent=2, sort_keys=True), encoding="utf-8"
     )
     print(f"[loop] wrote {output / 'harvest_report.json'}", flush=True)
-    return 0
+    print(
+        f"[loop] resume RL from {report_payload['resume_checkpoint']}",
+        flush=True,
+    )
+    # Non-zero on a halt so a shell loop driving this stops rather than
+    # cheerfully starting the iteration that would train on the collapse.
+    return 2 if drift["halt"] else 0
 
 
 if __name__ == "__main__":

@@ -411,8 +411,12 @@ class HarvestCommandTests(unittest.TestCase):
         )
         self.assertIn("demonstrations.npz", " ".join(sft[0]))
 
-    def test_the_report_does_not_claim_a_verdict(self):
-        """A single 512-world round cannot resolve five points; say so."""
+    def test_an_unproven_candidate_does_not_become_the_resume_checkpoint(self):
+        """A reject must hand RL back the checkpoint it already had.
+
+        An unresolved difference is "no evidence", not "no effect", and
+        resuming from an unproven candidate is how a loop drifts on noise.
+        """
 
         import tempfile
 
@@ -426,7 +430,7 @@ class HarvestCommandTests(unittest.TestCase):
             sil_loop._run = lambda command, dry_run: None
             try:
                 report = sil_loop.harvest_iteration(
-                    checkpoint=Path("ckpt.pt"), config=Path("cfg.yaml"),
+                    checkpoint=Path("pre_sft.pt"), config=Path("cfg.yaml"),
                     output=Path(tmp), instruction="move_to_object",
                     rungs=[0.03], rounds=1, smooth_window=5, seed_torch=0,
                     frame_worlds=0, lora_epochs=1, lora_row_fraction=0.3,
@@ -434,4 +438,235 @@ class HarvestCommandTests(unittest.TestCase):
                 )
             finally:
                 sil_loop._run = original
-        self.assertIn("NOT EVALUATED", report["verdict"])
+        self.assertFalse(report["verdict"]["accepted"])
+        self.assertEqual(report["resume_checkpoint"], "pre_sft.pt")
+
+    def test_the_top_rung_harvest_is_reused_as_the_baseline(self):
+        """Same checkpoint, same cap, same seed -- paying twice buys nothing."""
+
+        import tempfile
+
+        from tools.audit import sil_loop
+
+        with tempfile.TemporaryDirectory() as tmp:
+            replay = Path(tmp) / "replay"
+            replay.mkdir(parents=True)
+            (replay / "frames_a.npz").write_bytes(b"")
+            original = sil_loop._run
+            sil_loop._run = lambda command, dry_run: None
+            try:
+                report = sil_loop.harvest_iteration(
+                    checkpoint=Path("pre_sft.pt"), config=Path("cfg.yaml"),
+                    output=Path(tmp), instruction="move_to_object",
+                    rungs=[0.03, 0.09], rounds=2, smooth_window=5,
+                    seed_torch=0, frame_worlds=0, lora_epochs=1,
+                    lora_row_fraction=0.3, dry_run=True,
+                )
+            finally:
+                sil_loop._run = original
+        self.assertTrue(report["baseline_dir"].endswith("harvest/cap_0.090"))
+
+    def test_action_stats_run_on_the_replays_not_the_harvest(self):
+        """The dataset is built from the smoothed rollout; score that."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            replay = Path(tmp) / "replay"
+            replay.mkdir(parents=True)
+            for name in ("replay_a.npz", "frames_a.npz"):
+                (replay / name).write_bytes(b"")
+            commands = self._commands(tmp)
+        stats = [c for c in commands if c[1].endswith("sil_action_stats.py")]
+        self.assertEqual(len(stats), 1)
+        self.assertIn("--successes-only", stats[0])
+        joined = " ".join(stats[0])
+        self.assertIn("replay_a.npz", joined)
+        self.assertNotIn("harvest", joined.split("--output")[0])
+
+
+class CandidateSelectionTests(unittest.TestCase):
+    """Which epoch gets rolled out, decided before any rollout happens."""
+
+    def test_the_candidate_is_pre_registered_by_validation_mse(self):
+        """Not the best of three simulated points.
+
+        Taking the maximum of three noisy rates and then testing that maximum
+        inflates the result by exactly what the selection gained -- and the
+        per-round spread here swings a rate by 0.22 at one cap.
+        """
+
+        from tools.audit.sil_loop import select_candidate
+
+        chosen = select_candidate(
+            [
+                {"epoch": 8, "val_mse": 0.031},
+                {"epoch": 16, "val_mse": 0.027},
+                {"epoch": 25, "val_mse": 0.029},
+            ]
+        )
+        self.assertEqual(chosen["epoch"], 16)
+
+    def test_no_scored_candidate_returns_none(self):
+        from tools.audit.sil_loop import select_candidate
+
+        self.assertIsNone(select_candidate([{"epoch": 1}]))
+        self.assertIsNone(
+            select_candidate([{"epoch": 1, "val_mse": float("nan")}])
+        )
+
+
+class VerdictTests(unittest.TestCase):
+    """accept_or_reject, driven through real record summaries."""
+
+    def _collectable(self, directory, rates, episodes=512):
+        """A record summary in the shape sil_eval_table._collect reads."""
+
+        import json
+
+        directory.mkdir(parents=True, exist_ok=True)
+        payload = {"mode": "record"}
+        for index, rate in enumerate(rates):
+            payload[f"run_{index:02d}"] = {
+                "by_instruction": {
+                    "move_to_object": {
+                        "episodes": episodes,
+                        "successes": int(round(rate * episodes)),
+                        "source_success_rate": float(rate),
+                    }
+                }
+            }
+        (directory / "summary_00.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_a_consistent_gain_is_accepted(self):
+        import tempfile
+
+        from tools.audit.sil_loop import accept_or_reject
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base"
+            cand = Path(tmp) / "cand"
+            self._collectable(base, [0.40, 0.44, 0.42, 0.41])
+            self._collectable(cand, [0.52, 0.56, 0.54, 0.53])
+            out = accept_or_reject(base, cand, instruction="move_to_object")
+        self.assertTrue(out["accepted"], out)
+        self.assertGreater(out["delta"], 0.0)
+
+    def test_noise_around_zero_is_rejected(self):
+        import tempfile
+
+        from tools.audit.sil_loop import accept_or_reject
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base"
+            cand = Path(tmp) / "cand"
+            self._collectable(base, [0.40, 0.44, 0.42, 0.41])
+            self._collectable(cand, [0.44, 0.40, 0.43, 0.40])
+            out = accept_or_reject(base, cand, instruction="move_to_object")
+        self.assertFalse(out["accepted"])
+        self.assertIn("no evidence", out["reason"])
+
+    def test_a_consistent_loss_is_rejected_not_accepted_on_magnitude(self):
+        import tempfile
+
+        from tools.audit.sil_loop import accept_or_reject
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base"
+            cand = Path(tmp) / "cand"
+            self._collectable(base, [0.50, 0.54, 0.52, 0.51])
+            self._collectable(cand, [0.30, 0.34, 0.32, 0.31])
+            out = accept_or_reject(base, cand, instruction="move_to_object")
+        self.assertFalse(out["accepted"])
+        self.assertLess(out["delta"], 0.0)
+
+    def test_mismatched_denominators_are_refused(self):
+        """Different resets; a delta across them scores the reset distribution."""
+
+        import tempfile
+
+        from tools.audit.sil_loop import accept_or_reject
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp) / "base"
+            cand = Path(tmp) / "cand"
+            self._collectable(base, [0.40, 0.44, 0.42, 0.41], episodes=512)
+            self._collectable(cand, [0.52, 0.56, 0.54, 0.53], episodes=256)
+            out = accept_or_reject(base, cand, instruction="move_to_object")
+        self.assertFalse(out["accepted"])
+        self.assertIn("not comparable", out["reason"])
+
+
+class ActionDriftTests(unittest.TestCase):
+    """M4: the loop training on its own collapse."""
+
+    @staticmethod
+    def _row(aim, conc):
+        return {"aim": aim, "direction_concentration": conc}
+
+    def test_two_consecutive_falls_with_rising_concentration_halt(self):
+        from tools.audit.sil_loop import DriftPolicy, check_action_drift
+
+        out = check_action_drift(
+            [self._row(0.15, 0.36), self._row(0.12, 0.42), self._row(0.08, 0.51)],
+            policy=DriftPolicy(),
+        )
+        self.assertTrue(out["halt"], out)
+
+    def test_a_falling_aim_alone_does_not_halt(self):
+        """Concentration must rise with it; alone it accuses nothing.
+
+        A genuine servo scores 0.82 where the arm sits systematically to one
+        side of its goals, which is why it is only read together with aim.
+        """
+
+        from tools.audit.sil_loop import DriftPolicy, check_action_drift
+
+        out = check_action_drift(
+            [self._row(0.15, 0.40), self._row(0.12, 0.39), self._row(0.08, 0.38)],
+            policy=DriftPolicy(),
+        )
+        self.assertFalse(out["halt"])
+
+    def test_rising_concentration_alone_does_not_halt(self):
+        from tools.audit.sil_loop import DriftPolicy, check_action_drift
+
+        out = check_action_drift(
+            [self._row(0.12, 0.36), self._row(0.14, 0.44), self._row(0.15, 0.52)],
+            policy=DriftPolicy(),
+        )
+        self.assertFalse(out["halt"])
+
+    def test_one_dip_between_two_good_iterations_does_not_halt(self):
+        from tools.audit.sil_loop import DriftPolicy, check_action_drift
+
+        out = check_action_drift(
+            [self._row(0.15, 0.36), self._row(0.10, 0.44), self._row(0.16, 0.52)],
+            policy=DriftPolicy(),
+        )
+        self.assertFalse(out["halt"])
+
+    def test_two_iterations_are_not_enough_to_see_two_falls(self):
+        from tools.audit.sil_loop import DriftPolicy, check_action_drift
+
+        out = check_action_drift(
+            [self._row(0.15, 0.36), self._row(0.08, 0.52)], policy=DriftPolicy()
+        )
+        self.assertFalse(out["halt"])
+        self.assertIn("need three points", out["reason"])
+
+    def test_iterations_without_stats_are_skipped_not_counted(self):
+        from tools.audit.sil_loop import DriftPolicy, check_action_drift
+
+        out = check_action_drift(
+            [
+                self._row(0.15, 0.36),
+                {"aim": None, "direction_concentration": None},
+                self._row(0.12, 0.44),
+                self._row(0.08, 0.52),
+            ],
+            policy=DriftPolicy(),
+        )
+        self.assertTrue(out["halt"], out)
