@@ -30,9 +30,13 @@ source "$SCRIPT_DIR/huggingface_public_models.sh"
 configure_huggingface_public_models
 configure_huggingface_offline
 
-timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-RUN_NAME="${RUN_NAME:-cdpr_smolvla_move_to_resume_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
+# shellcheck source=scripts/run_naming.sh
+source "$SCRIPT_DIR/run_naming.sh"
+RUN_NAME="$(cdpr_compose_run_name "cdpr_smolvla_move_to_resume_mjwarp_w${WORLDS_PER_RANK}")"
 RUN_DIR="$REPO_ROOT/runs/$RUN_NAME"
+# A resume writes a NEW run directory and reads the checkpoint by path,
+# so a collision here is the same hazard as on a fresh start.
+cdpr_guard_run_dir "$RUN_DIR"
 
 if [[ -z "$CHECKPOINT" ]]; then
   echo "CHECKPOINT is required; use the scratch launcher to start from step zero." >&2

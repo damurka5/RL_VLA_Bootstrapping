@@ -1229,6 +1229,72 @@ def _flag_env(name: str) -> bool:
     raise SystemExit(f"{name} must be 0 or 1, got {raw!r}.")
 
 
+
+# The approach curriculum asks one question -- can the policy reach its goal
+# from this start distance -- and it has to be scored on the skill that answers
+# it. pick_up is the only active instruction whose success is a strictly larger
+# claim than its approach: it also requires the lift, whose conversion from a
+# landed grasp is ~0.6 and is governed by the rollout budget remaining, so
+# gating the cap on success there makes it wait on a skill the approach cannot
+# influence (measured on step_7505256; the cap sat at 0.05 m for 171k steps).
+#
+# Everything else gates on its own success. A membership test in the other
+# direction froze move_to_object for a whole run -- see the block that reads
+# this.
+_GRASP_GATED_INSTRUCTIONS = frozenset({"pick_up"})
+
+# How many consecutive updates a gate may read exactly zero, while the same
+# instruction is succeeding well above the promote threshold, before this is
+# called what it is. 20 updates is minutes of wall clock and is far below the
+# cooldown, so a real early-training zero cannot trip it.
+_DEAD_GATE_UPDATES = 20
+
+
+def _warn_on_structurally_dead_gate(
+    metrics: Mapping[str, float],
+    *,
+    pass_rates: Mapping[str, float],
+    state: dict[str, int],
+    promote_threshold: float,
+) -> None:
+    """Shout when the promotion gate is reading a metric the task never emits.
+
+    A gate wired to the wrong metric does not fail, it freezes: the pass rate is
+    a clean 0.0, the EMA decays to 0.0, promotion is simply never due, and every
+    other curve in TensorBoard looks healthy while the run trains one rung
+    forever. The signature is specific enough to detect -- the gate is exactly
+    zero while the instruction's own success rate is above the threshold that
+    would have promoted it -- and there is no legitimate configuration in which
+    that persists.
+    """
+
+    for name, gate_rate in pass_rates.items():
+        worlds = float(metrics.get(f"instruction_worlds_normal_start/{name}", 0.0))
+        if worlds <= 0.0:
+            continue
+        success_rate = (
+            float(metrics.get(f"instruction_successes_normal_start/{name}", 0.0))
+            / worlds
+        )
+        alive = gate_rate > 0.0 or success_rate <= float(promote_threshold)
+        if alive:
+            state[name] = 0
+            continue
+        state[name] = state.get(name, 0) + 1
+        if state[name] != _DEAD_GATE_UPDATES:
+            continue
+        warnings.warn(
+            f"The approach-curriculum gate for {name!r} has read exactly 0 for "
+            f"{_DEAD_GATE_UPDATES} consecutive updates while its own success "
+            f"rate is {success_rate:.3f}, above the {promote_threshold:.2f} "
+            "promote threshold. The cap cannot advance and the run will train "
+            "one rung indefinitely. Check which metric "
+            "_GRASP_GATED_INSTRUCTIONS routes this instruction to.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+
+
 def _task_metadata(args: Any) -> dict[str, Any]:
     raw = os.environ.get("RLVLA_TASK_METADATA_JSON", "").strip()
     if raw:
@@ -1838,6 +1904,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         update_index = int(curriculum.updates)
         start_update_index = int(update_index)
         last_saved_step = int(global_step)
+        # Consecutive updates each instruction's promotion gate has read exactly
+        # zero while succeeding; see _warn_on_structurally_dead_gate.
+        dead_gate_state: dict[str, int] = {}
         validation_state = trainer.loaded_extra_state.get("validation")
         if isinstance(validation_state, Mapping):
             last_validation_step = int(
@@ -2146,22 +2215,49 @@ def main(argv: Sequence[str] | None = None) -> None:
             # placement it is the placement itself -- there is no downstream
             # skill the approach cannot influence, because the grasp is handed
             # over at reset.
-            placement_names = {"put_into_plate", "put_into_bowl"}
+            # ...and the allowlist is the instructions that gate on the GRASP,
+            # not the ones that gate on success. Written the other way round it
+            # read "placement gates on success, everything else on grasp", which
+            # is the same rule applied to the wrong default: move_to_object has
+            # no grasp at all, so instruction_grasps_normal_start/move_to_object
+            # is 0 by construction on every update, the EMA sat at exactly
+            # 0.0000 for 1046 consecutive updates, and the cap never left 0.03
+            # while the task's own success rate climbed 0.115 -> 0.894. Ten
+            # hours, 1.9M steps, one rung.
+            #
+            # pick_up is the only instruction whose approach cannot be scored on
+            # success, because success there also requires the lift -- a
+            # separate skill with its own curriculum, whose conversion is
+            # governed by the rollout budget left after the grasp lands. Every
+            # other instruction's success IS the thing the approach achieves.
+            # Defaulting to success therefore makes a newly added instruction
+            # correct rather than silently frozen.
             instruction_pass_rates = {}
             for name in configured_instruction_names:
                 worlds_for_name = synchronized_metrics.get(
                     f"instruction_worlds_normal_start/{name}", 0.0
                 )
                 gate_key = (
-                    f"instruction_successes_normal_start/{name}"
-                    if name in placement_names
-                    else f"instruction_grasps_normal_start/{name}"
+                    f"instruction_grasps_normal_start/{name}"
+                    if name in _GRASP_GATED_INSTRUCTIONS
+                    else f"instruction_successes_normal_start/{name}"
                 )
                 if worlds_for_name > 0.0 and gate_key in synchronized_metrics:
                     instruction_pass_rates[name] = (
                         synchronized_metrics.get(gate_key, 0.0)
                         / worlds_for_name
                     )
+            _warn_on_structurally_dead_gate(
+                synchronized_metrics,
+                pass_rates=instruction_pass_rates,
+                state=dead_gate_state,
+                promote_threshold=float(
+                    task_metadata.get(
+                        "random_workspace_start_distance_promote_pass_rate",
+                        0.20,
+                    )
+                ),
+            )
             approach_curriculum.observe(instruction_pass_rates)
             # Anneal the pre-grasped stage on ITS OWN success, not the run's.
             # The global pass rate mixes both populations, and the stage should

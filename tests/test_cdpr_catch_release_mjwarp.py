@@ -1240,12 +1240,18 @@ class CDPRPerInstructionCurriculumTests(unittest.TestCase):
 
         from rl_vla_bootstrapping.policy import smolvla_grpo_mjwarp_cdpr
 
-        source = inspect.getsource(smolvla_grpo_mjwarp_cdpr)
-        marker = 'placement_names = {"put_into_plate", "put_into_bowl"}'
-        self.assertIn(marker, source)
-        gate = source[source.index(marker) : source.index(marker) + 900]
-        self.assertIn("instruction_successes_normal_start", gate)
-        self.assertIn("instruction_grasps_normal_start", gate)
+        # Asserted as a property of the routing, not as the spelling of the
+        # membership test. The first version of this test pinned the literal
+        # `placement_names = {...}`, which kept passing while the same line
+        # routed move_to_object -- an instruction that grasps nothing -- to the
+        # grasp metric and froze its cap for a whole run.
+        allowlist = set(smolvla_grpo_mjwarp_cdpr._GRASP_GATED_INSTRUCTIONS)
+        self.assertNotIn("put_into_plate", allowlist)
+        self.assertNotIn("put_into_bowl", allowlist)
+        self.assertIn("pick_up", allowlist)
+        source = inspect.getsource(smolvla_grpo_mjwarp_cdpr.main)
+        self.assertIn("instruction_successes_normal_start", source)
+        self.assertIn("instruction_grasps_normal_start", source)
 
     def test_a_pass_rate_inside_the_band_holds_the_cap(self):
         """The gate must be able to say no.
