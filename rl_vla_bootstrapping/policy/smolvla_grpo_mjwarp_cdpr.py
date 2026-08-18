@@ -1308,6 +1308,44 @@ def _task_metadata(args: Any) -> dict[str, Any]:
     return {}
 
 
+# Update metrics that are RANK MEANS rather than global sums. The suffix
+# rules beside this cover _mean/_max/_std/_rate/_time_s; this is the list of
+# names that carry none of those and are still not counts.
+#
+# Getting an entry wrong is quiet in both directions: a count listed here
+# reads as a fraction of the work actually done, and a per-rank setting left
+# out reads as the rank count times its real value.
+_RANK_MEAN_UPDATE_METRICS = frozenset({
+                "entropy_mean",
+                "approx_kl_mean",
+                "clip_fraction_mean",
+                "smolvla_batch_size",
+                "smolvla_inference_microbatch_size",
+                "complete_groups_per_rank",
+                # A per-rank SETTING, not a count: the approach cap is global
+                # and moves in lockstep, so both ranks pick the same horizon
+                # and summing reports the rank count times the real budget.
+                # It logged 16 on two ranks against a configured 8 and read as
+                # a doubled rollout cost. Note the prefix is not the tell --
+                # curriculum/start_max_goal_distance_m carries the same prefix
+                # and is merged AFTER this collective, so it is untouched.
+                "curriculum/horizon_decisions",
+                "group_pass_rate_mean",
+                "padded_records",
+                "backward_collectives",
+                "optimizer_steps",
+                "timers_cuda_synchronized",
+                "profiled_update",
+                "dense_move_to_distance_reward",
+                "dense_catch_release_reward",
+                # Per-rank LoRA diagnostics: report the rank mean, not the sum
+                # (vla_lora/records stays a sum -- it is a global count).
+                "vla_lora/ppo_loss",
+                "vla_lora/kl",
+                "vla_lora/grad_norm",
+})
+
+
 def _synchronize_update_metrics_once(
     metrics: Mapping[str, float],
     *,
@@ -1351,28 +1389,7 @@ def _synchronize_update_metrics_once(
             or key.endswith("_rate")
             or "_mean_" in key
             or key.startswith("loss_")
-            or key
-            in {
-                "entropy_mean",
-                "approx_kl_mean",
-                "clip_fraction_mean",
-                "smolvla_batch_size",
-                "smolvla_inference_microbatch_size",
-                "complete_groups_per_rank",
-                "group_pass_rate_mean",
-                "padded_records",
-                "backward_collectives",
-                "optimizer_steps",
-                "timers_cuda_synchronized",
-                "profiled_update",
-                "dense_move_to_distance_reward",
-                "dense_catch_release_reward",
-                # Per-rank LoRA diagnostics: report the rank mean, not the sum
-                # (vla_lora/records stays a sum -- it is a global count).
-                "vla_lora/ppo_loss",
-                "vla_lora/kl",
-                "vla_lora/grad_norm",
-            }
+            or key in _RANK_MEAN_UPDATE_METRICS
         ):
             summed[key] /= float(world_size)
     for key, value in zip(

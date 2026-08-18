@@ -148,3 +148,70 @@ class DeadGateDetectorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class MetricSynchronizationTests(unittest.TestCase):
+    """Which update metrics are global counts and which are per-rank settings."""
+
+    def test_the_horizon_is_a_setting_and_is_not_summed_across_ranks(self):
+        """It read 16 on two ranks against a configured 8.
+
+        The approach cap is global and moves in lockstep, so every rank picks
+        the same horizon; summing it reports the rank count times the real
+        rollout budget, which reads as a doubled cost that does not exist.
+        """
+
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            _RANK_MEAN_UPDATE_METRICS,
+        )
+
+        self.assertIn(
+            "curriculum/horizon_decisions", _RANK_MEAN_UPDATE_METRICS
+        )
+
+    def test_global_counts_are_not_in_the_rank_mean_list(self):
+        """A count listed there under-reports the work actually done."""
+
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            _RANK_MEAN_UPDATE_METRICS,
+        )
+
+        for key in (
+            "selected_environment_actions",
+            "sampled_environment_actions",
+            "candidate_worlds",
+            "candidate_successes",
+            "groups_collected",
+            "instruction_worlds_normal_start/move_to_object",
+            "instruction_successes_normal_start/move_to_object",
+        ):
+            self.assertNotIn(key, _RANK_MEAN_UPDATE_METRICS)
+
+    def test_the_gate_inputs_stay_global_sums(self):
+        """The promotion gate divides one summed count by another.
+
+        Both sides must be summed or the ratio is wrong by the rank count in
+        whichever direction only one of them moved.
+        """
+
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import (
+            _RANK_MEAN_UPDATE_METRICS,
+        )
+
+        for name in ("move_to_object", "pick_up", "put_into_plate"):
+            self.assertNotIn(
+                f"instruction_worlds_normal_start/{name}",
+                _RANK_MEAN_UPDATE_METRICS,
+            )
+            self.assertNotIn(
+                f"instruction_successes_normal_start/{name}",
+                _RANK_MEAN_UPDATE_METRICS,
+            )
+            self.assertNotIn(
+                f"instruction_grasps_normal_start/{name}",
+                _RANK_MEAN_UPDATE_METRICS,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
