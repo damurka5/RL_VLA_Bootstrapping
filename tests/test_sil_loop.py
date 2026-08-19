@@ -670,3 +670,131 @@ class ActionDriftTests(unittest.TestCase):
             policy=DriftPolicy(),
         )
         self.assertTrue(out["halt"], out)
+
+
+class PlateauWindowTests(unittest.TestCase):
+    """The still-window only grows; the plateau test must not use all of it.
+
+    Iteration 0 sat at cap 0.19 for 8.2M steps. Across the whole still-window
+    the EMA halves differ by +0.078 -- the early climb after the promotion is
+    still in there and always will be -- while the last ten checkpoints differ
+    by -0.003. Judging the plateau over the full window makes a LONGER stall
+    harder to detect, which is backwards.
+    """
+
+    @staticmethod
+    def _climb_then_flat():
+        # 20 checkpoints climbing 0.41 -> 0.59, then 20 flat at ~0.585.
+        rows = []
+        step = 2_800_000
+        for i in range(20):
+            rows.append((step, 0.19, 0.41 + 0.009 * i))
+            step += 200_000
+        for i in range(20):
+            rows.append((step, 0.19, 0.585 + (0.004 if i % 2 else -0.004)))
+            step += 200_000
+        return _history(*rows)
+
+    def test_the_real_shape_fires_on_the_recent_tail(self):
+        history = self._climb_then_flat()
+        decision = evaluate_trigger(
+            history,
+            policy=StallPolicy(
+                cap_still_steps=600_000,
+                min_steps_since_sft=1_000_000,
+                promote_pass_rate=0.30,
+                plateau_window_steps=2_000_000,
+            ),
+            ladder_top=0.19,
+            last_sft_step=0,
+            cap_promoted_since_sft=False,
+        )
+        self.assertTrue(decision.fire, decision.blocked_by)
+
+    def test_the_whole_window_would_have_blocked_it(self):
+        """Pinning the bug, so a future widening of the window is caught."""
+
+        history = self._climb_then_flat()
+        decision = evaluate_trigger(
+            history,
+            policy=StallPolicy(
+                cap_still_steps=600_000,
+                min_steps_since_sft=1_000_000,
+                promote_pass_rate=0.30,
+                plateau_window_steps=100_000_000,
+            ),
+            ladder_top=0.19,
+            last_sft_step=0,
+            cap_promoted_since_sft=False,
+        )
+        self.assertFalse(decision.fire)
+        self.assertTrue(
+            any("still rising" in line for line in decision.blocked_by)
+        )
+
+    def test_a_climb_inside_the_recent_window_still_blocks(self):
+        """Narrowing the window must not make it fire on anything."""
+
+        rows = []
+        step = 2_800_000
+        for i in range(20):
+            rows.append((step, 0.19, 0.30 + 0.015 * i))
+            step += 200_000
+        decision = evaluate_trigger(
+            _history(*rows),
+            policy=StallPolicy(
+                cap_still_steps=600_000,
+                min_steps_since_sft=1_000_000,
+                promote_pass_rate=0.30,
+                plateau_window_steps=2_000_000,
+            ),
+            ladder_top=0.19,
+            cap_promoted_since_sft=False,
+        )
+        self.assertFalse(decision.fire)
+
+
+class LadderTopToleranceTests(unittest.TestCase):
+    """The cap is accumulated, so the top never arrives as the literal value.
+
+    0.03 plus eight increments of 0.02 is 0.18999999999999997. At a 1e-9
+    tolerance the top rung is never recognised, and the condition that lets the
+    loop fire when there is no further promotion to wait for is silently dead.
+    """
+
+    def test_an_accumulated_top_rung_counts_as_the_top(self):
+        cap = 0.03
+        for _ in range(8):
+            cap += 0.02
+        self.assertNotEqual(cap, 0.19)
+        history = _history(
+            (4_000_000, cap, 0.60),
+            (4_600_000, cap, 0.61),
+            (5_200_000, cap, 0.60),
+            (5_800_000, cap, 0.61),
+        )
+        decision = evaluate_trigger(
+            history,
+            policy=POLICY,
+            ladder_top=0.19,
+            cap_promoted_since_sft=False,
+        )
+        self.assertTrue(decision.at_ladder_top)
+        self.assertTrue(decision.fire, decision.blocked_by)
+
+    def test_a_rung_below_the_top_is_still_below_it(self):
+        """The tolerance must not swallow a whole rung."""
+
+        history = _history(
+            (4_000_000, 0.17, 0.60),
+            (4_600_000, 0.17, 0.61),
+            (5_200_000, 0.17, 0.60),
+            (5_800_000, 0.17, 0.61),
+        )
+        decision = evaluate_trigger(
+            history,
+            policy=POLICY,
+            ladder_top=0.19,
+            cap_promoted_since_sft=False,
+        )
+        self.assertFalse(decision.at_ladder_top)

@@ -184,6 +184,15 @@ class StallPolicy:
     # 0.02 against the +0.09-per-100-updates a genuinely climbing top rung was
     # measured at, so a run in that state is nowhere near being called flat.
     plateau_delta: float = 0.02
+    # And the plateau is judged over a RECENT span, not over everything since
+    # the cap last moved. Those are different questions, and using one window
+    # for both is backwards: the still-window only grows, so the climb that
+    # follows a promotion stays in it forever and a LONGER stall becomes harder
+    # to detect. Measured on iteration 0 at cap 0.19 -- across the whole
+    # 8.2M-step still-window the EMA halves differ by +0.078 and the trigger
+    # blocks, while the last ten checkpoints differ by -0.003 and it is plainly
+    # flat.
+    plateau_window_steps: int = 2_000_000
 
 
 @dataclass
@@ -219,7 +228,15 @@ def evaluate_trigger(
         )
     ordered = sorted(history, key=lambda item: item.global_step)
     latest = ordered[-1]
-    at_top = latest.cap >= float(ladder_top) - 1.0e-9
+    # A micron of tolerance, not a float epsilon. The cap is built by repeated
+    # `+= increment` from the initial rung, so the top arrives as
+    # 0.18999999999999997 rather than 0.19, and a config that spells its ladder
+    # out in YAML can differ in the last bits again. At 1e-9 the top rung is
+    # simply never recognised, which silently disables the one condition that
+    # lets the loop fire when there is no further promotion to wait for. 1e-6 m
+    # is meaningless as a distance and safe as a tolerance -- the rungs are
+    # 0.02 m apart.
+    at_top = latest.cap >= float(ladder_top) - 1.0e-6
 
     # How long the cap has held its current value, measured from the earliest
     # checkpoint that already had it. Walking backwards rather than tracking a
@@ -237,23 +254,31 @@ def evaluate_trigger(
         for sample in ordered
         if sample.global_step >= still_since
     ]
+    # The plateau half-mean test reads only the recent tail of that window; the
+    # "cap still for N steps" test above keeps the whole of it.
+    recent_from = max(
+        still_since, latest.global_step - int(policy.plateau_window_steps)
+    )
+    recent = [
+        sample for sample in window if sample.global_step >= recent_from
+    ] or window[-2:]
     ema_below = all(
         sample.pass_rate_ema < float(policy.promote_pass_rate)
         for sample in window
     )
     # Not merely below the bar -- not climbing toward it either. Halves rather
     # than endpoints, so one noisy checkpoint cannot decide an iteration.
-    if len(window) >= 4:
-        half = len(window) // 2
-        first = sum(s.pass_rate_ema for s in window[:half]) / half
-        second = sum(s.pass_rate_ema for s in window[half:]) / (
-            len(window) - half
+    if len(recent) >= 4:
+        half = len(recent) // 2
+        first = sum(s.pass_rate_ema for s in recent[:half]) / half
+        second = sum(s.pass_rate_ema for s in recent[half:]) / (
+            len(recent) - half
         )
         ema_rising = (second - first) > float(policy.plateau_delta)
     else:
-        ema_rising = len(window) >= 2 and (
-            window[-1].pass_rate_ema
-            > window[0].pass_rate_ema + float(policy.plateau_delta)
+        ema_rising = len(recent) >= 2 and (
+            recent[-1].pass_rate_ema
+            > recent[0].pass_rate_ema + float(policy.plateau_delta)
         )
 
     decision = TriggerDecision(
@@ -304,9 +329,10 @@ def evaluate_trigger(
         "pass-rate EMA is flat or falling across the window"
         if not ema_rising
         else f"pass-rate EMA is still rising "
-        f"({window[0].pass_rate_ema:.4f} -> {window[-1].pass_rate_ema:.4f}, "
-        f"more than {policy.plateau_delta} across the window halves) -- RL is "
-        "still getting better on its own",
+        f"({recent[0].pass_rate_ema:.4f} -> {recent[-1].pass_rate_ema:.4f} "
+        f"over the last {policy.plateau_window_steps} steps, more than "
+        f"{policy.plateau_delta} across the halves) -- RL is still getting "
+        "better on its own",
     )
     since_sft = int(latest.global_step - int(last_sft_step))
     check(
