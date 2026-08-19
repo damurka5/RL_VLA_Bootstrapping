@@ -258,18 +258,36 @@ def _evaluate(
 # --------------------------------------------------------------------------
 
 
-def load_frame_index(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
-    """Open every frames_<stem>.npz and key it by the stem it was named for.
+def frame_join_key(name: str) -> str:
+    """Reduce either side's name to the identity the two share.
 
-    The join key is the SOURCE FILE STEM, not the rung and not the round.
-    ``_build_dataset`` builds ``episode_uid`` as ``<key>/r<round>w<world>``
-    where ``<key>`` is ``<parent>_<stem>`` of the replay it came from, and
-    ``sil_record`` writes ``frames_<same stem>.npz`` beside that replay. Two
-    families harvested at one cap share a rung label, and every rung numbers its
-    rounds from zero, so anything coarser than the stem collides -- which in
-    phase 3 silently merged distinct episodes and split one across train and
-    validation.
+    The two writers spell the same episode source differently, and the first
+    version of this join compared them raw and matched nothing at all --
+    0 of 33102 rows, after the whole harvest had already been paid for.
+
+    ``sil_record --mode replay`` writes ``replay_<X>.npz`` and
+    ``frames_<X>.npz`` side by side, so ``<X>`` is the shared identity.
+    ``--mode dataset`` then keys episodes by ``<parent>/<stem>`` of the replay
+    -- "Directory AND stem. Neither alone is unique across both layouts this
+    tool produces" -- so its half arrives as ``replay/replay_<X>``.
+
+    Taking the basename and stripping either prefix leaves ``<X>`` on both
+    sides. ``<X>`` is itself ``<rung dir>_<record stem>``, which is what makes
+    it unique: a harvest writes record_00..NN per rung so stems repeat across
+    rungs, and replays of a whole harvest land in one directory so parents
+    repeat there.
     """
+
+    tail = str(name).rsplit("/", 1)[-1]
+    for prefix in ("frames_", "replay_"):
+        if tail.startswith(prefix):
+            return tail[len(prefix) :]
+    return tail
+
+
+def load_frame_index(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
+    """Open every frames_<X>.npz and key it by the identity it shares with the
+    replay it was written beside. See frame_join_key."""
 
     index: dict[str, dict[str, Any]] = {}
     for path in paths:
@@ -278,7 +296,7 @@ def load_frame_index(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
             raise SystemExit(
                 f"{path} is not a frames_<stem>.npz written by sil_record."
             )
-        stem = name[len("frames_") :]
+        stem = frame_join_key(name)
         with np.load(path, allow_pickle=False) as data:
             payload = {key: data[key] for key in data.files}
         column = {
@@ -312,7 +330,11 @@ def resolve_frame_rows(
     keep = np.zeros(episode_uid.shape[0], dtype=bool)
     lookups: list[tuple[str, int, int]] = []
     for row, (uid, decision) in enumerate(zip(episode_uid, decision_index)):
-        stem, _, tail = str(uid).rpartition("/")
+        raw_stem, _, tail = str(uid).rpartition("/")
+        # The NORMALISED key travels in the lookup, because frames_for_rows
+        # indexes the frame index with it. Carrying the raw uid prefix here
+        # would resolve the row and then raise a KeyError on the gather.
+        stem = frame_join_key(raw_stem)
         entry = frames.get(stem)
         if entry is None or not tail.startswith("r"):
             continue
@@ -994,10 +1016,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             flush=True,
         )
         if not found.any():
+            example_uid = str(dataset["episode_uid"][0])
             raise SystemExit(
-                "No demonstration row matched a frame. The join key is the "
-                "replay file stem, so these frames belong to a different "
-                "harvest than this dataset."
+                "No demonstration row matched a frame.\n"
+                f"  dataset episode_uid[0] = {example_uid!r} -> join key "
+                f"{frame_join_key(example_uid.rpartition('/')[0])!r}\n"
+                f"  frame join keys        = {sorted(frames)[:3]}\n"
+                "Either these frames come from a different harvest than this "
+                "dataset, or the two naming conventions have drifted apart "
+                "again -- see frame_join_key."
             )
         runtime, trainer, _ = build_runtime_and_trainer(
             payload, checkpoint=args.checkpoint.expanduser().resolve(),

@@ -237,3 +237,94 @@ class VisionIntegrityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JoinKeyAgreementTests(unittest.TestCase):
+    """The two sides are written by different code paths and must still meet.
+
+    The first version of this join compared the frames stem against the raw
+    episode_uid prefix. Both tests fabricated the two sides with the same
+    string, so nothing could detect that the real writers disagree -- and they
+    do: the replay writes frames_<X>.npz while the dataset keys episodes by
+    <parent>/replay_<X>. It matched 0 of 33102 rows on the first real harvest.
+
+    These derive both names the way sil_record actually derives them.
+    """
+
+    # sil_record --mode replay: stem = "<rung dir>_<record stem>"
+    REPLAY_STEM = "cap_0.030_record_00"
+
+    def test_the_writers_still_use_the_names_this_join_assumes(self):
+        import inspect
+
+        from tools.audit import sil_record
+
+        source = inspect.getsource(sil_record.main)
+        # replay writes both files from one stem...
+        self.assertIn('f"replay_{stem}.npz"', source)
+        self.assertIn('f"frames_{stem}.npz"', source)
+        # ...and dataset keys episodes by parent AND stem of the replay.
+        self.assertIn('f"{path.parent.name}/{path.stem}"', source)
+
+    def test_the_real_pair_of_names_resolves_to_one_key(self):
+        from tools.audit.sil_sft import frame_join_key
+
+        frames_file = Path(f"frames_{self.REPLAY_STEM}.npz").stem
+        dataset_key = f"replay/replay_{self.REPLAY_STEM}"
+        self.assertEqual(
+            frame_join_key(frames_file), frame_join_key(dataset_key)
+        )
+        self.assertEqual(frame_join_key(frames_file), self.REPLAY_STEM)
+
+    def test_the_real_pair_of_names_joins_end_to_end(self):
+        from tools.audit.sil_sft import resolve_frame_rows
+
+        frames = _frames(self.REPLAY_STEM, worlds=[5], decisions=3)
+        uid = np.array([f"replay/replay_{self.REPLAY_STEM}/r0w5"])
+        keep, lookups = resolve_frame_rows(uid, np.array([1]), frames)
+        self.assertTrue(keep.all(), "the real naming pair failed to join")
+        self.assertEqual(lookups, [(self.REPLAY_STEM, 1, 0)])
+
+    def test_two_rungs_do_not_collide_after_normalising(self):
+        """Stripping prefixes must not strip the part that disambiguates.
+
+        Every rung numbers its rounds from zero, so the rung directory is the
+        only thing separating cap_0.030_record_00 from cap_0.050_record_00.
+        """
+
+        from tools.audit.sil_sft import frame_join_key
+
+        self.assertNotEqual(
+            frame_join_key("frames_cap_0.030_record_00"),
+            frame_join_key("frames_cap_0.050_record_00"),
+        )
+
+    def test_a_bare_name_passes_through(self):
+        from tools.audit.sil_sft import frame_join_key
+
+        self.assertEqual(frame_join_key("cap_0.030_record_00"),
+                         "cap_0.030_record_00")
+
+    def test_the_gather_survives_the_full_round_trip(self):
+        """resolve -> gather, with the real names. The KeyError this caught.
+
+        The lookup tuple is what frames_for_rows indexes the frame index with,
+        so a resolve that returns the raw uid prefix resolves cleanly and then
+        raises on the gather -- past every check and into the training loop.
+        """
+
+        from tools.audit.sil_sft import frames_for_rows, resolve_frame_rows
+
+        frames = _frames(self.REPLAY_STEM, worlds=[5, 9], decisions=3)
+        uid = np.array(
+            [
+                f"replay/replay_{self.REPLAY_STEM}/r0w9",
+                f"replay/replay_{self.REPLAY_STEM}/r0w5",
+            ]
+        )
+        keep, lookups = resolve_frame_rows(uid, np.array([2, 0]), frames)
+        self.assertTrue(keep.all())
+        overview, wrist = frames_for_rows(lookups, frames, [0, 1])
+        self.assertEqual(int(overview[0, 0, 0, 0]), (2 * 16 + 9) % 256)
+        self.assertEqual(int(overview[1, 0, 0, 0]), 5)
+        self.assertEqual(int(wrist[1, 0, 0, 0]), 105)
