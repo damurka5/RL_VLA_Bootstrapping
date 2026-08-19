@@ -1,0 +1,936 @@
+project:
+  name: cdpr_smolvla_phase4_pick_up_loop
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  env_vars:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_VERBOSITY: error
+    HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    NCCL_DEBUG: WARN
+  notes:
+    - PHASE 4, pick_up. Warm-start WEIGHTS-ONLY from the phase-4 move_to checkpoint; do not resume it, since move_to's curriculum caps mean nothing here.
+    - Derived from cdpr_smolvla_pick_up_dense_grpo_mjlab_warmstart.yaml with ONE change - excluded_target_catalogs. Everything else is left alone deliberately, so the run stays comparable to the pick_up runs that came before it.
+    - THE CHANGE - banana and mug were live pick_up targets and cannot be picked up at all, being wider than the gripper's open gap. A third of episodes were impossible by construction and the grasp-rate gate was reading a rate diluted by them.
+    - The approach cap gates on the GRASP here, not on success. That is right for pick_up and only for pick_up - success also needs the lift, a separate skill with its own curriculum, whose conversion from a landed grasp is ~0.6 and is governed by the rollout budget left over. Every other instruction gates on its own success.
+    - CAMERA FRAMING IS CLEAN, measured: ee_in_overview 1.0000 on every rung, because this config's z band tops out at 0.30 against the 0.441 m at which the gripper leaves the overview frame. No workspace change is needed here, unlike move_to.
+    - THE WRIST LOSES THE TARGET ABOVE CAP 0.08, measured: the fraction of starts whose target is certainly outside the wrist frame is 0.0000 through 0.08, then 0.031 at 0.10, 0.117 at 0.13, 0.180 at 0.16, 0.238 at 0.20. The ladder is left intact because the policy is nowhere near those rungs; revisit when the cap approaches 0.10, since a grasp needs millimetres and the overview localizes to 3-5 cm.
+    - Only 54% of starts come from the approach curriculum - 35% are pre-grasped and 12% aligned. Both are training aids and both are excluded from the gate's denominator, which is why it reads instruction_worlds_normal_start.
+    - train_vla_vision_lora is left ON here, unlike the phase-4 move_to config which turns it off and introduces the tower at the first SFT instead. Left as-is because this is the configuration pick_up has actually run under; if vla_lora/kl does not move, turn it off rather than tuning it.
+
+embodiment:
+  name: cdpr_5dof_mjwarp
+  kind: mjlab_mjwarp
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+  dof: 5
+  extra_python_paths: [../../robots/cdpr]
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs: {}
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 1.0]
+
+task:
+  instruction_types: [pick_up]
+  target_objects:
+    [
+      robocasa_apple,
+      robocasa_banana,
+      robocasa_tomato,
+      robocasa_orange,
+      robocasa_potato,
+      robocasa_mug,
+    ]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    instruction_sampling: uniform_cycle
+    reward_mode: dense
+    # Only graspable objects. Plate and bowl have fitted_gripper_opening 0.0 and
+    # are not liftable, so they are excluded entirely from phase 1 -- including
+    # as distractors, which keeps the object-count curriculum honest.
+    # THE knob that excludes them on the MJWarp path. This config had none, so
+    # banana and mug were live pick_up targets -- and both are wider than the
+    # gripper's open gap in the seeded pose (measured: first pad contact at 0.98
+    # from a fully open gripper, banana seating at 175/183 N against 3-17 N for
+    # every other catalog). They contribute attempts and never successes, so a
+    # third of the episodes were impossible by construction and the promote gate
+    # was reading a rate diluted by them.
+    #
+    # target_object_pool below is read only by validate_cdpr_policy and
+    # openvla_oft; editing that alone leaves banana as the target in every
+    # MJWarp episode, which is exactly how this survived here.
+    #
+    # They stay in scene_object_pool and distractor_object_pool: still valid
+    # clutter, and removing them there would change the visual distribution the
+    # warm-start weights were trained against.
+    excluded_target_catalogs: [robocasa_banana, robocasa_mug]
+    target_object_pool:
+      [
+        robocasa_apple,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+      ]
+    catchable_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    distractor_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    scene_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+      ]
+    # TWO objects from step 0, and only two. This reverses the earlier plan of
+    # one object until 7M, on three pieces of evidence that arrived after it was
+    # written.
+    #
+    # 1. Distractors are not what broke the 5.7M run. Phase means from the 16M
+    #    move-to run put the two-object window at the HIGHEST mean reward of the
+    #    whole run (0.761 vs 0.696 and 0.723 single-object) at unchanged
+    #    action->target cosine. That run died of log_std diffusion, fixed in
+    #    7d99c3e. The earlier collapse was distractors arriving mid-climb, which
+    #    the curriculum restart (eeffbc0) now prevents.
+    # 2. This phase INHERITS its grounding rather than learning it -- the warm
+    #    start comes from a move-to policy trained on two-object scenes. Dropping
+    #    to one object is therefore a regression in the observation
+    #    distribution, not a simplification, and nothing would maintain the
+    #    disambiguation skill for 7M steps. The unlock would then hand
+    #    distractors to a policy that had forgotten how to tell objects apart.
+    #    The new skill here is the grasp; the approach is already two-object.
+    # 3. Each unlock restarts the start-distance curriculum, so two thresholds in
+    #    one run means two full re-climbs and leaves neither stage the steps to
+    #    reach the final cap.
+    #
+    # A third object is the next run, not a second threshold in this one.
+    min_scene_objects: 1
+    max_scene_objects: 2
+    scene_object_curriculum_steps: [0]
+
+    random_workspace_gripper_start: true
+    # No caught-object start in phase 1: the whole point is to LEARN the grasp.
+    placement_start_with_caught_object: false
+    # Fraction of GRPO groups that start with the object already grasped at rest
+    # height, so the lift gets its own dense signal.
+    #
+    # Three multi-million-step runs all did the same thing: the grasp rate
+    # reached ~0.30 and stopped there while the LIFT decayed.
+    # post_grasp_rise_mean_m peaked at 18 mm and fell to 7-10 mm against the
+    # 50 mm success height, with the first grasp landing at env step ~27 of 64 --
+    # ample time left, and the policy simply stopped commanding up. Two fixes
+    # aimed at that failed: the entropy floor (entropy_coef 0 -> 0.0002) slowed
+    # the decay, and making the grasp bonus a ratchet on ever_grasped so a failed
+    # lift no longer costs the grasp credit delayed it ~0.9M steps. Neither
+    # stopped it, because both were still betting on the policy DISCOVERING the
+    # lift from behind a 0.30-probability grasp.
+    #
+    # A quarter of the groups now skip that discovery: the object starts held,
+    # at its rest height on the desk, with the pads closed on it and
+    # initial_target_positions at the rest position -- so the 5 cm success height
+    # still measures a real lift off the desk and every step of the episode is
+    # dense signal on the one behaviour that was not being learned. The other
+    # three quarters run the full approach + grasp + lift, so the grasp skill is
+    # trained on-distribution and the pre-grasped stage cannot become the task.
+    #
+    # Sampled per GROUP, not per candidate: GRPO normalizes advantage within a
+    # group of 8, so a mixed group would score the spawn instead of the actions.
+    # Held-out validation always runs the full task, whatever this is set to.
+    #
+    # 0.5, raised from 0.25. The A/B measured the stage working: normal-start
+    # success 0.1215 with it against 0.1076 without, from the same checkpoint,
+    # with the control holding MORE normal-start worlds -- and the whole gap sat
+    # in grasp->success conversion (0.205 against 0.177) at an identical
+    # ever-grasp rate, which is exactly the transfer it was built for. The lift
+    # is still the only unlearned half of the task, so it gets half the batch.
+    pick_up_prelifted_group_fraction: 0.35
+    # Groups starting ALIGNED at the grasp point with the gripper OPEN: pads
+    # bracketing the object, nothing held. They must close and lift.
+    #
+    # The pre-grasped stage proved the principle -- give a phase its own dense
+    # signal instead of waiting for the policy to discover it behind a
+    # low-probability prefix -- and success from a pre-grasped start is 0.83
+    # against 0.13 for the full task. The descend-and-close transition never got
+    # it, and it is the phase with the least gradient per update: it only
+    # happens after an approach that succeeds 22-49% of the time, and it is
+    # where the pressing failure lives (grasp quality and lift anti-correlated
+    # at -0.786). Conversion given a grasp sits at ~0.6.
+    #
+    # Taken out of the pre-grasped share rather than added on top: 0.50 -> 0.35
+    # pre-grasped + 0.20 aligned leaves 0.45 running the whole task, so the
+    # approach still gets the largest share and neither handed-over stage can
+    # become the task.
+    pick_up_aligned_group_fraction: 0.20
+    # FIXED at 0.5. Do not anneal it. This was tried and it is a measured
+    # regression, not an untested worry.
+    #
+    # The reasoning that motivated annealing was: pre-grasped success sits at
+    # 0.79-0.82 while the full task sits at 0.21, so half the batch is being
+    # spent on a solved sub-task and practice should follow the deficit. That
+    # reasoning is wrong, and the curriculum that implemented it disproved it
+    # by running the experiment in both directions inside one 4M-step run:
+    #
+    #   fraction 0.50 -> 0.20 over 602k   success | pre-grasped 0.753 -> 0.410
+    #   fraction 0.20 -> 0.50 over 618k   success | pre-grasped 0.410 -> 0.552
+    #
+    # The stage is LOAD-BEARING, not a scaffold. 0.82 pre-grasped success never
+    # meant the lift had been learned and the practice could be withdrawn; it
+    # meant the practice was holding the lift up. Withdraw it and the skill
+    # decays within a few hundred thousand steps.
+    #
+    # It is also not a local cost. Moving batch onto the approach made the
+    # APPROACH worse -- success | normal start fell 0.245 -> 0.098 over the same
+    # window -- because a degraded lift means the normal-start episodes that do
+    # reach a grasp can no longer finish. And the damage is partly hysteretic:
+    # the fraction has since been back at 0.50 for 2.4M steps and pre-grasped
+    # success has recovered only to 0.55, against the 0.79-0.82 it held before
+    # any of this. That run ended below the checkpoint it started from.
+    #
+    # If the batch split is revisited, the thing to change is the TOTAL batch or
+    # the horizon, not this ratio -- and it needs an A/B against a fixed 0.5
+    # control from a shared checkpoint, the way the stage itself was justified.
+    pick_up_prelifted_curriculum_enabled: false
+    # Retained so the machinery is configurable if the question is reopened, and
+    # so the disproved thresholds are on the record next to the result.
+    pick_up_prelifted_fraction_min: 0.15
+    pick_up_prelifted_fraction_step: 0.05
+    pick_up_prelifted_reduce_success: 0.70
+    pick_up_prelifted_restore_success: 0.45
+    pick_up_prelifted_success_ema_decay: 0.9
+    pick_up_prelifted_cooldown_updates: 15
+    ee_workspace_x_bounds: [-0.24, 0.24]
+    ee_workspace_y_bounds: [-0.24, 0.24]
+    # [0.19, 0.30]. The grasp point is object centre + 0.0075, i.e. 0.185 m
+    # (orange) to 0.203 m (mug), so the old [0.27, 0.38] band started the
+    # end-effector 8-19 cm ABOVE it and the 3 cm cap was unsatisfiable -- the
+    # cap-includes-Z clamp would have fallen back to the 0.27 floor and the
+    # realized start distance would never have gone below ~0.10 m. The floor now
+    # sits at the grasp height and the ceiling gives ~11 cm of descent to learn.
+    ee_workspace_z_bounds: [0.19, 0.30]
+    random_workspace_min_goal_xy_distance: 0.10
+    # 26/26, not 24/32. This pair is the fallback used when a group has NO cap,
+    # which in practice means validation -- so leaving it at 32 would measure the
+    # policy over a longer episode than training ever gives it. Fixed at the same
+    # 26-decision ceiling as curriculum_horizon_max below.
+    random_workspace_horizon_low: 26
+    random_workspace_horizon_high: 26
+
+    # --- Dense shaping (identical curve for every instruction) -------------
+    # Coarse inverse-polynomial on the 3-D distance to the grasp point, plus a
+    # tight fine term. The coarse term alone is >= 0.94 two centimetres out while
+    # bilateral pad contact needs millimetres, so the last centimetre -- the part
+    # that decides whether a grasp happens at all -- had no gradient.
+    distance_reward_exponent: 2.0
+    catch_release_distance_reward_scale: 0.08
+    catch_release_distance_reward_weight: 1.0
+    catch_release_fine_distance_reward_weight: 0.5
+    catch_release_fine_distance_reward_scale: 0.01
+    catch_release_fine_distance_window: 0.0
+    pick_distance_window: 0.02
+
+    # 0.015, not 0.08. MEASURED geometry: the finger pads sit 0.0075 m below
+    # ee_base (the body ee_position tracks), with a 0.0175 m pad half-height --
+    # see rl_vla_bootstrapping/simulation/cdpr_gripper_geometry.py, which derives
+    # this from the MJCF and is asserted against this value by
+    # test_grasp_configs_target_a_reachable_grasp_point.
+    #
+    # The old 0.08 was the ee_PLATFORM offset, not the pad offset. It put the
+    # reward's grasp point 7.25 cm above the object, and pick_up spent 10M steps
+    # solving that reward accurately -- converging to within 1.2-1.5 cm of a pose
+    # from which the gripper cannot touch anything. Grasp rate PEAKED at 0.068
+    # near 4.5M and then decayed to 0.056 as convergence removed the erratic
+    # excursions that had been producing accidental contacts; terminal successes
+    # went 8/1024 -> 0/1024.
+    #
+    # Exactly the measured pad offset, because that combination is VERIFIED end to
+    # end: runs/cdpr_task_reference_episodes ran the real resetter, the real
+    # reward and the trainer's own grasp detector under an oracle policy at
+    # offset 0.0075 with the controller floor at 0.18 and got 3/3 pick_up
+    # successes at final reward 5.70-5.72, against the 5.75 this ladder predicts
+    # -- with ever_physically_grasped true. The same harness at 0.08 / 0.25 got
+    # 0/N, never grasped, and a final reward of 1.42-1.48, which is exactly what
+    # the 10M-step run produced. A slightly larger offset would keep the finger
+    # tips further from the desk, but the verified value earns the benefit of the
+    # doubt over that reasoning: the oracle run shows the shallow tip contact is
+    # harmless. Re-run scripts/render_cdpr_task_reference_episodes.py before
+    # changing it.
+    pick_grasp_height_offset: 0.0075
+    # Partial credit for bilateral pad contact bridges hovering -> latched grasp.
+    pick_contact_bonus: 0.25
+    # 0.5, not 1.0. The grasp is the part the policy HAS learned -- over a 4.2M
+    # run physical_grasp_rate climbed 0.380 -> 0.447 and bilateral pad contact
+    # 0.416 -> 0.482 while the lift collapsed. "Close the gripper and hold
+    # still" was worth 2.75 with no risk, and the policy converged onto exactly
+    # that: group_reward_std fell 0.80 -> 0.52 as the eight candidates stopped
+    # differing. Paying less for the solved half makes that rung shallower.
+    pick_grasp_bonus: 0.5
+    # A grasp earns its bonus only once it has taken the object 5 mm off the
+    # desk. 0.0 would pay it on ever_grasped, which is what every run so far did.
+    #
+    # Measured over 451 updates of the 4.8M run, grasp quality and lift are
+    # ANTI-correlated: corr(grasp rate, prelifted rise) = -0.786,
+    # corr(pad force, rise) = -0.696. Pad force rose 6.4 -> 8.0 N and bilateral
+    # contact 0.467 -> 0.603 while slip FELL 3.86 -> 2.97 mm and the lift died
+    # 35 mm -> 15 mm. Pressing the object into the desk maximizes all three of
+    # those -- and the physical-grasp detector's pose-stability test as well --
+    # while making the object unliftable. The policy converged on a maximally
+    # secure grasp it cannot lift from, which is why four successive lift-reward
+    # fixes each delayed the collapse without stopping it: they raised the payoff
+    # for lifting from a pose that physically cannot lift.
+    #
+    # 5 mm because _GRASP_MIN_LIFT_M (the collector's own "physically lifted"
+    # test) is 15 mm, so this is deliberately well below the bar the diagnostics
+    # use -- it asks only that the object left the desk at all, not that it was
+    # lifted. pick_contact_bonus stays unconditional so the approach keeps its
+    # gradient.
+    pick_grasp_bonus_min_lift: 0.005
+    # 2.0, not 1.0. The lift is the unlearned skill and it is now a ratchet on
+    # the PEAK height reached while holding (see cdpr_batched_tasks), so partial
+    # progress is kept rather than erased when the object settles. Doubling the
+    # weight makes a 20 mm lift -- which the policy already produces -- worth
+    # +0.8 instead of +0.4, against a 0.5 grasp rung.
+    pick_lift_reward_weight: 2.0
+    pick_lift_reward_scale: 0.05
+    pick_lift_success_height: 0.05
+    # 3.0, not 2.0, so terminal success stays the single largest increment even
+    # after the lift weight doubled. Otherwise the biggest jump on the ladder
+    # would be a partial lift, and a policy that maximizes partial lifts is not
+    # the same as one that finishes.
+    pick_success_bonus: 3.0
+    # Returns (the GRPO return is the last active step's reward, but the grasp
+    # and lift terms are now both ratchets, so a rung once reached is kept):
+    #   far away              ~0.1
+    #   hovering at grasp      1.5
+    #   + pad contact          1.75
+    #   latched but PINNED     1.75   <- no grasp bonus: it never left the desk
+    #   + off the desk 5 mm    2.45   (0.5 grasp + 0.2 lift)
+    #   + peak lift 20 mm      3.05
+    #   + peak lift 50 mm      4.25
+    #   + success              7.25
+    # Every step strictly increases the return and none of them can be undone by
+    # a later failure, so attempting a lift now dominates holding still at every
+    # height -- which was not true before: a lift that settled scored 2.75, the
+    # same as never trying.
+    action_saturation_penalty_weight: 0.0
+
+    # --- Approach curriculum (success-gated, per instruction) --------------
+    # Same machinery and thresholds that finally moved move-to. The cap widens
+    # only when pick_up itself is passing, and phase 1 has one instruction so the
+    # gate cannot be dragged by an easier task. Expect the cap to sit at 0.03 for
+    # a long while: that is correct, it must not widen before a grasp exists.
+    random_workspace_start_distance_curriculum_enabled: true
+    # Bound the 3-D start distance, not just its XY projection. The reward is a
+    # 3-D potential, so an XY-only cap let the Z spread alone put a "3 cm" start
+    # over 20 cm from the grasp point. With this on, the Z band below can stay
+    # wide enough to keep teaching descent without breaking the early foothold.
+    curriculum_cap_includes_z: true
+    random_workspace_start_distance_initial: 0.03
+    # 0.20, not move-to's 0.34, so the spawn stays near the target.
+    #
+    # Note WHY, because the obvious reason is the wrong one: 26 decisions is not
+    # the binding constraint on distance. 26 decisions is 104 env steps; the
+    # grasp sequence costs ~22 of them (up to ~13 env steps closing the gripper
+    # from 1.0 to the fitted opening at 0.05/step, 6 steps of grasp persistence,
+    # ~4 steps of 5 cm lift at 0.015/step), leaving ~82 steps at 0.015 m each --
+    # over a metre of travel for a 0.20 m approach. Even a 0.34 m start needs
+    # only ~23 env steps of pure translation.
+    #
+    # The real reason is skill, not time. move-to plateaued with its cap at 0.23
+    # and a pass rate of 0.21, below its own promote gate, after 9M steps. This
+    # phase inherits exactly that approach ability, so a final cap beyond it
+    # would ask the policy to extend its approach range AND learn a grasp at the
+    # same time. 0.20 sits just inside what the inherited policy demonstrably
+    # does, which leaves the grasp as the only unsolved thing.
+    #
+    # This value also anchors the horizon interpolation: the coupled horizon
+    # runs from curriculum_horizon_min at the initial cap to
+    # curriculum_horizon_max at THIS value, so the 26-decision ceiling is
+    # reached exactly when the cap tops out.
+    random_workspace_start_distance_final: 0.20
+    random_workspace_start_distance_increment: 0.02
+    # An explicit ladder, which overrides initial/final/increment above.
+    #
+    # A single 0.02 increment made the FIRST promotion a +67% jump: 0.03 -> 0.05
+    # dropped the measured pass rate 0.400 -> 0.180 on the very next update, and
+    # it then sat at ~0.21 for 9M steps across two runs without ever recovering
+    # to the gate. The step has to be small where the task is hard and the
+    # relative jump is what matters, and can widen once the policy has margin.
+    # 3 -> 4 is +33%, 4 -> 5 is +25%, and by 0.10 -> 0.13 it is +30% of a
+    # distance the policy can already cover.
+    random_workspace_start_distance_ladder:
+      [0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.13, 0.16, 0.20]
+    # 0.30/0.12/15, NOT the 0.03/0.01/5 this file used to carry. Those were the
+    # degenerate pair: they were fitted while a resetter bug pinned the measured
+    # pass rate under 0.045, so once the cap actually reached the simulator the
+    # promote gate was true on every update and demote was unreachable. The cap
+    # then marched 0.03 -> 0.19 m in 350k steps on nothing but its cooldown. See
+    # 17a83f7; move-to has run on 0.30/0.12/15 since, and the gate now holds a
+    # level for 1.5M steps at a time instead of ratcheting.
+    #
+    # CALIBRATION CAVEAT, because this is the same mistake one level down: 0.30
+    # was derived from move-to's observed pass-rate range (0.06-0.41). pick_up's
+    # range is unmeasured -- terminal success needs grasp AND a 5 cm lift, so its
+    # achievable ceiling may well sit below 0.30, in which case the cap would
+    # never promote off 0.03.
+    #
+    # These numbers still err high on purpose, because the two failures are not
+    # symmetric. A promote threshold that is too HIGH stalls the cap at 0.03 and
+    # says so plainly -- curriculum/start_max_goal_distance_m/pick_up flat while
+    # curriculum/approach_pass_rate_ema/pick_up sits just under the gate -- and
+    # costs only the steps it takes to notice. A promote threshold that is too
+    # LOW destroys the run silently, which has now happened twice. So: if the cap
+    # is still 0.03 after ~3M steps AND the EMA has plateaued below 0.30 while
+    # physical_grasp_rate is climbing, lower promote to that plateau plus ~0.05
+    # and drop demote to roughly a third of it. Do not lower it before the grasp
+    # exists -- an early cap is exactly what this gate is here to prevent.
+    random_workspace_start_distance_promote_pass_rate: 0.30
+    random_workspace_start_distance_demote_pass_rate: 0.12
+    # 0.95, not 0.9. The per-update grasp rate carries about twice the spread
+    # binomial sampling on ~510 normal-start worlds explains (0.037 against
+    # 0.018), so a 10-update effective window leaves the average close enough to
+    # the threshold for two good updates to cross it.
+    random_workspace_start_distance_pass_rate_ema_decay: 0.95
+    # The EMA must hold at or above the promote threshold for this many
+    # consecutive updates before the cap moves. Every promotion of the 10M run
+    # fired on a first touch and landed below the line at the new rung
+    # (0.312 -> 0.243, 0.300 -> 0.219), which is a promotion the evidence did
+    # not support. 1 restores the old single-crossing behaviour.
+    random_workspace_start_distance_promote_dwell_updates: 5
+    # 15, not 5: at 5 the cap could advance every ~30k steps, far faster than the
+    # EMA can reflect whether the last level was learned. The EMA is also
+    # re-seeded on every cap change (17a83f7), so a promotion is judged on what
+    # the NEW difficulty scores rather than on the easier level's average.
+    random_workspace_start_distance_cooldown_updates: 15
+    # Horizon FLAT at the ceiling: min == max, so the coupling is inert for
+    # pick_up. It stays enabled rather than switched off so the uncapped branch
+    # (which validation takes) is not the only thing feeding the horizon.
+    #
+    # The old 16 was derived from "5 cm of lift at 0.015 per step", and 0.015 is
+    # the COMMANDED step, not a realized one. tools/audit/xy_approach_probe.py
+    # measures the plant's realized gain at 0.44-0.54, flat across every
+    # amplitude and both signs, so the effective step is ~0.0075 m; the loaded
+    # lift measures ~1.3 mm/step. A 50 mm lift needs ~38 env steps, about 10
+    # decisions, against the ~3 the old arithmetic budgeted.
+    #
+    # The coupling itself was the deeper error. It was designed for move_to,
+    # where a longer approach genuinely needs more steps. pick_up has two phases
+    # and the LIFT's step requirement does not shrink with start distance, so
+    # coupling the whole budget to the cap handed the least budget to the phase
+    # that never gets easier -- and the close-start stage meant to make the task
+    # learnable was the one starving it most. Measured on step_7505256 at the
+    # stuck 0.05 m cap: first grasp lands at decision ~9 of 17, leaving ~33 env
+    # steps for a lift needing ~38, and conversion-given-grasp climbs from 0.13
+    # to ~0.8 with decisions remaining along a curve that is identical whether
+    # the policy is handed a perfect object position or a 20 cm error. Raising
+    # the budget to 26 alone lifts deterministic success 0.289 -> 0.328 and
+    # conversion 0.57 -> 0.61.
+    #
+    # It costs ~53% more rollout per update; the horizon is the dominant term.
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 26
+    # Hard ceiling of 26 decisions; the horizon never grows past it at any cap.
+    # Each decision runs a batched SmolVLA forward over every world, so the
+    # horizon is the dominant per-update cost -- move-to reached 23 decisions and
+    # its rollouts dominated wall clock. Paired with the 0.20 final cap above,
+    # which is where this ceiling is reached.
+    curriculum_horizon_max: 26
+    # OFF, as in move-to: SmolVLA inference is batched over all worlds every
+    # decision regardless of the active mask, so early termination saves no
+    # compute but discards the remaining records.
+    reset_on_drift_enabled: false
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [robocasa_apple, robocasa_plate, robocasa_bowl]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  build_kwargs:
+    table_z: 0.15
+    ee_start: [0.0, 0.0, 0.40]
+  randomization:
+    random_scene_count: 256
+    max_objects: 4
+    use_domain_randomization: true
+
+simulator:
+  backend: mjlab_mjwarp
+  worlds_per_rank: 512
+  groups_per_rank: 64
+  nconmax: 256
+  njmax: 1024
+  render_width: 320
+  render_height: 240
+  object_slots: 4
+  fixed_scene_xml: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+
+policy:
+  type: smolvla_cdpr
+  base_checkpoint: lerobot/smolvla_base
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+  num_images_in_input: 3
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: false
+      bins: 256
+    export_filename: smolvla_action_codec.json
+
+training:
+  preview_before_rl: false
+  rl:
+    enabled: true
+    algorithm: smolvla_residual_grpo_mjwarp
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
+    args:
+      # No resume_checkpoint: the launcher passes the move-to adapter through
+      # RLVLA_SMOLVLA_WARMSTART_CHECKPOINT instead. Weights-only is deliberate --
+      # a full resume would also restore move-to's approach-curriculum state (a
+      # cap already widened for a different task) and its optimizer moments.
+      max_train_steps: 16000000
+      max_env_steps: 128
+      # Grasp phases MUST lower this. It clamps every commanded target, so the
+      # default 0.25 floor makes grasping geometrically impossible: the finger
+      # pads sit 0.0075 m below ee_base, so at 0.25 they bottom out at 0.2425
+      # while graspable object centres are 0.178-0.195. pick_up ran 10M steps
+      # unable to reach any object.
+      #
+      # 0.18 is the lowest value that is still conservative about the desk. The
+      # grasp target is object centre + 0.015, i.e. 0.193 (orange) to 0.210
+      # (mug), so 0.18 leaves 1.3 cm of travel below the nearest target for the
+      # reward gradient to be two-sided, and the finger tips (0.039 m below
+      # ee_base) reach 0.141 at worst -- 0.9 cm into the 0.15 m desk, a shallow
+      # tip contact rather than the deep interpenetration that previously
+      # diverged MJWarp into NaN rewards. VERIFY on a smoke run that
+      # bilateral_pad_contact_rate rises and rewards stay finite.
+      controller_workspace_z_bounds: [0.18, 0.60]
+      chunk_size: 8
+      replan_every: 4
+      image_size: 256
+      smolvla_model_image_size: 256
+      smolvla_compile_model: true
+      smolvla_compile_mode: max-autotune-no-cudagraphs
+      # 256, not 512: at 512 the combined PyTorch+Warp footprint sat on the card
+      # limit and Warp OOM'd once the LoRA backward was added.
+      smolvla_inference_microbatch_size: 256
+      state_dim: 6
+      # --- MUST MATCH THE MOVE-TO RUN (warm-start loads weights strictly) ---
+      residual_relative_target: false
+      residual_vision_features: true
+      residual_vision_dim: 512
+      # HOW the connector tokens become that 512-d feature, and it is the
+      # difference between a policy that can aim and one that cannot.
+      #
+      # flat_random (the original) flattens both cameras to 30720 and applies a
+      # fixed random projection. A random projection retains only d_out/d_in of
+      # any linearly decodable signal -- 512 of 30720 is 1.7% -- and measured on
+      # MJWarp over 120 episodes it takes the object's direction from cosine
+      # +0.41 un-projected to +0.09. That is why the deterministic policy holds
+      # the correct height (terminal ee_z 0.2006 m, ceiling-pinned rate 0.000)
+      # and still misses by 0.40 m HORIZONTALLY, why policy_target_cosine_mean
+      # has never left ~0.11, why the cap has never promoted past 0.05 m, and
+      # why deterministic validation has read ~0.001 for 52M steps. The policy
+      # was never blind to the grasp; it was blind to where the object is.
+      #
+      # per_token_random reduces channels only, sharing one projection across
+      # tokens, and keeps the 16-token ~4x4 spatial grid where position lives.
+      # 32 places x 16 channels = the same 512, so no tensor shape changes and a
+      # warm start still loads. Measured at that identical width: cosine +0.39
+      # against an un-projected ceiling of +0.41 -- the whole of it, at no extra
+      # width. Widening flat_random instead cannot get there: 8192 dims still
+      # keeps only 27%, and its yield is a lottery fixed at seed time (two draws
+      # of the same kind scored +0.44 and +0.09 on the same data).
+      #
+      # TRIED AND REVERTED. 2.73M steps from the split_credit checkpoint, and
+      # every approach metric went backwards:
+      #
+      #                          before   after
+      #   success|normal start    0.206   0.135
+      #   ever-grasped worlds     0.226   0.067
+      #   policy_target_cosine    0.111   0.003
+      #   residual_target_cosine  0.058  -0.032
+      #   curriculum cap            0.05    0.03  (demoted)
+      #   post_grasp_action_z      0.325   0.811
+      #   validation ceiling-pinned  0.00    0.79
+      #
+      # The probe was right about the feature and wrong about what follows from
+      # it. per_token_random does carry ~4x the linearly decodable object
+      # position (direction cosine +0.39 against +0.09), but the residual had
+      # spent 20M steps learning a mapping from the OLD feature, and swapping it
+      # reset that path to noise. What the policy then converged on is visible in
+      # the numbers: post-grasp z 0.81 -- far past the 0.30 the plant needs --
+      # and 79% of validation episodes ending pinned at the workspace ceiling.
+      # With vision unusable, the state-independent optimum is "command up", and
+      # the pre-grasped half of the groups pays for it (success|pre-grasped held
+      # at 0.83 throughout) while the approach half collapses.
+      #
+      # policy_target_cosine flat at ~0.00 across 2.73M steps is the part that
+      # rules out "needs longer". If it were learning to use the better feature
+      # that number would climb; it did not move.
+      #
+      # What this does NOT show: that the feature is unusable. It shows that
+      # swapping it under a policy trained against the old one costs more than
+      # it buys, at least over 2.7M steps. Testing it properly means a fresh
+      # residual rather than a resume, which is a different and much longer
+      # experiment.
+      # flat_random, at 512. dual_random was tried and measured to add
+      # nothing: 5.2M steps carrying both poolings left the aiming cosine
+      # exactly where flat_random had it (0.052/0.059/0.057/0.046/0.037 across
+      # fifths, against a 0.061 baseline). The reason only became clear later --
+      # the encoder localizes COARSELY, ~3-5 cm, so a better REDUCTION of a
+      # coarse signal is still coarse. Reverted so the vision-LoRA run is not
+      # confounded by a second feature block that earns nothing and doubles the
+      # residual's vision width.
+      #
+      # Vision itself is load-bearing, which is the finding that reversed the
+      # earlier reading: shuffling this block across worlds takes success 0.053
+      # -> 0.000 and ever-grasped 0.162 -> 0.035.
+      residual_vision_pooling: flat_random
+      residual_scale: 1.0
+      hidden_dim: 1024
+      train_vla_lora: true
+      # Adapt the VLM's VISION tower, not just the action expert.
+      #
+      # Vision is load-bearing -- shuffling the residual's vision block across
+      # worlds takes success 0.053 -> 0.000 and ever-grasped 0.162 -> 0.035 --
+      # and coarse: the oracle ladder gives ever-grasped 0.74 at 2 cm of
+      # localization error and 0.40 at 5 cm, while the policy grasps 0.51 at a
+      # 5 cm cap and 0.16 at 13 cm, which puts its effective error at ~3-5 cm.
+      # Sharpening a coarse signal the policy already uses is the remaining
+      # lever; no reduction of that signal can help, which is what three
+      # projection experiments established.
+      #
+      # An experiment, not a fix: the gradient reaching the tower is one
+      # advantage per episode through a flow-matching expert, and vla_lora/kl
+      # has read ~1e-4 in every run. Judge it on policy_target_cosine_mean and
+      # physical_grasp_rate, and abandon it if vla_lora/kl does not move --
+      # that means the update is not reaching the tower.
+      train_vla_vision_lora: true
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      lora_include_mlp: true
+      lora_expert_name_contains: lm_expert
+      # ---------------------------------------------------------------------
+      vla_lr: 1.0e-5
+      vla_kl_coef: 0.1
+      # 4, not 16: the vision LoRA adds a full backward through the tower on
+      # every update.
+      vla_microbatch_size: 4
+      vla_update_max_records: 128
+      include_wrist: true
+      include_aux_camera: true
+      mask_empty_aux_camera: true
+      mixed_precision: bf16
+      smolvla_action_normalization: tanh
+      learning_rate: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      init_log_std: -1.2
+      # -1.45, not -5.0. max_log_std stops the distribution diffusing OUT of the
+      # productive band; nothing stopped it collapsing INTO a point, and -5.0 is
+      # not a floor in any practical sense. Measured: log_std fell monotonically
+      # from -1.389 to -1.396 over 1.5M steps with entropy_coef already at
+      # 0.0002, and entropy_mean fell at every checkpoint of every pick_up run.
+      # The consequence is not subtle -- validation runs the DETERMINISTIC mean
+      # action and scores 0.001-0.007 while sampled training scores 0.11, so
+      # essentially every success is an exploration excursion. Narrow the
+      # sampling distribution and those excursions stop happening, which is the
+      # decay the last three runs all showed.
+      #
+      # -2.5, widened from -1.45, and it only means anything now that
+      # 80f6c35 projects the raw parameter back into the band after each
+      # optimizer step. Before that, clamp() had zero gradient outside its
+      # bounds, so an entry that left the band froze forever while the forward
+      # pass kept reporting the bound -- log_std_mean read EXACTLY -1.193750 on
+      # every update of five consecutive runs because all twenty trained entries
+      # were saturated, fifteen at the ceiling and five at the floor, none
+      # inside. Neither bound had bound anything since the first time it was hit.
+      #
+      # The dumped parameter is what sets this value. Raw entries spanned
+      # -3.5124 to -0.2990; four of them, mostly the x action, drove to -2.44 or
+      # below. The policy asked repeatedly for much tighter control on that axis
+      # and a -1.45 floor refused it. There is no evidence that downward
+      # movement is harmful -- the failure move-to proved is diffusion UPWARD,
+      # which the ceiling below still forbids -- so the floor stops fighting the
+      # gradient and only rules out a true collapse to a point.
+      min_log_std: -2.5
+      # -1.10, not -0.3. MUST MATCH the move-to phase. At -0.3 the ceiling never
+      # bound and the distribution diffused underneath it: over move-to's
+      # 16M-step run log_std rose monotonically for 12M steps (-1.227 -> -0.895)
+      # while entropy went 0.83 -> 4.15, the action->target cosine fell
+      # 0.25 -> 0.14 and validation collapsed from a 7.3% peak to 0.7%. The
+      # ceiling now sits just above the [-1.23, -1.15] band the policy was
+      # productive in, so it cannot diffuse out of it.
+      max_log_std: -1.10
+      clip_range_low: 0.20
+      clip_range_high: 0.28
+      # 0.0002 for the GRASP phases, where entropy_coef 0.0 collapsed the policy.
+      # Measured over pick_up's 3.1M-step run: entropy_mean fell monotonically at
+      # every single checkpoint, -0.404 -> -0.754, and everything peaked at ~2.0M
+      # then regressed -- pass rate -0.0089/M, grasp rate -0.033/M, reward
+      # -0.246/M, validation reward 0.261 -> 0.141. _normal_entropy is a pure
+      # function of log_std, so this is the sampling distribution narrowing (the
+      # 0.43 drop is ~5 action dims x 0.086 on the sampled chunk rows), which is
+      # exactly what this coefficient opposes.
+      #
+      # Safe at a value that was NOT safe before: max_log_std is now a hard -1.10
+      # ceiling, and log_std sits at -1.386, so the bonus can move it at most
+      # 0.29 and cannot run away. The old diffusion happened with the ceiling at
+      # -0.3, where it never bound. 0.002 diffused, 0.0005 slowed but did not stop
+      # it, 0.0 collapses -- 0.0002 sits under all of that with a ceiling behind
+      # it. move_to keeps 0.0: it ran 9M steps with log_std drifting UP slightly,
+      # so it has the opposite problem and needs no bonus.
+      entropy_coef: 0.0002
+      # Temporally correlated exploration: a per-episode, per-world offset added
+      # to the action mean and held for the whole episode. 0 is the historical
+      # i.i.d. per-step sampler, bit-for-bit.
+      #
+      # Why the knob exists. entropy_coef and max_log_std both move the PER-STEP
+      # sigma, and the campaign has now spent four interventions on that axis. It
+      # is the wrong axis. A lift needs the mean a_z held above the loaded plant's
+      # dead zone for ~13 consecutive env steps, and i.i.d. per-step noise
+      # explores that SUSTAINED bias with std sigma/sqrt(N) -- 0.09 over a 13-step
+      # window at the -1.10 ceiling, so the lifting region sits 3.3 sigma out.
+      # Measured on the CPU reference engine from an identical latched grasp:
+      #
+      #   sustained a_z    0.05   0.10   0.20   0.30   0.40   0.60
+      #   median lift mm    1.8    1.8   17.8   46.7   74.1  124.9
+      #   success/latched   0/6    0/6    0/6   7/14    6/6  14/14
+      #
+      # and a driftless Gaussian at sigma 0.333 reached 0/14 successes with a
+      # median peak lift of 10.5 mm. Nothing about that is a reward problem --
+      # the reward pays 1.58 more for a 60 mm lift than for holding still. It is
+      # that the estimator never proposes a sustained lift to be paid for.
+      #
+      # CONFIRMED on MJWarp (tools/audit/lift_barrier_probe.py, 15 episodes/arm):
+      #
+      #   sustained a_z    0.05   0.10   0.20   0.30   0.40   0.60
+      #   median lift mm    3.1    3.1   33.8   82.7  134.8  238.6
+      #   success/latched  0/15   0/15   0/15  14/15  15/15  15/15
+      #
+      # and the offset arm is what the sampler change buys, from an identical
+      # latched grasp at sigma 0.333:
+      #
+      #   offset 0.00   peaks 6 7 8 11 15 16 18 21 24 25 29 31 36 38 38   0/15
+      #   offset 0.25   peaks 7 11 11 15 16 21 26 30 41 47 53 63 77 89 277  5/15
+      #
+      # Not one episode in fifteen reached even 40 mm without it. The median
+      # barely moves (21 -> 30); it is the TAIL that clears the dead zone, which
+      # is what a variance-in-sustained-bias change should do. At a 0/15 lift
+      # rate no candidate in a group ever lifts, so group-relative advantage has
+      # nothing to rank; at 5/15 groups land inside grpo_dynamic_min/max_pass_rate.
+      #
+      # z ONLY: a sustained bias on the gripper channel would drift it open or
+      # closed over 128 steps and destroy grasps outright, and on xy it would
+      # walk the end-effector into the workspace clamp.
+      #
+      # AFTER THE GRASP ONLY, and that gate is load-bearing. Run
+      # pick_up_resume 2.41M -> 5.97M applied this ungated at 0.20 and it was
+      # the worst regression of the campaign:
+      #
+      #   Mstep   a_z post-grasp   rise|pre mm   succ|pre   approach EMA
+      #     2.4           +0.201          42.5      0.699          0.187
+      #     3.8           +0.031          33.3      0.500          0.131
+      #     4.6           -0.266          12.6      0.125          0.070
+      #     5.8           -0.373           8.6      0.066          0.048
+      #
+      # The offset perturbs the approach too, and that cost is not symmetric:
+      # the approach reward is dense and paid on every step of every episode,
+      # the lift reward is conditional on a grasp and rare. GRPO cancelled the
+      # disturbance exactly as it should -- by driving the policy's own mean z
+      # DOWN -- and because one residual serves both phases, the cancellation
+      # dragged the post-grasp command from +0.201 to -0.373. The plant curve
+      # says +0.30 lifts 83 mm; the run ended at -0.37.
+      #
+      # That run also CONFIRMED the transfer function it was fighting. At the
+      # resume point the policy's own post-grasp command was +0.201 and its
+      # pre-grasped rise was 42.5 mm, against the probe's 33.8 mm at a
+      # sustained 0.20 -- two independent measurements agreeing that
+      # post_grasp_action_z_mean is the control variable. The target is to move
+      # it +0.20 -> +0.30, and it is now logged every update.
+      #
+      # BOTH FORMS FAILED. Two resumes from the same checkpoint (step 2406053):
+      #
+      #                    a_z post-grasp      rise|pre mm     succ|pre
+      #   ungated 0.20   +0.203 -> -0.254    42.7 -> 13.3   0.71 -> 0.14
+      #   gated   0.25   +0.177 -> -0.408    40.6 -> 10.1   0.66 -> 0.10
+      #
+      # measured at the same global steps. They are indistinguishable across
+      # ~20 metrics, and the gate PROVABLY removes the offset from the approach,
+      # so the "the offset perturbs the approach and GRPO cancels it" reading of
+      # the first failure was wrong. The offset is more likely inert here than
+      # causal: what both runs show is the campaign's canonical decay -- grasp
+      # 0.35 -> 0.53, pad force 4.6 -> 7.6 N, lift down, reward 3.70 -> 2.17 --
+      # which has happened in runs with no offset at all.
+      #
+      # Neither failure was the offset's idea being wrong -- it was the
+      # estimator. Scoring the log-prob against mu+eps is the CONDITIONAL
+      # density given eps, whose score (a - mu - eps)/sigma^2 is the per-step
+      # noise and independent of eps by construction, so the gradient on mu
+      # learned nothing about which offset paid. The offset perturbed the
+      # rollouts and informed nothing: half the pre-grasped worlds drew a -z
+      # offset into the dead zone and failed, and the run paid that variance
+      # without ever collecting the finite-difference term. On synthetic data
+      # with advantage set equal to the offset signal that score reads -0.015
+      # against +1.43 for the marginal form now in use.
+      #
+      # The source run settles what the baseline is: adaptivestd is FLAT across
+      # its whole 2.34M steps -- succ|pre 0.820 -> 0.802, rise|pre 47.4 -> 46.1
+      # mm, grasp 0.339 -> 0.327, pad force 4.28 -> 4.15 N. Nothing was decaying
+      # until the offset was added, so both collapses were caused, not
+      # inherited.
+      #
+      # ON again now that eps reaches the gradient, at the probe's 0.25 and
+      # gated. Target: move post_grasp_action_z_mean from ~+0.18 to +0.30, where
+      # the plant lifts 83 mm and succeeds 14/15. Kill it if that metric is
+      # below +0.15 at 3.2M rather than spending another 3M steps confirming a
+      # slide. 0.0 restores the i.i.d. per-step sampler bit-for-bit.
+      episode_offset_std: [0.0, 0.0, 0.25, 0.0, 0.0]
+      episode_offset_after_grasp: true
+      # Separate returns for the approach and the lift, split at the latch.
+      #
+      # `offset_marginal` fixed the lift and charged the approach for it:
+      # post_grasp_action_z_mean +0.238 -> +0.318 and success | pre-grasped
+      # 0.723 -> 0.834, against ever-grasped worlds 0.231 -> 0.187 and a first
+      # grasp arriving 29.4 -> 34.1 env steps in. (The step-averaged
+      # physical_grasp_rate reads a larger 0.331 -> 0.217, but successful
+      # episodes terminate early and spend proportionally fewer steps holding,
+      # so that metric overstates it. The ever-grasped count is the honest one.)
+      #
+      # That is the campaign's invariant with the sign flipped, and the reason
+      # is structural: the GRPO return is the last active step's reward
+      # broadcast to EVERY step, so a descent action and a lift action receive
+      # identical credit while the task wants opposite z from them -- and one
+      # residual serves both. Nothing in the reward distinguishes them, so
+      # improving one has always cost the other.
+      #
+      # Split, the approach is scored on the dense reward at the moment the
+      # grasp latched -- "did this reach a good grasp?", blind to whether the
+      # lift then worked -- and the lift keeps the terminal reward. Episodes
+      # that never grasp are unchanged. Observability is not the obstacle: the
+      # probe in §4.9 shows gripper_opening alone decodes grasp state at 0.898,
+      # so the residual can already tell which phase it is in; what it lacked
+      # was any gradient that says the two phases want different things.
+      split_credit_at_grasp: true
+      max_grad_norm: 1.0
+      grpo_group_size: 8
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      # DAPO's dynamic sampling, for a dense reward. Groups whose eight
+      # candidates scored within 0.05 of each other separated nothing, but the
+      # advantage divides by the group std floored at 1e-6 and then clips at
+      # grpo_clip_advantage_abs above -- so they emit full-magnitude gradients
+      # made of rollout noise. Measured over the 10M run: 41 of 128 groups per
+      # update, 31 of them pre-grasped groups where no candidate lifted and the
+      # rewards are near-identical by construction. About a third of every
+      # update.
+      #
+      # The existing reward_span > 1e-6 filter is the literal translation of
+      # DAPO's all-correct-or-all-wrong test and never fires on a dense reward:
+      # informative_groups has equalled groups_collected on every update of
+      # every run. This is the threshold that does.
+      #
+      # Applied per return stream under split_credit_at_grasp, so a group that
+      # separated the approach but not the lift keeps its approach gradient.
+      grpo_min_group_reward_std: 0.05
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.10
+      grpo_dynamic_max_pass_rate: 0.90
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 64
+      grpo_max_collection_seconds_per_update: 600
+      ppo_epochs: 4
+      minibatch_size: 512
+      microbatch_size: 512
+      complex_training_approach: none
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      hold_steps: 6
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      validation_every_steps: 200000
+      validation_episodes_per_instruction: 1024
+      validation_seed: 3000000
+      validation_video_count: 0
+      save_every_steps: 200000
+      mjwarp_profile_timers: true
+      mjwarp_profile_updates: 4
+      distributed: true
+      distributed_backend: nccl
+      distributed_timeout_seconds: 21600
+      progress: true
+      progress_only: true
+      device: cuda
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks: []

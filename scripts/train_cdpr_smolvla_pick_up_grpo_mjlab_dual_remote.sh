@@ -31,9 +31,11 @@ source "$SCRIPT_DIR/huggingface_public_models.sh"
 configure_huggingface_public_models
 configure_huggingface_offline
 
-timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-RUN_NAME="${RUN_NAME:-cdpr_smolvla_pick_up_warmstart_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
+# shellcheck source=scripts/run_naming.sh
+source "$SCRIPT_DIR/run_naming.sh"
+RUN_NAME="$(cdpr_compose_run_name "cdpr_smolvla_pick_up_warmstart_mjwarp_w${WORLDS_PER_RANK}")"
 RUN_DIR="$REPO_ROOT/runs/$RUN_NAME"
+cdpr_guard_run_dir "$RUN_DIR"
 
 if [[ -n "${CHECKPOINT:-}" || -n "${RLVLA_SMOLVLA_RESUME_CHECKPOINT:-}" ]]; then
   echo "This launcher warm-starts weights only; do not set CHECKPOINT/RLVLA_SMOLVLA_RESUME_CHECKPOINT." >&2
