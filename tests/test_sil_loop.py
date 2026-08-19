@@ -825,3 +825,59 @@ class VisionLoraWiringTests(unittest.TestCase):
             sil_loop._run = original
         sft = [c for c in seen if c[1].endswith("sil_sft.py")][0]
         self.assertIn("--train-vision-lora", sft)
+
+
+class SingleRoundVerdictTests(unittest.TestCase):
+    """One round is not a weak measurement; it is no measurement.
+
+    _paired cannot form a spread from a single pair, so it returns
+    resolved=False whatever the numbers are. A generic REJECT printed beside a
+    visible +0.07 delta reads as evidence against the candidate, which it is
+    not.
+    """
+
+    def _write(self, directory, rates, episodes=512):
+        import json
+
+        directory.mkdir(parents=True, exist_ok=True)
+        payload = {"mode": "record"}
+        for index, rate in enumerate(rates):
+            payload[f"run_{index:02d}"] = {
+                "by_instruction": {
+                    "move_to_object": {
+                        "episodes": episodes,
+                        "successes": int(round(rate * episodes)),
+                        "source_success_rate": float(rate),
+                    }
+                }
+            }
+        (directory / "summary_00.json").write_text(
+            json.dumps(payload), encoding="utf-8"
+        )
+
+    def test_one_round_says_it_cannot_decide(self):
+        import tempfile
+
+        from tools.audit.sil_loop import accept_or_reject
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base, cand = Path(tmp) / "b", Path(tmp) / "c"
+            self._write(base, [0.613])
+            self._write(cand, [0.685])
+            out = accept_or_reject(base, cand, instruction="move_to_object")
+        self.assertFalse(out["accepted"])
+        self.assertIn("--rounds 4", out["reason"])
+        self.assertAlmostEqual(out["delta"], 0.072, places=3)
+
+    def test_two_rounds_get_a_real_test(self):
+        import tempfile
+
+        from tools.audit.sil_loop import accept_or_reject
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base, cand = Path(tmp) / "b", Path(tmp) / "c"
+            self._write(base, [0.613, 0.600])
+            self._write(cand, [0.685, 0.690])
+            out = accept_or_reject(base, cand, instruction="move_to_object")
+        self.assertIn("resolved", out)
+        self.assertNotIn("--rounds 4", out["reason"])

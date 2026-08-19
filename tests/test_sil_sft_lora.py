@@ -441,3 +441,61 @@ class LoraStageWiringTests(unittest.TestCase):
         # expert list matches almost nothing rather than raising.
         self.assertIn("out_proj", source)
         self.assertIn("fc1,fc2", source)
+
+
+@unittest.skipUnless(
+    __import__("importlib.util", fromlist=["util"]).find_spec("torch"),
+    "torch is required",
+)
+class IntegrityControlTests(unittest.TestCase):
+    """A difference with no control is the mistake phase 3 paid a week for.
+
+    This recompute differs from the rollout in two expected ways -- the frames
+    went through a uint8 round trip, and the batch is a few rows against the
+    rollout's hundreds, which selects different bf16 kernels -- and in one fatal
+    way, the frames being the wrong pictures. The control shares the first two
+    and not the third.
+    """
+
+    def test_without_a_control_it_refuses_to_call_it(self):
+        import torch
+
+        from tools.audit.sil_sft import check_recomputed_vision
+
+        out = check_recomputed_vision(
+            torch.ones((2, 8)), torch.zeros((2, 8)), vision_dim=4, torch=torch
+        )
+        self.assertIn("uninterpretable", out["verdict"])
+
+    def test_a_difference_near_the_floor_is_the_round_trip(self):
+        import torch
+
+        from tools.audit.sil_sft import check_recomputed_vision
+
+        recorded = torch.zeros((1, 8))
+        recomputed = recorded.clone()
+        recomputed[:, -4:] += 0.10
+        control = recomputed.clone()
+        control[:, -4:] += 0.05  # floor of the same order as the headline
+        out = check_recomputed_vision(
+            recomputed, recorded, vision_dim=4, torch=torch,
+            control_state=control,
+        )
+        self.assertIn("consistent with", out["verdict"])
+        self.assertAlmostEqual(out["headline_over_control"], 2.0, places=3)
+
+    def test_a_difference_far_above_the_floor_accuses_the_frames(self):
+        import torch
+
+        from tools.audit.sil_sft import check_recomputed_vision
+
+        recorded = torch.zeros((1, 8))
+        recomputed = recorded.clone()
+        recomputed[:, -4:] += 1.00
+        control = recomputed.clone()
+        control[:, -4:] += 0.001  # a tight floor makes the headline damning
+        out = check_recomputed_vision(
+            recomputed, recorded, vision_dim=4, torch=torch,
+            control_state=control,
+        )
+        self.assertIn("NOT explained", out["verdict"])

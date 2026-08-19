@@ -665,6 +665,25 @@ def accept_or_reject(
             "candidate_episodes": c["per_round_episodes"],
         }
     paired = _paired(b["rates"], c["rates"])
+    if int(paired["n"]) < 2:
+        # _paired cannot compute a spread from one pair, so it returns
+        # resolved=False whatever the numbers are. Reported as the structural
+        # fact it is: a one-round comparison is not a weak measurement, it is
+        # no measurement, and "REJECT" beside a visible delta reads as one.
+        return {
+            "accepted": False,
+            "instruction": instruction,
+            "baseline_rate": round(_rate(b), 5),
+            "candidate_rate": round(_rate(c), 5),
+            "delta": round(float(paired["mean"]), 5),
+            "rounds": int(paired["n"]),
+            "reason": (
+                f"only {int(paired['n'])} round on each side -- the paired "
+                "test needs at least 2 to have a spread at all, so this can "
+                "never accept regardless of the delta. Re-run the evaluation "
+                "with --rounds 4."
+            ),
+        }
     accepted = bool(
         paired["resolved"]
         and paired["all_same_sign"]

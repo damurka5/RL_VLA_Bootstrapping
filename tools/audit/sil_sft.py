@@ -585,7 +585,12 @@ def recompute_state_and_prior(
 
 
 def check_recomputed_vision(
-    recomputed_state: Any, recorded_state: Any, *, vision_dim: int, torch: Any
+    recomputed_state: Any,
+    recorded_state: Any,
+    *,
+    vision_dim: int,
+    torch: Any,
+    control_state: Any | None = None,
 ) -> dict[str, float]:
     """M5: the pipeline check that costs one forward and catches everything.
 
@@ -598,6 +603,19 @@ def check_recomputed_vision(
     tap fired at the wrong point, the cameras are swapped, or the pooling mode
     differs from the run's. All three train the vision path on the wrong
     pictures while every loss curve looks normal.
+
+    ``control_state`` is the SAME rows recomputed a second time, at a different
+    batch size, from the same stored frames. Without it the headline number is
+    uninterpretable: this recompute differs from the rollout in two ways that
+    are expected and harmless -- the frames went through a uint8 round trip,
+    and the batch is a handful of rows against the rollout's hundreds, which
+    selects different bf16 kernels -- and in one way that is fatal, the frames
+    being the wrong pictures. The control shares the first two and not the
+    third, so it is the instrument's own noise floor and the headline only
+    means something as a multiple of it.
+
+    Phase 3 spent a week on two nulls that each certified a policy knowing
+    nothing. A lone difference with no control is the same mistake.
     """
 
     if int(vision_dim) <= 0:
@@ -606,14 +624,30 @@ def check_recomputed_vision(
     b = recorded_state[:, -int(vision_dim) :]
     diff = (a - b).abs()
     scale = b.abs().mean().clamp_min(1.0e-6)
-    return {
+    out = {
         "vision_max_abs_diff": float(diff.max().item()),
         "vision_mean_abs_diff": float(diff.mean().item()),
-        "vision_relative_mean_abs_diff": float(
-            (diff.mean() / scale).item()
-        ),
+        "vision_relative_mean_abs_diff": float((diff.mean() / scale).item()),
         "vision_dim": float(vision_dim),
     }
+    if control_state is None:
+        out["verdict"] = "no control -- the number above is uninterpretable"
+        return out
+    control = (control_state[:, -int(vision_dim) :] - a).abs()
+    floor = float(control.mean().item())
+    out["control_mean_abs_diff"] = floor
+    out["control_max_abs_diff"] = float(control.max().item())
+    # A headline within a few times the floor is the round trip and the
+    # kernels; an order of magnitude above it is the pictures.
+    ratio = out["vision_mean_abs_diff"] / max(floor, 1.0e-12)
+    out["headline_over_control"] = round(ratio, 3)
+    out["verdict"] = (
+        "consistent with the uint8 round trip and batch-size numerics"
+        if ratio <= 5.0
+        else "NOT explained by the round trip -- these are probably not the "
+        "frames the policy was given"
+    )
+    return out
 
 
 def train_lora_stage(
@@ -1125,8 +1159,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             dataset["state"][probe_rows], dtype=torch.float32,
             device=args.device,
         )
+        # The control: same rows, same stored frames, a different batch size.
+        with torch.no_grad():
+            _, control = recompute_state_and_prior(
+                runtime, torch,
+                overview=(
+                    torch.as_tensor(overview_np[:1], device=args.device)
+                    .to(torch.float32).div_(255.0).permute(0, 3, 1, 2).contiguous()
+                ),
+                wrist=(
+                    torch.as_tensor(wrist_np[:1], device=args.device)
+                    .to(torch.float32).div_(255.0).permute(0, 3, 1, 2).contiguous()
+                ),
+                proprio=torch.as_tensor(
+                    dataset["state"][probe_rows[:1], :proprio_dim],
+                    dtype=torch.float32, device=args.device,
+                ),
+                instructions=[
+                    str(t) for t in dataset["instruction_text"][probe_rows[:1]]
+                ],
+                vision_dim=vision_dim, enable_grad=False,
+            )
         integrity = check_recomputed_vision(
-            recomputed, recorded, vision_dim=vision_dim, torch=torch
+            recomputed[:1], recorded[:1], vision_dim=vision_dim, torch=torch,
+            control_state=control,
         )
         print(f"[sft][lora] frame/state integrity: {integrity}", flush=True)
 
