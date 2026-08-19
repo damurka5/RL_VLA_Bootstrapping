@@ -525,6 +525,7 @@ def harvest_iteration(
             "--dataset", str(dataset_dir / "demonstrations.npz"),
             "--checkpoint", str(checkpoint),
             "--frames", *[str(path) for path in frames],
+            "--train-vision-lora",
             "--lora-epochs", str(int(lora_epochs)),
             "--lora-row-fraction", str(float(lora_row_fraction)),
             "--output", str(sft_dir),

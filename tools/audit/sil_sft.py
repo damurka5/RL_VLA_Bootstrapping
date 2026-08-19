@@ -397,6 +397,21 @@ def build_resume_payload(
     survive untouched.
     """
 
+    # The written policy must occupy exactly the key space of the one it
+    # replaces. Two different modules are handed to this function -- a bare
+    # ResidualChunkActor (keys "net.net.*") and the trainer's SmolVLAGRPOPolicy
+    # (keys "log_std", "actor.net.net.*") -- and the caller is responsible for
+    # presenting either in the checkpoint's spelling. Getting it wrong is
+    # invisible here and surfaces two tools later as a load_state_dict error
+    # listing forty keys, after a whole harvest and an SFT have been paid for.
+    expected = set(dict(source.get("policy") or {}))
+    written = set(policy_state)
+    if expected and written != expected:
+        raise ValueError(
+            "The SFT policy state does not match the checkpoint's key space.\n"
+            f"  missing:    {sorted(expected - written)[:6]}\n"
+            f"  unexpected: {sorted(written - expected)[:6]}"
+        )
     payload = dict(source)
     payload["policy"] = {
         key: value.detach().cpu() if hasattr(value, "detach") else value
@@ -419,7 +434,11 @@ def build_resume_payload(
 
 
 def build_runtime_and_trainer(
-    payload: Mapping[str, Any], *, checkpoint: Path, device: str
+    payload: Mapping[str, Any],
+    *,
+    checkpoint: Path,
+    device: str,
+    train_vision_lora: bool = False,
 ) -> tuple[Any, Any, Any]:
     """The RL run's own SmolVLA runtime, LoRA and residual, rebuilt verbatim.
 
@@ -446,6 +465,22 @@ def build_runtime_and_trainer(
             "resume_checkpoint": None,
         }
     )
+    if train_vision_lora:
+        # The design turns the vision tower on at the FIRST SFT, not during RL:
+        # in RL the adapter sees 128 decision-0 records per update through a
+        # PPO objective through a ten-step flow expert, and here it sees every
+        # sampled decision under an MSE. But attach_vla_lora reads the flag off
+        # the checkpoint's args, and those come from the RL run that wrote it --
+        # where it is deliberately off. So it is set here, with the leaf names
+        # defaulted, because the tower uses out_proj and fc1/fc2 rather than the
+        # expert's o_proj and gate/up/down and reusing the expert list matches
+        # almost nothing.
+        values["train_vla_lora"] = True
+        values["train_vla_vision_lora"] = True
+        values.setdefault("lora_vision_name_contains", "vision")
+        values.setdefault(
+            "lora_vision_leaf_names", "q_proj,k_proj,v_proj,out_proj,fc1,fc2"
+        )
     args = Namespace(**values)
     runtime = load_smolvla_runtime(
         checkpoint=str(args.base_checkpoint),
@@ -756,6 +791,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "unconditional no_grad behind a fixed random projection."
         ),
     )
+    parser.add_argument(
+        "--train-vision-lora",
+        action="store_true",
+        help=(
+            "Adapt the SmolVLA vision tower during the LoRA stage. Off in the "
+            "RL config on purpose and turned on here: in RL the adapter sees "
+            "128 decision-0 records per update through PPO through a ten-step "
+            "flow expert, and here it sees every sampled decision under an "
+            "MSE. Read vla_lora/vision_modules in the attach line to confirm "
+            "it matched something -- a wrong leaf name matches nothing rather "
+            "than raising."
+        ),
+    )
     parser.add_argument("--lora-epochs", type=int, default=8)
     parser.add_argument("--lora-lr", type=float, default=0.0,
                         help="0 = take vla_lr from the checkpoint's args.")
@@ -1029,16 +1077,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         runtime, trainer, _ = build_runtime_and_trainer(
             payload, checkpoint=args.checkpoint.expanduser().resolve(),
             device=str(args.device),
+            train_vision_lora=bool(args.train_vision_lora),
         )
         base = trainer._unwrap(trainer.actor)
-        base.load_state_dict(
-            {
-                key[len("actor.") :]: value
-                for key, value in best_policy_state.items()
-                if key.startswith("actor.")
-            },
-            strict=False,
-        )
+        # best_policy_state is ALREADY in SmolVLAGRPOPolicy's key space --
+        # "log_std" plus "actor.net.net.*" -- because the residual stage put it
+        # there when it wrote its checkpoint. The first version stripped the
+        # "actor." prefix before loading, so nothing matched at all, and
+        # strict=False turned that into silence: the LoRA stage was starting
+        # from an UNTRAINED residual and there was no way to tell from the loss.
+        base.load_state_dict(best_policy_state, strict=True)
         # M5, before a single gradient step: the vision block recomputed from
         # the frames must match the block the dataset recorded. Anything else
         # means these are not the pictures the policy was given.
@@ -1105,10 +1153,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         torch.save(
             build_resume_payload(
                 payload,
-                policy_state={
-                    f"actor.{key}": value
-                    for key, value in base.state_dict().items()
-                },
+                # No prefix: base IS the policy, so its state_dict already
+                # reads "log_std" / "actor.net.net.*". Prefixing again produced
+                # "actor.log_std" / "actor.actor.net.net.*", which loaded
+                # nowhere.
+                policy_state=base.state_dict(),
                 lora_state=trainer._vla_lora_state_dict(),
                 note={
                     "dataset": str(args.dataset),

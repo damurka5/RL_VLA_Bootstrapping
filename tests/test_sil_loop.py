@@ -798,3 +798,30 @@ class LadderTopToleranceTests(unittest.TestCase):
             cap_promoted_since_sft=False,
         )
         self.assertFalse(decision.at_ladder_top)
+
+
+class VisionLoraWiringTests(unittest.TestCase):
+    """The design turns the tower on at the first SFT; the driver must ask."""
+
+    def test_the_driver_requests_the_vision_tower(self):
+        import tempfile
+
+        from tools.audit import sil_loop
+
+        seen = []
+        original = sil_loop._run
+        sil_loop._run = lambda command, dry_run: seen.append(list(command))
+        try:
+            with tempfile.TemporaryDirectory() as tmp:
+                (Path(tmp) / "replay").mkdir(parents=True)
+                sil_loop.harvest_iteration(
+                    checkpoint=Path("ckpt.pt"), config=Path("cfg.yaml"),
+                    output=Path(tmp), instruction="move_to_object",
+                    rungs=[0.03], rounds=1, smooth_window=5, seed_torch=0,
+                    frame_worlds=0, lora_epochs=1, lora_row_fraction=0.3,
+                    dry_run=True,
+                )
+        finally:
+            sil_loop._run = original
+        sft = [c for c in seen if c[1].endswith("sil_sft.py")][0]
+        self.assertIn("--train-vision-lora", sft)

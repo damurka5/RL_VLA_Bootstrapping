@@ -328,3 +328,116 @@ class JoinKeyAgreementTests(unittest.TestCase):
         self.assertEqual(int(overview[0, 0, 0, 0]), (2 * 16 + 9) % 256)
         self.assertEqual(int(overview[1, 0, 0, 0]), 5)
         self.assertEqual(int(wrist[1, 0, 0, 0]), 105)
+
+
+class PolicyKeySpaceTests(unittest.TestCase):
+    """The written policy must occupy the key space of the one it replaces.
+
+    Two different modules reach build_resume_payload: a bare ResidualChunkActor
+    with keys "net.net.*", and the trainer's SmolVLAGRPOPolicy with keys
+    "log_std" and "actor.net.net.*". The LoRA branch prefixed the second one a
+    second time, producing "actor.log_std" and "actor.actor.net.net.*". Nothing
+    complained until sil_record tried to load the result two tools later, after
+    a full harvest and an SFT had been paid for.
+    """
+
+    SOURCE_KEYS = ("log_std", "actor.net.net.0.weight", "actor.net.net.0.bias")
+
+    def _source(self):
+        return {
+            "policy": {key: 0 for key in self.SOURCE_KEYS},
+            "optimizer": {},
+            "extra_state": {},
+            "args": {},
+        }
+
+    def test_the_matching_key_space_is_accepted(self):
+        out = build_resume_payload(
+            self._source(),
+            policy_state={key: 1 for key in self.SOURCE_KEYS},
+            lora_state=None,
+            note={},
+        )
+        self.assertEqual(set(out["policy"]), set(self.SOURCE_KEYS))
+
+    def test_the_double_prefix_is_refused_where_it_is_made(self):
+        """The exact shape of the bug, named in the error."""
+
+        with self.assertRaises(ValueError) as caught:
+            build_resume_payload(
+                self._source(),
+                policy_state={
+                    f"actor.{key}": 1 for key in self.SOURCE_KEYS
+                },
+                lora_state=None,
+                note={},
+            )
+        message = str(caught.exception)
+        self.assertIn("actor.actor.net.net.0.bias", message)
+        self.assertIn("log_std", message)
+
+    def test_a_missing_key_is_refused_too(self):
+        """The residual stage must not drop log_std by forgetting to copy it."""
+
+        with self.assertRaises(ValueError):
+            build_resume_payload(
+                self._source(),
+                policy_state={
+                    key: 1 for key in self.SOURCE_KEYS if key != "log_std"
+                },
+                lora_state=None,
+                note={},
+            )
+
+    def test_a_source_without_a_policy_is_not_second_guessed(self):
+        out = build_resume_payload(
+            {"args": {}}, policy_state={"anything": 1}, lora_state=None, note={}
+        )
+        self.assertEqual(set(out["policy"]), {"anything"})
+
+
+class LoraStageWiringTests(unittest.TestCase):
+    """The two loads in the LoRA branch, pinned by source.
+
+    strict=False on the load turned a total key mismatch into silence: the
+    stage ran from an untrained residual and the loss curve looked normal.
+    """
+
+    def _source(self):
+        import inspect
+
+        from tools.audit import sil_sft
+
+        return inspect.getsource(sil_sft.main)
+
+    def test_the_residual_is_loaded_strictly(self):
+        import re
+
+        source = self._source()
+        self.assertIn(
+            "base.load_state_dict(best_policy_state, strict=True)", source
+        )
+        # Matched as a CALL, not as a substring: the comment above that line
+        # names strict=False as the bug it fixes, and a bare substring test
+        # would fail on the explanation rather than on the code.
+        self.assertEqual(
+            re.findall(r"load_state_dict\([^)]*strict\s*=\s*False", source), []
+        )
+
+    def test_the_policy_is_saved_without_a_second_prefix(self):
+        source = self._source()
+        self.assertIn("policy_state=base.state_dict()", source)
+
+    def test_the_vision_tower_can_be_turned_on_for_the_sft_stage(self):
+        """The RL config leaves it off; the design turns it on here."""
+
+        import inspect
+
+        from tools.audit import sil_sft
+
+        source = inspect.getsource(sil_sft.build_runtime_and_trainer)
+        self.assertIn('values["train_vla_vision_lora"] = True', source)
+        # The tower's leaf names differ from the expert's, and reusing the
+        # expert list matches almost nothing rather than raising.
+        self.assertIn("out_proj", source)
+        self.assertIn("fc1,fc2", source)
