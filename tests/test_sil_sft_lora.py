@@ -432,11 +432,19 @@ class LoraStageWiringTests(unittest.TestCase):
         self.assertIn(
             "base.load_state_dict(best_policy_state, strict=True)", source
         )
-        # Matched as a CALL, not as a substring: the comment above that line
-        # names strict=False as the bug it fixes, and a bare substring test
-        # would fail on the explanation rather than on the code.
+        # Scoped to the RESIDUAL load. strict=False is correct on the LoRA
+        # state -- it deliberately holds only lora_* keys, which is the same
+        # contract _load_vla_lora_state uses -- so a blanket ban would forbid
+        # the right thing along with the wrong one.
         self.assertEqual(
-            re.findall(r"load_state_dict\([^)]*strict\s*=\s*False", source), []
+            re.findall(
+                r"base\.load_state_dict\([^)]*strict\s*=\s*False", source
+            ),
+            [],
+        )
+        self.assertIn(
+            'runtime.policy.load_state_dict(best_state["lora"], strict=False)',
+            source,
         )
 
     def test_the_policy_is_saved_without_a_second_prefix(self):
@@ -628,3 +636,50 @@ class FrameMemoryTests(unittest.TestCase):
         self.assertEqual(int(overview[0, 0, 0, 0]), (2 * 16 + 4) % 256)
         self.assertEqual(int(overview[1, 0, 0, 0]), 1)
         self.assertEqual(int(overview[2, 0, 0, 0]), 16)
+
+
+class LoraSelectionTests(unittest.TestCase):
+    """The stage must not write a checkpoint worse than the one it started from.
+
+    The first real run diverged -- train loss rising from epoch 1, validation
+    64% above its own baseline -- and the file left on disk was that stage's
+    WORST epoch, because there was no model selection at all.
+    """
+
+    def _source(self):
+        import inspect
+
+        from tools.audit import sil_sft
+
+        return inspect.getsource(sil_sft)
+
+    def test_the_baseline_is_a_candidate(self):
+        """If nothing beats the starting point, applying nothing is the answer."""
+
+        source = self._source()
+        self.assertIn('best = float(baseline["mse"])', source)
+        self.assertIn("best_state: dict[str, Any] | None = None", source)
+
+    def test_the_best_epoch_is_snapshotted_not_the_last(self):
+        source = self._source()
+        self.assertIn('improved = float(metrics["mse"]) < best', source)
+        self.assertIn('"lora": {', source)
+        self.assertIn('"actor": {', source)
+
+    def test_no_improvement_means_no_write(self):
+        source = self._source()
+        self.assertIn('if lora_report["applied"]:', source)
+        self.assertIn("as the \"\n                \"residual-only checkpoint", source)
+
+    def test_the_two_rates_are_separate(self):
+        """The adapter takes 512x the steps of an RL update; one rate is wrong."""
+
+        source = self._source()
+        self.assertIn('{"params": lora_params, "lr": float(lr)}', source)
+        self.assertIn('"lr": float(actor_lr)', source)
+
+    def test_the_default_lora_rate_is_below_the_rl_rate(self):
+        source = self._source()
+        self.assertIn(
+            'float(dict(payload["args"]).get("vla_lr", 1.0e-5)) / 10.0', source
+        )

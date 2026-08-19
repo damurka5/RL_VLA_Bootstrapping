@@ -759,6 +759,7 @@ def train_lora_stage(
     kl_coef: float,
     microbatch: int,
     seed: int,
+    actor_lr: float,
 ) -> dict[str, Any]:
     """Fit LoRA + residual through a grad-carrying SmolVLA forward.
 
@@ -771,8 +772,18 @@ def train_lora_stage(
     proprio_dim = int(dataset["state"].shape[-1]) - int(vision_dim)
     slots = int(dataset["action"].shape[1])
     lora_params = list(trainer.vla_lora_params)
+    # Two groups, two rates. The adapter and the residual are at different
+    # points in their lives here: the residual has just been fitted to
+    # convergence, and the adapter is about to take 512 times the optimizer
+    # steps of a single RL update (8192 rows x 8 epochs / microbatch 4 = 16384
+    # steps, against 128 records / 4 = 32 per update). Running both at RL's
+    # per-update rate is what made the first attempt diverge -- train loss ROSE
+    # from epoch 1 and validation went 64% worse than its own starting point.
     optimizer = torch.optim.AdamW(
-        lora_params + list(actor.parameters()), lr=float(lr)
+        [
+            {"params": lora_params, "lr": float(lr)},
+            {"params": list(actor.parameters()), "lr": float(actor_lr)},
+        ]
     )
     generator = np.random.default_rng(int(seed))
     history: list[dict[str, Any]] = []
@@ -840,6 +851,11 @@ def train_lora_stage(
 
     baseline = evaluate(rows_val)
     print(f"[sft][lora] untrained baseline on frames: {baseline}", flush=True)
+    # The starting point is a real candidate: if no epoch beats it, the right
+    # answer is to apply no LoRA at all rather than the last thing computed.
+    best = float(baseline["mse"])
+    best_epoch = -1
+    best_state: dict[str, Any] | None = None
 
     train_rows = np.flatnonzero(rows_train)
     for epoch in range(int(epochs)):
@@ -859,12 +875,46 @@ def train_lora_stage(
         history.append(
             {"epoch": epoch, "loss": round(running / max(batches, 1), 8), **metrics}
         )
+        improved = float(metrics["mse"]) < best
+        if improved:
+            best = float(metrics["mse"])
+            best_epoch = epoch
+            best_state = {
+                "actor": {
+                    key: value.detach().cpu().clone()
+                    for key, value in actor.state_dict().items()
+                },
+                "lora": {
+                    key: value.detach().cpu().clone()
+                    for key, value in
+                    (trainer._vla_lora_state_dict() or {}).items()
+                },
+            }
         print(
             f"[sft][lora] epoch {epoch:3d} loss={running / max(batches, 1):.6f} "
-            f"val_mse={metrics['mse']:.6f} val_kl={metrics['kl']:.6f}",
+            f"val_mse={metrics['mse']:.6f} val_kl={metrics['kl']:.6f}"
+            f"{'  <- best' if improved else ''}",
+            flush=True,
+        )
+    if best_state is None:
+        print(
+            "[sft][lora] NO epoch beat the starting point "
+            f"({baseline['mse']}). The adapter is not applied and the "
+            "residual-only checkpoint stands. Lower --lora-lr or --lora-epochs "
+            "before reading this as 'LoRA does not help' -- a rising TRAIN "
+            "loss means the step size is wrong, not that the data is.",
+            flush=True,
+        )
+    else:
+        print(
+            f"[sft][lora] best epoch {best_epoch} at val_mse {best}",
             flush=True,
         )
     return {
+        "best_epoch": best_epoch,
+        "best_val_mse": best,
+        "applied": best_state is not None,
+        "state": best_state,
         "rows_per_epoch": int(train_rows.size),
         "rows_train": int(train_rows.size),
         "baseline": baseline,
@@ -932,8 +982,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--lora-epochs", type=int, default=8)
-    parser.add_argument("--lora-lr", type=float, default=0.0,
-                        help="0 = take vla_lr from the checkpoint's args.")
+    parser.add_argument(
+        "--lora-lr",
+        type=float,
+        default=0.0,
+        help=(
+            "0 = one TENTH of the checkpoint's vla_lr. Not vla_lr itself: that "
+            "rate is calibrated for 32 optimizer steps per RL update under a "
+            "PPO objective with a KL term holding it, and this stage takes "
+            "16384 under an MSE. At the full rate the first run's TRAIN loss "
+            "rose from epoch 1 and validation ended 64% above its own starting "
+            "point. A starting point to be measured, not a tuned value."
+        ),
+    )
+    parser.add_argument(
+        "--lora-actor-lr",
+        type=float,
+        default=0.0,
+        help=(
+            "Residual learning rate DURING the LoRA stage; 0 = one tenth of "
+            "--lr. The residual arrives here converged, and its job in this "
+            "stage is to track a moving prior rather than to refit."
+        ),
+    )
     parser.add_argument(
         "--lora-kl-coef",
         type=float,
@@ -1314,39 +1385,57 @@ def main(argv: Sequence[str] | None = None) -> int:
             vision_dim=vision_dim, device=torch.device(str(args.device)),
             epochs=int(args.lora_epochs),
             lr=float(args.lora_lr)
-            or float(dict(payload["args"]).get("vla_lr", 1.0e-5)),
+            or float(dict(payload["args"]).get("vla_lr", 1.0e-5)) / 10.0,
             kl_coef=float(args.lora_kl_coef),
             microbatch=int(args.lora_microbatch),
             seed=int(args.seed),
+            actor_lr=float(args.lora_actor_lr) or float(args.lr) / 10.0,
         )
         lora_report["frame_state_integrity"] = integrity
         lora_report["rows_with_frames"] = int(found.sum())
         lora_report["rows_in_budget"] = int(budget_rows.size)
         lora_report["frames_held_gb"] = round(held, 3)
-        torch.save(
-            build_resume_payload(
-                payload,
-                # No prefix: base IS the policy, so its state_dict already
-                # reads "log_std" / "actor.net.net.*". Prefixing again produced
-                # "actor.log_std" / "actor.actor.net.net.*", which loaded
-                # nowhere.
-                policy_state=base.state_dict(),
-                lora_state=trainer._vla_lora_state_dict(),
-                note={
-                    "dataset": str(args.dataset),
-                    "source_checkpoint": str(args.checkpoint),
-                    "trained": "residual+vla_lora",
-                    "lora_epochs": int(args.lora_epochs),
-                    "kl_coef": float(args.lora_kl_coef),
-                },
-            ),
-            output / "sil_sft_adapter.pt",
-        )
-        print(
-            f"[sft][lora] wrote {output / 'sil_sft_adapter.pt'} "
-            "(residual + LoRA, optimizer states dropped for a clean resume)",
-            flush=True,
-        )
+        best_state = lora_report.pop("state", None)
+        if best_state is not None:
+            base.load_state_dict(best_state["actor"], strict=True)
+            if best_state["lora"]:
+                runtime.policy.load_state_dict(best_state["lora"], strict=False)
+        if lora_report["applied"]:
+            torch.save(
+                build_resume_payload(
+                    payload,
+                    # No prefix: base IS the policy, so its state_dict already
+                    # reads "log_std" / "actor.net.net.*".
+                    policy_state=base.state_dict(),
+                    lora_state=trainer._vla_lora_state_dict(),
+                    note={
+                        "dataset": str(args.dataset),
+                        "source_checkpoint": str(args.checkpoint),
+                        "trained": "residual+vla_lora",
+                        "lora_epochs": int(args.lora_epochs),
+                        "lora_best_epoch": lora_report["best_epoch"],
+                        "kl_coef": float(args.lora_kl_coef),
+                    },
+                ),
+                output / "sil_sft_adapter.pt",
+            )
+            print(
+                f"[sft][lora] wrote {output / 'sil_sft_adapter.pt'} "
+                f"(residual + LoRA from epoch {lora_report['best_epoch']}, "
+                "optimizer states dropped for a clean resume)",
+                flush=True,
+            )
+        else:
+            # The residual-only checkpoint written by the stage above is left
+            # exactly where it is. Overwriting it with a diverged adapter is
+            # what the first run did, and the file left on disk was that
+            # stage's WORST epoch.
+            print(
+                f"[sft][lora] left {output / 'sil_sft_adapter.pt'} as the "
+                "residual-only checkpoint; no adapter was applied.",
+                flush=True,
+            )
+
 
     report = {
         "dataset": str(args.dataset),
