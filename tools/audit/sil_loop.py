@@ -440,7 +440,7 @@ def harvest_iteration(
     seed_torch: int,
     frame_worlds: int,
     lora_epochs: int,
-    lora_row_fraction: float,
+    lora_rows: int,
     dry_run: bool,
 ) -> dict[str, Any]:
     """Record a ladder, replay each round smoothed with frames, pool a dataset."""
@@ -527,7 +527,7 @@ def harvest_iteration(
             "--frames", *[str(path) for path in frames],
             "--train-vision-lora",
             "--lora-epochs", str(int(lora_epochs)),
-            "--lora-row-fraction", str(float(lora_row_fraction)),
+            "--lora-rows", str(int(lora_rows)),
             "--output", str(sft_dir),
         ],
         dry_run=dry_run,
@@ -854,7 +854,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--seed-torch", type=int, default=0)
     parser.add_argument("--frame-worlds", type=int, default=0)
     parser.add_argument("--lora-epochs", type=int, default=8)
-    parser.add_argument("--lora-row-fraction", type=float, default=0.3)
+    parser.add_argument("--lora-rows", type=int, default=8192)
     parser.add_argument(
         "--poll-seconds",
         type=float,
@@ -944,7 +944,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         seed_torch=int(args.seed_torch),
         frame_worlds=int(args.frame_worlds),
         lora_epochs=int(args.lora_epochs),
-        lora_row_fraction=float(args.lora_row_fraction),
+        lora_rows=int(args.lora_rows),
         dry_run=bool(args.dry_run),
     )
     report_payload["trigger"] = asdict(decision)

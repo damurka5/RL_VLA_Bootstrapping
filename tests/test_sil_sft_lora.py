@@ -20,33 +20,48 @@ if str(ROOT) not in sys.path:
 
 from tools.audit.sil_sft import (  # noqa: E402
     build_resume_payload,
-    frames_for_rows,
-    load_frame_index,
+    load_frame_meta,
+    materialize_frames,
+    projected_frame_bytes,
     resolve_frame_rows,
+    select_frame_budget,
 )
 
 
-def _frames(stem, *, worlds, decisions, height=2, width=3):
+def _write_frames(directory, stem, *, worlds, decisions, height=2, width=3):
+    """A real frames_<stem>.npz, written the way sil_record writes one."""
+
     overview = np.zeros((decisions, len(worlds), height, width, 3), np.uint8)
     wrist = np.zeros_like(overview)
     for d in range(decisions):
         for i, w in enumerate(worlds):
             overview[d, i] = (d * 16 + w) % 256
             wrist[d, i] = (d * 16 + w + 100) % 256
-    return {
-        stem: {
-            "path": f"frames_{stem}.npz",
-            "overview": overview,
-            "wrist": wrist,
-            "world_column": {int(w): i for i, w in enumerate(worlds)},
-            "decisions": decisions,
-        }
-    }
+    path = Path(directory) / f"frames_{stem}.npz"
+    np.savez_compressed(
+        path,
+        overview=overview,
+        wrist=wrist,
+        world_index=np.asarray(worlds, dtype=np.int64),
+        decisions=np.asarray(decisions, dtype=np.int64),
+    )
+    return path
+
+
+def _meta(stem, *, worlds, decisions, height=2, width=3, directory=None):
+    import tempfile
+
+    directory = directory or tempfile.mkdtemp()
+    path = _write_frames(
+        directory, stem, worlds=worlds, decisions=decisions,
+        height=height, width=width,
+    )
+    return load_frame_meta([path])
 
 
 class FrameJoinTests(unittest.TestCase):
     def test_rows_resolve_to_their_own_world_and_decision(self):
-        frames = _frames("cap_0.030_record_00", worlds=[2, 5], decisions=4)
+        frames = _meta("cap_0.030_record_00", worlds=[2, 5], decisions=4)
         uid = np.array(
             [
                 "cap_0.030_record_00/r0w2",
@@ -65,7 +80,7 @@ class FrameJoinTests(unittest.TestCase):
                 ("cap_0.030_record_00", 3, 0),
             ],
         )
-        overview, _ = frames_for_rows(lookups, frames, [0, 1, 2])
+        overview, _ = materialize_frames(frames, lookups, [0, 1, 2])
         self.assertEqual(int(overview[0, 0, 0, 0]), 2)
         self.assertEqual(int(overview[1, 0, 0, 0]), 16 + 5)
         self.assertEqual(int(overview[2, 0, 0, 0]), 3 * 16 + 2)
@@ -73,14 +88,14 @@ class FrameJoinTests(unittest.TestCase):
     def test_a_world_without_frames_is_dropped_not_filled(self):
         """--frame-worlds caps the set; inventing a frame trains on the wrong episode."""
 
-        frames = _frames("s", worlds=[2], decisions=4)
+        frames = _meta("s", worlds=[2], decisions=4)
         uid = np.array(["s/r0w2", "s/r0w9"])
         keep, lookups = resolve_frame_rows(uid, np.array([0, 0]), frames)
         self.assertEqual(list(keep), [True, False])
         self.assertEqual(len(lookups), 1)
 
     def test_a_decision_past_the_recorded_horizon_is_dropped(self):
-        frames = _frames("s", worlds=[0], decisions=2)
+        frames = _meta("s", worlds=[0], decisions=2)
         keep, _ = resolve_frame_rows(
             np.array(["s/r0w0", "s/r0w0"]), np.array([1, 5]), frames
         )
@@ -94,7 +109,7 @@ class FrameJoinTests(unittest.TestCase):
         merged distinct episodes and split one across train and validation.
         """
 
-        frames = _frames("cap_0.030_record_00", worlds=[0], decisions=2)
+        frames = _meta("cap_0.030_record_00", worlds=[0], decisions=2)
         keep, _ = resolve_frame_rows(
             np.array(["cap_0.050_record_00/r0w0"]), np.array([0]), frames
         )
@@ -102,7 +117,7 @@ class FrameJoinTests(unittest.TestCase):
 
     def test_the_loader_rejects_a_file_that_is_not_a_frames_npz(self):
         with self.assertRaises(SystemExit):
-            load_frame_index([Path("replay_cap_0.030_record_00.npz")])
+            load_frame_meta([Path("replay_cap_0.030_record_00.npz")])
 
 
 class ResumePayloadTests(unittest.TestCase):
@@ -279,7 +294,7 @@ class JoinKeyAgreementTests(unittest.TestCase):
     def test_the_real_pair_of_names_joins_end_to_end(self):
         from tools.audit.sil_sft import resolve_frame_rows
 
-        frames = _frames(self.REPLAY_STEM, worlds=[5], decisions=3)
+        frames = _meta(self.REPLAY_STEM, worlds=[5], decisions=3)
         uid = np.array([f"replay/replay_{self.REPLAY_STEM}/r0w5"])
         keep, lookups = resolve_frame_rows(uid, np.array([1]), frames)
         self.assertTrue(keep.all(), "the real naming pair failed to join")
@@ -313,9 +328,9 @@ class JoinKeyAgreementTests(unittest.TestCase):
         raises on the gather -- past every check and into the training loop.
         """
 
-        from tools.audit.sil_sft import frames_for_rows, resolve_frame_rows
+        from tools.audit.sil_sft import materialize_frames, resolve_frame_rows
 
-        frames = _frames(self.REPLAY_STEM, worlds=[5, 9], decisions=3)
+        frames = _meta(self.REPLAY_STEM, worlds=[5, 9], decisions=3)
         uid = np.array(
             [
                 f"replay/replay_{self.REPLAY_STEM}/r0w9",
@@ -324,7 +339,7 @@ class JoinKeyAgreementTests(unittest.TestCase):
         )
         keep, lookups = resolve_frame_rows(uid, np.array([2, 0]), frames)
         self.assertTrue(keep.all())
-        overview, wrist = frames_for_rows(lookups, frames, [0, 1])
+        overview, wrist = materialize_frames(frames, lookups, [0, 1])
         self.assertEqual(int(overview[0, 0, 0, 0]), (2 * 16 + 9) % 256)
         self.assertEqual(int(overview[1, 0, 0, 0]), 5)
         self.assertEqual(int(wrist[1, 0, 0, 0]), 105)
@@ -484,7 +499,7 @@ class IntegrityControlTests(unittest.TestCase):
         self.assertIn("consistent with", out["verdict"])
         self.assertAlmostEqual(out["headline_over_control"], 2.0, places=3)
 
-    def test_a_difference_far_above_the_floor_accuses_the_frames(self):
+    def test_a_difference_far_above_the_floor_accuses_the_meta(self):
         import torch
 
         from tools.audit.sil_sft import check_recomputed_vision
@@ -499,3 +514,117 @@ class IntegrityControlTests(unittest.TestCase):
             control_state=control,
         )
         self.assertIn("NOT explained", out["verdict"])
+
+
+class FrameMemoryTests(unittest.TestCase):
+    """The loader must not hold the harvest. It once asked for 81 GB.
+
+    Nine rungs, four rounds, uncapped worlds: every file's overview and wrist
+    materialised up front, and the kernel's OOM killer took the process after
+    the residual stage had already finished. The arithmetic was in the frame
+    tap's own docstring -- 236 MB per decision at 512 worlds -- and nobody
+    multiplied it by thirty-six files where it mattered.
+    """
+
+    def test_the_index_reads_no_pictures(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_frames(tmp, "cap_0.030_record_00", worlds=[0, 1], decisions=4)
+            meta = load_frame_meta([Path(tmp) / "frames_cap_0.030_record_00.npz"])
+        entry = meta["cap_0.030_record_00"]
+        self.assertEqual(entry["decisions"], 4)
+        self.assertEqual(sorted(entry["world_column"]), [0, 1])
+        self.assertNotIn("overview", entry)
+        self.assertNotIn("wrist", entry)
+
+    def test_the_decision_count_survives_without_the_stored_field(self):
+        """Frames written before the field existed still index cheaply."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = _write_frames(tmp, "s", worlds=[0], decisions=5)
+            with np.load(path, allow_pickle=False) as data:
+                payload = {k: data[k] for k in data.files if k != "decisions"}
+            np.savez_compressed(path, **payload)
+            meta = load_frame_meta([path])
+        self.assertEqual(meta["s"]["decisions"], 5)
+
+    def test_the_projection_matches_the_arithmetic(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_frames(tmp, "s", worlds=[0, 1, 2], decisions=4)
+            meta = load_frame_meta([Path(tmp) / "frames_s.npz"])
+        self.assertEqual(
+            projected_frame_bytes(meta, height=240, width=320),
+            4 * 3 * 2 * 240 * 320 * 3,
+        )
+
+    def test_the_budget_bounds_what_is_held(self):
+        found = np.zeros(1000, dtype=bool)
+        found[::2] = True  # 500 resolved
+        chosen = select_frame_budget(found, budget=64, seed=0)
+        self.assertEqual(chosen.size, 64)
+        self.assertTrue(set(chosen.tolist()) <= set(np.flatnonzero(found).tolist()))
+        # Sorted, so the per-file gather stays sequential.
+        self.assertTrue(np.all(np.diff(chosen) > 0))
+
+    def test_a_budget_larger_than_the_harvest_takes_everything(self):
+        found = np.zeros(10, dtype=bool)
+        found[:3] = True
+        self.assertEqual(
+            list(select_frame_budget(found, budget=100, seed=0)), [0, 1, 2]
+        )
+
+    def test_zero_means_unbounded_and_is_still_reachable(self):
+        found = np.ones(5, dtype=bool)
+        self.assertEqual(
+            list(select_frame_budget(found, budget=0, seed=0)), [0, 1, 2, 3, 4]
+        )
+
+    def test_the_budget_is_stable_across_epochs(self):
+        """Drawn once, so the pictures are loaded once."""
+
+        found = np.ones(500, dtype=bool)
+        a = select_frame_budget(found, budget=32, seed=7)
+        b = select_frame_budget(found, budget=32, seed=7)
+        self.assertEqual(list(a), list(b))
+
+    def test_materialise_touches_only_the_files_it_needs(self):
+        """One rung's rows must not open the other eight files."""
+
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = [
+                _write_frames(tmp, f"cap_0.0{n}0_record_00", worlds=[0],
+                              decisions=2)
+                for n in (3, 5, 7)
+            ]
+            meta = load_frame_meta(paths)
+            missing = dict(meta)
+            # Point the two unwanted files at a path that does not exist: if
+            # materialize_frames opens them, this raises.
+            for key in ("cap_0.050_record_00", "cap_0.070_record_00"):
+                missing[key] = dict(meta[key], path="/nonexistent.npz")
+            lookups = [("cap_0.030_record_00", 1, 0)]
+            overview, wrist = materialize_frames(missing, lookups, [0])
+        self.assertEqual(overview.shape[0], 1)
+        self.assertEqual(int(overview[0, 0, 0, 0]), (1 * 16 + 0) % 256)
+
+    def test_materialise_keeps_the_requested_order(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmp:
+            _write_frames(tmp, "a", worlds=[0, 1], decisions=3)
+            _write_frames(tmp, "b", worlds=[4], decisions=3)
+            meta = load_frame_meta(
+                [Path(tmp) / "frames_a.npz", Path(tmp) / "frames_b.npz"]
+            )
+            lookups = [("b", 2, 0), ("a", 0, 1), ("a", 1, 0)]
+            overview, _ = materialize_frames(meta, lookups, [0, 1, 2])
+        self.assertEqual(int(overview[0, 0, 0, 0]), (2 * 16 + 4) % 256)
+        self.assertEqual(int(overview[1, 0, 0, 0]), 1)
+        self.assertEqual(int(overview[2, 0, 0, 0]), 16)

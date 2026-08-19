@@ -285,9 +285,42 @@ def frame_join_key(name: str) -> str:
     return tail
 
 
-def load_frame_index(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
-    """Open every frames_<X>.npz and key it by the identity it shares with the
-    replay it was written beside. See frame_join_key."""
+def _npz_member_shape(path: Path, member: str) -> tuple[int, ...]:
+    """The shape of one npz member, without decompressing the array.
+
+    An npz is a zip of .npy files, and a .npy begins with a header giving the
+    shape. Reading the first kilobyte of the member's decompressed stream is
+    enough, which matters here: the arrays are gigabytes and all that is wanted
+    is how many decisions they hold.
+    """
+
+    import zipfile
+
+    with zipfile.ZipFile(path) as archive:
+        with archive.open(f"{member}.npy") as stream:
+            version = np.lib.format.read_magic(stream)
+            if version[0] == 1:
+                shape, _, _ = np.lib.format.read_array_header_1_0(stream)
+            else:
+                shape, _, _ = np.lib.format.read_array_header_2_0(stream)
+    return tuple(int(value) for value in shape)
+
+
+def load_frame_meta(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
+    """Index the frames files WITHOUT loading a single picture.
+
+    The first version of this loaded every file's overview and wrist arrays up
+    front. One iteration's harvest -- nine rungs, four rounds, uncapped worlds
+    -- is 81 GB uncompressed, and the process was killed by the kernel's OOM
+    killer after the residual stage had already finished. The arithmetic was
+    available (a full round is 236 MB per decision at 512 worlds and two
+    cameras, and it is written in the frame tap's own docstring); nobody
+    multiplied it by thirty-six files at the point where it mattered.
+
+    So the index carries only what the join needs -- which worlds a file holds
+    and how many decisions -- and the pictures are fetched later, for a bounded
+    set of rows.
+    """
 
     index: dict[str, dict[str, Any]] = {}
     for path in paths:
@@ -296,19 +329,19 @@ def load_frame_index(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
             raise SystemExit(
                 f"{path} is not a frames_<stem>.npz written by sil_record."
             )
-        stem = frame_join_key(name)
         with np.load(path, allow_pickle=False) as data:
-            payload = {key: data[key] for key in data.files}
-        column = {
-            int(world): position
-            for position, world in enumerate(payload["world_index"])
-        }
-        index[stem] = {
+            worlds = np.asarray(data["world_index"])
+            decisions = (
+                int(data["decisions"]) if "decisions" in data.files else None
+            )
+        if decisions is None:
+            decisions = int(_npz_member_shape(Path(path), "overview")[0])
+        index[frame_join_key(name)] = {
             "path": str(path),
-            "overview": payload["overview"],
-            "wrist": payload["wrist"],
-            "world_column": column,
-            "decisions": int(payload["overview"].shape[0]),
+            "world_column": {
+                int(world): position for position, world in enumerate(worlds)
+            },
+            "decisions": int(decisions),
         }
     return index
 
@@ -318,20 +351,22 @@ def resolve_frame_rows(
     decision_index: np.ndarray,
     frames: Mapping[str, Mapping[str, Any]],
 ) -> tuple[np.ndarray, list[tuple[str, int, int]]]:
-    """Map each demonstration row to (stem, decision, world column).
+    """Map each demonstration row to (join key, decision, world column).
 
     Returns a mask of the rows that FOUND a frame and the lookups for them.
     Rows are dropped rather than filled: a missing frame means the replay that
     produced the row kept no pictures for that world (``--frame-worlds`` capped
     it, or the world failed the replay), and inventing one would train the
     vision path on a picture from a different episode.
+
+    Takes only the metadata index, so nothing is read from disk here.
     """
 
     keep = np.zeros(episode_uid.shape[0], dtype=bool)
     lookups: list[tuple[str, int, int]] = []
     for row, (uid, decision) in enumerate(zip(episode_uid, decision_index)):
         raw_stem, _, tail = str(uid).rpartition("/")
-        # The NORMALISED key travels in the lookup, because frames_for_rows
+        # The NORMALISED key travels in the lookup, because materialize_frames
         # indexes the frame index with it. Carrying the raw uid prefix here
         # would resolve the row and then raise a KeyError on the gather.
         stem = frame_join_key(raw_stem)
@@ -349,26 +384,82 @@ def resolve_frame_rows(
     return keep, lookups
 
 
-def frames_for_rows(
+def projected_frame_bytes(
+    meta: Mapping[str, Mapping[str, Any]], height: int = 240, width: int = 320
+) -> int:
+    """What loading every frame in the index would cost in RAM."""
+
+    total = 0
+    for entry in meta.values():
+        total += (
+            int(entry["decisions"])
+            * len(entry["world_column"])
+            * 2
+            * int(height)
+            * int(width)
+            * 3
+        )
+    return total
+
+
+def materialize_frames(
+    meta: Mapping[str, Mapping[str, Any]],
     lookups: Sequence[tuple[str, int, int]],
-    frames: Mapping[str, Mapping[str, Any]],
     rows: Sequence[int],
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Gather (overview, wrist) uint8 batches for a set of resolved rows."""
+    """Load the pictures for a BOUNDED set of resolved rows and nothing else.
 
-    overview = np.stack(
-        [
-            frames[lookups[row][0]]["overview"][lookups[row][1], lookups[row][2]]
-            for row in rows
-        ]
-    )
-    wrist = np.stack(
-        [
-            frames[lookups[row][0]]["wrist"][lookups[row][1], lookups[row][2]]
-            for row in rows
-        ]
-    )
+    One pass per file that any selected row lands in: decompress it once, take
+    the slices, release it. Peak memory is one file plus the result, instead of
+    every file at once.
+    """
+
+    wanted: dict[str, list[tuple[int, int, int]]] = {}
+    for position, row in enumerate(rows):
+        key, decision, column = lookups[row]
+        wanted.setdefault(key, []).append((position, decision, column))
+    if not rows:
+        empty = np.zeros((0, 0, 0, 3), dtype=np.uint8)
+        return empty, empty.copy()
+
+    overview: np.ndarray | None = None
+    wrist: np.ndarray | None = None
+    for key, items in wanted.items():
+        with np.load(meta[key]["path"], allow_pickle=False) as data:
+            source_overview = data["overview"]
+            source_wrist = data["wrist"]
+            if overview is None:
+                shape = (len(rows),) + tuple(source_overview.shape[2:])
+                overview = np.empty(shape, dtype=source_overview.dtype)
+                wrist = np.empty(shape, dtype=source_wrist.dtype)
+            for position, decision, column in items:
+                overview[position] = source_overview[decision, column]
+                wrist[position] = source_wrist[decision, column]
+            del source_overview, source_wrist
     return overview, wrist
+
+
+def select_frame_budget(
+    found: np.ndarray, *, budget: int, seed: int
+) -> np.ndarray:
+    """Which resolved rows the LoRA stage will actually see, chosen once.
+
+    A budget in ROWS, not a fraction of the harvest, because it is the only
+    knob that bounds memory: the pictures for the selected rows are held for
+    the whole stage, at 2 x 240 x 320 x 3 bytes each. A fraction scales with
+    the harvest and the harvest scales with the ladder, which is how one
+    iteration came to ask for 81 GB.
+
+    Drawn once and reused across epochs rather than resampled per epoch, so the
+    frames are loaded once. That costs some sample diversity and buys a bound;
+    at 8192 rows against ~120k resolved, the alternative is loading the lot.
+    """
+
+    resolved = np.flatnonzero(found)
+    if budget <= 0 or resolved.size <= int(budget):
+        return resolved
+    generator = np.random.default_rng(int(seed))
+    return np.sort(generator.choice(resolved, size=int(budget), replace=False))
 
 
 # --------------------------------------------------------------------------
@@ -657,8 +748,8 @@ def train_lora_stage(
     trainer: Any,
     actor: Any,
     dataset: Mapping[str, np.ndarray],
-    frames: Mapping[str, Mapping[str, Any]],
-    lookups: Sequence[tuple[str, int, int]],
+    overview_all: np.ndarray,
+    wrist_all: np.ndarray,
     rows_train: np.ndarray,
     rows_val: np.ndarray,
     vision_dim: int,
@@ -667,7 +758,6 @@ def train_lora_stage(
     lr: float,
     kl_coef: float,
     microbatch: int,
-    row_fraction: float,
     seed: int,
 ) -> dict[str, Any]:
     """Fit LoRA + residual through a grad-carrying SmolVLA forward.
@@ -688,7 +778,11 @@ def train_lora_stage(
     history: list[dict[str, Any]] = []
 
     def batch_loss(rows: Sequence[int], *, grad: bool) -> tuple[Any, Any, int]:
-        overview_np, wrist_np = frames_for_rows(lookups, frames, rows)
+        # rows index the MATERIALISED budget, so this is a gather from an
+        # array already in memory rather than a read from thirty-six files.
+        picked = np.asarray(rows, dtype=np.int64)
+        overview_np = overview_all[picked]
+        wrist_np = wrist_all[picked]
         # uint8 -> float32 in [0, 1] and NCHW, which is what the backend hands
         # the runtime at rollout time.
         def images(array: np.ndarray) -> Any:
@@ -748,9 +842,8 @@ def train_lora_stage(
     print(f"[sft][lora] untrained baseline on frames: {baseline}", flush=True)
 
     train_rows = np.flatnonzero(rows_train)
-    per_epoch = max(1, int(round(train_rows.size * float(row_fraction))))
     for epoch in range(int(epochs)):
-        picked = generator.permutation(train_rows)[:per_epoch]
+        picked = generator.permutation(train_rows)
         running = 0.0
         batches = 0
         for start in range(0, picked.size, int(microbatch)):
@@ -772,7 +865,7 @@ def train_lora_stage(
             flush=True,
         )
     return {
-        "rows_per_epoch": int(per_epoch),
+        "rows_per_epoch": int(train_rows.size),
         "rows_train": int(train_rows.size),
         "baseline": baseline,
         "history": history,
@@ -864,14 +957,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
-        "--lora-row-fraction",
-        type=float,
-        default=0.3,
+        "--lora-rows",
+        type=int,
+        default=8192,
         help=(
-            "Share of rows the LoRA stage sees per epoch. The residual stage "
-            "is free and uses every row; this one costs a VLA forward and "
-            "backward per row, so it is the term that decides the iteration's "
-            "wall clock."
+            "Hard budget, in ROWS, on what the LoRA stage sees -- and the only "
+            "knob that bounds memory, since those rows' pictures are held for "
+            "the whole stage at 2x240x320x3 bytes each (8192 rows ~ 3.8 GB). "
+            "A FRACTION of the harvest was the previous spelling and it scales "
+            "with the ladder: one iteration's nine rungs at four rounds asked "
+            "for 81 GB and the kernel killed the process. 0 = every resolved "
+            "row, which is only safe on a small harvest."
         ),
     )
     parser.add_argument(
@@ -1088,13 +1184,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             if bool(dict(payload["args"]).get("residual_vision_features", False))
             else 0
         )
-        frames = load_frame_index([Path(f) for f in args.frames])
+        # Metadata only -- no pictures are read here. See load_frame_meta.
+        frames = load_frame_meta([Path(f) for f in args.frames])
         found, lookups = resolve_frame_rows(
             dataset["episode_uid"], dataset["decision_index"], frames
         )
+        whole = projected_frame_bytes(frames) / 1e9
         print(
             f"[sft][lora] {int(found.sum())}/{found.shape[0]} rows found a "
-            f"frame across {len(frames)} files",
+            f"frame across {len(frames)} files "
+            f"({whole:.1f} GB if every frame were loaded)",
             flush=True,
         )
         if not found.any():
@@ -1121,19 +1220,36 @@ def main(argv: Sequence[str] | None = None) -> int:
         # strict=False turned that into silence: the LoRA stage was starting
         # from an UNTRAINED residual and there was no way to tell from the loss.
         base.load_state_dict(best_policy_state, strict=True)
+        # The bounded set of rows this stage will see, and the only pictures
+        # that are ever held. Chosen before anything is read.
+        budget_rows = select_frame_budget(
+            found, budget=int(args.lora_rows), seed=int(args.seed)
+        )
+        held = budget_rows.size * 2 * 240 * 320 * 3 / 1e9
+        print(
+            f"[sft][lora] budget {budget_rows.size} rows of "
+            f"{int(found.sum())} resolved -> ~{held:.2f} GB of frames held",
+            flush=True,
+        )
+        budget_lookup = {int(row): position for position, row in enumerate(
+            np.flatnonzero(found)
+        )}
+        overview_all, wrist_all = materialize_frames(
+            frames, lookups, [budget_lookup[int(row)] for row in budget_rows]
+        )
+        # Row -> position in the materialised budget.
+        position_of = {int(row): i for i, row in enumerate(budget_rows)}
         # M5, before a single gradient step: the vision block recomputed from
         # the frames must match the block the dataset recorded. Anything else
         # means these are not the pictures the policy was given.
         probe_rows = [
-            int(row) for row in np.flatnonzero(found)[: int(args.lora_microbatch)]
+            int(row) for row in budget_rows[: int(args.lora_microbatch)]
         ]
-        probe_positions = {
-            int(row): position
-            for position, row in enumerate(np.flatnonzero(found))
-        }
-        overview_np, wrist_np = frames_for_rows(
-            lookups, frames, [probe_positions[row] for row in probe_rows]
+        probe_slice = np.asarray(
+            [position_of[row] for row in probe_rows], dtype=np.int64
         )
+        overview_np = overview_all[probe_slice]
+        wrist_np = wrist_all[probe_slice]
         proprio_dim = int(dataset["state"].shape[-1]) - vision_dim
         with torch.no_grad():
             _, recomputed = recompute_state_and_prior(
@@ -1186,14 +1302,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"[sft][lora] frame/state integrity: {integrity}", flush=True)
 
-        kept = np.flatnonzero(found)
+        kept = budget_rows
         lora_report = train_lora_stage(
             torch=torch, runtime=runtime, trainer=trainer, actor=base,
             dataset={
                 key: value[kept] if getattr(value, "shape", None) else value
                 for key, value in dataset.items()
             },
-            frames=frames, lookups=lookups,
+            overview_all=overview_all, wrist_all=wrist_all,
             rows_train=train_rows[kept], rows_val=val_rows[kept],
             vision_dim=vision_dim, device=torch.device(str(args.device)),
             epochs=int(args.lora_epochs),
@@ -1201,11 +1317,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             or float(dict(payload["args"]).get("vla_lr", 1.0e-5)),
             kl_coef=float(args.lora_kl_coef),
             microbatch=int(args.lora_microbatch),
-            row_fraction=float(args.lora_row_fraction),
             seed=int(args.seed),
         )
         lora_report["frame_state_integrity"] = integrity
         lora_report["rows_with_frames"] = int(found.sum())
+        lora_report["rows_in_budget"] = int(budget_rows.size)
+        lora_report["frames_held_gb"] = round(held, 3)
         torch.save(
             build_resume_payload(
                 payload,

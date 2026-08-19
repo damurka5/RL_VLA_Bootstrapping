@@ -2264,6 +2264,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 0 if replay.states is None else int(replay.states.shape[0])
             )
             payload = frame_tap.stack(decisions=decisions)
+            # Stored so the SFT side can index this file without touching a
+            # single picture -- the arrays are gigabytes and all it needs is
+            # how many decisions they hold.
+            payload["decisions"] = np.asarray(int(decisions), dtype=np.int64)
             payload["round_index"] = np.asarray(
                 int(replay.round_index), dtype=np.int64
             )

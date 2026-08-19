@@ -332,7 +332,7 @@ class HarvestCommandTests(unittest.TestCase):
                 seed_torch=0,
                 frame_worlds=0,
                 lora_epochs=8,
-                lora_row_fraction=0.3,
+                lora_rows=64,
                 dry_run=True,
             )
         finally:
@@ -433,7 +433,7 @@ class HarvestCommandTests(unittest.TestCase):
                     checkpoint=Path("pre_sft.pt"), config=Path("cfg.yaml"),
                     output=Path(tmp), instruction="move_to_object",
                     rungs=[0.03], rounds=1, smooth_window=5, seed_torch=0,
-                    frame_worlds=0, lora_epochs=1, lora_row_fraction=0.3,
+                    frame_worlds=0, lora_epochs=1, lora_rows=64,
                     dry_run=True,
                 )
             finally:
@@ -460,7 +460,7 @@ class HarvestCommandTests(unittest.TestCase):
                     output=Path(tmp), instruction="move_to_object",
                     rungs=[0.03, 0.09], rounds=2, smooth_window=5,
                     seed_torch=0, frame_worlds=0, lora_epochs=1,
-                    lora_row_fraction=0.3, dry_run=True,
+                    lora_rows=64, dry_run=True,
                 )
             finally:
                 sil_loop._run = original
@@ -818,7 +818,7 @@ class VisionLoraWiringTests(unittest.TestCase):
                     checkpoint=Path("ckpt.pt"), config=Path("cfg.yaml"),
                     output=Path(tmp), instruction="move_to_object",
                     rungs=[0.03], rounds=1, smooth_window=5, seed_torch=0,
-                    frame_worlds=0, lora_epochs=1, lora_row_fraction=0.3,
+                    frame_worlds=0, lora_epochs=1, lora_rows=64,
                     dry_run=True,
                 )
         finally:
