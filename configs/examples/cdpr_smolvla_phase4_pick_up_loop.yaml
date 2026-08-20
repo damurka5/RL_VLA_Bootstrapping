@@ -381,7 +381,7 @@ task:
     # over 20 cm from the grasp point. With this on, the Z band below can stay
     # wide enough to keep teaching descent without breaking the early foothold.
     curriculum_cap_includes_z: true
-    random_workspace_start_distance_initial: 0.03
+    random_workspace_start_distance_initial: 0.06
     # 0.20, not move-to's 0.34, so the spawn stays near the target.
     #
     # Note WHY, because the obvious reason is the wrong one: 26 decisions is not
@@ -414,8 +414,27 @@ task:
     # relative jump is what matters, and can widen once the policy has margin.
     # 3 -> 4 is +33%, 4 -> 5 is +25%, and by 0.10 -> 0.13 it is +30% of a
     # distance the policy can already cover.
+    # FIRST RUNG 0.06, NOT 0.03. The gate here reads the GRASP, and the grasp
+    # tolerance is ~0.02 m -- while the measured realized median start distance
+    # at cap 0.03 is 0.0162 m, i.e. INSIDE it. The first rung was solved by
+    # closing the fingers, the gate promoted on that, and the cap ran ahead of
+    # the policy: over 172 updates it went 0.03 -> 0.20 with the gate metric
+    # rising 0.30 -> 0.78 while physical_grasp_rate FELL 0.247 -> 0.118 and
+    # success fell to 0. The reward then flattened, GRPO lost its contrast,
+    # entropy collapsed to -4.01, and 325 further updates back at cap 0.03
+    # produced zero grasps. 22 hours.
+    #
+    # This is the same free-rung failure the placement ladder has at 0.01, and
+    # it was missed here because the first rung was checked against the SUCCESS
+    # radius rather than against the grasp tolerance the gate actually reads.
+    # At 0.06 the realized median is ~0.032 m, outside the tolerance, so a
+    # promotion has to be earned.
+    #
+    # Edited HERE and not via ..._initial: an explicit ladder outranks
+    # initial/final/increment inside ApproachDistanceCurriculum, so raising the
+    # initial alone would have been a silent no-op.
     random_workspace_start_distance_ladder:
-      [0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.13, 0.16, 0.20]
+      [0.06, 0.08, 0.10, 0.13, 0.16, 0.20]
     # 0.30/0.12/15, NOT the 0.03/0.01/5 this file used to carry. Those were the
     # degenerate pair: they were fitted while a resetter bug pinned the measured
     # pass rate under 0.045, so once the cap actually reached the simulator the
@@ -441,7 +460,13 @@ task:
     # and drop demote to roughly a third of it. Do not lower it before the grasp
     # exists -- an early cap is exactly what this gate is here to prevent.
     random_workspace_start_distance_promote_pass_rate: 0.30
-    random_workspace_start_distance_demote_pass_rate: 0.12
+    # 0.20, not 0.12. Against a 0.30 promote gate that band was wide enough
+    # for the cap to climb five rungs while the metric it gates on was already
+    # degrading -- the demotion did not fire until update 216, by which point
+    # the physical grasp rate was 0.042 and never recovered. A narrower band
+    # makes the controller pull back while there is still something to pull
+    # back to.
+    random_workspace_start_distance_demote_pass_rate: 0.20
     # 0.95, not 0.9. The per-update grasp rate carries about twice the spread
     # binomial sampling on ~510 normal-start worlds explains (0.037 against
     # 0.018), so a 10-update effective window leaves the average close enough to
