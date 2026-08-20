@@ -1295,6 +1295,40 @@ def _warn_on_structurally_dead_gate(
         )
 
 
+def _log_policy_provenance(dist_ctx: Any, checkpoint: Any, kind: str) -> float:
+    """Say out loud whether this run starts from an SFT result.
+
+    Nothing surfaced this before. sil_sft stamps every checkpoint it writes,
+    but the stamp lived only inside the file, so "did the loop train on its own
+    demonstrations?" could not be answered from the training log, from
+    TensorBoard, or from the run directory -- and a 22-hour pick_up run was read
+    as a loop iteration when its launcher refuses resume checkpoints outright
+    and cannot consume an SFT result at all.
+
+    Returns 1.0 when the starting policy carries an SFT stamp, so the run can
+    log it as a scalar and the answer survives in the event file.
+    """
+
+    if not checkpoint:
+        _log(dist_ctx, "[smolvla-mjwarp] provenance: fresh init, no checkpoint")
+        return 0.0
+    try:
+        from tools.audit.checkpoint_provenance import describe, read_provenance
+
+        record = read_provenance(Path(checkpoint))
+        _log(
+            dist_ctx,
+            f"[smolvla-mjwarp] provenance ({kind}): {describe(record)}",
+        )
+        return 1.0 if record["sil_sft"] is not None else 0.0
+    except Exception as error:  # pragma: no cover - never block a launch
+        _log(
+            dist_ctx,
+            f"[smolvla-mjwarp] provenance unavailable for {checkpoint}: {error}",
+        )
+        return float("nan")
+
+
 def _task_metadata(args: Any) -> dict[str, Any]:
     raw = os.environ.get("RLVLA_TASK_METADATA_JSON", "").strip()
     if raw:
@@ -1627,6 +1661,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
         simulator_metadata = _runtime_metadata(args, backend)
         global_step = 0
+        # 1.0 when the starting policy came through sil_sft, 0.0 when it did
+        # not, NaN when it could not be read. Logged every update so the answer
+        # is in the event file rather than in someone's memory of the launch.
+        started_from_sft = 0.0
         warmstart_checkpoint = os.environ.get(
             "RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", ""
         ).strip()
@@ -1640,6 +1678,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             expand = _flag_env("RLVLA_SMOLVLA_EXPAND_VISION_COLUMNS")
             expand_info = trainer.load_weights_only(
                 resolved_warmstart, expand_vision_columns=expand
+            )
+            started_from_sft = _log_policy_provenance(
+                dist_ctx, resolved_warmstart, "warm start"
             )
             _log(
                 dist_ctx,
@@ -1670,6 +1711,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 allow_legacy_simulator_metadata=bool(
                     args.allow_legacy_simulator_checkpoint
                 ),
+            )
+            started_from_sft = _log_policy_provenance(
+                dist_ctx, checkpoint, "resume"
             )
             _log(
                 dist_ctx,
@@ -2329,6 +2373,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "curriculum/scene_objects_max": float(
                         scene_object_range[1]
                     ),
+                    # 1.0 when the policy this run started from carried a
+                    # sil_sft stamp, 0.0 when it did not. Constant for the whole
+                    # run by construction, and that is the point: "were the
+                    # self-recorded demonstrations applied here?" is otherwise
+                    # unanswerable from the event file, and it was asked of a
+                    # 22-hour run whose launcher cannot consume an SFT result.
+                    "provenance/started_from_sft": float(started_from_sft),
                     # Per-instruction caps and pass-rate EMAs. The unsuffixed
                     # aggregate below stays for dashboards that predate the
                     # split; it is the widest cap in the run.
