@@ -18,9 +18,9 @@ remote:
   notes:
     - Phase 4, placement family only. The RL leg of the iterative RL/SFT loop described in CDPR_PHASE4_LOOP_DESIGN.md.
     - ONE POLICY PER FAMILY. pick_up is deliberately absent, not forgotten - SFT on a subset of instructions erased the excluded one to exactly 0.000 in phase 3, and the harvest is success-gated so an instruction that is not working yet cannot supply its own rehearsal. pick_up gets its own run and its own checkpoint.
-    - FROM SCRATCH. Do NOT set RLVLA_SMOLVLA_WARMSTART_CHECKPOINT and do NOT pass --resume-checkpoint for iteration 0; the loop driver supplies the previous iteration's SFT checkpoint from iteration 1 onward.
+    - WARM-START WEIGHTS-ONLY from the phase-4 move_to checkpoint, and do NOT pass --resume-checkpoint for iteration 0. move_to is the right donor here and was not for pick_up: placement IS a move-to with a release at the end, since the grasp is handed over at reset, so there is no grasp-then-lift transition to transfer. From iteration 1 the loop driver supplies the previous SFT checkpoint as a resume.
     - The loop driver stops the RL segment externally on a cap promotion, so max_train_steps is a ceiling and not a plan.
-    - Vision-tower LoRA is ON here and was OFF for the whole of phase 2/3. Its gradient reaches the action only through the SmolVLA prior - the residual's 512-wide vision feature is pooled under an unconditional no_grad with a fixed random projection, so it stays exactly as coarse as before. Read vla_lora/vision_modules on the first update; 0 means the leaf names below matched nothing.
+    - Vision-tower LoRA is OFF here, as in the phase-4 move_to config, and is introduced at the FIRST SFT instead: in RL the adapter sees 128 decision-0 records per update through a PPO objective through a ten-step flow expert, while in SFT it sees every sampled decision under an MSE. Was ON in the phase-2/3 configs this one derives from. Its gradient reaches the action only through the SmolVLA prior - the residual's 512-wide vision feature is pooled under an unconditional no_grad with a fixed random projection, so it stays exactly as coarse as before. Read vla_lora/vision_modules on the first update; 0 means the leaf names below matched nothing.
     - Plate/bowl episodes start with the named object physically caught between the fingers, and the approach cap moves that start - the held object is placed AT the capped gripper pose, not the other way round.
     - Placement failures terminate as soon as the released/lost object settles outside the requested receptacle radius.
     - Verify the cap before trusting the loop trigger - tools/audit/start_distance_probe.py, both backends.
@@ -197,7 +197,14 @@ task:
     # ee_base, so 0.20-0.25 is "just picked up" without driving the fingers
     # into the desk. Below this cap the normal band applies.
     placement_far_rung_z_bounds: [0.20, 0.25]
-    placement_far_rung_min_cap: 0.09
+    # 0.19, not 0.09. Every rung of the re-based ladders is at or above 0.10,
+    # so at 0.09 they would ALL be far rungs -- and the far rung deliberately
+    # releases the 3-D cap bound, drawing the start height from
+    # placement_far_rung_z_bounds instead of confining it around the goal. That
+    # would have quietly removed the Z confinement from the whole curriculum.
+    # At 0.19 only the top rung of each ladder is far, which is what "rehearse
+    # the carry" was meant to mean.
+    placement_far_rung_min_cap: 0.19
     random_workspace_min_goal_xy_distance: 0.10
     random_workspace_horizon_low: 24
     random_workspace_horizon_high: 32
@@ -360,9 +367,32 @@ task:
     # also interacts with placement_far_rung_min_cap (0.09), since every re-based
     # bowl rung would then be a far rung. That is a curriculum decision with real
     # cost, not a typo fix, so it is stated here rather than applied.
+    # RE-BASED ABOVE THE SUCCESS RADII. Measured on the reset distribution, the
+    # realized median start distance against each instruction's own radius:
+    #
+    #   cap    plate median   vs 0.091    bowl median   vs 0.057
+    #   0.06      0.0469       INSIDE       0.0448       INSIDE
+    #   0.10      0.0787       INSIDE       0.0739       outside
+    #   0.14      0.1104       outside      0.1091       outside
+    #
+    # The old plate ladder topped out at 0.10, so EVERY plate rung started the
+    # gripper inside the receptacle: the episode was won by opening the fingers,
+    # the gate promoted on that, and phase 2's plate 0.71 was substantially the
+    # reset rather than the policy -- consistent with phase 3 measuring plate at
+    # 0.86-0.94, near ceiling. Bowl was free through 0.08.
+    #
+    # Two reasons this had to change before the loop runs here. A free rung
+    # promotes the cap on nothing, which is the failure two pick_up runs and 34
+    # hours were spent on. And a task at its ceiling cannot show the loop
+    # anything: phase 3 measured plate flat under SFT for exactly that reason,
+    # while bowl -- which had headroom -- moved +0.13.
+    #
+    # Absolute numbers here start well below phase 2's 0.71/0.32 and are NOT
+    # comparable to them. That is the first honest measurement, not a
+    # regression.
     random_workspace_start_distance_ladder_by_instruction:
-      put_into_bowl: [0.01, 0.02, 0.03, 0.045, 0.06, 0.08, 0.10]
-      put_into_plate: [0.01, 0.03, 0.06, 0.10]
+      put_into_bowl: [0.10, 0.13, 0.16, 0.19]
+      put_into_plate: [0.14, 0.17, 0.20]
     # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
     # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
     # (bowl 0.057, plate 0.091), so the first rung is solved by opening the
@@ -371,9 +401,14 @@ task:
     # These start just outside each radius and leave ~0.06 m of real approach;
     # the min-distance floor is min(0.10, 0.5 * cap), so at 0.12 the starts span
     # 0.06-0.12 m and at 0.15 they span 0.075-0.15 m.
+    # Dead keys, kept only to say so: an explicit ..._ladder_by_instruction
+    # entry outranks these inside PerInstructionApproachCurriculum, which reads
+    # the ladder branch and never looks at the initial. They were 0.12/0.15 --
+    # the right intent, expressed through a knob the ladder silences -- and the
+    # run started at 0.01 regardless. The ladder above now carries that intent.
     random_workspace_start_distance_initial_by_instruction:
-      put_into_bowl: 0.12
-      put_into_plate: 0.15
+      put_into_bowl: 0.10
+      put_into_plate: 0.14
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
     # 0.30/0.12/15, NOT 0.03/0.01/5. The old pair was fitted while a resetter
@@ -388,7 +423,11 @@ task:
     # the run silently. If an instruction's cap is still 0.03 after ~3M steps
     # with its EMA plateaued below 0.30, lower promote to that plateau + ~0.05.
     random_workspace_start_distance_promote_pass_rate: 0.30
-    random_workspace_start_distance_demote_pass_rate: 0.12
+    # 0.20, not 0.12, for the reason the pick_up config now carries: against a
+    # 0.30 promote gate that band is wide enough for the cap to climb several
+    # rungs while the metric it gates on is already degrading, and by the time
+    # the demotion fires there is nothing left to pull back to.
+    random_workspace_start_distance_demote_pass_rate: 0.20
     random_workspace_start_distance_pass_rate_ema_decay: 0.9
     random_workspace_start_distance_cooldown_updates: 15
     # Horizon coupled to each group's own cap. 16 at the initial cap: placement
@@ -514,7 +553,8 @@ training:
       # the expert list silently matches almost nothing. attach_vla_lora raises
       # on a zero match rather than training through it, and prints the
       # candidate module names when it does.
-      train_vla_vision_lora: true
+      # OFF: the tower is introduced at the first SFT, not here.
+      train_vla_vision_lora: false
       lora_vision_name_contains: vision
       lora_vision_leaf_names: q_proj,k_proj,v_proj,out_proj,fc1,fc2
       vla_lr: 1.0e-5
