@@ -16,6 +16,15 @@
 #                                  geometry that hides it. Videos are filtered to
 #                                  episodes where the named object is certainly
 #                                  outside the wrist frame at reset.
+#   E. scattered_objects       -- 2-3 objects and the lattice loosened: the
+#                                  whole scene shifts by +-0.03 m instead of
+#                                  +-0.015 and each object jitters by +-0.015
+#                                  instead of +-0.01, so the objects stop
+#                                  landing on nine repeated points. Separation
+#                                  stays 0.152 m, above the widest realistic
+#                                  pair (plate 0.091 + bowl 0.057 = 0.148), and
+#                                  |coord| stays at 0.225 m, inside both the
+#                                  overview frame and the reachable workspace.
 #   D. uncapped_workspace      -- the cap disabled: the EE starts anywhere in
 #                                  the workspace box at least
 #                                  random_workspace_min_goal_xy_distance (0.12)
@@ -31,7 +40,7 @@
 #                                  an argument: same policy, same seed, same
 #                                  predicate as A, differing only in the start.
 #
-# B, C and D are diagnostics. Their manifests carry
+# B, C, D and E are diagnostics. Their manifests carry
 # counts_toward_validation_metric: false and their episodes are in their own
 # CSVs -- do not pool them with A.
 set -euo pipefail
@@ -87,6 +96,15 @@ MAX_SCENE_OBJECTS="${MAX_SCENE_OBJECTS:-3}"
 # which is what keeps the episode well posed rather than impossible.
 BLIND_START_CAP="${BLIND_START_CAP:-0.33}"
 
+SCATTER_ROUNDS="${SCATTER_ROUNDS:-2}"
+SCATTER_TRACK_WORLDS="${SCATTER_TRACK_WORLDS:-32}"
+SCATTER_VIDEOS="${SCATTER_VIDEOS:-4}"
+# Bounded by two things, both measured, not guessed: objects must not overlap
+# (grid step 0.18 - jitter must stay >= 0.148) and the scene must stay in frame
+# and in reach (0.18 + shift/2 + jitter/2 = 0.225 <= 0.23 overview half-width).
+SCATTER_SCENE_SHIFT="${SCATTER_SCENE_SHIFT:-0.06}"
+SCATTER_JITTER="${SCATTER_JITTER:-0.03}"
+
 UNCAPPED_ROUNDS="${UNCAPPED_ROUNDS:-2}"
 UNCAPPED_TRACK_WORLDS="${UNCAPPED_TRACK_WORLDS:-32}"
 UNCAPPED_VIDEOS="${UNCAPPED_VIDEOS:-3}"
@@ -113,7 +131,10 @@ fi
 checkpoint_step="$(basename "$(dirname "$CHECKPOINT")")"
 training_run="$(basename "$(dirname "$(dirname "$(dirname "$CHECKPOINT")")")")"
 timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-RUN_DIR="${RUN_DIR:-$OUTPUT_ROOT/${training_run}_${checkpoint_step}_${timestamp}}"
+# Timestamp FIRST, so the directory sorts chronologically and the date of the
+# VALIDATION is not confused with the timestamp the training run carries in its
+# own name.
+RUN_DIR="${RUN_DIR:-$OUTPUT_ROOT/${timestamp}_${training_run}_${checkpoint_step}}"
 
 export CUDA_VISIBLE_DEVICES
 export MUJOCO_GL="${MUJOCO_GL:-egl}"
@@ -168,7 +189,7 @@ printf 'scene_objects=config (leg A) %s-%s (legs B,C)\n' \
   "$MIN_SCENE_OBJECTS" "$MAX_SCENE_OBJECTS"
 printf 'episodes=%s x %s (A) / %s (B) / %s (C)\n' \
   "$WORLDS" "$TRAIN_ROUNDS" "$HARD_ROUNDS" "$BLIND_ROUNDS"
-printf 'metric_leg=train_config diagnostic_legs=multi_object,multi_object_wrist_blind,uncapped_workspace\n'
+printf 'metric_leg=train_config diagnostic_legs=multi_object,multi_object_wrist_blind,scattered_objects,uncapped_workspace\n'
 
 if [[ "$DRY_RUN" != "1" ]]; then
   mkdir -p "$RUN_DIR"
@@ -199,6 +220,16 @@ cd "$REPO_ROOT"
     --start-distance-cap "$BLIND_START_CAP" \
     --metadata-override "min_scene_objects=$MIN_SCENE_OBJECTS" \
     --metadata-override "max_scene_objects=$MAX_SCENE_OBJECTS"
+
+  run_leg scattered_objects \
+    --rounds "$SCATTER_ROUNDS" \
+    --track-worlds "$SCATTER_TRACK_WORLDS" \
+    --max-videos "$SCATTER_VIDEOS" \
+    --video-filter any \
+    --metadata-override "min_scene_objects=$MIN_SCENE_OBJECTS" \
+    --metadata-override "max_scene_objects=$MAX_SCENE_OBJECTS" \
+    --metadata-override "scene_object_scene_shift_m=$SCATTER_SCENE_SHIFT" \
+    --metadata-override "scene_object_jitter_m=$SCATTER_JITTER"
 
   run_leg uncapped_workspace \
     --rounds "$UNCAPPED_ROUNDS" \
@@ -254,9 +285,11 @@ PY
     printf '  %s/train_config/videos\n' "$RUN_DIR"
     printf '  %s/multi_object/videos\n' "$RUN_DIR"
     printf '  %s/multi_object_wrist_blind/videos\n' "$RUN_DIR"
+    printf '  %s/scattered_objects/videos\n' "$RUN_DIR"
     printf 'DIAGNOSTIC CSVs (NOT part of the metric):\n'
     printf '  %s/multi_object/{episodes,validation_summary}.csv\n' "$RUN_DIR"
     printf '  %s/multi_object_wrist_blind/{episodes,validation_summary}.csv\n' "$RUN_DIR"
+    printf '  %s/scattered_objects/{episodes,validation_summary}.csv\n' "$RUN_DIR"
     printf '  %s/uncapped_workspace/{episodes,validation_summary}.csv\n' "$RUN_DIR"
   fi
 } 2>&1 | { if [[ "$DRY_RUN" == "1" ]]; then cat; else tee "$RUN_DIR/validation.log"; fi; }

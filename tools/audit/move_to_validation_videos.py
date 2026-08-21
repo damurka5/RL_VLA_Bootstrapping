@@ -104,7 +104,7 @@ import csv  # noqa: E402
 import importlib.util  # noqa: E402
 import json  # noqa: E402
 from pathlib import Path  # noqa: E402
-from typing import Any, Sequence  # noqa: E402
+from typing import Any, Iterable, Sequence  # noqa: E402
 
 import numpy as np  # noqa: E402
 
@@ -305,6 +305,38 @@ def _visibility(
     }
 
 
+def _named_vs_nearest(
+    ee: np.ndarray, objects: np.ndarray, target_slots: np.ndarray
+) -> dict[str, np.ndarray]:
+    """Distance to the object the instruction NAMES, and to the nearest other.
+
+    The grounding question this run exists to answer is not "did it move" but
+    "did it move to the named one". With one object on the desk the instruction
+    is decorative and the two distances are the same number; with two or three
+    they separate, and the episodes where the named object was NOT the nearest
+    at reset are the only ones that test language at all.
+    """
+
+    worlds, slots = objects.shape[0], objects.shape[1]
+    rows = np.arange(worlds)
+    active = (
+        np.linalg.norm(objects[:, :, :2], axis=-1) < _ACTIVE_SLOT_RADIUS_M
+    )
+    planar = np.linalg.norm(
+        objects[:, :, :2] - ee[:, None, :2], axis=-1
+    )
+    named = planar[rows, target_slots]
+    others = planar.copy()
+    others[rows, target_slots] = np.inf
+    others[~active] = np.inf
+    nearest_other = others.min(axis=1)
+    return {
+        "named": named,
+        "nearest_other": nearest_other,
+        "named_is_nearest": named <= nearest_other,
+    }
+
+
 def _reachable(
     target: np.ndarray, x_bounds: Sequence[float], y_bounds: Sequence[float]
 ) -> np.ndarray:
@@ -381,6 +413,13 @@ def _group_rows(
             if rows
             else float("nan")
         ),
+        "ended_closer_to_named_rate": (
+            float(
+                np.mean([bool(row["ended_closer_to_named"]) for row in rows])
+            )
+            if rows
+            else float("nan")
+        ),
         "within_curriculum_cap_rate": (
             float(
                 np.mean(
@@ -409,6 +448,20 @@ def _summary_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
             qualified, scope="training_configuration", value="visible_reachable"
         )
     )
+    # The only episodes that test language: more than one object on the desk
+    # AND the named one was not already the closest thing to the gripper. A
+    # policy that ignores the instruction and servos to whatever is nearest
+    # scores the same as a grounded one everywhere else.
+    grounding = [
+        row
+        for row in rows
+        if int(row["scene_object_count"]) > 1
+        and not bool(row["named_is_nearest_at_start"])
+    ]
+    if grounding:
+        summary.append(
+            _group_rows(grounding, scope="grounding_test", value="named_not_nearest")
+        )
     for catalog in sorted({str(row["target_catalog"]) for row in rows}):
         summary.append(
             _group_rows(
@@ -671,12 +724,25 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     cap_value = float(realized_caps["move_to_object"])
 
-    tracked = list(range(min(int(args.track_worlds), int(args.worlds))))
+    # One tracked world per GRPO GROUP, not the first N worlds.
+    #
+    # The eight candidates of a group share their scene AND their start pose --
+    # the reset samples both per group -- so tracking worlds 0..31 keeps eight
+    # copies each of four resets, and the video budget then fills with clips
+    # that are, correctly, indistinguishable from one another. Striding by the
+    # group size buys 32 different scenes for the same frame memory.
+    group_stride = max(1, int(args.group_size))
+    tracked = list(range(0, int(args.worlds), group_stride))[
+        : max(1, int(args.track_worlds))
+    ]
     videos_dir = output / "videos"
     near_miss_dir = videos_dir / "near_miss"
     rows: list[dict[str, Any]] = []
     success_videos = 0
     failure_videos = 0
+    # Objects already on film. A budget of five spent on five apples shows one
+    # scene five times; this spreads it over the catalog before it doubles up.
+    filmed_catalogs: set[str] = set()
     diverged_total = 0
 
     for round_index in range(int(args.rounds)):
@@ -708,10 +774,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 )
                 _state["visibility"] = visibility
                 count = int(snapshot.ee.shape[0])
-                eligible = _filter_indices(
+                qualifying = _filter_indices(
                     visibility, str(args.video_filter), count
-                ) or list(range(count))
-                chosen = eligible[: len(tracked)]
+                )
+                # First qualifying world of each group, for the same reason the
+                # default tracked set strides: the other seven are the same
+                # reset.
+                unique: list[int] = []
+                claimed: set[int] = set()
+                for index in qualifying:
+                    group = index // group_stride
+                    if group in claimed:
+                        continue
+                    claimed.add(group)
+                    unique.append(index)
+                chosen = (unique or list(tracked))[: len(tracked)]
                 tap.worlds = list(chosen)
                 tap.frames = {index: [] for index in chosen}
 
@@ -727,6 +804,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                         round_index=round_index
                     )
             frames = {index: list(value) for index, value in tap.frames.items()}
+
+        # The state the episode ended in. Every group here runs the same
+        # instruction at the same cap, so the horizons are equal and this is the
+        # terminal step for every world rather than a mid-episode snapshot of
+        # the ones that ran longer.
+        terminal = world.backend.low_dim_observations()
+        terminal_ee = terminal.ee_position.detach().float().cpu().numpy().copy()
+        terminal_objects = (
+            terminal.object_positions.detach().float().cpu().numpy().copy()
+        )
 
         diverged = int(world.backend.pop_nonfinite_world_events())
         diverged_total += diverged
@@ -766,6 +853,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             axis=-1,
         )
         within_cap = start_3d <= cap_value + 1.0e-4
+        at_start = _named_vs_nearest(
+            reset_tap.ee, reset_tap.objects, reset_tap.target_slots
+        )
+        at_end = _named_vs_nearest(
+            terminal_ee, terminal_objects, reset_tap.target_slots
+        )
         reachable = _reachable(
             np.stack(
                 (
@@ -806,6 +899,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                     ),
                     "start_xy_distance_m": float(start_distance[index]),
                     "start_3d_distance_to_hover_m": float(start_3d[index]),
+                    "start_xy_distance_to_nearest_other_m": float(
+                        at_start["nearest_other"][index]
+                    ),
+                    "named_is_nearest_at_start": bool(
+                        at_start["named_is_nearest"][index]
+                    ),
+                    "final_xy_distance_to_named_m": float(
+                        at_end["named"][index]
+                    ),
+                    "final_xy_distance_to_nearest_other_m": float(
+                        at_end["nearest_other"][index]
+                    ),
+                    "ended_closer_to_named": bool(
+                        at_end["named_is_nearest"][index]
+                    ),
                     "start_within_curriculum_cap": bool(within_cap[index]),
                     "best_xy_distance_m": float(best_distance[index]),
                     "final_dense_distance_m": float(final_dense[index]),
@@ -894,15 +1002,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             for index in sorted(frames)
             if _passes_filter(round_rows[index], str(args.video_filter))
         ]
-        # World order, not best-distance order: these clips are the evidence
-        # for the rate in the CSV, and ranking them by how well they went would
-        # make them a highlight reel of the same run instead.
-        for index in (i for i in eligible if success[i]):
+
+        def _spread(indices: Iterable[int]) -> list[int]:
+            """Unfilmed objects first, then world order.
+
+            NOT ranked by how well the episode went: these clips are the
+            evidence for the rate in the CSV, and a best-first order would make
+            them a highlight reel of the same run.
+            """
+
+            return sorted(
+                indices,
+                key=lambda i: (
+                    str(round_rows[i]["target_catalog"]) in filmed_catalogs,
+                    i,
+                ),
+            )
+
+        for index in _spread(i for i in eligible if success[i]):
             if success_videos >= int(args.max_videos):
                 break
             path = _write_video(index, directory=videos_dir, kind="success")
             if path:
                 round_rows[index]["video"] = path
+                filmed_catalogs.add(str(round_rows[index]["target_catalog"]))
                 success_videos += 1
         # Failures ARE ranked, by closest approach: the question a near-miss
         # answers is how close the policy got, so the closest ones are the

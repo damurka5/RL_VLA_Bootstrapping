@@ -902,6 +902,40 @@ class BatchedReverseFrontierResetter:
         scene_max = min(4, max(scene_min, int(number("max_scene_objects", 4))))
         self.scene_object_bounds = (scene_min, scene_max)
         self.scene_object_range = (scene_min, scene_max)
+        # Object placement: a 3x3 lattice of this step, shifted as a whole by
+        # +-scene_shift/2 and then per object by +-jitter/2. Defaults are the
+        # values the move-to phase trained on; they are exposed so a VALIDATION
+        # leg can scatter the objects without editing this file, and so any
+        # change to them is visible in the config diff of the run that made it.
+        #
+        # The guard is the whole reason these are not free parameters. Two
+        # objects must not be able to occupy the same place: the widest
+        # realistic pair is plate 0.091 + bowl 0.057 = 0.148 m, and the closest
+        # two objects can come is step - jitter. The common shift is exempt
+        # because it moves every object by the same vector.
+        self.scene_object_grid_step = max(
+            0.0, number("scene_object_grid_step", 0.18)
+        )
+        self.scene_object_scene_shift = max(
+            0.0, number("scene_object_scene_shift_m", 0.03)
+        )
+        self.scene_object_jitter = max(
+            0.0, number("scene_object_jitter_m", 0.02)
+        )
+        minimum_separation = number("scene_object_min_separation_m", 0.148)
+        realized_separation = (
+            self.scene_object_grid_step - self.scene_object_jitter
+        )
+        if scene_max > 1 and realized_separation < minimum_separation:
+            raise ValueError(
+                "Object placement would let two objects overlap: grid step "
+                f"{self.scene_object_grid_step:.3f} - jitter "
+                f"{self.scene_object_jitter:.3f} = {realized_separation:.3f} m "
+                f"< {minimum_separation:.3f} m (plate 0.091 + bowl 0.057). "
+                "Widen scene_object_grid_step, or scatter the scene with "
+                "scene_object_scene_shift_m instead -- a common shift moves "
+                "every object together and costs no separation."
+            )
         self.torch = backend.torch
         self.device = backend.device
         instruction_ids = resolve_mjwarp_instruction_ids(instruction_types)
@@ -1345,7 +1379,9 @@ class BatchedReverseFrontierResetter:
         # ~0.23 m half-width the dollied-in overview camera still covers at the
         # near edge of the desk.
         grid_coordinates = torch.tensor(
-            (-0.18, 0.0, 0.18), dtype=torch.float32, device=self.device
+            (-self.scene_object_grid_step, 0.0, self.scene_object_grid_step),
+            dtype=torch.float32,
+            device=self.device,
         )
         cell_choice = torch.rand(
             (groups, 9), generator=generator, device=self.device
@@ -1361,19 +1397,23 @@ class BatchedReverseFrontierResetter:
             ),
             dim=-1,
         )
-        # Common shift moves the whole scene without changing separation.
+        # Common shift moves the whole scene without changing separation, so it
+        # is the cheap way to make the lattice stop being a lattice: widen it
+        # and the same nine cells stop landing on the same nine points. Jitter
+        # is per object and therefore eats into the separation, which is why
+        # only that one is checked against it (see __init__).
         scene_shift = (
             torch.rand(
                 (groups, 1, 2), generator=generator, device=self.device
             )
             - 0.5
-        ) * 0.03
+        ) * self.scene_object_scene_shift
         jitter = (
             torch.rand(
                 (groups, 4, 2), generator=generator, device=self.device
             )
             - 0.5
-        ) * 0.02
+        ) * self.scene_object_jitter
         object_xy_group = cell_xy + scene_shift + jitter
         rest_height = torch.tensor(
             _REST_HEIGHT, dtype=torch.float32, device=self.device
