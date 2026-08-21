@@ -103,6 +103,7 @@ import argparse  # noqa: E402
 import csv  # noqa: E402
 import importlib.util  # noqa: E402
 import json  # noqa: E402
+import time  # noqa: E402
 from pathlib import Path  # noqa: E402
 from typing import Any, Iterable, Sequence  # noqa: E402
 
@@ -420,6 +421,32 @@ def _group_rows(
             if rows
             else float("nan")
         ),
+        # Where the named object actually was, per split. Read the
+        # target_object rows of this table to answer "is the apple always in
+        # the same place" from the CSV rather than from five clips: the desk
+        # lattice has nine cells, so an object pinned to one place scores
+        # distinct_target_cells = 1 and a std near the 10 mm jitter.
+        "target_x_std_m": (
+            float(column("target_x").std()) if rows else float("nan")
+        ),
+        "target_y_std_m": (
+            float(column("target_y").std()) if rows else float("nan")
+        ),
+        "distinct_target_cells": (
+            int(
+                len(
+                    {
+                        (
+                            round(float(row["target_x"]) / 0.18),
+                            round(float(row["target_y"]) / 0.18),
+                        )
+                        for row in rows
+                    }
+                )
+            )
+            if rows
+            else 0
+        ),
         "within_curriculum_cap_rate": (
             float(
                 np.mean(
@@ -592,6 +619,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--scene-seed",
+        type=int,
+        default=None,
+        help=(
+            "Reset seed for the SCENES (object cells, catalogs, EE start). "
+            "Omit to use the checkpoint's validation_seed, which is what makes "
+            "a leg reproducible and comparable with the training validator -- "
+            "and also what makes every leg draw the same round-0 scenes. Give "
+            "a diagnostic leg its own seed to move them."
+        ),
+    )
+    parser.add_argument(
+        "--video-seed",
+        type=int,
+        default=None,
+        help=(
+            "Seed for WHICH of the qualifying episodes get filmed. Does not "
+            "touch the rollout, the scenes or the metric -- only the sample of "
+            "clips. Omit for a fresh draw each run (the value used is written "
+            "to the manifest, so a set of clips can be reproduced)."
+        ),
+    )
+    parser.add_argument(
+        "--video-catalog",
+        default=None,
+        help=(
+            "Film only episodes whose NAMED target is this catalog, e.g. "
+            "robocasa_apple. The point is the question 'is the apple always in "
+            "the same place': with one catalog the clips come from different "
+            "groups and rounds, so its position varies across them or it does "
+            "not. The CSV still covers every episode."
+        ),
+    )
+    parser.add_argument(
         "--start-distance-cap",
         type=float,
         default=None,
@@ -664,6 +725,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         start_distance_cap=cap,
         metadata_overrides=list(args.metadata_override or []),
     )
+    if args.scene_seed is not None:
+        # The resetter reads base_seed on every reset, so this takes effect
+        # from the first round; nothing else in the stack caches it.
+        world.resetter.base_seed = int(args.scene_seed)
     instructions = tuple(world.args.instruction_types or ())
     if instructions != ("move_to_object",):
         raise SystemExit(
@@ -683,6 +748,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
         ACTIVE_CDPR_CATALOGS,
     )
+
+    allowed = tuple(str(name) for name in (world.args.allowed_objects or ()))
+    if args.video_catalog is not None and str(args.video_catalog) not in allowed:
+        raise SystemExit(
+            f"--video-catalog {args.video_catalog!r} is not in this config's "
+            f"target objects: {list(allowed)}"
+        )
 
     aspect = float(world.args.render_width) / float(world.args.render_height)
     try:
@@ -743,6 +815,20 @@ def main(argv: Sequence[str] | None = None) -> int:
     # Objects already on film. A budget of five spent on five apples shows one
     # scene five times; this spreads it over the catalog before it doubles up.
     filmed_catalogs: set[str] = set()
+    # WHICH qualifying episode gets filmed is a separate question from which
+    # episodes exist, and it gets its own generator: the reset stream stays
+    # deterministic (so the rate is reproducible) while two runs of the same
+    # command still show different scenes. Without this the clips are always
+    # groups 0..7 of round 0, and since the catalog cycle pins group g to
+    # catalog g % 8, "the apple" is then literally the same reset every time --
+    # which reads as the apple never moving when in fact it is one of eight
+    # apple groups per round, each in a different cell.
+    video_seed = (
+        int(args.video_seed)
+        if args.video_seed is not None
+        else int(time.time_ns() % 2_000_000_000)
+    )
+    video_rng = np.random.default_rng(video_seed)
     diverged_total = 0
 
     for round_index in range(int(args.rounds)):
@@ -777,6 +863,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 qualifying = _filter_indices(
                     visibility, str(args.video_filter), count
                 )
+                if args.video_catalog is not None:
+                    catalogs = _per_world(
+                        snapshot.target_catalog_ids, count
+                    )
+                    wanted = str(args.video_catalog)
+                    qualifying = [
+                        index
+                        for index in qualifying
+                        if ACTIVE_CDPR_CATALOGS[int(catalogs[index])] == wanted
+                    ]
+                # Shuffle before the one-per-group pass so the tracked set is a
+                # random sample of the qualifying groups rather than the first
+                # ones, which are the same groups in every leg and every rerun.
+                if qualifying:
+                    qualifying = [
+                        int(value)
+                        for value in video_rng.permutation(
+                            np.asarray(qualifying, dtype=np.int64)
+                        )
+                    ]
                 # First qualifying world of each group, for the same reason the
                 # default tracked set strides: the other seven are the same
                 # reset.
@@ -788,7 +894,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                         continue
                     claimed.add(group)
                     unique.append(index)
-                chosen = (unique or list(tracked))[: len(tracked)]
+                if unique:
+                    chosen = unique[: len(tracked)]
+                elif args.video_catalog is not None:
+                    # Nothing to film this round. Leave the frame budget
+                    # unspent rather than filling it with the wrong object.
+                    chosen = []
+                else:
+                    chosen = list(tracked)
                 tap.worlds = list(chosen)
                 tap.frames = {index: [] for index in chosen}
 
@@ -1011,11 +1124,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             them a highlight reel of the same run.
             """
 
+            order = {
+                int(index): float(value)
+                for index, value in zip(
+                    sorted(frames), video_rng.random(len(frames))
+                )
+            }
             return sorted(
                 indices,
                 key=lambda i: (
                     str(round_rows[i]["target_catalog"]) in filmed_catalogs,
-                    i,
+                    order.get(int(i), 0.0),
                 ),
             )
 
@@ -1089,6 +1208,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "success_videos": success_videos,
         "near_miss_videos": failure_videos,
         "video_filter": str(args.video_filter),
+        "video_catalog": (
+            None if args.video_catalog is None else str(args.video_catalog)
+        ),
+        "video_seed": video_seed,
+        "scene_seed": int(world.resetter.base_seed),
     }
     (output / "manifest.json").write_text(
         json.dumps(manifest, indent=2, sort_keys=True, default=str) + "\n",

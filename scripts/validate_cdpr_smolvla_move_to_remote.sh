@@ -39,8 +39,19 @@
 #                                  objection that deserves a number rather than
 #                                  an argument: same policy, same seed, same
 #                                  predicate as A, differing only in the start.
+#   F. one_object_many_places  -- leg A's configuration, but every clip is the
+#                                  SAME named object, drawn from different
+#                                  groups and rounds. It exists to answer, by
+#                                  eye, "is the apple always in the same
+#                                  place": the catalog cycle pins group g to
+#                                  catalog g % 8, so the first filmable apple
+#                                  is group 0 in every leg and every rerun,
+#                                  which looks like a pinned object and is not
+#                                  one. Measured on the reset stream: the eight
+#                                  apple groups of round 0 alone sit in eight
+#                                  different cells.
 #
-# B, C, D and E are diagnostics. Their manifests carry
+# B, C, D, E and F are diagnostics. Their manifests carry
 # counts_toward_validation_metric: false and their episodes are in their own
 # CSVs -- do not pool them with A.
 set -euo pipefail
@@ -109,6 +120,28 @@ UNCAPPED_ROUNDS="${UNCAPPED_ROUNDS:-2}"
 UNCAPPED_TRACK_WORLDS="${UNCAPPED_TRACK_WORLDS:-32}"
 UNCAPPED_VIDEOS="${UNCAPPED_VIDEOS:-3}"
 UNCAPPED_NEAR_MISS_VIDEOS="${UNCAPPED_NEAR_MISS_VIDEOS:-2}"
+
+ONE_OBJECT_ROUNDS="${ONE_OBJECT_ROUNDS:-2}"
+ONE_OBJECT_TRACK_WORLDS="${ONE_OBJECT_TRACK_WORLDS:-32}"
+ONE_OBJECT_VIDEOS="${ONE_OBJECT_VIDEOS:-6}"
+# Success is not the point of this leg -- placement is -- so near-misses count
+# as evidence too and the folder is never empty.
+ONE_OBJECT_NEAR_MISS_VIDEOS="${ONE_OBJECT_NEAR_MISS_VIDEOS:-3}"
+ONE_OBJECT_CATALOG="${ONE_OBJECT_CATALOG:-robocasa_apple}"
+
+# Scenes are drawn from the checkpoint's validation_seed, which is what makes a
+# leg reproducible -- and also what makes every leg draw the SAME round-0
+# scenes. Leg A keeps it, because its number is the one compared against
+# training. The diagnostic legs get their own offsets so their scenes differ
+# from A's and from each other. Set SCENE_SEED to pin them all.
+SCENE_SEED="${SCENE_SEED:-}"
+scene_seed_arg() {
+  if [[ -n "$SCENE_SEED" ]]; then
+    printf -- '--scene-seed\n%s\n' "$SCENE_SEED"
+  elif [[ -n "${1:-}" ]]; then
+    printf -- '--scene-seed\n%s\n' "$1"
+  fi
+}
 
 SKIP_LEGS="${SKIP_LEGS:-}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -189,7 +222,7 @@ printf 'scene_objects=config (leg A) %s-%s (legs B,C)\n' \
   "$MIN_SCENE_OBJECTS" "$MAX_SCENE_OBJECTS"
 printf 'episodes=%s x %s (A) / %s (B) / %s (C)\n' \
   "$WORLDS" "$TRAIN_ROUNDS" "$HARD_ROUNDS" "$BLIND_ROUNDS"
-printf 'metric_leg=train_config diagnostic_legs=multi_object,multi_object_wrist_blind,scattered_objects,uncapped_workspace\n'
+printf 'metric_leg=train_config diagnostic_legs=multi_object,multi_object_wrist_blind,scattered_objects,uncapped_workspace,one_object_many_places\n'
 
 if [[ "$DRY_RUN" != "1" ]]; then
   mkdir -p "$RUN_DIR"
@@ -198,12 +231,14 @@ cd "$REPO_ROOT"
 
 {
   run_leg train_config \
+    $(scene_seed_arg) \
     --rounds "$TRAIN_ROUNDS" \
     --track-worlds "$TRAIN_TRACK_WORLDS" \
     --max-videos "$TRAIN_VIDEOS" \
     --video-filter any
 
   run_leg multi_object \
+    $(scene_seed_arg 1000101) \
     --rounds "$HARD_ROUNDS" \
     --track-worlds "$HARD_TRACK_WORLDS" \
     --max-videos "$HARD_VIDEOS" \
@@ -212,6 +247,7 @@ cd "$REPO_ROOT"
     --metadata-override "max_scene_objects=$MAX_SCENE_OBJECTS"
 
   run_leg multi_object_wrist_blind \
+    $(scene_seed_arg 1000202) \
     --rounds "$BLIND_ROUNDS" \
     --track-worlds "$BLIND_TRACK_WORLDS" \
     --max-videos "$BLIND_VIDEOS" \
@@ -222,6 +258,7 @@ cd "$REPO_ROOT"
     --metadata-override "max_scene_objects=$MAX_SCENE_OBJECTS"
 
   run_leg scattered_objects \
+    $(scene_seed_arg 1000303) \
     --rounds "$SCATTER_ROUNDS" \
     --track-worlds "$SCATTER_TRACK_WORLDS" \
     --max-videos "$SCATTER_VIDEOS" \
@@ -232,12 +269,23 @@ cd "$REPO_ROOT"
     --metadata-override "scene_object_jitter_m=$SCATTER_JITTER"
 
   run_leg uncapped_workspace \
+    $(scene_seed_arg 1000404) \
     --rounds "$UNCAPPED_ROUNDS" \
     --track-worlds "$UNCAPPED_TRACK_WORLDS" \
     --max-videos "$UNCAPPED_VIDEOS" \
     --failure-videos "$UNCAPPED_NEAR_MISS_VIDEOS" \
     --video-filter any \
     --start-distance-cap inf
+
+  run_leg one_object_many_places \
+    $(scene_seed_arg 1000505) \
+    --rounds "$ONE_OBJECT_ROUNDS" \
+    --track-worlds "$ONE_OBJECT_TRACK_WORLDS" \
+    --max-videos "$ONE_OBJECT_VIDEOS" \
+    --failure-videos "$ONE_OBJECT_NEAR_MISS_VIDEOS" \
+    --video-filter any \
+    --video-catalog "$ONE_OBJECT_CATALOG" \
+    --no-counts-toward-metric
 
   if [[ "$DRY_RUN" != "1" ]]; then
     python3 - "$RUN_DIR" <<'PY'
@@ -286,6 +334,8 @@ PY
     printf '  %s/multi_object/videos\n' "$RUN_DIR"
     printf '  %s/multi_object_wrist_blind/videos\n' "$RUN_DIR"
     printf '  %s/scattered_objects/videos\n' "$RUN_DIR"
+    printf '  %s/one_object_many_places/videos   (%s, different scenes)\n' \
+      "$RUN_DIR" "$ONE_OBJECT_CATALOG"
     printf 'DIAGNOSTIC CSVs (NOT part of the metric):\n'
     printf '  %s/multi_object/{episodes,validation_summary}.csv\n' "$RUN_DIR"
     printf '  %s/multi_object_wrist_blind/{episodes,validation_summary}.csv\n' "$RUN_DIR"
