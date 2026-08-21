@@ -1,0 +1,62 @@
+{
+  "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/phase4_move_to_iter0_resume_20260818_080928/rl/step_11009573/smolvla_grpo_adapter.pt",
+  "checkpoint_global_step": 11009573,
+  "config": "/root/repo/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_phase4_move_to_loop.yaml",
+  "counts_toward_validation_metric": false,
+  "curriculum_hover_z_m": 0.27,
+  "diverged_worlds": 1,
+  "episodes": 1024,
+  "episodes_outside_training_preconditions": 0,
+  "episodes_over_curriculum_cap": 0,
+  "label": "multi_object",
+  "metadata_overrides": [
+    "min_scene_objects=2",
+    "max_scene_objects=3"
+  ],
+  "near_miss_videos": 0,
+  "overview_camera": {
+    "fovy_deg": 45.0,
+    "pos": [
+      0.0,
+      -0.5412341,
+      0.5125
+    ],
+    "right": [
+      1.0,
+      0.0,
+      0.0
+    ],
+    "source": "/root/repo/RL_VLA_Bootstrapping/robots/cdpr/cdpr_mujoco/cdpr.xml",
+    "up": [
+      0.0,
+      0.5,
+      0.8660254
+    ]
+  },
+  "policy_mode": "deterministic_residual_mean_over_sampled_smolvla_prior",
+  "render_aspect": 1.3333333333333333,
+  "rounds": 2,
+  "scene_object_range": [
+    2,
+    3
+  ],
+  "scene_seed": 1000101,
+  "start_distance_cap_m": {
+    "move_to_object": 0.19
+  },
+  "start_distance_cap_override": null,
+  "success_distance_m": 0.02,
+  "success_predicate": "trainer validate_round, move_to xy tolerance",
+  "success_rate": 0.4599609375,
+  "success_videos": 4,
+  "successes": 471,
+  "validation_seed": 1000000,
+  "video_catalog": null,
+  "video_filter": "any",
+  "video_seed": 1540754950,
+  "worlds": 512,
+  "wrist_bounds_deg": [
+    14.999999999999996,
+    58.89788624801398
+  ]
+}

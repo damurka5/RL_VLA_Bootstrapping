@@ -1,0 +1,610 @@
+[validate-move-to] leg train_config: conda run --no-capture-output -n cdpr-mjlab python3 /root/repo/RL_VLA_Bootstrapping/tools/audit/move_to_validation_videos.py --checkpoint /root/repo/RL_VLA_Bootstrapping/runs/phase4_move_to_iter0_resume_20260818_080928/rl/step_11009573/smolvla_grpo_adapter.pt --config /root/repo/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_phase4_move_to_loop.yaml --device cuda:0 --worlds 512 --group-size 8 --smolvla-microbatch 256 --fps 6 --label train_config --output /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/train_config --rounds 2 --track-worlds 32 --max-videos 5 --video-filter any
+[xy-probe] allocating 512 worlds (64 groups of 8) on cuda:0
+Warp 1.14.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.14.0
+Module reset_data__locals__reset_xfrc_applied_b12c4ea8 b12c4ea load on device 'cuda:0' took 0.39 ms  (cached)
+Module reset_data__locals__reset_M_d9340d51 d9340d5 load on device 'cuda:0' took 0.32 ms  (cached)
+Module reset_data__locals__reset_mocap_126f9143 126f914 load on device 'cuda:0' took 0.29 ms  (cached)
+Module reset_data__locals__reset_contact_9c4e0b5a 9c4e0b5 load on device 'cuda:0' took 0.32 ms  (cached)
+Module reset_data__locals__reset_sleep_0561e53d 0561e53 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_nworld_a515e60d a515e60 load on device 'cuda:0' took 0.36 ms  (cached)
+Module mujoco_warp._src.io b6def1f load on device 'cuda:0' took 2.36 ms  (cached)
+Module mujoco_warp._src.smooth 6acfd0b load on device 'cuda:0' took 2.41 ms  (cached)
+Module _tile_cholesky_factorize_block__locals__kernel_94b386bc 8be4f4c load on device 'cuda:0' took 17.89 ms  (cached)
+Module _tile_cholesky_solve_block__locals__kernel_08d79cc3 16a32d3 load on device 'cuda:0' took 17.48 ms  (cached)
+Module _nxn_broadphase__locals__kernel_0de18907 0de1890 load on device 'cuda:0' took 0.42 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_cff54597 cff5459 load on device 'cuda:0' took 1.38 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_e6d90138 e6d9013 load on device 'cuda:0' took 1.13 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_8e6a711d 8e6a711 load on device 'cuda:0' took 1.12 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_00f18ad3 00f18ad load on device 'cuda:0' took 1.81 ms  (cached)
+Module mujoco_warp._src.constraint 880bd7f load on device 'cuda:0' took 0.32 ms  (cached)
+Module _equality_joint__locals__kernel_aa27979b aa27979 load on device 'cuda:0' took 0.49 ms  (cached)
+Module _friction_dof__locals__kernel_196c77d2 196c77d load on device 'cuda:0' took 0.42 ms  (cached)
+Module _friction_tendon__locals__kernel_884aba88 884aba8 load on device 'cuda:0' took 0.45 ms  (cached)
+Module _limit_slide_hinge__locals__kernel_6e38514e 6e38514 load on device 'cuda:0' took 0.42 ms  (cached)
+Module _limit_tendon__locals__kernel_ef189ae5 ef189ae load on device 'cuda:0' took 0.47 ms  (cached)
+Module _efc_contact_init__locals__kernel_6eab31b8 6eab31b load on device 'cuda:0' took 0.39 ms  (cached)
+Module _efc_contact_jac_sparse__locals__kernel_f9099d1d f9099d1 load on device 'cuda:0' took 0.38 ms  (cached)
+Module _efc_contact_update__locals__kernel_8aad7bfd 8aad7bf load on device 'cuda:0' took 0.39 ms  (cached)
+Module mujoco_warp._src.sensor 4bf7c4d load on device 'cuda:0' took 2.63 ms  (cached)
+Module mujoco_warp._src.forward a27d81a load on device 'cuda:0' took 1.05 ms  (cached)
+Module mujoco_warp._src.forward bb9f957 load on device 'cuda:0' took 1.45 ms  (cached)
+Module mujoco_warp._src.passive e551f58 load on device 'cuda:0' took 0.96 ms  (cached)
+Module _qfrc_smooth__locals__kernel_6eb3d958 6eb3d95 load on device 'cuda:0' took 0.34 ms  (cached)
+Module mujoco_warp._src.support b6765b2 load on device 'cuda:0' took 0.55 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_6bb97780 72e0cd2 load on device 'cuda:0' took 33.25 ms  (cached)
+Module mujoco_warp._src.solver ee39d44 load on device 'cuda:0' took 2.74 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_f1102b5b f1102b5 load on device 'cuda:0' took 0.39 ms  (cached)
+Module mul_m_kernel__locals___mul_m_fd2186c4 fd2186c load on device 'cuda:0' took 0.37 ms  (cached)
+Module _update_constraint_efc__locals__kernel_d40ce3fb d40ce3f load on device 'cuda:0' took 0.38 ms  (cached)
+Module mujoco_warp._src.solver 546db7d load on device 'cuda:0' took 3.56 ms  (cached)
+Module _update_gradient_cholesky_blocked__locals__kernel_875ef57d e1f1ba2 load on device 'cuda:0' took 73.22 ms  (cached)
+Module _linesearch_jv_fused_kernel__locals__kernel_8f129a8a 8f129a8 load on device 'cuda:0' took 0.47 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_b1ba3791 74b17ed load on device 'cuda:0' took 0.61 ms  (cached)
+Module _update_constraint_efc__locals__kernel_3930e3eb 3930e3e load on device 'cuda:0' took 0.39 ms  (cached)
+Module _update_gradient_cholesky_blocked_skip_unchanged__locals__kernel_6e481e18 5868864 load on device 'cuda:0' took 70.87 ms  (cached)
+Module mujoco_warp._src.render_util ff4fe80 load on device 'cuda:0' took 0.63 ms  (cached)
+Module mujoco_warp._src.bvh d9cfd91 load on device 'cuda:0' took 0.82 ms  (cached)
+[xy-probe] restored approach caps (m): {0: 0.19}
+[xy-probe] loading frozen SmolVLA lerobot/smolvla_base
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Reducing the number of VLM layers to 16 ...
+[xy-probe] restored action-expert LoRA: 112 modules, 3416064 params
+[move-to-validation] label=train_config cap={'move_to_object': 0.19} scene_objects=1-2 worlds=512 rounds=2 counts_toward_metric=True
+Module reset_data__locals__reset_xfrc_applied_03030511 0303051 load on device 'cuda:0' took 0.43 ms  (cached)
+Module reset_data__locals__reset_M_631075dd 631075d load on device 'cuda:0' took 0.39 ms  (cached)
+Module reset_data__locals__reset_mocap_6513201c 6513201 load on device 'cuda:0' took 0.38 ms  (cached)
+Module reset_data__locals__reset_contact_5c08f689 5c08f68 load on device 'cuda:0' took 0.40 ms  (cached)
+Module reset_data__locals__reset_sleep_bd8c7e06 bd8c7e0 load on device 'cuda:0' took 0.40 ms  (cached)
+Module reset_data__locals__reset_nworld_092d1d28 092d1d2 load on device 'cuda:0' took 0.47 ms  (cached)
+Module render__locals___render_megakernel_55c210b2 8edcc46 load on device 'cuda:0' took 1.16 ms  (cached)
+[move-to-validation] round 0: success 0.656 (336/512)  start median 145 mm  best median 13 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 0
+[move-to-validation]   wrote success/train_config_r00_w040_success_robocasa_mug_obj1_d170mm_wrist48deg.mp4
+[move-to-validation]   wrote success/train_config_r00_w379_success_robocasa_bowl_obj1_d139mm_wrist37deg.mp4
+[move-to-validation]   wrote success/train_config_r00_w086_success_robocasa_tomato_obj1_d137mm_wrist37deg.mp4
+[move-to-validation]   wrote success/train_config_r00_w155_success_robocasa_orange_obj1_d177mm_wrist41deg.mp4
+[move-to-validation]   wrote success/train_config_r00_w243_success_robocasa_plate_obj2_d142mm_wrist29deg.mp4
+[move-to-validation] round 1: success 0.604 (309/512)  start median 145 mm  best median 15 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 0
+
+VALIDATION -- move_to_object
+---------------------------
+  label                 train_config
+  counts toward metric  True
+  episodes              1024
+  success rate          0.6299 (645/1024)
+  precondition          every episode had the target inside the overview or wrist frame AND inside the reachable workspace
+  start cap             0.1900 m (3-D to the hover point); 0 episode(s) started outside it
+    grounding_test                   named_not_nearest        96 eps  0.1250  best 0.1175 m
+    target_object                    robocasa_apple          128 eps  0.4922  best 0.0520 m
+    target_object                    robocasa_banana         128 eps  0.3047  best 0.0540 m
+    target_object                    robocasa_bowl           128 eps  0.8281  best 0.0223 m
+    target_object                    robocasa_mug            128 eps  0.5000  best 0.0494 m
+    target_object                    robocasa_orange         128 eps  0.7266  best 0.0271 m
+    target_object                    robocasa_plate          128 eps  0.7578  best 0.0126 m
+    target_object                    robocasa_potato         128 eps  0.6094  best 0.0370 m
+    target_object                    robocasa_tomato         128 eps  0.8203  best 0.0240 m
+    scene_objects                    1                       552 eps  0.7446  best 0.0232 m
+    scene_objects                    2                       472 eps  0.4958  best 0.0484 m
+    target_certainly_out_of_wrist    false                  1024 eps  0.6299  best 0.0348 m
+
+wrote /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/train_config  (5 success video(s), 0 near-miss video(s))
+[validate-move-to] leg multi_object: conda run --no-capture-output -n cdpr-mjlab python3 /root/repo/RL_VLA_Bootstrapping/tools/audit/move_to_validation_videos.py --checkpoint /root/repo/RL_VLA_Bootstrapping/runs/phase4_move_to_iter0_resume_20260818_080928/rl/step_11009573/smolvla_grpo_adapter.pt --config /root/repo/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_phase4_move_to_loop.yaml --device cuda:0 --worlds 512 --group-size 8 --smolvla-microbatch 256 --fps 6 --label multi_object --output /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object --scene-seed 1000101 --rounds 2 --track-worlds 32 --max-videos 4 --video-filter any --metadata-override min_scene_objects=2 --metadata-override max_scene_objects=3
+[xy-probe] metadata override min_scene_objects=2.0
+[xy-probe] metadata override max_scene_objects=3.0
+[xy-probe] allocating 512 worlds (64 groups of 8) on cuda:0
+Warp 1.14.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.14.0
+Module reset_data__locals__reset_xfrc_applied_b12c4ea8 b12c4ea load on device 'cuda:0' took 0.39 ms  (cached)
+Module reset_data__locals__reset_M_d9340d51 d9340d5 load on device 'cuda:0' took 0.44 ms  (cached)
+Module reset_data__locals__reset_mocap_126f9143 126f914 load on device 'cuda:0' took 0.29 ms  (cached)
+Module reset_data__locals__reset_contact_9c4e0b5a 9c4e0b5 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_sleep_0561e53d 0561e53 load on device 'cuda:0' took 0.30 ms  (cached)
+Module reset_data__locals__reset_nworld_a515e60d a515e60 load on device 'cuda:0' took 0.36 ms  (cached)
+Module mujoco_warp._src.io b6def1f load on device 'cuda:0' took 2.37 ms  (cached)
+Module mujoco_warp._src.smooth 6acfd0b load on device 'cuda:0' took 2.44 ms  (cached)
+Module _tile_cholesky_factorize_block__locals__kernel_94b386bc 8be4f4c load on device 'cuda:0' took 16.55 ms  (cached)
+Module _tile_cholesky_solve_block__locals__kernel_08d79cc3 16a32d3 load on device 'cuda:0' took 17.97 ms  (cached)
+Module _nxn_broadphase__locals__kernel_0de18907 0de1890 load on device 'cuda:0' took 0.41 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_cff54597 cff5459 load on device 'cuda:0' took 1.96 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_e6d90138 e6d9013 load on device 'cuda:0' took 1.16 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_8e6a711d 8e6a711 load on device 'cuda:0' took 1.23 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_00f18ad3 00f18ad load on device 'cuda:0' took 1.62 ms  (cached)
+Module mujoco_warp._src.constraint 880bd7f load on device 'cuda:0' took 0.31 ms  (cached)
+Module _equality_joint__locals__kernel_aa27979b aa27979 load on device 'cuda:0' took 0.49 ms  (cached)
+Module _friction_dof__locals__kernel_196c77d2 196c77d load on device 'cuda:0' took 0.42 ms  (cached)
+Module _friction_tendon__locals__kernel_884aba88 884aba8 load on device 'cuda:0' took 0.43 ms  (cached)
+Module _limit_slide_hinge__locals__kernel_6e38514e 6e38514 load on device 'cuda:0' took 0.43 ms  (cached)
+Module _limit_tendon__locals__kernel_ef189ae5 ef189ae load on device 'cuda:0' took 0.43 ms  (cached)
+Module _efc_contact_init__locals__kernel_6eab31b8 6eab31b load on device 'cuda:0' took 0.38 ms  (cached)
+Module _efc_contact_jac_sparse__locals__kernel_f9099d1d f9099d1 load on device 'cuda:0' took 0.38 ms  (cached)
+Module _efc_contact_update__locals__kernel_8aad7bfd 8aad7bf load on device 'cuda:0' took 0.41 ms  (cached)
+Module mujoco_warp._src.sensor 4bf7c4d load on device 'cuda:0' took 2.67 ms  (cached)
+Module mujoco_warp._src.forward a27d81a load on device 'cuda:0' took 1.04 ms  (cached)
+Module mujoco_warp._src.forward bb9f957 load on device 'cuda:0' took 1.34 ms  (cached)
+Module mujoco_warp._src.passive e551f58 load on device 'cuda:0' took 0.96 ms  (cached)
+Module _qfrc_smooth__locals__kernel_6eb3d958 6eb3d95 load on device 'cuda:0' took 0.35 ms  (cached)
+Module mujoco_warp._src.support b6765b2 load on device 'cuda:0' took 0.55 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_6bb97780 72e0cd2 load on device 'cuda:0' took 33.44 ms  (cached)
+Module mujoco_warp._src.solver ee39d44 load on device 'cuda:0' took 2.76 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_f1102b5b f1102b5 load on device 'cuda:0' took 0.37 ms  (cached)
+Module mul_m_kernel__locals___mul_m_fd2186c4 fd2186c load on device 'cuda:0' took 0.36 ms  (cached)
+Module _update_constraint_efc__locals__kernel_d40ce3fb d40ce3f load on device 'cuda:0' took 0.40 ms  (cached)
+Module mujoco_warp._src.solver 546db7d load on device 'cuda:0' took 3.51 ms  (cached)
+Module _update_gradient_cholesky_blocked__locals__kernel_875ef57d e1f1ba2 load on device 'cuda:0' took 72.97 ms  (cached)
+Module _linesearch_jv_fused_kernel__locals__kernel_8f129a8a 8f129a8 load on device 'cuda:0' took 0.47 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_b1ba3791 74b17ed load on device 'cuda:0' took 0.61 ms  (cached)
+Module _update_constraint_efc__locals__kernel_3930e3eb 3930e3e load on device 'cuda:0' took 0.38 ms  (cached)
+Module _update_gradient_cholesky_blocked_skip_unchanged__locals__kernel_6e481e18 5868864 load on device 'cuda:0' took 71.24 ms  (cached)
+Module mujoco_warp._src.render_util ff4fe80 load on device 'cuda:0' took 0.65 ms  (cached)
+Module mujoco_warp._src.bvh d9cfd91 load on device 'cuda:0' took 0.82 ms  (cached)
+[xy-probe] restored approach caps (m): {0: 0.19}
+[xy-probe] loading frozen SmolVLA lerobot/smolvla_base
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Reducing the number of VLM layers to 16 ...
+[xy-probe] restored action-expert LoRA: 112 modules, 3416064 params
+[move-to-validation] label=multi_object cap={'move_to_object': 0.19} scene_objects=2-3 worlds=512 rounds=2 counts_toward_metric=False
+Module reset_data__locals__reset_xfrc_applied_03030511 0303051 load on device 'cuda:0' took 0.44 ms  (cached)
+Module reset_data__locals__reset_M_631075dd 631075d load on device 'cuda:0' took 0.35 ms  (cached)
+Module reset_data__locals__reset_mocap_6513201c 6513201 load on device 'cuda:0' took 0.34 ms  (cached)
+Module reset_data__locals__reset_contact_5c08f689 5c08f68 load on device 'cuda:0' took 0.34 ms  (cached)
+Module reset_data__locals__reset_sleep_bd8c7e06 bd8c7e0 load on device 'cuda:0' took 0.34 ms  (cached)
+Module reset_data__locals__reset_nworld_092d1d28 092d1d2 load on device 'cuda:0' took 0.41 ms  (cached)
+Module render__locals___render_megakernel_55c210b2 8edcc46 load on device 'cuda:0' took 1.15 ms  (cached)
+[move-to-validation] round 0: success 0.395 (202/512)  start median 137 mm  best median 31 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 1
+[move-to-validation]   wrote success/multi_object_r00_w447_success_robocasa_bowl_obj3_d106mm_wrist27deg.mp4
+[move-to-validation]   wrote success/multi_object_r00_w468_success_robocasa_tomato_obj2_d120mm_wrist35deg.mp4
+[move-to-validation]   wrote success/multi_object_r00_w326_success_robocasa_apple_obj2_d160mm_wrist38deg.mp4
+[move-to-validation]   wrote success/multi_object_r00_w401_success_robocasa_tomato_obj2_d146mm_wrist32deg.mp4
+[move-to-validation] round 1: success 0.525 (269/512)  start median 139 mm  best median 18 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 0
+
+VALIDATION -- move_to_object
+---------------------------
+  label                 multi_object
+  counts toward metric  False
+  episodes              1024
+  success rate          0.4600 (471/1024)
+  precondition          every episode had the target inside the overview or wrist frame AND inside the reachable workspace
+  start cap             0.1900 m (3-D to the hover point); 0 episode(s) started outside it
+    grounding_test                   named_not_nearest       232 eps  0.2716  best 0.0864 m
+    target_object                    robocasa_apple          128 eps  0.5234  best 0.0627 m
+    target_object                    robocasa_banana         128 eps  0.4219  best 0.0515 m
+    target_object                    robocasa_bowl           128 eps  0.5469  best 0.0438 m
+    target_object                    robocasa_mug            128 eps  0.3594  best 0.0657 m
+    target_object                    robocasa_orange         128 eps  0.4219  best 0.0767 m
+    target_object                    robocasa_plate          128 eps  0.6016  best 0.0436 m
+    target_object                    robocasa_potato         128 eps  0.2812  best 0.0597 m
+    target_object                    robocasa_tomato         128 eps  0.5234  best 0.0456 m
+    scene_objects                    2                       520 eps  0.4865  best 0.0524 m
+    scene_objects                    3                       504 eps  0.4325  best 0.0600 m
+    target_certainly_out_of_wrist    false                  1024 eps  0.4600  best 0.0561 m
+
+wrote /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object  (4 success video(s), 0 near-miss video(s))
+[validate-move-to] leg multi_object_wrist_blind: conda run --no-capture-output -n cdpr-mjlab python3 /root/repo/RL_VLA_Bootstrapping/tools/audit/move_to_validation_videos.py --checkpoint /root/repo/RL_VLA_Bootstrapping/runs/phase4_move_to_iter0_resume_20260818_080928/rl/step_11009573/smolvla_grpo_adapter.pt --config /root/repo/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_phase4_move_to_loop.yaml --device cuda:0 --worlds 512 --group-size 8 --smolvla-microbatch 256 --fps 6 --label multi_object_wrist_blind --output /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object_wrist_blind --scene-seed 1000202 --rounds 3 --track-worlds 32 --max-videos 4 --failure-videos 3 --video-filter target_out_of_wrist --start-distance-cap 0.33 --metadata-override min_scene_objects=2 --metadata-override max_scene_objects=3
+[xy-probe] metadata override min_scene_objects=2.0
+[xy-probe] metadata override max_scene_objects=3.0
+[xy-probe] allocating 512 worlds (64 groups of 8) on cuda:0
+Warp 1.14.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.14.0
+Module reset_data__locals__reset_xfrc_applied_b12c4ea8 b12c4ea load on device 'cuda:0' took 0.40 ms  (cached)
+Module reset_data__locals__reset_M_d9340d51 d9340d5 load on device 'cuda:0' took 0.33 ms  (cached)
+Module reset_data__locals__reset_mocap_126f9143 126f914 load on device 'cuda:0' took 0.30 ms  (cached)
+Module reset_data__locals__reset_contact_9c4e0b5a 9c4e0b5 load on device 'cuda:0' took 0.33 ms  (cached)
+Module reset_data__locals__reset_sleep_0561e53d 0561e53 load on device 'cuda:0' took 0.30 ms  (cached)
+Module reset_data__locals__reset_nworld_a515e60d a515e60 load on device 'cuda:0' took 0.47 ms  (cached)
+Module mujoco_warp._src.io b6def1f load on device 'cuda:0' took 2.25 ms  (cached)
+Module mujoco_warp._src.smooth 6acfd0b load on device 'cuda:0' took 2.53 ms  (cached)
+Module _tile_cholesky_factorize_block__locals__kernel_94b386bc 8be4f4c load on device 'cuda:0' took 17.74 ms  (cached)
+Module _tile_cholesky_solve_block__locals__kernel_08d79cc3 16a32d3 load on device 'cuda:0' took 17.52 ms  (cached)
+Module _nxn_broadphase__locals__kernel_0de18907 0de1890 load on device 'cuda:0' took 0.41 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_cff54597 cff5459 load on device 'cuda:0' took 1.36 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_e6d90138 e6d9013 load on device 'cuda:0' took 1.17 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_8e6a711d 8e6a711 load on device 'cuda:0' took 1.11 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_00f18ad3 00f18ad load on device 'cuda:0' took 1.64 ms  (cached)
+Module mujoco_warp._src.constraint 880bd7f load on device 'cuda:0' took 0.35 ms  (cached)
+Module _equality_joint__locals__kernel_aa27979b aa27979 load on device 'cuda:0' took 0.48 ms  (cached)
+Module _friction_dof__locals__kernel_196c77d2 196c77d load on device 'cuda:0' took 0.43 ms  (cached)
+Module _friction_tendon__locals__kernel_884aba88 884aba8 load on device 'cuda:0' took 0.46 ms  (cached)
+Module _limit_slide_hinge__locals__kernel_6e38514e 6e38514 load on device 'cuda:0' took 0.43 ms  (cached)
+Module _limit_tendon__locals__kernel_ef189ae5 ef189ae load on device 'cuda:0' took 0.46 ms  (cached)
+Module _efc_contact_init__locals__kernel_6eab31b8 6eab31b load on device 'cuda:0' took 0.41 ms  (cached)
+Module _efc_contact_jac_sparse__locals__kernel_f9099d1d f9099d1 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _efc_contact_update__locals__kernel_8aad7bfd 8aad7bf load on device 'cuda:0' took 0.43 ms  (cached)
+Module mujoco_warp._src.sensor 4bf7c4d load on device 'cuda:0' took 2.71 ms  (cached)
+Module mujoco_warp._src.forward a27d81a load on device 'cuda:0' took 1.04 ms  (cached)
+Module mujoco_warp._src.forward bb9f957 load on device 'cuda:0' took 1.35 ms  (cached)
+Module mujoco_warp._src.passive e551f58 load on device 'cuda:0' took 1.03 ms  (cached)
+Module _qfrc_smooth__locals__kernel_6eb3d958 6eb3d95 load on device 'cuda:0' took 0.33 ms  (cached)
+Module mujoco_warp._src.support b6765b2 load on device 'cuda:0' took 0.56 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_6bb97780 72e0cd2 load on device 'cuda:0' took 33.45 ms  (cached)
+Module mujoco_warp._src.solver ee39d44 load on device 'cuda:0' took 2.77 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_f1102b5b f1102b5 load on device 'cuda:0' took 0.40 ms  (cached)
+Module mul_m_kernel__locals___mul_m_fd2186c4 fd2186c load on device 'cuda:0' took 0.38 ms  (cached)
+Module _update_constraint_efc__locals__kernel_d40ce3fb d40ce3f load on device 'cuda:0' took 0.39 ms  (cached)
+Module mujoco_warp._src.solver 546db7d load on device 'cuda:0' took 3.63 ms  (cached)
+Module _update_gradient_cholesky_blocked__locals__kernel_875ef57d e1f1ba2 load on device 'cuda:0' took 74.51 ms  (cached)
+Module _linesearch_jv_fused_kernel__locals__kernel_8f129a8a 8f129a8 load on device 'cuda:0' took 0.48 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_b1ba3791 74b17ed load on device 'cuda:0' took 0.64 ms  (cached)
+Module _update_constraint_efc__locals__kernel_3930e3eb 3930e3e load on device 'cuda:0' took 0.40 ms  (cached)
+Module _update_gradient_cholesky_blocked_skip_unchanged__locals__kernel_6e481e18 5868864 load on device 'cuda:0' took 71.59 ms  (cached)
+Module mujoco_warp._src.render_util ff4fe80 load on device 'cuda:0' took 0.65 ms  (cached)
+Module mujoco_warp._src.bvh d9cfd91 load on device 'cuda:0' took 0.85 ms  (cached)
+[xy-probe] restored approach caps (m): {0: 0.33}
+[xy-probe] loading frozen SmolVLA lerobot/smolvla_base
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Reducing the number of VLM layers to 16 ...
+[xy-probe] restored action-expert LoRA: 112 modules, 3416064 params
+[move-to-validation] label=multi_object_wrist_blind cap={'move_to_object': 0.33} scene_objects=2-3 worlds=512 rounds=3 counts_toward_metric=False
+Module reset_data__locals__reset_xfrc_applied_03030511 0303051 load on device 'cuda:0' took 0.45 ms  (cached)
+Module reset_data__locals__reset_M_631075dd 631075d load on device 'cuda:0' took 0.41 ms  (cached)
+Module reset_data__locals__reset_mocap_6513201c 6513201 load on device 'cuda:0' took 0.40 ms  (cached)
+Module reset_data__locals__reset_contact_5c08f689 5c08f68 load on device 'cuda:0' took 0.40 ms  (cached)
+Module reset_data__locals__reset_sleep_bd8c7e06 bd8c7e0 load on device 'cuda:0' took 0.38 ms  (cached)
+Module reset_data__locals__reset_nworld_092d1d28 092d1d2 load on device 'cuda:0' took 0.47 ms  (cached)
+Module render__locals___render_megakernel_55c210b2 8edcc46 load on device 'cuda:0' took 1.13 ms  (cached)
+[move-to-validation] round 0: success 0.176 (90/512)  start median 232 mm  best median 162 mm  horizon 32  out-of-wrist 0.125  over-cap 0.0000  diverged 0
+[move-to-validation]   wrote nearmiss/multi_object_wrist_blind_r00_w434_nearmiss_robocasa_plate_obj3_d328mm_wristblind.mp4
+[move-to-validation]   wrote nearmiss/multi_object_wrist_blind_r00_w084_nearmiss_robocasa_tomato_obj3_d293mm_wristblind.mp4
+[move-to-validation]   wrote nearmiss/multi_object_wrist_blind_r00_w188_nearmiss_robocasa_bowl_obj2_d312mm_wristblind.mp4
+[move-to-validation] round 1: success 0.158 (81/512)  start median 219 mm  best median 139 mm  horizon 32  out-of-wrist 0.125  over-cap 0.0000  diverged 0
+[move-to-validation] round 2: success 0.191 (98/512)  start median 228 mm  best median 174 mm  horizon 32  out-of-wrist 0.141  over-cap 0.0000  diverged 0
+
+VALIDATION -- move_to_object
+---------------------------
+  label                 multi_object_wrist_blind
+  counts toward metric  False
+  episodes              1536
+  success rate          0.1751 (269/1536)
+  precondition          every episode had the target inside the overview or wrist frame AND inside the reachable workspace
+  start cap             0.3300 m (3-D to the hover point); 0 episode(s) started outside it
+    grounding_test                   named_not_nearest       880 eps  0.0420  best 0.1829 m
+    target_object                    robocasa_apple          192 eps  0.1458  best 0.1265 m
+    target_object                    robocasa_banana         192 eps  0.0885  best 0.1601 m
+    target_object                    robocasa_bowl           192 eps  0.1979  best 0.1478 m
+    target_object                    robocasa_mug            192 eps  0.1875  best 0.1431 m
+    target_object                    robocasa_orange         192 eps  0.2188  best 0.1444 m
+    target_object                    robocasa_plate          192 eps  0.2552  best 0.1345 m
+    target_object                    robocasa_potato         192 eps  0.0833  best 0.1351 m
+    target_object                    robocasa_tomato         192 eps  0.2240  best 0.1289 m
+    scene_objects                    2                       752 eps  0.2207  best 0.1295 m
+    scene_objects                    3                       784 eps  0.1314  best 0.1502 m
+    target_certainly_out_of_wrist    false                  1336 eps  0.2013  best 0.1305 m
+    target_certainly_out_of_wrist    true                    200 eps  0.0000  best 0.2042 m
+
+wrote /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object_wrist_blind  (0 success video(s), 3 near-miss video(s))
+  no successful tracked episode: raise --rounds or --track-worlds, or pass --failure-videos to see what it did instead.
+[validate-move-to] leg scattered_objects: conda run --no-capture-output -n cdpr-mjlab python3 /root/repo/RL_VLA_Bootstrapping/tools/audit/move_to_validation_videos.py --checkpoint /root/repo/RL_VLA_Bootstrapping/runs/phase4_move_to_iter0_resume_20260818_080928/rl/step_11009573/smolvla_grpo_adapter.pt --config /root/repo/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_phase4_move_to_loop.yaml --device cuda:0 --worlds 512 --group-size 8 --smolvla-microbatch 256 --fps 6 --label scattered_objects --output /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/scattered_objects --scene-seed 1000303 --rounds 2 --track-worlds 32 --max-videos 4 --video-filter any --metadata-override min_scene_objects=2 --metadata-override max_scene_objects=3 --metadata-override scene_object_scene_shift_m=0.06 --metadata-override scene_object_jitter_m=0.03
+[xy-probe] metadata override min_scene_objects=2.0
+[xy-probe] metadata override max_scene_objects=3.0
+[xy-probe] metadata override scene_object_scene_shift_m=0.06
+[xy-probe] metadata override scene_object_jitter_m=0.03
+[xy-probe] allocating 512 worlds (64 groups of 8) on cuda:0
+Warp 1.14.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.14.0
+Module reset_data__locals__reset_xfrc_applied_b12c4ea8 b12c4ea load on device 'cuda:0' took 0.40 ms  (cached)
+Module reset_data__locals__reset_M_d9340d51 d9340d5 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_mocap_126f9143 126f914 load on device 'cuda:0' took 0.30 ms  (cached)
+Module reset_data__locals__reset_contact_9c4e0b5a 9c4e0b5 load on device 'cuda:0' took 0.30 ms  (cached)
+Module reset_data__locals__reset_sleep_0561e53d 0561e53 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_nworld_a515e60d a515e60 load on device 'cuda:0' took 0.35 ms  (cached)
+Module mujoco_warp._src.io b6def1f load on device 'cuda:0' took 2.33 ms  (cached)
+Module mujoco_warp._src.smooth 6acfd0b load on device 'cuda:0' took 2.41 ms  (cached)
+Module _tile_cholesky_factorize_block__locals__kernel_94b386bc 8be4f4c load on device 'cuda:0' took 17.10 ms  (cached)
+Module _tile_cholesky_solve_block__locals__kernel_08d79cc3 16a32d3 load on device 'cuda:0' took 17.40 ms  (cached)
+Module _nxn_broadphase__locals__kernel_0de18907 0de1890 load on device 'cuda:0' took 0.42 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_cff54597 cff5459 load on device 'cuda:0' took 1.69 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_e6d90138 e6d9013 load on device 'cuda:0' took 1.22 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_8e6a711d 8e6a711 load on device 'cuda:0' took 1.12 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_00f18ad3 00f18ad load on device 'cuda:0' took 1.62 ms  (cached)
+Module mujoco_warp._src.constraint 880bd7f load on device 'cuda:0' took 0.33 ms  (cached)
+Module _equality_joint__locals__kernel_aa27979b aa27979 load on device 'cuda:0' took 0.49 ms  (cached)
+Module _friction_dof__locals__kernel_196c77d2 196c77d load on device 'cuda:0' took 0.46 ms  (cached)
+Module _friction_tendon__locals__kernel_884aba88 884aba8 load on device 'cuda:0' took 0.45 ms  (cached)
+Module _limit_slide_hinge__locals__kernel_6e38514e 6e38514 load on device 'cuda:0' took 0.55 ms  (cached)
+Module _limit_tendon__locals__kernel_ef189ae5 ef189ae load on device 'cuda:0' took 0.44 ms  (cached)
+Module _efc_contact_init__locals__kernel_6eab31b8 6eab31b load on device 'cuda:0' took 0.38 ms  (cached)
+Module _efc_contact_jac_sparse__locals__kernel_f9099d1d f9099d1 load on device 'cuda:0' took 0.64 ms  (cached)
+Module _efc_contact_update__locals__kernel_8aad7bfd 8aad7bf load on device 'cuda:0' took 0.44 ms  (cached)
+Module mujoco_warp._src.sensor 4bf7c4d load on device 'cuda:0' took 2.11 ms  (cached)
+Module mujoco_warp._src.forward a27d81a load on device 'cuda:0' took 1.10 ms  (cached)
+Module mujoco_warp._src.forward bb9f957 load on device 'cuda:0' took 1.00 ms  (cached)
+Module mujoco_warp._src.passive e551f58 load on device 'cuda:0' took 0.77 ms  (cached)
+Module _qfrc_smooth__locals__kernel_6eb3d958 6eb3d95 load on device 'cuda:0' took 0.34 ms  (cached)
+Module mujoco_warp._src.support b6765b2 load on device 'cuda:0' took 0.44 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_6bb97780 72e0cd2 load on device 'cuda:0' took 25.22 ms  (cached)
+Module mujoco_warp._src.solver ee39d44 load on device 'cuda:0' took 2.73 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_f1102b5b f1102b5 load on device 'cuda:0' took 0.37 ms  (cached)
+Module mul_m_kernel__locals___mul_m_fd2186c4 fd2186c load on device 'cuda:0' took 0.37 ms  (cached)
+Module _update_constraint_efc__locals__kernel_d40ce3fb d40ce3f load on device 'cuda:0' took 0.40 ms  (cached)
+Module mujoco_warp._src.solver 546db7d load on device 'cuda:0' took 2.89 ms  (cached)
+Module _update_gradient_cholesky_blocked__locals__kernel_875ef57d e1f1ba2 load on device 'cuda:0' took 73.23 ms  (cached)
+Module _linesearch_jv_fused_kernel__locals__kernel_8f129a8a 8f129a8 load on device 'cuda:0' took 0.46 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_b1ba3791 74b17ed load on device 'cuda:0' took 0.61 ms  (cached)
+Module _update_constraint_efc__locals__kernel_3930e3eb 3930e3e load on device 'cuda:0' took 0.38 ms  (cached)
+Module _update_gradient_cholesky_blocked_skip_unchanged__locals__kernel_6e481e18 5868864 load on device 'cuda:0' took 70.91 ms  (cached)
+Module mujoco_warp._src.render_util ff4fe80 load on device 'cuda:0' took 0.64 ms  (cached)
+Module mujoco_warp._src.bvh d9cfd91 load on device 'cuda:0' took 0.85 ms  (cached)
+[xy-probe] restored approach caps (m): {0: 0.19}
+[xy-probe] loading frozen SmolVLA lerobot/smolvla_base
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Reducing the number of VLM layers to 16 ...
+[xy-probe] restored action-expert LoRA: 112 modules, 3416064 params
+[move-to-validation] label=scattered_objects cap={'move_to_object': 0.19} scene_objects=2-3 worlds=512 rounds=2 counts_toward_metric=False
+Module reset_data__locals__reset_xfrc_applied_03030511 0303051 load on device 'cuda:0' took 0.44 ms  (cached)
+Module reset_data__locals__reset_M_631075dd 631075d load on device 'cuda:0' took 0.35 ms  (cached)
+Module reset_data__locals__reset_mocap_6513201c 6513201 load on device 'cuda:0' took 0.32 ms  (cached)
+Module reset_data__locals__reset_contact_5c08f689 5c08f68 load on device 'cuda:0' took 0.34 ms  (cached)
+Module reset_data__locals__reset_sleep_bd8c7e06 bd8c7e0 load on device 'cuda:0' took 0.32 ms  (cached)
+Module reset_data__locals__reset_nworld_092d1d28 092d1d2 load on device 'cuda:0' took 0.39 ms  (cached)
+Module render__locals___render_megakernel_55c210b2 8edcc46 load on device 'cuda:0' took 1.13 ms  (cached)
+[move-to-validation] round 0: success 0.438 (224/512)  start median 157 mm  best median 19 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 0
+[move-to-validation]   wrote success/scattered_objects_r00_w194_success_robocasa_apple_obj2_d180mm_wrist43deg.mp4
+[move-to-validation]   wrote success/scattered_objects_r00_w454_success_robocasa_apple_obj3_d124mm_wrist31deg.mp4
+[move-to-validation]   wrote success/scattered_objects_r00_w037_success_robocasa_potato_obj3_d162mm_wrist40deg.mp4
+[move-to-validation]   wrote success/scattered_objects_r00_w276_success_robocasa_tomato_obj2_d96mm_wrist22deg.mp4
+[move-to-validation] round 1: success 0.266 (136/512)  start median 139 mm  best median 58 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 0
+
+VALIDATION -- move_to_object
+---------------------------
+  label                 scattered_objects
+  counts toward metric  False
+  episodes              1024
+  success rate          0.3516 (360/1024)
+  precondition          every episode had the target inside the overview or wrist frame AND inside the reachable workspace
+  start cap             0.1900 m (3-D to the hover point); 0 episode(s) started outside it
+    grounding_test                   named_not_nearest       272 eps  0.1213  best 0.1121 m
+    target_object                    robocasa_apple          128 eps  0.3984  best 0.0605 m
+    target_object                    robocasa_banana         128 eps  0.1250  best 0.0772 m
+    target_object                    robocasa_bowl           128 eps  0.3750  best 0.0690 m
+    target_object                    robocasa_mug            128 eps  0.3359  best 0.0588 m
+    target_object                    robocasa_orange         128 eps  0.2812  best 0.0834 m
+    target_object                    robocasa_plate          128 eps  0.3047  best 0.0717 m
+    target_object                    robocasa_potato         128 eps  0.4297  best 0.0508 m
+    target_object                    robocasa_tomato         128 eps  0.5625  best 0.0460 m
+    scene_objects                    2                       576 eps  0.4271  best 0.0534 m
+    scene_objects                    3                       448 eps  0.2545  best 0.0792 m
+    target_certainly_out_of_wrist    false                  1024 eps  0.3516  best 0.0647 m
+
+wrote /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/scattered_objects  (4 success video(s), 0 near-miss video(s))
+[validate-move-to] leg uncapped_workspace: conda run --no-capture-output -n cdpr-mjlab python3 /root/repo/RL_VLA_Bootstrapping/tools/audit/move_to_validation_videos.py --checkpoint /root/repo/RL_VLA_Bootstrapping/runs/phase4_move_to_iter0_resume_20260818_080928/rl/step_11009573/smolvla_grpo_adapter.pt --config /root/repo/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_phase4_move_to_loop.yaml --device cuda:0 --worlds 512 --group-size 8 --smolvla-microbatch 256 --fps 6 --label uncapped_workspace --output /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/uncapped_workspace --scene-seed 1000404 --rounds 2 --track-worlds 32 --max-videos 3 --failure-videos 2 --video-filter any --start-distance-cap inf
+[xy-probe] allocating 512 worlds (64 groups of 8) on cuda:0
+Warp 1.14.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.14.0
+Module reset_data__locals__reset_xfrc_applied_b12c4ea8 b12c4ea load on device 'cuda:0' took 0.39 ms  (cached)
+Module reset_data__locals__reset_M_d9340d51 d9340d5 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_mocap_126f9143 126f914 load on device 'cuda:0' took 0.30 ms  (cached)
+Module reset_data__locals__reset_contact_9c4e0b5a 9c4e0b5 load on device 'cuda:0' took 0.32 ms  (cached)
+Module reset_data__locals__reset_sleep_0561e53d 0561e53 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_nworld_a515e60d a515e60 load on device 'cuda:0' took 0.47 ms  (cached)
+Module mujoco_warp._src.io b6def1f load on device 'cuda:0' took 2.23 ms  (cached)
+Module mujoco_warp._src.smooth 6acfd0b load on device 'cuda:0' took 2.56 ms  (cached)
+Module _tile_cholesky_factorize_block__locals__kernel_94b386bc 8be4f4c load on device 'cuda:0' took 17.99 ms  (cached)
+Module _tile_cholesky_solve_block__locals__kernel_08d79cc3 16a32d3 load on device 'cuda:0' took 17.56 ms  (cached)
+Module _nxn_broadphase__locals__kernel_0de18907 0de1890 load on device 'cuda:0' took 0.40 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_cff54597 cff5459 load on device 'cuda:0' took 1.38 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_e6d90138 e6d9013 load on device 'cuda:0' took 1.10 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_8e6a711d 8e6a711 load on device 'cuda:0' took 1.19 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_00f18ad3 00f18ad load on device 'cuda:0' took 1.64 ms  (cached)
+Module mujoco_warp._src.constraint 880bd7f load on device 'cuda:0' took 0.33 ms  (cached)
+Module _equality_joint__locals__kernel_aa27979b aa27979 load on device 'cuda:0' took 0.48 ms  (cached)
+Module _friction_dof__locals__kernel_196c77d2 196c77d load on device 'cuda:0' took 0.43 ms  (cached)
+Module _friction_tendon__locals__kernel_884aba88 884aba8 load on device 'cuda:0' took 0.45 ms  (cached)
+Module _limit_slide_hinge__locals__kernel_6e38514e 6e38514 load on device 'cuda:0' took 0.43 ms  (cached)
+Module _limit_tendon__locals__kernel_ef189ae5 ef189ae load on device 'cuda:0' took 0.43 ms  (cached)
+Module _efc_contact_init__locals__kernel_6eab31b8 6eab31b load on device 'cuda:0' took 0.38 ms  (cached)
+Module _efc_contact_jac_sparse__locals__kernel_f9099d1d f9099d1 load on device 'cuda:0' took 0.37 ms  (cached)
+Module _efc_contact_update__locals__kernel_8aad7bfd 8aad7bf load on device 'cuda:0' took 0.42 ms  (cached)
+Module mujoco_warp._src.sensor 4bf7c4d load on device 'cuda:0' took 1.98 ms  (cached)
+Module mujoco_warp._src.forward a27d81a load on device 'cuda:0' took 1.01 ms  (cached)
+Module mujoco_warp._src.forward bb9f957 load on device 'cuda:0' took 1.14 ms  (cached)
+Module mujoco_warp._src.passive e551f58 load on device 'cuda:0' took 0.78 ms  (cached)
+Module _qfrc_smooth__locals__kernel_6eb3d958 6eb3d95 load on device 'cuda:0' took 0.37 ms  (cached)
+Module mujoco_warp._src.support b6765b2 load on device 'cuda:0' took 0.48 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_6bb97780 72e0cd2 load on device 'cuda:0' took 31.43 ms  (cached)
+Module mujoco_warp._src.solver ee39d44 load on device 'cuda:0' took 2.75 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_f1102b5b f1102b5 load on device 'cuda:0' took 0.40 ms  (cached)
+Module mul_m_kernel__locals___mul_m_fd2186c4 fd2186c load on device 'cuda:0' took 0.36 ms  (cached)
+Module _update_constraint_efc__locals__kernel_d40ce3fb d40ce3f load on device 'cuda:0' took 0.39 ms  (cached)
+Module mujoco_warp._src.solver 546db7d load on device 'cuda:0' took 3.65 ms  (cached)
+Module _update_gradient_cholesky_blocked__locals__kernel_875ef57d e1f1ba2 load on device 'cuda:0' took 73.67 ms  (cached)
+Module _linesearch_jv_fused_kernel__locals__kernel_8f129a8a 8f129a8 load on device 'cuda:0' took 0.46 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_b1ba3791 74b17ed load on device 'cuda:0' took 0.61 ms  (cached)
+Module _update_constraint_efc__locals__kernel_3930e3eb 3930e3e load on device 'cuda:0' took 0.42 ms  (cached)
+Module _update_gradient_cholesky_blocked_skip_unchanged__locals__kernel_6e481e18 5868864 load on device 'cuda:0' took 72.16 ms  (cached)
+Module mujoco_warp._src.render_util ff4fe80 load on device 'cuda:0' took 0.66 ms  (cached)
+Module mujoco_warp._src.bvh d9cfd91 load on device 'cuda:0' took 0.81 ms  (cached)
+[xy-probe] restored approach caps (m): {0: inf}
+[xy-probe] loading frozen SmolVLA lerobot/smolvla_base
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Reducing the number of VLM layers to 16 ...
+[xy-probe] restored action-expert LoRA: 112 modules, 3416064 params
+[move-to-validation] label=uncapped_workspace cap={'move_to_object': inf} scene_objects=1-2 worlds=512 rounds=2 counts_toward_metric=False
+Module reset_data__locals__reset_xfrc_applied_03030511 0303051 load on device 'cuda:0' took 0.49 ms  (cached)
+Module reset_data__locals__reset_M_631075dd 631075d load on device 'cuda:0' took 0.36 ms  (cached)
+Module reset_data__locals__reset_mocap_6513201c 6513201 load on device 'cuda:0' took 0.35 ms  (cached)
+Module reset_data__locals__reset_contact_5c08f689 5c08f68 load on device 'cuda:0' took 0.35 ms  (cached)
+Module reset_data__locals__reset_sleep_bd8c7e06 bd8c7e0 load on device 'cuda:0' took 0.38 ms  (cached)
+Module reset_data__locals__reset_nworld_092d1d28 092d1d2 load on device 'cuda:0' took 0.39 ms  (cached)
+Module render__locals___render_megakernel_55c210b2 8edcc46 load on device 'cuda:0' took 1.08 ms  (cached)
+[move-to-validation] round 0: success 0.113 (58/512)  start median 303 mm  best median 187 mm  horizon 32  out-of-wrist 0.438  over-cap 0.0000  diverged 0
+[move-to-validation]   wrote success/uncapped_workspace_r00_w475_success_robocasa_orange_obj2_d261mm_wrist49deg.mp4
+[move-to-validation]   wrote success/uncapped_workspace_r00_w110_success_robocasa_mug_obj2_d170mm_wrist37deg.mp4
+[move-to-validation]   wrote success/uncapped_workspace_r00_w018_success_robocasa_tomato_obj1_d167mm_wrist38deg.mp4
+[move-to-validation]   wrote nearmiss/uncapped_workspace_r00_w357_nearmiss_robocasa_potato_obj1_d394mm_wristblind.mp4
+[move-to-validation]   wrote nearmiss/uncapped_workspace_r00_w287_nearmiss_robocasa_orange_obj2_d143mm_wrist44deg.mp4
+[move-to-validation] round 1: success 0.230 (118/512)  start median 241 mm  best median 136 mm  horizon 32  out-of-wrist 0.328  over-cap 0.0000  diverged 0
+
+VALIDATION -- move_to_object
+---------------------------
+  label                 uncapped_workspace
+  counts toward metric  False
+  episodes              1024
+  success rate          0.1719 (176/1024)
+  precondition          every episode had the target inside the overview or wrist frame AND inside the reachable workspace
+  start cap             inf m (3-D to the hover point); 0 episode(s) started outside it
+    grounding_test                   named_not_nearest       288 eps  0.0590  best 0.2467 m
+    target_object                    robocasa_apple          128 eps  0.3125  best 0.1369 m
+    target_object                    robocasa_banana         128 eps  0.0156  best 0.1844 m
+    target_object                    robocasa_bowl           128 eps  0.2578  best 0.1843 m
+    target_object                    robocasa_mug            128 eps  0.0859  best 0.1965 m
+    target_object                    robocasa_orange         128 eps  0.1719  best 0.1354 m
+    target_object                    robocasa_plate          128 eps  0.1875  best 0.2272 m
+    target_object                    robocasa_potato         128 eps  0.0703  best 0.2012 m
+    target_object                    robocasa_tomato         128 eps  0.2734  best 0.1393 m
+    scene_objects                    1                       448 eps  0.2321  best 0.1659 m
+    scene_objects                    2                       576 eps  0.1250  best 0.1832 m
+    target_certainly_out_of_wrist    false                   632 eps  0.2753  best 0.1136 m
+    target_certainly_out_of_wrist    true                    392 eps  0.0051  best 0.2756 m
+
+wrote /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/uncapped_workspace  (3 success video(s), 2 near-miss video(s))
+[validate-move-to] leg one_object_many_places: conda run --no-capture-output -n cdpr-mjlab python3 /root/repo/RL_VLA_Bootstrapping/tools/audit/move_to_validation_videos.py --checkpoint /root/repo/RL_VLA_Bootstrapping/runs/phase4_move_to_iter0_resume_20260818_080928/rl/step_11009573/smolvla_grpo_adapter.pt --config /root/repo/RL_VLA_Bootstrapping/configs/examples/cdpr_smolvla_phase4_move_to_loop.yaml --device cuda:0 --worlds 512 --group-size 8 --smolvla-microbatch 256 --fps 6 --label one_object_many_places --output /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/one_object_many_places --scene-seed 1000505 --rounds 2 --track-worlds 32 --max-videos 6 --failure-videos 3 --video-filter any --video-catalog robocasa_apple --no-counts-toward-metric
+[xy-probe] allocating 512 worlds (64 groups of 8) on cuda:0
+Warp 1.14.0 initialized:
+   CUDA Toolkit 12.9, Driver 13.0
+   Devices:
+     "cpu"      : "x86_64"
+     "cuda:0"   : "NVIDIA A40" (44 GiB, sm_86, mempool enabled)
+   Kernel cache:
+     /root/.cache/warp/1.14.0
+Module reset_data__locals__reset_xfrc_applied_b12c4ea8 b12c4ea load on device 'cuda:0' took 0.39 ms  (cached)
+Module reset_data__locals__reset_M_d9340d51 d9340d5 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_mocap_126f9143 126f914 load on device 'cuda:0' took 0.30 ms  (cached)
+Module reset_data__locals__reset_contact_9c4e0b5a 9c4e0b5 load on device 'cuda:0' took 0.32 ms  (cached)
+Module reset_data__locals__reset_sleep_0561e53d 0561e53 load on device 'cuda:0' took 0.31 ms  (cached)
+Module reset_data__locals__reset_nworld_a515e60d a515e60 load on device 'cuda:0' took 0.47 ms  (cached)
+Module mujoco_warp._src.io b6def1f load on device 'cuda:0' took 2.25 ms  (cached)
+Module mujoco_warp._src.smooth 6acfd0b load on device 'cuda:0' took 2.53 ms  (cached)
+Module _tile_cholesky_factorize_block__locals__kernel_94b386bc 8be4f4c load on device 'cuda:0' took 20.94 ms  (cached)
+Module _tile_cholesky_solve_block__locals__kernel_08d79cc3 16a32d3 load on device 'cuda:0' took 22.44 ms  (cached)
+Module _nxn_broadphase__locals__kernel_0de18907 0de1890 load on device 'cuda:0' took 0.44 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_cff54597 cff5459 load on device 'cuda:0' took 1.43 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_e6d90138 e6d9013 load on device 'cuda:0' took 1.16 ms  (cached)
+Module ccd_kernel_builder__locals__ccd_kernel_8e6a711d 8e6a711 load on device 'cuda:0' took 1.30 ms  (cached)
+Module _primitive_narrowphase__locals__primitive_narrowphase_00f18ad3 00f18ad load on device 'cuda:0' took 2.19 ms  (cached)
+Module mujoco_warp._src.constraint 880bd7f load on device 'cuda:0' took 0.32 ms  (cached)
+Module _equality_joint__locals__kernel_aa27979b aa27979 load on device 'cuda:0' took 0.50 ms  (cached)
+Module _friction_dof__locals__kernel_196c77d2 196c77d load on device 'cuda:0' took 0.45 ms  (cached)
+Module _friction_tendon__locals__kernel_884aba88 884aba8 load on device 'cuda:0' took 0.43 ms  (cached)
+Module _limit_slide_hinge__locals__kernel_6e38514e 6e38514 load on device 'cuda:0' took 0.43 ms  (cached)
+Module _limit_tendon__locals__kernel_ef189ae5 ef189ae load on device 'cuda:0' took 0.46 ms  (cached)
+Module _efc_contact_init__locals__kernel_6eab31b8 6eab31b load on device 'cuda:0' took 0.41 ms  (cached)
+Module _efc_contact_jac_sparse__locals__kernel_f9099d1d f9099d1 load on device 'cuda:0' took 0.38 ms  (cached)
+Module _efc_contact_update__locals__kernel_8aad7bfd 8aad7bf load on device 'cuda:0' took 0.41 ms  (cached)
+Module mujoco_warp._src.sensor 4bf7c4d load on device 'cuda:0' took 2.74 ms  (cached)
+Module mujoco_warp._src.forward a27d81a load on device 'cuda:0' took 1.05 ms  (cached)
+Module mujoco_warp._src.forward bb9f957 load on device 'cuda:0' took 1.36 ms  (cached)
+Module mujoco_warp._src.passive e551f58 load on device 'cuda:0' took 0.95 ms  (cached)
+Module _qfrc_smooth__locals__kernel_6eb3d958 6eb3d95 load on device 'cuda:0' took 0.34 ms  (cached)
+Module mujoco_warp._src.support b6765b2 load on device 'cuda:0' took 0.57 ms  (cached)
+Module _tile_cholesky_factorize_solve_block__locals__kernel_6bb97780 72e0cd2 load on device 'cuda:0' took 33.64 ms  (cached)
+Module mujoco_warp._src.solver ee39d44 load on device 'cuda:0' took 2.76 ms  (cached)
+Module _solve_init_jaref_kernel__locals__kernel_f1102b5b f1102b5 load on device 'cuda:0' took 0.40 ms  (cached)
+Module mul_m_kernel__locals___mul_m_fd2186c4 fd2186c load on device 'cuda:0' took 0.37 ms  (cached)
+Module _update_constraint_efc__locals__kernel_d40ce3fb d40ce3f load on device 'cuda:0' took 0.39 ms  (cached)
+Module mujoco_warp._src.solver 546db7d load on device 'cuda:0' took 3.57 ms  (cached)
+Module _update_gradient_cholesky_blocked__locals__kernel_875ef57d e1f1ba2 load on device 'cuda:0' took 73.94 ms  (cached)
+Module _linesearch_jv_fused_kernel__locals__kernel_8f129a8a 8f129a8 load on device 'cuda:0' took 0.48 ms  (cached)
+Module _linesearch_iterative_kernel__locals__kernel_b1ba3791 74b17ed load on device 'cuda:0' took 0.63 ms  (cached)
+Module _update_constraint_efc__locals__kernel_3930e3eb 3930e3e load on device 'cuda:0' took 0.39 ms  (cached)
+Module _update_gradient_cholesky_blocked_skip_unchanged__locals__kernel_6e481e18 5868864 load on device 'cuda:0' took 71.26 ms  (cached)
+Module mujoco_warp._src.render_util ff4fe80 load on device 'cuda:0' took 0.66 ms  (cached)
+Module mujoco_warp._src.bvh d9cfd91 load on device 'cuda:0' took 0.83 ms  (cached)
+[xy-probe] restored approach caps (m): {0: 0.19}
+[xy-probe] loading frozen SmolVLA lerobot/smolvla_base
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+WARNING:huggingface_hub.utils._http:Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading  HuggingFaceTB/SmolVLM2-500M-Video-Instruct weights ...
+Reducing the number of VLM layers to 16 ...
+[xy-probe] restored action-expert LoRA: 112 modules, 3416064 params
+[move-to-validation] label=one_object_many_places cap={'move_to_object': 0.19} scene_objects=1-2 worlds=512 rounds=2 counts_toward_metric=False
+Module reset_data__locals__reset_xfrc_applied_03030511 0303051 load on device 'cuda:0' took 0.44 ms  (cached)
+Module reset_data__locals__reset_M_631075dd 631075d load on device 'cuda:0' took 0.37 ms  (cached)
+Module reset_data__locals__reset_mocap_6513201c 6513201 load on device 'cuda:0' took 0.41 ms  (cached)
+Module reset_data__locals__reset_contact_5c08f689 5c08f68 load on device 'cuda:0' took 0.40 ms  (cached)
+Module reset_data__locals__reset_sleep_bd8c7e06 bd8c7e0 load on device 'cuda:0' took 0.38 ms  (cached)
+Module reset_data__locals__reset_nworld_092d1d28 092d1d2 load on device 'cuda:0' took 0.48 ms  (cached)
+Module render__locals___render_megakernel_55c210b2 8edcc46 load on device 'cuda:0' took 1.13 ms  (cached)
+[move-to-validation] round 0: success 0.562 (288/512)  start median 148 mm  best median 16 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 0
+[move-to-validation]   wrote success/one_object_many_places_r00_w197_success_robocasa_apple_obj1_d188mm_wrist50deg.mp4
+[move-to-validation]   wrote success/one_object_many_places_r00_w261_success_robocasa_apple_obj2_d177mm_wrist41deg.mp4
+[move-to-validation]   wrote success/one_object_many_places_r00_w135_success_robocasa_apple_obj1_d115mm_wrist27deg.mp4
+[move-to-validation]   wrote success/one_object_many_places_r00_w326_success_robocasa_apple_obj2_d105mm_wrist35deg.mp4
+[move-to-validation]   wrote success/one_object_many_places_r00_w451_success_robocasa_apple_obj1_d150mm_wrist32deg.mp4
+[move-to-validation]   wrote nearmiss/one_object_many_places_r00_w386_nearmiss_robocasa_apple_obj2_d176mm_wrist41deg.mp4
+[move-to-validation]   wrote nearmiss/one_object_many_places_r00_w064_nearmiss_robocasa_apple_obj2_d139mm_wrist32deg.mp4
+[move-to-validation]   wrote nearmiss/one_object_many_places_r00_w003_nearmiss_robocasa_apple_obj1_d174mm_wrist48deg.mp4
+[move-to-validation] round 1: success 0.627 (321/512)  start median 139 mm  best median 14 mm  horizon 32  out-of-wrist 0.000  over-cap 0.0000  diverged 0
+[move-to-validation]   wrote success/one_object_many_places_r01_w322_success_robocasa_apple_obj1_d148mm_wrist41deg.mp4
+
+VALIDATION -- move_to_object
+---------------------------
+  label                 one_object_many_places
+  counts toward metric  False
+  episodes              1024
+  success rate          0.5947 (609/1024)
+  precondition          every episode had the target inside the overview or wrist frame AND inside the reachable workspace
+  start cap             0.1900 m (3-D to the hover point); 0 episode(s) started outside it
+    grounding_test                   named_not_nearest       120 eps  0.3417  best 0.0824 m
+    target_object                    robocasa_apple          128 eps  0.7031  best 0.0367 m
+    target_object                    robocasa_banana         128 eps  0.2344  best 0.0483 m
+    target_object                    robocasa_bowl           128 eps  0.9219  best 0.0134 m
+    target_object                    robocasa_mug            128 eps  0.3984  best 0.0572 m
+    target_object                    robocasa_orange         128 eps  0.6719  best 0.0264 m
+    target_object                    robocasa_plate          128 eps  0.7188  best 0.0241 m
+    target_object                    robocasa_potato         128 eps  0.4297  best 0.0452 m
+    target_object                    robocasa_tomato         128 eps  0.6797  best 0.0346 m
+    scene_objects                    1                       472 eps  0.7246  best 0.0217 m
+    scene_objects                    2                       552 eps  0.4837  best 0.0478 m
+    target_certainly_out_of_wrist    false                  1024 eps  0.5947  best 0.0357 m
+
+wrote /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/one_object_many_places  (6 success video(s), 3 near-miss video(s))
+[validate-move-to] combined table: /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/all_legs_validation_summary.csv
+
+VALIDATION METRIC (training configuration):
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/train_config/validation_summary.csv
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/train_config/episodes.csv
+SUCCESS VIDEOS:
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/train_config/videos
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object/videos
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object_wrist_blind/videos
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/scattered_objects/videos
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/one_object_many_places/videos   (robocasa_apple, different scenes)
+DIAGNOSTIC CSVs (NOT part of the metric):
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object/{episodes,validation_summary}.csv
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/multi_object_wrist_blind/{episodes,validation_summary}.csv
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/scattered_objects/{episodes,validation_summary}.csv
+  /root/repo/RL_VLA_Bootstrapping/runs/move_to_validation/20260821_085119_phase4_move_to_iter0_resume_20260818_080928_step_11009573/uncapped_workspace/{episodes,validation_summary}.csv
