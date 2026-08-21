@@ -16,8 +16,22 @@
 #                                  geometry that hides it. Videos are filtered to
 #                                  episodes where the named object is certainly
 #                                  outside the wrist frame at reset.
+#   D. uncapped_workspace      -- the cap disabled: the EE starts anywhere in
+#                                  the workspace box at least
+#                                  random_workspace_min_goal_xy_distance (0.12)
+#                                  from the target. This is what a validation
+#                                  resetter that never receives the cap does,
+#                                  i.e. the distribution the run's own
+#                                  validation/success_rate was computed on for
+#                                  52M steps, and it is close to what the
+#                                  qualitative video evaluator draws. Kept
+#                                  because "the gripper lands somewhere random,
+#                                  some of which overlaps training" is a fair
+#                                  objection that deserves a number rather than
+#                                  an argument: same policy, same seed, same
+#                                  predicate as A, differing only in the start.
 #
-# B and C are diagnostics. Their manifests carry
+# B, C and D are diagnostics. Their manifests carry
 # counts_toward_validation_metric: false and their episodes are in their own
 # CSVs -- do not pool them with A.
 set -euo pipefail
@@ -72,6 +86,11 @@ MAX_SCENE_OBJECTS="${MAX_SCENE_OBJECTS:-3}"
 # you want. The target stays inside the OVERVIEW frame at 1.0000 on every rung,
 # which is what keeps the episode well posed rather than impossible.
 BLIND_START_CAP="${BLIND_START_CAP:-0.33}"
+
+UNCAPPED_ROUNDS="${UNCAPPED_ROUNDS:-2}"
+UNCAPPED_TRACK_WORLDS="${UNCAPPED_TRACK_WORLDS:-32}"
+UNCAPPED_VIDEOS="${UNCAPPED_VIDEOS:-3}"
+UNCAPPED_NEAR_MISS_VIDEOS="${UNCAPPED_NEAR_MISS_VIDEOS:-2}"
 
 SKIP_LEGS="${SKIP_LEGS:-}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -149,7 +168,7 @@ printf 'scene_objects=config (leg A) %s-%s (legs B,C)\n' \
   "$MIN_SCENE_OBJECTS" "$MAX_SCENE_OBJECTS"
 printf 'episodes=%s x %s (A) / %s (B) / %s (C)\n' \
   "$WORLDS" "$TRAIN_ROUNDS" "$HARD_ROUNDS" "$BLIND_ROUNDS"
-printf 'metric_leg=train_config diagnostic_legs=multi_object,multi_object_wrist_blind\n'
+printf 'metric_leg=train_config diagnostic_legs=multi_object,multi_object_wrist_blind,uncapped_workspace\n'
 
 if [[ "$DRY_RUN" != "1" ]]; then
   mkdir -p "$RUN_DIR"
@@ -180,6 +199,14 @@ cd "$REPO_ROOT"
     --start-distance-cap "$BLIND_START_CAP" \
     --metadata-override "min_scene_objects=$MIN_SCENE_OBJECTS" \
     --metadata-override "max_scene_objects=$MAX_SCENE_OBJECTS"
+
+  run_leg uncapped_workspace \
+    --rounds "$UNCAPPED_ROUNDS" \
+    --track-worlds "$UNCAPPED_TRACK_WORLDS" \
+    --max-videos "$UNCAPPED_VIDEOS" \
+    --failure-videos "$UNCAPPED_NEAR_MISS_VIDEOS" \
+    --video-filter any \
+    --start-distance-cap inf
 
   if [[ "$DRY_RUN" != "1" ]]; then
     python3 - "$RUN_DIR" <<'PY'
@@ -230,5 +257,6 @@ PY
     printf 'DIAGNOSTIC CSVs (NOT part of the metric):\n'
     printf '  %s/multi_object/{episodes,validation_summary}.csv\n' "$RUN_DIR"
     printf '  %s/multi_object_wrist_blind/{episodes,validation_summary}.csv\n' "$RUN_DIR"
+    printf '  %s/uncapped_workspace/{episodes,validation_summary}.csv\n' "$RUN_DIR"
   fi
 } 2>&1 | { if [[ "$DRY_RUN" == "1" ]]; then cat; else tee "$RUN_DIR/validation.log"; fi; }
