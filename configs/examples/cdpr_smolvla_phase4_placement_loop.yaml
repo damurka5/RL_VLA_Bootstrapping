@@ -634,6 +634,38 @@ training:
       # it, 0.0 collapses -- 0.0002 sits under all of that with a ceiling behind
       # it. move_to keeps 0.0: it ran 9M steps with log_std drifting UP slightly,
       # so it has the opposite problem and needs no bonus.
+      # TEMPORALLY CORRELATED EXPLORATION ON THE GRIPPER CHANNEL ONLY.
+      # Order is [x, y, z, yaw, gripper], so this perturbs nothing but the
+      # release.
+      #
+      # Without it the release cannot be discovered, and that is arithmetic
+      # rather than a hunch. Opening from the caught start's fitted - 0.04 to
+      # max(0.55, fitted + 0.04) needs the gripper command to SUM to 1.6 (apple)
+      # through 3.16 (tomato) at 0.05 per env step. The i.i.d. per-step sampler
+      # at log_std -1.44 gives that sum a standard deviation of 0.237*sqrt(3) =
+      # 0.41 around a mean of zero, so the release sits 7.7 sigma out. Measured:
+      # physical_release_rate was 0.0001 on the first update of the previous run
+      # and 0.0000 for the remaining 917.
+      #
+      # A per-episode offset of 0.3 puts ~23-49 worlds per update at a bias
+      # above 0.5-0.6, and because a GRPO group is eight candidates sharing one
+      # start, the group becomes a finite-difference probe along the sustained
+      # -bias direction -- which is the estimator this response actually needs.
+      # This is the same mechanism the pick_up config documents for the z
+      # channel, where the lift sat 3.3 sigma out and a driftless sampler
+      # reached 0/14. Ours is worse.
+      #
+      # The near rung and this are BOTH required and they fix different halves:
+      # cap 0.02 makes a stray release pay +2.0 instead of the wrong-drop
+      # penalty, and this makes stray releases happen at all. The first without
+      # the second is what is running now.
+      #
+      # Watch for the documented failure mode as the cap climbs: a whole-episode
+      # offset also perturbs phases where opening is wrong, and GRPO can cancel
+      # it by driving the policy's own gripper mean down. At cap 0.02 an early
+      # release lands inside the radius, so the offset is safe there; if success
+      # falls as the cap reaches the upper rungs, cut this before anything else.
+      episode_offset_std: [0.0, 0.0, 0.0, 0.0, 0.3]
       entropy_coef: 0.0002
       max_grad_norm: 1.0
       grpo_group_size: 8
