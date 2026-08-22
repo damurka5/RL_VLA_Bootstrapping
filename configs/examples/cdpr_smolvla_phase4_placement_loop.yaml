@@ -390,9 +390,35 @@ task:
     # Absolute numbers here start well below phase 2's 0.71/0.32 and are NOT
     # comparable to them. That is the first honest measurement, not a
     # regression.
+    # THE LADDER SPANS BOTH JOBS, because the bottom rung has one the top rung
+    # cannot do.
+    #
+    # Re-basing this ladder above the success radii (bowl 0.057, plate 0.091)
+    # was right about the approach and wrong about everything else: it removed
+    # the near rung, and the near rung was TEACHING THE RELEASE. Measured over
+    # 917 updates and 9.5M steps on the re-based ladder: physical_release_rate
+    # 0.0001 at update 0 and 0.0000 ever after, physical_grasp_rate 0.9981 --
+    # the policy never once let go, so success was zero by construction no
+    # matter where it started.
+    #
+    # The release sits behind an exploration barrier, not a difficulty one. It
+    # takes 1.6-3.2 CONSECUTIVE env steps of commanding open to cross
+    # max(0.55, fitted + 0.04) from a start of fitted - 0.04 at 0.05 per step,
+    # and log_std had fallen to -1.86. Random exploration does not produce that
+    # sequence. Meanwhile candidate_reward_mean climbed 0.62 -> 0.80: the
+    # policy was busy perfecting the hover, which the dense term pays 1.5 for
+    # guaranteed while a release pays 3.5 only if it lands.
+    #
+    # At 0.02 the gripper starts within 2 cm of the release point, so letting go
+    # at any moment lands inside the radius and the +2.0 bonus is available
+    # immediately. That rung is free FOR THE APPROACH and that is fine -- it is
+    # not there to measure the approach. The rungs above the radii are, and the
+    # loop needs them because a task at its ceiling has nothing for SFT to add
+    # (phase 3 measured plate flat under SFT at 0.86-0.94, while bowl, which had
+    # headroom, moved +0.13).
     random_workspace_start_distance_ladder_by_instruction:
-      put_into_bowl: [0.10, 0.13, 0.16, 0.19]
-      put_into_plate: [0.14, 0.17, 0.20]
+      put_into_bowl: [0.02, 0.04, 0.07, 0.10, 0.13, 0.16, 0.19]
+      put_into_plate: [0.02, 0.05, 0.09, 0.14, 0.17, 0.20]
     # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
     # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
     # (bowl 0.057, plate 0.091), so the first rung is solved by opening the
@@ -407,8 +433,8 @@ task:
     # the right intent, expressed through a knob the ladder silences -- and the
     # run started at 0.01 regardless. The ladder above now carries that intent.
     random_workspace_start_distance_initial_by_instruction:
-      put_into_bowl: 0.10
-      put_into_plate: 0.14
+      put_into_bowl: 0.02
+      put_into_plate: 0.02
     random_workspace_start_distance_final: 0.34
     random_workspace_start_distance_increment: 0.02
     # 0.30/0.12/15, NOT 0.03/0.01/5. The old pair was fitted while a resetter
@@ -428,6 +454,13 @@ task:
     # rungs while the metric it gates on is already degrading, and by the time
     # the demotion fires there is nothing left to pull back to.
     random_workspace_start_distance_demote_pass_rate: 0.20
+    # 5, not the default 1. With a single crossing the cap leaves a rung the
+    # moment the EMA first touches 0.30, and the bottom rungs here are free by
+    # design -- so a dwell of 1 would race straight past the release-teaching
+    # rungs before the release is reliable, which is the failure this ladder
+    # exists to avoid. Every promotion of the 10M pick_up run fired on a single
+    # touch and the rate at the new rung was well below the gate.
+    random_workspace_start_distance_promote_dwell_updates: 5
     random_workspace_start_distance_pass_rate_ema_decay: 0.9
     random_workspace_start_distance_cooldown_updates: 15
     # Horizon coupled to each group's own cap. 16 at the initial cap: placement
