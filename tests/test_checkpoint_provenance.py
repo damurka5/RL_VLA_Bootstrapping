@@ -160,3 +160,54 @@ class TrainerProvenanceWiringTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoopClosureTests(unittest.TestCase):
+    """The step that lets an accepted SFT result get back into RL.
+
+    Until this launcher existed the loop could harvest, train and reach a
+    verdict, and then had nowhere to put the answer: the catch_release launcher
+    warm-starts weights only and refuses CHECKPOINT outright.
+    """
+
+    LAUNCHER = (
+        ROOT
+        / "scripts"
+        / "train_cdpr_smolvla_catch_release_grpo_mjlab_dual_remote_resume.sh"
+    )
+
+    def test_the_resume_launcher_exists_and_takes_a_checkpoint(self):
+        text = self.LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn('export RLVLA_SMOLVLA_RESUME_CHECKPOINT="$CHECKPOINT"', text)
+        self.assertIn("CHECKPOINT is required", text)
+
+    def test_it_resumes_rather_than_warm_starts(self):
+        """A warm start discards extra_state, where the earned caps live."""
+
+        text = self.LAUNCHER.read_text(encoding="utf-8")
+        self.assertNotIn("RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", text)
+        self.assertIn("load_weights_only discards them", text)
+
+    def test_it_defaults_to_the_phase_four_placement_config(self):
+        text = self.LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("cdpr_smolvla_phase4_placement_loop.yaml", text)
+
+    def test_it_prints_provenance_by_an_absolute_path(self):
+        """It runs before the cd into REPO_ROOT, and || true hides a failure.
+
+        A relative path here resolves against wherever the launcher was invoked
+        from, so the one line that answers "did the demonstrations get used?"
+        silently prints nothing.
+        """
+
+        text = self.LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn(
+            '"$REPO_ROOT/tools/audit/checkpoint_provenance.py"', text
+        )
+        index = text.index("checkpoint_provenance.py")
+        self.assertLess(index, text.index('cd "$REPO_ROOT"'))
+
+    def test_it_carries_the_run_naming_guard(self):
+        text = self.LAUNCHER.read_text(encoding="utf-8")
+        self.assertIn("cdpr_compose_run_name", text)
+        self.assertIn("cdpr_guard_run_dir", text)
