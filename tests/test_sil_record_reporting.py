@@ -21,6 +21,7 @@ import numpy as np
 from tools.audit.sil_record import (
     _Recording,
     _build_dataset,
+    _row_quota_mask,
     _determinism_report,
     _divergence,
     _episode_rows,
@@ -354,6 +355,87 @@ def _with_observations(recording: _Recording) -> _Recording:
     return recording
 
 
+class RowQuotaTests(unittest.TestCase):
+    """The quota is in DECISIONS and it never cuts an episode in half."""
+
+    def setUp(self) -> None:
+        # Two families with a 4x difference in episode length, which is the
+        # asymmetry the quota exists for: measured on the first mixed build,
+        # move_to ran 21.2 decisions per episode against 5.2 for placement.
+        ids, uids = [], []
+        for episode in range(20):
+            ids += [PLATE] * 20
+            uids += [f"long/{episode}"] * 20
+        for episode in range(60):
+            ids += [BOWL] * 5
+            uids += [f"short/{episode}"] * 5
+        self.ids = np.asarray(ids)
+        self.uids = np.asarray(uids)
+
+    def _kept(self, mask: np.ndarray) -> dict[int, int]:
+        return {
+            int(i): int((self.ids[mask] == i).sum())
+            for i in np.unique(self.ids[mask])
+        }
+
+    def test_budget_is_rows_not_episodes(self) -> None:
+        mask = _row_quota_mask(
+            self.ids, self.uids, rows_per_instruction=100, seed=0
+        )
+        kept = self._kept(mask)
+        # Equal rows, deliberately unequal episode counts: 5 long episodes
+        # against 20 short ones. An episode quota would invert this.
+        self.assertEqual(kept[PLATE], 100)
+        self.assertEqual(kept[BOWL], 100)
+        episodes = {
+            int(i): len(np.unique(self.uids[mask][self.ids[mask] == i]))
+            for i in (PLATE, BOWL)
+        }
+        self.assertEqual(episodes[PLATE], 5)
+        self.assertEqual(episodes[BOWL], 20)
+
+    def test_no_episode_is_split(self) -> None:
+        mask = _row_quota_mask(
+            self.ids, self.uids, rows_per_instruction=90, seed=3
+        )
+        for uid in np.unique(self.uids[mask]):
+            rows = self.uids == uid
+            self.assertTrue(
+                mask[rows].all(),
+                f"{uid} was kept only in part; _episode_split would then put "
+                "consecutive decisions of one episode on both sides.",
+            )
+
+    def test_zero_and_oversized_budgets_keep_everything(self) -> None:
+        for budget in (0, -1, 10_000):
+            with self.subTest(budget=budget):
+                mask = _row_quota_mask(
+                    self.ids, self.uids, rows_per_instruction=budget, seed=0
+                )
+                self.assertTrue(mask.all())
+
+    def test_seed_is_deterministic_and_meaningful(self) -> None:
+        first = _row_quota_mask(
+            self.ids, self.uids, rows_per_instruction=100, seed=11
+        )
+        self.assertTrue(
+            np.array_equal(
+                first,
+                _row_quota_mask(
+                    self.ids, self.uids, rows_per_instruction=100, seed=11
+                ),
+            )
+        )
+        self.assertFalse(
+            np.array_equal(
+                first,
+                _row_quota_mask(
+                    self.ids, self.uids, rows_per_instruction=100, seed=12
+                ),
+            )
+        )
+
+
 class DatasetBuildTests(unittest.TestCase):
     def setUp(self) -> None:
         self.recording = _with_observations(_synthetic())
@@ -362,6 +444,26 @@ class DatasetBuildTests(unittest.TestCase):
         _, stats = _build_dataset([self.recording])
         # Worlds 0, 2 and 4 succeed; 1, 3 and 5 do not.
         self.assertEqual(stats["episodes_kept"], 3)
+
+    def test_quota_is_reported_and_reaches_the_arrays(self) -> None:
+        full, full_stats = _build_dataset([self.recording], ["rung"], ["src"])
+        self.assertIsNone(full_stats["quota"])
+        capped, stats = _build_dataset(
+            [self.recording], ["rung"], ["src"], rows_per_instruction=1
+        )
+        self.assertEqual(stats["quota"]["rows_per_instruction"], 1)
+        self.assertEqual(
+            stats["quota"]["decisions_before"], full_stats["decisions"]
+        )
+        self.assertEqual(stats["decisions"], capped["state"].shape[0])
+        self.assertLessEqual(stats["decisions"], full_stats["decisions"])
+        # episodes_kept must describe the FILE, not the recordings, or a
+        # quota'd build reports a dataset that was never written.
+        self.assertEqual(
+            stats["episodes_kept"], len(np.unique(capped["episode_uid"]))
+        )
+        for entry in stats["by_instruction"].values():
+            self.assertLessEqual(entry["episodes_kept"], entry["episodes"])
 
     def test_decisions_are_truncated_at_the_success(self) -> None:
         dataset, stats = _build_dataset([self.recording], ["rung"], ["src"])

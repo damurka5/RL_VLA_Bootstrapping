@@ -1409,10 +1409,59 @@ def _smoothness(actions: np.ndarray, active: np.ndarray) -> dict[str, float]:
     }
 
 
+def _row_quota_mask(
+    instruction_ids: np.ndarray,
+    episode_uids: np.ndarray,
+    *,
+    rows_per_instruction: int,
+    seed: int,
+) -> np.ndarray:
+    """Row mask holding each instruction to roughly ``rows_per_instruction``.
+
+    In ROWS, not episodes. A decision is what the loss sees, and episode
+    lengths differ by a factor of four across these families -- measured on the
+    first mixed build, 21.2 decisions per move_to episode against 5.2-5.4 for
+    the placement pair. A quota of 300 episodes each therefore hands move_to
+    two thirds of the gradient while every count in the report reads as
+    balanced, which is the kind of skew that only shows up as a policy that
+    over-restored one family at another's expense.
+
+    Whole episodes, in random order, until the budget is met. Never a partial
+    episode: ``_episode_split`` holds out whole episodes so that consecutive
+    decisions sharing an observation history cannot straddle the train/val
+    line, and a quota that cut mid-episode would reintroduce exactly that.
+
+    The episode that crosses the budget is kept rather than dropped, so a slice
+    overshoots by up to one episode. Stopping short instead would bias the bank
+    toward short episodes, which for move_to means the starts nearest the goal.
+    """
+
+    keep = np.zeros(instruction_ids.shape, dtype=bool)
+    budget = int(rows_per_instruction)
+    if budget <= 0:
+        return ~keep
+    rng = np.random.default_rng(int(seed))
+    for instruction_id in np.unique(instruction_ids):
+        rows = np.flatnonzero(instruction_ids == instruction_id)
+        uids = episode_uids[rows]
+        taken = 0
+        chosen: list[str] = []
+        for uid in rng.permutation(np.unique(uids)):
+            if taken >= budget:
+                break
+            chosen.append(uid)
+            taken += int((uids == uid).sum())
+        keep[rows[np.isin(uids, chosen)]] = True
+    return keep
+
+
 def _build_dataset(
     recordings: Sequence[_Recording],
     labels: Sequence[str] | None = None,
     keys: Sequence[str] | None = None,
+    *,
+    rows_per_instruction: int = 0,
+    quota_seed: int = 0,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Successful episodes only, truncated at the step that made them succeed.
 
@@ -1519,6 +1568,24 @@ def _build_dataset(
         "source_group": np.asarray(groups, dtype="U32"),
     }
 
+    quota: dict[str, Any] | None = None
+    if int(rows_per_instruction) > 0:
+        keep = _row_quota_mask(
+            dataset["instruction_id"],
+            dataset["episode_uid"],
+            rows_per_instruction=int(rows_per_instruction),
+            seed=int(quota_seed),
+        )
+        before = int(dataset["state"].shape[0])
+        dataset = {key: value[keep] for key, value in dataset.items()}
+        episodes_kept = int(len(np.unique(dataset["episode_uid"])))
+        quota = {
+            "rows_per_instruction": int(rows_per_instruction),
+            "seed": int(quota_seed),
+            "decisions_before": before,
+            "decisions_after": int(dataset["state"].shape[0]),
+        }
+
     # The source success rate travels with every slice. A dataset drawn from a
     # 0.06 source is mostly luck; one drawn from 0.93 is mostly skill, and the
     # two must never be pooled without saying so.
@@ -1546,12 +1613,17 @@ def _build_dataset(
     for instruction_id in sorted(set(instruction_ids)):
         name = _instruction_name(instruction_id)
         entry = slice_stats(instruction_id, paired)
-        entry["decisions"] = int(
-            (dataset["instruction_id"] == instruction_id).sum()
+        rows_for_name = dataset["instruction_id"] == instruction_id
+        entry["decisions"] = int(rows_for_name.sum())
+        # Distinct from "episodes", which counts what the RECORDINGS held. A
+        # quota makes the two diverge, and reporting only the source count
+        # would describe a dataset that was never written.
+        entry["episodes_kept"] = int(
+            len(np.unique(dataset["episode_uid"][rows_for_name]))
         )
         entry["decisions_per_episode"] = (
-            round(entry["decisions"] / entry["episodes"], 2)
-            if entry["episodes"]
+            round(entry["decisions"] / entry["episodes_kept"], 2)
+            if entry["episodes_kept"]
             else None
         )
         # Pooling across rungs reports a rate that describes no collection
@@ -1594,6 +1666,7 @@ def _build_dataset(
         "recordings": len(usable),
         "recordings_without_observations": len(recordings) - len(usable),
         "episodes_kept": episodes_kept,
+        "quota": quota,
         "decisions": int(dataset["state"].shape[0]),
         "state_dim": int(dataset["state"].shape[-1]),
         "actions_per_decision": int(dataset["action"].shape[1]),
@@ -1692,6 +1765,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         nargs="+",
         default=[],
         help="Recording npz files to build a dataset from (--mode dataset).",
+    )
+    parser.add_argument(
+        "--rows-per-instruction",
+        type=int,
+        default=0,
+        help=(
+            "--mode dataset: hold each instruction to roughly this many "
+            "DECISIONS by dropping whole episodes at random. 0 keeps "
+            "everything. The unit is decisions and not episodes because the "
+            "SFT loss is per decision and episode lengths differ ~4x across "
+            "families, so an episode quota that reads as balanced is not."
+        ),
+    )
+    parser.add_argument(
+        "--quota-seed",
+        type=int,
+        default=0,
+        help="Seed for the --rows-per-instruction subsample.",
     )
     parser.add_argument(
         "--round-index",
@@ -1876,6 +1967,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             # directory PER RUNG, so stems repeat across rungs; replays of a
             # whole harvest land in ONE directory, so parents repeat there.
             [f"{path.parent.name}/{path.stem}" for path in resolved],
+            rows_per_instruction=int(args.rows_per_instruction),
+            quota_seed=int(args.quota_seed),
         )
         np.savez_compressed(output / "demonstrations.npz", **dataset)
         stats["inputs"] = [str(path) for path in args.inputs]
@@ -1891,7 +1984,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for name, entry in stats["by_instruction"].items():
             print(
-                f"[sil][dataset] {name}: {entry['episodes']} episodes "
+                f"[sil][dataset] {name}: {entry['episodes_kept']} episodes "
+                f"of {entry['episodes']} available "
                 f"({entry['decisions']} decisions, "
                 f"{entry['decisions_per_episode']} per episode) pooled source "
                 f"rate {entry['source_success_rate']:.3f}",
