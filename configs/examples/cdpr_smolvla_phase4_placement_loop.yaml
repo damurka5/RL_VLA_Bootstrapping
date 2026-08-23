@@ -607,7 +607,7 @@ training:
       adam_eps: 1.0e-5
       weight_decay: 0.0
       init_log_std: -1.2
-      min_log_std: -5.0
+      min_log_std: -1.72
       # -1.10, not -0.3. MUST MATCH the move-to phase. At -0.3 the ceiling never
       # bound and the distribution diffused underneath it: over move-to's
       # 16M-step run log_std rose monotonically for 12M steps (-1.227 -> -0.895)
@@ -665,7 +665,7 @@ training:
       # it by driving the policy's own gripper mean down. At cap 0.02 an early
       # release lands inside the radius, so the offset is safe there; if success
       # falls as the cap reaches the upper rungs, cut this before anything else.
-      episode_offset_std: [0.0, 0.0, 0.0, 0.0, 0.3]
+      episode_offset_std: [0.0, 0.0, 0.0, 0.0, 0.0]
       entropy_coef: 0.0002
       max_grad_norm: 1.0
       grpo_group_size: 8
