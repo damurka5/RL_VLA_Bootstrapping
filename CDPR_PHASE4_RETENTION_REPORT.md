@@ -24,15 +24,20 @@ Tests: `tests/test_sil_refresh_priors.py`, plus `RowQuotaTests` and
 Retention SFT on a three-family bank, from
 `runs/phase4_placement_iter1_20260823_165011/rl/step_1504301`:
 
-| instruction | cap | before | after | Δ |
+| instruction | cap | before | SFT, 20 epochs | SFT, 60 epochs |
 |---|---|---|---|---|
-| **move_to_object** | 0.19 | 0.062 / 0.060 / 0.117 → **0.080** | 0.371 / 0.254 / 0.270 → **0.298** | **+0.218** |
-| put_into_bowl | 0.20 | 0.230 / 0.231 → 0.2305 | 0.250 / 0.238 → 0.244 | +0.014 |
-| put_into_plate | 0.20 | 0.508 / 0.492 → 0.500 | 0.538 / 0.492 → 0.515 | +0.015 |
+| **move_to_object** | 0.19 | 0.062 / 0.060 / 0.117 → **0.080** | 0.371 / 0.254 / 0.270 → **0.298** | 0.383 / 0.256 / 0.295 → **0.311** |
+| put_into_bowl | 0.20 | 0.230 / 0.231 → 0.2305 | 0.250 / 0.238 → 0.244 | 0.319 / 0.234 → **0.2765** |
+| put_into_plate | 0.20 | 0.508 / 0.492 → 0.500 | 0.538 / 0.492 → 0.515 | 0.519 / 0.527 → **0.523** |
 
-move_to up 3.7×, every round positive; placement up on three of four paired
-rounds and down on none. Against the move_to reference of 0.641 the SFT closed
-39% of the gap, starting from a policy that had lost the skill outright.
+move_to up **3.9×**, every round positive; placement up on both families and
+down on neither. Against the move_to reference of 0.641 the SFT closed **41% of
+the gap**, starting from a policy that had lost the skill outright.
+
+Retention was not paid for out of placement — bowl gained 20% and plate 5%
+while move_to was being rebuilt. The bank's placement rows are the policy's own
+recent output, so that half is consolidation rather than distillation, and it
+behaves like it.
 
 **And the RL stall was one config line.** Zeroing `episode_offset_std` (see §2)
 took the placement run from 193 updates of frozen caps to both ladders topped
@@ -208,9 +213,29 @@ states agree with the SFT's recompute to within the numerics floor, so the 4.47
 was measuring distance to the *recording* network — exactly the distance the
 refresh exists to close.
 
-**Pending:** the 60-epoch checkpoint (`runs/phase4_bank/sft_retention_e60`) has
-not been scored in simulation. MSE and success rate are not linearly related, so
-whether the 12% MSE gain buys move_to success is open.
+### 6.1 Epochs were not the binding constraint
+
+Scored in simulation, the 12% MSE gain is worth almost nothing on the metric
+that matters:
+
+| | 20 epochs | 60 epochs | Δ |
+|---|---|---|---|
+| residual val_mse | 0.019656 | 0.017305 | −12% |
+| move_to @ 0.19 | 0.298 | **0.311** | **+0.013** |
+| put_into_bowl @ 0.20 | 0.244 | 0.2765 | +0.033 |
+| put_into_plate @ 0.20 | 0.515 | 0.523 | +0.008 |
+
+Every number moved the right way and every one is small; tripling the training
+bought 1.3 points of move_to. **The MSE-to-success relationship has saturated**,
+which rules out "train longer" as the lever and points the remaining headroom at
+the data — the move_to slice is 6 009 rows of 13 363 available — or at the
+residual's capacity, or at a ceiling on how far another policy's demonstrations
+can carry a skill this network no longer has.
+
+Curiously placement gained more from the extra epochs than move_to did (+0.033
+on bowl against +0.013), so the extra fitting went mostly into the
+self-imitation half of the mix rather than the distillation half. 60 epochs is
+still the better setting; it just is not the way to lift retention.
 
 ---
 
@@ -238,21 +263,26 @@ In the phase-3 report's spirit, because each cost a step.
 
 ## 8. State, and what is open
 
-Single policy `runs/phase4_bank/sft_retention/sil_sft_adapter.pt`:
-move_to 0.298 @ 0.19, put_into_plate 0.515 @ 0.20, put_into_bowl 0.244 @ 0.20.
+Single policy `runs/phase4_bank/sft_retention_e60/sil_sft_adapter.pt`:
+move_to 0.311 @ 0.19, put_into_plate 0.523 @ 0.20, put_into_bowl 0.2765 @ 0.20.
 Both placement ladders topped out (bowl 0.19, plate 0.20).
 
 Open:
 
-1. **Does the 60-epoch checkpoint retain better?** One eval, ~10 min.
-2. **Does retention hold across a second cycle?** The loop is alternating
-   optimization and can sawtooth. One data point is not a trend. The cheap lever
-   if it does is shorter RL segments — erosion scales with RL steps — and the
-   heavier one is a behaviour-cloning anchor on bank data inside the RL
-   objective, so the skill never has to be rebuilt from zero.
-3. **39% of the gap, or more?** If epochs were the constraint the number moves;
-   if not, the move_to slice needs to grow, and `--rows-per-instruction` cannot
-   yet express a per-family weight.
+1. ~~Does the 60-epoch checkpoint retain better?~~ Marginally. §6.1. Epochs are
+   not the lever.
+2. **Does retention hold across a second cycle?** This is the one that decides
+   whether the architecture works. The loop is alternating optimization: RL
+   erodes, SFT rebuilds. If a second cycle lands near 0.31 again that is a
+   stable fixed point and the design is sound; if it lands lower it is a
+   sawtooth and the fix moves inside the RL objective — a behaviour-cloning
+   anchor on bank data, so the skill never falls to 0.08 in the first place.
+   One data point cannot tell these apart.
+3. **41% of the gap, or more?** Epochs are excluded. What remains is slice size
+   — move_to used 6 009 of 13 363 available rows — which
+   `--rows-per-instruction` can test today by raising the quota, at the cost of
+   a mix deliberately weighted toward the forgotten skill. A genuine per-family
+   weight would need a small extension to that flag.
 4. **The composed pick-and-place.** `PlacementCaughtStageCurriculum`
    (`smolvla_grpo_mjwarp_cdpr.py:1016`) already anneals the fraction of
    placement episodes that start with the object caught, and is disabled by
