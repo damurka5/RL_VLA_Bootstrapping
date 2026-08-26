@@ -370,11 +370,49 @@ with the controller floor at 0.18, and the pick_up config records 3/3 successful
 grasps under it.
 
 Gate to watch: `reduce_success: 0.60` is measured against placement success,
-which at the topped-out caps is 0.244 (bowl) and 0.515 (plate). Bowl would never
-clear 0.60 and its fraction would never anneal, so a run started this way trains
-the composition on plate alone. Either lower the gate to each family's reach or
-start the annealing at a lower cap where success is high — bowl reaches 0.449 at
+which at the topped-out caps is 0.244 (bowl) and 0.515 (plate).
+
+**CORRECTED, phase 5 preflight.** The paragraph that stood here said bowl's
+fraction would never anneal and the run would "train the composition on plate
+alone". That reads the knob as per-instruction and it is not. There is **one
+fraction for both placement families**, driven by the **mean** of their two
+normal-start pass rates:
+`placement_caught_curriculum.observe(sum(placement_rates) / len(placement_rates))`
+(`smolvla_grpo_mjwarp_cdpr.py:2340-2352`), applied through
+`resetter.set_caught_container_fraction`, a single scalar
+(`mjwarp_rank_local_collector.py:1011`).
+
+So the failure mode is not asymmetric, it is total: iteration 2's EMAs of 0.588
+(plate) and 0.441 (bowl) average **0.515**, below the 0.60 reduce gate and above
+the 0.35 restore gate, so the fraction sits at 1.0 forever and *nothing* anneals.
+The remedy is the same shape as before but for a different reason — lower
+`reduce_success` to roughly 0.45 (under the current mean, clear of restore), or
+start the anneal at a lower cap where the mean is higher; bowl reaches 0.449 at
 cap 0.10.
+
+Three further facts about route (a), read off the resetter rather than inferred:
+
+* **The uncaught branch is fully built** (`mjwarp_rank_local_collector.py:1593-1626`).
+  Drawn per GROUP, so all eight GRPO candidates share a stage and stay
+  comparable. The object starts on the desk near the receptacle with the
+  gripper above it — grasp-then-carry.
+* **It already has its own horizon floor**, and this is the campaign's starved-phase
+  trap pre-empted: `placement_grasp_horizon_min_decisions` (default **32**, i.e.
+  the whole 128-step budget at `replan_every: 4`) is applied to uncaught groups
+  *only*, because a grasp costs the same ~30 env steps however close the
+  receptacle is. The comment there records 0/6 at a 64-step budget against 4/6
+  at 128, taking 77-119 steps — so the composed episode fits, with 9 steps of
+  margin at the worst measured case. No config change is needed for the budget.
+* **The approach cap measures gripper-to-CONTAINER, not gripper-to-object**, for
+  every container instruction: `random_goal = where(is_container, reference,
+  goal_target)` (`:1662-1665`). An uncaught episode at the topped-out 0.19/0.20
+  therefore starts with gripper *and* object both near the container. Route (a)
+  buys composition at short range — it is the right first rung, but it is not
+  "object anywhere, container anywhere", and no rung on the current ladder is.
+
+`placement_start_with_caught_object: true` does not block any of this: it gates
+`grasp_learning` only (`:1583`), which is Reverse-Frontier shell machinery this
+phase disables, and the uncaught branch is deliberately routed around it.
 
 ---
 
