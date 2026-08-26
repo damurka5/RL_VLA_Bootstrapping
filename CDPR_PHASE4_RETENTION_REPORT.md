@@ -261,18 +261,73 @@ In the phase-3 report's spirit, because each cost a step.
 
 ---
 
-## 8. State, and what is open
+## 8. Iteration 2 — the ladder runs out before the policy does
 
-Single policy `runs/phase4_bank/sft_retention_e60/sil_sft_adapter.pt`:
+925 updates, 25.1 hours, step 1 513 194 → 10 002 374, resumed from
+`sft_retention_e60`. The best run of the campaign, and the clearest evidence
+that the §2 fix holds at length.
+
+| step | overall validation | put_into_plate | put_into_bowl |
+|---|---|---|---|
+| 1.75 M (start) | 0.388 | 0.552 | 0.190 |
+| 7.75 M (**peak**) | **0.633** | **0.791** | 0.442 |
+| 10.0 M (end) | 0.586 | 0.689 | 0.461 |
+
+Against a previous campaign best of 0.4375. The entropy fix held over ten times
+the duration that used to break it: `log_std_mean` −1.432 → −1.459 across 925
+updates, against −1.44 → −1.93 across 459 before the offset was cut.
+`clip_fraction_mean` plateaued at ~0.37 rather than running to 0.48.
+
+**But the caps never moved.** Bowl held 0.19 and plate 0.20 for every one of the
+925 updates — their ladder tops — while `pass_rate_ema` climbed to **0.441** and
+**0.588** against a 0.30 promote gate. The policy spent the whole run
+comfortably clearing a gate with nowhere left to promote to.
+
+What that bought, by thirds:
+
+| window | overall validation | Δ |
+|---|---|---|
+| 1.75 M → 4.25 M | 0.388 → 0.455 | +0.067 |
+| 4.25 M → 7.75 M | 0.455 → 0.633 | **+0.178** |
+| 7.75 M → 10.0 M | 0.633 → 0.586 | **−0.047** |
+
+All nine validations after the peak came in below it. Plate carries the decline
+(0.791 → 0.689) while bowl kept improving to its own best at the final reading
+(0.461) — so the last seven hours were one family regressing and the other
+advancing, netting negative.
+
+**The conclusion is about the curriculum, not the policy.** A policy passing at
+0.44 and 0.59 on its top rung has not reached its limit, it has run out of
+rungs. `random_workspace_start_distance_final` is 0.34, but an explicit
+`..._ladder_by_instruction` entry outranks it
+(`smolvla_grpo_mjwarp_cdpr.py:1102-1107`) and these ladders stop at 0.19 and
+0.20. Extending them — bowl `[..., 0.19, 0.22, 0.25]`, plate
+`[..., 0.20, 0.23, 0.26]` — is the supported way to spend more RL on placement,
+and the promote gate decides whether the policy can follow. More steps against a
+fixed top rung is what produced the final third of the table.
+
+---
+
+## 9. State, and what is open
+
+Best placement policy: `runs/phase4_placement_iter2_*/rl/step_7753190` —
+validation 0.633 overall, plate 0.791, bowl 0.442. Both ladders topped out and
+`pass_rate_ema` at 0.44 / 0.59 against a 0.30 gate, so placement is finished
+under this curriculum.
+
+Last measured single policy `runs/phase4_bank/sft_retention_e60/sil_sft_adapter.pt`:
 move_to 0.311 @ 0.19, put_into_plate 0.523 @ 0.20, put_into_bowl 0.2765 @ 0.20.
-Both placement ladders topped out (bowl 0.19, plate 0.20).
+Iteration 2 ran 8.5 M steps from it, so its move_to is presumed eroded again and
+unmeasured — that measurement is the cycle-2 baseline.
 
 Open:
 
 1. ~~Does the 60-epoch checkpoint retain better?~~ Marginally. §6.1. Epochs are
    not the lever.
 2. **Does retention hold across a second cycle?** This is the one that decides
-   whether the architecture works. The loop is alternating optimization: RL
+   whether the architecture works. Iteration 2 makes it a harder question than
+   planned: 8.5 M steps of erosion against cycle 1's 495 k, so it measures
+   rebuilding from a much deeper hole rather than the stability of 0.311. The loop is alternating optimization: RL
    erodes, SFT rebuilds. If a second cycle lands near 0.31 again that is a
    stable fixed point and the design is sound; if it lands lower it is a
    sawtooth and the fix moves inside the RL objective — a behaviour-cloning
@@ -286,11 +341,11 @@ Open:
 4. **The composed pick-and-place.** `PlacementCaughtStageCurriculum`
    (`smolvla_grpo_mjwarp_cdpr.py:1016`) already anneals the fraction of
    placement episodes that start with the object caught, and is disabled by
-   default. See §9.
+   default. See §10.
 
 ---
 
-## 9. Lift-then-place is a curriculum knob, not a new instruction
+## 10. Lift-then-place is a curriculum knob, not a new instruction
 
 Placement episodes start with the object already between the fingers
 (`curriculum/placement_caught_fraction` logs 1.0). The trainer carries a built,
@@ -323,7 +378,7 @@ cap 0.10.
 
 ---
 
-## 10. Reference commands
+## 11. Reference commands
 
 ```bash
 # Bank a mastered instruction: record from the checkpoint that has it, then
