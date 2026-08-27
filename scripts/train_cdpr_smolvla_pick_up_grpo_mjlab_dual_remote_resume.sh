@@ -33,9 +33,19 @@ source "$SCRIPT_DIR/huggingface_public_models.sh"
 configure_huggingface_public_models
 configure_huggingface_offline
 
-timestamp="${RUN_TIMESTAMP:-$(date +%Y%m%d_%H%M%S)}"
-RUN_NAME="${RUN_NAME:-cdpr_smolvla_pick_up_resume_mjwarp_w${WORLDS_PER_RANK}_${timestamp}}"
+# shellcheck source=scripts/run_naming.sh
+source "$SCRIPT_DIR/run_naming.sh"
+# This launcher used to build the name inline, which left it as the only
+# trainer entry point with no collision guard: RUN_NAME was honoured verbatim,
+# so two resumes under one readable name wrote into a single directory --
+# overwriting latest.pt, interleaving step_*/ from two runs, and truncating
+# train.log through tee. A later resume could then load a checkpoint written by
+# a different config, which is the failure run_naming.sh exists to prevent.
+# RUN_LABEL now gets the timestamp for free, and an explicit RUN_NAME is still
+# guarded rather than silently reused.
+RUN_NAME="$(cdpr_compose_run_name "cdpr_smolvla_pick_up_resume_mjwarp_w${WORLDS_PER_RANK}")"
 RUN_DIR="$REPO_ROOT/runs/$RUN_NAME"
+cdpr_guard_run_dir "$RUN_DIR"
 
 if [[ -z "$CHECKPOINT" ]]; then
   echo "CHECKPOINT is required; use the scratch launcher to warm-start pick_up from a move-to adapter." >&2
