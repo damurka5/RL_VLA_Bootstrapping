@@ -462,14 +462,52 @@ task:
     # physical_grasp_rate is climbing, lower promote to that plateau plus ~0.05
     # and drop demote to roughly a third of it. Do not lower it before the grasp
     # exists -- an early cap is exactly what this gate is here to prevent.
-    random_workspace_start_distance_promote_pass_rate: 0.30
+    # 0.50, not 0.30. THE CALIBRATION CAVEAT ABOVE FIRED, in the direction it
+    # did not anticipate. It warned that pick_up's achievable range was
+    # unmeasured and might sit BELOW 0.30, stalling the cap at the first rung.
+    # Run phase4_pick_up_iter1 measured the opposite: seeded by the pre-RL SFT,
+    # the normal-start grasp rate opens at 0.514 and peaks at 0.621, so a 0.30
+    # gate is never a constraint at all and the ladder advances on nothing but
+    # its cooldown -- the exact degenerate pair 17a83f7 removed, arrived at from
+    # the other side. The gate was calibrated on move_to's 0.06-0.41 range; a
+    # seeded pick_up lives above that whole range.
+    #
+    # The three promotions, with the instantaneous rate the lagging EMA hid:
+    #
+    #   step      cap          EMA     graspN
+    #   205 806   0.06 -> 0.08 0.353   0.522
+    #   383 716   0.08 -> 0.10 0.551   0.517
+    #   562 813   0.10 -> 0.13 0.408   0.298   <- already halved
+    #
+    # The third promotion is the failure: it fired on a 0.408 EMA while the rate
+    # it summarizes had fallen to 0.298. Nothing recovered after it. The cap
+    # demoted 0.13 -> 0.10 -> 0.08 -> 0.06 over the next 300k steps and the
+    # policy did NOT come back with it -- graspN at cap 0.06 read 0.000 at the
+    # end against 0.514 at the same cap at the start. The damage is hysteretic,
+    # the same way the prelifted fraction's is, and it ends in the release
+    # behaviour the placement warm start showed: physical_release_rate 0.000 ->
+    # 0.118, pad force 3.04 -> 0.68 N, success given a pre-grasped start
+    # 0.99 -> 0.65.
+    #
+    # 0.50 is what the policy demonstrably SUSTAINS at 0.06-0.08. It could not
+    # hold 0.10 (0.517 -> 0.36-0.46) and never held 0.13. A rung now has to be
+    # consolidated at roughly the level the seed establishes before the next one
+    # is handed over. If this stalls the cap at 0.08-0.10, that is the correct
+    # outcome and not a repeat of the old stall: a policy that is good at 0.10
+    # beats one that was marched to 0.13 and unwound.
+    random_workspace_start_distance_promote_pass_rate: 0.50
     # 0.20, not 0.12. Against a 0.30 promote gate that band was wide enough
     # for the cap to climb five rungs while the metric it gates on was already
     # degrading -- the demotion did not fire until update 216, by which point
     # the physical grasp rate was 0.042 and never recovered. A narrower band
     # makes the controller pull back while there is still something to pull
     # back to.
-    random_workspace_start_distance_demote_pass_rate: 0.20
+    # 0.35, not 0.20, keeping the band the same 0.15 width under the raised
+    # promote gate. At 0.20 the demotion did not fire until graspN had reached
+    # 0.098 -- a fifth of where it started -- which is the same "pull back while
+    # there is still something to pull back to" argument that moved this number
+    # off 0.12, applied to a policy that now operates much higher.
+    random_workspace_start_distance_demote_pass_rate: 0.35
     # 0.95, not 0.9. The per-update grasp rate carries about twice the spread
     # binomial sampling on ~510 normal-start worlds explains (0.037 against
     # 0.018), so a 10-update effective window leaves the average close enough to
@@ -485,7 +523,12 @@ task:
     # EMA can reflect whether the last level was learned. The EMA is also
     # re-seeded on every cap change (17a83f7), so a promotion is judged on what
     # the NEW difficulty scores rather than on the easier level's average.
-    random_workspace_start_distance_cooldown_updates: 15
+    # 25, not 15. pass_rate_ema_decay 0.95 is a ~20-update effective window, so
+    # a 15-update cooldown lets the cap move again before the EMA has finished
+    # reflecting the rung it moved onto. That is precisely how the 562 813
+    # promotion read 0.408 while the underlying rate was 0.298. The cooldown now
+    # outlasts the averaging window it is judged on.
+    random_workspace_start_distance_cooldown_updates: 25
     # Horizon FLAT at the ceiling: min == max, so the coupling is inert for
     # pick_up. It stays enabled rather than switched off so the uncapped branch
     # (which validation takes) is not the only thing feeding the horizon.
