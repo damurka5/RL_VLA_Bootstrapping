@@ -340,7 +340,93 @@ Open:
 * `train_cdpr_smolvla_pick_up_grpo_mjlab_dual_remote_resume.sh` now sources
   `run_naming.sh`; it was the only trainer entry point with no collision guard.
 
-## 10. Predictions made here that came back wrong
+## 10. Two things watching the dataset videos showed
+
+Both found by playing `sil_dataset_videos` output — the actual frames the SFT
+consumed — rather than by reading a metric. Neither is visible in any number the
+pipeline currently logs, which is the argument for looking at the data.
+
+### 10.1 The gripper aims its wrist camera at the overview camera
+
+Across instructions the policy rotates yaw so the end-effector camera faces the
+overview camera. It is consistent enough to notice within a handful of clips.
+
+**Yaw is an unconstrained axis for every instruction we train.** Grepping the
+reward module, `yaw` enters a reward or success term in exactly two places:
+`prepositioned_gripper_yaw_penalty`, which belongs to a different instruction
+family, and the object-rotation tasks' `total_signed_rotation`. Nothing in
+`pick_up`, `put_into_plate` or `put_into_bowl` references gripper yaw at all,
+and `lock_non_commanded_axes` is `false`. The policy has a yaw channel at
+`action_step_yaw: 0.08` and no reason to prefer any value.
+
+So the behaviour costs nothing, which explains why it survives. What it does not
+explain is why *this* orientation. The candidate worth testing: the residual's
+state carries a 512-d vision feature pooled from both cameras' connector tokens
+under a **fixed random projection** (`residual_vision_pooling: flat_random`).
+Pointing the wrist at a fixed, high-contrast landmark makes that half of the
+feature far more predictable than pointing it at whatever the workspace happens
+to contain — the policy would be stabilising its own observation rather than
+solving the task. That is an observation-hacking hypothesis, not a measurement.
+
+Cheap test, if it is worth chasing: log the yaw distribution against success,
+and A/B a run with yaw locked (`lock_non_commanded_axes: true`). If success is
+unchanged, the behaviour is free and cosmetic. If it *drops*, the policy is
+genuinely relying on a stabilised vision feature, which would say something
+uncomfortable about how much of the encoder's usable signal is landmark rather
+than object.
+
+### 10.2 `put_into_*` succeeds by dropping, not by placing
+
+The videos show the policy carrying the object over the receptacle and opening
+the gripper from height. The object falls in, settles, and the episode scores.
+Technically correct, and not the behaviour the task name promises.
+
+**The predicate permits it by construction.** For
+`CONTAINER_PLACEMENT_INSTRUCTION_TYPES` success requires XY within tolerance
+(plate 0.091, bowl 0.057), `abs(object_z - container_z)` within
+`put_container_z_tolerance` — **0.12 m** — plus `put_require_release: true` and
+grasp history. Nothing anywhere constrains **how high the object was when the
+gripper opened**. A release from 10 cm up and a release from 1 cm up produce the
+same terminal state once the object settles, so the two are indistinguishable to
+the success test and the reward pays them identically.
+
+Tightening `put_container_z_tolerance` does not fix it: a dropped object also
+ends up resting low in the container, so it passes the tightened test on a later
+step. The discriminator has to be evaluated **at the release moment**, not at
+the end — a `put_release_max_height` condition on the object's height above its
+resting surface at the step the gripper crosses `put_release_opening_threshold`.
+
+The knob does not exist yet. `put_downward_reward_enabled` is the nearest
+existing machinery, but it measures displacement from the episode's initial
+object height rather than clearance at release, so a high carry followed by a
+high drop satisfies it.
+
+**Time-reversing pick-from-container episodes does not substitute for this**,
+which is worth writing down because the idea is appealing and the reason it
+fails is not obvious. The bank stores `(frames, actions)` and the SFT trains
+action prediction. Reversing a trajectory reverses the *states* kinematically,
+but the actions that generate the reverse motion are not the reversed actions:
+the plant is dissipative and gravity is not symmetric in time. Lifting a held
+object needs a sustained positive z command — the lift-barrier probe measured
+0.30 → 83 mm — while lowering the same object needs far less than the mirrored
+negative, because gravity does the work and the measured plant gain (0.44-0.54,
+asymmetric under load) does not invert. Played backwards the lift's commands are
+still positive z during a descent; negated, they command a fall much faster than
+the real one. Neither is a valid label. Only the gripper channel reverses
+cleanly, and that is one of five.
+
+The sound version of the same intuition is to use extraction episodes as a
+**reset distribution** rather than as demonstrations: the poses a successful
+lift-out-of-bowl passes through are exactly the poses a successful placement
+must pass through, so they define a reverse curriculum of start states -- object
+low in the container, gripper closed, task reduced to "release from here" --
+which then anneals outward. That uses the trajectories for what they actually
+certify (reachable, physically valid states) rather than for labels they cannot
+support.
+
+---
+
+## 11. Predictions made here that came back wrong
 
 * **"The 0.06 rung will hold for a long stretch — that is the ladder working."**
   Said before iter0. The approach half had no gradient to climb with, so waiting
