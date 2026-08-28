@@ -1,0 +1,118 @@
+<mujoco model="wx200_scene">
+  <!--
+    Desk scene for the WidowX-200, mirroring the CDPR's
+    `cdpr_mjwarp_smoke.xml` so that everything downstream of the robot keeps
+    working: the desk surface stays at z = 0.1502, the physical top is the same
+    collision-only box, the overview camera keeps its pose, and the textures
+    are the same seven checker materials the visual randomizer indexes.
+
+    What changes is the robot and, necessarily, where the objects may be. The
+    arm mounts at the BACK of the desk facing the overview camera, and the
+    object-spawn region is the annular sector in `workspace.DEFAULT_LAYOUT`
+    rather than the CDPR's symmetric square -- see that module for why a box
+    does not fit a serial arm's reachable set.
+
+    The object slots themselves are deliberately NOT included here. They live in
+    `cdpr_mjwarp_object_slots.xml`, which is embodiment-independent (four free
+    bodies with fixed-topology visual/collider slots), and the MJWarp scene
+    includes both. This file is the robot-and-room half.
+  -->
+  <option>
+    <!-- Same MJWarp CCD constraint as the CDPR wrapper: MuJoCo 3.8+ enables
+         MULTICCD by default and MJWarp rejects non-zero contact margins with
+         it, so the 1 mm margins throughout require disabling both paths. -->
+    <flag multiccd="disable" nativeccd="disable"/>
+  </option>
+
+  <include file="wx200.xml"/>
+
+  <asset>
+    <texture name="mjwarp_skybox" type="skybox" builtin="gradient"
+             rgb1="0.16 0.25 0.34" rgb2="0.012 0.018 0.030"
+             width="256" height="1536"/>
+    <texture name="mjwarp_desk_tex_0" type="2d" builtin="checker"
+             rgb1="0.46 0.31 0.20" rgb2="0.63 0.45 0.29" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_1" type="2d" builtin="checker"
+             rgb1="0.25 0.25 0.25" rgb2="0.48 0.48 0.48" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_2" type="2d" builtin="checker"
+             rgb1="0.12 0.29 0.38" rgb2="0.24 0.48 0.56" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_3" type="2d" builtin="checker"
+             rgb1="0.47 0.44 0.34" rgb2="0.70 0.66 0.51" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_4" type="2d" builtin="checker"
+             rgb1="0.31 0.16 0.12" rgb2="0.55 0.28 0.20" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_5" type="2d" builtin="checker"
+             rgb1="0.22 0.33 0.20" rgb2="0.42 0.55 0.34" width="128" height="128"/>
+    <texture name="mjwarp_desk_tex_6" type="2d" builtin="checker"
+             rgb1="0.33 0.24 0.38" rgb2="0.54 0.42 0.60" width="128" height="128"/>
+    <material name="mjwarp_desk_mat_0" texture="mjwarp_desk_tex_0" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_1" texture="mjwarp_desk_tex_1" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_2" texture="mjwarp_desk_tex_2" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_3" texture="mjwarp_desk_tex_3" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_4" texture="mjwarp_desk_tex_4" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_5" texture="mjwarp_desk_tex_5" texrepeat="12 12" texuniform="true"/>
+    <material name="mjwarp_desk_mat_6" texture="mjwarp_desk_tex_6" texrepeat="12 12" texuniform="true"/>
+  </asset>
+
+  <worldbody>
+    <light name="side_light" pos="1.0 -1.0 2.0" dir="-1 1 -1"
+           ambient="0.04 0.04 0.04" diffuse="0.42 0.42 0.42"
+           specular="0.06 0.06 0.06" directional="true" castshadow="false"/>
+    <light name="fill_light" pos="-1.0 -0.8 1.7" dir="1 0.8 -1"
+           ambient="0.05 0.05 0.05" diffuse="0.32 0.32 0.32"
+           specular="0.03 0.03 0.03" directional="true" castshadow="false"/>
+
+    <!--
+      Re-aimed for the arm. The CDPR pose (0 -0.5412341 0.5125, fovy 45) put
+      the whole robot overhead and outside the frame; rendering it here showed
+      the objects fine and the arm cropped to a gripper hanging in from the top
+      edge, with the base and every link out of shot. An overview that cannot
+      see the arm is not an overview.
+
+      It is also OFF-AXIS. A camera on the arm's own +y axis sees the arm
+      end-on: rendered from straight in front, a correctly placed arm still
+      looks like a gripper floating at the top of the frame, because every link
+      is foreshortened onto the one behind it. This three-quarter pose, 0.75 m
+      out at 45 degrees, shows the shoulder, upper arm, forearm, and wrist as
+      separate things -- which is what makes the arm's configuration legible to
+      a policy at all.
+
+      It looks at (0, 0.05, 0.25) -- the centroid of the objects plus the arm --
+      and fovy 55 covers the scene with margin. xyaxes is the exact frame for
+      that view direction.
+
+      This does change the overview image distribution relative to the CDPR
+      checkpoints. That is unavoidable: the scene now contains a different
+      robot. The WRIST camera is the one held to the old contract (fovy 60,
+      same standoff class), because it sees mostly gripper and object, which
+      are the parts a warm start can still recognise.
+    -->
+    <camera name="overview" mode="fixed" pos="-0.45 -0.45 0.55"
+            xyaxes="0.7432 -0.6689 0  0.2716 0.3018 0.9103" fovy="55"/>
+
+    <geom name="floor" type="plane" size="5 5 0.1" pos="0 0 -0.1"
+          rgba="0.8 0.8 0.8 1"/>
+
+    <!-- Textured render surface; MJWarp samples plane UVs but not box UVs. -->
+    <geom name="mjwarp_desk_surface_visual" type="plane" pos="0 0 0.1502"
+          size="0.48 0.68 0.001" material="mjwarp_desk_mat_0"
+          contype="0" conaffinity="0" group="2"/>
+    <!-- Physical desk top. contype 4 pairs with the arm's conaffinity 1. -->
+    <geom name="mjwarp_desk_surface" type="box" pos="0 0 0.13"
+          size="0.48 0.68 0.02" material="mjwarp_desk_mat_0"
+          contype="4" conaffinity="1" condim="3" group="3"
+          friction="0.9 0.01 0.001" solref="0.008 1"
+          solimp="0.90 0.95 0.001" margin="0.001"/>
+  </worldbody>
+
+  <!--
+    The mount pose is NOT written here. `wx200_mount` is a static body, so
+    `workspace.mount_widowx200` writes its `body_pos`/`body_quat` on the
+    compiled model instead, from the single `DEFAULT_LAYOUT` that the
+    controller also reads. Two copies of the mount pose -- one in XML, one in
+    the controller -- is exactly the sort of pair that drifts apart and then
+    solves IK in the wrong frame with no error anywhere.
+
+    It also makes the mount a per-world field, which is what MJWarp needs if
+    the arm's placement is ever randomized.
+  -->
+</mujoco>

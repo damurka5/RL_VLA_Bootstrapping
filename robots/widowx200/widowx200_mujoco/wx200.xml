@@ -1,0 +1,321 @@
+<mujoco model="widowx200">
+  <!--
+    Interbotix WidowX-200, transcribed from the official URDF
+    (interbotix_ros_xsarms/interbotix_xsarm_descriptions/urdf/wx200.urdf.xacro,
+    BSD-3, Trossen Robotics). Meshes under meshes/ are the upstream STLs,
+    unmodified; see meshes/LICENSE.
+
+    Two deliberate departures from a mechanical transcription:
+
+    1. Meshes are VISUAL ONLY (contype/conaffinity 0). Collision is a small set
+       of capsules and boxes. MJWarp's contact path is native-primitive first,
+       and the CDPR scene already pays for mesh colliders in constraint count;
+       an arm sweeping over a desk of free bodies would pay far more. The
+       fingers are the exception that matters and they get exact box pads.
+
+    2. The finger pads carry the names `left_finger_pad` / `right_finger_pad`
+       and the tracked end-effector body is `ee_base`, placed at the point
+       between the pads. Those are the names the grasp machinery looks up
+       (the gripper-geometry module, the backend's
+       finger_object_contact_metrics, the batched success predicates). Keeping
+       them makes every grasp predicate work on this arm unchanged.
+
+    Frames follow the URDF exactly: base_link at the mount, +x forward, +z up.
+  -->
+  <compiler autolimits="true" angle="radian" meshdir="meshes"/>
+
+  <default>
+    <site type="sphere" rgba="1 0 0 1" size="0.005"/>
+    <default class="wx200_visual">
+      <geom contype="0" conaffinity="0" group="1" type="mesh"
+            material="interbotix_black"/>
+    </default>
+    <!--
+      Arm collision proxies. contype 8 / conaffinity 1 means the arm collides
+      with the desk (contype 4) and the objects (conaffinity 1) but the pairs
+      inside the arm are handled by explicit contype/conaffinity rather than
+      by MuJoCo's parent-child exclusion alone.
+    -->
+    <default class="wx200_collision">
+      <geom contype="8" conaffinity="1" group="3" condim="3"
+            friction="0.8 0.01 0.001" solref="0.008 1"
+            solimp="0.90 0.95 0.001" margin="0.001"
+            rgba="0.2 0.2 0.2 1"/>
+    </default>
+    <!--
+      Finger pads. Mirrors the CDPR `finger_pad_collision` class exactly --
+      condim 4, friction 3.0, the stiff solref/solimp pair, and a 1 mm margin --
+      because the grasp-stability thresholds (bilateral contact, minimum solved
+      normal force, bounded slip) were tuned against those numbers.
+    -->
+    <default class="finger_pad_collision">
+      <geom contype="2" conaffinity="1" group="3" condim="4"
+            friction="3.0 0.08 0.003" solref="0.005 1"
+            solimp="0.95 0.99 0.001" margin="0.001"
+            rgba="0.10 0.12 0.14 1"/>
+    </default>
+    <default class="wx200_joint">
+      <joint type="hinge" limited="true" damping="1.2" armature="0.02"
+             frictionloss="0.05"/>
+    </default>
+  </default>
+
+  <visual>
+    <headlight ambient=".16 .16 .16" diffuse=".62 .62 .62" specular=".08 .08 .08"/>
+    <rgba haze=".035 .050 .075 1"/>
+    <!--
+      Same reasoning as the CDPR model: znear/zfar are fractions of
+      model.stat.extent, and the wrist camera works centimetres from what it
+      must see. A near plane at MuJoCo's default would clip the object away
+      through the entire grasp phase.
+    -->
+    <map znear="0.0002" zfar="2.0"/>
+  </visual>
+
+  <asset>
+    <material name="interbotix_black" rgba="0.15 0.15 0.15 1"
+              specular="0.30" shininess="0.35" reflectance="0.04"/>
+    <material name="interbotix_grey" rgba="0.55 0.57 0.60 1"
+              specular="0.35" shininess="0.40" reflectance="0.06"/>
+    <mesh name="wx200_base" file="wx200_1_base.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_shoulder" file="wx200_2_shoulder.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_upper_arm" file="wx200_3_upper_arm.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_forearm" file="wx200_4_forearm.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_wrist" file="wx200_5_wrist.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper" file="wx200_6_gripper.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper_prop" file="wx200_7_gripper_prop.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper_bar" file="wx200_8_gripper_bar.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper_finger" file="wx200_9_gripper_finger.stl" scale="0.001 0.001 0.001"/>
+  </asset>
+
+  <worldbody>
+    <!--
+      The mount pose is set by the scene wrapper, not here, so this file stays
+      a pure robot description. `wx200_mount` is the body a scene repositions.
+    -->
+    <body name="wx200_mount" pos="0 0 0">
+      <body name="base_link" pos="0 0 0">
+        <inertial pos="-0.0381747 0.000647863 0.0193458" mass="0.395887"
+                  diaginertia="0.0010650 0.0003332 0.0012080"/>
+        <geom class="wx200_visual" mesh="wx200_base" euler="0 0 1.5707963"/>
+        <geom class="wx200_collision" type="box" size="0.055 0.055 0.036"
+              pos="-0.01 0 0.036"/>
+
+        <body name="shoulder_link" pos="0 0 0.072">
+          <inertial pos="0.0000223 0.0000415 0.0066287" mass="0.072587"
+                    diaginertia="0.0000247 0.0000247 0.0000353"/>
+          <joint name="waist" class="wx200_joint" axis="0 0 1"
+                 range="-3.1405927 3.1405927"/>
+          <geom class="wx200_visual" mesh="wx200_shoulder"
+                pos="0 0 -0.003" euler="0 0 1.5707963"/>
+          <geom class="wx200_collision" type="cylinder" size="0.038 0.024"
+                pos="0 0 0.020"/>
+
+          <body name="upper_arm_link" pos="0 0 0.03865">
+            <inertial pos="0.0119707 -0.000118 0.139429" mass="0.276300"
+                      diaginertia="0.0021740 0.0021450 0.0002540"/>
+            <joint name="shoulder" class="wx200_joint" axis="0 1 0"
+                   range="-1.8849556 1.9722221"/>
+            <geom class="wx200_visual" mesh="wx200_upper_arm" euler="0 0 1.5707963"/>
+            <!-- The upper arm is skewed: (0.05, 0, 0.2) shoulder to elbow. -->
+            <geom class="wx200_collision" type="capsule" size="0.026"
+                  fromto="0 0 0.02  0.05 0 0.20"/>
+
+            <body name="forearm_link" pos="0.05 0 0.2">
+              <inertial pos="0.121192 -0.000124 0" mass="0.239400"
+                        diaginertia="0.0001590 0.0014300 0.0014400"/>
+              <joint name="elbow" class="wx200_joint" axis="0 1 0"
+                     range="-1.8849556 1.6231562"/>
+              <geom class="wx200_visual" mesh="wx200_forearm" euler="0 0 1.5707963"/>
+              <geom class="wx200_collision" type="capsule" size="0.023"
+                    fromto="0.012 0 0  0.19 0 0"/>
+
+              <body name="wrist_link" pos="0.2 0 0">
+                <inertial pos="0.04236 -0.0000107 0.0105770" mass="0.084600"
+                          diaginertia="0.0000265 0.0000282 0.0000285"/>
+                <joint name="wrist_angle" class="wx200_joint" axis="0 1 0"
+                       range="-1.7453293 2.1467550"/>
+                <geom class="wx200_visual" mesh="wx200_wrist" euler="0 0 1.5707963"/>
+                <geom class="wx200_collision" type="capsule" size="0.021"
+                      fromto="0.010 0 0.005  0.058 0 0.005"/>
+
+                <body name="gripper_link" pos="0.065 0 0">
+                  <inertial pos="0.021631 0 0.01141" mass="0.072300"
+                            diaginertia="0.0000216 0.0000273 0.0000353"/>
+                  <joint name="wrist_rotate" class="wx200_joint" axis="1 0 0"
+                         range="-3.1405927 3.1405927"/>
+                  <geom class="wx200_visual" mesh="wx200_gripper"
+                        pos="-0.02 0 0" euler="0 0 1.5707963"/>
+                  <geom class="wx200_visual" mesh="wx200_gripper_prop"
+                        pos="-0.0685 0 0" euler="0 0 1.5707963"
+                        material="interbotix_grey"/>
+                  <geom class="wx200_collision" type="capsule" size="0.020"
+                        fromto="0.005 0 0.010  0.038 0 0.010"/>
+
+                  <!-- ee_arm_link in the URDF; carries the gripper bar. -->
+                  <body name="gripper_bar_link" pos="0.043 0 0">
+                    <inertial pos="0.009687 0 0.004962" mass="0.034199"
+                              diaginertia="0.0000074 0.0000284 0.0000286"/>
+                    <geom class="wx200_visual" mesh="wx200_gripper_bar"
+                          pos="-0.063 0 0" euler="0 0 1.5707963"/>
+                    <!-- Sized from the compiled gripper-bar mesh bounds. -->
+                    <geom class="wx200_collision" type="box"
+                          size="0.014 0.052 0.025" pos="0.014 0 0.011"/>
+
+                    <!--
+                      Wrist camera, on a bracket above the gripper bar. It is
+                      11.9 cm from the grasp point and the euler below aims
+                      its optical axis exactly at that point (residual < 0.01
+                      deg, solved against the compiled model, not eyeballed),
+                      so the fingers and whatever they are closing on are
+                      centred through the whole approach.
+
+                      The mount offset is a measured trade, not a guess. With
+                      the camera on the bar itself the gripper fills 15.2% of
+                      the frame (segmentation render, fingers at mid-open);
+                      backing it off to this 12 cm bracket halves that to 8.5%
+                      while keeping a mount a real arm could carry. Going
+                      further (14 cm) reaches 4.9% but the standoff starts
+                      shrinking the object in frame.
+
+                      fovy stays 60 to match the CDPR wrist camera exactly. The
+                      wrist view is half the policy's input and a warm start
+                      from a CDPR checkpoint depends on its image statistics;
+                      a wider lens would buy ~4 cm of context and cost that.
+                    -->
+                    <body name="wrist_camera_body" pos="-0.055 0 0.055"
+                          euler="0 0 0">
+                      <site name="wrist_camera_marker" type="sphere"
+                            size="0.004" rgba="0 1 0 1"/>
+                      <camera name="ee_camera" mode="fixed" fovy="60"
+                              euler="0 -1.0908000 -1.5707963"/>
+                    </body>
+
+                    <body name="fingers_link" pos="0.023 0 0">
+                      <inertial pos="0 0 0" mass="0.001"
+                                diaginertia="1e-6 1e-6 1e-6"/>
+
+                      <!--
+                        `ee_base` is ee_gripper_link in the URDF: the point
+                        between the pads, not the arm flange. It carries the
+                        name because that is the body every observation, reward,
+                        and gripper-geometry lookup treats as "the end
+                        effector", and putting it AT the grasp point is what
+                        keeps the task layer portable.
+
+                        The CDPR's tracked body sat 0.0075 m above its pads, so
+                        every `*_grasp_height_offset` in the task configs is a
+                        small correction. Tracking the arm flange instead would
+                        make that correction 0.05 m and silently invalidate all
+                        of them -- the exact shape of the failure that cost
+                        pick_up 10M steps (see cdpr_gripper_geometry). Here the
+                        offset is near zero by construction, and
+                        widowx200_gripper_geometry measures the residual from
+                        this model rather than assuming it.
+                      -->
+                      <body name="ee_base" pos="0.027575 0 0">
+                        <inertial pos="0 0 0" mass="1e-6"
+                                  diaginertia="1e-9 1e-9 1e-9"/>
+                        <site name="ee_grasp_site" pos="0 0 0"
+                              size="0.004" rgba="1 0.4 0 1"/>
+                      </body>
+
+                      <body name="left_finger_link" pos="0 0 0">
+                        <inertial pos="0 0.0138160 0" mass="0.016246"
+                                  diaginertia="0.0000047 0.0000016 0.0000037"/>
+                        <joint name="left_finger" type="slide" axis="0 1 0"
+                               limited="true" range="0.015 0.037" damping="3.0"
+                               armature="0.005"/>
+                        <geom class="wx200_visual" mesh="wx200_gripper_finger"
+                              pos="0 0.005 0" euler="3.1415927 3.1415927 0"/>
+                        <!--
+                          Pad box, placed on the finger's INNER face. All three
+                          numbers come from the compiled finger mesh rather
+                          than from the STL file: in this body frame the finger
+                          spans x -0.0121..0.0432 and its inner face sits at
+                          y = -0.011, so a 2 mm-thick pad centred at y = -0.009
+                          is flush with it and the 34 mm-long pad straddles
+                          ee_base at x = 0.027575.
+                        -->
+                        <geom name="left_finger_pad" class="finger_pad_collision"
+                              type="box" size="0.017 0.002 0.010"
+                              pos="0.027 -0.009 0"/>
+                      </body>
+
+                      <body name="right_finger_link" pos="0 0 0">
+                        <inertial pos="0 -0.0138160 0" mass="0.016246"
+                                  diaginertia="0.0000047 0.0000016 0.0000037"/>
+                        <joint name="right_finger" type="slide" axis="0 -1 0"
+                               limited="true" range="0.015 0.037" damping="3.0"
+                               armature="0.005"/>
+                        <geom class="wx200_visual" mesh="wx200_gripper_finger"
+                              pos="0 -0.005 0" euler="0 3.1415927 0"/>
+                        <geom name="right_finger_pad" class="finger_pad_collision"
+                              type="box" size="0.017 0.002 0.010"
+                              pos="0.027 0.009 0"/>
+                      </body>
+                    </body>
+                  </body>
+                </body>
+              </body>
+            </body>
+          </body>
+        </body>
+      </body>
+    </body>
+  </worldbody>
+
+  <equality>
+    <!--
+      The URDF drives right_finger with `mimic multiplier="-1"`. Both joints
+      here are declared with mirrored axes and equal positive ranges, so the
+      mimic becomes an identity coupling. Same construction as the CDPR
+      finger_l/finger_r pair.
+    -->
+    <joint joint1="left_finger" joint2="right_finger" polycoef="0 1 0 0 0"/>
+  </equality>
+
+  <actuator>
+    <!--
+      Position servos, one per joint, matching how the real Dynamixels are
+      driven (XM430/XL430 in position mode). kp is scaled roughly with each
+      joint's URDF effort limit (waist 8, shoulder 18, elbow 13, wrist_angle 5,
+      wrist_rotate 1 N.m) so the proximal joints hold the arm's own weight
+      without the distal ones being stiff enough to fight contacts.
+    -->
+    <position name="waist_pos" joint="waist" kp="120" kv="12"
+              ctrlrange="-3.1405927 3.1405927"/>
+    <position name="shoulder_pos" joint="shoulder" kp="300" kv="30"
+              ctrlrange="-1.8849556 1.9722221"/>
+    <position name="elbow_pos" joint="elbow" kp="220" kv="22"
+              ctrlrange="-1.8849556 1.6231562"/>
+    <position name="wrist_angle_pos" joint="wrist_angle" kp="90" kv="9"
+              ctrlrange="-1.7453293 2.1467550"/>
+    <position name="wrist_rotate_pos" joint="wrist_rotate" kp="35" kv="3.5"
+              ctrlrange="-3.1405927 3.1405927"/>
+    <!--
+      Gripper servo. ctrlrange is the raw finger travel rather than a
+      normalized 0..1, because the batched controller already maps a
+      normalized opening onto `actuator_ctrlrange` affinely (see
+      MJLabMJWarpCDPRBackend._write_controller_controls) and
+      `_normalized_gripper_opening` inverts it from `jnt_range`. Both ends
+      therefore agree without a `gear` term, which cannot express the 0.015 m
+      closed offset anyway. 0.015 is closed, 0.037 is fully open.
+    -->
+    <!--
+      kp = 200, not 60. Measured: at kp 60 the fingers close straight through a
+      30-48 mm object and every lift dropped it; at 200 all three sizes lift and
+      the settled opening tracks the object diameter to about a millimetre.
+      kv stays low so the pads do not fight the object's own settling.
+    -->
+    <position name="act_gripper" joint="left_finger" kp="200" kv="2.0"
+              ctrlrange="0.015 0.037"/>
+  </actuator>
+
+  <sensor>
+    <framepos objtype="site" objname="ee_grasp_site"/>
+    <framequat objtype="site" objname="ee_grasp_site"/>
+    <framepos objtype="camera" objname="ee_camera"/>
+    <framequat objtype="camera" objname="ee_camera"/>
+  </sensor>
+</mujoco>
