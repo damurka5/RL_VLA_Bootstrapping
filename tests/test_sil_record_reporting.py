@@ -22,6 +22,7 @@ from tools.audit.sil_record import (
     _Recording,
     _merge_shard_summaries,
     plan_device_shards,
+    record_file_index,
     strip_argv_flags,
     _build_dataset,
     _row_quota_mask,
@@ -897,3 +898,61 @@ class ShardSummaryMergeTests(unittest.TestCase):
         )
         self.assertEqual(merged, {})
         self.assertEqual(_merge_shard_summaries([]), {})
+
+
+class RecordFileIndexTests(unittest.TestCase):
+    """Which number a record file carries. Getting it wrong destroys data.
+
+    Two shards that compute the same file index write the same path at the
+    same time. That is not a clash anyone sees: the loser's round vanishes and
+    the winner's file fails its CRC on the next read, hours later.
+    """
+
+    def test_a_one_round_shard_is_named_by_its_round(self) -> None:
+        # The regression. Sharding 2 rounds over 2 devices hands each child
+        # --rounds 1, and the old rule ("round index only when rounds > 1")
+        # made both children write record_00.npz.
+        first = record_file_index(run_index=0, round_index=0, repeat=1)
+        second = record_file_index(run_index=0, round_index=1, repeat=1)
+        self.assertEqual((first, second), (0, 1))
+        self.assertNotEqual(first, second)
+
+    def test_shards_of_a_longer_split_stay_disjoint(self) -> None:
+        # 4 rounds over 2 devices: each child walks 2 and starts at its offset.
+        names = [
+            record_file_index(run_index=run, round_index=start + run, repeat=1)
+            for start in (0, 2)
+            for run in (0, 1)
+        ]
+        self.assertEqual(names, [0, 1, 2, 3])
+        self.assertEqual(len(set(names)), 4)
+
+    def test_repeat_is_named_by_the_run_because_the_round_is_pinned(self) -> None:
+        names = [
+            record_file_index(run_index=run, round_index=7, repeat=3)
+            for run in range(3)
+        ]
+        self.assertEqual(names, [0, 1, 2])
+
+    def test_the_plain_single_run_is_unchanged(self) -> None:
+        # What every harvest before sharding produced: record_00.npz.
+        self.assertEqual(
+            record_file_index(run_index=0, round_index=0, repeat=1), 0
+        )
+
+    def test_every_shard_of_a_planned_split_gets_a_unique_name(self) -> None:
+        # The property that actually matters, asserted against the planner
+        # rather than against hand-written offsets.
+        for rounds, devices in ((2, 2), (4, 2), (5, 2), (7, 3), (1, 2)):
+            with self.subTest(rounds=rounds, devices=devices):
+                shards = plan_device_shards(
+                    0, rounds, [f"cuda:{i}" for i in range(devices)]
+                )
+                names = [
+                    record_file_index(
+                        run_index=run, round_index=start + run, repeat=1
+                    )
+                    for _device, start, count in shards
+                    for run in range(count)
+                ]
+                self.assertEqual(len(set(names)), rounds)

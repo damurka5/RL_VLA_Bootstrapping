@@ -1775,6 +1775,23 @@ def _run_sharded(
     for reader in readers:
         reader.join(timeout=30.0)
 
+    # Every round the shards owned must have left a file. This is cheap and it
+    # is the guard that was missing when two children computed the same file
+    # index: they wrote the same path concurrently, one round was lost and the
+    # survivor failed its CRC on the next read, hours later at replay. Naming
+    # is fixed (see record_file_index) but the check stays, because the failure
+    # it catches is silent at the only moment it could still be cheap to fix.
+    missing = [
+        f"record_{index:02d}.npz"
+        for _device, start, count in shards
+        for index in range(start, start + count)
+        if not (output / f"record_{index:02d}.npz").is_file()
+    ]
+    if missing and not failures:
+        failures.append(
+            f"{len(missing)} round(s) left no recording: {', '.join(missing)}"
+        )
+
     summaries: list[Mapping[str, Any]] = []
     for _device, suffix, _process in processes:
         path = output / f"summary{suffix}.json"
@@ -1817,6 +1834,29 @@ def _run_sharded(
         )
         return 1
     return 0
+
+
+def record_file_index(*, run_index: int, round_index: int, repeat: int) -> int:
+    """Which number a record file carries: the round, unless repeating.
+
+    ``--repeat`` pins one round index and re-runs it, so only the run number
+    separates those files. Every other invocation walks the round index, and
+    then the ROUND has to name the file -- including a one-round invocation,
+    which is what a device shard receives.
+
+    That last clause is the whole reason this is a function. It used to read
+    "round index if rounds > 1", which is true for a serial harvest and false
+    for the shards it was written to support: the parent hands each child
+    ``--rounds 1`` when there is one round per device, so both children
+    computed run index 0, both wrote record_00.npz, and the two processes
+    raced. The surviving file failed its CRC and the other round was simply
+    gone. Sharding four rounds over two devices hid it, because each child then
+    got --rounds 2 and took the walking branch.
+    """
+
+    if int(repeat) > 1:
+        return int(run_index)
+    return int(round_index)
 
 
 def plan_device_shards(
@@ -2408,14 +2448,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                 float("nan") if start_cap is None else float(start_cap)
             )
             summary["determinism"] = recorder.determinism
-            # Named by ROUND index while walking, run index while
-            # repeating. Under --repeat the round is pinned and only the run
-            # number separates the files; under --rounds the round number does,
-            # and it has to, because sharding across devices gives two
-            # processes the same run indices and different round ones. For the
-            # default harvest (--round-index 0) the two agree and the name is
+            # See record_file_index: the round names the file unless --repeat
+            # pinned it. For the default harvest the two agree and the name is
             # unchanged from before sharding existed.
-            file_index = round_index if walking else index
+            file_index = record_file_index(
+                run_index=index,
+                round_index=round_index,
+                repeat=int(args.repeat),
+            )
             path = output / f"record_{file_index:02d}.npz"
             recording.to_npz(path)
             recordings.append(recording)
