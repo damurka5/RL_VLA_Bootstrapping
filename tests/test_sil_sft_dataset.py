@@ -14,6 +14,9 @@ import numpy as np
 
 from tools.audit.sil_sft import (
     _episode_split,
+    progress_enabled,
+    progress_iter,
+    progress_write,
     _filter_instructions,
     _reachability,
 )
@@ -123,3 +126,71 @@ class InstructionFilterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class _FakeStream:
+    """Minimal stdout stand-in whose tty-ness is set per test."""
+
+    def __init__(self, tty: bool) -> None:
+        self._tty = tty
+        self.written: list[str] = []
+
+    def isatty(self) -> bool:
+        return self._tty
+
+    def write(self, text: str) -> int:
+        self.written.append(text)
+        return len(text)
+
+    def flush(self) -> None:
+        return None
+
+
+class _NoIsattyStream:
+    """A stream object with no isatty at all, e.g. a capture shim."""
+
+
+class ProgressGatingTests(unittest.TestCase):
+    """Bars must never reach a log file.
+
+    Every long run here is launched under tee, nohup or a redirect. A
+    carriage-return progress bar written to a file is thousands of unreadable
+    lines, and the per-epoch numbers -- the ones that get pasted into a report
+    -- would be buried in them. So the gate, not the bar, is what these cover.
+    """
+
+    def test_a_redirected_stdout_gets_no_bars(self) -> None:
+        self.assertFalse(progress_enabled("auto", _FakeStream(tty=False)))
+
+    def test_a_terminal_gets_bars(self) -> None:
+        # Skipped rather than failed where tqdm is absent: the gate correctly
+        # returns False then, and that is a different assertion.
+        if progress_enabled("always", _FakeStream(tty=True)) is False:
+            self.skipTest("tqdm is not installed in this environment")
+        self.assertTrue(progress_enabled("auto", _FakeStream(tty=True)))
+
+    def test_never_beats_a_terminal(self) -> None:
+        self.assertFalse(progress_enabled("never", _FakeStream(tty=True)))
+
+    def test_a_stream_without_isatty_is_not_a_terminal(self) -> None:
+        self.assertFalse(progress_enabled("auto", _NoIsattyStream()))
+
+    def test_disabled_wrapping_is_the_identity(self) -> None:
+        # The training loops iterate whatever this returns, so a disabled bar
+        # must not consume, reorder or copy the sequence.
+        source = [3, 1, 4, 1, 5]
+        wrapped = progress_iter(
+            source, total=len(source), desc="x", leave=False, enabled=False
+        )
+        self.assertIs(wrapped, source)
+        self.assertEqual(list(wrapped), [3, 1, 4, 1, 5])
+
+    def test_epoch_lines_are_printed_even_with_bars_off(self) -> None:
+        # The durable record is never replaced by the bar, only relocated.
+        import contextlib
+        import io
+
+        buffer = io.StringIO()
+        with contextlib.redirect_stdout(buffer):
+            progress_write("[sft] epoch   0 loss=0.1", enabled=False)
+        self.assertEqual(buffer.getvalue().strip(), "[sft] epoch   0 loss=0.1")

@@ -102,6 +102,68 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
 # --------------------------------------------------------------------------
 
 
+try:  # noqa: E402
+    from tqdm.auto import tqdm as _tqdm
+except Exception:  # pragma: no cover - present in the env lock, not required
+    _tqdm = None
+
+
+def progress_enabled(mode: str = "auto", stream: Any = None) -> bool:
+    """Whether to draw bars. Off by default whenever stdout is not a terminal.
+
+    Every long run in this campaign is launched under tee, a redirect or nohup,
+    and a carriage-return bar in a log file is thousands of unreadable lines --
+    so "auto" means "only when a human is watching". The epoch lines have to
+    make the same call as the bars (they are written THROUGH tqdm when it is
+    active, so they do not collide with it), which is why this is one predicate
+    both consult rather than tqdm's own disable=None.
+    """
+
+    if str(mode) == "never":
+        return False
+    if _tqdm is None:
+        return False
+    if str(mode) == "always":
+        return True
+    handle = sys.stdout if stream is None else stream
+    try:
+        return bool(handle.isatty())
+    except Exception:
+        # A stream with no isatty (a capture object, a closed pipe) is not a
+        # terminal for our purposes.
+        return False
+
+
+def progress_iter(
+    iterable: Any,
+    *,
+    total: int | None,
+    desc: str,
+    leave: bool,
+    enabled: bool,
+) -> Any:
+    """Wrap an iterable in a bar, or hand it back untouched when disabled."""
+
+    if not enabled or _tqdm is None:
+        return iterable
+    return _tqdm(
+        iterable, total=total, desc=desc, leave=leave, dynamic_ncols=True
+    )
+
+
+def progress_write(text: str, *, enabled: bool) -> None:
+    """Emit a line that must survive: above the bars, or as a plain print.
+
+    The per-epoch lines are the durable record -- they are what gets pasted
+    into a report -- so they are never replaced by the bar, only relocated.
+    """
+
+    if enabled and _tqdm is not None:
+        _tqdm.write(text)
+    else:
+        print(text, flush=True)
+
+
 def _load_dataset(path: Path) -> dict[str, np.ndarray]:
     with np.load(path, allow_pickle=False) as data:
         dataset = {key: data[key] for key in data.files}
@@ -760,6 +822,7 @@ def train_lora_stage(
     microbatch: int,
     seed: int,
     actor_lr: float,
+    show_progress: bool = False,
 ) -> dict[str, Any]:
     """Fit LoRA + residual through a grad-carrying SmolVLA forward.
 
@@ -858,11 +921,25 @@ def train_lora_stage(
     best_state: dict[str, Any] | None = None
 
     train_rows = np.flatnonzero(rows_train)
-    for epoch in range(int(epochs)):
+    lora_bar = progress_iter(
+        range(int(epochs)),
+        total=int(epochs),
+        desc="sft lora",
+        leave=True,
+        enabled=show_progress,
+    )
+    for epoch in lora_bar:
         picked = generator.permutation(train_rows)
         running = 0.0
         batches = 0
-        for start in range(0, picked.size, int(microbatch)):
+        lora_starts = list(range(0, picked.size, int(microbatch)))
+        for start in progress_iter(
+            lora_starts,
+            total=len(lora_starts),
+            desc=f"lora epoch {epoch}",
+            leave=False,
+            enabled=show_progress,
+        ):
             chunk = picked[start : start + int(microbatch)]
             mse, kl, _ = batch_loss(list(chunk), grad=True)
             loss = mse + float(kl_coef) * kl
@@ -890,12 +967,18 @@ def train_lora_stage(
                     (trainer._vla_lora_state_dict() or {}).items()
                 },
             }
-        print(
+        progress_write(
             f"[sft][lora] epoch {epoch:3d} loss={running / max(batches, 1):.6f} "
             f"val_mse={metrics['mse']:.6f} val_kl={metrics['kl']:.6f}"
             f"{'  <- best' if improved else ''}",
-            flush=True,
+            enabled=show_progress,
         )
+        if show_progress and hasattr(lora_bar, "set_postfix"):
+            lora_bar.set_postfix(
+                val_mse=f"{metrics['mse']:.6f}",
+                val_kl=f"{metrics['kl']:.2e}",
+                refresh=False,
+            )
     if best_state is None:
         print(
             "[sft][lora] NO epoch beat the starting point "
@@ -940,6 +1023,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--epochs", type=int, default=20)
+    parser.add_argument(
+        "--progress",
+        choices=("auto", "always", "never"),
+        default="auto",
+        help=(
+            "Draw tqdm bars for the epoch and batch loops. 'auto' (the "
+            "default) draws them only when stdout is a terminal, because these "
+            "runs are normally launched under tee or a redirect and a "
+            "carriage-return bar in a log file is thousands of unreadable "
+            "lines. The per-epoch lines are printed either way -- when a bar "
+            "is active they go through tqdm.write so they scroll above it "
+            "instead of colliding with it -- so a redirected run's log is "
+            "byte-identical to one from before this existed. 'always' forces "
+            "bars on (a tmux pipe someone is watching); 'never' forces them "
+            "off."
+        ),
+    )
     parser.add_argument("--batch-size", type=int, default=512)
     parser.add_argument("--lr", type=float, default=1e-4)
     parser.add_argument("--weight-decay", type=float, default=0.0)
@@ -1151,13 +1251,28 @@ def main(argv: Sequence[str] | None = None) -> int:
     generator.manual_seed(int(args.seed))
     started = time.perf_counter()
 
-    for epoch in range(int(args.epochs)):
+    show_progress = progress_enabled(str(args.progress))
+    epoch_bar = progress_iter(
+        range(int(args.epochs)),
+        total=int(args.epochs),
+        desc="sft residual",
+        leave=True,
+        enabled=show_progress,
+    )
+    for epoch in epoch_bar:
         order = torch.randperm(
             int(tr_state.shape[0]), generator=generator
         ).to(device)
         running = 0.0
         batches = 0
-        for start in range(0, int(order.numel()), int(args.batch_size)):
+        starts = list(range(0, int(order.numel()), int(args.batch_size)))
+        for start in progress_iter(
+            starts,
+            total=len(starts),
+            desc=f"epoch {epoch}",
+            leave=False,
+            enabled=show_progress,
+        ):
             index = order[start : start + int(args.batch_size)]
             out = actor(
                 tr_state.index_select(0, index),
@@ -1194,12 +1309,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "val_mae": val_metrics["mae"],
             }
         )
-        print(
+        progress_write(
             f"[sft] epoch {epoch:3d} loss={running / max(batches, 1):.6f} "
             f"train_mse={train_metrics['mse']:.6f} "
             f"val_mse={val_metrics['mse']:.6f}",
-            flush=True,
+            enabled=show_progress,
         )
+        if show_progress and hasattr(epoch_bar, "set_postfix"):
+            # The two numbers worth watching over 60+ epochs: where val_mse is
+            # now, and whether it is still falling.
+            epoch_bar.set_postfix(
+                val_mse=f"{val_metrics['mse']:.6f}",
+                best=f"{min(best, val_metrics['mse']):.6f}",
+                refresh=False,
+            )
         if val_metrics["mse"] < best:
             best = val_metrics["mse"]
             best_epoch = epoch
@@ -1375,6 +1498,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         kept = budget_rows
         lora_report = train_lora_stage(
+            show_progress=show_progress,
             torch=torch, runtime=runtime, trainer=trainer, actor=base,
             dataset={
                 key: value[kept] if getattr(value, "shape", None) else value
