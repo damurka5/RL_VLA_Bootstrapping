@@ -20,6 +20,9 @@ import numpy as np
 
 from tools.audit.sil_record import (
     _Recording,
+    _merge_shard_summaries,
+    plan_device_shards,
+    strip_argv_flags,
     _build_dataset,
     _row_quota_mask,
     _determinism_report,
@@ -782,3 +785,115 @@ class RoundTripTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DeviceShardTests(unittest.TestCase):
+    """--devices splits a round range; getting it wrong loses rounds silently.
+
+    The sharding is the only new logic behind ``--devices`` -- each shard is
+    the ordinary single-device path -- so this is where the correctness lives.
+    A dropped round is invisible at harvest time and shows up as a short
+    dataset slice days later.
+    """
+
+    def test_even_split_covers_every_round_exactly_once(self) -> None:
+        shards = plan_device_shards(0, 12, ["cuda:0", "cuda:1"])
+        self.assertEqual(
+            shards, [("cuda:0", 0, 6), ("cuda:1", 6, 6)]
+        )
+        covered = [
+            index
+            for _device, start, count in shards
+            for index in range(start, start + count)
+        ]
+        self.assertEqual(covered, list(range(12)))
+
+    def test_remainder_goes_to_the_earliest_devices(self) -> None:
+        shards = plan_device_shards(0, 5, ["cuda:0", "cuda:1"])
+        self.assertEqual(shards, [("cuda:0", 0, 3), ("cuda:1", 3, 2)])
+        self.assertEqual(sum(count for _d, _s, count in shards), 5)
+
+    def test_ranges_are_contiguous_and_disjoint(self) -> None:
+        # Disjointness is what lets every shard write into one directory:
+        # record files are named by round index while walking.
+        shards = plan_device_shards(4, 7, ["cuda:0", "cuda:1", "cuda:2"])
+        covered = [
+            index
+            for _device, start, count in shards
+            for index in range(start, start + count)
+        ]
+        self.assertEqual(sorted(covered), covered)
+        self.assertEqual(len(set(covered)), len(covered))
+        self.assertEqual(covered, list(range(4, 11)))
+
+    def test_first_round_offset_is_honoured(self) -> None:
+        shards = plan_device_shards(6, 4, ["cuda:0", "cuda:1"])
+        self.assertEqual(shards, [("cuda:0", 6, 2), ("cuda:1", 8, 2)])
+
+    def test_more_devices_than_rounds_drops_the_idle_ones(self) -> None:
+        # An empty shard would still load the model and build a world.
+        shards = plan_device_shards(0, 2, ["cuda:0", "cuda:1", "cuda:2"])
+        self.assertEqual(shards, [("cuda:0", 0, 1), ("cuda:1", 1, 1)])
+
+    def test_degenerate_inputs_produce_no_shards(self) -> None:
+        self.assertEqual(plan_device_shards(0, 0, ["cuda:0"]), [])
+        self.assertEqual(plan_device_shards(0, 4, []), [])
+        self.assertEqual(plan_device_shards(0, 4, ["  ", ""]), [])
+
+
+class ArgvStripTests(unittest.TestCase):
+    """Child command lines are rebuilt from the parent's argv."""
+
+    def test_both_spellings_are_removed_with_their_values(self) -> None:
+        argv = [
+            "--mode", "record",
+            "--device", "cuda:0",
+            "--devices=cuda:0,cuda:1",
+            "--rounds", "12",
+            "--worlds", "2048",
+        ]
+        self.assertEqual(
+            strip_argv_flags(argv, ("--device", "--devices", "--rounds")),
+            ["--mode", "record", "--worlds", "2048"],
+        )
+
+    def test_unrelated_flags_and_their_values_survive(self) -> None:
+        # The point of rebuilding from argv is that arguments added to the tool
+        # later are inherited without anyone updating the shard code.
+        argv = ["--start-distance-cap", "0.20", "--seed-torch", "0"]
+        self.assertEqual(strip_argv_flags(argv, ("--device",)), argv)
+
+    def test_a_value_that_looks_like_a_flag_name_is_not_eaten(self) -> None:
+        argv = ["--output", "--device", "--rounds", "3"]
+        # "--device" here is the VALUE of --output, so stripping --rounds must
+        # not resynchronise onto it.
+        self.assertEqual(
+            strip_argv_flags(argv, ("--rounds",)), ["--output", "--device"]
+        )
+
+
+class ShardSummaryMergeTests(unittest.TestCase):
+    """Pooled rates come from summed counts, not averaged rates."""
+
+    def test_unequal_shards_pool_by_count(self) -> None:
+        merged = _merge_shard_summaries(
+            [
+                {"run_00": {"by_instruction": {
+                    "put_into_bowl": {"successes": 30, "episodes": 100}}}},
+                {"run_01": {"by_instruction": {
+                    "put_into_bowl": {"successes": 10, "episodes": 300}}}},
+            ]
+        )
+        # Averaging the rates would give 0.20; the pooled rate is 40/400.
+        self.assertEqual(merged["put_into_bowl"]["successes"], 40)
+        self.assertEqual(merged["put_into_bowl"]["episodes"], 400)
+        self.assertAlmostEqual(
+            merged["put_into_bowl"]["source_success_rate"], 0.1
+        )
+
+    def test_non_run_keys_and_empty_input_are_ignored(self) -> None:
+        merged = _merge_shard_summaries(
+            [{"checkpoint": "x", "pick_up_prefix": {"placement_episodes": 3}}]
+        )
+        self.assertEqual(merged, {})
+        self.assertEqual(_merge_shard_summaries([]), {})

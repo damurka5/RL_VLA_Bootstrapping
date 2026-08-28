@@ -1678,6 +1678,240 @@ def _build_dataset(
     return dataset, stats
 
 
+def _run_sharded(
+    *,
+    raw_argv: Sequence[str],
+    devices: Sequence[str],
+    first_round: int,
+    rounds: int,
+    output: Path,
+) -> int:
+    """Record one contiguous slice of the round range per device, in parallel.
+
+    Each shard is this same script re-invoked with a single --device, so the
+    recording path is byte-for-byte the one a serial harvest takes and there is
+    no second implementation to keep correct. What the parent adds is the
+    split, the live prefixed log, and the pooled summary.
+
+    Every shard writes into the SAME --output directory. That is safe because
+    record files are named by round index while walking, and the shards own
+    disjoint round ranges -- so the harvest looks exactly like a serial one and
+    --mode dataset needs no special case to read it.
+    """
+
+    import subprocess
+    import threading
+
+    shards = plan_device_shards(first_round, rounds, devices)
+    if not shards:
+        print("[sil][shard] nothing to run", flush=True)
+        return 0
+    if len(shards) < len(devices):
+        print(
+            f"[sil][shard] {rounds} rounds over {len(devices)} devices: "
+            f"using {len(shards)} of them, the rest would record nothing.",
+            flush=True,
+        )
+    inherited = strip_argv_flags(
+        raw_argv,
+        ("--device", "--devices", "--round-index", "--rounds",
+         "--summary-suffix"),
+    )
+
+    processes: list[tuple[str, str, subprocess.Popen[str]]] = []
+    readers: list[threading.Thread] = []
+    for device, start, count in shards:
+        tag = device.replace(":", "").replace("/", "")
+        suffix = f"_{tag}"
+        command = [
+            sys.executable,
+            str(Path(__file__).resolve()),
+            *inherited,
+            "--device", device,
+            "--round-index", str(start),
+            "--rounds", str(count),
+            "--summary-suffix", suffix,
+        ]
+        print(
+            f"[sil][shard] {device}: rounds {start}..{start + count - 1} "
+            f"-> summary{suffix}.json",
+            flush=True,
+        )
+        log_path = output / f"log{suffix}.txt"
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            bufsize=1,
+        )
+
+        def pump(
+            stream: Any, label: str, path: Path
+        ) -> None:
+            # Prefixed so two shards interleaving on one terminal stay
+            # readable, and teed to a file so a long harvest is still
+            # inspectable after the scrollback is gone.
+            with path.open("w", encoding="utf-8") as handle:
+                for line in stream:
+                    handle.write(line)
+                    handle.flush()
+                    print(f"[{label}] {line.rstrip()}", flush=True)
+
+        reader = threading.Thread(
+            target=pump,
+            args=(process.stdout, device, log_path),
+            daemon=True,
+        )
+        reader.start()
+        readers.append(reader)
+        processes.append((device, suffix, process))
+
+    failures: list[str] = []
+    for device, _suffix, process in processes:
+        code = process.wait()
+        if code != 0:
+            failures.append(f"{device} (exit {code})")
+    for reader in readers:
+        reader.join(timeout=30.0)
+
+    summaries: list[Mapping[str, Any]] = []
+    for _device, suffix, _process in processes:
+        path = output / f"summary{suffix}.json"
+        if path.is_file():
+            summaries.append(json.loads(path.read_text(encoding="utf-8")))
+    pooled = _merge_shard_summaries(summaries)
+    merged = {
+        "mode": "record",
+        "sharded": True,
+        "devices": [device for device, _s, _p in processes],
+        "round_index": int(first_round),
+        "rounds": int(rounds),
+        "shards": [
+            {"device": device, "first_round": start, "rounds": count}
+            for device, start, count in shards
+        ],
+        "shard_summaries": [
+            f"summary{suffix}.json" for _d, suffix, _p in processes
+        ],
+        "by_instruction": pooled,
+        "failed_shards": failures,
+    }
+    (output / "summary.json").write_text(
+        json.dumps(merged, indent=2, sort_keys=True), encoding="utf-8"
+    )
+    for name, stats in sorted(pooled.items()):
+        print(
+            f"[sil][shard] pooled {name}: {stats['successes']}/"
+            f"{stats['episodes']} = {stats['source_success_rate']:.3f}",
+            flush=True,
+        )
+    print(f"[sil] wrote {output / 'summary.json'}", flush=True)
+    if failures:
+        # Loud and non-zero: a half-finished harvest that reports success is
+        # how a dataset silently becomes one shard.
+        print(
+            f"[sil][shard] FAILED: {', '.join(failures)}. The rounds those "
+            "shards owned were not recorded.",
+            flush=True,
+        )
+        return 1
+    return 0
+
+
+def plan_device_shards(
+    first_round: int,
+    rounds: int,
+    devices: Sequence[str],
+) -> list[tuple[str, int, int]]:
+    """Split a contiguous round range across devices, as (device, start, n).
+
+    Rounds are independent by construction -- ``round_index`` is part of the
+    reset seed and nothing carries between rounds -- so sharding them is exact
+    rather than an approximation. The split is CONTIGUOUS, not round-robin, so
+    every shard owns a run of consecutive indices and the record files it
+    writes are named by an index no other shard can produce.
+
+    Devices beyond the round count get no shard rather than an empty one: a
+    child process that recorded nothing would still pay the full model load,
+    build a world, and write a summary describing zero episodes.
+
+    The remainder goes to the earliest devices, so with 5 rounds on 2 devices
+    the split is 3/2 and never 2/2 with a round quietly dropped.
+    """
+
+    rounds = max(int(rounds), 0)
+    names = [str(device).strip() for device in devices if str(device).strip()]
+    if not names or rounds <= 0:
+        return []
+    usable = min(len(names), rounds)
+    base, extra = divmod(rounds, usable)
+    shards: list[tuple[str, int, int]] = []
+    start = int(first_round)
+    for position in range(usable):
+        count = base + (1 if position < extra else 0)
+        shards.append((names[position], start, count))
+        start += count
+    return shards
+
+
+def strip_argv_flags(argv: Sequence[str], flags: Sequence[str]) -> list[str]:
+    """Drop ``--flag value`` and ``--flag=value`` pairs from an argv list.
+
+    Used to rebuild a child command line from the parent's own, so a shard
+    inherits every argument that was actually passed -- including ones added to
+    this tool after the sharding was written -- rather than a hand-maintained
+    subset that silently drops the flag someone needs.
+
+    Only long options are handled, which is all this tool defines.
+    """
+
+    wanted = {str(flag) for flag in flags}
+    out: list[str] = []
+    skip_value = False
+    for token in argv:
+        if skip_value:
+            skip_value = False
+            continue
+        text = str(token)
+        head = text.split("=", 1)[0]
+        if head in wanted:
+            # "--flag=value" carries its value; "--flag value" does not.
+            skip_value = "=" not in text
+            continue
+        out.append(text)
+    return out
+
+
+def _merge_shard_summaries(
+    summaries: Sequence[Mapping[str, Any]],
+) -> dict[str, dict[str, Any]]:
+    """Pool per-instruction counts across shard summaries.
+
+    Rates are recomputed from summed counts rather than averaged: shards can
+    hold different numbers of rounds when the split has a remainder, and the
+    mean of two rates over unequal denominators is not the pooled rate.
+    """
+
+    totals: dict[str, dict[str, Any]] = {}
+    for summary in summaries:
+        for key, entry in summary.items():
+            if not str(key).startswith("run_") or not isinstance(entry, Mapping):
+                continue
+            for name, stats in (entry.get("by_instruction") or {}).items():
+                bucket = totals.setdefault(
+                    str(name), {"successes": 0, "episodes": 0}
+                )
+                bucket["successes"] += int(stats.get("successes", 0))
+                bucket["episodes"] += int(stats.get("episodes", 0))
+    for bucket in totals.values():
+        episodes = int(bucket["episodes"])
+        bucket["source_success_rate"] = (
+            round(bucket["successes"] / episodes, 5) if episodes else 0.0
+        )
+    return totals
+
+
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     if not rows:
         return
@@ -1796,6 +2030,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--device", default="cuda:0")
+    parser.add_argument(
+        "--devices",
+        default="",
+        help=(
+            "Comma-separated devices to shard --rounds across, e.g. "
+            "'cuda:0,cuda:1'. Record mode only. The parent process builds no "
+            "world of its own: it re-invokes this script once per device with "
+            "a contiguous slice of the round range and waits, so each shard is "
+            "the ordinary single-device path and the only new machinery is the "
+            "split. Rounds are independent -- round_index is part of the reset "
+            "seed and nothing carries between them -- so this is exact, not an "
+            "approximation of a serial harvest. Overrides --device."
+        ),
+    )
+    parser.add_argument(
+        "--summary-suffix",
+        default="",
+        help=argparse.SUPPRESS,
+    )
     parser.add_argument("--worlds", type=int, default=512)
     parser.add_argument("--group-size", type=int, default=8)
     parser.add_argument("--smolvla-microbatch", type=int, default=256)
@@ -1936,6 +2189,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    # The child command lines are rebuilt from this, so a shard inherits every
+    # argument that was actually passed rather than a subset kept in sync by
+    # hand. Captured before any validation mutates the parsed values.
+    raw_argv = list(sys.argv[1:] if argv is None else argv)
 
     if args.repeat < 1:
         parser.error("--repeat must be at least 1.")
@@ -1947,6 +2204,25 @@ def main(argv: Sequence[str] | None = None) -> int:
             "walks consecutive round indices to harvest. Combining them makes "
             "the output ambiguous. Pick one."
         )
+    # Parsed and checked BEFORE the dataset and compare branches return, so
+    # "--devices with --mode dataset" is refused rather than silently ignored
+    # on the way past.
+    devices = [
+        name.strip() for name in str(args.devices).split(",") if name.strip()
+    ]
+    if devices:
+        if args.mode != "record":
+            parser.error(
+                "--devices shards a round range across GPUs and only --mode "
+                f"record walks one; --mode {args.mode} does not. Replay or "
+                "build a dataset with --device."
+            )
+        if int(args.repeat) > 1:
+            parser.error(
+                "--devices shards --rounds across devices; --repeat pins one "
+                "round index to measure noise, so there is nothing to shard "
+                "and the two runs of the null would land on different GPUs."
+            )
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
 
@@ -2055,6 +2331,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.mode == "replay" and args.actions is None:
         parser.error("--mode replay needs --actions.")
 
+    if len(devices) > 1:
+        return _run_sharded(
+            raw_argv=raw_argv,
+            devices=devices,
+            first_round=(
+                0 if args.round_index is None else int(args.round_index)
+            ),
+            rounds=int(args.rounds),
+            output=output,
+        )
+    if len(devices) == 1:
+        # One device named is just that device. Fall through to the ordinary
+        # path rather than spawning a child to do what this process can do.
+        args.device = devices[0]
+
     start_cap = args.start_distance_cap
     if start_cap is not None and (start_cap <= 0.0 or start_cap == float("inf")):
         start_cap = float("inf")
@@ -2090,7 +2381,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "horizon_decisions_override": int(args.horizon_decisions),
     }
 
-    summary_name = "summary.json"
+    summary_name = f"summary{args.summary_suffix}.json"
     if args.mode == "record":
         recordings: list[_Recording] = []
         runs = max(int(args.repeat), int(args.rounds))
@@ -2117,13 +2408,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 float("nan") if start_cap is None else float(start_cap)
             )
             summary["determinism"] = recorder.determinism
-            path = output / f"record_{index:02d}.npz"
+            # Named by ROUND index while walking, run index while
+            # repeating. Under --repeat the round is pinned and only the run
+            # number separates the files; under --rounds the round number does,
+            # and it has to, because sharding across devices gives two
+            # processes the same run indices and different round ones. For the
+            # default harvest (--round-index 0) the two agree and the name is
+            # unchanged from before sharding existed.
+            file_index = round_index if walking else index
+            path = output / f"record_{file_index:02d}.npz"
             recording.to_npz(path)
             recordings.append(recording)
             rows = _episode_rows(recording)
-            _write_csv(output / f"episodes_{index:02d}.csv", rows)
+            _write_csv(output / f"episodes_{file_index:02d}.csv", rows)
             slices = _slice_summary(rows)
-            summary[f"run_{index:02d}"] = {
+            summary[f"run_{file_index:02d}"] = {
                 "npz": str(path),
                 "env_steps": int(recording.actions.shape[0]),
                 "actions_per_decision": recording.actions_per_decision,
@@ -2136,7 +2435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             }
             for name, stats in slices.items():
                 print(
-                    f"[sil][run {index}] {name}: "
+                    f"[sil][run {file_index}] {name}: "
                     f"{stats['successes']}/{stats['episodes']} "
                     f"= {stats['source_success_rate']:.3f}",
                     flush=True,
