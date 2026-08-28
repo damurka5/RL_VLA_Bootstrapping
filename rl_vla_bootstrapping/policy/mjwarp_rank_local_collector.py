@@ -162,6 +162,39 @@ def post_grasp_metrics(
     }
 
 
+def _release_clearance_metrics(task_state: Any) -> dict[str, float]:
+    """Mean and count of the latched release clearance, over releases only.
+
+    Reported so ``put_release_max_height`` can be set from a measurement rather
+    than a guess. The gate is off until it is, because the threshold has to sit
+    ABOVE the object's own resting clearance inside the receptacle -- an object
+    at rest already has a positive clearance, and a threshold below it denies
+    every placement including correct ones.
+    """
+
+    import torch
+
+    clearance = getattr(task_state, "release_clearance", None)
+    if clearance is None:
+        return {
+            "release_clearance_mean_m": 0.0,
+            "release_clearance_worlds": 0.0,
+        }
+    released = torch.isfinite(clearance)
+    count = float(released.sum().item())
+    if count <= 0.0:
+        return {
+            "release_clearance_mean_m": 0.0,
+            "release_clearance_worlds": 0.0,
+        }
+    return {
+        "release_clearance_mean_m": float(
+            clearance[released].mean().item()
+        ),
+        "release_clearance_worlds": count,
+    }
+
+
 def instruction_outcome_counts(
     successes: Any,
     task_ids: Any,
@@ -2263,6 +2296,15 @@ class BatchedReverseFrontierResetter:
             peak_lift=torch.zeros(
                 (worlds,), dtype=torch.float32, device=self.device
             ),
+            # NaN means "has not released yet". Zero would be a real clearance
+            # -- the object level with the receptacle centre -- and would read
+            # as a perfect placement to the release-height gate.
+            release_clearance=torch.full(
+                (worlds,),
+                float("nan"),
+                dtype=torch.float32,
+                device=self.device,
+            ),
         )
         target_catalog_names = [
             ACTIVE_CDPR_CATALOGS[index]
@@ -3574,6 +3616,14 @@ class RankLocalMJWarpGRPOCollector:
                     float(grasp_diagnostic_totals["contact_loaded"].item()),
                 )
             ),
+            # Object clearance above the receptacle at the step the gripper
+            # opened, over the worlds that released. This is the number the
+            # put_release_max_height gate is calibrated against: it has to sit
+            # above the object's own resting clearance (a threshold below that
+            # makes the task impossible) and below what a drop looks like.
+            # NaN marks a world that never released, so the mean is over
+            # releases and the count says how many there were.
+            **_release_clearance_metrics(reset.task_state),
             "slip_mean_while_loaded_m": float(
                 grasp_diagnostic_totals["slip_while_loaded_m"].item()
                 / max(

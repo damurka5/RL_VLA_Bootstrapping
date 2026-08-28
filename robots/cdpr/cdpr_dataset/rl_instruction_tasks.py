@@ -393,6 +393,15 @@ class RewardState:
     translation_sign_comparison_count: int = 0
     prev_action: Optional[np.ndarray] = None
     prev_prev_action: Optional[np.ndarray] = None
+    # Object clearance above the receptacle at the step the gripper first
+    # opened, latched once per episode. None until a release happens.
+    #
+    # It has to be latched rather than recomputed, because the quantity that
+    # distinguishes a placement from a drop only exists for one step. After the
+    # object leaves the fingers it falls, and a drop from 10 cm and a placement
+    # from 1 cm reach the same resting height a few steps later -- which is
+    # exactly why the terminal success test could not tell them apart.
+    release_clearance: Optional[float] = None
 
 
 def canonical_object_name(name: str) -> str:
@@ -2288,6 +2297,12 @@ def _compute_sparse_manipulation_reward(
     put_container_z_tolerance = 0.0
     put_release_ok = True
     put_release_fraction = 1.0
+    # NaN, not 0.0: "the gripper has not released yet" and "it released at the
+    # receptacle's exact height" are different states and a zero would report
+    # the second for the first. The consumer filters on isfinite.
+    put_release_clearance = float("nan")
+    put_release_max_height = 0.0
+    put_release_height_ok = True
     carried_object_lost = False
     carried_object_caught_ok = bool(caught_object_is_target)
     carried_object_fall_penalty = _metadata_float(task_metadata, "carried_object_fall_penalty", 2.0)
@@ -2558,6 +2573,44 @@ def _compute_sparse_manipulation_reward(
             ((not relation_grasp_required) or reward_state.grasped)
             and relation_grasp_history_ok
         )
+
+        # --- place, not drop -------------------------------------------------
+        # Height of the object above the receptacle centre. Live every step;
+        # latched at the first release so the success test can ask how high the
+        # gripper was when it let go.
+        #
+        # Gated on ever_grasped, and on the gripper ACTUALLY being open rather
+        # than on release_ok: with put_require_release false the latter is true
+        # from step 0, which would latch the carry height of an episode that
+        # never released at all.
+        put_release_clearance = float(target_pos[2]) - float(plate_pos[2])
+        gripper_is_open = bool(
+            np.isfinite(gripper_value) and gripper_value >= release_threshold
+        )
+        if (
+            gripper_is_open
+            and reward_state.ever_grasped
+            and reward_state.release_clearance is None
+        ):
+            reward_state.release_clearance = float(put_release_clearance)
+        # 0.0 disables the gate, which is the behaviour every run before this
+        # existed had. Deliberately off by default: the threshold has to be
+        # calibrated against the clearance the policy actually releases at, and
+        # put_release_clearance is reported every step precisely so that
+        # distribution can be measured before anything is gated on it. Setting
+        # it blind can make the task unreachable on the first update.
+        put_release_max_height = _metadata_float(
+            task_metadata, "put_release_max_height", 0.0
+        )
+        put_release_height_ok = True
+        if put_release_max_height > 0.0:
+            put_release_height_ok = bool(
+                reward_state.release_clearance is not None
+                and float(reward_state.release_clearance)
+                <= float(put_release_max_height)
+            )
+        # ---------------------------------------------------------------------
+
         put_downward_reward_enabled = _metadata_bool(task_metadata, "put_downward_reward_enabled", False)
         if put_downward_reward_enabled:
             relation_motion_required = max(
@@ -2598,6 +2651,7 @@ def _compute_sparse_manipulation_reward(
                 and release_ok
                 and relation_motion_ok
                 and relation_grasp_ok
+                and put_release_height_ok
             )
 
     elif spec.instruction_type in {
@@ -2906,6 +2960,23 @@ def _compute_sparse_manipulation_reward(
         "put_container_z_error": float(put_container_z_error) if np.isfinite(put_container_z_error) else -1.0,
         "put_container_z_tolerance": float(put_container_z_tolerance),
         "put_release_ok": float(put_release_ok),
+        # Latched clearance if the gripper has released, else the live value,
+        # else -1. Reported whether or not the gate is armed, because the
+        # threshold can only be set from the distribution this measures.
+        "put_release_clearance": (
+            float(reward_state.release_clearance)
+            if getattr(reward_state, "release_clearance", None) is not None
+            else (
+                float(put_release_clearance)
+                if np.isfinite(put_release_clearance)
+                else -1.0
+            )
+        ),
+        "put_release_max_height": float(put_release_max_height),
+        "put_release_height_ok": float(put_release_height_ok),
+        "put_released": float(
+            getattr(reward_state, "release_clearance", None) is not None
+        ),
         "relation_motion_required": float(relation_motion_required),
         "relation_motion_ok": float(relation_motion_ok),
         "relation_grasp_required": float(relation_grasp_required),

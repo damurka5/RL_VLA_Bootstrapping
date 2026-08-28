@@ -169,6 +169,26 @@ class BatchedCatchReleaseDenseReward:
     bowl_radius: float = 0.057
     container_z_tolerance: float = 0.12
     wrong_place_settle_margin: float = 0.025
+    # Maximum object clearance above the receptacle AT THE MOMENT THE GRIPPER
+    # OPENED, for the placement to count. 0.0 disables it, which is what every
+    # run before this had.
+    #
+    # Without it a placement and a drop are the same event to the success test.
+    # container_ok already requires target_has_settled, so both end with the
+    # object resting in the receptacle, and nothing looks at how high it was
+    # when it was let go -- so the cheapest policy is to carry over and open
+    # from wherever the shaping put it. The dataset videos show exactly that.
+    #
+    # Tightening container_z_tolerance cannot substitute: a dropped object also
+    # settles low and passes on a later step. The quantity only exists for one
+    # step, so it has to be latched when it happens.
+    #
+    # Off by default because the threshold has to sit ABOVE the object's own
+    # resting clearance -- an object at rest in the receptacle already has a
+    # positive clearance, and a threshold below it makes the task impossible --
+    # and that height is per-object and per-receptacle. Arm it against a
+    # measured release_clearance distribution, not a guess.
+    release_max_height: float = 0.0
     # Placement shaping was XY-only, so nothing held the gripper at release
     # height while the frozen prior pushes +Z; the policy drifts up and drops
     # from height. With distance_include_z the term becomes a bounded 3-D
@@ -283,6 +303,9 @@ class BatchedCatchReleaseDenseReward:
             distance_include_z=flag(
                 "catch_release_distance_include_z", False
             ),
+            release_max_height=max(
+                number("put_release_max_height", 0.0), 0.0
+            ),
             plate_release_height=number("put_plate_release_height", 0.045),
             bowl_release_height=number("put_bowl_release_height", 0.10),
             placement_distance_window=max(
@@ -347,6 +370,12 @@ class BatchedTaskState:
     # "raise it 5 cm" and is not the task. None reproduces the old
     # instantaneous behaviour for callers that predate this.
     peak_lift: Any | None = None
+    # Object clearance above the receptacle at the step the gripper first
+    # opened, NaN until then. Latched rather than recomputed because the
+    # quantity that separates a placement from a drop exists for one step only:
+    # afterwards the object falls, and both end at the same resting height.
+    # None keeps the pre-latch behaviour for callers that predate this.
+    release_clearance: Any | None = None
 
     def validate(self, batch_size: int, device: Any) -> None:
         import torch
@@ -394,6 +423,16 @@ class BatchedTaskState:
             ):
                 raise ValueError(
                     f"peak_lift must have shape ({batch_size},) on {device}."
+                )
+        if self.release_clearance is not None:
+            if (
+                not isinstance(self.release_clearance, torch.Tensor)
+                or tuple(self.release_clearance.shape) != (batch_size,)
+                or self.release_clearance.device != device
+            ):
+                raise ValueError(
+                    f"release_clearance must have shape ({batch_size},) on "
+                    f"{device}."
                 )
 
 
@@ -755,6 +794,38 @@ def evaluate_active_sparse_tasks(
             + target_rest_height
             + float(catch_release_dense_reward.wrong_place_settle_margin)
         )
+    # Latch the clearance the object had when the gripper first opened, so the
+    # success test can ask how high it was let go from. Written once per
+    # episode: the update is masked on the entry still being NaN, so a later
+    # step -- when the object has already fallen to its resting height -- cannot
+    # overwrite the value that distinguishes a placement from a drop.
+    #
+    # Gated on ever_grasped, not just on `released`: a world whose gripper is
+    # open at reset has released nothing.
+    release_height_ok = torch.ones_like(is_container)
+    if state.release_clearance is not None:
+        clearance_now = target[:, 2] - reference[:, 2]
+        first_release = (
+            released
+            & state.ever_grasped
+            & torch.isnan(state.release_clearance)
+        )
+        state.release_clearance.copy_(
+            torch.where(
+                first_release, clearance_now, state.release_clearance
+            )
+        )
+        release_max_height = (
+            float(catch_release_dense_reward.release_max_height)
+            if catch_release_dense_reward is not None
+            else 0.0
+        )
+        if release_max_height > 0.0:
+            # NaN compares false, so a world that never released fails the gate
+            # without a separate isnan branch.
+            release_height_ok = (
+                state.release_clearance <= float(release_max_height)
+            )
     container_ok = (
         (container_xy <= container_radius)
         & (container_z <= float(cfg.container_z))
@@ -762,6 +833,7 @@ def evaluate_active_sparse_tasks(
         & (target_motion_xy >= minimum_target_motion)
         & state.ever_grasped
         & released
+        & release_height_ok
         & (
             target_has_settled
             if catch_release_dense_reward is not None
@@ -1080,6 +1152,15 @@ def evaluate_active_sparse_tasks(
             "container_xy_radius": container_radius,
             "container_z_error": container_z,
             "target_has_settled": target_has_settled,
+            # NaN for a world that has not released. Reported whether or not
+            # the gate is armed, because the threshold can only be chosen from
+            # the distribution this measures.
+            "release_clearance": (
+                state.release_clearance
+                if state.release_clearance is not None
+                else torch.full_like(container_z, float("nan"))
+            ),
+            "release_height_ok": release_height_ok,
             "projection_between": projection,
             "released": released,
             "ever_grasped": state.ever_grasped,

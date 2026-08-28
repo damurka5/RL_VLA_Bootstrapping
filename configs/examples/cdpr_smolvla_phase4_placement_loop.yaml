@@ -272,6 +272,39 @@ task:
     placement_wrong_drop_settle_margin: 0.045
     put_require_release: true
     put_require_target_grasp_history: true
+    # 0.0 = OFF. Maximum object clearance above the receptacle at the step the
+    # gripper opens, for the placement to count.
+    #
+    # WHY IT EXISTS. Watching the SFT dataset videos, the policy carries the
+    # object over the receptacle and opens from height; the object falls in,
+    # settles, and scores. Success needs XY tolerance, container_z_tolerance
+    # and a release, and container_ok additionally requires target_has_settled
+    # -- so a drop and a placement reach the IDENTICAL terminal state and the
+    # test cannot separate them. Tightening container_z_tolerance does not
+    # help: a dropped object also ends up resting low and passes a step later.
+    # The only moment the two differ is the release itself, so the clearance is
+    # latched there (state.release_clearance) and the gate reads the latch.
+    #
+    # WHY IT IS OFF. The threshold has to sit ABOVE the object's own resting
+    # clearance inside the receptacle -- an object at rest already sits some
+    # centimetres above the reference centre, and a threshold below that denies
+    # every placement including correct ones, which reads as the task suddenly
+    # becoming impossible. That height is per object and per receptacle and has
+    # not been measured in this scene.
+    #
+    # HOW TO ARM IT. release_clearance_mean_m and release_clearance_worlds are
+    # logged every update. Run placement with the gate off, read the mean the
+    # policy currently releases at (expected near put_*_release_height, 0.10),
+    # and read the resting clearance from a successful settled episode. Set
+    # this between them, nearer the resting value.
+    #
+    # AND LOWER THE SHAPING WITH IT. put_plate_release_height /
+    # put_bowl_release_height place the dense term's hover point at 0.10 above
+    # the receptacle. Arming the gate below that without moving them asks the
+    # policy to release where the shaping is actively pulling it away from --
+    # the reward and the success test would disagree, which is the same shape
+    # of error as a promote gate reading a metric the trainer depresses.
+    put_release_max_height: 0.0
     caught_object_start_release_opening_margin: 0.04
 
     # Pick-up: approach the physical between-fingers grasp point, reward a
