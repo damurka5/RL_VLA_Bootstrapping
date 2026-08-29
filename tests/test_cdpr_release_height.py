@@ -186,3 +186,88 @@ class ConfigPlumbingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PerFamilyThresholdTests(unittest.TestCase):
+    """Plate and bowl need different limits; one knob wastes the bowl's room.
+
+    Measured over the bank: an object at rest sits 0.058 m above the plate's
+    centre and 0.042 above the bowl's. A shared threshold has to clear the
+    plate's tallest object, which leaves the bowl barely constrained.
+    """
+
+    def _run(self, instruction, object_z, *, plate_max, bowl_max):
+        state = make_state(1)
+        state.instruction_ids.fill_(INSTRUCTION_TO_ID[instruction])
+        objects = torch.zeros((1, 2, 3))
+        objects[:, 1, 2] = PLATE_Z
+        dense = BatchedCatchReleaseDenseReward(
+            plate_release_max_height=plate_max,
+            bowl_release_max_height=bowl_max,
+        )
+
+        def one(z):
+            objects[:, 0, 2] = z
+            ee = objects[:, 0].clone()
+            ee[:, 2] += 0.0075
+            return evaluate_active_sparse_tasks(
+                state=state,
+                ee_position=ee,
+                object_positions=objects,
+                gripper_opening=torch.full((1,), 0.9),
+                caught_target=torch.zeros((1,), dtype=torch.bool),
+                active_mask=torch.ones((1,), dtype=torch.bool),
+                max_steps=128,
+                thresholds=BatchedTaskThresholds(),
+                catch_release_dense_reward=dense,
+            )
+
+        one(object_z)
+        return one(SETTLED_Z)
+
+    def test_the_bowl_limit_binds_where_the_plate_limit_would_not(self) -> None:
+        # A release at 0.07: allowed for the plate (0.080), denied for the
+        # bowl (0.065). One shared threshold could not express this.
+        z = PLATE_Z + 0.07
+        plate = self._run("put_into_plate", z, plate_max=0.080, bowl_max=0.065)
+        bowl = self._run("put_into_bowl", z, plate_max=0.080, bowl_max=0.065)
+        self.assertTrue(bool(plate.success[0]))
+        self.assertFalse(bool(bowl.success[0]))
+
+    def test_the_measured_release_height_is_denied_for_both(self) -> None:
+        # 0.0867 is what phase5_placement_iter3 actually released at.
+        z = PLATE_Z + 0.0867
+        for name in ("put_into_plate", "put_into_bowl"):
+            with self.subTest(name):
+                result = self._run(name, z, plate_max=0.080, bowl_max=0.065)
+                self.assertFalse(bool(result.success[0]))
+
+    def test_a_settled_object_is_never_denied_by_its_own_height(self) -> None:
+        # The failure that would look like the task breaking: a threshold
+        # below the resting clearance denies correct placements. Measured
+        # maxima are 0.0690 (plate) and 0.0523 (bowl).
+        for name, rest_max in (
+            ("put_into_plate", 0.0690), ("put_into_bowl", 0.0523)
+        ):
+            with self.subTest(name):
+                result = self._run(
+                    name, PLATE_Z + rest_max, plate_max=0.080, bowl_max=0.065
+                )
+                self.assertTrue(bool(result.success[0]))
+
+    def test_a_family_override_falls_back_to_the_shared_knob(self) -> None:
+        dense = BatchedCatchReleaseDenseReward.from_metadata(
+            {"put_release_max_height": 0.09}
+        )
+        self.assertAlmostEqual(dense.release_max_height, 0.09)
+        self.assertAlmostEqual(dense.plate_release_max_height, 0.0)
+
+    def test_the_family_knobs_reach_the_config(self) -> None:
+        dense = BatchedCatchReleaseDenseReward.from_metadata(
+            {
+                "put_plate_release_max_height": 0.080,
+                "put_bowl_release_max_height": 0.065,
+            }
+        )
+        self.assertAlmostEqual(dense.plate_release_max_height, 0.080)
+        self.assertAlmostEqual(dense.bowl_release_max_height, 0.065)

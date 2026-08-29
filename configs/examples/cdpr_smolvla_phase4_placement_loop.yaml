@@ -304,6 +304,22 @@ task:
     # policy to release where the shaping is actively pulling it away from --
     # the reward and the success test would disagree, which is the same shape
     # of error as a promote gate reading a metric the trainer depresses.
+    # ARMED, per family, from measurement. Over 6663 settled plate successes
+    # and 3683 bowl ones in the bank, an object at REST sits 0.0576 m above the
+    # plate's centre (p90 0.0655, max 0.0690) and 0.0419 above the bowl's
+    # (p90 0.0487, max 0.0523). Run phase5_placement_iter3 logged the policy
+    # RELEASING at a median 0.0867 -- a 2.9 cm drop into the plate and a 4.4 cm
+    # drop into the bowl.
+    #
+    # Each threshold sits ~1.2 cm above the tallest settled object of its
+    # family, so no correct placement is denied, and below the 0.0867 the
+    # policy currently uses, so the behaviour has to change. The bowl gets the
+    # real constraint (2.2 cm lower); the plate only 0.7 cm, because its
+    # objects rest higher and the gap between "clearly not settled while held"
+    # and "clearly placed" is genuinely narrow there. A per-object threshold
+    # would buy the rest and is not worth the machinery.
+    put_plate_release_max_height: 0.080
+    put_bowl_release_max_height: 0.065
     put_release_max_height: 0.0
     caught_object_start_release_opening_margin: 0.04
 
@@ -449,9 +465,17 @@ task:
     # loop needs them because a task at its ceiling has nothing for SFT to add
     # (phase 3 measured plate flat under SFT at 0.86-0.94, while bowl, which had
     # headroom, moved +0.13).
+    # EXTENDED. Both ladders topped out and then had nowhere to go: in
+    # phase5_placement_iter3 plate reached 0.20 at step 1 363 484 and bowl 0.19
+    # at 1 529 700, and the run spent its remaining 3.64 M and 3.48 M steps at
+    # the ceiling -- 73% of it -- with pass-rate EMAs of 0.560 and 0.384 against
+    # a 0.30 promote gate. That is the phase-4 section 8 finding repeating, and
+    # a policy clearing its gate by that margin on its top rung has not reached
+    # its limit, it has run out of rungs. The promote gate decides whether it
+    # follows; nothing is forced by adding them.
     random_workspace_start_distance_ladder_by_instruction:
-      put_into_bowl: [0.02, 0.04, 0.07, 0.10, 0.13, 0.16, 0.19]
-      put_into_plate: [0.02, 0.05, 0.09, 0.14, 0.17, 0.20]
+      put_into_bowl: [0.02, 0.04, 0.07, 0.10, 0.13, 0.16, 0.19, 0.22, 0.25]
+      put_into_plate: [0.02, 0.05, 0.09, 0.14, 0.17, 0.20, 0.23, 0.26]
     # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
     # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
     # (bowl 0.057, plate 0.091), so the first rung is solved by opening the

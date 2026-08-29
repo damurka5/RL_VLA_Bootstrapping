@@ -2599,9 +2599,23 @@ def _compute_sparse_manipulation_reward(
         # put_release_clearance is reported every step precisely so that
         # distribution can be measured before anything is gated on it. Setting
         # it blind can make the task unreachable on the first update.
-        put_release_max_height = _metadata_float(
+        # Per-family, falling back to the shared knob. The receptacles differ
+        # in height: measured over the bank, an object at rest sits 0.058 m
+        # above the plate's centre against 0.042 above the bowl's, so one
+        # threshold either under-constrains the bowl or denies correctly
+        # placed tall objects on the plate.
+        _shared_release_max = _metadata_float(
             task_metadata, "put_release_max_height", 0.0
         )
+        put_release_max_height = _metadata_float(
+            task_metadata,
+            (
+                "put_bowl_release_max_height"
+                if spec.instruction_type == "put_into_bowl"
+                else "put_plate_release_max_height"
+            ),
+            0.0,
+        ) or _shared_release_max
         put_release_height_ok = True
         if put_release_max_height > 0.0:
             put_release_height_ok = bool(

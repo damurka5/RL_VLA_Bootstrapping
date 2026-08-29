@@ -189,6 +189,16 @@ class BatchedCatchReleaseDenseReward:
     # and that height is per-object and per-receptacle. Arm it against a
     # measured release_clearance distribution, not a guess.
     release_max_height: float = 0.0
+    # Per-family overrides, because the two receptacles are not the same
+    # height. Measured over the bank's settled successes, an object at rest
+    # sits 0.0576 m above the plate's centre (p90 0.0655, max 0.0690) but only
+    # 0.0419 above the bowl's (p90 0.0487, max 0.0523) -- a 38% difference. One
+    # shared threshold has to clear the plate's tallest object, which throws
+    # away 1.6 cm of the bowl's headroom and leaves the bowl barely gated at
+    # all. Same reason plate_radius and bowl_radius are separate. 0.0 falls
+    # back to release_max_height.
+    plate_release_max_height: float = 0.0
+    bowl_release_max_height: float = 0.0
     # Placement shaping was XY-only, so nothing held the gripper at release
     # height while the frozen prior pushes +Z; the policy drifts up and drops
     # from height. With distance_include_z the term becomes a bounded 3-D
@@ -305,6 +315,12 @@ class BatchedCatchReleaseDenseReward:
             ),
             release_max_height=max(
                 number("put_release_max_height", 0.0), 0.0
+            ),
+            plate_release_max_height=max(
+                number("put_plate_release_max_height", 0.0), 0.0
+            ),
+            bowl_release_max_height=max(
+                number("put_bowl_release_max_height", 0.0), 0.0
             ),
             plate_release_height=number("put_plate_release_height", 0.045),
             bowl_release_height=number("put_bowl_release_height", 0.10),
@@ -815,17 +831,35 @@ def evaluate_active_sparse_tasks(
                 first_release, clearance_now, state.release_clearance
             )
         )
-        release_max_height = (
+        shared_max = (
             float(catch_release_dense_reward.release_max_height)
             if catch_release_dense_reward is not None
             else 0.0
         )
-        if release_max_height > 0.0:
+        plate_max = (
+            float(catch_release_dense_reward.plate_release_max_height)
+            if catch_release_dense_reward is not None
+            else 0.0
+        ) or shared_max
+        bowl_max = (
+            float(catch_release_dense_reward.bowl_release_max_height)
+            if catch_release_dense_reward is not None
+            else 0.0
+        ) or shared_max
+        if plate_max > 0.0 or bowl_max > 0.0:
+            # Per-world limit; a world with no limit gets +inf and is unaffected.
+            limit = torch.where(
+                is_plate,
+                torch.full_like(clearance_now, plate_max or float("inf")),
+                torch.where(
+                    is_bowl,
+                    torch.full_like(clearance_now, bowl_max or float("inf")),
+                    torch.full_like(clearance_now, float("inf")),
+                ),
+            )
             # NaN compares false, so a world that never released fails the gate
             # without a separate isnan branch.
-            release_height_ok = (
-                state.release_clearance <= float(release_max_height)
-            )
+            release_height_ok = state.release_clearance <= limit
     container_ok = (
         (container_xy <= container_radius)
         & (container_z <= float(cfg.container_z))
