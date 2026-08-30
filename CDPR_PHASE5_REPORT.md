@@ -58,6 +58,8 @@ before. Phase 4 measured 41% and could not move it with epochs.
 | `phase4_pick_up_iter0` | 1.83 M | 191 | dead; 222 normal-start grasps in 102 016 worlds |
 | `phase4_pick_up_iter1` | 1.15 M | 130 | peak val **0.1387** @ 206 k, then collapse |
 | `phase4_pick_up_iter2` | 0.21→1.41 M | 140 | peak val **0.1328** @ 1.00 M, then decay |
+| `phase5_placement_iter3` | 1.00→5.01 M | 525 | peak val **0.6211** @ 2.75 M; 73% of it at the ladder ceiling |
+| `phase5_placement_iter4` | 2.76→8.01 M | 695 | release gate armed; val 0.6211 → peak **0.3320**, plateau |
 
 ### 1.5 pick_up validation series (for the graph)
 
@@ -66,6 +68,21 @@ before. Phase 4 measured 41% and could not move it with epochs.
 * iter0: 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000
 * iter1: 0.1387, 0.0381, 0.0146, 0.0361, 0.0010
 * iter2: 0.0156, 0.0371, 0.0312, **0.1328**, 0.0586, 0.0166
+
+### 1.7 Placement validation series (for the graph)
+
+`validation/success_rate` overall, every ~250 k steps.
+
+* iter3 (gate off, old ladders): 0.5977, 0.5850, 0.5752, 0.5869, 0.6045,
+  0.6104, **0.6211**, 0.5576, 0.6191, 0.5840, 0.6143, 0.6104, 0.6133, 0.6074,
+  0.5547, 0.5117
+* iter4 (gate armed, ladders extended): 0.2295, 0.2637, 0.2783, 0.2490,
+  0.3291, 0.3174, **0.3320**, 0.2637, 0.2666, 0.2627, 0.2500, 0.2305, 0.2344,
+  0.2617, 0.3057, 0.2373, 0.3174, 0.2822, 0.3018, 0.2832, 0.3027
+
+`release_clearance_mean_m` across iter4: 0.0897, 0.0696, 0.0696, 0.0683,
+0.0683, 0.0693, 0.0719, 0.0661, 0.0644, 0.0636 — the constraint being learned,
+and converging above the bowl's threshold.
 
 ### 1.6 SFT curves
 
@@ -301,15 +318,28 @@ start of phase 4.
 
 ## 8. State, and what is open
 
-Best single policy: `runs/phase4_bank/sft_cycle2/sil_sft_adapter.pt` —
-pick_up **0.1738** @0.06, move_to **0.4316** @0.19, plate 0.3463 @0.20,
-bowl 0.1702 @0.20. Best pick_up RL checkpoint:
+Best single policy for the non-placement families:
+`runs/phase4_bank/sft_cycle2/sil_sft_adapter.pt` — pick_up **0.1738** @0.06,
+move_to **0.4316** @0.19. Best pick_up RL checkpoint:
 `runs/phase4_pick_up_iter2/rl/step_1003315`, validation 0.1328.
+
+Best PLACEMENT checkpoint, and the one to resume from:
+`runs/phase5_placement_iter3_20260828_224948/rl/step_2754052` — overall 0.6211,
+plate 0.7982, bowl 0.4073 (§11.1). iter4's lineage tops out at 0.3320 and is
+superseded.
 
 Open:
 
-1. **Placement's RL turn.** The family is at 0.346/0.170 against a topped-out
-   0.791/0.442 in phase 4. This is the next run.
+1. ~~Placement's RL turn.~~ Done, twice. iter3 took it past phase 4 on both
+   families (§11.1); iter4 spent 5.25 M steps measuring what the
+   place-not-drop constraint costs (§11.2). Open now: **do the extended
+   ladders alone beat 0.6211?** That is the next run, and the criterion is
+   exactly that number.
+2. **Is place-not-drop worth buying?** The gate works and costs half the
+   success rate. Re-arming it needs bowl at ~0.075 rather than 0.065 and
+   `placement_wrong_drop_penalty` lowered alongside, run as its own experiment
+   from a known peak. Whether the thesis needs the distinction is a separate
+   question from whether it is achievable.
 2. **Does the ~67% ceiling move again?** Both families landed there from very
    different starting fractions, which is either a coincidence or a second
    ceiling. pick_up is the family to test it on, since it is the one whose bank
@@ -426,7 +456,85 @@ support.
 
 ---
 
-## 11. Predictions made here that came back wrong
+## 11. Placement's RL turn: recovered past phase 4, then paid for the gate
+
+Two runs from `sft_cycle2`, whose placement the pick_up RL had left at
+0.3463 / 0.1702.
+
+### 11.1 iter3 — placement comes back higher than it started
+
+`phase5_placement_iter3`, 525 updates, step 1.00 M → 5.01 M.
+
+| | phase 4 best | iter3 |
+|---|---|---|
+| overall peak | 0.633 | **0.6211** @ 2 754 052 |
+| put_into_plate | 0.791 | **0.7982** |
+| put_into_bowl | 0.442 | **0.4655** @ 3 250 193 |
+
+Both families ended above phase 4's ceiling. **The erode → rebuild → RL cycle
+does not merely restore a family, it improves on the previous peak** — a
+stronger statement about the loop than cycle 2's move_to result, because
+placement had been driven much further down first.
+
+**And 73% of the run was wasted at the ladder ceiling.** Plate reached 0.20 at
+step 1 363 484 and bowl 0.19 at 1 529 700; the remaining **3.64 M** and
+**3.48 M** steps ran with the cap pinned and pass-rate EMAs of 0.560 and 0.384
+against a 0.30 promote gate. That is phase 4 §8 repeating verbatim, now at a
+measured cost. Ladders extended to bowl 0.22/0.25 and plate 0.23/0.26.
+
+Unlike pick_up's iter1, the gate behaved: the caps climbed over 500 k steps and
+stopped because they ran out of rungs, not because they outran the policy.
+
+### 11.2 iter4 — what the place-not-drop constraint costs
+
+`put_*_release_max_height` armed at 0.080 (plate) / 0.065 (bowl) from the
+measurement in §10.2, resumed from iter3's peak, 5.25 M steps to the 8 M
+ceiling.
+
+| | iter3 peak | iter4 |
+|---|---|---|
+| `release_clearance_mean_m` | 0.0867 | **0.0636**, flat from 3.5 M |
+| overall validation | 0.6211 | 0.2295 → peak **0.3320** → 0.3027 |
+| `release_clearance_worlds` | 821 | **524** |
+| `physical_release_rate` | 0.057 | **0.021** |
+| bowl cap | 0.19 (top) | 0.22 → **0.07**, never recovered |
+| plate cap | 0.20 (top) | 0.23 → 0.20 |
+
+**The gate did what it was built to do and the policy did learn it.** Release
+clearance fell 2 cm in 3.5 M steps and then converged. At 0.068 against a plate
+resting height of 0.058 (max 0.069) that is a genuine placement rather than a
+drop.
+
+**It cost half the success rate and never got it back** over 3.5 M further
+steps of oscillation between 0.23 and 0.33.
+
+Two mechanisms, both visible:
+
+* **The bowl threshold was below what the policy could reach.** It converged at
+  0.068 — above bowl's 0.065 gate, below plate's 0.080. Bowl releases were
+  therefore mostly denied, its cap collapsed to 0.07, and because **one policy
+  serves both families** that pulled the plate down with it. A re-arm sets bowl
+  to ~0.075.
+* **The policy compensated by releasing LESS OFTEN, not lower.** Releasing
+  worlds fell 36%. This is the hovering optimum `placement_wrong_drop_penalty`
+  was tuned against: at 0.25 releasing beats hovering once success probability
+  passes ~11%, and the gate lowers exactly that probability. The penalty has to
+  fall with the gate or hovering wins again.
+
+**The run confounded itself, and that was avoidable.** The gate and the extended
+ladders were armed together, so "the threshold is too tight" and "two
+difficulty increases at once" cannot be separated from this data. Bowl was
+promoted straight to 0.22 on resume — its EMA was 0.45, over the gate — into a
+task that had simultaneously become harder. The campaign's own history is a
+record of single-variable discipline and this run broke it.
+
+Gate disabled; the armed values and this result are kept in the config comment
+for whoever re-arms it. The extended ladders are the change with standalone
+expected value and go forward on their own.
+
+---
+
+## 12. Predictions made here that came back wrong
 
 * **"The 0.06 rung will hold for a long stretch — that is the ladder working."**
   Said before iter0. The approach half had no gradient to climb with, so waiting
@@ -438,6 +546,14 @@ support.
 * **"The promotion to 0.13 caused the collapse."** iter2 never promoted to 0.13
   and decayed anyway, at a fixed cap. The ladder accelerates it; the post-grasp
   z drift causes it. §5.
+* **"Expect the first validation to drop."** Said before iter4, about arming
+  the release-height gate. It dropped 0.6211 -> 0.2295 and recovered only to
+  0.3320 over 5.25 M steps. The direction was right and the magnitude was not
+  close, which is the difference between a caveat and a forecast.
+* **"Arm the gate and extend the ladders together."** Not a prediction, a
+  process error, and the more expensive one: it made the result of a 5.25 M
+  step run unattributable. The two changes had independent rationales and
+  should have been sequenced. §11.2.
 * **"More data will let the SFT train longer."** It let it train longer in
   *steps* (2 490 → 6 840) but *fewer* epochs before overfitting than the epoch
   cap that stopped cycle 1. The two are not the same axis and the report had

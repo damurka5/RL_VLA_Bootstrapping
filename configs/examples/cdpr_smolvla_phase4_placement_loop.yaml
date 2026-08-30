@@ -318,8 +318,36 @@ task:
     # objects rest higher and the gap between "clearly not settled while held"
     # and "clearly placed" is genuinely narrow there. A per-object threshold
     # would buy the rest and is not worth the machinery.
-    put_plate_release_max_height: 0.080
-    put_bowl_release_max_height: 0.065
+    # BOTH 0.0 = DISABLED, after phase5_placement_iter4 measured what they
+    # cost. Run from iter3's peak with these at 0.080 / 0.065 and the extended
+    # ladders, 5.25 M steps:
+    #
+    #   release_clearance_mean_m   0.0897 -> 0.068 by 3.5 M, then FLAT
+    #   overall validation         0.6211 -> 0.2295, peak 0.3320, ended 0.3027
+    #   release_clearance_worlds   821 -> 524
+    #   physical_release_rate      0.057 -> 0.021
+    #   bowl cap                   0.22 -> 0.07, never recovered
+    #   plate cap                  0.23 -> 0.20
+    #
+    # The gate DID change the behaviour -- 2 cm lower, which for the plate is a
+    # genuine placement rather than a drop. It cost half the success rate and
+    # never got it back over 3.5 M further steps.
+    #
+    # Two things to keep for whoever re-arms it. The policy converged at 0.068
+    # and stopped, which is ABOVE the bowl's 0.065 gate and below the plate's
+    # 0.080 -- so the bowl was being denied and its cap collapsed, and because
+    # one policy serves both families that dragged the plate down with it. A
+    # re-arm sets bowl to ~0.075, the level the policy demonstrably reaches.
+    # And the compensation was FEWER releases, not lower ones, which is the
+    # hovering optimum placement_wrong_drop_penalty was tuned against: the gate
+    # lowers the success probability of a release, so that penalty has to come
+    # down with it or hovering wins again.
+    #
+    # The run also confounded itself: this gate and the extended ladders were
+    # armed together, so "too tight" and "two difficulty increases at once"
+    # cannot be separated from it. Re-arm alone, from a known peak.
+    put_plate_release_max_height: 0.0
+    put_bowl_release_max_height: 0.0
     put_release_max_height: 0.0
     caught_object_start_release_opening_margin: 0.04
 
