@@ -60,6 +60,7 @@ before. Phase 4 measured 41% and could not move it with epochs.
 | `phase4_pick_up_iter2` | 0.21→1.41 M | 140 | peak val **0.1328** @ 1.00 M, then decay |
 | `phase5_placement_iter3` | 1.00→5.01 M | 525 | peak val **0.6211** @ 2.75 M; 73% of it at the ladder ceiling |
 | `phase5_placement_iter4` | 2.76→8.01 M | 695 | release gate armed; val 0.6211 → peak **0.3320**, plateau |
+| `phase5_placement_iter5` | 2.76→6.84 M | 407 | ladders extended; val 0.6211 → peak **0.5205** → 0.42 |
 
 ### 1.5 pick_up validation series (for the graph)
 
@@ -68,21 +69,6 @@ before. Phase 4 measured 41% and could not move it with epochs.
 * iter0: 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000, 0.0000
 * iter1: 0.1387, 0.0381, 0.0146, 0.0361, 0.0010
 * iter2: 0.0156, 0.0371, 0.0312, **0.1328**, 0.0586, 0.0166
-
-### 1.7 Placement validation series (for the graph)
-
-`validation/success_rate` overall, every ~250 k steps.
-
-* iter3 (gate off, old ladders): 0.5977, 0.5850, 0.5752, 0.5869, 0.6045,
-  0.6104, **0.6211**, 0.5576, 0.6191, 0.5840, 0.6143, 0.6104, 0.6133, 0.6074,
-  0.5547, 0.5117
-* iter4 (gate armed, ladders extended): 0.2295, 0.2637, 0.2783, 0.2490,
-  0.3291, 0.3174, **0.3320**, 0.2637, 0.2666, 0.2627, 0.2500, 0.2305, 0.2344,
-  0.2617, 0.3057, 0.2373, 0.3174, 0.2822, 0.3018, 0.2832, 0.3027
-
-`release_clearance_mean_m` across iter4: 0.0897, 0.0696, 0.0696, 0.0683,
-0.0683, 0.0693, 0.0719, 0.0661, 0.0644, 0.0636 — the constraint being learned,
-and converging above the bowl's threshold.
 
 ### 1.6 SFT curves
 
@@ -97,6 +83,27 @@ and converging above the bowl's threshold.
 | reachable fraction | 0.90494 | 0.91398 |
 | `headline_over_control` | 1.024 | 0.988 |
 | LoRA stage | best e0, +0.5% | **no epoch beat baseline** |
+### 1.7 Placement validation series (for the graph)
+
+`validation/success_rate` overall, every ~250 k steps.
+
+* iter3 (gate off, old ladders): 0.5977, 0.5850, 0.5752, 0.5869, 0.6045,
+  0.6104, **0.6211**, 0.5576, 0.6191, 0.5840, 0.6143, 0.6104, 0.6133, 0.6074,
+  0.5547, 0.5117
+* iter4 (gate armed, ladders extended): 0.2295, 0.2637, 0.2783, 0.2490,
+  0.3291, 0.3174, **0.3320**, 0.2637, 0.2666, 0.2627, 0.2500, 0.2305, 0.2344,
+  0.2617, 0.3057, 0.2373, 0.3174, 0.2822, 0.3018, 0.2832, 0.3027
+
+* iter5 (gate off, ladders extended): 0.4932, 0.4854, **0.5205**, 0.4600,
+  0.4814, 0.4922, 0.4775, 0.4619, 0.4434, 0.4629, 0.4756, 0.4531, 0.4082,
+  0.4150, 0.4170, 0.4248
+
+`release_clearance_mean_m` across iter4: 0.0897, 0.0696, 0.0696, 0.0683,
+0.0683, 0.0693, 0.0719, 0.0661, 0.0644, 0.0636 — the constraint being learned,
+and converging above the bowl's threshold. In iter5, with the gate off, it sits
+at 0.080–0.095 throughout: the drop behaviour returns the moment it is not
+penalised, which is itself evidence the gate was the thing changing it.
+
 
 ---
 
@@ -330,11 +337,11 @@ superseded.
 
 Open:
 
-1. ~~Placement's RL turn.~~ Done, twice. iter3 took it past phase 4 on both
+1. ~~Placement's RL turn.~~ Done, three times. iter3 took it past phase 4 on both
    families (§11.1); iter4 spent 5.25 M steps measuring what the
    place-not-drop constraint costs (§11.2). Open now: **do the extended
-   ladders alone beat 0.6211?** That is the next run, and the criterion is
-   exactly that number.
+   ladders alone beat 0.6211?** Answered in §11.3: no, and for a
+   diagnosable reason. Placement stops at `step_2754052`.
 2. **Is place-not-drop worth buying?** The gate works and costs half the
    success rate. Re-arming it needs bowl at ~0.075 rather than 0.065 and
    `placement_wrong_drop_penalty` lowered alongside, run as its own experiment
@@ -534,6 +541,58 @@ expected value and go forward on their own.
 
 ---
 
+### 11.3 iter5 — the extended ladders lost too, and for a known reason
+
+Gate off, ladders extended to bowl 0.25 and plate 0.26, resumed from iter3's
+peak. 4.07 M steps. Criterion: beat 0.6211.
+
+Peak **0.5205** at 3.50 M, then a slow decline to 0.42. It did not come close.
+
+**Both new rungs were consumed on cooldown, not on evidence.** A resume
+restores the pass-rate EMA, and iter3 left it at 0.665 (plate) and 0.497 (bowl)
+against a 0.30 promote gate:
+
+| step | plate | bowl |
+|---|---|---|
+| 2 762 631 | 0.20 → 0.23, EMA 0.665 | 0.19 → 0.22, EMA 0.497 |
+| 2 948 909 | 0.23 → **0.26**, EMA 0.588 | 0.22 → **0.25**, EMA 0.434 |
+
+186 k steps for both promotions — exactly the 15-update cooldown. The ladders
+were spent before the policy had trained a single sustained update at either
+new rung, and validation never recovered.
+
+**This is pick_up iter1 on a different instruction.** There, a 0.30 gate could
+not bind a policy opening at 0.51 and the cap marched on its cooldown; the fix
+was to raise the gate to what the policy sustains. Placement's gate is still
+0.30 while iter3 sustained 0.560 and 0.384. The same diagnosis, unfixed here
+because placement was stopped instead.
+
+So iter5 measures *"the extension is consumed instantly"*, **not** *"the
+extension is worthless"*. Retrying it means promote ≈ 0.50 on the shared knob —
+plate could climb, bowl would hold at 0.19, which is the right split given bowl
+is the weaker family. Ladders reverted meanwhile, with this recorded beside
+them.
+
+**It also corrects phase 4 §8.** That section read a topped-out ladder with
+pass rates of 0.44/0.59 as "the policy has run out of rungs, not reached its
+limit", and this report carried the recommendation forward. iter5 is evidence
+against it: pass rate at the top rung does not predict that a harder rung
+helps. Two follow-ups from iter3's peak, one tightening the success test and
+one lengthening the ladder, both lost — from opposite directions.
+
+### 11.4 Placement is done at 0.6211
+
+9.3 M steps across iter4 and iter5 failed to beat `step_2754052`. Both failures
+are understood and neither points at a cheap third attempt: the gate needs a
+looser bowl threshold *and* a `placement_wrong_drop_penalty` change, the ladder
+needs a re-calibrated promote gate, and each is another ~4 M steps for a family
+already past phase 4's ceiling.
+
+Placement stops here. The phase's remaining deliverable — the composed
+pick-and-place — has not been started.
+
+---
+
 ## 12. Predictions made here that came back wrong
 
 * **"The 0.06 rung will hold for a long stretch — that is the ladder working."**
@@ -554,6 +613,10 @@ expected value and go forward on their own.
   process error, and the more expensive one: it made the result of a 5.25 M
   step run unattributable. The two changes had independent rationales and
   should have been sequenced. §11.2.
+* **"Extending the ladders has clear standalone expected value."** Said when
+  reverting the gate, and carried over from phase 4 §8. iter5 lost 0.6211 ->
+  0.5205 -> 0.42. The rungs were consumed on cooldown, which I had already
+  diagnosed and fixed once on pick_up and did not think to check for here.
 * **"More data will let the SFT train longer."** It let it train longer in
   *steps* (2 490 → 6 840) but *fewer* epochs before overfitting than the epoch
   cap that stopped cycle 1. The two are not the same axis and the report had

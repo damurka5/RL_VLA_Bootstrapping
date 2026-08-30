@@ -501,9 +501,33 @@ task:
     # a policy clearing its gate by that margin on its top rung has not reached
     # its limit, it has run out of rungs. The promote gate decides whether it
     # follows; nothing is forced by adding them.
+    # REVERTED to the rungs that produced the campaign's best placement.
+    # phase5_placement_iter5 ran the extension (bowl +0.22/0.25, plate
+    # +0.23/0.26) from iter3's peak with everything else unchanged, and lost:
+    # validation 0.6211 -> peak 0.5205 -> 0.42, over 4.07 M steps.
+    #
+    # The rungs were consumed on COOLDOWN, not on evidence. A resume restores
+    # the EMA, and iter3 left it at 0.665 (plate) and 0.497 (bowl) against a
+    # 0.30 promote gate, so both ladders climbed two rungs in 186 k steps --
+    # exactly the 15-update cooldown -- and the policy never recovered. This is
+    # the pick_up iter1 failure repeated on a different instruction: a gate
+    # calibrated below what the policy sustains is not a gate.
+    #
+    # So this measures "the extension consumed instantly" and NOT "the
+    # extension is worthless". Retrying it means raising
+    # random_workspace_start_distance_promote_pass_rate to roughly what each
+    # family sustains at its top rung -- iter3 held 0.560 (plate) and 0.384
+    # (bowl) -- which for one shared knob means ~0.50: plate could still climb,
+    # bowl would hold at 0.19, and that is the right split given bowl is the
+    # weaker family. Not attempted; placement was stopped at iter3's peak.
+    #
+    # Phase 4 section 8 read "passing 0.44/0.59 on the top rung means the
+    # policy has run out of rungs, not reached its limit". iter5 is evidence
+    # against that reading: pass rate at the top rung does not predict that a
+    # harder rung helps.
     random_workspace_start_distance_ladder_by_instruction:
-      put_into_bowl: [0.02, 0.04, 0.07, 0.10, 0.13, 0.16, 0.19, 0.22, 0.25]
-      put_into_plate: [0.02, 0.05, 0.09, 0.14, 0.17, 0.20, 0.23, 0.26]
+      put_into_bowl: [0.02, 0.04, 0.07, 0.10, 0.13, 0.16, 0.19]
+      put_into_plate: [0.02, 0.05, 0.09, 0.14, 0.17, 0.20]
     # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
     # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
     # (bowl 0.057, plate 0.091), so the first rung is solved by opening the
