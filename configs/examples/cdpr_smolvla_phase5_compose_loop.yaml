@@ -1,0 +1,873 @@
+project:
+  name: cdpr_smolvla_phase5_compose_loop
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  env_vars:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_VERBOSITY: error
+    HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    NCCL_DEBUG: WARN
+  notes:
+    - PHASE 5, COMPOSITION. Identical to cdpr_smolvla_phase4_placement_loop except for the placement_caught_* block below. Everything that produced the campaign's best placement (validation 0.6211, plate 0.7982, bowl 0.4655 at runs/phase5_placement_iter3_20260828_224948/rl/step_2754052) is left alone, so a regression here is attributable to the composition stage and nothing else.
+    - THE TASK CHANGES. Placement episodes have always started with the object already between the fingers - curriculum/placement_caught_fraction logs 1.0. This anneals that away, so a growing share of episodes start with the object ON THE DESK near the receptacle and the gripper above it: grasp, carry, release. That is the composed pick-and-place, and it is the phase's remaining deliverable.
+    - IT IS NOT A NEW INSTRUCTION. The machinery is built, wired and checkpointed into extra_state alongside the approach curriculum; it has simply been disabled. The uncaught branch is drawn per GROUP so all eight GRPO candidates share a stage and stay comparable, and it already carries its own horizon floor - placement_grasp_horizon_min_decisions, default 32, the whole 128-step budget - applied to uncaught groups only, because a grasp costs the same ~30 env steps however close the receptacle is. Measured in that branch's own comment - 0/6 at a 64-step budget against 4/6 at 128, taking 77-119 steps - so the composed episode fits, with 9 steps of margin at the worst case.
+    - THE APPROACH CAP MEASURES GRIPPER-TO-CONTAINER for container instructions, not gripper-to-object. An uncaught episode at the topped-out 0.19/0.20 therefore starts with gripper AND object both near the container. This buys composition at SHORT RANGE. It is the right first rung and it is not "object anywhere, container anywhere"; no rung on this ladder is.
+    - Phase 4, placement family only. The RL leg of the iterative RL/SFT loop described in CDPR_PHASE4_LOOP_DESIGN.md.
+    - ONE POLICY PER FAMILY. pick_up is deliberately absent, not forgotten - SFT on a subset of instructions erased the excluded one to exactly 0.000 in phase 3, and the harvest is success-gated so an instruction that is not working yet cannot supply its own rehearsal. pick_up gets its own run and its own checkpoint.
+    - WARM-START WEIGHTS-ONLY from the phase-4 move_to checkpoint, and do NOT pass --resume-checkpoint for iteration 0. move_to is the right donor here and was not for pick_up: placement IS a move-to with a release at the end, since the grasp is handed over at reset, so there is no grasp-then-lift transition to transfer. From iteration 1 the loop driver supplies the previous SFT checkpoint as a resume.
+    - The loop driver stops the RL segment externally on a cap promotion, so max_train_steps is a ceiling and not a plan.
+    - Vision-tower LoRA is OFF here, as in the phase-4 move_to config, and is introduced at the FIRST SFT instead: in RL the adapter sees 128 decision-0 records per update through a PPO objective through a ten-step flow expert, while in SFT it sees every sampled decision under an MSE. Was ON in the phase-2/3 configs this one derives from. Its gradient reaches the action only through the SmolVLA prior - the residual's 512-wide vision feature is pooled under an unconditional no_grad with a fixed random projection, so it stays exactly as coarse as before. Read vla_lora/vision_modules on the first update; 0 means the leaf names below matched nothing.
+    - Plate/bowl episodes start with the named object physically caught between the fingers, and the approach cap moves that start - the held object is placed AT the capped gripper pose, not the other way round.
+    - Placement failures terminate as soon as the released/lost object settles outside the requested receptacle radius.
+    - Verify the cap before trusting the loop trigger - tools/audit/start_distance_probe.py, both backends.
+    - The pick_up shaping/curriculum metadata below is retained deliberately. It is inert with pick_up out of instruction_types, and deleting keys would change the reset RNG stream for no measured gain.
+
+embodiment:
+  name: cdpr_5dof_mjwarp
+  kind: mjlab_mjwarp
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+  dof: 5
+  extra_python_paths: [../../robots/cdpr]
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs: {}
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x: [-0.8, 0.8]
+      y: [-0.8, 0.8]
+      z: [0.08, 1.2]
+      yaw: [-3.141592653589793, 3.141592653589793]
+      gripper: [0.0, 1.0]
+
+task:
+  # Placement family only -- see the note on one policy per family.
+  instruction_types: [put_into_plate, put_into_bowl]
+  target_objects:
+    [
+      robocasa_apple,
+      robocasa_banana,
+      robocasa_tomato,
+      robocasa_orange,
+      robocasa_potato,
+      robocasa_mug,
+      robocasa_plate,
+      robocasa_bowl,
+    ]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    instruction_sampling: uniform_cycle
+    reward_mode: dense
+    # Banana and mug dropped 2026-08-10. Measured: bracketed from a fully open
+    # gripper, both report first pad contact at 0.98 -- the pads touch them even
+    # wide open, in the orientation the caught reset seeds, because they are
+    # wider than the gripper's open gap (0.0969 m) along that axis. The banana
+    # seats at 175/183 N against 3-17 N for every other catalog, is ejected at
+    # reset, and failed 4/4 placement episodes on MJWarp with the pads never
+    # both loading; the mug never settles and times out silently.
+    #
+    # This is a geometry fact, not a difficulty setting: no squeeze or reward
+    # change reaches it, and their `fitted_gripper_opening` cannot be corrected
+    # to 0.98 either -- the release test is max(0.55, fitted + 0.04), which
+    # would clamp past 1.0 and make `released` unreachable. Restoring them needs
+    # a seeded yaw that presents their narrow axis to the pads.
+    #
+    # They stay in scene_object_pool and distractor_object_pool: they are still
+    # valid clutter, and removing them there would change the visual
+    # distribution the warm-start weights were trained on.
+    # This is the knob that ACTUALLY excludes them on the MJWarp path.
+    # target_object_pool below is read only by validate_cdpr_policy and
+    # openvla_oft, so editing that alone left banana as the target in every
+    # reference episode.
+    excluded_target_catalogs: [robocasa_banana, robocasa_mug]
+    target_object_pool:
+      [
+        robocasa_apple,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+      ]
+    catchable_object_pool:
+      [
+        robocasa_apple,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+      ]
+    container_object_pool: [robocasa_plate, robocasa_bowl]
+    required_scene_object_pool: [robocasa_plate, robocasa_bowl]
+    distractor_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    scene_object_pool:
+      [
+        robocasa_apple,
+        robocasa_banana,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    # Placement forces 3 slots (target + plate + bowl) regardless of this range,
+    # so this only affects pick_up groups. Two objects from step 0, one
+    # threshold: this phase inherits its grounding from a two-object pick_up
+    # run, so starting distractor-free is a regression in the observation
+    # distribution rather than a simplification, and nothing would maintain the
+    # disambiguation skill until the unlock. Distractors also cost nothing once
+    # they arrive on close starts -- the two-object window was the best phase of
+    # the 16M move-to run. And each unlock restarts the start-distance
+    # curriculum (eeffbc0), so two thresholds mean two full re-climbs.
+    min_scene_objects: 1
+    max_scene_objects: 2
+    scene_object_curriculum_steps: [0]
+
+    # The new phase never uses the near-goal shell-0 spawn.
+    random_workspace_gripper_start: true
+    placement_start_with_caught_object: true
+    # +/-0.19, not +/-0.28. The overview camera does NOT cover the workspace,
+    # and the episode is only well posed if it frames the receptacle, the object
+    # and the gripper at once. Computed from the MJCF camera
+    # (cdpr.xml:97 -- pos 0 -0.5412341 0.5125, 30 deg downward, fovy 45, 320x240
+    # so hfov 57.8): the largest symmetric xy envelope entirely in frame is
+    #
+    #   z=0.16 (objects on the desk)   0.240 m, 0.220 at a 10% frame margin
+    #   z=0.19 (gripper, band bottom)  0.235 m, 0.215
+    #   z=0.32 (gripper, band top)     0.210 m, 0.195   <- binding
+    #
+    # The corner binds, not the edges (+/-x alone reaches 0.28). At +/-0.28 the
+    # gripper leaves the frame over most of the workspace boundary and the near
+    # edge y=-0.28 is below the frame entirely, so those episodes ask the policy
+    # to servo to something it cannot see. 0.19 keeps every element inside the
+    # central 80% of the image across the whole Z band.
+    ee_workspace_x_bounds: [-0.19, 0.19]
+    ee_workspace_y_bounds: [-0.19, 0.19]
+    # Narrowed from [0.30, 0.48]. The approach curriculum caps the start's XY
+    # distance only, while the reward is 3-D: with a 0.18 m Z spread a "3 cm"
+    # start was really up to ~0.18 m away, so the easy regime the curriculum
+    # thinks it is creating did not exist. Plate hover sits at 0.285 m and bowl
+    # hover at 0.356 m, so this band still requires a real descent.
+    # Lowered with the corrected grasp offset; see the pick_up config. The old
+    # [0.29, 0.40] sat 10-21 cm above the real grasp point.
+    ee_workspace_z_bounds: [0.19, 0.32]
+    # Stage 4: at the far rung the gripper starts LOW, as though it had just
+    # lifted the object off the desk, instead of already at the receptacle
+    # hover height. Objects rest at z ~0.19-0.21 and the pads sit 0.0075 below
+    # ee_base, so 0.20-0.25 is "just picked up" without driving the fingers
+    # into the desk. Below this cap the normal band applies.
+    placement_far_rung_z_bounds: [0.20, 0.25]
+    # 0.19, not 0.09. Every rung of the re-based ladders is at or above 0.10,
+    # so at 0.09 they would ALL be far rungs -- and the far rung deliberately
+    # releases the 3-D cap bound, drawing the start height from
+    # placement_far_rung_z_bounds instead of confining it around the goal. That
+    # would have quietly removed the Z confinement from the whole curriculum.
+    # At 0.19 only the top rung of each ladder is far, which is what "rehearse
+    # the carry" was meant to mean.
+    placement_far_rung_min_cap: 0.19
+    random_workspace_min_goal_xy_distance: 0.10
+    random_workspace_horizon_low: 24
+    random_workspace_horizon_high: 32
+
+    # --- Dense shaping: ONE curve for all three instructions ---------------
+    # The placement term used to take its window from the SUCCESS radius (plate
+    # 0.091, bowl 0.057). With scale 0.08 that made the plate reward >= 0.988
+    # anywhere inside 10 cm: eight group candidates landing 3-6 cm apart scored
+    # within ~0.003 of each other, and GRPO's group normalization divided that by
+    # a near-zero std, turning rollout noise into full-magnitude advantages.
+    # placement_distance_window decouples shaping from success -- success still
+    # uses the real radius, shaping uses the same 0.02 window as pick_up.
+    distance_reward_exponent: 2.0
+    move_to_object_xy_reward_scale: 0.08
+    move_to_object_distance_reward_weight: 1.0
+    catch_release_distance_reward_scale: 0.08
+    catch_release_distance_reward_weight: 1.0
+    placement_distance_window: 0.02
+    # Fine term: the coarse curve is already >= 0.94 two centimetres out, but a
+    # grasp needs the pads within millimetres. Without this the last centimetre
+    # of every approach carries no gradient at all.
+    catch_release_fine_distance_reward_weight: 0.5
+    catch_release_fine_distance_reward_scale: 0.01
+    catch_release_fine_distance_window: 0.0
+    # Bounded 3-D placement shaping toward a hover point above the receptacle.
+    # XY-only shaping left the release height unconstrained while the frozen
+    # prior pushes +Z, so the gripper drifted up and dropped from height.
+    catch_release_distance_include_z: true
+    # 0.10, not 0.045. target_has_settled is `target_z <= desk + rest_height +
+    # wrong_drop_settle_margin`, which for an orange is 0.15 + 0.0278 + 0.045 =
+    # 0.223. At 0.045 the plate's CARRIED hover point put the object at
+    # 0.16 + 0.045 = 0.205 -- 18 mm BELOW the height at which the reward
+    # declares it has come to rest on the desk. So target_has_settled was true
+    # at t=0 while the object was still gripped, and put_into_plate terminated
+    # on env step 1 of 64 with both pads loaded. Measured on MJWarp and on the
+    # CPU reference; raising it to the bowl's value took the plate 0/3 -> 2/3.
+    #
+    # It cannot simply be lowered instead: an object resting CORRECTLY on the
+    # plate also sits at ~0.205, so the carried object has to hover materially
+    # above where it will come to rest or the two states are indistinguishable.
+    put_plate_release_height: 0.10
+    put_bowl_release_height: 0.10
+
+    # Placement: distance is gripper-to-receptacle XY distance. Success also
+    # requires release and the object center to fall within the real radius.
+    put_plate_xy_tolerance: 0.091
+    put_bowl_xy_tolerance: 0.057
+    put_container_z_tolerance: 0.12
+    placement_release_success_bonus: 2.0
+    # Release is a risky action with a safe alternative: hovering over the
+    # receptacle until timeout pays the shaping terms guaranteed (coarse 1.0 +
+    # fine 0.5 = 1.5), while releasing pays 3.5 on success and (1.5 - penalty)
+    # on a wrong drop. At penalty 1.0 releasing only beats hovering once the
+    # success probability exceeds 33%, which the policy must first reach BY
+    # releasing -- a chicken-and-egg local optimum. 0.25 drops that bar to
+    # ~11% (1.25 + 2.25p > 1.5) while still deterring random drops: at p=0
+    # releasing remains strictly worse than hovering. The fine term shifts both
+    # sides equally, so the break-even is unchanged.
+    placement_wrong_drop_penalty: 0.25
+    # target_has_settled is measured from the DESK, but an object resting
+    # correctly inside the bowl sits ~20.3 mm above it (bowl rest 0.0263, its
+    # interior floor 6 mm below centre). At 0.025 that left only 4.7 mm of
+    # slack, and falling outside it blocks BOTH success and the wrong-drop
+    # termination, so the episode just times out silently. 0.045 gives ~25 mm.
+    placement_wrong_drop_settle_margin: 0.045
+    # --- COMPOSITION: anneal the pre-grasped start away ----------------
+    # ON. Every earlier phase ran this at false, so placement episodes began
+    # with the object already held and the task was carry-and-release.
+    placement_caught_curriculum_enabled: true
+    placement_caught_object_fraction: 1.0
+    # 0.25, the default: a quarter of episodes keep the caught start even at
+    # the floor. Deliberately not 0.0. The caught stage is what keeps the CARRY
+    # trained, and pick_up's history is explicit that withdrawing a stage whose
+    # skill looks solved is a measured regression, not a saving - the
+    # pre-grasped fraction was annealed 0.50 -> 0.20 there and success given a
+    # pre-grasped start fell 0.753 -> 0.410, taking the approach down with it.
+    placement_caught_fraction_min: 0.25
+    placement_caught_fraction_step: 0.10
+    # 0.45 / 0.30, NOT the 0.60 / 0.35 defaults.
+    #
+    # This gate reads ONE scalar for both families - the MEAN of put_into_plate
+    # and put_into_bowl normal-start pass rates
+    # (smolvla_grpo_mjwarp_cdpr.py:2340), applied through a single
+    # set_caught_container_fraction. It is not per-instruction, which the
+    # phase-4 report originally got wrong. iter3 sustained 0.560 (plate) and
+    # 0.384 (bowl), a mean of 0.472, so a 0.60 reduce gate never fires and the
+    # fraction sits at 1.0 forever - the composition would simply never start.
+    # 0.45 sits just under the measured mean; 0.30 restores the stage before
+    # the carry is gone rather than after.
+    placement_caught_reduce_success: 0.45
+    placement_caught_restore_success: 0.30
+    placement_caught_success_ema_decay: 0.9
+    # 40, NOT the default 15. THE lesson of phase5_placement_iter5: the
+    # approach ladder there climbed two rungs in 186 k steps because a 15-update
+    # cooldown let a restored EMA promote on nothing but elapsed time, and
+    # validation never recovered. Each step of this fraction is a real
+    # difficulty increase of the same kind, and 0.9 EMA decay is a ~10-update
+    # window. 40 updates is ~400 k steps per 0.10 of annealing: long enough for
+    # the policy to actually train the harder mix before the next reduction,
+    # and long enough for the EMA to describe it.
+    placement_caught_cooldown_updates: 40
+    # -------------------------------------------------------------------
+    put_require_release: true
+    put_require_target_grasp_history: true
+    # 0.0 = OFF. Maximum object clearance above the receptacle at the step the
+    # gripper opens, for the placement to count.
+    #
+    # WHY IT EXISTS. Watching the SFT dataset videos, the policy carries the
+    # object over the receptacle and opens from height; the object falls in,
+    # settles, and scores. Success needs XY tolerance, container_z_tolerance
+    # and a release, and container_ok additionally requires target_has_settled
+    # -- so a drop and a placement reach the IDENTICAL terminal state and the
+    # test cannot separate them. Tightening container_z_tolerance does not
+    # help: a dropped object also ends up resting low and passes a step later.
+    # The only moment the two differ is the release itself, so the clearance is
+    # latched there (state.release_clearance) and the gate reads the latch.
+    #
+    # WHY IT IS OFF. The threshold has to sit ABOVE the object's own resting
+    # clearance inside the receptacle -- an object at rest already sits some
+    # centimetres above the reference centre, and a threshold below that denies
+    # every placement including correct ones, which reads as the task suddenly
+    # becoming impossible. That height is per object and per receptacle and has
+    # not been measured in this scene.
+    #
+    # HOW TO ARM IT. release_clearance_mean_m and release_clearance_worlds are
+    # logged every update. Run placement with the gate off, read the mean the
+    # policy currently releases at (expected near put_*_release_height, 0.10),
+    # and read the resting clearance from a successful settled episode. Set
+    # this between them, nearer the resting value.
+    #
+    # AND LOWER THE SHAPING WITH IT. put_plate_release_height /
+    # put_bowl_release_height place the dense term's hover point at 0.10 above
+    # the receptacle. Arming the gate below that without moving them asks the
+    # policy to release where the shaping is actively pulling it away from --
+    # the reward and the success test would disagree, which is the same shape
+    # of error as a promote gate reading a metric the trainer depresses.
+    # ARMED, per family, from measurement. Over 6663 settled plate successes
+    # and 3683 bowl ones in the bank, an object at REST sits 0.0576 m above the
+    # plate's centre (p90 0.0655, max 0.0690) and 0.0419 above the bowl's
+    # (p90 0.0487, max 0.0523). Run phase5_placement_iter3 logged the policy
+    # RELEASING at a median 0.0867 -- a 2.9 cm drop into the plate and a 4.4 cm
+    # drop into the bowl.
+    #
+    # Each threshold sits ~1.2 cm above the tallest settled object of its
+    # family, so no correct placement is denied, and below the 0.0867 the
+    # policy currently uses, so the behaviour has to change. The bowl gets the
+    # real constraint (2.2 cm lower); the plate only 0.7 cm, because its
+    # objects rest higher and the gap between "clearly not settled while held"
+    # and "clearly placed" is genuinely narrow there. A per-object threshold
+    # would buy the rest and is not worth the machinery.
+    # BOTH 0.0 = DISABLED, after phase5_placement_iter4 measured what they
+    # cost. Run from iter3's peak with these at 0.080 / 0.065 and the extended
+    # ladders, 5.25 M steps:
+    #
+    #   release_clearance_mean_m   0.0897 -> 0.068 by 3.5 M, then FLAT
+    #   overall validation         0.6211 -> 0.2295, peak 0.3320, ended 0.3027
+    #   release_clearance_worlds   821 -> 524
+    #   physical_release_rate      0.057 -> 0.021
+    #   bowl cap                   0.22 -> 0.07, never recovered
+    #   plate cap                  0.23 -> 0.20
+    #
+    # The gate DID change the behaviour -- 2 cm lower, which for the plate is a
+    # genuine placement rather than a drop. It cost half the success rate and
+    # never got it back over 3.5 M further steps.
+    #
+    # Two things to keep for whoever re-arms it. The policy converged at 0.068
+    # and stopped, which is ABOVE the bowl's 0.065 gate and below the plate's
+    # 0.080 -- so the bowl was being denied and its cap collapsed, and because
+    # one policy serves both families that dragged the plate down with it. A
+    # re-arm sets bowl to ~0.075, the level the policy demonstrably reaches.
+    # And the compensation was FEWER releases, not lower ones, which is the
+    # hovering optimum placement_wrong_drop_penalty was tuned against: the gate
+    # lowers the success probability of a release, so that penalty has to come
+    # down with it or hovering wins again.
+    #
+    # The run also confounded itself: this gate and the extended ladders were
+    # armed together, so "too tight" and "two difficulty increases at once"
+    # cannot be separated from it. Re-arm alone, from a known peak.
+    put_plate_release_max_height: 0.0
+    put_bowl_release_max_height: 0.0
+    put_release_max_height: 0.0
+    caught_object_start_release_opening_margin: 0.04
+
+    # Pick-up: approach the physical between-fingers grasp point, reward a
+    # persistent bilateral grasp, then reward lift only while grasp is kept.
+    # 0.015, not 0.08 -- the finger pads sit 0.0075 m below ee_base (measured;
+    # see rl_vla_bootstrapping/simulation/cdpr_gripper_geometry.py), and 0.08 was
+    # the ee_platform offset. It placed the reward's grasp point 7.25 cm above the
+    # object; see the pick_up config for what that cost, and
+    # runs/cdpr_task_reference_episodes for the oracle run that verifies this
+    # value reaches the full 5.7 reward with a real physical grasp.
+    pick_grasp_height_offset: 0.0075
+    # Partial credit for bilateral pad contact: without it there is no gradient
+    # between hovering at the grasp point and a latched persistent grasp.
+    pick_contact_bonus: 0.25
+    pick_distance_window: 0.02
+    pick_grasp_bonus: 1.0
+    pick_lift_reward_weight: 1.0
+    pick_lift_reward_scale: 0.05
+    pick_lift_success_height: 0.05
+    pick_success_bonus: 2.0
+
+    # --- Approach curriculum, run PER INSTRUCTION -------------------------
+    # One cap per instruction, each gated on its own pass rate. A single shared
+    # cap would be promoted by the placement tasks -- which start with the object
+    # already in the gripper and only have to servo to a receptacle -- and would
+    # drag pick_up out to far starts before it can grasp at all. Watch
+    # curriculum/start_max_goal_distance_m/<instruction>: the placement caps
+    # should climb quickly while pick_up's stays low until grasps appear.
+    random_workspace_start_distance_curriculum_enabled: true
+    # Bound the 3-D start distance, not just its XY projection: the placement
+    # hover points sit 0.285 m (plate) and 0.356 m (bowl) up, so an XY-only cap
+    # left the Z offset alone larger than the cap itself.
+    curriculum_cap_includes_z: true
+    random_workspace_start_distance_initial: 0.03
+    # Explicit per-instruction rungs for placement, replacing the geometric
+    # climb. Stage 1 (0.01) is "you are holding the object over the receptacle,
+    # let go" -- deliberately inside the success radius, because the skill being
+    # taught there is the RELEASE, not the approach. Stages 2-4 then move the
+    # start outside the radius so the approach has to be learned:
+    #
+    #   0.01  release only
+    #   0.03  2-3 cm, a few decisions to centre, release still nearly free
+    #   0.06  4-6 cm, outside the bowl radius, must centre
+    #   0.10  the far rung, and as far as vision is aligned with motion
+    #
+    # 0.10 is the ceiling on purpose. The previous run let the cap run to 0.34,
+    # where the traverse alone is ~45 env steps of a 64-step budget and the
+    # receptacle is far outside the frame the policy is aiming with.
+    #
+    # Stage 1 is only safe BECAUSE the gate now reads placement success rather
+    # than the grasp rate: a rung the reset already satisfies is a teaching
+    # signal when the curriculum can leave it, and a trap when it cannot.
+    # The bowl gets a FINER ladder than the plate. Measured over the 6.7M run:
+    # both climbed 0.01 -> 0.10 by ~3M, but the bowl's validation success went
+    # 0.331 -> 0.151 -> 0.093 across the two promotions that took it there and
+    # needed 3M steps to recover to 0.19, while the plate absorbed the same
+    # jumps and kept climbing to 0.57. The difference is the success radius --
+    # 0.057 against 0.091 -- so an identical step in metres is a far bigger
+    # step relative to what the bowl has to hit.
+    #
+    # The cap is sampled ~38 updates apart at validation cadence against a
+    # 15-update cooldown, so TWO promotions can land between one validation
+    # point and the next: the bowl went 0.01 -> 0.06 without the run ever
+    # measuring it at 0.03. Finer rungs bound what a double promotion can cost
+    # -- the largest relative jump falls from +200% to +100%, and every rung
+    # above 0.02 moves by 25-50%. Raising the cooldown would also work but it
+    # is shared with pick_up, which is not the instruction with the problem.
+    # UNRESOLVED, AND IT DECIDES WHAT THE LOOP TRIGGER MEANS. Left at the phase
+    # 2/3 values on purpose so this config reproduces that run; do not start the
+    # loop before choosing.
+    #
+    # Two knobs below contradict each other and only one of them is live. An
+    # explicit ..._ladder_by_instruction entry OUTRANKS
+    # ..._initial_by_instruction inside PerInstructionApproachCurriculum
+    # (smolvla_grpo_mjwarp_cdpr.py:1102-1107 takes the ladder branch and never
+    # reads the initial), so the 0.12/0.15 first rungs written below are dead
+    # and both instructions actually start at 0.01. Measured, not inferred:
+    # tools/audit/start_distance_probe.py prints the RESOLVED rungs, and they
+    # come out [0.01 ... 0.10].
+    #
+    # Why that matters here more than it did in phase 2/3. The success radii are
+    # bowl 0.057 and plate 0.091, so rungs 0.01-0.045 (bowl) and 0.01-0.06
+    # (plate) start the gripper INSIDE the receptacle -- the rung is solved by
+    # opening the fingers. The gate promotes placement on success, so those
+    # rungs promote on free successes, which is exactly what the dead
+    # ..._initial_by_instruction block was written to prevent. Phase 2/3 could
+    # absorb that (its harvest at cap 0.01 measured source rates 0.795/0.922);
+    # phase 4 cannot, because "the cap went up" IS the loop's trigger and a free
+    # rung fires it without the policy having learned anything.
+    #
+    # The fix is to re-base both ladders above their radii -- roughly bowl
+    # [0.07, 0.09, 0.12, 0.15, 0.19] and plate [0.11, 0.14, 0.18, 0.22] -- which
+    # also interacts with placement_far_rung_min_cap (0.09), since every re-based
+    # bowl rung would then be a far rung. That is a curriculum decision with real
+    # cost, not a typo fix, so it is stated here rather than applied.
+    # RE-BASED ABOVE THE SUCCESS RADII. Measured on the reset distribution, the
+    # realized median start distance against each instruction's own radius:
+    #
+    #   cap    plate median   vs 0.091    bowl median   vs 0.057
+    #   0.06      0.0469       INSIDE       0.0448       INSIDE
+    #   0.10      0.0787       INSIDE       0.0739       outside
+    #   0.14      0.1104       outside      0.1091       outside
+    #
+    # The old plate ladder topped out at 0.10, so EVERY plate rung started the
+    # gripper inside the receptacle: the episode was won by opening the fingers,
+    # the gate promoted on that, and phase 2's plate 0.71 was substantially the
+    # reset rather than the policy -- consistent with phase 3 measuring plate at
+    # 0.86-0.94, near ceiling. Bowl was free through 0.08.
+    #
+    # Two reasons this had to change before the loop runs here. A free rung
+    # promotes the cap on nothing, which is the failure two pick_up runs and 34
+    # hours were spent on. And a task at its ceiling cannot show the loop
+    # anything: phase 3 measured plate flat under SFT for exactly that reason,
+    # while bowl -- which had headroom -- moved +0.13.
+    #
+    # Absolute numbers here start well below phase 2's 0.71/0.32 and are NOT
+    # comparable to them. That is the first honest measurement, not a
+    # regression.
+    # THE LADDER SPANS BOTH JOBS, because the bottom rung has one the top rung
+    # cannot do.
+    #
+    # Re-basing this ladder above the success radii (bowl 0.057, plate 0.091)
+    # was right about the approach and wrong about everything else: it removed
+    # the near rung, and the near rung was TEACHING THE RELEASE. Measured over
+    # 917 updates and 9.5M steps on the re-based ladder: physical_release_rate
+    # 0.0001 at update 0 and 0.0000 ever after, physical_grasp_rate 0.9981 --
+    # the policy never once let go, so success was zero by construction no
+    # matter where it started.
+    #
+    # The release sits behind an exploration barrier, not a difficulty one. It
+    # takes 1.6-3.2 CONSECUTIVE env steps of commanding open to cross
+    # max(0.55, fitted + 0.04) from a start of fitted - 0.04 at 0.05 per step,
+    # and log_std had fallen to -1.86. Random exploration does not produce that
+    # sequence. Meanwhile candidate_reward_mean climbed 0.62 -> 0.80: the
+    # policy was busy perfecting the hover, which the dense term pays 1.5 for
+    # guaranteed while a release pays 3.5 only if it lands.
+    #
+    # At 0.02 the gripper starts within 2 cm of the release point, so letting go
+    # at any moment lands inside the radius and the +2.0 bonus is available
+    # immediately. That rung is free FOR THE APPROACH and that is fine -- it is
+    # not there to measure the approach. The rungs above the radii are, and the
+    # loop needs them because a task at its ceiling has nothing for SFT to add
+    # (phase 3 measured plate flat under SFT at 0.86-0.94, while bowl, which had
+    # headroom, moved +0.13).
+    # EXTENDED. Both ladders topped out and then had nowhere to go: in
+    # phase5_placement_iter3 plate reached 0.20 at step 1 363 484 and bowl 0.19
+    # at 1 529 700, and the run spent its remaining 3.64 M and 3.48 M steps at
+    # the ceiling -- 73% of it -- with pass-rate EMAs of 0.560 and 0.384 against
+    # a 0.30 promote gate. That is the phase-4 section 8 finding repeating, and
+    # a policy clearing its gate by that margin on its top rung has not reached
+    # its limit, it has run out of rungs. The promote gate decides whether it
+    # follows; nothing is forced by adding them.
+    # REVERTED to the rungs that produced the campaign's best placement.
+    # phase5_placement_iter5 ran the extension (bowl +0.22/0.25, plate
+    # +0.23/0.26) from iter3's peak with everything else unchanged, and lost:
+    # validation 0.6211 -> peak 0.5205 -> 0.42, over 4.07 M steps.
+    #
+    # The rungs were consumed on COOLDOWN, not on evidence. A resume restores
+    # the EMA, and iter3 left it at 0.665 (plate) and 0.497 (bowl) against a
+    # 0.30 promote gate, so both ladders climbed two rungs in 186 k steps --
+    # exactly the 15-update cooldown -- and the policy never recovered. This is
+    # the pick_up iter1 failure repeated on a different instruction: a gate
+    # calibrated below what the policy sustains is not a gate.
+    #
+    # So this measures "the extension consumed instantly" and NOT "the
+    # extension is worthless". Retrying it means raising
+    # random_workspace_start_distance_promote_pass_rate to roughly what each
+    # family sustains at its top rung -- iter3 held 0.560 (plate) and 0.384
+    # (bowl) -- which for one shared knob means ~0.50: plate could still climb,
+    # bowl would hold at 0.19, and that is the right split given bowl is the
+    # weaker family. Not attempted; placement was stopped at iter3's peak.
+    #
+    # Phase 4 section 8 read "passing 0.44/0.59 on the top rung means the
+    # policy has run out of rungs, not reached its limit". iter5 is evidence
+    # against that reading: pass rate at the top rung does not predict that a
+    # harder rung helps.
+    random_workspace_start_distance_ladder_by_instruction:
+      put_into_bowl: [0.02, 0.04, 0.07, 0.10, 0.13, 0.16, 0.19]
+      put_into_plate: [0.02, 0.05, 0.09, 0.14, 0.17, 0.20]
+    # Per-instruction first rung. The shared 0.03 is calibrated on pick_up's
+    # ~0.02 m grasp tolerance; for placement it is INSIDE the success radius
+    # (bowl 0.057, plate 0.091), so the first rung is solved by opening the
+    # gripper and every success number it produces is the reset's, not the
+    # policy's. Measured realized start-to-hover distance at 0.03: 0.0245-0.0300 m.
+    # These start just outside each radius and leave ~0.06 m of real approach;
+    # the min-distance floor is min(0.10, 0.5 * cap), so at 0.12 the starts span
+    # 0.06-0.12 m and at 0.15 they span 0.075-0.15 m.
+    # Dead keys, kept only to say so: an explicit ..._ladder_by_instruction
+    # entry outranks these inside PerInstructionApproachCurriculum, which reads
+    # the ladder branch and never looks at the initial. They were 0.12/0.15 --
+    # the right intent, expressed through a knob the ladder silences -- and the
+    # run started at 0.01 regardless. The ladder above now carries that intent.
+    random_workspace_start_distance_initial_by_instruction:
+      put_into_bowl: 0.02
+      put_into_plate: 0.02
+    random_workspace_start_distance_final: 0.34
+    random_workspace_start_distance_increment: 0.02
+    # 0.30/0.12/15, NOT 0.03/0.01/5. The old pair was fitted while a resetter
+    # bug pinned the measured pass rate under 0.045; against the real 0.06-0.41
+    # range promote was true on every update and demote was unreachable, so the
+    # cap advanced on its cooldown alone (17a83f7). Each instruction here runs
+    # its own gate, so a passing placement task cannot drag pick_up's cap.
+    #
+    # Same calibration caveat as pick_up: 0.30 comes from move-to's measured
+    # range, and the placement tasks' achievable rate is unmeasured. Err high --
+    # a too-high gate stalls the cap visibly and cheaply, a too-low one destroys
+    # the run silently. If an instruction's cap is still 0.03 after ~3M steps
+    # with its EMA plateaued below 0.30, lower promote to that plateau + ~0.05.
+    random_workspace_start_distance_promote_pass_rate: 0.30
+    # 0.20, not 0.12, for the reason the pick_up config now carries: against a
+    # 0.30 promote gate that band is wide enough for the cap to climb several
+    # rungs while the metric it gates on is already degrading, and by the time
+    # the demotion fires there is nothing left to pull back to.
+    random_workspace_start_distance_demote_pass_rate: 0.20
+    # 5, not the default 1. With a single crossing the cap leaves a rung the
+    # moment the EMA first touches 0.30, and the bottom rungs here are free by
+    # design -- so a dwell of 1 would race straight past the release-teaching
+    # rungs before the release is reliable, which is the failure this ladder
+    # exists to avoid. Every promotion of the 10M pick_up run fired on a single
+    # touch and the rate at the new rung was well below the gate.
+    random_workspace_start_distance_promote_dwell_updates: 5
+    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    random_workspace_start_distance_cooldown_updates: 15
+    # Horizon coupled to each group's own cap. 16 at the initial cap: placement
+    # must reach the hover point, open the gripper past the release threshold
+    # (up to 0.215 of opening for the banana at 0.05 per env step), and let the
+    # object fall and settle before the episode can be scored.
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 16
+    curriculum_horizon_max: 32
+    reset_on_drift_enabled: false
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [robocasa_apple, robocasa_plate, robocasa_bowl]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  build_kwargs:
+    table_z: 0.15
+    ee_start: [0.0, 0.0, 0.40]
+  randomization:
+    random_scene_count: 256
+    max_objects: 4
+    use_domain_randomization: true
+
+simulator:
+  backend: mjlab_mjwarp
+  worlds_per_rank: 512
+  groups_per_rank: 64
+  nconmax: 256
+  njmax: 1024
+  render_width: 320
+  render_height: 240
+  object_slots: 4
+  fixed_scene_xml: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+
+policy:
+  type: smolvla_cdpr
+  base_checkpoint: lerobot/smolvla_base
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+  num_images_in_input: 3
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: false
+      bins: 256
+    export_filename: smolvla_action_codec.json
+
+training:
+  preview_before_rl: false
+  rl:
+    enabled: true
+    algorithm: smolvla_residual_grpo_mjwarp
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
+    args:
+      # No resume_checkpoint and no warm start: phase 4 starts from a fresh
+      # SmolVLA. From iteration 1 onward the loop driver passes the previous
+      # iteration's SFT checkpoint as --resume-checkpoint, NOT as a warm start
+      # -- load_weights_only discards extra_state, and extra_state is where the
+      # approach-curriculum caps live, so a warm start would drop the cap back
+      # to the first rung and undo the iteration that earned it.
+      max_train_steps: 15000000
+      max_env_steps: 128
+      # Grasp phases MUST lower this. It clamps every commanded target, so the
+      # default 0.25 floor makes grasping geometrically impossible: the finger
+      # pads sit 0.0075 m below ee_base, so at 0.25 they bottom out at 0.2425
+      # while graspable object centres are 0.178-0.195. pick_up ran 10M steps
+      # unable to reach any object.
+      #
+      # 0.18 is the lowest value that is still conservative about the desk. The
+      # grasp target is object centre + 0.015, i.e. 0.193 (orange) to 0.210
+      # (mug), so 0.18 leaves 1.3 cm of travel below the nearest target for the
+      # reward gradient to be two-sided, and the finger tips (0.039 m below
+      # ee_base) reach 0.141 at worst -- 0.9 cm into the 0.15 m desk, a shallow
+      # tip contact rather than the deep interpenetration that previously
+      # diverged MJWarp into NaN rewards. VERIFY on a smoke run that
+      # bilateral_pad_contact_rate rises and rewards stay finite.
+      controller_workspace_z_bounds: [0.18, 0.60]
+      chunk_size: 8
+      replan_every: 4
+      image_size: 256
+      smolvla_model_image_size: 256
+      smolvla_compile_model: true
+      smolvla_compile_mode: max-autotune-no-cudagraphs
+      smolvla_inference_microbatch_size: 256
+      state_dim: 6
+      # Must match the move-to phase: no privileged target geometry in the
+      # observation, so the frozen SmolVLA's state is 6-dim pure proprioception.
+      # The policy localizes the receptacle and the held object from the cameras,
+      # exactly as at real-robot deployment.
+      residual_relative_target: false
+      # MUST MATCH the warm-start checkpoint. The trainable residual's input is
+      # state_dim + vision_feature_dim, so omitting these builds a 6-wide
+      # residual where the checkpoint holds a 518-wide one and the strict
+      # load_state_dict fails outright. (Even if it loaded, dropping the frozen
+      # connector-token projection would throw away the only part of the
+      # observation that actually localizes the target.)
+      residual_vision_features: true
+      residual_vision_dim: 512
+      train_vla_lora: true
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      lora_include_mlp: true
+      lora_expert_name_contains: lm_expert
+      # NEW IN PHASE 4, and off for the whole of phase 2/3. What it can and
+      # cannot buy: the vision LoRA's gradient reaches the action only through
+      # the prior, because the residual's 512-wide vision feature is pooled
+      # under an unconditional no_grad with a fixed seeded random projection
+      # (smolvla_cdpr.py:1006 and :1086). So this improves the PRIOR's
+      # localization; the residual's own view of the scene is unchanged and
+      # stays at the ~1.7% of linearly decodable signal flat_random retains.
+      #
+      # The tower's leaf names differ from the expert's -- SigLIP uses out_proj
+      # rather than o_proj and fc1/fc2 rather than gate/up/down -- so reusing
+      # the expert list silently matches almost nothing. attach_vla_lora raises
+      # on a zero match rather than training through it, and prints the
+      # candidate module names when it does.
+      # OFF: the tower is introduced at the first SFT, not here.
+      train_vla_vision_lora: false
+      lora_vision_name_contains: vision
+      lora_vision_leaf_names: q_proj,k_proj,v_proj,out_proj,fc1,fc2
+      vla_lr: 1.0e-5
+      vla_kl_coef: 0.1
+      vla_microbatch_size: 16
+      vla_update_max_records: 128
+      include_wrist: true
+      include_aux_camera: true
+      mask_empty_aux_camera: true
+      mixed_precision: bf16
+      smolvla_action_normalization: tanh
+      hidden_dim: 1024
+      # Must match the move-to phase: the residual was trained at 1.0 so the
+      # frozen prior's task-blind biases can be overridden per axis.
+      residual_scale: 1.0
+      learning_rate: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      init_log_std: -1.2
+      min_log_std: -1.72
+      # -1.10, not -0.3. MUST MATCH the move-to phase. At -0.3 the ceiling never
+      # bound and the distribution diffused underneath it: over move-to's
+      # 16M-step run log_std rose monotonically for 12M steps (-1.227 -> -0.895)
+      # while entropy went 0.83 -> 4.15, the action->target cosine fell
+      # 0.25 -> 0.14 and validation collapsed from a 7.3% peak to 0.7%. The
+      # ceiling now sits just above the [-1.23, -1.15] band the policy was
+      # productive in, so it cannot diffuse out of it.
+      max_log_std: -1.10
+      clip_range_low: 0.20
+      clip_range_high: 0.28
+      # 0.0002 for the GRASP phases, where entropy_coef 0.0 collapsed the policy.
+      # Measured over pick_up's 3.1M-step run: entropy_mean fell monotonically at
+      # every single checkpoint, -0.404 -> -0.754, and everything peaked at ~2.0M
+      # then regressed -- pass rate -0.0089/M, grasp rate -0.033/M, reward
+      # -0.246/M, validation reward 0.261 -> 0.141. _normal_entropy is a pure
+      # function of log_std, so this is the sampling distribution narrowing (the
+      # 0.43 drop is ~5 action dims x 0.086 on the sampled chunk rows), which is
+      # exactly what this coefficient opposes.
+      #
+      # Safe at a value that was NOT safe before: max_log_std is now a hard -1.10
+      # ceiling, and log_std sits at -1.386, so the bonus can move it at most
+      # 0.29 and cannot run away. The old diffusion happened with the ceiling at
+      # -0.3, where it never bound. 0.002 diffused, 0.0005 slowed but did not stop
+      # it, 0.0 collapses -- 0.0002 sits under all of that with a ceiling behind
+      # it. move_to keeps 0.0: it ran 9M steps with log_std drifting UP slightly,
+      # so it has the opposite problem and needs no bonus.
+      # TEMPORALLY CORRELATED EXPLORATION ON THE GRIPPER CHANNEL ONLY.
+      # Order is [x, y, z, yaw, gripper], so this perturbs nothing but the
+      # release.
+      #
+      # Without it the release cannot be discovered, and that is arithmetic
+      # rather than a hunch. Opening from the caught start's fitted - 0.04 to
+      # max(0.55, fitted + 0.04) needs the gripper command to SUM to 1.6 (apple)
+      # through 3.16 (tomato) at 0.05 per env step. The i.i.d. per-step sampler
+      # at log_std -1.44 gives that sum a standard deviation of 0.237*sqrt(3) =
+      # 0.41 around a mean of zero, so the release sits 7.7 sigma out. Measured:
+      # physical_release_rate was 0.0001 on the first update of the previous run
+      # and 0.0000 for the remaining 917.
+      #
+      # A per-episode offset of 0.3 puts ~23-49 worlds per update at a bias
+      # above 0.5-0.6, and because a GRPO group is eight candidates sharing one
+      # start, the group becomes a finite-difference probe along the sustained
+      # -bias direction -- which is the estimator this response actually needs.
+      # This is the same mechanism the pick_up config documents for the z
+      # channel, where the lift sat 3.3 sigma out and a driftless sampler
+      # reached 0/14. Ours is worse.
+      #
+      # The near rung and this are BOTH required and they fix different halves:
+      # cap 0.02 makes a stray release pay +2.0 instead of the wrong-drop
+      # penalty, and this makes stray releases happen at all. The first without
+      # the second is what is running now.
+      #
+      # Watch for the documented failure mode as the cap climbs: a whole-episode
+      # offset also perturbs phases where opening is wrong, and GRPO can cancel
+      # it by driving the policy's own gripper mean down. At cap 0.02 an early
+      # release lands inside the radius, so the offset is safe there; if success
+      # falls as the cap reaches the upper rungs, cut this before anything else.
+      episode_offset_std: [0.0, 0.0, 0.0, 0.0, 0.0]
+      entropy_coef: 0.0002
+      max_grad_norm: 1.0
+      grpo_group_size: 8
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      # 0.05, carried over from the pick_up config where it was measured. It was
+      # missing here, and filtered_record_fraction logged 0.0000 for every
+      # update of all three phase-2 runs -- the filter has been off for the
+      # whole phase.
+      #
+      # The advantage divides the centred reward by the group std floored at
+      # 1e-6, so a group whose eight candidates separated nothing still emits
+      # advantages clipped at grpo_clip_advantage_abs (6.0): rollout noise at
+      # full scale. The existing reward_span > 1e-6 test is the literal
+      # all-right-or-all-wrong translation and never fires on a dense reward.
+      # Measured over the 10M pick_up run, 41 of 128 groups per update had a
+      # std under 0.05. Expect filtered_record_fraction ~0.34; if it stays at
+      # 0.0000 the knob is not reaching the collector.
+      grpo_min_group_reward_std: 0.05
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.10
+      grpo_dynamic_max_pass_rate: 0.90
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 64
+      grpo_max_collection_seconds_per_update: 600
+      ppo_epochs: 4
+      minibatch_size: 512
+      microbatch_size: 512
+      complex_training_approach: none
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      hold_steps: 6
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      validation_every_steps: 250000
+      validation_episodes_per_instruction: 256
+      validation_seed: 2000000
+      validation_video_count: 0
+      save_every_steps: 250000
+      mjwarp_profile_timers: true
+      mjwarp_profile_updates: 4
+      distributed: true
+      distributed_backend: nccl
+      distributed_timeout_seconds: 21600
+      progress: true
+      progress_only: true
+      device: cuda
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks: []
