@@ -28,9 +28,13 @@ uneven instruction counts and the naive mean misreads a small round.
 | `sft_pickup_seed` (cycle 1 of phase 5) | **0.0964** | 0.3203 | 0.5736 | 0.2721 |
 | `step_1003315` (after 1.2M pick_up RL) | ~0.155 | eroded | eroded | eroded |
 | **`sft_cycle2`** | **0.1738** | **0.4316** | 0.3463 | 0.1702 |
+| `step_2754052` (after 4 M placement RL) | eroded | eroded | 0.7982 val | 0.4073 val |
+| **`sft_cycle3`** | 0.1191 | **0.4779** | **0.7383** | **0.5353** |
 
 Raw counts for `sft_cycle2`: pick_up 267/1536, move_to 663/1536,
 plate 302/872, bowl 113/664.
+Raw counts for `sft_cycle3`: pick_up 183/1536, move_to 734/1536,
+plate 632/856, bowl 364/680.
 
 ### 1.2 Reference levels, for normalising the plot
 
@@ -47,6 +51,9 @@ plate 302/872, bowl 113/664.
 |---|---|---|
 | move_to vs 0.641 | 0.311 → **48.5%** | 0.4316 → **67.3%** |
 | pick_up vs 0.260 | 0.0964 → **37.1%** | 0.1738 → **66.8%** |
+
+Cycle 3 (§12): move_to **74.6%**, pick_up **45.8%** — and the two moved in
+opposite directions, which is the sawtooth, not the ceiling.
 
 Two independent families, both at ~67% after a 4.3× slice, both under 50%
 before. Phase 4 measured 41% and could not move it with epochs.
@@ -593,7 +600,54 @@ pick-and-place — has not been started.
 
 ---
 
-## 12. Predictions made here that came back wrong
+## 12. Cycle 3 — the sawtooth, seen from the other side
+
+`sft_cycle3`, built from `step_2754052` (iter3's placement peak) with the
+placement slice re-harvested from that same checkpoint and the old, weaker
+placement demos excluded from the pool.
+
+| instruction | cycle 2 | **cycle 3** | Δ |
+|---|---|---|---|
+| pick_up @0.06 | 0.1738 | **0.1191** | −0.0547 (−31%) |
+| move_to @0.19 | 0.4316 | **0.4779** | +0.0463 (+11%) |
+| put_into_plate @0.20 | 0.5736 | **0.7383** | +0.1647 (+29%) |
+| put_into_bowl @0.20 | 0.2721 | **0.5353** | +0.2632 (**+97%**) |
+
+**Three campaign bests in one checkpoint.** plate 0.7383 and bowl 0.5353 are
+the highest either family has recorded on this measurement, by a wide margin —
+bowl nearly doubled. move_to at 0.4779 is **74.6% of its reference**, up from
+67.3%, on an unchanged slice.
+
+**And pick_up fell 31%, which is the same mechanism as §7 with the roles
+swapped.** Cycle 2 ran its SFT from `step_1003315`, which still held pick_up at
+~0.155, so that slice was *consolidation*. Cycle 3 ran from `step_2754052`,
+which had absorbed 4 M steps of placement RL and had pick_up eroded, so the
+same 26 109-row slice had to *rebuild* it — and a rebuild is partial. It landed
+at 45.8% of source against cycle 2's 66.8%.
+
+So the alternating loop's signature is now measured in both directions: the
+family that last had RL is high, and the families rebuilt from the bank land at
+roughly half their reference. Nothing here is a new failure — it is the
+sawtooth phase 4 open question #2 asked about, and the amplitude is what a
+single cycle costs.
+
+**What that says about the deliverable.** One adapter now holds move_to 0.478,
+plate 0.738, bowl 0.535 and pick_up 0.119. Three of those are the best the
+campaign has produced; the fourth is the one whose RL turn is furthest in the
+past. If pick_up matters as much as placement, it wants either its own RL turn
+next (which will erode placement in exchange) or a larger slice — its bank is
+the binding constraint at 1 498 episodes and is the only family never
+re-harvested from a stronger checkpoint. `sft_cycle3` scores 0.1191, above the
+0.155-era harvest source in nothing, so a re-harvest would want a better pick_up
+policy first.
+
+The quota was balanced from measurement rather than assumed, and pick_up bound
+it again — the script's first dataset build reads availability and the second
+uses the smallest slice.
+
+---
+
+## 13. Predictions made here that came back wrong
 
 * **"The 0.06 rung will hold for a long stretch — that is the ladder working."**
   Said before iter0. The approach half had no gradient to climb with, so waiting
@@ -617,6 +671,10 @@ pick-and-place — has not been started.
   reverting the gate, and carried over from phase 4 §8. iter5 lost 0.6211 ->
   0.5205 -> 0.42. The rungs were consumed on cooldown, which I had already
   diagnosed and fixed once on pick_up and did not think to check for here.
+* **"Placement should land far above cycle 2's 0.3463/0.1702."** Right, and
+  understated: 0.7383 and 0.5353. The reasoning — consolidation beats rebuild —
+  was the §7 finding applied forward, and it also predicted pick_up's fall,
+  which was not stated at the time and should have been.
 * **"More data will let the SFT train longer."** It let it train longer in
   *steps* (2 490 → 6 840) but *fewer* epochs before overfitting than the epoch
   cap that stopped cycle 1. The two are not the same axis and the report had
