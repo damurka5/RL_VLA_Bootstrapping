@@ -18,8 +18,14 @@ from pathlib import Path
 
 import numpy as np
 
+from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+    ACTIVE_INSTRUCTION_TYPES,
+)
 from tools.audit.sil_record import (
     _Recording,
+    apply_instruction_relabel,
+    parse_relabel_rules,
+    relabel_instruction_text,
     _merge_shard_summaries,
     plan_device_shards,
     record_file_index,
@@ -956,3 +962,105 @@ class RecordFileIndexTests(unittest.TestCase):
                     for run in range(count)
                 ]
                 self.assertEqual(len(set(names)), rounds)
+
+
+class InstructionRelabelTests(unittest.TestCase):
+    """Retargeting grasp episodes onto put_into.
+
+    The label reaches the policy through ONE channel: the residual's state is
+    proprioception plus a vision feature and carries no instruction, and
+    sil_refresh_priors recomputes the SmolVLA prior from instruction_text. So a
+    malformed prompt here becomes a malformed prior in training, silently.
+    """
+
+    def setUp(self) -> None:
+        self.pick = ACTIVE_INSTRUCTION_TYPES.index("pick_up")
+        self.plate = ACTIVE_INSTRUCTION_TYPES.index("put_into_plate")
+        self.bowl = ACTIVE_INSTRUCTION_TYPES.index("put_into_bowl")
+
+    def test_the_prompt_matches_what_the_target_would_have_written(self) -> None:
+        self.assertEqual(
+            relabel_instruction_text("pick up apple", "pick_up", "put_into_plate"),
+            "put apple into plate",
+        )
+        self.assertEqual(
+            relabel_instruction_text("pick up b cups", "pick_up", "put_into_bowl"),
+            "put b cups into bowl",
+        )
+
+    def test_an_unparsable_prompt_does_not_invent_an_object(self) -> None:
+        self.assertEqual(
+            relabel_instruction_text("???", "pick_up", "put_into_plate"),
+            "put object into plate",
+        )
+
+    def test_every_row_of_an_episode_gets_the_same_instruction(self) -> None:
+        # A prompt that changed mid-episode would train the policy on a task
+        # that switches under it.
+        ids = np.full(6, self.pick, dtype=np.int64)
+        text = np.array(["pick up apple"] * 6, dtype="U256")
+        uid = np.array(["a", "a", "a", "b", "b", "b"], dtype="U32")
+        new_id, new_text, _ = apply_instruction_relabel(
+            ids, text, uid, {"pick_up": ["put_into_plate", "put_into_bowl"]}
+        )
+        self.assertEqual(len(set(new_id[:3].tolist())), 1)
+        self.assertEqual(len(set(new_id[3:].tolist())), 1)
+        self.assertEqual(len(set(new_text[:3].tolist())), 1)
+
+    def test_targets_split_evenly_at_scale(self) -> None:
+        n = 2000
+        ids = np.full(n, self.pick, dtype=np.int64)
+        text = np.array(["pick up apple"] * n, dtype="U256")
+        uid = np.array([f"r0w{i}" for i in range(n)], dtype="U32")
+        new_id, _, counts = apply_instruction_relabel(
+            ids, text, uid, {"pick_up": ["put_into_plate", "put_into_bowl"]}
+        )
+        share = int((new_id == self.plate).sum()) / n
+        self.assertGreater(share, 0.40)
+        self.assertLess(share, 0.60)
+        self.assertEqual(sum(counts.values()), n)
+
+    def test_the_split_is_stable_and_order_independent(self) -> None:
+        # A counter would make the assignment depend on which files were
+        # globbed in which order, so the same episode could change label
+        # between two builds of the same bank.
+        uid = np.array(["x", "y", "z"], dtype="U32")
+        ids = np.full(3, self.pick, dtype=np.int64)
+        text = np.array(["pick up apple"] * 3, dtype="U256")
+        rules = {"pick_up": ["put_into_plate", "put_into_bowl"]}
+        first, _, _ = apply_instruction_relabel(ids, text, uid, rules)
+        order = [2, 0, 1]
+        second, _, _ = apply_instruction_relabel(
+            ids[order], text[order], uid[order], rules
+        )
+        self.assertEqual(first[order].tolist(), second.tolist())
+
+    def test_other_instructions_are_untouched(self) -> None:
+        move = ACTIVE_INSTRUCTION_TYPES.index("move_to_object")
+        ids = np.array([self.pick, move], dtype=np.int64)
+        text = np.array(["pick up apple", "move to apple"], dtype="U256")
+        uid = np.array(["a", "b"], dtype="U32")
+        new_id, new_text, _ = apply_instruction_relabel(
+            ids, text, uid, {"pick_up": ["put_into_plate"]}
+        )
+        self.assertEqual(int(new_id[1]), move)
+        self.assertEqual(str(new_text[1]), "move to apple")
+
+    def test_no_rules_is_a_no_op(self) -> None:
+        ids = np.array([self.pick], dtype=np.int64)
+        text = np.array(["pick up apple"], dtype="U256")
+        uid = np.array(["a"], dtype="U32")
+        new_id, new_text, counts = apply_instruction_relabel(ids, text, uid, {})
+        self.assertEqual(new_id.tolist(), ids.tolist())
+        self.assertEqual(new_text.tolist(), text.tolist())
+        self.assertEqual(counts, {})
+
+    def test_rule_parsing_and_its_refusals(self) -> None:
+        self.assertEqual(
+            parse_relabel_rules(["pick_up=put_into_plate,put_into_bowl"]),
+            {"pick_up": ["put_into_plate", "put_into_bowl"]},
+        )
+        for bad in (["pick_up"], ["=put_into_plate"], ["pick_up="], ["nope=put_into_plate"]):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError):
+                    parse_relabel_rules(bad)

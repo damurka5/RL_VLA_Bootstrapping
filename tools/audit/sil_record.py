@@ -123,6 +123,7 @@ from tools.audit.xy_approach_probe import _build_world  # noqa: E402
 import argparse  # noqa: E402
 import contextlib  # noqa: E402
 import csv  # noqa: E402
+import hashlib  # noqa: E402
 import json  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from typing import Any, Mapping, Sequence  # noqa: E402
@@ -1462,6 +1463,7 @@ def _build_dataset(
     *,
     rows_per_instruction: int = 0,
     quota_seed: int = 0,
+    relabel_rules: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Successful episodes only, truncated at the step that made them succeed.
 
@@ -1568,6 +1570,23 @@ def _build_dataset(
         "source_group": np.asarray(groups, dtype="U32"),
     }
 
+    # BEFORE the quota, so a relabelled episode counts against the budget of
+    # the instruction it now carries rather than the one it was recorded as.
+    # Applied after the arrays are assembled rather than per row, because the
+    # split is per EPISODE and needs every row's uid in hand.
+    relabel_counts: dict[str, int] = {}
+    if relabel_rules:
+        (
+            dataset["instruction_id"],
+            dataset["instruction_text"],
+            relabel_counts,
+        ) = apply_instruction_relabel(
+            dataset["instruction_id"],
+            dataset["instruction_text"],
+            dataset["episode_uid"],
+            relabel_rules,
+        )
+
     quota: dict[str, Any] | None = None
     if int(rows_per_instruction) > 0:
         keep = _row_quota_mask(
@@ -1663,6 +1682,7 @@ def _build_dataset(
         per_slice[name] = entry
 
     stats = {
+        "relabelled": relabel_counts,
         "recordings": len(usable),
         "recordings_without_observations": len(recordings) - len(usable),
         "episodes_kept": episodes_kept,
@@ -1952,6 +1972,110 @@ def _merge_shard_summaries(
     return totals
 
 
+_RELABEL_RECEPTACLE = {
+    "put_into_plate": "plate",
+    "put_into_bowl": "bowl",
+}
+
+
+def parse_relabel_rules(specs: Sequence[str]) -> dict[str, list[str]]:
+    """``pick_up=put_into_plate,put_into_bowl`` -> {src: [dst, ...]}."""
+
+    rules: dict[str, list[str]] = {}
+    for spec in specs or ():
+        source, _, targets = str(spec).partition("=")
+        source = source.strip()
+        names = [name.strip() for name in targets.split(",") if name.strip()]
+        if not source or not names:
+            raise ValueError(
+                f"--relabel-instruction expects SRC=DST[,DST2], got {spec!r}"
+            )
+        for name in (source, *names):
+            if name not in ACTIVE_INSTRUCTION_TYPES:
+                raise ValueError(f"Unknown instruction in --relabel-instruction: {name}")
+        rules[source] = names
+    return rules
+
+
+def relabel_instruction_text(text: str, source: str, target: str) -> str:
+    """Rewrite one episode's prompt for its new instruction.
+
+    The prompt is the ONLY channel a relabel travels down. The residual's state
+    is proprioception plus a vision feature and carries no instruction, and
+    sil_refresh_priors recomputes the SmolVLA prior from
+    ``dataset["instruction_text"]`` -- so the text here becomes the prior the
+    SFT trains against, and a malformed one trains against a malformed prompt.
+
+    Generated to match what sample_instruction would have written for the
+    target, so relabelled rows are indistinguishable in the prompt
+    distribution: "pick up apple" -> "put apple into plate".
+    """
+
+    raw = str(text).strip()
+    prefix = {
+        "pick_up": "pick up ",
+        "move_to_object": "move to ",
+        "grab_object": "grab ",
+    }.get(source)
+    obj = raw[len(prefix):].strip() if prefix and raw.startswith(prefix) else ""
+    if not obj:
+        # Never invent a name. An unparsed prompt keeps the generic wording the
+        # task itself falls back to when the reference object is unnamed.
+        obj = "object"
+    receptacle = _RELABEL_RECEPTACLE.get(target)
+    if receptacle is None:
+        return raw
+    return f"put {obj} into {receptacle}"
+
+
+def apply_instruction_relabel(
+    instruction_id: np.ndarray,
+    instruction_text: np.ndarray,
+    episode_uid: np.ndarray,
+    rules: Mapping[str, Sequence[str]],
+) -> tuple[np.ndarray, np.ndarray, dict[str, int]]:
+    """Retarget whole episodes onto a different instruction.
+
+    Why this exists: a `put_into` episode has always begun with the object
+    already between the fingers, so nothing in the bank shows what to do when
+    the instruction is `put_into` and the object is still on the desk. A grasp
+    recorded in a scene that contains the receptacle IS that missing prefix --
+    the actions are real and were executed under the right physics, and only
+    the label is wrong.
+
+    Split per EPISODE, not per row, and by a hash of the uid rather than a
+    counter: every decision of one trajectory must carry the same instruction
+    or the prompt changes mid-episode, and a counter would make the assignment
+    depend on which files were globbed in which order.
+    """
+
+    names = list(ACTIVE_INSTRUCTION_TYPES)
+    new_id = np.asarray(instruction_id).copy()
+    new_text = np.asarray(instruction_text).copy()
+    counts: dict[str, int] = {}
+    if not rules:
+        return new_id, new_text, counts
+    by_episode: dict[str, str] = {}
+    for row in range(new_id.shape[0]):
+        source = names[int(new_id[row])]
+        targets = rules.get(source)
+        if not targets:
+            continue
+        uid = str(episode_uid[row])
+        target = by_episode.get(uid)
+        if target is None:
+            # Stable across runs and across input ordering.
+            digest = hashlib.sha1(uid.encode("utf-8")).digest()
+            target = list(targets)[digest[0] % len(targets)]
+            by_episode[uid] = target
+        new_id[row] = int(names.index(target))
+        new_text[row] = relabel_instruction_text(
+            str(instruction_text[row]), source, target
+        )
+        counts[f"{source}->{target}"] = counts.get(f"{source}->{target}", 0) + 1
+    return new_id, new_text, counts
+
+
 def _write_csv(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
     if not rows:
         return
@@ -2050,6 +2174,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             "everything. The unit is decisions and not episodes because the "
             "SFT loss is per decision and episode lengths differ ~4x across "
             "families, so an episode quota that reads as balanced is not."
+        ),
+    )
+    parser.add_argument(
+        "--relabel-instruction",
+        action="append",
+        default=[],
+        metavar="SRC=DST[,DST2]",
+        help=(
+            "--mode dataset: retarget whole episodes onto another instruction, "
+            "e.g. pick_up=put_into_plate,put_into_bowl. A put_into episode has "
+            "always started with the object already held, so nothing in the "
+            "bank shows what to do when the instruction is put_into and the "
+            "object is still on the desk; a grasp recorded in a scene that "
+            "CONTAINS the receptacle is that missing prefix, with real actions "
+            "and only the label wrong. Multiple targets split evenly across "
+            "episodes by a hash of the episode uid, so the assignment is "
+            "stable across runs and independent of input ordering. The prompt "
+            "is rewritten to match what the target instruction would have "
+            "generated, because the prompt is the only channel the label "
+            "travels down: the residual's state carries no instruction and "
+            "sil_refresh_priors recomputes the prior from instruction_text. "
+            "Applied BEFORE the row quota."
         ),
     )
     parser.add_argument(
@@ -2269,6 +2415,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.mode == "dataset":
         if not args.inputs:
             parser.error("--mode dataset needs --inputs.")
+        try:
+            relabel_rules = parse_relabel_rules(args.relabel_instruction)
+        except ValueError as exc:
+            parser.error(str(exc))
         resolved = [path.expanduser().resolve() for path in args.inputs]
         recordings = [_Recording.from_npz(path) for path in resolved]
         # Provenance for recordings written before start_distance_cap was
@@ -2285,6 +2435,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             [f"{path.parent.name}/{path.stem}" for path in resolved],
             rows_per_instruction=int(args.rows_per_instruction),
             quota_seed=int(args.quota_seed),
+            relabel_rules=relabel_rules,
         )
         np.savez_compressed(output / "demonstrations.npz", **dataset)
         stats["inputs"] = [str(path) for path in args.inputs]
@@ -2315,6 +2466,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{group_entry['source_success_rate']:.3f}",
                     flush=True,
                 )
+        for pair, rows in sorted(stats.get("relabelled", {}).items()):
+            print(f"[sil][dataset] relabelled {pair}: {rows} rows", flush=True)
         print(f"[sil] wrote {output / 'demonstrations.npz'}", flush=True)
         return 0
 
