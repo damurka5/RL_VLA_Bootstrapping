@@ -43,6 +43,12 @@ EPOCHS="${EPOCHS:-45}"
 LORA_EPOCHS="${LORA_EPOCHS:-0}"
 EVAL_ROUNDS="${EVAL_ROUNDS:-3}"
 EVAL_WORLDS="${EVAL_WORLDS:-512}"
+# Frames per replay, 0 = every surviving world. The oracle survives far more
+# worlds than a policy does -- 1378 of 2048 against the 600-900 a placement
+# harvest kept -- and frames are ~48 KB per world-decision across two cameras,
+# so a round can run to several GB and twelve of them to tens. Cap it if the
+# disk is tight; the quota subsamples episodes anyway.
+FRAME_WORLDS="${FRAME_WORLDS:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 
 # Every container episode starts UNCAUGHT, and the curriculum is off so nothing
@@ -64,7 +70,8 @@ cd "$REPO_ROOT"
 printf 'checkpoint=%s\n' "$CHECKPOINT"
 printf 'caps=%s rounds_per_cap=%s worlds=%s devices=%s\n' \
   "$CAPS" "$ROUNDS_PER_CAP" "$WORLDS" "$DEVICES"
-printf 'epochs=%s lora_epochs=%s logs=%s\n' "$EPOCHS" "$LORA_EPOCHS" "$LOG_DIR"
+printf 'epochs=%s lora_epochs=%s frame_worlds=%s logs=%s\n' "$EPOCHS" "$LORA_EPOCHS" "$FRAME_WORLDS" "$LOG_DIR"
+printf 'free space: %s\n' "$(df -h "$BANK" | tail -1)"
 [[ "$DRY_RUN" == "1" ]] && { say "DRY_RUN=1, stopping before the first GPU stage."; exit 0; }
 
 # --- 1. oracle demonstrations of the composed task ------------------------
@@ -97,7 +104,8 @@ for cap in $CAPS; do
           --worlds "$WORLDS" --device "${device_list[$lane]}" \
           --seed-torch 0 --start-distance-cap "$cap" "${COMPOSED[@]}" \
           --checkpoint "$CHECKPOINT" --config "$COMPOSE_CONFIG" \
-          --record-frames --frame-worlds 0 --output "$BANK/o6_demos"
+          --record-frames --frame-worlds "$FRAME_WORLDS" \
+          --output "$BANK/o6_demos"
       done
     ) > "$LOG_DIR/replay_${cap}_lane${lane}.log" 2>&1 &
     pids+=($!)
@@ -105,7 +113,19 @@ for cap in $CAPS; do
   status=0
   for pid in "${pids[@]}"; do wait "$pid" || status=1; done
   grep -h "survived" "$LOG_DIR/replay_${cap}"_lane*.log || true
-  [[ "$status" -eq 0 ]] || { echo "replay lane failed at cap $cap" >&2; exit 1; }
+  if [[ "$status" -ne 0 ]]; then
+    # The lane's own output is the only place the reason exists, because the
+    # subshell redirects it. Printing "a lane failed" and nothing else -- as
+    # this did on its first run -- makes the operator go and find the log by
+    # hand, which is work the script already had the path for.
+    echo "=== replay lane failed at cap $cap; tail of each lane log ===" >&2
+    for log in "$LOG_DIR/replay_${cap}"_lane*.log; do
+      echo "--- $log" >&2
+      tail -n 25 "$log" >&2
+    done
+    df -h "$BANK" >&2 || true
+    exit 1
+  fi
 done
 
 # --- 3. pool, balanced from a measured availability read -----------------
