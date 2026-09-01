@@ -43,12 +43,23 @@ EPOCHS="${EPOCHS:-45}"
 LORA_EPOCHS="${LORA_EPOCHS:-0}"
 EVAL_ROUNDS="${EVAL_ROUNDS:-3}"
 EVAL_WORLDS="${EVAL_WORLDS:-512}"
-# Frames per replay, 0 = every surviving world. The oracle survives far more
-# worlds than a policy does -- 1378 of 2048 against the 600-900 a placement
-# harvest kept -- and frames are ~48 KB per world-decision across two cameras,
-# so a round can run to several GB and twelve of them to tens. Cap it if the
-# disk is tight; the quota subsamples episodes anyway.
-FRAME_WORLDS="${FRAME_WORLDS:-0}"
+# Frames per replay. NOT 0 (= every surviving world), and the reason is HOST
+# RAM rather than disk. The oracle survives 1378 of 2048 worlds against the
+# 600-900 a policy harvest kept, and the frame tap builds the whole array in
+# host memory before compressing it: one uncapped round measured 2993 MB
+# written, so with two lanes running concurrently -- each holding that array
+# plus a compression buffer, alongside two SmolVLA models and two 2048-world
+# MJWarp instances -- the OOM killer took a lane out at cap 0.10.
+#
+# 400 is well above what the mix can use. put_into's quota share is bounded by
+# whichever instruction binds (pick_up, at ~26k decisions), and a composed
+# episode is ~32 decisions, so ~800 composed episodes saturate it. 400 per
+# round over twelve rounds is 4800.
+FRAME_WORLDS="${FRAME_WORLDS:-400}"
+# Concurrent replay lanes. Replay is the memory-hungry stage, so this is
+# separate from DEVICES: 1 runs the rounds one at a time on the first device,
+# which halves peak host RAM at the cost of wall clock.
+REPLAY_LANES="${REPLAY_LANES:-0}"
 DRY_RUN="${DRY_RUN:-0}"
 
 # Every container episode starts UNCAUGHT, and the curriculum is off so nothing
@@ -70,7 +81,9 @@ cd "$REPO_ROOT"
 printf 'checkpoint=%s\n' "$CHECKPOINT"
 printf 'caps=%s rounds_per_cap=%s worlds=%s devices=%s\n' \
   "$CAPS" "$ROUNDS_PER_CAP" "$WORLDS" "$DEVICES"
-printf 'epochs=%s lora_epochs=%s frame_worlds=%s logs=%s\n' "$EPOCHS" "$LORA_EPOCHS" "$FRAME_WORLDS" "$LOG_DIR"
+printf 'epochs=%s lora_epochs=%s frame_worlds=%s replay_lanes=%s logs=%s\n' \
+  "$EPOCHS" "$LORA_EPOCHS" "$FRAME_WORLDS" "$REPLAY_LANES" "$LOG_DIR"
+printf 'free RAM: %s\n' "$(free -g 2>/dev/null | awk '/^Mem:/{print $7" GiB available"}' || echo unknown)"
 printf 'free space: %s\n' "$(df -h "$BANK" | tail -1)"
 [[ "$DRY_RUN" == "1" ]] && { say "DRY_RUN=1, stopping before the first GPU stage."; exit 0; }
 
@@ -90,8 +103,11 @@ done
 # --- 2. replay for frames, unsmoothed ------------------------------------
 IFS=',' read -r -a device_list <<< "$DEVICES"
 lanes=${#device_list[@]}
+if [[ "$REPLAY_LANES" -gt 0 && "$REPLAY_LANES" -lt "$lanes" ]]; then
+  lanes="$REPLAY_LANES"
+fi
 for cap in $CAPS; do
-  say "replay cap $cap -> $BANK/o6_demos"
+  say "replay cap $cap on $lanes lane(s) -> $BANK/o6_demos"
   pids=()
   for lane in $(seq 0 $((lanes - 1))); do
     (
@@ -124,6 +140,10 @@ for cap in $CAPS; do
       tail -n 25 "$log" >&2
     done
     df -h "$BANK" >&2 || true
+    free -g >&2 2>/dev/null || true
+    echo "If a lane says only 'Killed', that is the host OOM killer and not " \
+         "this tool: lower FRAME_WORLDS, or set REPLAY_LANES=1 to stop two " \
+         "lanes holding their frame arrays at once." >&2
     exit 1
   fi
 done
