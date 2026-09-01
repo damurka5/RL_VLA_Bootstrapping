@@ -169,8 +169,9 @@ INPUTS=(
   "$BANK"/o6_demos/replay_*.npz
 )
 if [[ ! -f "$BANK/dataset6_probe/dataset.json" ]]; then
-  say "reading availability"
+  say "reading availability (frames-filtered)"
   "${PY[@]}" tools/audit/sil_record.py --mode dataset --inputs "${INPUTS[@]}" \
+    --require-frames "$BANK"/*_demos/frames_*.npz \
     --rows-per-instruction 0 --output "$BANK/dataset6_probe" 2>&1 \
     | tee "$LOG_DIR/dataset_probe.log"
 fi
@@ -186,6 +187,7 @@ PYEOF
 say "balanced quota = $QUOTA"
 if [[ ! -f "$BANK/dataset6/demonstrations.npz" ]]; then
   "${PY[@]}" tools/audit/sil_record.py --mode dataset --inputs "${INPUTS[@]}" \
+    --require-frames "$BANK"/*_demos/frames_*.npz \
     --rows-per-instruction "$QUOTA" --output "$BANK/dataset6" 2>&1 \
     | tee "$LOG_DIR/dataset_build.log"
 fi

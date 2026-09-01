@@ -1617,6 +1617,7 @@ def _build_dataset(
     rows_per_instruction: int = 0,
     quota_seed: int = 0,
     relabel_rules: Mapping[str, Sequence[str]] | None = None,
+    frame_paths: Sequence[Path] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
     """Successful episodes only, truncated at the step that made them succeed.
 
@@ -1722,6 +1723,48 @@ def _build_dataset(
         # selection-bias trap.
         "source_group": np.asarray(groups, dtype="U32"),
     }
+
+    # BEFORE the quota, and before the relabel, so the budget is spent only on
+    # episodes that can actually be trained on.
+    #
+    # A frame budget (--frame-worlds) keeps pictures for a subset of the
+    # surviving worlds, but every surviving episode still lands in the replay
+    # npz -- so pooling them all produces a dataset whose rows are mostly
+    # unresolvable, and sil_refresh_priors then refuses the whole bank. Dropping
+    # them here makes the selection EXPLICIT: "episodes with pictures", rather
+    # than the implicit "whichever rows happened to keep them" that
+    # --min-resolved-fraction exists to catch.
+    #
+    # Whole episodes, never rows: _episode_split holds out whole episodes, and
+    # a partly-resolved one would put consecutive decisions of one trajectory
+    # on both sides of the train/val line.
+    frame_stats: dict[str, Any] = {}
+    if frame_paths:
+        from tools.audit.sil_sft import load_frame_meta, resolve_frame_rows
+
+        meta = load_frame_meta([Path(path) for path in frame_paths])
+        resolved, _ = resolve_frame_rows(
+            dataset["episode_uid"], dataset["decision_index"], meta
+        )
+        complete = {
+            uid
+            for uid in np.unique(dataset["episode_uid"])
+            if bool(resolved[dataset["episode_uid"] == uid].all())
+        }
+        keep_rows = np.isin(dataset["episode_uid"], list(complete))
+        frame_stats = {
+            "rows_before": int(dataset["episode_uid"].shape[0]),
+            "rows_kept": int(keep_rows.sum()),
+            "episodes_before": int(np.unique(dataset["episode_uid"]).size),
+            "episodes_kept": len(complete),
+        }
+        if not keep_rows.any():
+            raise ValueError(
+                "No episode resolved to a complete set of frames. The "
+                "--require-frames glob probably does not cover these replays."
+            )
+        for key, value in list(dataset.items()):
+            dataset[key] = value[keep_rows]
 
     # BEFORE the quota, so a relabelled episode counts against the budget of
     # the instruction it now carries rather than the one it was recorded as.
@@ -1835,6 +1878,7 @@ def _build_dataset(
         per_slice[name] = entry
 
     stats = {
+        "frame_filter": frame_stats,
         "relabelled": relabel_counts,
         "recordings": len(usable),
         "recordings_without_observations": len(recordings) - len(usable),
@@ -2330,6 +2374,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--require-frames",
+        type=Path,
+        nargs="+",
+        default=[],
+        help=(
+            "--mode dataset: keep only episodes that have stored pictures in "
+            "these frames_*.npz files, dropping the rest before the quota. "
+            "Needed whenever the replays ran with a --frame-worlds budget: "
+            "every surviving episode lands in the replay npz but only the "
+            "budgeted ones keep frames, so pooling them all yields a dataset "
+            "sil_refresh_priors will refuse. Filtering here makes the "
+            "selection explicit -- episodes with pictures -- instead of the "
+            "implicit one --min-resolved-fraction exists to catch. Whole "
+            "episodes only."
+        ),
+    )
+    parser.add_argument(
         "--relabel-instruction",
         action="append",
         default=[],
@@ -2589,6 +2650,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             rows_per_instruction=int(args.rows_per_instruction),
             quota_seed=int(args.quota_seed),
             relabel_rules=relabel_rules,
+            frame_paths=[
+                path.expanduser().resolve() for path in args.require_frames
+            ],
         )
         np.savez_compressed(output / "demonstrations.npz", **dataset)
         stats["inputs"] = [str(path) for path in args.inputs]
@@ -2619,6 +2683,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"{group_entry['source_success_rate']:.3f}",
                     flush=True,
                 )
+        filtered = stats.get("frame_filter") or {}
+        if filtered:
+            print(
+                f"[sil][dataset] frames filter kept "
+                f"{filtered['episodes_kept']}/{filtered['episodes_before']} "
+                f"episodes ({filtered['rows_kept']}/{filtered['rows_before']} "
+                "rows); the rest have no stored pictures",
+                flush=True,
+            )
         for pair, rows in sorted(stats.get("relabelled", {}).items()):
             print(f"[sil][dataset] relabelled {pair}: {rows} rows", flush=True)
         print(f"[sil] wrote {output / 'demonstrations.npz'}", flush=True)
