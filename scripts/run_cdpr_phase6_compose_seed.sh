@@ -114,7 +114,14 @@ for cap in $CAPS; do
       for index in $(seq 0 $((ROUNDS_PER_CAP - 1))); do
         [[ $((index % lanes)) -eq "$lane" ]] || continue
         stem=$(printf 'record_%02d' "$index")
-        [[ -f "$BANK/o6_demos/replay_o6_${cap}_${stem}.npz" ]] && continue
+        # Guard on the FRAMES file, not the replay one. sil_record writes the
+        # replay npz first and the frames npz last, so a process killed while
+        # compressing frames leaves a complete replay beside a truncated
+        # frames file -- and a guard that checked the replay would skip the
+        # round, leaving the corruption in place to surface later as
+        # BadZipFile in sil_refresh_priors, after the whole harvest had been
+        # paid for. Which is exactly what happened.
+        [[ -f "$BANK/o6_demos/frames_o6_${cap}_${stem}.npz" ]] && continue
         "${PY[@]}" tools/audit/sil_record.py --mode replay --smooth none \
           --actions "$BANK/o6_${cap}/${stem}.npz" \
           --worlds "$WORLDS" --device "${device_list[$lane]}" \
