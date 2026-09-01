@@ -383,6 +383,132 @@ def _apply_determinism(
     return applied
 
 
+class _OracleActionSource:
+    """Actions from the scripted oracle instead of from the policy.
+
+    Rebuilt at every reset, because the phase chain a world runs depends on
+    what its reset produced: an ungrasped container start gets the grasp
+    prefix, a caught one does not, and an instruction with no oracle gets an
+    empty chain and a zero action.
+
+    Everything else in the recording path is untouched. The states and priors
+    still come from `patched_action`, so a demonstration recorded this way
+    carries the same inputs the residual would have seen; the reward, the grasp
+    detector, the horizon and the success predicate are all the trainer's own.
+    Only the five numbers handed to the plant come from somewhere else.
+    """
+
+    def __init__(self) -> None:
+        self.oracle: Any = None
+        self._previous_ee: np.ndarray | None = None
+        self._target_slots: np.ndarray | None = None
+        self._initial_target_z: np.ndarray | None = None
+
+    def begin(self, reset: Any, world: Any) -> None:
+        from tools.audit.sil_oracle import BatchedOracle
+        from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+            OBJECT_VARIANTS,
+        )
+
+        task_state = reset.task_state
+        worlds = int(world.layout.worlds_per_rank)
+        metadata = dict(world.task_metadata or {})
+
+        def number(key: str, default: float) -> float:
+            try:
+                return float(metadata.get(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        instruction_ids = _host_int(task_state.instruction_ids).reshape(-1)
+        names = [_instruction_name(int(i)) for i in instruction_ids]
+        target_slots = _host_int(task_state.target_slots).reshape(-1)
+        reference_slots = _host_int(task_state.reference_slots).reshape(-1)
+        # Per GROUP in the reset; the recording expands it the same way.
+        catalogs = getattr(reset, "group_target_catalog_ids", None)
+        if catalogs is None:
+            catalog_ids = np.zeros(worlds, dtype=np.int64)
+        else:
+            catalog_ids = _host_int(catalogs).reshape(-1)
+            if catalog_ids.shape[0] != worlds:
+                catalog_ids = np.repeat(
+                    catalog_ids, worlds // max(catalog_ids.shape[0], 1)
+                )
+        catalog_names = [
+            ACTIVE_CDPR_CATALOGS[int(index)] for index in catalog_ids
+        ]
+        release_thresholds = _host_float(task_state.release_threshold).reshape(-1)
+        plate_release = number("put_plate_release_height", 0.10)
+        bowl_release = number("put_bowl_release_height", 0.10)
+        self.oracle = BatchedOracle(
+            instruction_types=names,
+            # The reset decides this, not the config: the caught-object stage
+            # is drawn per group, so two worlds of one round can need different
+            # chains.
+            starts_grasped=[
+                bool(v) for v in _host_bool(task_state.grasped).reshape(-1)
+            ],
+            instruction_texts=[str(t) for t in reset.instructions],
+            target_slots=target_slots,
+            reference_slots=reference_slots,
+            target_catalogs=catalog_names,
+            fitted_openings=[
+                float(OBJECT_VARIANTS[name].fitted_gripper_opening)
+                for name in catalog_names
+            ],
+            # The harness opens a little past the threshold so the release is
+            # unambiguous rather than exactly on the boundary.
+            release_openings=[
+                float(min(1.0, value + 0.05)) for value in release_thresholds
+            ],
+            grasp_height_offset=number("pick_grasp_height_offset", 0.0075),
+            release_heights=[
+                bowl_release if name == "put_into_bowl" else plate_release
+                for name in names
+            ],
+            support_surface_z=_host_float(task_state.support_surface_z).reshape(-1),
+            lift_success_height=number("pick_lift_success_height", 0.05),
+            action_step_xyz=float(world.action_step_xyz),
+            action_step_gripper=float(world.action_step_gripper),
+        )
+        # Cleared per reset: carrying the previous round's end pose into the
+        # next round's first velocity would put one bogus damping term on step
+        # 0 of every round after the first.
+        self._previous_ee = None
+        self._target_slots = target_slots
+        self._initial_target_z = _host_float(
+            task_state.initial_target_positions
+        ).reshape(worlds, 3)[:, 2]
+
+    def __call__(self, *, low_dim: Any, caught_target: Any, backend: Any) -> np.ndarray:
+        assert self.oracle is not None, "begin() must run at reset"
+        ee = _host_float(low_dim.ee_position)
+        previous = getattr(self, "_previous_ee", None)
+        if previous is None or previous.shape != ee.shape:
+            previous = ee
+        self._previous_ee = ee
+        controller = backend.controller_state()
+        commanded = np.asarray(controller["gripper"], dtype=np.float32).reshape(-1)
+        # caught_target lags one step: it is captured at the predicate, which
+        # runs after the step. It only ever latches on, and the phase that
+        # reads it is waiting for exactly that transition.
+        grasp = (
+            np.zeros(ee.shape[0], dtype=bool)
+            if caught_target is None
+            else _host_bool(caught_target).reshape(-1)
+        )
+        return self.oracle.actions(
+            ee=ee,
+            ee_velocity=ee - previous,
+            ee_yaw=_host_float(low_dim.ee_yaw).reshape(-1),
+            measured_gripper=_host_float(low_dim.gripper_opening).reshape(-1),
+            commanded_gripper=commanded,
+            object_positions=_host_float(low_dim.object_positions),
+            physical_grasp=grasp,
+            initial_target_z=self._initial_target_z,
+        )
+
+
 class _RoundRecorder:
     """Runs one ``validate_round``, capturing what the plant executed.
 
@@ -396,12 +522,20 @@ class _RoundRecorder:
         world: Any,
         *,
         playback: np.ndarray | None = None,
+        action_source: Any = None,
         horizon_override: int = 0,
         torch_seed: int | None = None,
         deterministic_kernels: bool = False,
     ) -> None:
         self.world = world
         self.playback = playback
+        # Closed-loop substitution, where `playback` is open-loop: the oracle
+        # needs the live observation to decide, so it is handed the low-dim
+        # state the PREVIOUS step returned. One step of lag on a quantity the
+        # controller is already integrating over four env steps per decision.
+        self.action_source = action_source
+        self._last_low_dim: Any = None
+        self._last_caught: Any = None
         self.horizon_override = max(0, int(horizon_override))
         self.torch_seed = torch_seed
         self.deterministic_kernels = bool(deterministic_kernels)
@@ -453,6 +587,12 @@ class _RoundRecorder:
                 reset.horizons.fill_(self.horizon_override)
             self.reset = reset
             self.env_step = 0
+            # The first step has no previous one to read, so seed from the
+            # backend directly.
+            if self.action_source is not None:
+                self._last_low_dim = backend.low_dim_observations()
+                self._last_caught = None
+                self.action_source.begin(reset, self.world)
             self._rows_step.clear()
             self._rows_eval.clear()
             self._rows_decision.clear()
@@ -476,6 +616,16 @@ class _RoundRecorder:
                     dtype=actions.dtype,
                     device=actions.device,
                 )
+            if self.action_source is not None:
+                actions = torch.as_tensor(
+                    self.action_source(
+                        low_dim=self._last_low_dim,
+                        caught_target=self._last_caught,
+                        backend=backend,
+                    ),
+                    dtype=actions.dtype,
+                    device=actions.device,
+                )
             self._rows_step.append(
                 {
                     "actions": _host_float(actions),
@@ -483,7 +633,9 @@ class _RoundRecorder:
                 }
             )
             self.env_step += 1
-            return self._original_step(actions, active_mask)
+            result = self._original_step(actions, active_mask)
+            self._last_low_dim = result
+            return result
 
         def patched_predicate(**kwargs: Any) -> Any:
             result = self._original_predicate(**kwargs)
@@ -498,6 +650,7 @@ class _RoundRecorder:
                     "object_xyz": _host_float(kwargs["object_positions"]),
                 }
             )
+            self._last_caught = kwargs["caught_target"]
             return result
 
         def patched_action(
@@ -2111,7 +2264,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
         "--mode",
-        choices=("record", "replay", "compare", "dataset"),
+        choices=("record", "replay", "compare", "dataset", "oracle"),
         default="record",
         help=(
             "record runs the deterministic policy and writes the executed "
@@ -2397,11 +2550,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         name.strip() for name in str(args.devices).split(",") if name.strip()
     ]
     if devices:
-        if args.mode != "record":
+        if args.mode not in ("record", "oracle"):
             parser.error(
                 "--devices shards a round range across GPUs and only --mode "
-                f"record walks one; --mode {args.mode} does not. Replay or "
-                "build a dataset with --device."
+                f"record and --mode oracle walk one; --mode {args.mode} does "
+                "not. Replay or build a dataset with --device."
             )
         if int(args.repeat) > 1:
             parser.error(
@@ -2514,6 +2667,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 0
 
     if args.checkpoint is None or args.config is None:
+        # oracle still needs both: the checkpoint supplies the states and
+        # priors the demonstration is conditioned on, even though its actions
+        # are discarded, and the config supplies the scene and the reward.
         parser.error(f"--mode {args.mode} needs --checkpoint and --config.")
     checkpoint = args.checkpoint.expanduser().resolve()
     config_path = args.config.expanduser().resolve()
@@ -2575,7 +2731,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     }
 
     summary_name = f"summary{args.summary_suffix}.json"
-    if args.mode == "record":
+    if args.mode in ("record", "oracle"):
         recordings: list[_Recording] = []
         runs = max(int(args.repeat), int(args.rounds))
         # --repeat pins the round index (the null); --rounds walks it (harvest).
@@ -2589,6 +2745,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
             with _RoundRecorder(
                 world,
+                action_source=(
+                    _OracleActionSource() if args.mode == "oracle" else None
+                ),
                 horizon_override=int(args.horizon_decisions),
                 torch_seed=args.seed_torch,
                 deterministic_kernels=bool(args.deterministic_kernels),
