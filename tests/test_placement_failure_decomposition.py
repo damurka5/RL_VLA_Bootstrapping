@@ -350,6 +350,54 @@ class DecompositionAgreesWithThePredicate(unittest.TestCase):
             ["", "no_release", "xy_miss", "no_grasp"],
         )
 
+    def test_grasp_timing_and_timeout_separate_the_no_release_causes(self) -> None:
+        """`no_release` is 25-33% of every failure population measured so far.
+
+        Either the episode grasped too late to carry and open -- a horizon
+        finding that points at placement_grasp_horizon_min_decisions -- or it
+        grasped in good time and the release never fired, which is a different
+        piece of work entirely. The funnel cannot tell them apart; these two
+        columns can.
+        """
+
+        # Grasps at step 1, never releases, and uses every step of its budget.
+        stalled = carry((0.0, 0.0), steps=8)
+        rows = self._terms([stalled])
+        self.assertEqual(rows[0]["blocking_stage"], "no_release")
+        self.assertEqual(rows[0]["first_grasp_env_step"], 0)
+        # horizons is 32 decisions at 4 actions each in the fixture, and the
+        # episode ran 8 steps, so it did NOT exhaust the budget.
+        self.assertEqual(rows[0]["env_step_budget"], 32 * 4)
+        self.assertFalse(rows[0]["timed_out"])
+
+    def test_an_episode_that_never_grasps_reports_minus_one(self) -> None:
+        never = _Episode(
+            instruction="put_into_bowl",
+            object_xy=[(0.0, 0.0)] * 4,
+            object_z=[SETTLED_Z] * 4,
+            gripper=[0.9] * 4,
+            caught=[False] * 4,
+        )
+        rows = self._terms([never])
+        self.assertEqual(rows[0]["first_grasp_env_step"], -1)
+
+    def test_spawn_separation_is_measured_from_the_reset_position(self) -> None:
+        """Not from wherever the object ended up.
+
+        The question is whether the bowl's wall obstructed the grasp, and that
+        is decided by where the object STARTED. Measuring it at the end would
+        report the receptacle's own radius for every success and nothing for
+        anything else.
+        """
+
+        # The fixture seeds initial_target_positions from object_xy[0] and puts
+        # the receptacle at the origin, so a first-step offset is the answer.
+        episode = place((0.08, 0.0), (0.0, 0.0), release_z=CARRY_Z)
+        rows = self._terms([episode])
+        self.assertAlmostEqual(
+            rows[0]["object_to_receptacle_at_reset_m"], 0.08, places=4
+        )
+
     def test_non_container_worlds_are_dropped(self) -> None:
         # A composed harvest is a mixed batch; move_to and pick_up worlds have
         # no receptacle and must not be counted into a placement denominator.

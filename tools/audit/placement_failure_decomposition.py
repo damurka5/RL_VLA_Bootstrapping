@@ -279,6 +279,37 @@ def _episode_terms(
             continue
         last = int(np.flatnonzero(live)[-1])
 
+        # WHEN the grasp happened, and whether the episode ran out of budget.
+        #
+        # These separate the two live explanations for `no_release`, which is
+        # 25-33% of every failure population measured so far. Either the
+        # episode grasped so late that no budget remained to carry and open --
+        # a horizon problem, fixable with placement_grasp_horizon_min_decisions
+        # -- or it grasped in good time and the release never fired, which is a
+        # policy/controller problem and a completely different piece of work.
+        grasp_steps = np.flatnonzero(caught[:, world] & live)
+        first_grasp = int(grasp_steps[0]) if grasp_steps.size else -1
+        budget = int(recording.horizons[world]) * int(
+            recording.actions_per_decision
+        )
+        steps_active = int(live.sum())
+        # An episode terminates on success, on a settled wrong drop, or on
+        # timeout, so "used the whole budget" means nothing terminated it.
+        timed_out = steps_active >= budget
+        # How far the object was spawned from its receptacle. The composed
+        # scene places it 0.06-0.10 m away (placement_grasp_object_min/max_
+        # distance), and a bowl is a CONCAVE vessel -- an object at the near end
+        # of that range can sit against or inside the wall, where the gripper
+        # cannot get around it. Plate is flat and has no such failure mode,
+        # which is the shape of the measured grasp gap (bowl 0.646 against
+        # plate 0.932 with the ORACLE driving, so it is not perception).
+        reset_separation = float(
+            np.linalg.norm(
+                recording.initial_target_xyz[world, :2]
+                - reference[0, world, :2]
+            )
+        )
+
         # The release the predicate latches on: the FIRST one, so a policy that
         # opens, re-closes and opens again is scored on the height it first let
         # go from -- which is the one that decided the object's trajectory.
@@ -339,7 +370,11 @@ def _episode_terms(
                 "recomputed_success": recomputed,
                 "blocking_stage": blocking,
                 "grasped_at_reset": bool(recording.physical_grasp_at_reset[world]),
+                "first_grasp_env_step": first_grasp,
                 "first_release_env_step": first_release,
+                "timed_out": timed_out,
+                "env_step_budget": budget,
+                "object_to_receptacle_at_reset_m": round(reset_separation, 5),
                 "release_clearance_m": round(release_clearance, 5),
                 "xy_at_release_m": round(xy_at_release, 5),
                 "min_xy_m": round(float(container_xy[live, world].min()), 5),
@@ -459,13 +494,99 @@ def _summarize(
             if np.isfinite(float(row["xy_at_release_m"]))
             and float(row["xy_at_release_m"]) <= float(row["radius_m"])
         ]
+        # The conditional rates. A funnel read as fractions-of-all hides where
+        # the loss is: bowl and plate both lose most of their episodes at the
+        # grasp, but bowl ALSO loses a quarter of its grasps before the release
+        # and plate loses 2%. Those are different problems and the marginal
+        # numbers make them look like one.
+        stages = [total] + [
+            funnel[stage]["episodes"] for stage in FUNNEL_STAGES
+        ]
+        conditional = {}
+        for index, stage in enumerate(FUNNEL_STAGES):
+            denominator = stages[index]
+            conditional[stage] = (
+                round(stages[index + 1] / denominator, 4)
+                if denominator
+                else None
+            )
+
+        # Why `no_release` happened, which is the one term the funnel cannot
+        # explain on its own.
+        no_release = [row for row in failures if row["blocking_stage"] == "no_release"]
+        timed_out = [row for row in no_release if row["timed_out"]]
+        grasped_rows = [
+            row for row in subset if int(row["first_grasp_env_step"]) >= 0
+        ]
         summary[name] = {
             "episodes": total,
             "successes": len(successes),
             "success_rate": round(len(successes) / total, 4),
             "radius_m": round(thresholds.radius_for(name), 5),
             "funnel": funnel,
+            "funnel_conditional": conditional,
             "failure_taxonomy": taxonomy,
+            "no_release_diagnosis": {
+                "episodes": len(no_release),
+                # Ran the whole budget: nothing terminated them, so the carry
+                # and the open had no room left. A high fraction here is a
+                # HORIZON finding and points at
+                # placement_grasp_horizon_min_decisions.
+                "timed_out": len(timed_out),
+                "timed_out_fraction": round(
+                    len(timed_out) / max(len(no_release), 1), 4
+                ),
+                "first_grasp_env_step": _percentiles(
+                    np.array(
+                        [row["first_grasp_env_step"] for row in no_release],
+                        dtype=np.float64,
+                    )
+                ),
+                "env_step_budget": _percentiles(
+                    np.array(
+                        [row["env_step_budget"] for row in no_release],
+                        dtype=np.float64,
+                    )
+                ),
+            },
+            "first_grasp_env_step": {
+                "successes": _percentiles(
+                    np.array(
+                        [row["first_grasp_env_step"] for row in successes],
+                        dtype=np.float64,
+                    )
+                ),
+                "all_that_grasped": _percentiles(
+                    np.array(
+                        [row["first_grasp_env_step"] for row in grasped_rows],
+                        dtype=np.float64,
+                    )
+                ),
+            },
+            # Split by whether the grasp happened at all. If the bowl's wall is
+            # obstructing, ungrasped episodes concentrate at the NEAR end of the
+            # 0.06-0.10 m spawn range and grasped ones at the far end.
+            "object_to_receptacle_at_reset_m": {
+                "grasped": _percentiles(
+                    np.array(
+                        [
+                            row["object_to_receptacle_at_reset_m"]
+                            for row in grasped_rows
+                        ],
+                        dtype=np.float64,
+                    )
+                ),
+                "never_grasped": _percentiles(
+                    np.array(
+                        [
+                            row["object_to_receptacle_at_reset_m"]
+                            for row in subset
+                            if int(row["first_grasp_env_step"]) < 0
+                        ],
+                        dtype=np.float64,
+                    )
+                ),
+            },
             "released_inside_but_failed": {
                 "episodes": len(arrived_then_failed),
                 "fraction_of_failures": round(
@@ -702,6 +823,25 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"({value['fraction_of_failures']:.4f})",
                     flush=True,
                 )
+        print("[decomp]   conditional (each stage given the one above):", flush=True)
+        for stage, value in entry["funnel_conditional"].items():
+            print(f"[decomp]     {stage:<28} {value}", flush=True)
+        diag = entry["no_release_diagnosis"]
+        if diag["episodes"]:
+            print(
+                f"[decomp]   no_release: {diag['episodes']} episodes, "
+                f"{diag['timed_out']} ran the whole budget "
+                f"({diag['timed_out_fraction']:.4f}); first grasp at "
+                f"{diag['first_grasp_env_step']} of budget "
+                f"{diag['env_step_budget']}",
+                flush=True,
+            )
+        reset_split = entry["object_to_receptacle_at_reset_m"]
+        print(
+            f"[decomp]   spawn distance grasped={reset_split['grasped']} "
+            f"never_grasped={reset_split['never_grasped']}",
+            flush=True,
+        )
         arrived = entry["released_inside_but_failed"]
         print(
             f"[decomp]   released INSIDE the radius and still failed: "
