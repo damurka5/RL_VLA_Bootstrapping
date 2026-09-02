@@ -2467,6 +2467,15 @@ class CollectorRound:
     # rollout budget, so gating the approach on success made the cap wait on a
     # skill the approach cannot influence.
     candidate_ever_grasped: Any | None = None
+    # Per-group "this group carried gradient on at least one return stream".
+    #
+    # The unit dynamic sampling has to count. `loss_mask` counts RECORDS, and a
+    # record target is satisfied by round 0 for any horizon worth running --
+    # 512 worlds x up to 128 records each is ~65k against a 1024 target -- so a
+    # loop that refills on records never refills. Groups are also the quantity
+    # the arithmetic is about: a binary reward gives gradient only where a group
+    # holds both a success and a failure, which at p=0.0147 is 11% of groups.
+    usable_groups: Any | None = None
     # Capped decision-0 subsample of SmolVLA inputs for the LoRA grad-through-VLA
     # update (None unless the collector was asked to store it).
     vla_records: dict[str, Any] | None = None
@@ -3432,6 +3441,15 @@ class RankLocalMJWarpGRPOCollector:
                 usable_pre_world.index_select(0, record_world),
             )
         loss_mask = record_valid & record_usable
+        # A group counts as usable if EITHER return stream survived the filter.
+        # With split_credit_at_grasp the two streams are filtered separately --
+        # a group can separate the approach while the lift is uniform -- and a
+        # group that contributes approach gradient is not a wasted rollout.
+        usable_groups = informative_group & ~degenerate_terminal
+        if self.split_credit_at_grasp and self.min_group_reward_std > 0.0:
+            usable_groups = usable_groups | (
+                informative_group & ~degenerate_pre
+            )
         vla_records = None
         if vla_capture is not None:
             world_idx = vla_capture.pop("world_index")
@@ -3720,6 +3738,14 @@ class RankLocalMJWarpGRPOCollector:
             "filtered_record_fraction": float(
                 (record_valid & ~record_usable).sum().item()
             ) / max(1.0, float(record_valid.sum().item())),
+            # What dynamic sampling steers on. `usable_group_fraction` is the
+            # informative fraction the DAPO oversample factor is 1/x of: at
+            # composed bowl's measured 0.0147 success this reads ~0.11, and a
+            # single round then supplies ~7 usable groups out of 64.
+            "usable_groups": float(usable_groups.sum().item()),
+            "usable_group_fraction": float(
+                usable_groups.to(dtype=torch.float32).mean().item()
+            ),
             "degenerate_reward_groups": float(degenerate_group.sum().item()),
             "degenerate_reward_groups_prelifted": float(
                 (degenerate_group & prelifted_group_mask).sum().item()
@@ -3733,6 +3759,7 @@ class RankLocalMJWarpGRPOCollector:
             group_instruction_ids=reset.group_instruction_ids,
             group_shell_ids=reset.group_shell_ids,
             metrics=metrics,
+            usable_groups=usable_groups,
             vla_records=vla_records,
             group_prelifted=prelifted_group_mask,
             group_skips_approach=skips_approach_group_mask,

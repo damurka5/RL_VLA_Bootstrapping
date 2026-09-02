@@ -137,21 +137,25 @@ class BatchedRandomWorkspaceMoveToResetter(BatchedReverseFrontierResetter):
         update_index: int,
         round_index: int,
         allow_prelifted: bool = True,
+        force_uncaught_container: bool = False,
     ) -> Any:
-        # allow_prelifted is forwarded rather than dropped, and the signature
-        # has to keep tracking the base class. It was added to the base for the
-        # pre-grasped pick_up stage and not mirrored here, so training -- which
-        # calls reset() with two keywords -- ran fine for 197k steps and the run
-        # died at its FIRST validation, where validate_round passes
-        # allow_prelifted=False (mjwarp_rank_local_collector.py:3646). Nothing
-        # about move_to depends on the flag (both stages it gates are masked to
-        # pick_up_task), so this is a signature bug and not a behavioural one --
-        # which is exactly why nothing caught it until an hour of GPU time had
-        # been spent.
+        # Every base keyword is forwarded rather than dropped, and the signature
+        # has to keep tracking the base class. allow_prelifted was added to the
+        # base for the pre-grasped pick_up stage and not mirrored here, so
+        # training -- which calls reset() with two keywords -- ran fine for 197k
+        # steps and the run died at its FIRST validation, where validate_round
+        # passes allow_prelifted=False. Nothing about move_to depends on either
+        # flag (the stages they gate are masked to pick_up_task and to container
+        # instructions respectively), so both are signature bugs rather than
+        # behavioural ones -- which is exactly why nothing caught the first one
+        # until an hour of GPU time had been spent. The signature test in
+        # tests/test_start_distance_probe.py caught force_uncaught_container in
+        # seconds, which is what it exists for.
         reset = super().reset(
             update_index=update_index,
             round_index=round_index,
             allow_prelifted=allow_prelifted,
+            force_uncaught_container=force_uncaught_container,
         )
         # This schedule runs no Reverse Frontier shells; -1 is the "no shell"
         # sentinel the validation and video tooling reads.
@@ -2102,6 +2106,26 @@ def main(argv: Sequence[str] | None = None) -> None:
             update_started = time.perf_counter()
             rounds = []
             local_informative = 0
+            local_usable_groups = 0
+            # DAPO-style refill: keep rolling out and DISCARDING degenerate
+            # groups until the update holds enough groups that actually carry
+            # gradient. `grpo_dynamic_sampling` on its own only MASKS them, so
+            # the batch shrinks to the informative fraction and is never
+            # refilled -- and with a binary reward that fraction is the whole
+            # problem: 1 - p^8 - (1-p)^8 is 0.99 at p=0.48 but 0.11 at the
+            # measured composed-bowl p=0.0147.
+            #
+            # The loop already existed and could never take a second round.
+            # `max_rounds` is grpo_max_groups_per_update / groups_per_rank, and
+            # the compose config sets 64 against 512 worlds / group 8 = 64
+            # groups, so it was exactly 1. The records target could not save it
+            # either: 512 worlds at up to 128 records each is ~65k against a
+            # 1024 target, satisfied by round 0 every time. Both budgets have to
+            # be raised for this to do anything, which is a config change and is
+            # stated in the config.
+            target_groups = int(
+                getattr(args, "grpo_target_informative_groups", 0)
+            )
             max_rounds = max(
                 1,
                 (
@@ -2118,7 +2142,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                 )
                 rounds.append(item)
                 local_informative += int(item.loss_mask.sum().item())
-                if (
+                if item.usable_groups is not None:
+                    local_usable_groups += int(item.usable_groups.sum().item())
+                if target_groups > 0:
+                    # Group-targeted: the records target is ignored, because a
+                    # record count cannot express "enough groups separated".
+                    if local_usable_groups >= target_groups:
+                        break
+                elif (
                     int(args.grpo_target_records_per_update) <= 0
                     or local_informative
                     >= int(args.grpo_target_records_per_update)
@@ -2256,6 +2287,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "candidate_reward_sum": float(candidate_rewards.sum().item()),
                 "candidate_reward_count": float(candidate_rewards.numel()),
                 "groups_collected": float(successes.shape[0]),
+                # What the refill actually cost and bought. These are summed
+                # across ranks by _synchronize_update_metrics_once, so read
+                # usable_groups_collected / groups_collected as the realised
+                # informative fraction and rounds_collected as the oversample
+                # factor that was spent to reach it. A run whose
+                # usable fraction sits near 0.11 is paying ~9 rollouts per
+                # update of gradient, and that is the signal to fix the task
+                # rather than raise the budget again.
+                "rounds_collected": float(len(rounds)),
+                "usable_groups_collected": float(local_usable_groups),
                 "contacts_rank_sum": float(capacity["contacts"]),
                 "max_constraints_per_world_rank_sum": float(
                     capacity["max_constraints_per_world"]

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 
@@ -38,6 +38,36 @@ class BatchedTaskThresholds:
     release_opening: float = 0.55
     sparse_success_reward: float = 1.0
     sparse_failure_reward: float = 0.0
+
+
+# The one metadata key that turns every dense shaping term off at once.
+#
+# WHY IT IS A FLAG AND NOT "PASS None FOR THE REWARD". The sparse binary reward
+# is already the BASE: `evaluate_active_sparse_tasks` builds
+# `where(success, sparse_success_reward, sparse_failure_reward)` and the dense
+# terms then OVERWRITE it per instruction. So dropping the reward objects looks
+# like "turn dense off" and is not -- both objects also own SUCCESS PREDICATE
+# geometry, and without them the predicate silently becomes a different task:
+#
+#     plate radius          0.091 -> 0.03   (cfg.container_xy)
+#     bowl radius           0.057 -> 0.03
+#     target_has_settled    required -> not computed at all
+#     minimum_target_motion 0.0 -> 0.04
+#     wrong_place_settled   terminates -> never fires
+#     move_to xy window     from the config -> the 0.02 default
+#
+# Every number in the campaign report was measured under the first column. This
+# flag keeps all of it and zeroes ONLY the shaping weights, so a sparse arm and
+# a dense arm score the identical task and their success rates are comparable.
+#
+# The success bonuses go to 1.0 rather than 0.0: GRPO normalises the advantage
+# within a group, so the scale is arbitrary, but a reward that is 0 everywhere
+# has no group spread at all and every group would be filtered as degenerate.
+def sparse_binary_reward_requested(metadata: dict[str, Any] | None) -> bool:
+    raw = (metadata or {}).get("sparse_binary_reward", False)
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw)
 
 
 @dataclass(frozen=True)
@@ -115,7 +145,7 @@ class BatchedMoveToDistanceReward:
                 number("move_to_object_z_window_high", 0.20),
             )
         )
-        return cls(
+        reward = cls(
             xy_window_low=low,
             xy_window_high=high,
             xy_reward_scale=scale,
@@ -154,6 +184,20 @@ class BatchedMoveToDistanceReward:
                 "move_to_object_approach_z", 0.5 * (z_low + z_high)
             ),
         )
+        if sparse_binary_reward_requested(values):
+            # xy_window_low/high and z_window_low/high are NOT touched: they are
+            # read back out by `_task_thresholds` as `move_to_xy_low`/
+            # `move_to_xy` and are the move_to SUCCESS TEST, not shaping.
+            # require_z_window likewise gates the predicate.
+            reward = replace(
+                reward,
+                distance_reward_weight=0.0,
+                excess_distance_penalty_weight=0.0,
+                too_close_penalty_weight=0.0,
+                z_penalty_weight=0.0,
+                success_bonus=1.0,
+            )
+        return reward
 
 
 @dataclass(frozen=True)
@@ -281,7 +325,7 @@ class BatchedCatchReleaseDenseReward:
             "move_to_object_distance_reward_weight", 1.0
         )
         default_success_bonus = number("success_bonus", 2.0)
-        return cls(
+        reward = cls(
             distance_reward_scale=max(
                 number("catch_release_distance_reward_scale", default_scale),
                 1.0e-6,
@@ -361,6 +405,31 @@ class BatchedCatchReleaseDenseReward:
                 "pick_success_bonus", default_success_bonus
             ),
         )
+        if sparse_binary_reward_requested(values):
+            # Zeroed: every shaping weight and every intermediate bonus.
+            # KEPT, because the success predicate reads them --
+            # plate_radius, bowl_radius, container_z_tolerance,
+            # wrong_place_settle_margin, the release_max_height gate,
+            # pick_lift_success_height and pick_grasp_height_offset.
+            #
+            # placement_failure_penalty goes to 0 but `wrong_place_settled`
+            # still TERMINATES the episode: the early stop is task structure
+            # (the object has come to rest outside the receptacle and nothing
+            # can recover it), while the -1 was shaping. Keeping the
+            # termination preserves the horizon accounting every measurement
+            # in the report was taken under.
+            reward = replace(
+                reward,
+                distance_reward_weight=0.0,
+                fine_distance_reward_weight=0.0,
+                placement_success_bonus=1.0,
+                placement_failure_penalty=0.0,
+                pick_contact_bonus=0.0,
+                pick_grasp_bonus=0.0,
+                pick_lift_reward_weight=0.0,
+                pick_success_bonus=1.0,
+            )
+        return reward
 
 
 @dataclass

@@ -643,6 +643,22 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--mixed-curriculum-manipulation-min-prob", type=float, default=0.25)
     parser.add_argument("--near-success-instruction-types", nargs="+", default=None)
 
+    parser.add_argument(
+        "--grpo-target-informative-groups",
+        type=int,
+        default=0,
+        help=(
+            "DAPO-style dynamic sampling: keep collecting rollout rounds, "
+            "discarding degenerate groups, until this many groups actually "
+            "carry gradient. 0 keeps the existing records-based behaviour. "
+            "--grpo-dynamic-sampling on its own only MASKS degenerate groups, "
+            "so the batch shrinks to the informative fraction and is never "
+            "refilled -- which is what a binary reward makes expensive: "
+            "1 - p^8 - (1-p)^8 is 0.99 at p=0.48 and 0.11 at p=0.0147. "
+            "Requires --grpo-max-groups-per-update well above groups-per-rank, "
+            "or the loop cannot take a second round."
+        ),
+    )
     parser.add_argument("--validation-every-steps", type=int, default=0)
     parser.add_argument("--validation-episodes-per-instruction", type=int, default=0)
     parser.add_argument(
