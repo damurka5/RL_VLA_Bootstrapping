@@ -647,7 +647,61 @@ uses the smallest slice.
 
 ---
 
-## 13. Predictions made here that came back wrong
+## 13. Phase 6 — the composed task, seeded from a script
+
+The deliverable the whole campaign points at: `put_into` from the object on the
+desk, not pre-grasped. Grasp, carry, release.
+
+**Nothing we had could seed it.** `sft_cycle3` on the composed task scores
+0.0046 (plate) and 0.0114 (bowl). Relabelling free-scene `pick_up` grasps onto
+`put_into` was the obvious alternative and the join measurement killed it: the
+gripper-to-receptacle distance at the grasp has a median of **0.2471 m**
+against the 0.19-0.20 m a placement demonstration starts within, so only 36%
+of the *nearest* receptacle cases and 5% of the farthest land in covered
+territory. Roughly 20% of relabelled episodes would end in a state the bank
+demonstrates, and at a 0.085 grasp rate that is ~70 usable episodes.
+
+**The oracle does it.** `render_cdpr_task_reference_episodes` already defined
+the chain and, for an ungrasped placement start, returns pick_up's approach and
+close followed by the placement carry — eight phases. Driven over a batch it
+scores **1.000 (plate) and 0.427 (bowl)** under the same reward and the same
+success predicate the policy is measured by. Harvested at three caps, 12 rounds
+of 2048 worlds: plate 0.815 pooled, bowl 0.511, replay survival 0.998-1.000.
+
+Result, `sft_phase6`:
+
+| | `sft_cycle3` | **`sft_phase6`** | |
+|---|---|---|---|
+| **composed plate** | 0.0046 | **0.0935** | **×20.3** |
+| **composed bowl** | 0.0114 | **0.0265** | ×2.3 |
+| pick_up @0.06 | 0.1191 | **0.1491** | ×1.3 |
+| move_to @0.19 | 0.4779 | 0.4798 | flat |
+| caught plate @0.20 | 0.7383 | 0.7150 | −0.023 |
+| caught bowl @0.20 | 0.5353 | 0.4794 | −0.056 |
+
+**The composed task is out of the noise.** Plate at 0.0935 means a GRPO group
+of eight contains a success 54% of the time — real contrast, which is exactly
+what `pick_up_iter0` lacked and what the pick_up seed supplied at a nearly
+identical 0.0964 before RL took it to a 0.621 grasp rate. Bowl at 0.0265 gives
+19% and is thinner.
+
+**pick_up rose 25% for free.** The composed demonstrations open with a grasp,
+and although they carry the `put_into` prompt the motion transfers: a slice
+recorded for one instruction improved another. Nothing in the loop predicted
+that.
+
+**Caught placement paid a little**, 2-6% relative. Composed and caught episodes
+share the `put_into` quota, so adding one dilutes the other; that is the trade,
+and it is small.
+
+`reachable` came in at **0.91111**, against 0.90494 and 0.91398 on policy
+demonstrations — so the risk that oracle actions sit outside
+`tanh(prior ± residual_scale)` did not materialise. val_mse was still falling at
+epoch 44 of 45, so this mix wants more epochs than cycle 2's turn at 38.
+
+---
+
+## 14. Predictions made here that came back wrong
 
 * **"The 0.06 rung will hold for a long stretch — that is the ladder working."**
   Said before iter0. The approach half had no gradient to climb with, so waiting
@@ -675,6 +729,9 @@ uses the smallest slice.
   understated: 0.7383 and 0.5353. The reasoning — consolidation beats rebuild —
   was the §7 finding applied forward, and it also predicted pick_up's fall,
   which was not stated at the time and should have been.
+* **"Oracle actions may sit outside the residual's reachable set."** Flagged
+  as the way the oracle route could quietly fail. `reachable` came in at
+  0.91111, indistinguishable from the 0.905-0.914 of policy demonstrations.
 * **"More data will let the SFT train longer."** It let it train longer in
   *steps* (2 490 → 6 840) but *fewer* epochs before overfitting than the epoch
   cap that stopped cycle 1. The two are not the same axis and the report had
