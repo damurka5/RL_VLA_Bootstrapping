@@ -296,19 +296,42 @@ def _episode_terms(
         # An episode terminates on success, on a settled wrong drop, or on
         # timeout, so "used the whole budget" means nothing terminated it.
         timed_out = steps_active >= budget
-        # How far the object was spawned from its receptacle. The composed
-        # scene places it 0.06-0.10 m away (placement_grasp_object_min/max_
-        # distance), and a bowl is a CONCAVE vessel -- an object at the near end
-        # of that range can sit against or inside the wall, where the gripper
-        # cannot get around it. Plate is flat and has no such failure mode,
-        # which is the shape of the measured grasp gap (bowl 0.646 against
-        # plate 0.932 with the ORACLE driving, so it is not perception).
+        # How far the object actually sat from its receptacle at the start.
+        #
+        # MEASURED FROM object_xyz[0], NOT FROM initial_target_xyz, and the
+        # difference is not cosmetic. `initial_target_positions` is captured
+        # BEFORE the placement repositioning: the resetter updates it for
+        # `held_group` and for `grasp_learning` and NOT for
+        # `uncaught_container`, so a composed episode's entry still holds the
+        # pre-repositioning lattice point somewhere in the workspace. Reading
+        # it here reported medians of 0.26-0.35 m against a spawn the config
+        # fixes at 0.06-0.10 m (placement_grasp_object_min/max_distance), which
+        # is how the bug was caught: a plausible-looking number that disagreed
+        # with the knob that produces it.
+        #
+        # object_xyz[0] is one env step of physics after the reset. For an
+        # object at rest on the desk that is a sub-millimetre difference.
         reset_separation = float(
-            np.linalg.norm(
-                recording.initial_target_xyz[world, :2]
-                - reference[0, world, :2]
-            )
+            np.linalg.norm(target[0, world, :2] - reference[0, world, :2])
         )
+
+        # Did the episode END holding the object, or did it lose it?
+        #
+        # This splits `no_release` a second way, orthogonally to `timed_out`.
+        # An episode that ran the whole budget still holding never got to the
+        # release; one that terminated early while NOT holding dropped the
+        # object and was terminated by `wrong_place_settled` -- it grasped, lost
+        # grip without ever opening past the release bar, and the object settled
+        # outside the receptacle. Those are a horizon problem and a grip
+        # retention problem, and they want opposite work.
+        held_now = caught[:, world] & (
+            recording.gripper_opening[:, world] <= 0.94
+        )
+        ended_holding = bool(held_now[last])
+        lost_steps = np.flatnonzero(
+            (~caught[:, world]) & live & ever_grasped_t[:, world]
+        )
+        lost_grip = int(lost_steps[0]) if lost_steps.size else -1
 
         # The release the predicate latches on: the FIRST one, so a policy that
         # opens, re-closes and opens again is scored on the height it first let
@@ -373,6 +396,8 @@ def _episode_terms(
                 "first_grasp_env_step": first_grasp,
                 "first_release_env_step": first_release,
                 "timed_out": timed_out,
+                "ended_holding": ended_holding,
+                "lost_grip_env_step": lost_grip,
                 "env_step_budget": budget,
                 "object_to_receptacle_at_reset_m": round(reset_separation, 5),
                 "release_clearance_m": round(release_clearance, 5),
@@ -535,6 +560,18 @@ def _summarize(
                 "timed_out": len(timed_out),
                 "timed_out_fraction": round(
                     len(timed_out) / max(len(no_release), 1), 4
+                ),
+                # Ended still holding: never reached the release. Ended NOT
+                # holding without having released: dropped it. The oracle's
+                # no_release is the first; the policy's is mostly the second.
+                "ended_holding": sum(
+                    1 for row in no_release if row["ended_holding"]
+                ),
+                "lost_grip": sum(
+                    1
+                    for row in no_release
+                    if int(row["lost_grip_env_step"]) >= 0
+                    and not row["ended_holding"]
                 ),
                 "first_grasp_env_step": _percentiles(
                     np.array(
@@ -831,7 +868,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(
                 f"[decomp]   no_release: {diag['episodes']} episodes, "
                 f"{diag['timed_out']} ran the whole budget "
-                f"({diag['timed_out_fraction']:.4f}); first grasp at "
+                f"({diag['timed_out_fraction']:.4f}), "
+                f"{diag['ended_holding']} ended still holding, "
+                f"{diag['lost_grip']} dropped it; first grasp at "
                 f"{diag['first_grasp_env_step']} of budget "
                 f"{diag['env_step_budget']}",
                 flush=True,

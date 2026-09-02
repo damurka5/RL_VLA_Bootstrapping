@@ -381,22 +381,57 @@ class DecompositionAgreesWithThePredicate(unittest.TestCase):
         rows = self._terms([never])
         self.assertEqual(rows[0]["first_grasp_env_step"], -1)
 
-    def test_spawn_separation_is_measured_from_the_reset_position(self) -> None:
-        """Not from wherever the object ended up.
+    def test_spawn_separation_comes_from_the_first_observed_position(self) -> None:
+        """NOT from initial_target_positions, which is stale for this task.
 
-        The question is whether the bowl's wall obstructed the grasp, and that
-        is decided by where the object STARTED. Measuring it at the end would
-        report the receptacle's own radius for every success and nothing for
-        anything else.
+        The resetter updates `initial_target_group` for `held_group` and for
+        `grasp_learning` and NOT for `uncaught_container`, so a composed
+        episode's entry still holds the pre-repositioning lattice point. Reading
+        it reported medians of 0.26-0.35 m against a spawn the config fixes at
+        0.06-0.10 m, and the only reason that was caught is that the number
+        disagreed with the knob that produces it.
         """
 
-        # The fixture seeds initial_target_positions from object_xy[0] and puts
-        # the receptacle at the origin, so a first-step offset is the answer.
         episode = place((0.08, 0.0), (0.0, 0.0), release_z=CARRY_Z)
-        rows = self._terms([episode])
+        recording, _, _ = _run([episode])
+        # Poison the stale field the tool must NOT be reading. If it is, the
+        # measurement comes back 0.5 instead of 0.08.
+        recording.initial_target_xyz = np.array(
+            [[0.5, 0.0, CARRY_Z]], dtype=np.float32
+        )
+        rows = _episode_terms(recording, _Thresholds(METADATA))
         self.assertAlmostEqual(
             rows[0]["object_to_receptacle_at_reset_m"], 0.08, places=4
         )
+
+    def test_grip_retention_splits_no_release_a_second_way(self) -> None:
+        """Ended holding, versus dropped it.
+
+        Orthogonal to `timed_out`. An episode that ran the budget still holding
+        never reached the release -- a horizon problem. One that terminated
+        early having lost the object grasped and then dropped it -- a grip
+        retention problem. The oracle's no_release is the first kind (100% of
+        plate's ran the whole budget); the policy's is mostly the second.
+        """
+
+        # Grasps, holds to the end, never opens.
+        holder = carry((0.0, 0.0), steps=6)
+        # Grasps at step 0-1, loses the object at step 2, never opens.
+        dropper = _Episode(
+            instruction="put_into_bowl",
+            object_xy=[(0.0, 0.0)] * 6,
+            object_z=[CARRY_Z, CARRY_Z, CARRY_Z, SETTLED_Z, SETTLED_Z, SETTLED_Z],
+            gripper=[0.2] * 6,
+            caught=[True, True, False, False, False, False],
+        )
+        rows = self._terms([holder, dropper])
+        self.assertEqual(
+            [row["blocking_stage"] for row in rows], ["no_release", "no_release"]
+        )
+        self.assertTrue(rows[0]["ended_holding"])
+        self.assertEqual(rows[0]["lost_grip_env_step"], -1)
+        self.assertFalse(rows[1]["ended_holding"])
+        self.assertEqual(rows[1]["lost_grip_env_step"], 2)
 
     def test_non_container_worlds_are_dropped(self) -> None:
         # A composed harvest is a mixed batch; move_to and pick_up worlds have
