@@ -645,6 +645,21 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
 
     parser.add_argument("--validation-every-steps", type=int, default=0)
     parser.add_argument("--validation-episodes-per-instruction", type=int, default=0)
+    parser.add_argument(
+        "--composed-validation-episodes-per-instruction",
+        type=int,
+        default=0,
+        help=(
+            "Run a SECOND validation leg with every container episode started "
+            "UNCAUGHT -- the composed put_into task: grasp, carry, release. 0 "
+            "disables it and the run behaves exactly as before. Reported under "
+            "validation_composed/ rather than replacing validation/, because "
+            "the two are different reset distributions. This exists because "
+            "phase 6 steered 2.25M steps by a metric that was 80-90% "
+            "carry-only episodes while training composition, and the composed "
+            "rate measured afterwards had not improved on the seed."
+        ),
+    )
     parser.add_argument("--validation-seed", type=int, default=1000000)
     parser.add_argument("--validation-video-count", type=int, default=3)
     parser.add_argument("--validation-video-fps", type=float, default=10.0)

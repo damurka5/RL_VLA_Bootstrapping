@@ -1118,6 +1118,7 @@ class BatchedReverseFrontierResetter:
         update_index: int,
         round_index: int,
         allow_prelifted: bool = True,
+        force_uncaught_container: bool = False,
     ) -> BatchedReset:
         """Build one rank-local batch of starts.
 
@@ -1125,6 +1126,24 @@ class BatchedReverseFrontierResetter:
         pick_up stage is a TRAINING aid, and letting it into validation would
         mean the held-out success rate -- the number that says whether the aid
         worked -- was partly measured on episodes that were handed the grasp.
+
+        ``force_uncaught_container`` is the same argument for placement, and it
+        was missing for a whole phase. ``caught_container_fraction`` is also a
+        training aid: it hands the episode its grasp. Phase 6 annealed it only
+        as far as 0.8, so the in-run validation that steered the run was 80-90%
+        carry-only episodes and measured the OLD task while the run was
+        supposedly learning the composed one. Measured afterwards under an
+        explicit uncaught protocol, the run's peak checkpoint scored composed
+        plate 0.0689 and bowl 0.0147 against the seed's 0.0935 and 0.0265 --
+        that is, 2.25M steps bought nothing the caught-dominated metric could
+        see, because the metric moved with the knob rather than with the
+        policy.
+
+        True forces every container group uncaught regardless of the
+        curriculum's current fraction. Note this CHANGES the validation reset
+        distribution, so a composed leg is not comparable with the caught
+        numbers from the same run -- which is why the trainer reports it under
+        its own metric prefix rather than replacing the existing one.
         """
 
         torch = self.torch
@@ -1623,10 +1642,21 @@ class BatchedReverseFrontierResetter:
         # on `shell_group >= 5`, which belongs to the Reverse Frontier shell
         # machinery this phase disables, so reusing it would make the stage
         # silently depend on a system that is switched off.
-        if self.caught_container_fraction < 1.0:
+        caught_fraction = (
+            0.0 if force_uncaught_container else float(self.caught_container_fraction)
+        )
+        if force_uncaught_container:
+            # No draw at all: every container group is uncaught, so the
+            # generator stream is untouched and the composed leg's scenes are
+            # the caught leg's scenes with the handed-over grasp removed. A
+            # rand() here would ALSO reshuffle the scenes, and the composed
+            # number would then differ from the caught one for two reasons at
+            # once.
+            uncaught_container = is_container.clone()
+        elif caught_fraction < 1.0:
             uncaught_container = is_container & (
                 torch.rand((groups,), generator=generator, device=self.device)
-                >= float(self.caught_container_fraction)
+                >= caught_fraction
             )
         else:
             # Draw nothing while the stage is off, so the generator stream --
@@ -3715,8 +3745,15 @@ class RankLocalMJWarpGRPOCollector:
         self,
         *,
         round_index: int,
+        force_uncaught_container: bool = False,
     ) -> ValidationRound:
-        """Run one fixed-seed, inference-only validation batch on this GPU."""
+        """Run one fixed-seed, inference-only validation batch on this GPU.
+
+        ``force_uncaught_container`` runs the COMPOSED placement task: the
+        object starts on the desk and the episode is grasp, carry, release.
+        See ``BatchedReverseFrontierResetter.reset`` for why the default
+        protocol is not that and why this is reported separately.
+        """
 
         torch = self.torch
         if (
@@ -3733,7 +3770,10 @@ class RankLocalMJWarpGRPOCollector:
         # held-out rate on episodes that began already holding the object would
         # make the metric move with the knob rather than with the policy.
         reset = self.resetter.reset(
-            update_index=0, round_index=round_index, allow_prelifted=False
+            update_index=0,
+            round_index=round_index,
+            allow_prelifted=False,
+            force_uncaught_container=bool(force_uncaught_container),
         )
         if reset.group_target_catalog_ids is None:
             raise RuntimeError("Validation reset did not expose target catalogs.")

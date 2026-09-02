@@ -855,6 +855,23 @@ training:
       lock_non_commanded_axes_threshold: 0.05
       validation_every_steps: 250000
       validation_episodes_per_instruction: 256
+      # THE COMPOSED LEG. A second validation rollout at every validation point
+      # with every container episode started UNCAUGHT, reported under
+      # validation_composed/ and never mixed into validation/.
+      #
+      # Why it exists. iter0 annealed placement_caught_fraction only 1.0 -> 0.9
+      # -> 0.8, so validation/ was 80-90% carry-only episodes for the whole run
+      # and its 0.6240 peak described the OLD task. Measured afterwards under an
+      # explicit uncaught protocol, that peak checkpoint scored composed plate
+      # 59/856 = 0.0689 and bowl 10/680 = 0.0147, against the sft_phase6 seed's
+      # 80/856 = 0.0935 and 18/680 = 0.0265 -- 2.25M steps and the composed task
+      # did not improve. The stop rule fired on the wrong number, which is the
+      # same class of error as 4.12's uncapped held-out validation.
+      #
+      # 128 rather than 256: the composed episode carries the 32-decision
+      # horizon floor (placement_grasp_horizon_min_decisions), so it costs about
+      # twice a caught episode, and this leg runs IN ADDITION to the one above.
+      composed_validation_episodes_per_instruction: 128
       validation_seed: 2000000
       validation_video_count: 0
       save_every_steps: 250000

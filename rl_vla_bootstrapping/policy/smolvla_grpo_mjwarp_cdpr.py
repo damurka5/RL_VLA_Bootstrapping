@@ -579,6 +579,20 @@ def _synchronize_validation_rounds(
     return metrics
 
 
+def _composed_validation_enabled(args: Any) -> bool:
+    """Is the second, uncaught-start placement leg switched on?
+
+    Separate from ``_validation_enabled`` because it is a strict addition: a
+    run with it off behaves exactly as before, and a run with it on pays a
+    second rollout at every validation point.
+    """
+
+    return (
+        _validation_enabled(args)
+        and int(getattr(args, "composed_validation_episodes_per_instruction", 0)) > 0
+    )
+
+
 def _run_gpu_validation(
     *,
     args: Any,
@@ -587,12 +601,27 @@ def _run_gpu_validation(
     device: Any,
     rank: int,
     world_size: int,
+    force_uncaught_container: bool = False,
+    episodes_per_instruction: int | None = None,
+    metric_prefix: str = "validation",
 ) -> dict[str, float]:
-    """Evaluate fixed held-out scenes while preserving the training RNG."""
+    """Evaluate fixed held-out scenes while preserving the training RNG.
+
+    ``force_uncaught_container`` runs the COMPOSED placement task -- object on
+    the desk, grasp then carry then release -- instead of the curriculum's
+    current caught fraction. It is reported under ``metric_prefix`` so the
+    existing ``validation/`` series keeps its meaning and its history; the two
+    are different reset distributions and plotting them as one curve is the
+    error this leg exists to stop being possible.
+    """
 
     import torch
 
-    requested = int(args.validation_episodes_per_instruction)
+    requested = int(
+        args.validation_episodes_per_instruction
+        if episodes_per_instruction is None
+        else episodes_per_instruction
+    )
     global_worlds_per_round = (
         int(collector.layout.worlds_per_rank) * int(world_size)
     )
@@ -609,7 +638,10 @@ def _run_gpu_validation(
             torch.manual_seed(validation_seed)
             torch.cuda.manual_seed(validation_seed)
             rounds = [
-                collector.validate_round(round_index=round_index)
+                collector.validate_round(
+                    round_index=round_index,
+                    force_uncaught_container=bool(force_uncaught_container),
+                )
                 for round_index in range(round_count)
             ]
     finally:
@@ -617,6 +649,25 @@ def _run_gpu_validation(
     metrics = _synchronize_validation_rounds(rounds, device=device)
     metrics["validation/requested_episodes"] = float(requested)
     metrics["validation/seed"] = float(args.validation_seed)
+    metrics["validation/force_uncaught_container"] = float(
+        bool(force_uncaught_container)
+    )
+    if metric_prefix != "validation":
+        # EVERY key is renamed, not only the `validation/`-prefixed ones.
+        # `_synchronize_validation_rounds` also emits bare timing keys --
+        # render_time_s, smolvla_time_s, policy_time_s, physics_time_s,
+        # reward_time_s -- and leaving those alone would make the composed
+        # leg's timings overwrite the caught leg's in the single dict the
+        # caller `update()`s them into. Silently: the numbers would still look
+        # like plausible timings, of the wrong rollout.
+        metrics = {
+            (
+                f"{metric_prefix}/{key[len('validation/'):]}"
+                if key.startswith("validation/")
+                else f"{metric_prefix}/{key}"
+            ): value
+            for key, value in metrics.items()
+        }
     return metrics
 
 
@@ -2476,6 +2527,28 @@ def main(argv: Sequence[str] | None = None) -> None:
                     rank=dist_ctx.rank,
                     world_size=dist_ctx.world_size,
                 )
+                # The COMPOSED leg, when it is switched on. A second rollout
+                # over the same held-out seeds with every container episode
+                # started uncaught, so the number that steers the run is the
+                # task the run is trying to learn rather than the one the
+                # curriculum happens to be handing out this update.
+                if _composed_validation_enabled(args):
+                    torch.cuda.empty_cache()
+                    validation_metrics.update(
+                        _run_gpu_validation(
+                            args=args,
+                            collector=validation_collector,
+                            trainer=trainer,
+                            device=device,
+                            rank=dist_ctx.rank,
+                            world_size=dist_ctx.world_size,
+                            force_uncaught_container=True,
+                            episodes_per_instruction=int(
+                                args.composed_validation_episodes_per_instruction
+                            ),
+                            metric_prefix="validation_composed",
+                        )
+                    )
                 validation_metrics.update(
                     {
                         "global_step": float(global_step),
@@ -2505,6 +2578,27 @@ def main(argv: Sequence[str] | None = None) -> None:
                         f"episodes={validation_metrics['validation/episodes']:.0f}",
                         progress=progress,
                     )
+                    if "validation_composed/success_rate" in validation_metrics:
+                        composed_line = " ".join(
+                            f"{name}={validation_metrics[key]:.4f}"
+                            for name in ("put_into_plate", "put_into_bowl")
+                            for key in (
+                                f"validation_composed/by_instruction/{name}"
+                                "/success_rate",
+                            )
+                            if key in validation_metrics
+                        )
+                        _log(
+                            dist_ctx,
+                            "[smolvla-mjwarp] validation COMPOSED "
+                            f"step={global_step} "
+                            "success="
+                            f"{validation_metrics['validation_composed/success_rate']:.4f} "
+                            "episodes="
+                            f"{validation_metrics['validation_composed/episodes']:.0f}"
+                            + (f" {composed_line}" if composed_line else ""),
+                            progress=progress,
+                        )
 
             save_due = (
                 int(args.save_every_steps) > 0
