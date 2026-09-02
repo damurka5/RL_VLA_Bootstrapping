@@ -278,6 +278,40 @@ task:
     # --- COMPOSITION: anneal the pre-grasped start away ----------------
     # ON. Every earlier phase ran this at false, so placement episodes began
     # with the object already held and the task was carry-and-release.
+    # 40, not the default 32. THE MEASURED BINDING CONSTRAINT ON COMPOSITION.
+    #
+    # 32 decisions is 128 env steps, and it was sized on the uncaught branch's
+    # own smoke measurement -- 0/6 at a 64-step budget against 4/6 at 128,
+    # taking 77-119 steps, "9 steps of margin at the worst case". The margin was
+    # not there. Decomposed over 24 576 ORACLE episodes
+    # (tools/audit/placement_failure_decomposition.py):
+    #
+    #   plate no_release  291 episodes, 291 ran the WHOLE budget  (1.000)
+    #   bowl  no_release 2095 episodes, 1735 ran the whole budget (0.828)
+    #   first grasp      plate p50 90  p90 116  |  bowl p50 81  p90 112
+    #
+    # The grasp alone eats most of 128, and the carry-and-release that follows
+    # needs ~40 more. So these episodes never reached the release at all: 279 of
+    # plate's 291 and 1549 of bowl's 2095 ended STILL HOLDING the object. That
+    # is not a policy failure and not a placement failure -- under the oracle,
+    # success|settled is 1.0000 for both receptacles and the object never
+    # bounces out (bowl bounce mean 0.00018 m). It is the clock.
+    #
+    # Convert the timed-out episodes at the settle rate they would have met and
+    # the ORACLE ceiling moves plate 0.9088 -> 0.9315 (against a 0.9317 grasp
+    # ceiling) and bowl 0.4565 -> 0.6009 (against 0.6459). This is the cheapest
+    # ceiling raise available and it lifts the oracle, the policy and the
+    # demonstration yield at once.
+    #
+    # WHY 40. p90 first grasp is 116 env steps and the carry needs ~40, so 156
+    # steps = 39 decisions covers the p90; 40 gives 160 with a little margin.
+    #
+    # COST, AND IT IS NOT ONLY THE UNCAUGHT GROUPS. The rollout loop runs
+    # `max_decisions = reset.horizons.max()` iterations for the whole batch with
+    # `step_active` masking, so any update containing one uncaught group is 40
+    # decisions long rather than 32 -- about +25% rollout wall clock. Accepted:
+    # the projected bowl yield is +32%.
+    placement_grasp_horizon_min_decisions: 40
     placement_caught_curriculum_enabled: true
     placement_caught_object_fraction: 1.0
     # 0.25, the default: a quarter of episodes keep the caught start even at

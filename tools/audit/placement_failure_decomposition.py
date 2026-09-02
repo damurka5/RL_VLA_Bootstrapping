@@ -165,6 +165,13 @@ class _Thresholds:
         # floor under every world's release bar is 0.55 in every config. The
         # per-world part is `release_threshold`, which the recording stores.
         self.release_opening = 0.55
+        # The composed scene's object spawn, so an episode whose object is not
+        # actually inside it can be COUNTED rather than inferred from a mean
+        # sitting above its own p90.
+        self.spawn_min = max(number("placement_grasp_object_min_distance", 0.06), 0.0)
+        self.spawn_max = max(
+            number("placement_grasp_object_max_distance", 0.10), self.spawn_min
+        )
         shared = max(number("put_release_max_height", 0.0), 0.0)
         self.plate_release_max = (
             max(number("put_plate_release_max_height", 0.0), 0.0) or shared
@@ -198,6 +205,8 @@ class _Thresholds:
             "bowl_release_max_height_m": (
                 None if self.bowl_release_max <= 0.0 else round(self.bowl_release_max, 5)
             ),
+            "spawn_min_m": round(self.spawn_min, 5),
+            "spawn_max_m": round(self.spawn_max, 5),
             "release_height_gate_armed": bool(
                 self.plate_release_max > 0.0 or self.bowl_release_max > 0.0
             ),
@@ -600,6 +609,51 @@ def _summarize(
                     )
                 ),
             },
+            # Objects that are not where the resetter put them.
+            #
+            # The spawn is drawn in [min, max] and then CLAMPED to the workspace
+            # bounds, so a receptacle near an edge legitimately produces a
+            # closer object -- that is the low tail. A spawn ABOVE the maximum
+            # cannot come from the draw at all: the object has been moved by
+            # physics before the first observation, which for a CONCAVE
+            # receptacle is what an object spawned intersecting its wall looks
+            # like once the solver resolves the penetration.
+            "spawn_outside_configured_range": {
+                "range_m": [
+                    round(thresholds.spawn_min, 5),
+                    round(thresholds.spawn_max, 5),
+                ],
+                "below_min": sum(
+                    1
+                    for row in subset
+                    if float(row["object_to_receptacle_at_reset_m"])
+                    < thresholds.spawn_min
+                ),
+                "above_max": sum(
+                    1
+                    for row in subset
+                    if float(row["object_to_receptacle_at_reset_m"])
+                    > thresholds.spawn_max
+                ),
+                "above_max_never_grasped": sum(
+                    1
+                    for row in subset
+                    if float(row["object_to_receptacle_at_reset_m"])
+                    > thresholds.spawn_max
+                    and int(row["first_grasp_env_step"]) < 0
+                ),
+                "above_max_distance_m": _percentiles(
+                    np.array(
+                        [
+                            row["object_to_receptacle_at_reset_m"]
+                            for row in subset
+                            if float(row["object_to_receptacle_at_reset_m"])
+                            > thresholds.spawn_max
+                        ],
+                        dtype=np.float64,
+                    )
+                ),
+            },
             # Split by whether the grasp happened at all. If the bowl's wall is
             # obstructing, ungrasped episodes concentrate at the NEAR end of the
             # 0.06-0.10 m spawn range and grasped ones at the far end.
@@ -875,6 +929,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"{diag['env_step_budget']}",
                 flush=True,
             )
+        ejected = entry["spawn_outside_configured_range"]
+        print(
+            f"[decomp]   spawn outside {ejected['range_m']}: "
+            f"{ejected['below_min']} below (workspace clamp), "
+            f"{ejected['above_max']} ABOVE "
+            f"({ejected['above_max_never_grasped']} never grasped) "
+            f"at {ejected['above_max_distance_m']}",
+            flush=True,
+        )
         reset_split = entry["object_to_receptacle_at_reset_m"]
         print(
             f"[decomp]   spawn distance grasped={reset_split['grasped']} "
