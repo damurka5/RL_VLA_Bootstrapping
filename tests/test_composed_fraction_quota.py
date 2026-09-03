@@ -270,5 +270,54 @@ class TheReharvestScriptExposesItTests(unittest.TestCase):
         self.assertNotIn("--composed-fraction", probe)
 
 
+class TheSweepScriptTests(unittest.TestCase):
+    SCRIPT = (
+        __import__("pathlib").Path(__file__).resolve().parents[1]
+        / "scripts/run_cdpr_phase7_composed_fraction_sweep.sh"
+    )
+
+    def setUp(self) -> None:
+        self.text = self.SCRIPT.read_text(encoding="utf-8")
+
+    def test_every_arm_spends_the_same_budget(self) -> None:
+        """Otherwise the comparison is between slice SIZES, not mixes.
+
+        The availability read is reused rather than repeated -- the pool has
+        not changed, so the balanced quota has not either.
+        """
+
+        self.assertIn('--rows-per-instruction "$QUOTA"', self.text)
+        self.assertEqual(self.text.count('--rows-per-instruction "$QUOTA"'), 1)
+
+    def test_the_deciding_pair_runs_before_the_retention_legs(self) -> None:
+        # An interrupted sweep should still leave a complete trade curve.
+        deciding = self.text.index("run_eval \"$tag\" composed")
+        retention = self.text.index("run_eval \"$tag\" pick_up")
+        self.assertLess(deciding, retention)
+
+    def test_it_evaluates_retention_even_though_those_slices_are_identical(self) -> None:
+        # The residual is trained jointly, so a put_into mix can perturb
+        # move_to and pick_up through shared weights even when their data is
+        # byte-identical across arms.
+        for leg in ("pick_up", "move_to", "placement_caught", "composed"):
+            self.assertIn(f'run_eval "$tag" {leg}', self.text)
+
+    def test_the_composed_eval_forces_uncaught_starts(self) -> None:
+        self.assertIn("placement_caught_object_fraction=0.0", self.text)
+        self.assertIn('run_eval "$tag" composed 0.20 "$COMPOSE_CONFIG" "${COMPOSED[@]}"', self.text)
+
+    def test_stages_are_guarded_so_the_sweep_resumes(self) -> None:
+        for artefact in (
+            'dataset7_$tag/demonstrations.npz',
+            'refreshed7_$tag/demonstrations.npz',
+            'sft_phase7_$tag/sil_sft_adapter.pt',
+        ):
+            self.assertIn(f'[[ ! -f "$BANK/{artefact}" ]]', self.text)
+
+    def test_it_reports_realized_and_not_only_requested(self) -> None:
+        self.assertIn("realized_composed_fraction", self.text)
+        self.assertIn("SHORT", self.text)
+
+
 if __name__ == "__main__":
     unittest.main()
