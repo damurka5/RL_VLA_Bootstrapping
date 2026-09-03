@@ -1609,6 +1609,121 @@ def _row_quota_mask(
     return keep
 
 
+def _stratified_row_quota_mask(
+    instruction_ids: np.ndarray,
+    episode_uids: np.ndarray,
+    starts_grasped: np.ndarray,
+    *,
+    rows_per_instruction: int,
+    composed_fraction: float,
+    seed: int,
+) -> tuple[np.ndarray, dict[str, Any]]:
+    """``_row_quota_mask``, but splitting each instruction's budget by stratum.
+
+    WHY THIS EXISTS. The flat quota balances by INSTRUCTION ID and nothing
+    else, so inside ``put_into_*`` the caught-start carries and the composed
+    grasp-carry-releases compete purely by how many of each happen to be in the
+    bank. That made the composed share an ACCIDENT of harvest history: adding
+    the o7 re-harvest raised it as a side effect, composed success rose
+    0.0935 -> 0.1203 (plate) and caught plate fell 0.7150 -> 0.6822 in the same
+    pass, and there was no knob that chose that trade or could undo it.
+
+    THE STRATUM IS INTRINSIC, NOT PROVENANCE. It is
+    ``physical_grasp_at_reset``: did this episode begin with the object already
+    between the fingers, or did it have to make the grasp itself.
+    ``source_group`` cannot do this job -- it carries the start-distance cap,
+    so a caught placement round and a composed round both harvested at 0.20 are
+    the same string. The reset state is the thing that actually differs, and it
+    is stored per world in every recording.
+
+    SPILL, RATHER THAN A SHORT SLICE. If a stratum cannot fill its share the
+    remainder goes to the other one, so the instruction still reaches
+    ``rows_per_instruction``. Asking for 50% composed when only 30% exists
+    should give 30/70, not a half-empty budget -- the alternative silently
+    shrinks the instruction relative to every other instruction in the mix,
+    which is the exact skew the row quota exists to prevent.
+
+    Whole episodes, as ever: ``_episode_split`` holds out whole episodes, and a
+    quota that cut mid-episode would put consecutive decisions of one
+    trajectory on both sides of the train/validation line.
+    """
+
+    keep = np.zeros(instruction_ids.shape, dtype=bool)
+    report: dict[str, Any] = {}
+    budget = int(rows_per_instruction)
+    if budget <= 0:
+        return ~keep, report
+    fraction = min(1.0, max(0.0, float(composed_fraction)))
+    rng = np.random.default_rng(int(seed))
+
+    for instruction_id in np.unique(instruction_ids):
+        rows = np.flatnonzero(instruction_ids == instruction_id)
+        uids = episode_uids[rows]
+        grasped = starts_grasped[rows]
+        # Per EPISODE. Every row of an episode shares its reset, so reading the
+        # stratum off the first row of each uid is exact rather than a vote.
+        unique_uids = np.unique(uids)
+        composed_uids, caught_uids = [], []
+        for uid in unique_uids:
+            first = np.flatnonzero(uids == uid)[0]
+            (caught_uids if bool(grasped[first]) else composed_uids).append(uid)
+
+        chosen: list[str] = []
+        taken = 0
+        realized: dict[str, int] = {}
+        # Composed FIRST, and that ordering is the knob. Whichever stratum is
+        # served first gets its full share before the other spills into the
+        # remainder, and composed is the scarce one this exists to protect.
+        for label, pool, share in (
+            ("composed", composed_uids, fraction),
+            ("caught", caught_uids, 1.0 - fraction),
+        ):
+            target = int(round(budget * share))
+            got = 0
+            for uid in rng.permutation(np.asarray(pool, dtype=object)) if pool else ():
+                if got >= target or taken >= budget:
+                    break
+                size = int((uids == uid).sum())
+                chosen.append(str(uid))
+                got += size
+                taken += size
+            realized[label] = got
+
+        # Spill: whichever stratum still has episodes fills what is left.
+        if taken < budget:
+            remaining = [
+                uid for uid in unique_uids if str(uid) not in set(chosen)
+            ]
+            for uid in rng.permutation(np.asarray(remaining, dtype=object)) if remaining else ():
+                if taken >= budget:
+                    break
+                size = int((uids == uid).sum())
+                chosen.append(str(uid))
+                taken += size
+                first = np.flatnonzero(uids == uid)[0]
+                label = "caught" if bool(grasped[first]) else "composed"
+                realized[label] = realized.get(label, 0) + size
+
+        keep[rows[np.isin(uids, chosen)]] = True
+        total = max(sum(realized.values()), 1)
+        report[_instruction_name(int(instruction_id))] = {
+            "requested_composed_fraction": round(fraction, 4),
+            "decisions": int(sum(realized.values())),
+            "composed_decisions": int(realized.get("composed", 0)),
+            "caught_decisions": int(realized.get("caught", 0)),
+            # What was actually achieved. It differs from the request whenever
+            # a stratum ran out, and that difference is the thing to read: a
+            # request the bank cannot meet is a harvest problem, not a mix
+            # problem, and no amount of reweighting will fix it.
+            "realized_composed_fraction": round(
+                realized.get("composed", 0) / total, 4
+            ),
+            "available_composed_episodes": len(composed_uids),
+            "available_caught_episodes": len(caught_uids),
+        }
+    return keep, report
+
+
 def _build_dataset(
     recordings: Sequence[_Recording],
     labels: Sequence[str] | None = None,
@@ -1616,6 +1731,7 @@ def _build_dataset(
     *,
     rows_per_instruction: int = 0,
     quota_seed: int = 0,
+    composed_fraction: float = -1.0,
     relabel_rules: Mapping[str, Sequence[str]] | None = None,
     frame_paths: Sequence[Path] | None = None,
 ) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
@@ -1675,6 +1791,7 @@ def _build_dataset(
     episode_uids: list[str] = []
     decision_indices: list[int] = []
     groups: list[str] = []
+    starts_grasped: list[bool] = []
     episodes_kept = 0
 
     for rec, group, key in paired:
@@ -1704,6 +1821,9 @@ def _build_dataset(
                 episode_uids.append(uid)
                 decision_indices.append(decision)
                 groups.append(group)
+                starts_grasped.append(
+                    bool(rec.physical_grasp_at_reset[world])
+                )
 
     if not states:
         raise ValueError("No successful episodes to build a dataset from.")
@@ -1722,6 +1842,15 @@ def _build_dataset(
         # ones are scarce and biased, and pooling them silently is the whole
         # selection-bias trap.
         "source_group": np.asarray(groups, dtype="U32"),
+        # Did this episode begin with the object already between the fingers?
+        #
+        # The stratum the composed-fraction quota splits on, and it is carried
+        # per row so a consumer can reweight without re-reading the recordings.
+        # `source_group` cannot substitute: it holds the start-distance cap, so
+        # a caught placement round and a composed one both harvested at 0.20
+        # are the same string. This is the reset state, which is what actually
+        # differs between carry-and-release and grasp-carry-release.
+        "starts_grasped": np.asarray(starts_grasped, dtype=bool),
     }
 
     # BEFORE the quota, and before the relabel, so the budget is spent only on
@@ -1785,12 +1914,27 @@ def _build_dataset(
 
     quota: dict[str, Any] | None = None
     if int(rows_per_instruction) > 0:
-        keep = _row_quota_mask(
-            dataset["instruction_id"],
-            dataset["episode_uid"],
-            rows_per_instruction=int(rows_per_instruction),
-            seed=int(quota_seed),
-        )
+        strata: dict[str, Any] = {}
+        if float(composed_fraction) >= 0.0:
+            keep, strata = _stratified_row_quota_mask(
+                dataset["instruction_id"],
+                dataset["episode_uid"],
+                dataset["starts_grasped"],
+                rows_per_instruction=int(rows_per_instruction),
+                composed_fraction=float(composed_fraction),
+                seed=int(quota_seed),
+            )
+        else:
+            # Negative means OFF, and off is byte-identical to every build
+            # made before the knob existed -- same function, same generator,
+            # same draws. A default of 0.0 would silently mean "no composed
+            # episodes at all", which is a very different and very wrong thing.
+            keep = _row_quota_mask(
+                dataset["instruction_id"],
+                dataset["episode_uid"],
+                rows_per_instruction=int(rows_per_instruction),
+                seed=int(quota_seed),
+            )
         before = int(dataset["state"].shape[0])
         dataset = {key: value[keep] for key, value in dataset.items()}
         episodes_kept = int(len(np.unique(dataset["episode_uid"])))
@@ -1799,6 +1943,12 @@ def _build_dataset(
             "seed": int(quota_seed),
             "decisions_before": before,
             "decisions_after": int(dataset["state"].shape[0]),
+            "composed_fraction": (
+                None
+                if float(composed_fraction) < 0.0
+                else round(float(composed_fraction), 4)
+            ),
+            "by_instruction": strata or None,
         }
 
     # The source success rate travels with every slice. A dataset drawn from a
@@ -2374,6 +2524,26 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--composed-fraction",
+        type=float,
+        default=-1.0,
+        help=(
+            "--mode dataset: within each instruction's row budget, the share "
+            "spent on episodes that did NOT start with the object between the "
+            "fingers -- the composed grasp-carry-release, as against the "
+            "caught-start carry. Negative (the default) is OFF and reproduces "
+            "the flat quota exactly. Without it the composed share is an "
+            "accident of harvest history: it competes with the caught rounds "
+            "purely by how many of each are in the bank, so the o7 re-harvest "
+            "raised it as a SIDE EFFECT -- composed plate 0.0935 -> 0.1203 "
+            "while caught plate fell 0.7150 -> 0.6822, a trade nothing chose "
+            "and nothing could undo. A stratum that cannot fill its share "
+            "spills the remainder to the other, so the instruction still "
+            "reaches its budget; read realized_composed_fraction in "
+            "dataset.json to see what the bank could actually supply."
+        ),
+    )
+    parser.add_argument(
         "--require-frames",
         type=Path,
         nargs="+",
@@ -2649,6 +2819,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             [f"{path.parent.name}/{path.stem}" for path in resolved],
             rows_per_instruction=int(args.rows_per_instruction),
             quota_seed=int(args.quota_seed),
+            composed_fraction=float(args.composed_fraction),
             relabel_rules=relabel_rules,
             frame_paths=[
                 path.expanduser().resolve() for path in args.require_frames

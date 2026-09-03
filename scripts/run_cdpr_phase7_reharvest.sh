@@ -65,6 +65,17 @@ EVAL_WORLDS="${EVAL_WORLDS:-512}"
 # not in phase 6, this is the knob -- lower it, or set REPLAY_LANES=1.
 FRAME_WORLDS="${FRAME_WORLDS:-320}"
 REPLAY_LANES="${REPLAY_LANES:-0}"
+# Share of each instruction's row budget spent on episodes that did NOT start
+# with the object between the fingers. Negative is OFF and reproduces the flat
+# quota exactly, which is what phase 6 and the first phase-7 build ran.
+#
+# WHY IT IS OFF BY DEFAULT HERE. Turning it on changes the mix at the same time
+# as the harvest changes, and then a moved number has two causes. Run this
+# script once at -1 to get the re-harvest effect alone; set it afterwards to
+# choose the trade deliberately. Measured on the first phase-7 build, the
+# UNCHOSEN share was 0.16, and the o7 harvest raising it is what moved composed
+# plate 0.0935 -> 0.1203 while caught plate fell 0.7150 -> 0.6822.
+COMPOSED_FRACTION="${COMPOSED_FRACTION:--1}"
 DRY_RUN="${DRY_RUN:-0}"
 
 # The composed protocol: every container episode starts UNCAUGHT and the
@@ -251,9 +262,27 @@ say "balanced quota = $QUOTA decisions per instruction"
 if [[ ! -f "$BANK/dataset7/demonstrations.npz" ]]; then
   "${PY[@]}" tools/audit/sil_record.py --mode dataset --inputs "${INPUTS[@]}" \
     --require-frames "$BANK"/*_demos/frames_*.npz \
-    --rows-per-instruction "$QUOTA" --output "$BANK/dataset7" 2>&1 \
+    --rows-per-instruction "$QUOTA" --composed-fraction "$COMPOSED_FRACTION" \
+    --output "$BANK/dataset7" 2>&1 \
     | tee "$LOG_DIR/dataset_build.log"
 fi
+# What the mix actually came out as. READ realized_composed_fraction, not the
+# requested one: they differ whenever a stratum ran out, and that difference is
+# a harvest finding rather than a mix finding -- no reweighting fixes a bank
+# that does not hold the episodes.
+"${PY[@]}" - "$BANK/dataset7/dataset.json" <<'PYEOF' || true
+import json, sys
+quota = (json.load(open(sys.argv[1])).get("quota") or {})
+per = quota.get("by_instruction") or {}
+if not per:
+    print("[phase7] composed-fraction OFF; the mix is whatever the bank holds.")
+for name, entry in sorted(per.items()):
+    print(f"[phase7] {name}: composed {entry['composed_decisions']} / "
+          f"{entry['decisions']} decisions = "
+          f"{entry['realized_composed_fraction']} "
+          f"(requested {entry['requested_composed_fraction']}, "
+          f"{entry['available_composed_episodes']} composed episodes available)")
+PYEOF
 
 # --- 4. refresh and train ------------------------------------------------
 if [[ ! -f "$BANK/refreshed7/demonstrations.npz" ]]; then
