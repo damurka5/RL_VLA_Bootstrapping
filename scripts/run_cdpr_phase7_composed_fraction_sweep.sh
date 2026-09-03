@@ -53,29 +53,40 @@ say() { printf '\n[sweep %s] %s\n' "$(date +%H:%M:%S)" "$*"; }
 mkdir -p "$LOG_DIR"
 cd "$REPO_ROOT"
 
-# The same pool the phase-7 build used, so an arm differs from sft_phase7 in
-# the MIX and in nothing else.
-INPUTS=(
-  "$BANK"/pick_up_demos/replay_*.npz
-  "$BANK"/pick_up_iter2_demos/replay_*.npz
-  "$BANK"/move_to_demos/replay_*.npz
-  "$BANK"/m2_demos/replay_*.npz
-  "$BANK"/p3_demos/replay_*.npz
-  "$BANK"/o6_demos/replay_*.npz
-  "$BANK"/o7_demos/replay_*.npz
-)
+# Built from the directories that EXIST, so a bank without c7_demos (the
+# caught-side harvest) still runs and one with it picks the rounds up without
+# an edit. An unmatched glob would otherwise be passed through literally and
+# fail inside sil_record after the availability read had already started.
+SOURCES="${SOURCES:-pick_up_demos pick_up_iter2_demos move_to_demos m2_demos p3_demos o6_demos o7_demos c7_demos}"
+INPUTS=()
+present=()
+for name in $SOURCES; do
+  if compgen -G "$BANK/$name/replay_*.npz" > /dev/null; then
+    INPUTS+=("$BANK/$name"/replay_*.npz)
+    present+=("$name")
+  fi
+done
+[[ ${#INPUTS[@]} -gt 0 ]] || { echo "No replay_*.npz under $BANK for: $SOURCES" >&2; exit 2; }
+# The probe is keyed on WHICH sources went into it. A pool that gained the
+# caught harvest must not reuse the availability read taken before it -- that
+# read is the thing the reachable-floor preflight below trusts, and a stale one
+# would clear arms the new pool can supply while blocking ones it cannot.
+POOL_KEY="$(printf '%s\n' "${present[@]}" | sort | cksum | cut -d" " -f1)"
+PROBE="$BANK/dataset7_probe_$POOL_KEY"
+printf 'pool sources: %s\n' "${present[*]}"
+printf 'availability probe: %s\n' "$PROBE"
 
 # Reuse the availability read rather than repeating it: the pool has not
 # changed, so the balanced quota has not either. Every arm must spend the SAME
 # budget or the comparison is between slice sizes rather than between mixes.
-if [[ ! -f "$BANK/dataset7_probe/dataset.json" ]]; then
+if [[ ! -f "$PROBE/dataset.json" ]]; then
   say "reading availability (frames-filtered)"
   "${PY[@]}" tools/audit/sil_record.py --mode dataset --inputs "${INPUTS[@]}" \
     --require-frames "$BANK"/*_demos/frames_*.npz \
-    --rows-per-instruction 0 --output "$BANK/dataset7_probe" 2>&1 \
+    --rows-per-instruction 0 --output "$PROBE" 2>&1 \
     | tee "$LOG_DIR/dataset_probe.log"
 fi
-QUOTA="$("${PY[@]}" - "$BANK/dataset7_probe/dataset.json" <<'PYEOF'
+QUOTA="$("${PY[@]}" - "$PROBE/dataset.json" <<'PYEOF'
 import json, sys
 by = json.load(open(sys.argv[1]))["by_instruction"]
 print(min(int(v["decisions"]) for v in by.values()))
@@ -89,7 +100,7 @@ say "balanced quota = $QUOTA decisions per instruction, arms: $ARMS"
 # of GPU for one mix under three names. The probe now reports the composition,
 # so this is checkable for free before any of it is spent.
 say "pool composition, per instruction"
-"${PY[@]}" - "$BANK/dataset7_probe/dataset.json" "$QUOTA" "$ARMS" <<'PYEOF'
+"${PY[@]}" - "$PROBE/dataset.json" "$QUOTA" "$ARMS" <<'PYEOF'
 import json, sys
 by = json.load(open(sys.argv[1]))["by_instruction"]
 quota, arms = int(sys.argv[2]), [float(a) for a in sys.argv[3].split()]
@@ -98,7 +109,7 @@ for name, entry in sorted(by.items()):
     pool = entry.get("pool_strata")
     if not pool:
         print(f"[sweep]   {name}: no pool_strata -- the probe predates this "
-              "read; delete dataset7_probe and let it rebuild")
+              "read; delete it and let it rebuild")
         continue
     caught, composed = pool["caught_decisions"], pool["composed_decisions"]
     if not caught or not composed:
