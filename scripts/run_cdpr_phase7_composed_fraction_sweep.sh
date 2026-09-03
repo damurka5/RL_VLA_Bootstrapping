@@ -82,6 +82,49 @@ print(min(int(v["decisions"]) for v in by.values()))
 PYEOF
 )"
 say "balanced quota = $QUOTA decisions per instruction, arms: $ARMS"
+
+# CAN THE POOL EVEN SUPPLY THESE ARMS? The first run of this script could not:
+# three arms at 0.2/0.4/0.6 and every one realized 0.981, because put_into's
+# pool is ~98% composed BY DECISION and the spill had nowhere else to go. Hours
+# of GPU for one mix under three names. The probe now reports the composition,
+# so this is checkable for free before any of it is spent.
+say "pool composition, per instruction"
+"${PY[@]}" - "$BANK/dataset7_probe/dataset.json" "$QUOTA" "$ARMS" <<'PYEOF'
+import json, sys
+by = json.load(open(sys.argv[1]))["by_instruction"]
+quota, arms = int(sys.argv[2]), [float(a) for a in sys.argv[3].split()]
+floors = []
+for name, entry in sorted(by.items()):
+    pool = entry.get("pool_strata")
+    if not pool:
+        print(f"[sweep]   {name}: no pool_strata -- the probe predates this "
+              "read; delete dataset7_probe and let it rebuild")
+        continue
+    caught, composed = pool["caught_decisions"], pool["composed_decisions"]
+    if not caught or not composed:
+        print(f"[sweep]   {name}: single stratum (composed {composed}, "
+              f"caught {caught}) -- the knob is vacuous here, spills to 100%")
+        continue
+    # The lowest composed fraction the pool can realise at this budget: spend
+    # every caught decision it has, and composed for the remainder.
+    floor = max(0.0, (quota - caught) / quota)
+    print(f"[sweep]   {name}: composed {composed} / caught {caught} decisions "
+          f"({pool['composed_decision_fraction']:.3f} composed), "
+          f"{pool['composed_decisions_per_episode']} vs "
+          f"{pool['caught_decisions_per_episode']} decisions per episode")
+    print(f"[sweep]     at a {quota}-decision budget the reachable composed "
+          f"range is {floor:.3f} - 1.000")
+    floors.append(floor)
+if floors:
+    worst = max(floors)
+    blocked = [a for a in arms if a < worst - 0.02]
+    if blocked:
+        print(f"[sweep] WARNING: arms {blocked} sit BELOW the reachable floor "
+              f"{worst:.3f} and will every one realise about {worst:.3f} -- "
+              "the same mix under different names. Harvest more caught-start "
+              "put_into episodes, or sweep inside the reachable range.")
+PYEOF
+
 [[ "$DRY_RUN" == "1" ]] && { say "DRY_RUN=1, stopping before the first GPU stage."; exit 0; }
 
 slug() { printf 'f%s' "${1/./}"; }

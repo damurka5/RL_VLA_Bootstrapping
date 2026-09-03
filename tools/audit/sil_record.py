@@ -1912,6 +1912,43 @@ def _build_dataset(
             relabel_rules,
         )
 
+    # BEFORE the quota. The availability probe runs --rows-per-instruction 0,
+    # so nothing downstream of the quota exists on that path -- and the pool's
+    # stratum composition is exactly what has to be known BEFORE choosing a
+    # --composed-fraction. Without this the first phase-7 sweep ran three arms
+    # at 0.2/0.4/0.6 and every one of them realized 0.981, because the pool is
+    # ~98% composed BY DECISION COUNT and the spill had nowhere else to go. A
+    # sweep that cannot vary its variable is hours of GPU for one number, and
+    # this is the read that says so in advance.
+    pool_strata: dict[str, Any] = {}
+    for instruction_id in sorted(set(instruction_ids)):
+        rows_for_name = dataset["instruction_id"] == instruction_id
+        grasped = dataset["starts_grasped"][rows_for_name]
+        uids = dataset["episode_uid"][rows_for_name]
+        composed_rows = int((~grasped).sum())
+        total_rows = max(int(rows_for_name.sum()), 1)
+        composed_uids = set(uids[~grasped].tolist())
+        caught_uids = set(uids[grasped].tolist())
+        pool_strata[_instruction_name(instruction_id)] = {
+            "composed_decisions": composed_rows,
+            "caught_decisions": int(grasped.sum()),
+            "composed_decision_fraction": round(composed_rows / total_rows, 4),
+            "composed_episodes": len(composed_uids),
+            "caught_episodes": len(caught_uids),
+            # The reason the DECISION fraction and the EPISODE fraction differ
+            # so much here: a composed episode is ~32 decisions and a caught
+            # carry ~5, so equal episode counts give composed ~6x the gradient.
+            # The quota is in decisions, so this is the number that binds.
+            "composed_decisions_per_episode": (
+                round(composed_rows / len(composed_uids), 2)
+                if composed_uids else None
+            ),
+            "caught_decisions_per_episode": (
+                round(int(grasped.sum()) / len(caught_uids), 2)
+                if caught_uids else None
+            ),
+        }
+
     quota: dict[str, Any] | None = None
     if int(rows_per_instruction) > 0:
         strata: dict[str, Any] = {}
@@ -1986,6 +2023,7 @@ def _build_dataset(
         entry["episodes_kept"] = int(
             len(np.unique(dataset["episode_uid"][rows_for_name]))
         )
+        entry["pool_strata"] = pool_strata.get(name)
         entry["decisions_per_episode"] = (
             round(entry["decisions"] / entry["episodes_kept"], 2)
             if entry["episodes_kept"]

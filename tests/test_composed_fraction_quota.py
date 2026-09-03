@@ -270,6 +270,103 @@ class TheReharvestScriptExposesItTests(unittest.TestCase):
         self.assertNotIn("--composed-fraction", probe)
 
 
+class ThePoolCompositionIsVisibleBeforeSweepingTests(unittest.TestCase):
+    """The read that has to exist BEFORE a fraction is chosen.
+
+    The first phase-7 sweep ran three arms at 0.2 / 0.4 / 0.6 and every one
+    realized 0.981, because the pool is ~98% composed BY DECISION COUNT and the
+    spill had nowhere else to go. Three arms, hours of GPU, one mix. The
+    availability probe runs --rows-per-instruction 0, so nothing downstream of
+    the quota exists on that path -- which is why the composition has to be
+    reported independently of the quota.
+
+    The decision/episode distinction is the trap: a composed episode is ~32
+    decisions and a caught carry ~5, so a pool that is a third composed by
+    EPISODE is three quarters composed by DECISION, and the quota binds on
+    decisions.
+    """
+
+    def _pool(self, composed_episodes, caught_episodes):
+        import numpy as np
+
+        from tools.audit.sil_record import _build_dataset
+
+        from test_placement_failure_decomposition import _run, place, carry  # noqa
+
+        # Built directly rather than through the physics fixture: this test is
+        # about the accounting, and a synthetic recording states the episode
+        # lengths that make the point explicit.
+        from tools.audit.sil_record import _Recording
+
+        def make(worlds, grasped, steps, per=4):
+            decisions = steps // per
+            return _Recording(
+                actions=np.zeros((steps, worlds, 5), np.float32),
+                active=np.ones((steps, worlds), bool),
+                success=np.concatenate([
+                    np.zeros((steps - 1, worlds), bool),
+                    np.ones((1, worlds), bool),
+                ]),
+                terminated=np.zeros((steps, worlds), bool),
+                caught_target=np.ones((steps, worlds), bool),
+                ee_xyz=np.zeros((steps, worlds, 3), np.float32),
+                gripper_opening=np.zeros((steps, worlds), np.float32),
+                object_xyz=np.zeros((steps, worlds, 2, 3), np.float32),
+                instruction_ids=np.full((worlds,), PLATE, np.int64),
+                target_slots=np.zeros((worlds,), np.int64),
+                reference_slots=np.ones((worlds,), np.int64),
+                second_reference_slots=np.full((worlds,), -1, np.int64),
+                horizons=np.full((worlds,), decisions, np.int64),
+                initial_target_xyz=np.zeros((worlds, 3), np.float32),
+                support_surface_z=np.zeros((worlds,), np.float32),
+                release_threshold=np.full((worlds,), 0.55, np.float32),
+                target_rest_height=np.zeros((worlds,), np.float32),
+                physical_grasp_at_reset=np.full((worlds,), grasped, bool),
+                instructions=np.array(["put the apple into the plate"] * worlds),
+                actions_per_decision=per, round_index=0, diverged_worlds=0,
+                pick_lift_success_height=0.05,
+                states=np.zeros((decisions, worlds, 518), np.float32),
+                priors=np.zeros((decisions, worlds, per, 5), np.float32),
+                start_distance_cap=0.20,
+            )
+
+        _, stats = _build_dataset(
+            [make(composed_episodes, False, 128), make(caught_episodes, True, 20)],
+            ["o7_demos", "p3_demos"],
+            ["o7/replay_00", "p3/replay_00"],
+            rows_per_instruction=0,
+        )
+        return stats["by_instruction"]["put_into_plate"]["pool_strata"]
+
+    def test_the_probe_reports_it_with_no_quota_at_all(self) -> None:
+        pool = self._pool(200, 400)
+        self.assertIsNotNone(pool)
+        self.assertEqual(pool["composed_episodes"], 200)
+        self.assertEqual(pool["caught_episodes"], 400)
+
+    def test_the_decision_fraction_is_the_one_that_binds(self) -> None:
+        # A third of the EPISODES and three quarters of the DECISIONS. Reading
+        # the episode share would predict a mix the quota cannot produce.
+        pool = self._pool(200, 400)
+        episode_share = pool["composed_episodes"] / (
+            pool["composed_episodes"] + pool["caught_episodes"]
+        )
+        self.assertAlmostEqual(episode_share, 1 / 3, places=2)
+        self.assertAlmostEqual(pool["composed_decision_fraction"], 0.7619, places=3)
+        self.assertGreater(pool["composed_decision_fraction"], episode_share)
+
+    def test_it_reports_the_length_asymmetry_that_causes_that(self) -> None:
+        pool = self._pool(200, 400)
+        self.assertAlmostEqual(pool["composed_decisions_per_episode"], 32.0, places=1)
+        self.assertAlmostEqual(pool["caught_decisions_per_episode"], 5.0, places=1)
+
+    def test_a_single_stratum_pool_reports_the_absent_side_as_zero(self) -> None:
+        pool = self._pool(200, 0)
+        self.assertEqual(pool["caught_episodes"], 0)
+        self.assertIsNone(pool["caught_decisions_per_episode"])
+        self.assertEqual(pool["composed_decision_fraction"], 1.0)
+
+
 class TheSweepScriptTests(unittest.TestCase):
     SCRIPT = (
         __import__("pathlib").Path(__file__).resolve().parents[1]
@@ -317,6 +414,27 @@ class TheSweepScriptTests(unittest.TestCase):
     def test_it_reports_realized_and_not_only_requested(self) -> None:
         self.assertIn("realized_composed_fraction", self.text)
         self.assertIn("SHORT", self.text)
+
+    def test_it_refuses_arms_the_pool_cannot_reach(self) -> None:
+        """The check the first sweep did not have.
+
+        Three arms at 0.2 / 0.4 / 0.6 all realised 0.981, because put_into's
+        pool is ~98% composed by DECISION and the spill had nowhere else to go.
+        The reachable floor is (quota - caught_decisions) / quota, and an arm
+        below it is the same mix under a different name.
+        """
+
+        self.assertIn("reachable composed", self.text)
+        self.assertIn("(quota - caught) / quota", self.text)
+        self.assertIn("WARNING: arms", self.text)
+
+    def test_the_preflight_runs_before_the_first_gpu_stage(self) -> None:
+        pool = self.text.index("pool composition, per instruction")
+        first_gpu = self.text.index("sil_refresh_priors.py")
+        self.assertLess(pool, first_gpu)
+        # And before DRY_RUN exits, so DRY_RUN=1 shows the reachable range.
+        dry = self.text.index('DRY_RUN=1, stopping before the first GPU stage')
+        self.assertLess(pool, dry)
 
 
 if __name__ == "__main__":
