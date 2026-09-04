@@ -2173,6 +2173,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 prelifted_groups,
                 ever_grasped_groups,
                 skips_approach_groups,
+                caught_start_groups,
             ) = (
                 concatenate_collector_rounds(rounds)
             )
@@ -2277,6 +2278,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                 # that skipped the thing the cap measures.
                 skips_approach_groups,
                 ever_grasped_groups,
+                # Splits the container instructions' approach rate into the
+                # caught carry and the composed grasp-carry-release. Without it
+                # the gate reads a blend whose mixture IS the caught-fraction
+                # knob, which is the phase-6 error in a second place.
+                caught_start_groups,
             )
             local_metrics = {
                 **rollout_metrics,
@@ -2385,6 +2391,25 @@ def main(argv: Sequence[str] | None = None) -> None:
             # other instruction's success IS the thing the approach achieves.
             # Defaulting to success therefore makes a newly added instruction
             # correct rather than silently frozen.
+            # ...and one more split, for the composed task. A caught placement
+            # episode DOES perform an approach, so it sits inside normal_start
+            # by construction, and while the caught-fraction curriculum is
+            # annealing that pair reports a BLEND whose mixture is the knob's
+            # current value. Measured on phase 7 at caught fraction 0.8: the
+            # blended gate read 0.42 for put_into_plate and promoted the cap
+            # four times, while the composed validation of the same policy read
+            # 0.013 and its composed bowl reached exactly 0.000. The cap
+            # advanced on the carry-only task the run had already learned.
+            #
+            # approach_gate_uncaught_only routes the container instructions to
+            # the uncaught-start pair instead. It FALLS BACK to the blended pair
+            # whenever an update produced no uncaught worlds -- at caught
+            # fraction 1.0 there are none, and a gate reading 0/0 does not fail,
+            # it freezes, which is the failure the three comments above are all
+            # about.
+            gate_uncaught_only = _metadata_flag(
+                task_metadata, "approach_gate_uncaught_only", False
+            )
             instruction_pass_rates = {}
             for name in configured_instruction_names:
                 worlds_for_name = synchronized_metrics.get(
@@ -2395,6 +2420,14 @@ def main(argv: Sequence[str] | None = None) -> None:
                     if name in _GRASP_GATED_INSTRUCTIONS
                     else f"instruction_successes_normal_start/{name}"
                 )
+                if gate_uncaught_only and name not in _GRASP_GATED_INSTRUCTIONS:
+                    uncaught_worlds = synchronized_metrics.get(
+                        f"instruction_worlds_uncaught_start/{name}", 0.0
+                    )
+                    uncaught_key = f"instruction_successes_uncaught_start/{name}"
+                    if uncaught_worlds > 0.0 and uncaught_key in synchronized_metrics:
+                        worlds_for_name = uncaught_worlds
+                        gate_key = uncaught_key
                 if worlds_for_name > 0.0 and gate_key in synchronized_metrics:
                     instruction_pass_rates[name] = (
                         synchronized_metrics.get(gate_key, 0.0)

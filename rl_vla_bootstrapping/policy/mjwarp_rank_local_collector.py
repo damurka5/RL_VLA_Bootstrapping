@@ -201,6 +201,7 @@ def instruction_outcome_counts(
     instruction_ids: Mapping[str, int],
     prelifted_groups: Any | None = None,
     ever_grasped: Any | None = None,
+    caught_groups: Any | None = None,
 ) -> dict[str, float]:
     """Per-instruction success/world counts, whole-run and approach-only.
 
@@ -214,6 +215,21 @@ def instruction_outcome_counts(
     which would promote the start-distance cap on the strength of episodes that
     skip the approach entirely.
 
+    A THIRD pair when ``caught_groups`` is supplied:
+    ``instruction_successes_uncaught_start/{name}`` counts only the groups that
+    did NOT begin with the object between the fingers -- the composed
+    grasp-carry-release rather than the caught carry.
+
+    The normal-start pair cannot substitute, and this is the same class of
+    error as gating on a pre-grasped pick_up. A caught placement episode DOES
+    perform an approach, so it is inside `normal_start` by construction, and
+    while the caught-fraction curriculum is annealing the pair reports a BLEND
+    whose mixture is the knob's value. Measured on phase 7 at caught fraction
+    0.8: the blended gate read 0.42 for put_into_plate while the composed
+    validation of the same policy read 0.013, so the cap promoted four times on
+    a number that mostly described the carry-only task the run had already
+    learned.
+
     Plain counts, so the update-boundary all-reduce turns them into global sums
     and every rank derives the same rate without an extra collective.
     """
@@ -225,6 +241,9 @@ def instruction_outcome_counts(
     prelifted = (
         None if prelifted_groups is None
         else prelifted_groups.to(dtype=torch.bool)
+    )
+    caught = (
+        None if caught_groups is None else caught_groups.to(dtype=torch.bool)
     )
     for name, instruction_id in instruction_ids.items():
         selected = task_ids == int(instruction_id)
@@ -244,6 +263,14 @@ def instruction_outcome_counts(
         if ever_grasped is not None:
             counts[f"instruction_grasps_normal_start/{name}"] = float(
                 ever_grasped[approach].sum().item()
+            )
+        if caught is not None:
+            uncaught = approach & ~caught
+            counts[f"instruction_successes_uncaught_start/{name}"] = float(
+                successes[uncaught].sum().item()
+            )
+            counts[f"instruction_worlds_uncaught_start/{name}"] = float(
+                uncaught.sum().item() * candidates
             )
     return counts
 
@@ -2467,6 +2494,13 @@ class CollectorRound:
     # rollout budget, so gating the approach on success made the cap wait on a
     # skill the approach cannot influence.
     candidate_ever_grasped: Any | None = None
+    # Per-group "this container start was handed its grasp".
+    #
+    # What separates the caught carry from the composed grasp-carry-release,
+    # and therefore what the approach gate has to be able to exclude while the
+    # caught-fraction curriculum is annealing. Taken from the reset rather than
+    # from the episode, because it is a property of the START.
+    group_caught_start: Any | None = None
     # Per-group "this group carried gradient on at least one return stream".
     #
     # The unit dynamic sampling has to count. `loss_mask` counts RECORDS, and a
@@ -3515,6 +3549,13 @@ class RankLocalMJWarpGRPOCollector:
             (prelifted_world | aligned_world)
             .reshape(self.layout.groups_per_rank, group_size)[:, 0]
         )
+        # Per GROUP, like every other stage mask here: the caught branch is
+        # drawn per group so all eight candidates share it, and taking column 0
+        # is exact rather than a vote.
+        caught_start_group_mask = (
+            reset.physical_grasp.to(dtype=torch.bool)
+            .reshape(self.layout.groups_per_rank, group_size)[:, 0]
+        )
 
         def group_std_mean(selected: Any) -> float:
             count = int(selected.sum().item())
@@ -3763,6 +3804,7 @@ class RankLocalMJWarpGRPOCollector:
             vla_records=vla_records,
             group_prelifted=prelifted_group_mask,
             group_skips_approach=skips_approach_group_mask,
+            group_caught_start=caught_start_group_mask,
             candidate_ever_grasped=(first_grasp_step >= 0).reshape(
                 self.layout.groups_per_rank, group_size
             ),
@@ -4038,7 +4080,7 @@ class RankLocalMJWarpGRPOCollector:
 def concatenate_collector_rounds(
     rounds: Sequence[CollectorRound],
 ) -> tuple[
-    dict[str, Any], Any, Any, Any, Any, Any, dict[str, float], Any, Any, Any
+    dict[str, Any], Any, Any, Any, Any, Any, dict[str, float], Any, Any, Any, Any
 ]:
     if not rounds:
         raise ValueError("At least one collector round is required.")
@@ -4062,6 +4104,11 @@ def concatenate_collector_rounds(
     prelifted_groups = (
         torch.cat([item.group_prelifted for item in rounds], dim=0)
         if all(item.group_prelifted is not None for item in rounds)
+        else None
+    )
+    caught_start_groups = (
+        torch.cat([item.group_caught_start for item in rounds], dim=0)
+        if all(item.group_caught_start is not None for item in rounds)
         else None
     )
     skips_approach_groups = (
@@ -4098,4 +4145,5 @@ def concatenate_collector_rounds(
         prelifted_groups,
         ever_grasped,
         skips_approach_groups,
+        caught_start_groups,
     )

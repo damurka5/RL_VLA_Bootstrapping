@@ -122,6 +122,32 @@ class TheSparseJointLauncherTests(unittest.TestCase):
         ):
             self.assertIn(probe, self.text, probe)
 
+    def test_the_preflight_refuses_a_sparse_run_with_no_exploration(self) -> None:
+        """The check that would have saved 13 hours.
+
+        Phase 7's first attempt ran 2.1M steps at episode_offset_std
+        [0,0,0,0,0]: physical_release_rate 0.0771 -> 0.0535, grasp 0.2633 ->
+        0.2084, entropy and log_std flat to four decimals, composed bowl to
+        0.0000. Under a binary reward nothing pays for keeping the release once
+        it drifts.
+        """
+
+        for probe in (
+            # Matched as the source writes them: these messages are split
+            # across adjacent string literals.
+            "channel is zero. Under a sparse reward nothing then pays",
+            "not on the",
+            "GRIPPER channel (index 4), which is the one the release needs",
+            'offsets = list(getattr(args, "episode_offset_std", []) or [])',
+            "if not any(float(v) > 0.0 for v in offsets):",
+        ):
+            self.assertIn(probe, self.text, probe)
+
+    def test_the_preflight_refuses_training_a_task_it_does_not_score(self) -> None:
+        self.assertIn("placement_caught_object_fraction", self.text)
+        self.assertIn("if caught > 0.75:", self.text)
+        self.assertIn("approach_gate_uncaught_only is off", self.text)
+
     def test_the_preflight_runs_before_the_run_directory_is_made(self) -> None:
         preflight = self.text.index("[phase7] preflight clean")
         mkdir = self.text.index('mkdir -p "$RUN_DIR"')
@@ -169,6 +195,42 @@ class ThePreflightAgreesWithTheConfigsTests(unittest.TestCase):
             "composed_val": int(args.composed_validation_episodes_per_instruction),
             "horizon": int(metadata.get("placement_grasp_horizon_min_decisions", 32)),
         }
+
+    def test_the_config_now_trains_what_it_scores(self) -> None:
+        from rl_vla_bootstrapping.core.config import load_project_config
+
+        metadata = dict(
+            load_project_config(
+                ROOT / "configs/examples/cdpr_smolvla_phase7_sparse_joint.yaml"
+            ).task.metadata or {}
+        )
+        # Half of every container batch is the composed task from step 0,
+        # against the first attempt's 10-20%.
+        self.assertLessEqual(
+            float(metadata["placement_caught_object_fraction"]), 0.75
+        )
+        # ...and the caught stage is not switched off entirely: it is what
+        # holds the carry the composed task ends with.
+        self.assertGreater(float(metadata["placement_caught_object_fraction"]), 0.0)
+        self.assertTrue(metadata["approach_gate_uncaught_only"])
+
+    def test_exploration_is_on_the_gripper_channel(self) -> None:
+        import yaml
+
+        raw = yaml.safe_load(
+            (ROOT / "configs/examples/cdpr_smolvla_phase7_sparse_joint.yaml")
+            .read_text(encoding="utf-8")
+        )
+        args = next(v["args"] for v in raw["training"].values()
+                    if isinstance(v, dict) and "args" in v)
+        offsets = args["episode_offset_std"]
+        # Order is [x, y, z, yaw, gripper]; only the release is perturbed.
+        self.assertEqual(len(offsets), 5)
+        self.assertGreater(float(offsets[4]), 0.0)
+        self.assertTrue(all(float(v) == 0.0 for v in offsets[:4]))
+        # Below the 0.3 the compose config argues for: that value stalled the
+        # approach ladder at the upper rungs, and this run is at them.
+        self.assertLess(float(offsets[4]), 0.3)
 
     def test_the_sparse_joint_config_passes_every_check(self) -> None:
         v = self._verdict("cdpr_smolvla_phase7_sparse_joint.yaml")

@@ -145,11 +145,56 @@ if horizon < 40:
     failures.append(f"placement_grasp_horizon_min_decisions is {horizon}; the "
                     "composed episode does not fit in 32")
 
+# THE CHECK THAT WOULD HAVE SAVED 13 HOURS. A sparse run with every exploration
+# channel zeroed has nothing that pays for keeping a behaviour once it starts
+# to drift: under a binary reward a carry that never opens the gripper scores
+# exactly what one that never moved scores. Phase 7's first attempt ran 2.1M
+# steps that way -- physical_release_rate 0.0771 -> 0.0535, grasp 0.2633 ->
+# 0.2084, entropy and log_std flat to four decimals -- and this file's own note
+# claimed episode_offset was on while the value read [0,0,0,0,0].
+offsets = list(getattr(args, "episode_offset_std", []) or [])
+if not any(float(v) > 0.0 for v in offsets):
+    failures.append(
+        f"episode_offset_std is {offsets or 'unset'} -- every exploration "
+        "channel is zero. Under a sparse reward nothing then pays for keeping "
+        "the release, and it erodes. Set the gripper channel (index 4)."
+    )
+elif len(offsets) >= 5 and float(offsets[4]) <= 0.0:
+    failures.append(
+        f"episode_offset_std is {offsets}: exploration is on, but not on the "
+        "GRIPPER channel (index 4), which is the one the release needs."
+    )
+
+# The run must train the task it is scored on. Phase 7 measured 100% composed
+# and trained 10-20% of it, which is the phase-6 error with a better metric
+# bolted on.
+caught = float(metadata.get("placement_caught_object_fraction", 1.0))
+if caught > 0.75:
+    failures.append(
+        f"placement_caught_object_fraction is {caught}: {caught:.0%} of "
+        "container episodes start already holding the object, while "
+        "validation_composed scores 100% composed. That is what phase 7 did."
+    )
+
+# And the gate must read the composed task rather than a blend whose mixture is
+# the caught knob.
+gate_uncaught = str(
+    metadata.get("approach_gate_uncaught_only", False)
+).strip().lower() in {"1", "true", "yes", "on"}
+if not gate_uncaught:
+    failures.append(
+        "approach_gate_uncaught_only is off, so the approach curriculum "
+        "promotes on a blend of caught carries and composed episodes. On "
+        "phase 7 that gate read 0.42 while the composed validation read 0.013."
+    )
+
 print(f"[phase7] sparse={sparse_binary_reward_requested(metadata)} "
       f"instructions={len(instructions)} groups/rank={groups} "
       f"max_rounds={rounds} target_groups={args.grpo_target_informative_groups} "
       f"composed_val={args.composed_validation_episodes_per_instruction} "
       f"horizon={horizon}")
+print(f"[phase7] caught_fraction={caught} gate_uncaught_only={gate_uncaught} "
+      f"episode_offset_std={offsets}")
 if failures:
     for line in failures:
         print(f"[phase7] REFUSING: {line}", file=sys.stderr)

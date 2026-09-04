@@ -3140,7 +3140,11 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         first = torch.tensor([True, False])
         second = torch.tensor([False, True])
         merged = concatenate_collector_rounds([make(first), make(second)])
-        self.assertEqual(len(merged), 10)
+        # The arity is pinned on purpose: every caller unpacks this tuple
+        # positionally, so a field appended without updating them mis-binds
+        # silently. 11 since group_caught_start joined, which the approach gate
+        # needs to separate the composed episodes from the caught carries.
+        self.assertEqual(len(merged), 11)
         self.assertTrue(
             torch.equal(merged[7], torch.tensor([True, False, False, True]))
         )
@@ -3148,6 +3152,48 @@ class CDPRPreliftedPickUpStartTests(unittest.TestCase):
         # so the gate falls back to counting every world.
         partial = concatenate_collector_rounds([make(first), make(None)])
         self.assertIsNone(partial[7])
+        # Same contract for the caught mask: absent on any round disables the
+        # split, and the gate falls back to the blended pair rather than
+        # reading 0/0 and freezing.
+        self.assertIsNone(merged[10])
+
+    def test_the_caught_start_mask_survives_concatenation(self):
+        """What the approach gate uses to exclude caught carries.
+
+        A caught placement episode performs an approach, so it is inside
+        normal_start by construction; separating it needs a mask that survives
+        the merge, exactly as the pre-grasped one does.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            CollectorRound,
+            concatenate_collector_rounds,
+        )
+
+        def make(caught):
+            return CollectorRound(
+                records={"advantage": torch.zeros((2,))},
+                loss_mask=torch.ones((2,)),
+                candidate_rewards=torch.zeros((2, 8)),
+                candidate_success=torch.zeros((2, 8), dtype=torch.bool),
+                group_instruction_ids=torch.zeros((2,), dtype=torch.int64),
+                group_shell_ids=torch.zeros((2,), dtype=torch.int64),
+                metrics={"rollout_time_s": 1.0},
+                group_caught_start=caught,
+            )
+
+        merged = concatenate_collector_rounds(
+            [make(torch.tensor([True, False])), make(torch.tensor([False, True]))]
+        )
+        self.assertTrue(
+            torch.equal(merged[10], torch.tensor([True, False, False, True]))
+        )
+        partial = concatenate_collector_rounds(
+            [make(torch.tensor([True, False])), make(None)]
+        )
+        self.assertIsNone(partial[10])
 
     def test_the_gate_mask_excludes_aligned_starts_as_well_as_pregrasped(self):
         """An aligned start performs no approach either.

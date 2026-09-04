@@ -20,7 +20,7 @@ remote:
     - WHY SPARSE. Per-family DENSE rewards are why RL had to be per-family, and per-family RL is why there is a sawtooth - the family most recently trained is strongest while the others are partially rebuilt by SFT. A binary outcome reward is instruction-agnostic, so all four families share one return stream, one advantage normalisation and one batch. That attacks the sawtooth's cause rather than compensating for it with retention SFT.
     - SPARSE IS A FLAG, NOT A MISSING REWARD OBJECT. The binary reward is already the base - evaluate_active_sparse_tasks builds where(success, sparse_success_reward, sparse_failure_reward) and the dense terms overwrite it per instruction. Dropping the reward objects would ALSO change the success predicate, because they own its geometry - plate radius 0.091 -> 0.03, bowl 0.057 -> 0.03, target_has_settled from required to not computed, minimum_target_motion 0.0 -> 0.04, wrong_place_settled from terminating to never firing. Every number in the campaign report was measured under the first column. sparse_binary_reward zeroes ONLY the shaping weights and leaves all of that alone, which is what makes the sparse and dense arms comparable.
     - THE SUCCESS BONUSES GO TO 1.0, NOT 0.0. GRPO normalises within the group so the scale is arbitrary, but a reward that is zero everywhere has no group spread and every group would be filtered as degenerate.
-    - WHAT SPARSE DOES NOT SURVIVE. The release sat behind an EXPLORATION barrier, not a difficulty one - physical_release_rate was 0.0001 on the first update of the previous run and log_std had fallen to -1.86, and random exploration does not produce that. Dense hover shaping plus episode_offset marginal scoring is what discovered it. Under a binary reward a carry that never opens the gripper scores exactly what one that never moved scores. That is survivable for a family already above the noise floor and fatal for one at zero, which is why episode_offset stays on and why this config is a warm start from sft_phase6 rather than a cold one. The same premise is SimpleVLA-RL's - its LIBERO-Long 17.3 -> 91.7 starts from an SFT-supplied 17.3, not from zero.
+    - WHAT SPARSE DOES NOT SURVIVE. The release sat behind an EXPLORATION barrier, not a difficulty one - physical_release_rate was 0.0001 on the first update of the previous run and log_std had fallen to -1.86, and random exploration does not produce that. Dense hover shaping plus episode_offset marginal scoring is what discovered it. Under a binary reward a carry that never opens the gripper scores exactly what one that never moved scores. That is survivable for a family already above the noise floor and fatal for one at zero, which is why this config is a warm start rather than a cold one. NOTE, and this was wrong when first written here: episode_offset was NOT on. It read [0,0,0,0,0], inherited from the placement lineage where it is off deliberately, and phase 7 ran 2.1M steps with no exploration safeguard at all while physical_release_rate fell 0.0771 -> 0.0535. The gripper channel is set below. The same premise is SimpleVLA-RL's - its LIBERO-Long 17.3 -> 91.7 starts from an SFT-supplied 17.3, not from zero.
     - DYNAMIC SAMPLING, AND THE ARITHMETIC IT EXISTS FOR. A binary reward gives gradient only where a group holds both a success and a failure; the informative fraction is 1 - p^8 - (1-p)^8. Measured on sft_phase6 - move_to 0.480 -> 0.99, plate caught 0.715 -> 0.93, bowl caught 0.479 -> 0.99, pick_up 0.149 -> 0.73, composed plate 0.069 -> 0.44, composed bowl 0.0147 -> 0.11. Five legs of six are ready now. Composed bowl needs ~9 rollouts per update of gradient and is also the family whose scripted ORACLE only reaches 0.455, so it wants the ceiling work in tools/audit/placement_failure_decomposition.py before it wants RL.
     - grpo_dynamic_sampling ON ITS OWN ONLY MASKS. It marks degenerate groups and drops them, so the batch shrinks to the informative fraction; nothing refills it. The refill loop existed and could never take a second round - max_rounds is grpo_max_groups_per_update / groups_per_rank, and the compose config set 64 against 512 worlds at group 8 = 64 groups, so it was exactly 1. The records target could not save it either, because 512 worlds at up to 128 records each is ~65k against a 1024 target. Both budgets are raised below and grpo_target_informative_groups now drives the loop.
     - WATCH usable_groups_collected / groups_collected AND rounds_collected. The first is the realised informative fraction and the second is the oversample factor spent to reach it. A run sitting near 0.11 is paying ~9 rollouts per update; that is the signal to fix the task, not to raise the budget again.
@@ -312,8 +312,38 @@ task:
     # decisions long rather than 32 -- about +25% rollout wall clock. Accepted:
     # the projected bowl yield is +32%.
     placement_grasp_horizon_min_decisions: 40
+    # THE APPROACH GATE READS THE UNCAUGHT EPISODES ONLY.
+    #
+    # A caught placement episode DOES perform an approach, so it sits inside
+    # instruction_successes_normal_start by construction, and while the caught
+    # fraction is annealing that number is a BLEND whose mixture is the knob's
+    # current value. Measured on phase 7 at caught fraction 0.8: the gate read
+    # 0.42 for put_into_plate and promoted the cap 0.02 -> 0.17 in four steps,
+    # while the composed validation of the same policy read 0.013. The cap
+    # advanced on the carry-only task the run had already learned -- the
+    # phase-6 error, in a second place.
+    #
+    # Falls back to the blended pair on any update with no uncaught worlds, so
+    # the gate cannot read 0/0 and freeze. That failure mode has cost this
+    # curriculum three separate runs and is what the comments around
+    # _GRASP_GATED_INSTRUCTIONS are all about.
+    approach_gate_uncaught_only: true
     placement_caught_curriculum_enabled: true
-    placement_caught_object_fraction: 1.0
+    # 0.5, NOT 1.0. THE RUN MUST TRAIN THE TASK IT IS SCORED ON.
+    #
+    # iter0 annealed 1.0 -> 0.9 -> 0.8 across 2.25M steps, so 80-90% of
+    # container episodes were still carry-only while the metric that decides
+    # the phase is 100% composed. Phase 7 repeated it exactly: 2.1M steps,
+    # caught fraction reached 0.8, and validation_composed/put_into_bowl went
+    # 0.0341 -> 0.0000 while validation_composed/put_into_plate went 0.0362 ->
+    # 0.0132. The composed measurement was added and the composed TRAINING
+    # FRACTION was left where phase 6 had it.
+    #
+    # Starting at 0.5 puts half of every container batch on the composed task
+    # from step 0, and the curriculum below still anneals toward its 0.25 floor.
+    # Not 0.0: the caught stage is what holds the carry the composed task ends
+    # with, and a policy that only ever saw composed starts would lose it.
+    placement_caught_object_fraction: 0.5
     # 0.25, the default: a quarter of episodes keep the caught start even at
     # the floor. Deliberately not 0.0. The caught stage is what keeps the CARRY
     # trained, and pick_up's history is explicit that withdrawing a stage whose
@@ -857,7 +887,33 @@ training:
       # it by driving the policy's own gripper mean down. At cap 0.02 an early
       # release lands inside the radius, so the offset is safe there; if success
       # falls as the cap reaches the upper rungs, cut this before anything else.
-      episode_offset_std: [0.0, 0.0, 0.0, 0.0, 0.0]
+      # 0.15 ON THE GRIPPER CHANNEL. Order is [x, y, z, yaw, gripper].
+      #
+      # WHY IT IS NOT ZERO. Phase 7 ran 2.1M steps at all-zeros and
+      # physical_release_rate fell 0.0771 -> 0.0535 while physical_grasp_rate
+      # fell 0.2633 -> 0.2084 and entropy_mean and log_std_mean did not move at
+      # all (-1.4997 -> -1.4963, -1.4597 -> -1.4592). Under a binary reward a
+      # carry that never opens the gripper scores exactly what one that never
+      # moved scores, so nothing pays for keeping the release once it starts to
+      # drift. The block above sets out the arithmetic: the i.i.d. per-step
+      # sampler puts the release 7.7 sigma out, and a per-episode offset turns
+      # a GRPO group into a finite-difference probe along the sustained-bias
+      # direction, which is the estimator this response needs.
+      #
+      # WHY IT IS NOT 0.3, WHICH IS THE VALUE THAT BLOCK ARGUES FOR. At 0.3 the
+      # documented failure is that the whole-episode offset also perturbs the
+      # phases where opening is wrong, and it stalled the approach ladder and
+      # collapsed entropy on an earlier run. That block's own warning is "if
+      # success falls as the cap reaches the upper rungs, cut this before
+      # anything else" -- and phase 7 is AT the upper rungs (plate 0.17, bowl
+      # 0.13), not at the 0.02 rung where it was shown safe.
+      #
+      # 0.15 is an interpolation between two measured points, not a measured
+      # optimum: 0.0 lets the release erode, 0.3 stalls the ladder. It is the
+      # first thing to cut, and curriculum/start_max_goal_distance_m ceasing to
+      # advance while the pass-rate EMA sits above the promote gate is the
+      # signal to cut it.
+      episode_offset_std: [0.0, 0.0, 0.0, 0.0, 0.15]
       entropy_coef: 0.0002
       max_grad_norm: 1.0
       grpo_group_size: 8
