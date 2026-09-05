@@ -148,6 +148,62 @@ class TheSparseJointLauncherTests(unittest.TestCase):
         self.assertIn("if caught > 0.75:", self.text)
         self.assertIn("approach_gate_uncaught_only is off", self.text)
 
+    def test_the_preflight_refuses_a_ladder_that_parks_below_its_own_floor(self) -> None:
+        """P - drop >= D, not a band-width rule.
+
+        Every promotion costs pass rate because the next rung is harder --
+        measured over twelve promotions: median 0.091, p90 0.129, max 0.133. A
+        family that promotes from P lands near P - drop and stays there: below
+        P it cannot promote, above D it will not fall back. Parking is not the
+        bug; parking BELOW the level the config itself calls unacceptable is.
+
+        The first version of this check compared the BAND width to the drop and
+        had the inequality backwards -- it refused the fix and passed the
+        configuration that had just ratcheted. Both directions are asserted
+        here for that reason.
+        """
+
+        self.assertIn("promote - MEASURED_P90_DROP < demote", self.text)
+        self.assertIn("ratchets down", self.text)
+
+    def test_the_ladder_arithmetic_holds_both_ways(self) -> None:
+        drop = 0.129
+
+        def refuses(promote, demote):
+            return promote - drop < demote - 1e-9
+
+        # What ran, and parked three of four families at ~0.24.
+        self.assertTrue(refuses(0.30, 0.20))
+        # The replacement.
+        self.assertFalse(refuses(0.45, 0.30))
+        # Raising promote alone is enough; so is lowering demote alone.
+        self.assertFalse(refuses(0.35, 0.20))
+        self.assertTrue(refuses(0.45, 0.35))
+
+    def test_the_config_carries_the_corrected_ladder(self) -> None:
+        from rl_vla_bootstrapping.core.config import load_project_config
+
+        metadata = dict(
+            load_project_config(
+                ROOT / "configs/examples/cdpr_smolvla_phase7_sparse_joint.yaml"
+            ).task.metadata or {}
+        )
+        promote = float(
+            metadata["random_workspace_start_distance_promote_pass_rate"]
+        )
+        demote = float(
+            metadata["random_workspace_start_distance_demote_pass_rate"]
+        )
+        self.assertGreaterEqual(promote - 0.129, demote - 1e-9)
+        # And the dwell/cooldown that damp the oscillation this trades for are
+        # still present, since a tighter band makes them load-bearing.
+        self.assertGreater(
+            int(metadata["random_workspace_start_distance_promote_dwell_updates"]), 1
+        )
+        self.assertGreater(
+            int(metadata["random_workspace_start_distance_cooldown_updates"]), 1
+        )
+
     def test_the_preflight_runs_before_the_run_directory_is_made(self) -> None:
         preflight = self.text.index("[phase7] preflight clean")
         mkdir = self.text.index('mkdir -p "$RUN_DIR"')

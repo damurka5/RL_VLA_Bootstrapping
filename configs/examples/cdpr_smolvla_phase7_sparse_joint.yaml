@@ -670,12 +670,50 @@ task:
     # a too-high gate stalls the cap visibly and cheaply, a too-low one destroys
     # the run silently. If an instruction's cap is still 0.03 after ~3M steps
     # with its EMA plateaued below 0.30, lower promote to that plateau + ~0.05.
-    random_workspace_start_distance_promote_pass_rate: 0.30
+    # 0.45, NOT 0.30. THE LADDER WAS A ONE-WAY RATCHET AND THE MEASUREMENT
+    # SAYS SO EXACTLY.
+    #
+    # Every promotion costs pass rate, because the next rung is harder. Over
+    # the twelve promotions of phase7_sparse_joint_20260904 the EMA drop was
+    # median 0.091, p90 0.129, max 0.133. Against a 0.30 promote gate that
+    # lands the family at 0.17-0.27 -- and the demote gate is 0.20, so it parks
+    # in the dead band between them: too low to promote, too high to demote.
+    #
+    #   promote at 0.30:  0 of 12 promotions landed back above 0.30
+    #   promote at 0.40:  7 of 12
+    #   promote at 0.45: 12 of 12
+    #
+    # Three of four families ended parked there -- pick_up 0.241 at cap 0.130,
+    # put_into_plate 0.264 at 0.200, put_into_bowl 0.242 at 0.100 -- and it
+    # cost real composed performance: plate peaked at validation_composed
+    # 0.3980 and fell to 0.3717 after its last promotion, bowl peaked 0.2273
+    # and fell to 0.1818 after its last.
+    #
+    # 0.30 was calibrated on move_to's DENSE-era range. A sparse training pass
+    # rate is also noisier than the deterministic validation it is compared
+    # against -- measured on plate at the end, gate EMA 0.264 against
+    # validation_composed 0.3717 -- so the same threshold bites harder here.
+    random_workspace_start_distance_promote_pass_rate: 0.45
     # 0.20, not 0.12, for the reason the pick_up config now carries: against a
     # 0.30 promote gate that band is wide enough for the cap to climb several
     # rungs while the metric it gates on is already degrading, and by the time
     # the demotion fires there is nothing left to pull back to.
-    random_workspace_start_distance_demote_pass_rate: 0.20
+    # 0.30, NOT 0.20, and this half is what closes the dead band. With promote
+    # at 0.45 and demote at 0.30 the ladder is a servo holding the pass rate in
+    # [0.30, 0.45] rather than a ratchet that walks it down to 0.24 and stops.
+    #
+    # It bites immediately and that is the point: pick_up (0.241), put_into_
+    # plate (0.264) and put_into_bowl (0.242) all sit below 0.30 right now, at
+    # caps they have already been shown unable to hold. They should come back a
+    # rung. move_to_object is at 0.548 and stays where it is -- which is also
+    # the argument against coupling the caps to the weakest instruction:
+    # doing that would drag a healthy family from 0.170 to bowl's 0.100 for
+    # nothing.
+    #
+    # Oscillation risk is real and is damped by the existing dwell (5 updates)
+    # and cooldown (15) below. If a family starts alternating rungs every
+    # cooldown, widen the band from the DEMOTE side, not the promote side.
+    random_workspace_start_distance_demote_pass_rate: 0.30
     # 5, not the default 1. With a single crossing the cap leaves a rung the
     # moment the EMA first touches 0.30, and the bottom rungs here are free by
     # design -- so a dwell of 1 would race straight past the release-teaching

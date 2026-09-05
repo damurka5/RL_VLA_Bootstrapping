@@ -176,6 +176,43 @@ if caught > 0.75:
         "validation_composed scores 100% composed. That is what phase 7 did."
     )
 
+# THE LADDER MUST PARK AT A COMPETENCE LEVEL WORTH HAVING.
+#
+# Every promotion costs pass rate, because the next rung is harder -- measured
+# over the twelve promotions of phase7_sparse_joint_20260904: median 0.091, p90
+# 0.129, max 0.133. So a family that promotes from the gate P lands at about
+# P - drop, and stays there: below P it cannot promote again, above the demote
+# gate D it will not fall back. Parking is not the bug. Parking LOW is.
+#
+# The condition is therefore on the level it parks at, not on the band width:
+#
+#     P - drop_p90 >= D
+#
+# With the old 0.30 / 0.20 that reads 0.171 >= 0.20, false -- promotions landed
+# at or under the demote gate and the families sat at 0.24 on a rung they could
+# not hold. Measured: 0 of 12 promotions landed back above their own gate, and
+# three of four families ended in the dead band (pick_up 0.241 at cap 0.130,
+# put_into_plate 0.264 at 0.200, put_into_bowl 0.242 at 0.100). It cost real
+# performance -- plate peaked at validation_composed 0.3980 and fell to 0.3717
+# after its last promotion; bowl peaked 0.2273 and fell to 0.1818 after its.
+#
+# With 0.45 / 0.30 it reads 0.321 >= 0.30, true: a promotion lands the family
+# just above the demote gate rather than under it, and the rung it holds is one
+# it performs at.
+promote = float(metadata.get(
+    "random_workspace_start_distance_promote_pass_rate", 0.30))
+demote = float(metadata.get(
+    "random_workspace_start_distance_demote_pass_rate", 0.20))
+MEASURED_P90_DROP = 0.129
+if promote - MEASURED_P90_DROP < demote - 1e-9:
+    failures.append(
+        f"the approach ladder ratchets down: promote {promote} minus the "
+        f"{MEASURED_P90_DROP} p90 pass-rate drop a promotion costs is "
+        f"{promote - MEASURED_P90_DROP:.3f}, below the demote gate {demote}. "
+        "Families will promote, land under the level this config calls "
+        "unacceptable, and park there. Raise promote, or lower demote."
+    )
+
 # And the gate must read the composed task rather than a blend whose mixture is
 # the caught knob.
 gate_uncaught = str(
@@ -195,6 +232,8 @@ print(f"[phase7] sparse={sparse_binary_reward_requested(metadata)} "
       f"horizon={horizon}")
 print(f"[phase7] caught_fraction={caught} gate_uncaught_only={gate_uncaught} "
       f"episode_offset_std={offsets}")
+print(f"[phase7] ladder promote={promote} demote={demote} "
+      f"band={promote - demote:.2f} against a {MEASURED_P90_DROP} p90 drop")
 if failures:
     for line in failures:
         print(f"[phase7] REFUSING: {line}", file=sys.stderr)
