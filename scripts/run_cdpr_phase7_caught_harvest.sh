@@ -197,6 +197,16 @@ for name, entry in sorted(by.items()):
     caught = int(pool.get("caught_decisions", 0))
     composed = int(pool.get("composed_decisions", 0))
     if not caught or not composed:
+        # SAY SO. Skipping silently is what this printed on its first real run:
+        # only pick_up appeared, and the two instructions the harvest exists for
+        # were invisible because one of their strata was empty. An empty stratum
+        # is the finding, not a reason to print nothing.
+        print(f"[caught] {name}: SINGLE STRATUM -- composed {composed}, caught "
+              f"{caught} decisions. If the caught side is 0 the new rounds did "
+              "not reach the pool: check that c7_demos holds BOTH replay_*.npz "
+              "and frames_*.npz, since the frames filter drops any episode "
+              "without stored pictures before the strata are counted.")
+        ok = False
         continue
     floor = max(0.0, (quota - caught) / quota)
     flag = "" if floor <= target + 1e-9 else "   <-- STILL ABOVE TARGET"
