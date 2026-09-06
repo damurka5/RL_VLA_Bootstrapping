@@ -31,7 +31,10 @@ set -euo pipefail
 REPO_ROOT="${REPO_ROOT:-/root/repo/RL_VLA_Bootstrapping}"
 ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
 BANK="${BANK:-$REPO_ROOT/runs/phase4_bank}"
-CHECKPOINT="${CHECKPOINT:-$BANK/sft_phase6/sil_sft_adapter.pt}"
+# The strongest four-family policy measured, and what each arm SFTs from:
+# composed plate 0.5000, bowl 0.2159, move_to 0.4200 (sil_record @0.20) and
+# pick_up 0.1465 (@0.06, its own cap). Override for a different lineage.
+CHECKPOINT="${CHECKPOINT:-$REPO_ROOT/runs/phase7_sparse_joint_20260904_212930/rl/step_2017690/smolvla_grpo_adapter.pt}"
 COMPOSE_CONFIG="${COMPOSE_CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_phase5_compose_loop.yaml}"
 PLACEMENT_CONFIG="${PLACEMENT_CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_phase4_placement_loop.yaml}"
 PICKUP_CONFIG="${PICKUP_CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_phase4_pick_up_loop.yaml}"
@@ -234,7 +237,11 @@ def totals(directory):
     return out
 
 # The reference arm: the phase-7 build, knob OFF.
-points = [("off (~0.16)", "phase7", None)]
+# The knob-off reference. NOT labelled with a realized fraction: the "~0.16"
+# this once said came from `physical_grasp_at_reset`, which held the FINAL
+# grasp state and classified nearly the whole bank as composed. Whatever the
+# knob-off mix actually is, that number was not it.
+points = [("knob off", "phase7", None)]
 for frac in arms:
     points.append((frac, f"sweep_f{frac.replace('.', '')}", frac))
 
