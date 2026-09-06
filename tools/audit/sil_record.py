@@ -238,6 +238,31 @@ class _Recording:
         return int(self.actions.shape[1])
 
     @property
+    def starts_grasped(self) -> np.ndarray:
+        """Did this episode BEGIN with the object between the fingers?
+
+        Derived from ``caught_target`` at env step 0, NOT from the stored
+        ``physical_grasp_at_reset`` column, and the difference is not academic.
+        ``BatchedReset.physical_grasp`` is live state -- ``_update_physical_grasp``
+        copies into it every step -- so a recorder that reads it while
+        assembling the recording captures the FINAL grasp, additionally gated on
+        ``active_mask`` and therefore False for every episode that terminated.
+        Measured on the pooled bank: it called 494 of pick_up's 25 550 decisions
+        caught (the ~2% still running and holding at the round's last step) and
+        essentially none of put_into's, because a successful placement ends
+        released.
+
+        ``caught_target`` is captured per step at the success predicate, so
+        index 0 is the grasp state after the first env step -- which is the
+        reset state for a caught start, whose ``bilateral_contact_steps`` is
+        seeded AT the persistence threshold precisely so the detector latches
+        immediately. It is correct on every recording already written, which
+        the fixed column is not.
+        """
+
+        return self.caught_target[0].astype(bool)
+
+    @property
     def episode_success(self) -> np.ndarray:
         """Per-world verdict, latched exactly as ``validate_round`` latches it.
 
@@ -541,6 +566,7 @@ class _RoundRecorder:
         self.deterministic_kernels = bool(deterministic_kernels)
         self.determinism: dict[str, Any] = {}
         self.reset: Any = None
+        self.caught_at_reset: Any = None
         self.env_step = 0
         self._rows_step: list[dict[str, np.ndarray]] = []
         self._rows_eval: list[dict[str, np.ndarray]] = []
@@ -586,6 +612,15 @@ class _RoundRecorder:
             if self.horizon_override:
                 reset.horizons.fill_(self.horizon_override)
             self.reset = reset
+            # `reset.physical_grasp` is LIVE state the grasp detector writes
+            # into on every env step, so reading it when the recording is
+            # assembled -- after the round -- gives the FINAL grasp, gated on
+            # `active_mask` and therefore False for every terminated episode.
+            # Every recording written before this carries that in its
+            # `physical_grasp_at_reset` column. Consumers should prefer
+            # `caught_target[0]`, which is stored per step and is correct on
+            # those files too.
+            self.caught_at_reset = _host_bool(reset.physical_grasp).copy()
             self.env_step = 0
             # The first step has no previous one to read, so seed from the
             # backend directly.
@@ -803,7 +838,7 @@ class _RoundRecorder:
                     dtype=np.float32,
                 )
             ),
-            physical_grasp_at_reset=_host_bool(self.reset.physical_grasp),
+            physical_grasp_at_reset=self.caught_at_reset,
             instructions=np.asarray(list(self.reset.instructions), dtype="U256"),
             actions_per_decision=int(
                 self.world.collector.actions_per_policy_decision
@@ -1009,9 +1044,7 @@ def _episode_rows(recording: _Recording) -> list[dict[str, Any]]:
                 "first_success_env_step": int(first[world]),
                 "env_steps_active": int(length[world]),
                 "horizon_decisions": int(recording.horizons[world]),
-                "grasped_at_reset": bool(
-                    recording.physical_grasp_at_reset[world]
-                ),
+                "grasped_at_reset": bool(recording.starts_grasped[world]),
                 "ever_grasped": bool(
                     (grasped[:, world] & recording.active[:, world]).any()
                 ),
@@ -1099,7 +1132,7 @@ def _pick_up_prefix_report(recording: _Recording) -> dict[str, Any]:
         "placement_episodes": int(placement.sum()),
         "successful_placement_episodes": int(subset.sum()),
         "grasped_at_reset_fraction": round(
-            float(recording.physical_grasp_at_reset[placement].mean()), 4
+            float(recording.starts_grasped[placement].mean()), 4
         )
         if placement.any()
         else 0.0,
@@ -1821,9 +1854,7 @@ def _build_dataset(
                 episode_uids.append(uid)
                 decision_indices.append(decision)
                 groups.append(group)
-                starts_grasped.append(
-                    bool(rec.physical_grasp_at_reset[world])
-                )
+                starts_grasped.append(bool(rec.starts_grasped[world]))
 
     if not states:
         raise ValueError("No successful episodes to build a dataset from.")

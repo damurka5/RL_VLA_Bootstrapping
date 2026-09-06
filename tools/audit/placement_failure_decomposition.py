@@ -401,7 +401,9 @@ def _episode_terms(
                 "recorded_success": bool(recording.episode_success[world]),
                 "recomputed_success": recomputed,
                 "blocking_stage": blocking,
-                "grasped_at_reset": bool(recording.physical_grasp_at_reset[world]),
+                # `_Recording.starts_grasped`, not the stored column: that
+                # column holds the FINAL grasp state, not the reset one.
+                "grasped_at_reset": bool(recording.starts_grasped[world]),
                 "first_grasp_env_step": first_grasp,
                 "first_release_env_step": first_release,
                 "timed_out": timed_out,

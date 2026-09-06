@@ -2801,6 +2801,15 @@ class RankLocalMJWarpGRPOCollector:
         reset = self.resetter.reset(
             update_index=update_index, round_index=round_index
         )
+        # SNAPSHOT NOW. `reset.physical_grasp` is LIVE state, not a record of
+        # the start: `_update_physical_grasp` calls `.copy_()` into it on every
+        # env step, and it additionally requires `active_mask`, so after the
+        # rollout it reads "was still running and still holding at the final
+        # step" -- False for every terminated episode. Read after the loop it
+        # said almost nothing was a caught start, which silently made the
+        # uncaught-only approach gate a no-op and made the composed-fraction
+        # quota classify nearly the whole bank as composed.
+        caught_at_reset = reset.physical_grasp.detach().clone()
         self._sample_generator.manual_seed(
             self.resetter.base_seed
             + self.resetter.rank * 1_000_003
@@ -3553,7 +3562,7 @@ class RankLocalMJWarpGRPOCollector:
         # drawn per group so all eight candidates share it, and taking column 0
         # is exact rather than a vote.
         caught_start_group_mask = (
-            reset.physical_grasp.to(dtype=torch.bool)
+            caught_at_reset.to(dtype=torch.bool)
             .reshape(self.layout.groups_per_rank, group_size)[:, 0]
         )
 

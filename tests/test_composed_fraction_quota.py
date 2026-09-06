@@ -216,7 +216,12 @@ class TheStratumIsIntrinsicTests(unittest.TestCase):
 
         source = inspect.getsource(_build_dataset)
         self.assertIn('"starts_grasped"', source)
-        self.assertIn("rec.physical_grasp_at_reset[world]", source)
+        # From the RECORDING PROPERTY, which derives the stratum from
+        # caught_target[0]. The physical_grasp_at_reset column holds the FINAL
+        # grasp state -- reading it here classified nearly the whole bank as
+        # composed and made the fraction knob inert.
+        self.assertIn("rec.starts_grasped[world]", source)
+        self.assertNotIn("rec.physical_grasp_at_reset[world]", source)
 
     def test_source_group_is_not_used_as_the_stratum(self) -> None:
         """It holds the CAP, not the provenance.
@@ -308,7 +313,14 @@ class ThePoolCompositionIsVisibleBeforeSweepingTests(unittest.TestCase):
                     np.ones((1, worlds), bool),
                 ]),
                 terminated=np.zeros((steps, worlds), bool),
-                caught_target=np.ones((steps, worlds), bool),
+                # THE STRATUM LIVES HERE NOW, at step 0. Setting only
+                # physical_grasp_at_reset would encode it in the column that
+                # holds the FINAL grasp state and is wrong on every recording
+                # already written.
+                caught_target=np.concatenate([
+                    np.full((1, worlds), grasped, dtype=bool),
+                    np.ones((steps - 1, worlds), bool),
+                ]),
                 ee_xyz=np.zeros((steps, worlds, 3), np.float32),
                 gripper_opening=np.zeros((steps, worlds), np.float32),
                 object_xyz=np.zeros((steps, worlds, 2, 3), np.float32),
