@@ -125,6 +125,7 @@ import contextlib  # noqa: E402
 import csv  # noqa: E402
 import hashlib  # noqa: E402
 import json  # noqa: E402
+import warnings  # noqa: E402
 from dataclasses import dataclass  # noqa: E402
 from typing import Any, Mapping, Sequence  # noqa: E402
 
@@ -1053,6 +1054,118 @@ def _episode_rows(recording: _Recording) -> list[dict[str, Any]]:
             }
         )
     return rows
+
+
+def earned_caps(payload: Mapping[str, Any] | None) -> dict[str, float]:
+    """Each instruction's start-distance cap as the CHECKPOINT left it.
+
+    Read from ``extra_state["approach_curriculum"]``, which stores one entry
+    per instruction because the ladders are independent. Returns {} for a
+    checkpoint that predates the per-instruction curriculum or carries no
+    approach state at all -- an SFT adapter, for instance -- so the caller
+    reports "unknown" rather than inventing a comparison. An SFT seed
+    legitimately has none: it never ran a ladder.
+    """
+
+    if not payload:
+        return {}
+    state = (payload.get("extra_state") or {}).get("approach_curriculum")
+    if not isinstance(state, Mapping):
+        return {}
+    caps: dict[str, float] = {}
+    for name, entry in state.items():
+        if isinstance(entry, Mapping) and "cap" in entry:
+            try:
+                caps[str(name)] = float(entry["cap"])
+            except (TypeError, ValueError):
+                continue
+    return caps
+
+
+def cap_verdicts(
+    instruction_names: Sequence[str],
+    *,
+    requested_cap: float | None,
+    earned: Mapping[str, float],
+    tolerance: float = 1.0e-6,
+) -> dict[str, dict[str, Any]]:
+    """Was each instruction scored at a start distribution it ever trained at?
+
+    THE ERROR THIS EXISTS FOR, twice paid. `--start-distance-cap` applies to
+    EVERY instruction in the config, but the ladders are per instruction and
+    end at different rungs. A composed put_into evaluation at 0.20 is correct
+    for the container families and simultaneously puts pick_up -- whose earned
+    cap was 0.080 -- at a start distance it has never seen. It scored 0/328,
+    which was read as "pick_up destroyed" twice in a row. Measured at its own
+    0.06 the same checkpoint scores 0.1465.
+
+    This is §7.1 of the campaign report in a new place: a held-out evaluator
+    that ignores curriculum state evaluates a different reset distribution and
+    can invert the conclusion. move_to reads 0.630 at its earned cap and 0.172
+    uncapped -- a 3.7x difference on one checkpoint.
+
+    `above_earned_cap` is the dangerous verdict and the only one that warns.
+    Below is merely easy, and equal is the intended protocol.
+    """
+
+    verdicts: dict[str, dict[str, Any]] = {}
+    for name in sorted(set(str(n) for n in instruction_names)):
+        cap = earned.get(name)
+        entry: dict[str, Any] = {
+            "requested_cap": (
+                None if requested_cap is None else round(float(requested_cap), 5)
+            ),
+            "earned_cap": None if cap is None else round(float(cap), 5),
+        }
+        if requested_cap is None or cap is None:
+            entry["verdict"] = "unknown"
+        elif float(requested_cap) > float(cap) + tolerance:
+            entry["verdict"] = "above_earned_cap"
+        elif float(requested_cap) < float(cap) - tolerance:
+            entry["verdict"] = "below_earned_cap"
+        else:
+            entry["verdict"] = "at_earned_cap"
+        verdicts[name] = entry
+    return verdicts
+
+
+def _report_cap_verdicts(verdicts: Mapping[str, Mapping[str, Any]]) -> None:
+    """Say it on the console, before the rollout, not only in the JSON."""
+
+    above = {
+        name: entry
+        for name, entry in verdicts.items()
+        if entry.get("verdict") == "above_earned_cap"
+    }
+    for name, entry in sorted(verdicts.items()):
+        print(
+            f"[sil][cap] {name}: requested {entry['requested_cap']} "
+            f"earned {entry['earned_cap']} -> {entry['verdict']}",
+            flush=True,
+        )
+    if not above:
+        return
+    detail = "; ".join(
+        f"{name} requested {entry['requested_cap']} against earned "
+        f"{entry['earned_cap']}"
+        for name, entry in sorted(above.items())
+    )
+    names = ", ".join(sorted(above))
+    warnings.warn(
+        f"{detail}. A low or zero rate for these instructions describes the "
+        "evaluator's reset distribution, not the policy -- see the campaign "
+        "report's rule that a held-out evaluator ignoring curriculum state "
+        "measures a different task, where move_to reads 0.630 capped and "
+        "0.172 uncapped. Score them at their own earned cap before concluding "
+        "anything.",
+        RuntimeWarning,
+        stacklevel=2,
+    )
+    print(
+        f"[sil][cap] WARNING: {names} above earned cap. Their numbers describe "
+        "the evaluator's reset distribution, not the policy.",
+        flush=True,
+    )
 
 
 def _slice_summary(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
@@ -3042,6 +3155,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         "horizon_decisions_override": int(args.horizon_decisions),
     }
+
+    # BEFORE the rollout, so the operator sees it while there is still time to
+    # stop, and IN the summary, so a reader of the json cannot repeat the
+    # mistake the console warning was missed on.
+    if args.mode in ("record", "oracle"):
+        _cap_verdicts = cap_verdicts(
+            list(world.args.instruction_types or ()),
+            requested_cap=start_cap,
+            # From the payload _build_world already loaded, not a second read
+            # of a multi-gigabyte adapter.
+            earned=earned_caps(world.payload),
+        )
+        _report_cap_verdicts(_cap_verdicts)
+        summary["cap_check"] = _cap_verdicts
 
     summary_name = f"summary{args.summary_suffix}.json"
     if args.mode in ("record", "oracle"):
