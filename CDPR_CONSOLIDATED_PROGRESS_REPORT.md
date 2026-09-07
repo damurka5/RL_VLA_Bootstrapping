@@ -458,6 +458,74 @@ consecutive validations at 0.0000.
 
 The Phase 4 archive has a checksum manifest, preserved model files, raw evaluation tables, manifests, logs, reports, and 30 evaluation videos. This is a substantial improvement over result-only reporting and should be continued for every promoted checkpoint.
 
+### 7.11 A terminal condition must test what it is named for
+
+`wrong_place_settled` ended a container episode on `~container_ok`, and
+`container_ok` requires `released`. So an object carried into the receptacle
+and set down while the gripper was still opening ended its own episode: the
+surface takes the load, the pads unload, `~state.grasped` goes true,
+`target_has_settled` is already true, and `released` is not true **yet**. The
+median gap between the latch breaking and the termination was ZERO env steps.
+
+This is §7.8's failure in a third place — a terminal condition sharing a
+conjunct with success, firing because that conjunct is not satisfied yet — and
+it is the more general rule. §7.8 was about a field describing the start being
+read at the end; this is about a condition asking a question it was not named
+to ask. An object settled inside the receptacle is not in the wrong PLACE,
+whatever the gripper is doing.
+
+The fix splits `container_ok` into `placement_geometry_ok` plus the
+release-dependent terms and gives the terminal condition the geometry alone.
+`container_ok` implies `placement_geometry_ok`, so termination strictly
+narrows: no episode that used to run can start dying. That implication is the
+property to assert when splitting any predicate this way, and
+`tests/test_wrong_place_settled.py` asserts it over a grid rather than on a
+chosen case.
+
+It cost four hypotheses. Release height, horizon, grasp speed and more composed
+demonstrations were all tested against the reading that the policy drops the
+object mid-carry. That mechanism is 16% of plate's failures; the terminal
+condition was 61%.
+
+### 7.12 The horizon is computed from the curriculum, not drawn from the seed
+
+Two evaluations of `step_2017690` at the same `--round-index`, `--worlds`,
+`--start-distance-cap` and `--seed-torch` drew 808/1536 and 424/1536 long
+horizons. That is not nondeterminism. `_generator` is seeded from
+`base_seed + rank + update_index + round_index` and nothing else, and the early
+draws agree: `--mode compare` reports `same_instruction_ids` and
+`same_target_slots` True. The horizon is not one of those draws:
+
+```
+cap_group      = _start_cap_table[task]        # NOT the generator
+frac           = (cap_group - horizon_cap_initial) / span
+coupled        = curriculum_horizon_min + frac * (max - min)
+horizon_group  = where(cap_active, coupled, uncapped_horizon)
+travel_group   = f(horizon_group * 4)          # ... and the START DISTANCE
+```
+
+`_start_cap_table` is filled two ways. A scalar `--start-distance-cap` fills
+every instruction with the same value; a per-instruction restore from the
+checkpoint's `approach_curriculum` fills it with the earned caps, which on this
+checkpoint are 0.10-0.17 and all BELOW the 0.20 usually requested. A lower cap
+gives a lower `frac`, a shorter horizon, and — because `travel_group` is
+derived from the horizon — a different object start distance, with the RNG
+stream untouched. One flag, two tasks, depending on whether the curriculum was
+restored first.
+
+The rule: **compare horizon histograms before comparing any two evaluations.**
+
+```
+np.unique(np.load(recording)["horizons"], return_counts=True)
+```
+
+`sil_record --mode compare` reports this as `same_horizons` in
+`reset_identity`. That check was previously unreadable because
+`same_grasp_at_reset` beside it read `physical_grasp_at_reset` — the §7.8
+column — and therefore read False on every honest comparison, training the
+reader to discount the whole block. It now uses `starts_grasped`, and prints
+each term separately with the object-layout delta at step 0.
+
 ---
 
 ## 8. Composing grasp with placement — measured
