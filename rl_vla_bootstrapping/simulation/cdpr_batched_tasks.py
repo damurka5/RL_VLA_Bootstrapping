@@ -929,11 +929,19 @@ def evaluate_active_sparse_tasks(
             # NaN compares false, so a world that never released fails the gate
             # without a separate isnan branch.
             release_height_ok = state.release_clearance <= limit
-    container_ok = (
+    # The GEOMETRIC half of the container test: is the object where it was
+    # asked to be put? Split out from `container_ok` because the two consumers
+    # ask different questions of it. SUCCESS asks the geometry AND whether the
+    # policy has let go. The TERMINAL condition `wrong_place_settled` below
+    # must ask the geometry and nothing else -- see the comment there.
+    placement_geometry_ok = (
         (container_xy <= container_radius)
         & (container_z <= float(cfg.container_z))
         & (container_z <= container_z_tolerance)
         & (target_motion_xy >= minimum_target_motion)
+    )
+    container_ok = (
+        placement_geometry_ok
         & state.ever_grasped
         & released
         & release_height_ok
@@ -1019,12 +1027,43 @@ def evaluate_active_sparse_tasks(
     timeout = state.step_count >= max(1, int(max_steps))
     wrong_place_settled = torch.zeros_like(success)
     if catch_release_dense_reward is not None:
+        # `~placement_geometry_ok`, NOT `~container_ok`, and the difference was
+        # worth 63 of composed plate's 228 failures.
+        #
+        # `container_ok` requires `released`. `state.grasped` is
+        # `caught_target & (opening <= 0.94)`, and `caught_target` is the live
+        # `physical_grasp` -- which needs both pads loaded above 0.05 N. So when
+        # a carried object touches down INSIDE the receptacle while the gripper
+        # is still opening, the surface takes the load, the pads unload,
+        # `~grasped` goes true, `target_has_settled` is already true, and
+        # `released` is not true YET. Against `~container_ok` that conjunction
+        # fires, and a correct placement is terminated as a wrong one on the
+        # step it lands -- before the release can finish.
+        #
+        # Measured on `phase7_sparse_joint` step_2017690: 85 of plate's 140
+        # `no_release` grasp losses ended this way, median ZERO env steps
+        # between the latch breaking and the termination, and 63 of the 70 with
+        # the object already at rest INSIDE the 0.091 m plate radius. The policy
+        # was mid-release, commanding a_gripper +0.44 and a_z +0.26 upward, and
+        # at action_step_gripper 0.05 needed ~11 more steps to cross the bar.
+        #
+        # This is the §7.8 failure again: a terminal condition sharing a
+        # conjunct with success, firing because that conjunct is not satisfied
+        # YET. The condition is named for the PLACE, so it must test the place.
+        # An object settled inside the receptacle is not in the wrong place,
+        # whatever the gripper is doing.
+        #
+        # `container_ok` implies `placement_geometry_ok`, so this strictly
+        # NARROWS termination: every episode the old form ended, minus the ones
+        # it should never have. Nothing becomes easier to succeed at -- the
+        # success test above is untouched -- but an episode that lands correctly
+        # now gets the steps it needs to open the gripper.
         wrong_place_settled = (
             is_container
             & state.ever_grasped
             & ~state.grasped
             & target_has_settled
-            & ~container_ok
+            & ~placement_geometry_ok
         )
     terminated = success | wrong_place_settled | timeout
     rewards = torch.where(
