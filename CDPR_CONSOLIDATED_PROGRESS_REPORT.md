@@ -241,6 +241,16 @@ The project established a reliable decomposition:
 
 The remaining limitation is structural: one residual controls both descent and post-grasp lift. Pick-up RL develops an increasing upward bias that eventually harms the descent needed to re-grasp. This is an open architecture/control issue, not evidence that grasping was never learned.
 
+**Superseded 2026-09-07: the bottleneck is the lift, not the grasp.** Phase 5's
+conclusion — that `pick_up` fails at the grasp, 222 grasps in 102k worlds, and
+should be seeded by SFT — described a checkpoint whose grasp rate has since
+moved. On `step_2017690` the deterministic grasp rate is **0.4116 at cap 0.10
+and 0.2835 at 0.13**, while `lift|grasp` is **0.1185 and 0.0323**. The lift is
+the binding constraint by a factor of eight, and effort still aimed at the
+grasp is aimed at a bottleneck that moved. See §7.13 for the mechanism: the
+policy commands +0.02 mean `a_z` after grasping under `pick_up` and +0.40 under
+`put_into`, on the same adapter.
+
 ### 4.3 `put_into_plate` and `put_into_bowl`: placement
 
 Phase 2 answered the original feasibility question positively. With no demonstrations and no behavior cloning, a frozen SmolVLA prior plus residual learned:
@@ -429,6 +439,18 @@ writes a per-instruction verdict — `at_earned_cap`, `below_earned_cap`,
 line is what gets missed; the JSON is what gets read later, so the caveat
 travels with the number.
 
+**A grasp-gated instruction's earned cap is an APPROACH cap, and its success
+cap is a different number.** `_GRASP_GATED_INSTRUCTIONS` routes `pick_up`'s
+ladder to `instruction_grasps_normal_start/`, not to
+`instruction_successes_normal_start/`, because the approach curriculum measures
+whether the policy can reach the object and gating the reach on the full lift
+would stall it on a separate problem. So `pick_up`'s earned cap of 0.13 is the
+distance at which it can reach and close, and its success there is **0.0091**:
+0.1465 at 0.06, 0.0366 at 0.10, 0.0091 at 0.13, 0.0000 at 0.17. Reporting
+0.0091 as "`pick_up` at its earned cap" is true and misleading in the same
+breath, which is the exact failure this section exists to prevent. Measure the
+success cap; never inherit it from the ladder.
+
 ### 7.8 Reset state and live state must not share a field
 
 `BatchedReset.physical_grasp` is written by the grasp detector on every env
@@ -531,6 +553,57 @@ was previously unreadable because `same_grasp_at_reset` beside it read
 `physical_grasp_at_reset` — the §7.8 column — and therefore read False on every
 honest comparison, training the reader to discount the whole block. It now uses
 `starts_grasped` and prints each term separately.
+
+### 7.13 A proxy gate that stops tracking its goal is invisible to its own thresholds
+
+`pick_up`'s approach ladder promotes and demotes on the GRASP rate. That is a
+deliberate and defensible proxy — the approach curriculum is about reaching the
+object — and the gate was measured honest: at cap 0.13 the stored
+`pass_rate_ema` is 0.2198 and the deterministic grasp rate is 0.2835, matching
+in the direction exploration noise predicts. The three success-gated families
+match too (`move_to` EMA 0.5874 against a measured 0.5775, bowl 0.2446 against
+0.2756).
+
+The failure is not in the gate. It is that the proxy stopped predicting the
+goal and nothing in the ladder can say so:
+
+```
+cap 0.10   grasp 0.4116   lift|grasp 0.1185   success 0.0488
+cap 0.13   grasp 0.2835   lift|grasp 0.0323   success 0.0091
+cap 0.17   grasp 0.1707   lift|grasp 0.0000   success 0.0000
+```
+
+Grasping improved, the cap climbed on it, and success stayed at zero because
+the lift never came. §7.9's promote and demote thresholds both read the grasp
+rate, so no setting of them could have caught this — the ladder was working
+exactly as designed while the instruction went nowhere.
+
+The detector is cheap and should run beside every gate: **the gate metric
+rising while the instruction's own success stays flat at zero.** That is the
+same signature `_warn_on_structurally_dead_gate` already watches for in the
+opposite direction — a gate reading zero while success is high — and it wants
+the mirror case.
+
+The cause here is measurable and specific. Over the steps the object is
+actually held, the mean commanded `a_z` is:
+
+```
+pick_up          p10 -0.033   p50 +0.024   p90 +0.284   peak height 0.0027 m
+put_into_plate   p10 +0.170   p50 +0.395   p90 +0.766   peak height 0.0896 m
+put_into_bowl    p10 +0.083   p50 +0.257   p90 +0.442   peak height 0.0910 m
+```
+
+The same adapter, the same grasp detector, the same plant. It commands +0.37 to
++0.40 upward after grasping under `put_into` and lifts the object 9 cm; under
+`pick_up` it commands +0.02 and lifts it 2.7 mm. Against the loaded plant's
+dead zone of roughly 0.15-0.20, about 10% of `pick_up`'s grasped episodes clear
+it — against a measured `lift|grasp` of 0.1185. The dead-zone model predicts
+the lift rate.
+
+So this is instruction conditioning, not the plant, not the grasp, and not
+grasp quality. Under one sparse binary reward `pick_up` succeeds 0.003-0.05 of
+the time, so its GRPO groups are near-degenerate and carry almost no advantage
+— it has effectively not been trained while its ladder kept promoting it.
 
 ---
 
@@ -821,7 +894,18 @@ The following should not be reused as current headline results:
 - Validation numbers produced without restoring curriculum state.
 - Unseeded single-round comparisons that treated SmolVLA's stochastic prior as deterministic.
 - Phase 3 placement-only SFT as a retained single-policy solution; it improved near-cap bowl but erased pick-up because pick-up was absent from the mix.
-- Hindsight relabelling of caught-start placement into pick-up; the required lift predicate was never reached because placement starts already lifted.
+- Hindsight relabelling of **caught-start** placement into pick-up; the required
+  lift predicate was never reached because those episodes start already lifted.
+  **Scoped to caught starts, and reopened for composed ones.** The composed
+  stratum did not exist when this was written: a composed `put_into` episode
+  starts on the desk, grasps, and lifts to a median 0.0896 m, past
+  `pick_lift_success_height` of 0.05. Measured on three composed evaluations of
+  `step_2017690`, **485-493 of 808** container episodes (0.60) grasp from the
+  desk and clear the lift predicate, and about two thirds of those go on to
+  place successfully. That is a 0.60 yield of valid `pick_up` prefixes against
+  0.1465 from `pick_up`'s own rollouts at cap 0.06. Any use of them must
+  reckon with the 2026-09-07 SFT result below, which is why this is listed as
+  reopened rather than adopted.
 - Cross-checkpoint simulator replay as a way to refresh priors/state; it destroys trajectory survival and has been replaced by frame inference.
 - Vision-tower LoRA as an active contributor to the current policy; it is disabled in active RL and no Cycle 2 LoRA epoch beat baseline.
 - Phase 5 placement `iter4` and `iter5` as promoted checkpoints. Both are superseded by `step_2754052`; the active release-height gate is off and the attempted ladder extension was reverted.
