@@ -43,7 +43,7 @@ The central idea is now demonstrated end to end:
 | **Composed pick-and-place, one sparse reward, four instructions** | Phase 7 `step_2017690`: composed plate **0.5000** (228/456), composed bowl **0.2159** (76/352), `pick_up` 0.1465 at its own cap, `move_to` 0.4200 — against the seed's 0.1203 and 0.0412 on the identical protocol, i.e. **4.2x and 5.2x** | `sil_record` at cap 0.20, 3 rounds x 512 worlds; decomposition retained |
 | **The grasp gap to the scripted oracle is closed** | Plate grasp 0.9079 against the oracle's 0.9336 (97.2%); bowl 0.6051 against 0.6752 (89.6%), from 0.4054 and 0.2956 before | `placement_failure_decomposition`, 0 predicate disagreements |
 | Residual SFT destroys the composed gain | The same bank that rebuilds forgotten families takes composed plate 0.5000 → 0.1285-0.1390 at every demonstration mix tested (0.5 and 0.8 composed) | Two-arm sweep, identical protocol |
-| **The composed "drop" was a scoring boundary, not a physical one** | `wrong_place_settled` terminated episodes whose object was already at rest **inside** the receptacle, a median of zero env steps after the grasp latch broke, because it tested `~container_ok` and `container_ok` requires the release. Fixing it: mixed-start plate **0.4737 → 0.5263**, bowl **0.1960 → 0.2642** (paired arms, same start mix; not comparable to the composed numbers above) | Scene-matched paired evaluation, `same_episodes=True`, step-0 actions identical in 512/512 worlds, `move_to` null control flips 25:25 |
+| **The composed "drop" was a scoring boundary, not a physical one** | `wrong_place_settled` terminated episodes whose object was already at rest **inside** the receptacle, a median of zero env steps after the grasp latch broke, because it tested `~container_ok` and `container_ok` requires the release. Fixing it takes composed plate **0.5000 → 0.6272** and bowl **0.2159 → 0.2841**, with `move_to` moving +0.010 as a control — the campaign's best composed result, from a scoring correction rather than training | Protocol-matched repeat of the Phase 7 composed evaluation (cap 0.20, caught fraction forced to 0, containers 100% at the 40-decision floor); mechanism isolated on a scene-matched paired pair, `same_episodes=True`, step-0 actions identical in 512/512 worlds |
 | The grasp detector is not rejecting real grasps | The 8 mm relative-pose stability test never fires on a held object: **0 of 12 496** genuinely-held policy steps crossed the bar, held slip p50 0.23 mm | `grasp_loss_forensics`, CPU-only, on recordings already on disk |
 
 ### Instruction success by phase and retention cycle
@@ -93,9 +93,10 @@ releases; what looked like losing the object mid-carry was
 `wrong_place_settled` terminating episodes in which the object was **already
 resting correctly inside the receptacle** and the gripper had not finished
 opening — a terminal condition that tested a conjunct of success rather than
-the placement it is named for. Fixing it is worth plate +0.053 and
-bowl +0.068 on a scene-matched paired evaluation with a null control, and it
-moves the binding constraint to the horizon. See the 2026-09-07 entry in §14;
+the placement it is named for. Fixing it takes composed plate **0.5000 → 0.6272** and
+composed bowl **0.2159 → 0.2841** on a protocol-matched repeat, with `move_to`
+moving +0.010 as a control, and it moves the binding constraint to the
+horizon. See the 2026-09-07 entry in §14;
 the earlier claim that closing this transition would reach **0.7622** was a
 bound built on the assumption that every such episode would complete its
 release, and about a third do.
@@ -960,7 +961,7 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
-### 2026-09-07 — `wrong_place_settled` terminated correct placements; fixing it is worth +0.053 plate and +0.068 bowl
+### 2026-09-07 — `wrong_place_settled` terminated correct placements; fixing it takes composed plate 0.5000 → 0.6272
 
 - Git commit: `1b78cbc` (predicate fix and its tests); `0616cee`, `a9bbae9`,
   `5523a94`, `e450de2` (`tools/audit/grasp_loss_forensics.py`, the CPU-only
@@ -998,7 +999,29 @@ Newest first. Entries follow the §13 template.
   earned. 1536 episodes; at the default `--group-size 8` that is 64 reset groups
   per round, and per §13 the group is the independent unit, so the per-episode
   flip counts below are optimistic as a significance claim
-- Instruction results (successes / denominator and rate):
+- Instruction results (successes / denominator and rate). **The headline arm is
+  protocol-matched**: `comp_fixed_020` repeats the Phase 7 composed protocol
+  exactly — cap 0.20, `placement_caught_object_fraction=0.0`, containers 100% at
+  the 40-decision floor — so it differs from the entry below in the predicate
+  and nothing else:
+
+| instruction | composed @0.20, pre-fix (Phase 7) | composed @0.20, post-fix | Δ |
+|---|---|---|---|
+| `put_into_plate` | 228/456 = 0.5000 | **286/456 = 0.6272** | **+0.127** |
+| `put_into_bowl` | 76/352 = 0.2159 | **100/352 = 0.2841** | **+0.068** |
+| `move_to_object` | 168/400 = 0.4200 | 172/400 = 0.4300 | +0.010 (control) |
+| `pick_up` | 0/328, above its cap | 1/328, above its cap | — |
+
+- `move_to_object` is again the control — `wrong_place_settled` is gated on
+  `is_container` — and it moves +0.010, inside the world-coupling noise measured
+  at 25:25 below. Two further composed runs at caps 0.17 and 0.10 give plate
+  0.6404 and 0.6491 and bowl 0.3153 and 0.2756; `--start-distance-cap` is a
+  **no-op for composed container starts**, whose spawn comes from
+  `placement_grasp_object_min/max_distance`, so those are three draws of one
+  task and pool to plate **874/1368 = 0.6389** and bowl **308/1056 = 0.2917**
+- The scene-matched paired arms that isolate the mechanism ran WITHOUT the
+  composed forcing, so their container rates are mixed-start and are reported
+  as such. They are the causal evidence, not the headline:
 
 | instruction | protocol | pre-fix | post-fix | flipped, pre:post |
 |---|---|---|---|---|
@@ -1052,8 +1075,11 @@ Newest first. Entries follow the §13 template.
   every family was scored above its earned cap. And it does not support the
   bound this work was launched on: the predicted +0.138 on plate assumed every
   inside-radius set-down would complete its release, and about a third do
-- Status: **diagnostic and active fix.** The checkpoint is unchanged and nothing
-  is promoted. The predicate change is landed and is a change to the TASK —
+- Status: **active fix, and a new campaign best on the composed protocol.** The
+  checkpoint is unchanged and nothing is promoted — `step_2017690` did not get
+  better, the task it was scored against got correct. Part of the 0.5000
+  recorded below was a measurement artifact, and composed plate 0.6272 is the
+  closest this campaign has come to the 70% target on the hard protocol. The predicate change is landed and is a change to the TASK —
   episodes that used to end now keep running, horizon usage rises, and results
   before and after it are not commensurable
 - Local artifact path: on the training host
