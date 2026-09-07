@@ -43,7 +43,7 @@ The central idea is now demonstrated end to end:
 | **Composed pick-and-place, one sparse reward, four instructions** | Phase 7 `step_2017690`: composed plate **0.5000** (228/456), composed bowl **0.2159** (76/352), `pick_up` 0.1465 at its own cap, `move_to` 0.4200 — against the seed's 0.1203 and 0.0412 on the identical protocol, i.e. **4.2x and 5.2x** | `sil_record` at cap 0.20, 3 rounds x 512 worlds; decomposition retained |
 | **The grasp gap to the scripted oracle is closed** | Plate grasp 0.9079 against the oracle's 0.9336 (97.2%); bowl 0.6051 against 0.6752 (89.6%), from 0.4054 and 0.2956 before | `placement_failure_decomposition`, 0 predicate disagreements |
 | Residual SFT destroys the composed gain | The same bank that rebuilds forgotten families takes composed plate 0.5000 → 0.1285-0.1390 at every demonstration mix tested (0.5 and 0.8 composed) | Two-arm sweep, identical protocol |
-| **The composed "drop" was a scoring boundary, not a physical one** | `wrong_place_settled` terminated episodes whose object was already at rest **inside** the receptacle, a median of zero env steps after the grasp latch broke, because it tested `~container_ok` and `container_ok` requires the release. Fixing it: composed plate **0.4737 → 0.5263**, bowl **0.1960 → 0.2642** | Scene-matched paired evaluation, `same_episodes=True`, step-0 actions identical in 512/512 worlds, `move_to` null control flips 25:25 |
+| **The composed "drop" was a scoring boundary, not a physical one** | `wrong_place_settled` terminated episodes whose object was already at rest **inside** the receptacle, a median of zero env steps after the grasp latch broke, because it tested `~container_ok` and `container_ok` requires the release. Fixing it: mixed-start plate **0.4737 → 0.5263**, bowl **0.1960 → 0.2642** (paired arms, same start mix; not comparable to the composed numbers above) | Scene-matched paired evaluation, `same_episodes=True`, step-0 actions identical in 512/512 worlds, `move_to` null control flips 25:25 |
 | The grasp detector is not rejecting real grasps | The 8 mm relative-pose stability test never fires on a held object: **0 of 12 496** genuinely-held policy steps crossed the bar, held slip p50 0.23 mm | `grasp_loss_forensics`, CPU-only, on recordings already on disk |
 
 ### Instruction success by phase and retention cycle
@@ -93,7 +93,7 @@ releases; what looked like losing the object mid-carry was
 `wrong_place_settled` terminating episodes in which the object was **already
 resting correctly inside the receptacle** and the gripper had not finished
 opening — a terminal condition that tested a conjunct of success rather than
-the placement it is named for. Fixing it is worth composed plate +0.053 and
+the placement it is named for. Fixing it is worth plate +0.053 and
 bowl +0.068 on a scene-matched paired evaluation with a null control, and it
 moves the binding constraint to the horizon. See the 2026-09-07 entry in §14;
 the earlier claim that closing this transition would reach **0.7622** was a
@@ -487,44 +487,49 @@ demonstrations were all tested against the reading that the policy drops the
 object mid-carry. That mechanism is 16% of plate's failures; the terminal
 condition was 61%.
 
-### 7.12 The horizon is computed from the curriculum, not drawn from the seed
+### 7.12 The horizon histogram tells you which task a run actually scored
 
 Two evaluations of `step_2017690` at the same `--round-index`, `--worlds`,
 `--start-distance-cap` and `--seed-torch` drew 808/1536 and 424/1536 long
-horizons. That is not nondeterminism. `_generator` is seeded from
-`base_seed + rank + update_index + round_index` and nothing else, and the early
-draws agree: `--mode compare` reports `same_instruction_ids` and
-`same_target_slots` True. The horizon is not one of those draws:
+horizons. That is not nondeterminism, and the seeded generator is not involved.
+Horizons come from two places, and BOTH encode something about the task:
 
 ```
-cap_group      = _start_cap_table[task]        # NOT the generator
-frac           = (cap_group - horizon_cap_initial) / span
-coupled        = curriculum_horizon_min + frac * (max - min)
-horizon_group  = where(cap_active, coupled, uncapped_horizon)
-travel_group   = f(horizon_group * 4)          # ... and the START DISTANCE
+coupled       = curriculum_horizon_min + frac*(max-min)   # frac from the CAP
+composed      = placement_grasp_horizon_min_decisions      # a FLOOR, 40 here
+horizon_group = composed if the container start is uncaught else coupled
+travel_group  = f(horizon_group * 4)                       # the START DISTANCE
 ```
 
-`_start_cap_table` is filled two ways. A scalar `--start-distance-cap` fills
-every instruction with the same value; a per-instruction restore from the
-checkpoint's `approach_curriculum` fills it with the earned caps, which on this
-checkpoint are 0.10-0.17 and all BELOW the 0.20 usually requested. A lower cap
-gives a lower `frac`, a shorter horizon, and — because `travel_group` is
-derived from the horizon — a different object start distance, with the RNG
-stream untouched. One flag, two tasks, depending on whether the curriculum was
-restored first.
+So, per instruction, the histogram reads out the protocol:
 
-The rule: **compare horizon histograms before comparing any two evaluations.**
+- the **single** value on `move_to_object` and `pick_up` tracks the requested
+  cap — 0.20 gives 25, 0.17 gives 23, 0.10 gives 20;
+- the **split** on `put_into_*` is the caught/composed mix. Every episode at 40
+  is a composed start; every episode at the coupled value began caught.
+
+That is how a mislabelled evaluation was caught. The Phase 7 composed protocol
+passes `--metadata-override placement_caught_object_fraction=0.0`; a later
+series of evaluations omitted it, so roughly half of their container episodes
+began with the object already held, and their rates were being read against
+composed ones. The pooled histogram said 40/25 in both and looked like a
+horizon difference; the PER-INSTRUCTION histogram said 128/128 at 40 against
+72/128, which is the caught fraction and nothing else.
+
+The rule: **print the horizon histogram per instruction before comparing any
+two evaluations.**
 
 ```
-np.unique(np.load(recording)["horizons"], return_counts=True)
+np.unique(h[instruction_ids == i], return_counts=True)
 ```
 
-`sil_record --mode compare` reports this as `same_horizons` in
-`reset_identity`. That check was previously unreadable because
-`same_grasp_at_reset` beside it read `physical_grasp_at_reset` — the §7.8
-column — and therefore read False on every honest comparison, training the
-reader to discount the whole block. It now uses `starts_grasped`, and prints
-each term separately with the object-layout delta at step 0.
+A container split that is not 100% at the composed floor is not a composed
+evaluation, whatever the directory is called. `sil_record --mode compare`
+reports the pooled version as `same_horizons` in `reset_identity`; that check
+was previously unreadable because `same_grasp_at_reset` beside it read
+`physical_grasp_at_reset` — the §7.8 column — and therefore read False on every
+honest comparison, training the reader to discount the whole block. It now uses
+`starts_grasped` and prints each term separately.
 
 ---
 
@@ -831,13 +836,12 @@ The following should not be reused as current headline results:
   tested against the drop reading — release height, horizon, grasp speed, more
   composed demonstrations — were aimed at a mechanism that accounts for 16% of
   plate's failures.
-- Any comparison between evaluations of one checkpoint whose horizon histograms
-  differ. The horizon is COMPUTED from the curriculum cap, not drawn from the
-  seeded generator, and `travel_group` is derived from it — so a different cap
-  moves the horizon and the object's start distance together with the RNG
-  stream untouched. Two evaluations of `step_2017690` at the same seed, round
-  indices and cap drew 808/1536 and 424/1536 long horizons. Check
-  `np.unique(recording["horizons"])` across arms before quoting any delta.
+- Any comparison between evaluations of one checkpoint whose PER-INSTRUCTION
+  horizon histograms differ. On `put_into_*` that split is the caught/composed
+  mix — composed starts take the 40-decision floor, caught starts take the
+  curriculum-coupled value — so a run that omits
+  `--metadata-override placement_caught_object_fraction=0.0` is scoring a
+  half-caught task and cannot be read against a composed number. See §7.12.
 - The claim that the retention bank is ~98% composed by decision and that the
   composed fraction cannot be swept. That came from `physical_grasp_at_reset`,
   which stored the FINAL grasp state rather than the reset one; the bank is
@@ -976,6 +980,17 @@ Newest first. Entries follow the §13 template.
   instructions, slots and horizons, object layout within 1.2 mm — and step-0
   actions bit-identical in 512/512 worlds. The two arms differ in the predicate
   and in nothing else
+- **Protocol correction.** These arms did NOT pass
+  `--metadata-override placement_caught_object_fraction=0.0`, which the Phase 7
+  protocol uses to force every container episode to a composed start. About
+  half of their container episodes therefore begin CAUGHT, and caught starts
+  are far easier. The container rates below are **mixed-start**, not composed,
+  and must not be read against any composed number. Diagnosed from the horizon
+  histogram: composed container starts take the
+  `placement_grasp_horizon_min_decisions` floor of 40, caught starts take the
+  curriculum-coupled value, so the split is a direct readout of the mix — 100%
+  at 40 in the Phase 7 run below, roughly half here. The paired comparison
+  itself is unaffected: both arms share the identical mix, episode for episode
 - Caps, seeds, rounds, worlds, and independent reset groups: requested cap 0.20
   for every instruction. `cap_check` reports earned caps `move_to_object` 0.14,
   `pick_up` 0.13, `put_into_bowl` 0.10, `put_into_plate` 0.17 — **every family
@@ -987,8 +1002,8 @@ Newest first. Entries follow the §13 template.
 
 | instruction | protocol | pre-fix | post-fix | flipped, pre:post |
 |---|---|---|---|---|
-| `put_into_plate` | composed @0.20 | 216/456 = 0.4737 | **240/456 = 0.5263** | 84, 30:54 |
-| `put_into_bowl` | composed @0.20 | 69/352 = 0.1960 | **93/352 = 0.2642** | 36, 6:30 |
+| `put_into_plate` | **mixed-start** @0.20 | 216/456 = 0.4737 | **240/456 = 0.5263** | 84, 30:54 |
+| `put_into_bowl` | **mixed-start** @0.20 | 69/352 = 0.1960 | **93/352 = 0.2642** | 36, 6:30 |
 | `move_to_object` | @0.20 | 172/400 = 0.4300 | 172/400 = 0.4300 | 50, **25:25** |
 | `pick_up` | @0.20, above its cap | 0/328 = 0.0000 | 1/328 = 0.0031 | 1, 0:1 |
 
@@ -1029,10 +1044,10 @@ Newest first. Entries follow the §13 template.
   **0 of 12 496 genuinely-held policy steps** crossed the bar, held slip p50
   0.23 mm against it — and detector chatter is 5%
 - What it does not support: **any comparison with the Phase 7 entry below.**
-  Those numbers were measured with a horizon mix of 808/1536 long (40-decision)
-  draws; these arms drew 424/1536. Same checkpoint, same seed, same requested
-  cap, different task. `0.5263` is therefore **not** an improvement on the
-  `0.5000` recorded below, and the two must not be placed in one column. It also
+  That entry is 100% composed starts; these arms are roughly half caught. Same
+  checkpoint, same seed, same requested cap, different reset distribution.
+  `0.5263` is therefore **not** an improvement on the `0.5000` recorded below,
+  and the two must not be placed in one column. It also
   does not support any absolute claim about this checkpoint's ability, because
   every family was scored above its earned cap. And it does not support the
   bound this work was launched on: the predicted +0.138 on plate assumed every
