@@ -43,6 +43,8 @@ The central idea is now demonstrated end to end:
 | **Composed pick-and-place, one sparse reward, four instructions** | Phase 7 `step_2017690`: composed plate **0.5000** (228/456), composed bowl **0.2159** (76/352), `pick_up` 0.1465 at its own cap, `move_to` 0.4200 — against the seed's 0.1203 and 0.0412 on the identical protocol, i.e. **4.2x and 5.2x** | `sil_record` at cap 0.20, 3 rounds x 512 worlds; decomposition retained |
 | **The grasp gap to the scripted oracle is closed** | Plate grasp 0.9079 against the oracle's 0.9336 (97.2%); bowl 0.6051 against 0.6752 (89.6%), from 0.4054 and 0.2956 before | `placement_failure_decomposition`, 0 predicate disagreements |
 | Residual SFT destroys the composed gain | The same bank that rebuilds forgotten families takes composed plate 0.5000 → 0.1285-0.1390 at every demonstration mix tested (0.5 and 0.8 composed) | Two-arm sweep, identical protocol |
+| **The composed "drop" was a scoring boundary, not a physical one** | `wrong_place_settled` terminated episodes whose object was already at rest **inside** the receptacle, a median of zero env steps after the grasp latch broke, because it tested `~container_ok` and `container_ok` requires the release. Fixing it: composed plate **0.4737 → 0.5263**, bowl **0.1960 → 0.2642** | Scene-matched paired evaluation, `same_episodes=True`, step-0 actions identical in 512/512 worlds, `move_to` null control flips 25:25 |
+| The grasp detector is not rejecting real grasps | The 8 mm relative-pose stability test never fires on a held object: **0 of 12 496** genuinely-held policy steps crossed the bar, held slip p50 0.23 mm | `grasp_loss_forensics`, CPU-only, on recordings already on disk |
 
 ### Instruction success by phase and retention cycle
 
@@ -85,11 +87,18 @@ Phase 4/5 loop depends on is now measured to destroy ~72% of that composed
 capability, at every demonstration mix tested. The loop's two halves have
 become incompatible for this task: RL builds composition and SFT removes it.
 
-The remaining loss is localised and, for plate, small enough to name. The policy
-grasps at 97% of the oracle's rate and places accurately once it releases; it
-loses the object mid-carry in 95% of its remaining failures. Closing that one
-transition alone would put composed plate at **0.7622**, over the campaign's
-70% target.
+The remaining loss is localised, and it turned out not to be a drop at all.
+The policy grasps at 97% of the oracle's rate and places accurately once it
+releases; what looked like losing the object mid-carry was
+`wrong_place_settled` terminating episodes in which the object was **already
+resting correctly inside the receptacle** and the gripper had not finished
+opening — a terminal condition that tested a conjunct of success rather than
+the placement it is named for. Fixing it is worth composed plate +0.053 and
+bowl +0.068 on a scene-matched paired evaluation with a null control, and it
+moves the binding constraint to the horizon. See the 2026-09-07 entry in §14;
+the earlier claim that closing this transition would reach **0.7622** was a
+bound built on the assumption that every such episode would complete its
+release, and about a third do.
 
 ---
 
@@ -746,6 +755,21 @@ The following should not be reused as current headline results:
 - Composed pick-and-place as achieved. Only the missing-prefix data path is implemented.
 - Legacy LCHOL-based relabelling on the MJWarp path; that implementation is not connected to the active batched trainer.
 
+- The reading of the composed `put_into` loss as the policy dropping the object
+  mid-carry, and the **0.7622** plate figure derived from it. 61% of plate's
+  `no_release` grasp losses were `wrong_place_settled` firing on an object
+  already at rest inside the plate, a median of zero env steps after the latch
+  broke; the fix at `1b78cbc` is worth +0.053, not +0.138. The four hypotheses
+  tested against the drop reading — release height, horizon, grasp speed, more
+  composed demonstrations — were aimed at a mechanism that accounts for 16% of
+  plate's failures.
+- Any comparison between evaluations of one checkpoint whose horizon histograms
+  differ. The horizon is COMPUTED from the curriculum cap, not drawn from the
+  seeded generator, and `travel_group` is derived from it — so a different cap
+  moves the horizon and the object's start distance together with the RNG
+  stream untouched. Two evaluations of `step_2017690` at the same seed, round
+  indices and cap drew 808/1536 and 424/1536 long horizons. Check
+  `np.unique(recording["horizons"])` across arms before quoting any delta.
 - The claim that the retention bank is ~98% composed by decision and that the
   composed fraction cannot be swept. That came from `physical_grasp_at_reset`,
   which stored the FINAL grasp state rather than the reset one; the bank is
@@ -863,6 +887,97 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-07 — `wrong_place_settled` terminated correct placements; fixing it is worth +0.053 plate and +0.068 bowl
+
+- Git commit: `1b78cbc` (predicate fix and its tests); `0616cee`, `a9bbae9`,
+  `5523a94`, `e450de2` (`tools/audit/grasp_loss_forensics.py`, the CPU-only
+  audit that found it); `5c0870d` (reset-identity check in `--mode compare`)
+- Run/config: `configs/examples/cdpr_smolvla_phase7_sparse_joint.yaml`. Arms are
+  `runs/phase4_bank/eval/phase7rl_composed_fixed` — **pre-fix, despite the
+  directory name**; the host was at `e450de2` when it ran and never had the
+  patch — and `runs/phase4_bank/eval/phase7rl_composed_fixed2`, post-fix
+- Source checkpoint and lineage:
+  `runs/phase7_sparse_joint_20260904_212930/rl/step_2017690/smolvla_grpo_adapter.pt`,
+  byte-identical in both arms
+- Candidate checkpoint: none. This changes the task predicate, not a policy
+- Training steps / updates / wall time: none; both arms are inference-only
+- Evaluation protocol: `sil_record --mode record`, 3 rounds x 512 worlds,
+  `--seed-torch 0`, `--start-distance-cap 0.20`. **Scene-matched**: `--mode
+  compare` reports `same_episodes=True` on all three rounds — identical
+  instructions, slots and horizons, object layout within 1.2 mm — and step-0
+  actions bit-identical in 512/512 worlds. The two arms differ in the predicate
+  and in nothing else
+- Caps, seeds, rounds, worlds, and independent reset groups: requested cap 0.20
+  for every instruction. `cap_check` reports earned caps `move_to_object` 0.14,
+  `pick_up` 0.13, `put_into_bowl` 0.10, `put_into_plate` 0.17 — **every family
+  reads `above_earned_cap`**, and bowl is scored at twice the start distance it
+  earned. 1536 episodes; at the default `--group-size 8` that is 64 reset groups
+  per round, and per §13 the group is the independent unit, so the per-episode
+  flip counts below are optimistic as a significance claim
+- Instruction results (successes / denominator and rate):
+
+| instruction | protocol | pre-fix | post-fix | flipped, pre:post |
+|---|---|---|---|---|
+| `put_into_plate` | composed @0.20 | 216/456 = 0.4737 | **240/456 = 0.5263** | 84, 30:54 |
+| `put_into_bowl` | composed @0.20 | 69/352 = 0.1960 | **93/352 = 0.2642** | 36, 6:30 |
+| `move_to_object` | @0.20 | 172/400 = 0.4300 | 172/400 = 0.4300 | 50, **25:25** |
+| `pick_up` | @0.20, above its cap | 0/328 = 0.0000 | 1/328 = 0.0031 | 1, 0:1 |
+
+- Comparison baseline under the same protocol: the pre-fix arm above.
+  `move_to_object` is a **null control** — `wrong_place_settled` is gated on
+  `is_container` and cannot reach it — and it flips 50 of 400 episodes at
+  exactly 25:25, net zero. That is the world-coupled rollout noise, and both
+  container families sit outside it
+- What this result supports: **`wrong_place_settled` was terminating correct
+  placements.** It tested `~container_ok`, and `container_ok` requires
+  `released`; `state.grasped` is `caught_target & (opening <= 0.94)` over the
+  live `physical_grasp`. So an object carried into the receptacle and set down
+  while the gripper is still opening ended its own episode: the surface takes
+  the load, the pads unload, `~grasped` goes true, `target_has_settled` is
+  already true, and `released` is not true *yet*. Median **zero** env steps
+  between the latch breaking and the termination. This is §7.8 in a third place
+  — a terminal condition sharing a conjunct with success, firing because that
+  conjunct is not satisfied yet — and the condition is named for the PLACE, so
+  it now tests `~placement_geometry_ok` alone. `container_ok` implies
+  `placement_geometry_ok`, so the change strictly *narrows* termination
+- ...and the mechanism is confirmed, not only the outcome. Set-downs coming to
+  rest **inside** the receptacle radius went 28 -> 0 on plate and 26 -> 0 on
+  bowl; the survivors are genuine misses (plate's 5 sit at xy p50 0.092 against
+  a 0.091 radius). Real drops are untouched: `separated_and_fell` 44 -> 42 and
+  34 -> 32. In the funnel, `no_release` fell 104 -> 71 and 115 -> 88, success
+  rose +24 on each, and **`xy_miss` stayed flat** (90 -> 89, 77 -> 79) — the
+  freed episodes became successes rather than late misses. `release|grasp`
+  0.7626 -> 0.8364 (plate) and 0.6007 -> 0.6890 (bowl); `xy_ok|settle` rose on
+  both, 0.7059 -> 0.7295 and 0.4726 -> 0.5407
+- ...and that **the horizon now binds on what remains.** `no_release` episodes
+  that ran the whole budget went 12/104 (0.1154) -> 32/71 (0.4507) on plate and
+  21/115 (0.1826) -> 34/88 (0.3864) on bowl. The bottleneck moved rather than
+  vanishing, and for the first time it is a measured constraint rather than a
+  guess. These arms drew the SHORT horizon mix (see below), so the lever is
+  cheap to test
+- ...and that four hypotheses about the composed loss were aimed at the wrong
+  mechanism. The 8 mm relative-pose stability test never rejects a real grasp —
+  **0 of 12 496 genuinely-held policy steps** crossed the bar, held slip p50
+  0.23 mm against it — and detector chatter is 5%
+- What it does not support: **any comparison with the Phase 7 entry below.**
+  Those numbers were measured with a horizon mix of 808/1536 long (40-decision)
+  draws; these arms drew 424/1536. Same checkpoint, same seed, same requested
+  cap, different task. `0.5263` is therefore **not** an improvement on the
+  `0.5000` recorded below, and the two must not be placed in one column. It also
+  does not support any absolute claim about this checkpoint's ability, because
+  every family was scored above its earned cap. And it does not support the
+  bound this work was launched on: the predicted +0.138 on plate assumed every
+  inside-radius set-down would complete its release, and about a third do
+- Status: **diagnostic and active fix.** The checkpoint is unchanged and nothing
+  is promoted. The predicate change is landed and is a change to the TASK —
+  episodes that used to end now keep running, horizon usage rises, and results
+  before and after it are not commensurable
+- Local artifact path: on the training host
+- SHA-256: not recorded
+- Missing provenance: neither arm's recordings are in the local evidence set;
+  the pre-fix arm's directory name (`..._fixed`) misdescribes it and should be
+  renamed before the two are archived together
 
 ### 2026-09-07 — Phase 7: one sparse binary reward, four instructions, one run
 
