@@ -1,7 +1,7 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — current through 2026-09-02, Europe/Moscow**  
-**Repository state reviewed:** `c5251aa`  
+**Living report — current through 2026-09-07, Europe/Moscow**  
+**Repository state reviewed:** `994df48`  
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
 This is the campaign's canonical high-level progress record. It consolidates the results that are still technically relevant, backed by retained evidence, or used by the current training loop. Failed branches and measurements later shown to be invalid are not presented as achievements. They are named only in §10 so they are not accidentally revived.
@@ -40,10 +40,56 @@ The central idea is now demonstrated end to end:
 | Composed demonstrations come from a scripted oracle, not a policy | Oracle on the composed task: plate **1.000**, bowl **0.427** in smoke, plate **0.909** / bowl **0.455** pooled over 8192 worlds at cap 0.20 | 12 harvest rounds retained; replay survival 0.998–1.000 |
 | Composition RL now anneals the pre-grasped start | `phase6_compose_iter0`: caught fraction **1.0 → 0.9 → 0.8**; validation peak **0.6240** overall (plate 0.7571, bowl 0.4634) at step 4 257 133 | TensorBoard event file; caught-dominated validation protocol, see §8.4 |
 | Cross-instruction transfer | Composed demonstrations carry a grasp prefix under the `put_into` prompt, and `pick_up` rose **0.1191 → 0.1491** (+25%) with no pick_up data added | Same four-evaluation run as the seed row |
+| **Composed pick-and-place, one sparse reward, four instructions** | Phase 7 `step_2017690`: composed plate **0.5000** (228/456), composed bowl **0.2159** (76/352), `pick_up` 0.1465 at its own cap, `move_to` 0.4200 — against the seed's 0.1203 and 0.0412 on the identical protocol, i.e. **4.2x and 5.2x** | `sil_record` at cap 0.20, 3 rounds x 512 worlds; decomposition retained |
+| **The grasp gap to the scripted oracle is closed** | Plate grasp 0.9079 against the oracle's 0.9336 (97.2%); bowl 0.6051 against 0.6752 (89.6%), from 0.4054 and 0.2956 before | `placement_failure_decomposition`, 0 predicate disagreements |
+| Residual SFT destroys the composed gain | The same bank that rebuilds forgotten families takes composed plate 0.5000 → 0.1285-0.1390 at every demonstration mix tested (0.5 and 0.8 composed) | Two-arm sweep, identical protocol |
+
+### Instruction success by phase and retention cycle
+
+This table is the compact instruction-level result index. A dash means that the
+instruction was not evaluated or not reported for that stage; it does **not**
+mean zero success. Placement entries distinguish **caught** starts, where the
+object begins held, from **composed** starts, where the policy must approach,
+grasp, carry, and release from the desk.
+
+| Phase / stage | Evaluation protocol | `move_to_object` | `pick_up` | `put_into_plate` | `put_into_bowl` |
+|---|---|---:|---:|---:|---:|
+| Phase 0 — dedicated reaching | Controlled six-leg validation, cap 0.19 | **0.6299** (645/1024) | — | — | — |
+| Phase 1 — dedicated pick-up source | Dedicated/source reference, cap 0.06 | — | **0.2600**; direct re-harvest mean 0.279 | — | — |
+| Phase 2 — RL-only placement, final at 15M | Held-out caught-placement validation | — | — | **0.7100**; run peak 0.778 | **0.3200**; run peak 0.387 |
+| Phase 3 — SIL toolchain construction | No promoted comparable multi-instruction policy result | — | — | — | — |
+| Phase 4 — before Cycle 1 SFT | Three-family evaluation at registered caps | 0.0800 | — | 0.5000 caught | 0.2305 caught |
+| Phase 4 — Cycle 1 after retention SFT | Three-family evaluation at registered caps | **0.3110** | — | **0.5230** caught | **0.2765** caught |
+| Phase 4 — placement RL historical peak | Caught-placement validation; 0.633 overall | — | — | **0.7910** | **0.4420** |
+| Phase 5 — Cycle 2 four-family policy | Cycle evaluation at registered caps | **0.4316** | **0.1738** | **0.3463** caught | **0.1702** caught |
+| Phase 5 — retained placement RL checkpoint `step_2754052` | Caught-placement validation; 0.6211 overall | — | — | **0.7982** | **0.4073**; separate bowl peak 0.4655 |
+| Phase 5 — Cycle 3 four-family policy | Three-round `sil_record` evaluation | **0.4779** (734/1536) | **0.1191** (183/1536) | **0.7383** caught (632/856); 0.0046 composed (10/2168) | **0.5353** caught (364/680); 0.0114 composed (22/1928) |
+| Phase 6 — composed SFT seed `sft_phase6` | Three-round `sil_record`; explicit caught and composed legs | **0.4798** (737/1536) | **0.1491** (229/1536) | 0.7150 caught (612/856); **0.0935 composed** (80/856) | 0.4794 caught (326/680); **0.0265 composed** (18/680) |
+| Phase 6 — composition RL peak `step_4257133` | In-run validation, 80–90% caught starts; 0.6240 overall | — | — | **0.7571** mixed/caught-dominated | **0.4634** mixed/caught-dominated |
+
+These rows are a chronology, not a single leaderboard. Dedicated validation,
+bank-harvest evaluation, caught placement, composed placement, and mixed
+caught-fraction validation use different reset distributions. Comparisons
+should be made within a row or between rows with the same stated protocol.
 
 The most important scientific result is not a single maximum score. It is that one adapter can carry non-zero competence in all four instruction families after repeated RL-induced forgetting, and that balanced self-imitation can recover multiple old skills from a durable bank. Cycle 3 contains three campaign-best results on its own evaluation protocol—move-to, plate, and bowl—while preserving non-zero pick-up.
 
 The most important unresolved behavior is the **sawtooth**: family-specific RL strengthens the active family and erodes inactive ones; retention SFT rebuilds the inactive families only partially. The current loop works, but it alternates between peaks rather than holding every family at its dedicated-policy maximum simultaneously.
+
+**Phase 7 removes the sawtooth's cause and exposes a different one.** A single
+sparse binary reward is instruction-agnostic, so all four families train in one
+GRPO run with one return stream — no alternation, and therefore no sawtooth to
+compensate for. It produced the campaign's best composed pick-and-place and
+closed the grasp gap to the scripted oracle. But the retention SFT that the
+Phase 4/5 loop depends on is now measured to destroy ~72% of that composed
+capability, at every demonstration mix tested. The loop's two halves have
+become incompatible for this task: RL builds composition and SFT removes it.
+
+The remaining loss is localised and, for plate, small enough to name. The policy
+grasps at 97% of the oracle's rate and places accurately once it releases; it
+loses the object mid-carry in 95% of its remaining failures. Closing that one
+transition alone would put composed plate at **0.7622**, over the campaign's
+70% target.
 
 ---
 
@@ -357,7 +403,49 @@ Replaying old actions in the simulator under a different checkpoint changes the 
 
 Both residual and optional LoRA stages compare against the untrained baseline and retain the best validation epoch. Cycle 2 demonstrates why this matters: the residual overfits after epoch 38, but the saved adapter remains at epoch 38; the LoRA stage never beats baseline and is not applied.
 
-### 7.7 Artifact integrity is now explicit
+### 7.7 A curriculum-state check now travels with every evaluation
+
+`--start-distance-cap` applies to every instruction in a config, but the
+approach ladders are per instruction and end at different rungs. A composed
+`put_into` evaluation at 0.20 is correct for the container families and
+simultaneously scores `pick_up` — earned cap 0.080 — at a start distance it has
+never trained at, where it reads 0.0000 against 0.1465 at its own 0.06.
+
+This is §7.1 in a new place, and it cost two wrong conclusions before it was
+found. `sil_record` now reads `extra_state["approach_curriculum"]` from the
+checkpoint, compares it to the requested cap, warns before the rollout, and
+writes a per-instruction verdict — `at_earned_cap`, `below_earned_cap`,
+`above_earned_cap`, `unknown` — into `summary.json` as `cap_check`. The console
+line is what gets missed; the JSON is what gets read later, so the caveat
+travels with the number.
+
+### 7.8 Reset state and live state must not share a field
+
+`BatchedReset.physical_grasp` is written by the grasp detector on every env
+step and is additionally gated on `active_mask`. Two consumers read it after a
+rollout and both silently got "was still running and still holding at the final
+step" instead of "started holding": the recorder, which wrote it into every
+recording's `physical_grasp_at_reset` column, and the collector's caught-start
+mask, which made the uncaught-only approach gate a no-op that appeared to work.
+
+The rule: a field describing the START must be snapshotted at reset or derived
+from a per-step record. `_Recording.starts_grasped` uses `caught_target[0]`,
+which is correct on every recording already written.
+
+### 7.9 A curriculum ladder must not promote into a rung it cannot hold
+
+Every promotion costs pass rate, because the next rung is harder — measured
+over twelve promotions: median 0.091, p90 0.129, max 0.133. Against a 0.30
+promote gate and a 0.20 demote gate, a family lands at 0.17-0.27 and parks:
+too low to promote, too high to fall back. Zero of twelve promotions landed
+back above their gate and three of four families ended parked.
+
+The condition is on the level a family parks at, not the band width:
+`promote - drop_p90 >= demote`. At 0.45/0.30 the next run took zero demotions,
+held every family in or above the band, and rescued `pick_up` from five
+consecutive validations at 0.0000.
+
+### 7.10 Artifact integrity is now explicit
 
 The Phase 4 archive has a checksum manifest, preserved model files, raw evaluation tables, manifests, logs, reports, and 30 evaluation videos. This is a substantial improvement over result-only reporting and should be continued for every promoted checkpoint.
 
@@ -658,6 +746,21 @@ The following should not be reused as current headline results:
 - Composed pick-and-place as achieved. Only the missing-prefix data path is implemented.
 - Legacy LCHOL-based relabelling on the MJWarp path; that implementation is not connected to the active batched trainer.
 
+- The claim that the retention bank is ~98% composed by decision and that the
+  composed fraction cannot be swept. That came from `physical_grasp_at_reset`,
+  which stored the FINAL grasp state rather than the reset one; the bank is
+  roughly balanced (plate 51% composed, bowl 40%) and the fraction spans
+  [0, 1]. Fixed at `da8b834`; derive the stratum from `caught_target[0]`, which
+  is correct on recordings already written.
+- `pick_up` scored at a cap it never earned. A composed evaluation forces
+  `--start-distance-cap 0.20` on every instruction, and `pick_up`'s ladder
+  ended at 0.080; it read 0/328 there and 0.1465 at its own 0.06. Two separate
+  conclusions were drawn from the zero before the cause was found. `sil_record`
+  now emits a `cap_check` verdict per instruction into `summary.json`.
+- More composed demonstrations as a route to better composition. Measured flat:
+  0.5 and 0.8 composed slices differ by 0.021 on composed bowl, inside the
+  ~0.04 noise floor, while 0.8 costs caught plate 0.075.
+
 These exclusions do not erase the engineering lessons that produced active fixes. They prevent a superseded measurement or abandoned branch from appearing in the presentation as a current result.
 
 ---
@@ -696,7 +799,23 @@ Until items 4–5 are copied and checksummed, the latest reported results are no
 6. **Dataset size, not more epochs, broke the first retention ceiling.** A 4.3× larger per-family slice brought both move-to and pick-up to about 67% of their references.
 7. **One adapter now performs all four instructions.** Cycle 3 reports 0.478 move-to, 0.119 pick-up, 0.738 plate, and 0.535 bowl.
 8. **The remaining problem is retention amplitude, not basic feasibility.** RL and SFT form a measured sawtooth: the newest family peaks while older skills are partially rebuilt.
-9. **The next scientific step is full composition.** The grasp prefix for uncaught `put_into_*` is now representable in the bank, but the geometric join and end-to-end success are still unmeasured.
+9. **Full composition is achieved and measured.** Composed `put_into_plate`
+   reaches **0.500** and `put_into_bowl` **0.216** from a single policy that
+   also performs `move_to_object` and `pick_up` — grasp, carry and release,
+   with the object starting on the desk.
+10. **One sparse binary reward replaces four dense ones and removes the
+    sawtooth's cause.** All four instruction families train simultaneously in
+    one GRPO run. This is the SimpleVLA-RL two-stage pattern: an SFT cold start
+    followed by outcome-only RL, and it is worth 4.2x on composed plate and
+    5.2x on composed bowl over the SFT seed it began from.
+11. **The binding constraint has moved from perception to grip retention.** The
+    policy's grasp rate is 97% of a ground-truth oracle's; what it cannot do is
+    hold the object through the carry. 140 of 147 remaining plate failures drop
+    it. Closing that alone reaches 0.762.
+12. **Retention SFT and composition RL are now in conflict.** The bank that
+    rebuilds forgotten skills removes 72% of the composed capability RL builds,
+    independent of the demonstration mix. Any future loop has to reconcile
+    these or keep them apart.
 
 ---
 
@@ -744,6 +863,91 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-07 — Phase 7: one sparse binary reward, four instructions, one run
+
+- Git commit: `994df48`
+- Run/config: `phase7_sparse_joint_20260904_212930`, `configs/examples/cdpr_smolvla_phase7_sparse_joint.yaml`
+- Source checkpoint and lineage: `runs/phase4_bank/sft_phase7/sil_sft_adapter.pt`, weights-only warm start, fresh optimizer and curriculum
+- Candidate checkpoint: `rl/step_2017690`
+- Training steps / updates: ~2.0 M to the promoted step, 2.51 M to the end of the run
+- Evaluation protocol: `sil_record --mode record`, 3 rounds x 512 worlds, `--seed-torch 0`. Composed forces `placement_caught_object_fraction=0.0`; `pick_up` is scored at its OWN cap 0.06, never at the composed 0.20
+- Caps: composed put_into 0.20, move_to 0.20, pick_up 0.06
+
+| instruction | protocol | `sft_phase7` seed | **phase 7 RL** | raw |
+|---|---|---|---|---|
+| put_into_plate | composed @0.20 | 0.1203 | **0.5000** | 228/456 |
+| put_into_bowl | composed @0.20 | 0.0412 | **0.2159** | 76/352 |
+| move_to_object | @0.20 | — | 0.4200 | 168/400 |
+| pick_up | @0.06 | 0.1562 | 0.1465 | 225/1536 |
+
+- Comparison baseline under the same protocol: the `sft_phase7` seed above. Composed plate **4.2x**, composed bowl **5.2x**; `pick_up` and `move_to` unchanged within noise
+- What this result supports: one binary outcome reward, instruction-agnostic, trains all four families in a single GRPO run and produces the campaign's best composed pick-and-place. The sawtooth's *cause* — per-family dense rewards forcing per-family RL turns — is removed, not compensated for
+- What it does not support: 70% on any composed family, and no claim that the run is converged. A second run under a corrected ladder landed at composed plate 0.4145 / bowl 0.1364, i.e. ~0.08 lower on both, so the level is reproducible in band but the peak is not
+- Status: **promoted — the current best four-family policy and the base for all downstream work**
+- Local artifact path: on the training host
+- SHA-256: not yet recorded
+- Missing provenance: adapter not in the local evidence set
+
+**The decomposition, which is where the remaining work is.** Conditional rates
+against the scripted oracle on the identical protocol:
+
+```
+                grasp   release|grasp   settle|rel   xy_ok|settle   success
+  plate RL     0.9079      0.6449         0.9401       0.9084       0.5000
+  plate oracle 0.9336      0.9831         1.0000       1.0000       0.9178
+  bowl  RL     0.6051      0.5305         0.9115       0.7379       0.2159
+  bowl  oracle 0.6752      0.7778         0.9958       1.0000       0.5229
+```
+
+The grasp gap is closed: plate is 97.2% of the oracle's grasp rate and bowl
+89.6%, from 0.4054 and 0.2956 before. The horizon is no longer binding — 4.8%
+of plate's `no_release` timed out, against 100% two runs earlier — and the
+policy now grasps FASTER than the oracle, first grasp p50 19-21 env steps
+against 90-104.
+
+**What remains is the drop.** 140 of plate's 147 `no_release` failures (95.2%)
+lost the object mid-carry without ever opening the gripper. Give plate the
+oracle's `release|grasp` and nothing else and it reaches **0.7622**, over the
+70% target. Bowl reaches only 0.3166, because its grasp (0.605) and its
+placement accuracy (`xy_ok|settle` 0.7379 against the oracle's 1.0) are also
+short.
+
+Three hypotheses about the drop have been tested and none isolated it: release
+height (falsified, bounce is 0.18 mm under the oracle), horizon (fixed, now 5%
+of failures), and grasp speed (backwards — dropped episodes grasp SLOWER,
+median 19 vs 16 on plate, and the correlation does not transfer to the oracle,
+which is five times slower and more reliable).
+
+### 2026-09-07 — Phase 7 SFT collapses the RL gain, at every demonstration mix
+
+- Git commit: `994df48`
+- Run/config: `scripts/run_cdpr_phase7_composed_fraction_sweep.sh`, arms 0.5 and 0.8
+- Source checkpoint: `phase7_sparse_joint_20260904_212930/rl/step_2017690` — composed plate 0.5000
+- Evaluation protocol: identical to the entry above
+
+| arm | realized | comp plate | comp bowl | caught plate | caught bowl | pick_up | move_to |
+|---|---|---|---|---|---|---|---|
+| base (RL) | — | **0.5000** | **0.2159** | — | — | 0.1465 | 0.4200 |
+| knob off (SFT) | — | 0.1203 | 0.0412 | 0.6822 | 0.4985 | 0.1562 | 0.4668 |
+| 0.5 (SFT) | 0.5 | 0.1390 | 0.0471 | 0.6857 | 0.5132 | 0.1712 | 0.5007 |
+| 0.8 (SFT) | 0.8 | 0.1285 | 0.0676 | 0.6110 | 0.4500 | 0.1901 | 0.4616 |
+
+- What this result supports: **residual SFT on the retention bank destroys ~72%
+  of the composed capability RL built, and it does so at every mix tested.**
+  0.5000 becomes 0.1285-0.1390 regardless of whether the demonstration slice is
+  50% or 80% composed. The bank's demonstrations are a weaker teacher than the
+  policy being retrained on them
+- ...and that the mix itself is not a lever in this range. 0.8 buys composed
+  bowl +0.021 (inside the ~0.04 noise floor) and costs caught plate -0.075 and
+  caught bowl -0.063 (outside it). 0.5 is the better mix and is barely
+  distinguishable from leaving the knob off
+- What it does not support: any claim that more composed demonstrations help.
+  That hypothesis is now tested and flat
+- Status: **diagnostic — and it invalidates the alternating RL/SFT loop for the
+  composed task specifically.** The loop remains the retention mechanism for
+  families RL is not currently training
+- Missing provenance: the arms' adapters are on the training host
 
 ### 2026-09-01 — Phase 6 composition RL, first annealed run
 
@@ -794,5 +998,4 @@ Newest first. Entries follow the §13 template.
 - What it does not support: abandoning relabelling in general — it fails on scene geometry, not on principle
 - Status: diagnostic only; superseded by the oracle route
 - Missing provenance: none
-
 
