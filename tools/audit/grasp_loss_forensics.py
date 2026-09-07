@@ -757,8 +757,13 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     arms: dict[str, list[dict[str, Any]]] = {}
     arm_files: dict[str, list[str]] = {}
-    disagreements_total = 0
-    rows_total = 0
+    # Per arm, not pooled. Arms are usually different runs scored under
+    # different configs -- a policy eval beside an oracle harvest -- so one
+    # mismatched arm pooled into a single counter kills the whole invocation
+    # without saying which arm is wrong, and the natural next move is to raise
+    # the allowance, which switches the guard off for the arms that were fine.
+    disagreements: dict[str, int] = {}
+    rows_seen: dict[str, int] = {}
     for entry in args.arm:
         label, sep, pattern = str(entry).partition("=")
         if not sep or not label or not pattern:
@@ -770,16 +775,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise SystemExit(f"No recordings matched {part.strip()!r}.")
             paths.extend(Path(p) for p in expanded)
         collected: list[dict[str, Any]] = []
+        disagreements.setdefault(label, 0)
+        rows_seen.setdefault(label, 0)
         for path in paths:
             recording = _Recording.from_npz(path)
             base = _episode_terms(recording, thresholds)
-            rows_total += len(base)
+            rows_seen[label] += len(base)
             bad = [
                 row
                 for row in base
                 if row["recorded_success"] != row["recomputed_success"]
             ]
-            disagreements_total += len(bad)
+            disagreements[label] += len(bad)
             found = _loss_rows(recording, thresholds, params, base)
             fingerprints = {
                 int(row["world"]): _scene_fingerprint(recording, int(row["world"]))
@@ -809,19 +816,30 @@ def main(argv: Sequence[str] | None = None) -> int:
         arms[label] = collected
         arm_files[label] = [str(p) for p in paths]
 
-    if disagreements_total:
+    failed = {
+        label: count
+        for label, count in disagreements.items()
+        if count > int(args.max_predicate_disagreement)
+    }
+    for label, count in disagreements.items():
+        if not count:
+            continue
         print(
-            f"[grasploss] PREDICATE DISAGREEMENT on {disagreements_total} of "
-            f"{rows_total} container worlds. Most likely --config is not the "
-            "one these recordings were scored under.",
+            f"[grasploss] PREDICATE DISAGREEMENT in arm {label!r}: {count} of "
+            f"{rows_seen[label]} container worlds. The terms recomputed here "
+            "do not reproduce the verdict that arm latched, so --config is "
+            "most likely not the one THAT arm was scored under.",
             flush=True,
         )
-        if disagreements_total > int(args.max_predicate_disagreement):
-            raise SystemExit(
-                f"{disagreements_total} disagreements exceeds "
-                f"--max-predicate-disagreement "
-                f"{args.max_predicate_disagreement}."
-            )
+    if failed:
+        raise SystemExit(
+            "Arms over --max-predicate-disagreement "
+            f"{args.max_predicate_disagreement}: "
+            + ", ".join(f"{label} ({count})" for label, count in failed.items())
+            + ". Run each of those alone under the config its own "
+            "failure_decomposition.json names; the arms not listed here "
+            "reproduced their verdicts and are fine."
+        )
 
     summary: dict[str, Any] = {
         "config": str(args.config),
@@ -834,7 +852,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "min_pad_force_n": min_pad_force,
         },
         "params": params.as_dict(),
-        "predicate_disagreements": disagreements_total,
+        "predicate_disagreements": dict(disagreements),
+        "container_episodes": dict(rows_seen),
         "by_arm": {},
     }
     for label, rows in arms.items():
