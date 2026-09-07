@@ -256,6 +256,12 @@ def _loss_rows(
         if live_idx.size == 0:
             continue
         last = int(live_idx[-1])
+        # WHY the episode stopped, which is what `censored` cannot say on its
+        # own. `terminated` is stored per step, so its value at the last live
+        # step separates "the predicate ended this episode" from "the budget
+        # ran out" -- and those want opposite work. Carried rather than
+        # re-derived: `timed_out` is the decomposition's own column.
+        terminated_at_end = bool(recording.terminated[last, world])
 
         target = target_all[:, world, :].astype(np.float64)
         ee = recording.ee_xyz[:, world, :].astype(np.float64)
@@ -321,6 +327,10 @@ def _loss_rows(
             "held_steps": int(held_mask.sum()),
             "env_steps_active": int(live.sum()),
             "last_active_env_step": last,
+            "terminated_at_end": terminated_at_end,
+            "timed_out": bool(base["timed_out"]),
+            "ended_holding": bool(base["ended_holding"]),
+            "env_step_budget": int(base["env_step_budget"]),
             # The slip distribution while genuinely holding, against the bar
             # the detector applies to it. This is the D3 evidence.
             "slip_held_p50_m": round(_pct(slip_held, 50), 6),
@@ -348,6 +358,7 @@ def _loss_rows(
                     "distance_excess_m": float("nan"),
                     "min_height_after_loss_m": float("nan"),
                     "steps_live_after_loss": 0,
+                    "steps_loss_to_end": -1,
                     "height_at_loss_m": float("nan"),
                     "episode_outcome": _outcome(
                         held_mask, height, last, thresholds
@@ -422,6 +433,9 @@ def _loss_rows(
                 "distance_excess_m": round(distance_excess, 6),
                 "min_height_after_loss_m": round(min_height_after, 6),
                 "steps_live_after_loss": steps_after,
+                # Unclipped by --window-steps, so a censored episode reports how
+                # much episode was actually left rather than the window's floor.
+                "steps_loss_to_end": int(last - first_loss),
                 "height_at_loss_m": round(float(height[first_loss]), 6),
                 "episode_outcome": _outcome(held_mask, height, last, thresholds),
             }
@@ -525,6 +539,7 @@ def _taxonomy(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "min_height_after_loss_m",
         "height_at_loss_m",
         "steps_live_after_loss",
+        "steps_loss_to_end",
         "first_loss_env_step",
     )
     for field, source in (
@@ -534,6 +549,39 @@ def _taxonomy(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         out[field] = _percentiles(
             np.array([float(row[field]) for row in source], dtype=np.float64)
         )
+    # What ended the episodes the separation test could not see. `censored`
+    # is not a mechanism, it is a measurement that ran out of episode -- so the
+    # only useful thing to report about it is why the episode stopped.
+    censored = [row for row in losses if row["first_loss_class"] == "censored"]
+    out["censored_diagnosis"] = {
+        "episodes": len(censored),
+        "terminated_at_end": sum(
+            1 for row in censored if row["terminated_at_end"]
+        ),
+        "timed_out": sum(1 for row in censored if row["timed_out"]),
+        "ended_holding": sum(1 for row in censored if row["ended_holding"]),
+        "neither": sum(
+            1
+            for row in censored
+            if not row["terminated_at_end"] and not row["timed_out"]
+        ),
+        "steps_loss_to_end": _percentiles(
+            np.array(
+                [float(row["steps_loss_to_end"]) for row in censored],
+                dtype=np.float64,
+            )
+        ),
+        "height_at_loss_m": _percentiles(
+            np.array(
+                [float(row["height_at_loss_m"]) for row in censored],
+                dtype=np.float64,
+            )
+        ),
+    }
+    out["terminated_at_end"] = {
+        "episodes": sum(1 for row in rows if row["terminated_at_end"]),
+        "of_grasped": len(rows),
+    }
     # The single number the D3 question turns on: how much of the time a
     # genuinely-held step is already over the bar the detector applies to it.
     measured = sum(int(row["held_steps_measured"]) for row in rows)
@@ -754,6 +802,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         flush=True,
     )
     print(f"[grasploss] params {json.dumps(params.as_dict())}", flush=True)
+    # The settle margin is the fall test's bar, so a height percentile printed
+    # without it beside it cannot be read.
+    print(
+        f"[grasploss] thresholds {json.dumps(thresholds.as_dict())}", flush=True
+    )
 
     arms: dict[str, list[dict[str, Any]]] = {}
     arm_files: dict[str, list[str]] = {}
@@ -916,6 +969,19 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"relatch gap {block['relatch_gap_steps']}",
                     flush=True,
                 )
+                cens = block["censored_diagnosis"]
+                if cens["episodes"]:
+                    print(
+                        f"[grasploss]   censored: {cens['episodes']} episodes "
+                        f"ended within the window -- "
+                        f"{cens['terminated_at_end']} terminated by the "
+                        f"predicate, {cens['timed_out']} ran the whole budget, "
+                        f"{cens['ended_holding']} ended still holding, "
+                        f"{cens['neither']} neither; steps from loss to end "
+                        f"{cens['steps_loss_to_end']}; object height at the "
+                        f"loss {cens['height_at_loss_m']}",
+                        flush=True,
+                    )
                 bar = block["held_steps_over_slip_bar"]
                 print(
                     f"[grasploss]   held steps over the {slip_bar} m bar: "

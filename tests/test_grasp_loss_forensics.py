@@ -270,6 +270,49 @@ class TaxonomyTest(unittest.TestCase):
         self.assertEqual(summary["slip_held_p50_m"]["n"], 2)
 
 
+class CensoredDiagnosisTest(unittest.TestCase):
+    """`censored` is not a mechanism, so it has to say why the episode ended.
+
+    A loss three steps from the end can be an episode the predicate stopped --
+    the object came to rest somewhere wrong -- or one that simply ran out of
+    budget while still holding. Those want opposite work, and without the
+    termination evidence carried through, both read as the same class.
+    """
+
+    def _terminated(self) -> dict:
+        parts = _build(1)
+        parts["active"][LOSE_AT + 1 :, 0] = False
+        recording_parts = parts
+        return recording_parts
+
+    def test_terminated_at_end_is_read_from_the_last_live_step(self) -> None:
+        parts = self._terminated()
+        recording = _recording(parts, 1)
+        recording.terminated[LOSE_AT, 0] = True
+        thresholds = _Thresholds(METADATA)
+        base = _episode_terms(recording, thresholds)
+        row = _loss_rows(recording, thresholds, _Params(_Args()), base)[0]
+        self.assertEqual(row["first_loss_class"], "censored")
+        self.assertTrue(row["terminated_at_end"])
+        self.assertEqual(row["steps_loss_to_end"], 0)
+
+    def test_a_budget_exhausted_episode_is_not_marked_terminated(self) -> None:
+        parts = _build(1)
+        row = _classify(parts, 1)[0]
+        self.assertFalse(row["terminated_at_end"])
+        self.assertTrue(row["timed_out"])
+
+    def test_the_diagnosis_counts_only_censored_episodes(self) -> None:
+        parts = _build(2)
+        parts["active"][LOSE_AT + 1 :, 0] = False  # censored
+        parts["obj"][LOSE_AT:, 1, 0, 2] = REST  # separated and fell
+        summary = _taxonomy(_classify(parts, 2))
+        self.assertEqual(summary["censored_diagnosis"]["episodes"], 1)
+        self.assertEqual(
+            summary["censored_diagnosis"]["steps_loss_to_end"]["n"], 1
+        )
+
+
 class SceneFingerprintTest(unittest.TestCase):
     """The guard on the paired policy-versus-oracle table.
 
