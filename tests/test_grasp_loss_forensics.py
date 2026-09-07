@@ -313,6 +313,73 @@ class CensoredDiagnosisTest(unittest.TestCase):
         )
 
 
+class SetDownTest(unittest.TestCase):
+    """The mechanism the first run named, asserted rather than assumed.
+
+    A set-down and a mid-carry drop are both "the latch broke and the episode
+    ended", and the campaign has been reading them as one thing. The three
+    conditions that separate them are the object already being at resting
+    height, the episode terminating on the same step, and the gripper never
+    opening -- so all three are required, and each is withheld in turn here.
+    """
+
+    def _set_down(self) -> _Recording:
+        parts = _build(1)
+        # Carried down to the surface while still held, then the surface takes
+        # the load: the latch breaks at rest height and the predicate stops the
+        # episode on that step.
+        parts["ee"][LOSE_AT:, 0, 2] = REST + HELD_GAP
+        parts["obj"][LOSE_AT:, 0, 0, 2] = REST
+        parts["active"][LOSE_AT + 1 :, 0] = False
+        recording = _recording(parts, 1)
+        recording.terminated[LOSE_AT, 0] = True
+        return recording
+
+    def _rows(self, recording: _Recording) -> list[dict]:
+        thresholds = _Thresholds(METADATA)
+        base = _episode_terms(recording, thresholds)
+        return _loss_rows(recording, thresholds, _Params(_Args()), base)
+
+    def test_a_set_down_is_flagged(self) -> None:
+        row = self._rows(self._set_down())[0]
+        self.assertTrue(row["set_down"])
+        self.assertEqual(row["steps_loss_to_end"], 0)
+        self.assertLessEqual(
+            row["height_at_loss_m"], _Thresholds(METADATA).settle_margin
+        )
+
+    def test_a_loss_at_carry_height_is_not_a_set_down(self) -> None:
+        """The height condition. A latch that breaks 22 cm up is a drop."""
+
+        parts = _build(1)
+        parts["active"][LOSE_AT + 1 :, 0] = False
+        recording = _recording(parts, 1)
+        recording.terminated[LOSE_AT, 0] = True
+        row = self._rows(recording)[0]
+        self.assertFalse(row["set_down"])
+
+    def test_an_unterminated_episode_is_not_a_set_down(self) -> None:
+        """The termination condition, which is what makes it the same event."""
+
+        recording = self._set_down()
+        recording.terminated[:] = False
+        row = self._rows(recording)[0]
+        self.assertFalse(row["set_down"])
+
+    def test_the_landing_is_scored_against_the_receptacle_radius(self) -> None:
+        """Inside the radius is a release that never fired; outside is a miss.
+
+        The receptacle sits 0.40 m away in these trajectories, so a set-down
+        there must read as outside a 0.091 m plate radius. Reading it as inside
+        would turn a localization failure into a release-timing one.
+        """
+
+        row = self._rows(self._set_down())[0]
+        self.assertFalse(row["inside_radius_at_rest"])
+        self.assertAlmostEqual(row["xy_to_receptacle_at_rest_m"], 0.40, places=3)
+        self.assertGreater(row["xy_to_receptacle_at_loss_m"], row["radius_m"])
+
+
 class SceneFingerprintTest(unittest.TestCase):
     """The guard on the paired policy-versus-oracle table.
 

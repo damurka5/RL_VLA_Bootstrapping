@@ -231,6 +231,14 @@ def _loss_rows(
     worlds = recording.worlds
     world_index = np.arange(worlds)
     target_all = recording.object_xyz[:, world_index, recording.target_slots, :]
+    # The receptacle, so a set-down can be scored against the radius it was
+    # supposed to land inside. Without this the censored class says the policy
+    # put the object down early and cannot say whether it put it down in the
+    # right place -- which is the difference between a localization problem and
+    # a release-timing one, and they want completely different work.
+    reference_all = recording.object_xyz[
+        :, world_index, recording.reference_slots, :
+    ]
     active = recording.active.astype(bool)
     caught = recording.caught_target.astype(bool)
     ever_grasped_t = np.logical_or.accumulate(caught & active, axis=0)
@@ -269,6 +277,9 @@ def _loss_rows(
         # `relative_position_slip` without the orientation term -- the same
         # quantity the 8 mm stability test reads, recomputed from stored
         # positions rather than guessed at.
+        reference = reference_all[:, world, :].astype(np.float64)
+        container_xy = np.linalg.norm(target[:, :2] - reference[:, :2], axis=-1)
+        radius = float(thresholds.radius_for(str(base["instruction"])))
         relative = target - ee
         distance = np.linalg.norm(relative, axis=-1)
         slip = np.full(distance.shape, np.nan, dtype=np.float64)
@@ -282,6 +293,10 @@ def _loss_rows(
             recording.actions[:, world, 0:3].astype(np.float64), axis=-1
         )
         grip_command = recording.actions[:, world, 4].astype(np.float64)
+        # Signed, not the magnitude: "was the policy still driving downward as
+        # the object touched down" is a different question from how large the
+        # command was.
+        command_z = recording.actions[:, world, 2].astype(np.float64)
         height = target[:, 2] - float(desk[world])
 
         held_mask = caught[:, world] & live
@@ -344,6 +359,11 @@ def _loss_rows(
             "held_steps_measured": int(slip_held.size),
             "ee_speed_held_p50_m": round(_pct(speed_held, 50), 6),
             "distance_held_m": round(distance_held, 6),
+            "radius_m": round(radius, 5),
+            "xy_to_receptacle_at_rest_m": round(
+                float(container_xy[last]), 6
+            ),
+            "inside_radius_at_rest": bool(container_xy[last] <= radius),
         }
 
         if first_loss < 0:
@@ -360,6 +380,9 @@ def _loss_rows(
                     "steps_live_after_loss": 0,
                     "steps_loss_to_end": -1,
                     "height_at_loss_m": float("nan"),
+                    "xy_to_receptacle_at_loss_m": float("nan"),
+                    "command_z_at_loss": float("nan"),
+                    "set_down": False,
                     "episode_outcome": _outcome(
                         held_mask, height, last, thresholds
                     ),
@@ -437,6 +460,22 @@ def _loss_rows(
                 # much episode was actually left rather than the window's floor.
                 "steps_loss_to_end": int(last - first_loss),
                 "height_at_loss_m": round(float(height[first_loss]), 6),
+                "xy_to_receptacle_at_loss_m": round(
+                    float(container_xy[first_loss]), 6
+                ),
+                "command_z_at_loss": round(float(command_z[first_loss]), 6),
+                # The mechanism the first run turned up, stated as a predicate
+                # rather than inferred from a class: the object was already at
+                # resting height when the latch broke, and the episode ended on
+                # the same step. That is the surface taking the load, not the
+                # object falling out of the hand -- a fall needs steps, and
+                # these have a median of zero left.
+                "set_down": bool(
+                    terminated_at_end
+                    and float(height[first_loss])
+                    <= float(thresholds.settle_margin)
+                    and int(last - first_loss) <= params.min_steps_after
+                ),
                 "episode_outcome": _outcome(held_mask, height, last, thresholds),
             }
         )
@@ -529,6 +568,7 @@ def _taxonomy(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "distance_held_m",
         "held_steps",
         "loss_events",
+        "xy_to_receptacle_at_rest_m",
     )
     over_losses = (
         "slip_at_loss_m",
@@ -541,6 +581,8 @@ def _taxonomy(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "steps_live_after_loss",
         "steps_loss_to_end",
         "first_loss_env_step",
+        "xy_to_receptacle_at_loss_m",
+        "command_z_at_loss",
     )
     for field, source in (
         [(name, rows) for name in over_grasped]
@@ -574,6 +616,46 @@ def _taxonomy(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         "height_at_loss_m": _percentiles(
             np.array(
                 [float(row["height_at_loss_m"]) for row in censored],
+                dtype=np.float64,
+            )
+        ),
+    }
+    # Where the set-downs landed. Inside the radius means the policy had the
+    # place right and never let go; outside means it put the object down
+    # somewhere the receptacle is not.
+    set_down = [row for row in losses if row["set_down"]]
+    out["set_down"] = {
+        "episodes": len(set_down),
+        "fraction_of_losses": (
+            round(len(set_down) / len(losses), 4) if losses else None
+        ),
+        "inside_radius_at_rest": sum(
+            1 for row in set_down if row["inside_radius_at_rest"]
+        ),
+        "xy_to_receptacle_at_loss_m": _percentiles(
+            np.array(
+                [float(row["xy_to_receptacle_at_loss_m"]) for row in set_down],
+                dtype=np.float64,
+            )
+        ),
+        "xy_to_receptacle_at_rest_m": _percentiles(
+            np.array(
+                [float(row["xy_to_receptacle_at_rest_m"]) for row in set_down],
+                dtype=np.float64,
+            )
+        ),
+        "radius_m": _percentiles(
+            np.array([float(row["radius_m"]) for row in set_down], dtype=np.float64)
+        ),
+        "command_z_at_loss": _percentiles(
+            np.array(
+                [float(row["command_z_at_loss"]) for row in set_down],
+                dtype=np.float64,
+            )
+        ),
+        "gripper_command_at_loss": _percentiles(
+            np.array(
+                [float(row["gripper_command_at_loss"]) for row in set_down],
                 dtype=np.float64,
             )
         ),
@@ -980,6 +1062,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                         f"{cens['neither']} neither; steps from loss to end "
                         f"{cens['steps_loss_to_end']}; object height at the "
                         f"loss {cens['height_at_loss_m']}",
+                        flush=True,
+                    )
+                sd = block["set_down"]
+                if sd["episodes"]:
+                    print(
+                        f"[grasploss]   SET DOWN (at rest height, terminated "
+                        f"on the same step, gripper never opened): "
+                        f"{sd['episodes']} ({sd['fraction_of_losses']} of "
+                        f"losses); {sd['inside_radius_at_rest']} came to rest "
+                        f"INSIDE the radius {sd['radius_m'].get('p50')} m",
+                        flush=True,
+                    )
+                    print(
+                        f"[grasploss]     xy to receptacle at the loss "
+                        f"{sd['xy_to_receptacle_at_loss_m']}",
+                        flush=True,
+                    )
+                    print(
+                        f"[grasploss]     xy to receptacle at rest "
+                        f"{sd['xy_to_receptacle_at_rest_m']}",
+                        flush=True,
+                    )
+                    print(
+                        f"[grasploss]     commanded a_z at the loss "
+                        f"{sd['command_z_at_loss']}; a_gripper "
+                        f"{sd['gripper_command_at_loss']}",
                         flush=True,
                     )
                 bar = block["held_steps_over_slip_bar"]
