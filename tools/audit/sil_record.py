@@ -1356,7 +1356,29 @@ def _reset_identity_report(
     ``base_seed + rank*1_000_003 + update_index*10_000_019 + round_index*100_003``
     and nothing else, so a mismatch here means the run was launched with a
     different cap, round index or config -- not that the simulator is noisy.
+
+    ``same_grasp_at_reset`` used to read ``physical_grasp_at_reset``, which is
+    the §7.8 column: ``BatchedReset.physical_grasp`` is live state the detector
+    writes every step, so that column holds the FINAL grasp, additionally gated
+    on ``active_mask``. Two different rollouts can never agree on it, so the
+    field read False on every honest comparison and trained the reader to
+    discount the whole block -- including ``same_horizons`` beside it, which is
+    real. It now uses ``starts_grasped`` (``caught_target[0]``), which is
+    correct on every recording already written.
+
+    ``max_object_xyz_delta_m`` is the authoritative scene check and is new:
+    ``initial_target_xyz`` is captured BEFORE the placement repositioning and
+    is not updated for ``uncaught_container``, so on a composed harvest it
+    describes a lattice point the episode never used. The object layout one env
+    step after reset is what the episode actually started from.
     """
+
+    step0_delta = float(
+        np.abs(
+            first.object_xyz[0].astype(np.float64)
+            - second.object_xyz[0].astype(np.float64)
+        ).max()
+    ) if first.object_xyz.shape[1:] == second.object_xyz.shape[1:] else float("nan")
 
     return {
         "same_instruction_ids": bool(
@@ -1367,10 +1389,9 @@ def _reset_identity_report(
         ),
         "same_horizons": bool(np.array_equal(first.horizons, second.horizons)),
         "same_grasp_at_reset": bool(
-            np.array_equal(
-                first.physical_grasp_at_reset, second.physical_grasp_at_reset
-            )
+            np.array_equal(first.starts_grasped, second.starts_grasped)
         ),
+        "max_object_xyz_delta_m": round(step0_delta, 6),
         "max_initial_target_delta_m": float(
             np.abs(
                 first.initial_target_xyz - second.initial_target_xyz
@@ -3066,9 +3087,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         identity = report["reset_identity"]
         decision = report["first_decision"]
+        # Printed term by term rather than as one boolean: "same_episodes=False"
+        # says nothing about WHICH invariant broke, and the four are not equally
+        # serious -- differing horizons change the task, differing object
+        # layouts change the scene.
         print(
             "[sil][compare] same_episodes="
-            f"{identity['same_instruction_ids'] and identity['same_horizons']}",
+            f"{identity['same_instruction_ids'] and identity['same_horizons']}"
+            f" (instructions={identity['same_instruction_ids']}"
+            f" slots={identity['same_target_slots']}"
+            f" horizons={identity['same_horizons']}"
+            f" starts_grasped={identity['same_grasp_at_reset']}"
+            f" max_object_delta={identity['max_object_xyz_delta_m']} m)",
             flush=True,
         )
         print(
