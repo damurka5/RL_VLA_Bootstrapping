@@ -751,7 +751,9 @@ class ApproachDistanceCurriculum:
                 except (TypeError, ValueError):
                     ladder = []
                     break
-        self.ladder = tuple(sorted(set(ladder))) if len(ladder) >= 2 else ()
+        # One rung deliberately fixes the cap. Disabling the curriculum would
+        # instead remove the cap and expose full-workspace starts.
+        self.ladder = tuple(sorted(set(ladder)))
         if self.ladder:
             self.initial = float(self.ladder[0])
             self.final = float(self.ladder[-1])
@@ -1169,7 +1171,7 @@ class PerInstructionApproachCurriculum:
                     except (TypeError, ValueError):
                         rungs = []
                         break
-                if len(rungs) >= 2:
+                if rungs:
                     ladders[str(key)] = rungs
         self._by_name = {}
         for name in names:
