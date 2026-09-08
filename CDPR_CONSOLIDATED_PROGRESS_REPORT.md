@@ -1,7 +1,9 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — current through 2026-09-07, Europe/Moscow**  
-**Repository state reviewed:** `994df48`  
+**Living report — current through 2026-09-08, Europe/Moscow**
+
+**Repository state reviewed:** `fd0c73f`
+
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
 This is the campaign's canonical high-level progress record. It consolidates the results that are still technically relevant, backed by retained evidence, or used by the current training loop. Failed branches and measurements later shown to be invalid are not presented as achievements. They are named only in §10 so they are not accidentally revived.
@@ -24,6 +26,13 @@ The central idea is now demonstrated end to end:
 > Start from a pretrained SmolVLA action prior, learn task-specific corrections with a compact residual policy and GRPO, harvest successful trajectories, preserve them in a retention bank, and alternate family-specific RL with balanced residual SFT so one adapter can recover old skills while adding or strengthening a new one.
 
 ### Current headline achievements
+
+**Latest candidate, 2026-09-08:** the fixed-cap joint-RL release-recovery pilot
+improved composed plate **0.6162 → 0.6930** and pick-up **0.1494 → 0.1982**
+on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
+0.08**, bowl **0.3068**. This is a retained candidate, not a promoted >70%
+four-family policy; checkpoint trajectory and fresh-seed confirmation remain
+pending. See the first entry in §14 and `CDPR_NEXT_CAMPAIGN_PLAN.md`.
 
 | Achievement | Strongest supported result | Evidence status |
 |---|---|---|
@@ -1045,6 +1054,58 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-08 — Fixed-cap joint RL: plate 0.6162 → 0.6930, pick-up 0.1494 → 0.1982
+
+- Git commit: pilot implementation/config `fd0c73f`; actual host launch revision
+  is saved in `pilot_manifest.json` and has not yet been supplied locally.
+- Run/config: `release_recovery_pilot_20260907_193019`,
+  `configs/examples/cdpr_smolvla_release_recovery_pilot.yaml`.
+- Source: `runs/phase7_sparse_joint_20260904_212930/rl/step_2017690/smolvla_grpo_adapter.pt`,
+  weights-only warm start, fresh optimizer and curriculum. No SFT.
+- Candidate: the pilot's final numeric `step_*` checkpoint, selected by the
+  launcher. Exact path and SHA-256 are in `pilot_comparison.json`, not yet
+  pasted. Do not substitute an invented step number or a presumed `latest.pt`.
+- Budget: 500,000 selected environment actions across both ranks, stopping at
+  an update boundary. Actual step, update count and elapsed time not supplied.
+- Settings: one shared policy, all four instructions, sparse binary reward,
+  corrected `wrong_place_settled`. One-rung ladders fix move-to at 0.08 m and
+  pick-up at 0.06 m. Containers are 100% uncaught, with aligned gripper starts,
+  original 0.06–0.10 m object-to-receptacle spawn range and 40 decisions. Their
+  nominal 0.20 cap does not set composed carry distance. Existing gripper
+  episode-offset std 0.15 is on; no pick-up-specific z exploration.
+- Evaluation: before/after `sil_record`, 3 rounds × 512 worlds, round indices
+  0–2, group size 8, torch seed 0, same config. No scalar cap override. These
+  are matched evaluation settings, not a demonstrated bit-identical rollout.
+- Independent reset groups: 192 total, comprising move-to 50, pick-up 41,
+  bowl 44 and plate 57. Candidate episodes within groups are not independent.
+
+| Instruction | Baseline | Final | Change |
+|---|---:|---:|---:|
+| move_to_object @0.08 | 279/400 = 0.6975 | 285/400 = **0.7125** | +0.0150 |
+| pick_up @0.06 | 49/328 = 0.1494 | 65/328 = **0.1982** | +0.0488 |
+| put_into_plate, composed | 281/456 = 0.6162 | 316/456 = **0.6930** | +0.0768 |
+| put_into_bowl, composed | 107/352 = 0.3040 | 108/352 = **0.3068** | +0.0028 |
+
+- Supports: the successor joint-RL recipe improves the aggregate plate and
+  pick-up estimates while the other two aggregate estimates do not regress.
+  Plate requires four additional successes on this denominator to exceed
+  70% (320/456); move-to exceeds 70% as a point estimate at its easier cap.
+- Does not support: statistical significance without a paired group-level
+  analysis; four-family >70%; harder-cap reaching; a claim that the final
+  checkpoint is best or still improving; or that release specifically caused
+  the plate gain. The final grasp/release funnel has not yet been supplied.
+  Bowl is effectively unchanged in this comparison. The recipe differs from
+  the historical run in training mixture, fixed caps and exploration as well
+  as corrected termination, so this is not a single-variable causal ablation.
+- Status: **retained candidate; not automatically promoted or extended**.
+  Next read the per-family validation trajectory and exact candidate identity
+  before choosing continuation versus a targeted intervention. Keep caps fixed.
+- Evidence: user-supplied console output. Remote artifacts are under
+  `runs/release_recovery_pilot_20260907_193019/`, including baseline/final NPZs,
+  `pilot_comparison.json`, `pilot_manifest.json`, `rl/validation.jsonl`,
+  `rl/metrics.jsonl` and all step checkpoints. Not copied into the local
+  evidence set; hashes are recorded remotely but not yet available here.
+
 ### 2026-09-07 — `wrong_place_settled` terminated correct placements; fixing it takes composed plate 0.5000 → 0.6272
 
 - Git commit: `1b78cbc` (predicate fix and its tests); `0616cee`, `a9bbae9`,
@@ -1306,4 +1367,3 @@ which is five times slower and more reliable).
 - What it does not support: abandoning relabelling in general — it fails on scene geometry, not on principle
 - Status: diagnostic only; superseded by the oracle route
 - Missing provenance: none
-

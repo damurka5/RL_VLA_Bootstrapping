@@ -3,8 +3,17 @@
 Date: 2026-09-07. Source review: `26cddf6`, consolidated report §§1, 4, 7,
 10 and the current resetter, collector, and Phase 7 config.
 
-Status: proposed experiments, not measured improvements. GPU work runs on the
-user's remote 2×A40 host; no training was launched by this review.
+Status: pilot completed on the user's remote 2×A40 host; results supplied on
+2026-09-08. Later interventions remain proposed, not measured improvements.
+
+Latest matched baseline → final results from
+`release_recovery_pilot_20260907_193019`: move-to **279/400 → 285/400**
+(0.6975 → 0.7125 at 0.08 m), pick-up **49/328 → 65/328** (0.1494 → 0.1982
+at 0.06 m), composed plate **281/456 → 316/456** (0.6162 → 0.6930), bowl
+**107/352 → 108/352** (0.3040 → 0.3068). See the 2026-09-08 entry in the
+consolidated report for protocol, provenance and limits. Keep the final
+checkpoint as a candidate; exact path, learning trajectory and confirmation
+remain to be retrieved. Do not increase difficulty on this one evaluation.
 
 ## Objective and evaluation contract
 
@@ -219,7 +228,7 @@ rule out individual controller/contact failures, nor establish that the object
 was geometrically ready throughout each final window. The remaining opening
 gaps are substantial, not tiny threshold misses. Keep the release predicate.
 
-### Prepared learning pilot (not yet run)
+### Learning pilot (completed; validation trajectory pending)
 
 `scripts/run_cdpr_release_recovery_pilot.sh` uses
 `configs/examples/cdpr_smolvla_release_recovery_pilot.yaml`:
