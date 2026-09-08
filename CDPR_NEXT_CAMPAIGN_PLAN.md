@@ -12,8 +12,30 @@ Latest matched baseline → final results from
 at 0.06 m), composed plate **281/456 → 316/456** (0.6162 → 0.6930), bowl
 **107/352 → 108/352** (0.3040 → 0.3068). See the 2026-09-08 entry in the
 consolidated report for protocol, provenance and limits. Keep the final
-checkpoint as a candidate; exact path, learning trajectory and confirmation
-remain to be retrieved. Do not increase difficulty on this one evaluation.
+checkpoint as a candidate. Its identity and learning trajectory have now been
+supplied; confirmation remains pending. Do not increase difficulty on this
+one evaluation.
+
+The pilot ended at **527,307 selected actions / update 19**. Candidate:
+`runs/release_recovery_pilot_20260907_193019/rl/step_0527307/smolvla_grpo_adapter.pt`,
+SHA-256 `ee33b11d9a1a17c64ebe7251b614edb1706dbe69f83c793196a997f4596d329e`.
+Its in-run validation trajectory is now recorded in §14 of the consolidated
+report: bowl rose 0.2917 → 0.3295, plate recovered after an early dip, and
+pick-up ended at 0.0950. The trajectory is mixed, not evidence that every
+family improves monotonically or that the run has converged.
+
+**User steering, 2026-09-08:** multi-million-step training is welcome; do not
+keep the campaign at short pilot budgets. The next run will be a **full
+resume for 3,000,000 additional selected actions**, to cumulative 3,527,307,
+with identical fixed task settings and validation/checkpoints every 100,000
+actions. Use the existing configurable full-resume launcher
+`scripts/train_cdpr_smolvla_pick_up_grpo_mjlab_dual_remote_resume.sh` with the
+four-family pilot `CONFIG`, despite that launcher's historical filename.
+The command builder was checked: it emits `--resume-checkpoint`, all four
+instructions and the absolute stop target. Do not rerun the weights-only
+pilot wrapper to continue this lineage. The full resume restores residual
+and LoRA optimizer states, curriculum state, global step and update index;
+it is not a claim of bit-identical RNG/simulator continuation.
 
 ## Objective and evaluation contract
 
@@ -228,7 +250,7 @@ rule out individual controller/contact failures, nor establish that the object
 was geometrically ready throughout each final window. The remaining opening
 gaps are substantial, not tiny threshold misses. Keep the release predicate.
 
-### Learning pilot (completed; validation trajectory pending)
+### Learning pilot (completed; full-resume continuation planned)
 
 `scripts/run_cdpr_release_recovery_pilot.sh` uses
 `configs/examples/cdpr_smolvla_release_recovery_pilot.yaml`:

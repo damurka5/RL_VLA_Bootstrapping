@@ -31,8 +31,9 @@ The central idea is now demonstrated end to end:
 improved composed plate **0.6162 → 0.6930** and pick-up **0.1494 → 0.1982**
 on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 0.08**, bowl **0.3068**. This is a retained candidate, not a promoted >70%
-four-family policy; checkpoint trajectory and fresh-seed confirmation remain
-pending. See the first entry in §14 and `CDPR_NEXT_CAMPAIGN_PLAN.md`.
+  four-family policy. The supplied trajectory covers only 19 updates; a
+  further 3M-action full resume is planned, and fresh-seed confirmation remains
+  pending. See the first entry in §14 and `CDPR_NEXT_CAMPAIGN_PLAN.md`.
 
 | Achievement | Strongest supported result | Evidence status |
 |---|---|---|
@@ -1062,11 +1063,13 @@ Newest first. Entries follow the §13 template.
   `configs/examples/cdpr_smolvla_release_recovery_pilot.yaml`.
 - Source: `runs/phase7_sparse_joint_20260904_212930/rl/step_2017690/smolvla_grpo_adapter.pt`,
   weights-only warm start, fresh optimizer and curriculum. No SFT.
-- Candidate: the pilot's final numeric `step_*` checkpoint, selected by the
-  launcher. Exact path and SHA-256 are in `pilot_comparison.json`, not yet
-  pasted. Do not substitute an invented step number or a presumed `latest.pt`.
+- Candidate: `runs/release_recovery_pilot_20260907_193019/rl/step_0527307/smolvla_grpo_adapter.pt`.
+  SHA-256 supplied by the user:
+  `ee33b11d9a1a17c64ebe7251b614edb1706dbe69f83c793196a997f4596d329e`.
 - Budget: 500,000 selected environment actions across both ranks, stopping at
-  an update boundary. Actual step, update count and elapsed time not supplied.
+  an update boundary. Actual total **527,307**, update index **19**. Elapsed
+  time not supplied. These are training-loop updates, not individual optimizer
+  minibatch steps.
 - Settings: one shared policy, all four instructions, sparse binary reward,
   corrected `wrong_place_settled`. One-rung ladders fix move-to at 0.08 m and
   pick-up at 0.06 m. Containers are 100% uncaught, with aligned gripper starts,
@@ -1097,14 +1100,35 @@ Newest first. Entries follow the §13 template.
   Bowl is effectively unchanged in this comparison. The recipe differs from
   the historical run in training mixture, fixed caps and exploration as well
   as corrected termination, so this is not a single-variable causal ablation.
-- Status: **retained candidate; not automatically promoted or extended**.
-  Next read the per-family validation trajectory and exact candidate identity
-  before choosing continuation versus a targeted intervention. Keep caps fixed.
+- In-run validation trajectory, supplied separately (different seeds/protocol
+  from the recorded baseline/final comparison; do not splice the curves):
+
+| Selected actions | Move-to | Pick-up | Composed plate | Composed bowl |
+|---:|---:|---:|---:|---:|
+| 112878 | 0.5664 | 0.1100 | 0.5263 | 0.2917 |
+| 203598 | 0.5938 | 0.1350 | 0.4572 | 0.3068 |
+| 313034 | 0.5469 | 0.1250 | 0.4737 | 0.3182 |
+| 422092 | 0.6211 | 0.1400 | 0.4803 | 0.3295 |
+| 527307 | 0.5859 | 0.0950 | 0.5164 | 0.3295 |
+
+- Final training batch: 320 groups collected, 164 usable (51.25%),
+  `rounds_collected=5`. These are globally reduced metrics; five is not a
+  per-rank refill count. Pooled usable-group supply does not establish that
+  every instruction receives sufficient gradient.
+- Status: **retained candidate; no claim of convergence or four-family >70%**.
+  The user explicitly authorized multi-million-step training. Plan a full
+  resume for **3,000,000 additional selected actions**, to cumulative
+  **3,527,307** at an update boundary, in a new run directory. Preserve
+  optimizer/curriculum state and the fixed task settings. The mixed validation
+  trajectory does not prove the final checkpoint is best, but 19 updates do
+  not establish saturation. Continue per-family validation/checkpoint retention;
+  do not impose a 70% early-stop or widen caps based on one recorded score.
 - Evidence: user-supplied console output. Remote artifacts are under
   `runs/release_recovery_pilot_20260907_193019/`, including baseline/final NPZs,
   `pilot_comparison.json`, `pilot_manifest.json`, `rl/validation.jsonl`,
   `rl/metrics.jsonl` and all step checkpoints. Not copied into the local
-  evidence set; hashes are recorded remotely but not yet available here.
+  evidence set; candidate hash supplied, source/config hashes still only
+  recorded remotely.
 
 ### 2026-09-07 — `wrong_place_settled` terminated correct placements; fixing it takes composed plate 0.5000 → 0.6272
 
