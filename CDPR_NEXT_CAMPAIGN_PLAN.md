@@ -4,7 +4,12 @@ Date: 2026-09-07. Source review: `26cddf6`, consolidated report §§1, 4, 7,
 10 and the current resetter, collector, and Phase 7 config.
 
 Status: pilot completed on the user's remote 2×A40 host; results supplied on
-2026-09-08. Later interventions remain proposed, not measured improvements.
+2026-09-08. The additional 3M-action continuation is running. Its uploaded
+TensorBoard snapshot reaches 2,981,624 cumulative selected actions, with 97
+continuation updates and 24 validation checkpoints. See
+`CDPR_MANIPULATION_UPGRADE_PLAN.md` for the final-versus-two-peaks comparison
+command and the proposed actor–critic/skill-curriculum upgrade. Later training
+interventions remain proposed, not measured improvements.
 
 Latest matched baseline → final results from
 `release_recovery_pilot_20260907_193019`: move-to **279/400 → 285/400**
@@ -25,7 +30,7 @@ pick-up ended at 0.0950. The trajectory is mixed, not evidence that every
 family improves monotonically or that the run has converged.
 
 **User steering, 2026-09-08:** multi-million-step training is welcome; do not
-keep the campaign at short pilot budgets. The next run will be a **full
+keep the campaign at short pilot budgets. The running continuation is a **full
 resume for 3,000,000 additional selected actions**, to cumulative 3,527,307,
 with identical fixed task settings and validation/checkpoints every 100,000
 actions. Use the existing configurable full-resume launcher
@@ -34,8 +39,10 @@ four-family pilot `CONFIG`, despite that launcher's historical filename.
 The command builder was checked: it emits `--resume-checkpoint`, all four
 instructions and the absolute stop target. Do not rerun the weights-only
 pilot wrapper to continue this lineage. The full resume restores residual
-and LoRA optimizer states, curriculum state, global step and update index;
-it is not a claim of bit-identical RNG/simulator continuation.
+and LoRA optimizer states, curriculum state and global step. Correction from
+the continuation logs: the displayed update index restarts at 1 because it is
+initialized from the disabled reverse curriculum's counter; it does not
+resume at 20. This is not a claim of bit-identical RNG/simulator continuation.
 
 ## Objective and evaluation contract
 
