@@ -24,7 +24,9 @@ for task in pick_up placement; do
 done
 printf 'Output: %s\nTwo handoff audits; optimizer updates=0\n' "$PROBE_DIR"
 [[ "${DRY_RUN:-0}" == 1 ]] && exit 0
-"${PY[@]}" -m unittest tests.test_cdpr_demonstration_handoff
+# tests/ is not a Python package. Discover by directory so an installed
+# package named "tests" cannot shadow this repository's preflight.
+"${PY[@]}" -m unittest discover -s tests -p test_cdpr_demonstration_handoff.py
 mkdir -p "$PROBE_DIR"
 git rev-parse HEAD > "$PROBE_DIR/git_head.txt"
 git diff HEAD > "$PROBE_DIR/tracked_changes.patch"

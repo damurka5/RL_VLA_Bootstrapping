@@ -1257,6 +1257,23 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-09 — Handoff launcher preflight import repaired; GPU result still pending
+
+- Remote attempt: `runs/demo_handoff_probe_20260909_172122`. CPU planning
+  found placement handoffs at 44 env steps (6 groups) and 60 env steps
+  (5 groups), with 34 incomplete-placement candidates excluded. These are
+  proposed replay boundaries, not verified handoffs or suffix outcomes.
+- The launcher then stopped at `python -m unittest
+  tests.test_cdpr_demonstration_handoff`: `tests/` has no `__init__.py`, so
+  importing it as a package is environment-dependent. Neither GPU worker had
+  started; no training or suffix collection occurred.
+- Fix: directory-based unittest discovery, and a self-contained handoff test
+  fixture that removes the second `tests.*` dependency. The dotted-import
+  failure was reproduced locally with a conflicting installed `tests` package;
+  the corrected discovery command passed all **10** handoff tests in that
+  environment. Shell syntax and whitespace checks pass. Rerun the same launcher;
+  the existing demonstration manifest is still its input.
+
 ### 2026-09-09 — Demonstration prototype yields 293 lift prefixes; handoff probe prepared
 
 - Evidence: user-supplied extractor output from

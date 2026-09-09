@@ -11,7 +11,8 @@ import unittest
 import numpy as np
 import torch
 
-from tests.test_extract_cdpr_transition_demonstrations import recording
+from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import INSTRUCTION_TO_ID
+from tools.audit.sil_record import _Recording
 from tools.audit.extract_cdpr_transition_demonstrations import main as extract
 from tools.audit.probe_cdpr_demonstration_handoff import (
     clone_reset_groups, collect_suffix_once, main, plan_boundaries, run_job, sha256,
@@ -19,17 +20,36 @@ from tools.audit.probe_cdpr_demonstration_handoff import (
 
 
 def grouped_recording():
-    r = recording()
-    # Two true scene groups of eight, plate and bowl. Clone the source fixture
-    # to test that eight accepted candidates do not become eight demo groups.
-    indices = np.repeat([0, 1], 8)
-    for name in r._REQUIRED_ARRAYS:
-        value = getattr(r, name)
-        setattr(r, name, value[:, indices].copy() if name in (
-            'actions', 'active', 'success', 'terminated', 'caught_target',
-            'ee_xyz', 'gripper_opening', 'object_xyz') else value[indices].copy())
-    r.gripper_opening[6:] = .8
-    return r
+    # Two scene groups of eight, plate and bowl: eight accepted candidates
+    # from one scene must not become eight demo groups.
+    # Keep the fixture local: importing another test via "tests.*" depends
+    # on which unrelated package named "tests" happens to be installed.
+    steps, worlds = 8, 16
+    xyz = np.zeros((steps, worlds, 2, 3), dtype=np.float32)
+    xyz[..., 2] = .10
+    xyz[3, :, 0, 2] = .12
+    xyz[4:, :, 0, 2] = .16
+    held = np.zeros((steps, worlds), dtype=bool)
+    held[2:6] = True
+    success = np.zeros_like(held)
+    success[6, :8] = True
+    active = np.ones_like(held)
+    active[7, :8] = False
+    opening = np.zeros((steps, worlds))
+    opening[6:] = .8
+    return _Recording(
+        actions=np.zeros((steps, worlds, 5)), active=active, success=success,
+        terminated=success.copy(), caught_target=held, ee_xyz=np.zeros((steps, worlds, 3)),
+        gripper_opening=opening, object_xyz=xyz,
+        instruction_ids=np.repeat([INSTRUCTION_TO_ID['put_into_plate'], INSTRUCTION_TO_ID['put_into_bowl']], 8),
+        target_slots=np.zeros(worlds, dtype=int), reference_slots=np.ones(worlds, dtype=int),
+        second_reference_slots=np.full(worlds, -1), horizons=np.full(worlds, 40),
+        initial_target_xyz=xyz[0, :, 0].copy(), support_surface_z=np.zeros(worlds),
+        release_threshold=np.full(worlds, .55), target_rest_height=np.full(worlds, .10),
+        physical_grasp_at_reset=np.zeros(worlds, dtype=bool),
+        instructions=np.repeat(['put apple into plate', 'put tomato into bowl'], 8),
+        actions_per_decision=4, round_index=0, diverged_worlds=0, pick_lift_success_height=.05,
+    )
 
 
 def episodes(r):
