@@ -111,10 +111,57 @@ class TransitionDemonstrationTests(unittest.TestCase):
         episodes, rejected = select_episodes(r)
         self.assertEqual(episodes, [])
 
-    def test_reported_divergence_quarantines_recording(self):
+    def test_a_count_without_a_mask_quarantines_the_whole_recording(self):
+        """A recording that cannot name its diverged worlds loses all of them.
+
+        `diverged_worlds` is an event count. Written before the per-world mask
+        existed, a recording can say something blew up and not which episode,
+        and there is no safe way to keep any of it.
+        """
+
         r = recording()
         r.diverged_worlds = 1
-        self.assertEqual(select_episodes(r), ([], {'recording_reported_divergence': 3}))
+        self.assertEqual(
+            select_episodes(r), ([], {'recording_unattributable_divergence': 3})
+        )
+
+    def test_only_the_diverged_world_is_dropped_when_named(self):
+        """The point of the mask: 8-21 bad worlds must not cost 512 good ones."""
+
+        r = recording()
+        kept = [e['world'] for e in select_episodes(r)[0]]
+        self.assertIn(0, kept)
+        self.assertIn(1, kept)
+        r.diverged_worlds = 2
+        r.diverged_world_mask = np.array([True, False, False])
+        episodes, rejected = select_episodes(r)
+        self.assertEqual([e['world'] for e in episodes], [w for w in kept if w != 0])
+        self.assertEqual(rejected['diverged_world'], 1)
+
+    def test_an_all_clear_mask_beside_a_positive_count_is_a_contradiction(self):
+        """Something diverged and the mask did not record it: trust neither."""
+
+        r = recording()
+        r.diverged_worlds = 1
+        r.diverged_world_mask = np.zeros(3, dtype=bool)
+        self.assertEqual(
+            select_episodes(r), ([], {'divergence_count_without_worlds': 3})
+        )
+
+    def test_a_wrong_length_mask_is_refused(self):
+        r = recording()
+        r.diverged_worlds = 1
+        r.diverged_world_mask = np.zeros(2, dtype=bool)
+        self.assertEqual(
+            select_episodes(r), ([], {'malformed_divergence_mask': 3})
+        )
+
+    def test_a_clean_round_needs_no_mask(self):
+        """Zero events and no mask is the ordinary case and stays usable."""
+
+        r = recording()
+        self.assertIsNone(r.diverged_world_mask)
+        self.assertTrue(select_episodes(r)[0])
 
     def test_export_truncates_actions_and_keeps_link_between_views(self):
         with tempfile.TemporaryDirectory() as tmp:

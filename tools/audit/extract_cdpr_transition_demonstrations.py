@@ -98,8 +98,31 @@ def pickup_success_mask(recording, lift_baseline=None):
 def select_episodes(recording, *, max_start_clearance=.01):
     from tools.audit.sil_record import _instruction_name
 
-    if recording.diverged_worlds:
-        return [], {'recording_reported_divergence': recording.worlds}
+    # Divergence is quarantined per WORLD when the recording can say which,
+    # and per ROUND when it cannot.
+    #
+    # A cable-singularity blowup is contained by resetting that world's state
+    # mid-episode, so its trajectory is not a demonstration of anything -- but
+    # the other worlds in the round are untouched, MJWarp integrates them
+    # independently. `diverged_worlds` is an EVENT COUNT, so a recording
+    # carrying only that cannot name the affected episodes and the whole round
+    # has to go: on the release-recovery evaluations that discarded 512
+    # episodes per round to exclude 8-21. `diverged_world_mask` names them.
+    #
+    # Absence of the mask is NOT read as "nothing diverged" -- a recording
+    # written before the mask existed reports a positive count and no mask, and
+    # is quarantined exactly as it was.
+    diverged_mask = getattr(recording, 'diverged_world_mask', None)
+    if recording.diverged_worlds and diverged_mask is None:
+        return [], {'recording_unattributable_divergence': recording.worlds}
+    diverged_mask = (np.zeros(recording.worlds, dtype=bool) if diverged_mask is None
+                     else np.asarray(diverged_mask, dtype=bool).reshape(-1))
+    if diverged_mask.shape[0] != recording.worlds:
+        return [], {'malformed_divergence_mask': recording.worlds}
+    # A count with an all-clear mask is a contradiction, not a pass: something
+    # diverged and the mask did not record it.
+    if recording.diverged_worlds and not diverged_mask.any():
+        return [], {'divergence_count_without_worlds': recording.worlds}
     lift_baseline = recorded_start_positions(recording)
     scored = pickup_success_mask(recording, lift_baseline)
     selected, rejected = [], {}
@@ -115,6 +138,9 @@ def select_episodes(recording, *, max_start_clearance=.01):
         target, ref = int(recording.target_slots[world]), int(recording.reference_slots[world])
         if not 0 <= ref < recording.object_xyz.shape[2] or ref == target:
             reject('missing_distinct_receptacle')
+            continue
+        if diverged_mask[world]:
+            reject('diverged_world')
             continue
         if recording.starts_grasped[world]:
             reject('starts_grasped')
@@ -204,7 +230,8 @@ def main(argv=None):
                     'Relabelled prompts need fresh images/prior inference before any imitation loss.',
                     'Landmarks are env-step observations, not guaranteed decision-boundary reset states.',
                     'Composed starts may skip approach; desk-start here means uncaught object on support.',
-                    'Reported divergence is quarantined; unrecorded contained resets cannot be certified absent.',
+                    'Divergence is quarantined per world when the recording names them and per round otherwise; '
+                    'unrecorded contained resets still cannot be certified absent.',
                     'Source episodes and relabelled views are not independent demonstration scenes.',
                     'Lift is scored from the recorded start pose, not initial_target_positions,'
                     ' which is stale for uncaught_container starts; see production_lift_baseline_delta_m.',

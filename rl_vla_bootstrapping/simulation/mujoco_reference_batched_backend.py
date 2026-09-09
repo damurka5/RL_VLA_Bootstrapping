@@ -78,6 +78,11 @@ class MujocoReferenceBatchedBackend(CDPRSimulatorBackend):
         self.torch = torch
         self._device = "cpu"
         self._nonfinite_world_events = 0
+        # Which worlds diverged, not only how many events; see the MJWarp
+        # backend's note. Sized once the world count is known below.
+        self._nonfinite_world_seen = np.zeros(
+            (int(config.worlds_per_rank),), dtype=bool
+        )
         resolved = Path(xml_path or config.xml_path or "").expanduser()
         if not resolved.exists():
             raise FileNotFoundError(f"CDPR MJCF does not exist: {resolved}")
@@ -254,10 +259,21 @@ class MujocoReferenceBatchedBackend(CDPRSimulatorBackend):
             "gripper": self._controller_gripper.copy(),
         }
 
-    def pop_nonfinite_world_events(self) -> int:
+    def pop_nonfinite_world_report(self) -> tuple[int, Any]:
+        """Return and clear both the event count and the per-world mask.
+
+        One call clears both; see the MJWarp backend for why they must not be
+        popped separately.
+        """
+
         count = int(self._nonfinite_world_events)
+        mask = self._nonfinite_world_seen.copy()
         self._nonfinite_world_events = 0
-        return count
+        self._nonfinite_world_seen[:] = False
+        return count, mask
+
+    def pop_nonfinite_world_events(self) -> int:
+        return self.pop_nonfinite_world_report()[0]
 
     def _tensor(self, value: Any, dtype: Any = None) -> Any:
         return self.torch.as_tensor(
@@ -570,6 +586,7 @@ class MujocoReferenceBatchedBackend(CDPRSimulatorBackend):
                 np.all(np.isfinite(sim.data.qpos)) and np.all(np.isfinite(sim.data.qvel))
             ):
                 self._nonfinite_world_events += 1
+                self._nonfinite_world_seen[world] = True
                 self.reset_worlds(self.torch.tensor([world]))
         return self.low_dim_observations()
 

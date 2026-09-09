@@ -213,7 +213,17 @@ class _Recording:
     # averaged number hides which of the two a slice came from.
     start_distance_cap: float = float("nan")
 
-    _OPTIONAL_ARRAYS = ("states", "priors", "target_catalog_ids")
+    # WHICH worlds went non-finite during the round, [W] bool. Optional so
+    # every recording written before it existed stays loadable -- and, more
+    # importantly, so a consumer can tell "no world diverged" from "this
+    # recording cannot say". `diverged_worlds` is an EVENT count and cannot
+    # answer the second question, which is why a demonstration harvest had to
+    # discard whole 512-world rounds to exclude the 8-21 that diverged.
+    diverged_world_mask: Any = None
+
+    _OPTIONAL_ARRAYS = (
+        "states", "priors", "target_catalog_ids", "diverged_world_mask",
+    )
     _REQUIRED_ARRAYS = (
         "actions", "active", "success", "terminated", "caught_target",
         "ee_xyz", "gripper_opening", "object_xyz",
@@ -747,7 +757,10 @@ class _RoundRecorder:
             deterministic_kernels=self.deterministic_kernels,
         )
         collector.validate_round(round_index=round_index)
-        diverged = int(self.world.backend.pop_nonfinite_world_events())
+        diverged, diverged_mask = (
+            self.world.backend.pop_nonfinite_world_report()
+        )
+        diverged = int(diverged)
 
         if len(self._rows_step) != len(self._rows_eval):
             raise RuntimeError(
@@ -846,6 +859,7 @@ class _RoundRecorder:
             ),
             round_index=int(round_index),
             diverged_worlds=diverged,
+            diverged_world_mask=np.asarray(diverged_mask, dtype=bool),
             pick_lift_success_height=float(
                 getattr(catch_release, "pick_lift_success_height", 0.05)
             ),

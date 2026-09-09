@@ -269,6 +269,17 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self.set_object_catalogs(inactive)
 
         self._nonfinite_world_events = 0
+        # WHICH worlds diverged, not only how many times. A consumer that is
+        # building demonstrations has to drop the affected episodes, and a bare
+        # count leaves it no choice but to quarantine the whole round -- 512
+        # episodes discarded to exclude the 8-21 that actually diverged.
+        # Events and worlds are different quantities and both are kept: one
+        # world can diverge on several steps.
+        self._nonfinite_world_seen = self.torch.zeros(
+            (int(self.config.worlds_per_rank),),
+            dtype=self.torch.bool,
+            device=self._device,
+        )
         self.render_context = None
         self._overview_rgb_wp = None
         self._wrist_rgb_wp = None
@@ -1198,14 +1209,37 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         if bool(diverged.any().item()):
             indices = torch.nonzero(diverged, as_tuple=False).reshape(-1)
             self._nonfinite_world_events += int(indices.numel())
+            self._nonfinite_world_seen |= diverged
             self.reset_worlds(indices)
 
-    def pop_nonfinite_world_events(self) -> int:
-        """Return and clear the diverged-world count since the last call."""
+    def pop_nonfinite_world_report(self) -> tuple[int, Any]:
+        """Return and clear both the event count and the per-world mask.
+
+        One call clears both, so the two can never drift apart: a consumer that
+        popped the count and then asked for the mask would otherwise get an
+        empty one and conclude nothing diverged.
+
+        The count is EVENTS -- one world diverging on three steps counts three
+        -- and the mask is worlds seen at least once. Both are reported because
+        the first says how unstable the rollout was and the second says which
+        episodes are unusable.
+        """
 
         count = int(self._nonfinite_world_events)
+        mask = self._nonfinite_world_seen.detach().to("cpu").numpy().copy()
         self._nonfinite_world_events = 0
-        return count
+        self._nonfinite_world_seen.zero_()
+        return count, mask
+
+    def pop_nonfinite_world_events(self) -> int:
+        """Return and clear the diverged-world count since the last call.
+
+        Kept for callers that only report the count; it clears the mask too, so
+        popping through this path cannot leave a stale mask behind for the next
+        round to inherit.
+        """
+
+        return self.pop_nonfinite_world_report()[0]
 
     def controller_state(self) -> dict[str, Any]:
         """Commanded controller set-points, as the policy's actions accumulate them.

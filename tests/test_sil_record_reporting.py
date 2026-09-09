@@ -1116,3 +1116,57 @@ class MergeShardCapCheckTest(unittest.TestCase):
             self.VERDICTS,
         )
 
+
+class DivergedWorldMaskPersistenceTest(unittest.TestCase):
+    """The mask has to survive the npz, and absence has to stay distinguishable.
+
+    `diverged_worlds` is an event count, so a recording carrying only that
+    cannot name the episodes a contained reset ruined and a consumer must
+    quarantine the whole round. The mask names them. It is optional so that
+    every recording written before it existed still loads -- and so that
+    "this recording cannot say" reads as None rather than as an all-clear.
+    """
+
+    def _recording(self, mask=None, events=0):
+        steps, worlds = 2, 3
+        return _Recording(
+            actions=np.zeros((steps, worlds, 5)),
+            active=np.ones((steps, worlds), dtype=bool),
+            success=np.zeros((steps, worlds), dtype=bool),
+            terminated=np.zeros((steps, worlds), dtype=bool),
+            caught_target=np.zeros((steps, worlds), dtype=bool),
+            ee_xyz=np.zeros((steps, worlds, 3)),
+            gripper_opening=np.zeros((steps, worlds)),
+            object_xyz=np.zeros((steps, worlds, 2, 3)),
+            instruction_ids=np.zeros(worlds, dtype=np.int64),
+            target_slots=np.zeros(worlds, dtype=np.int64),
+            reference_slots=np.ones(worlds, dtype=np.int64),
+            second_reference_slots=np.full(worlds, -1, dtype=np.int64),
+            horizons=np.full(worlds, 40, dtype=np.int64),
+            initial_target_xyz=np.zeros((worlds, 3)),
+            support_surface_z=np.zeros(worlds),
+            release_threshold=np.full(worlds, 0.55),
+            target_rest_height=np.zeros(worlds),
+            physical_grasp_at_reset=np.zeros(worlds, dtype=bool),
+            instructions=np.asarray(["x"] * worlds, dtype="U256"),
+            actions_per_decision=4, round_index=0,
+            diverged_worlds=events, pick_lift_success_height=0.05,
+            diverged_world_mask=mask,
+        )
+
+    def test_mask_round_trips(self):
+        mask = np.array([True, False, True])
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.npz"
+            self._recording(mask, 2).to_npz(path)
+            loaded = _Recording.from_npz(path)
+        np.testing.assert_array_equal(loaded.diverged_world_mask, mask)
+        self.assertEqual(loaded.diverged_worlds, 2)
+
+    def test_absent_mask_loads_as_none_not_as_all_clear(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "r.npz"
+            self._recording().to_npz(path)
+            loaded = _Recording.from_npz(path)
+        self.assertIsNone(loaded.diverged_world_mask)
+
