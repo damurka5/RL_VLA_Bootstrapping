@@ -1,6 +1,6 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — current through 2026-09-08, Europe/Moscow**
+**Living report — current through 2026-09-09, Europe/Moscow**
 
 **Repository state reviewed:** `fd0c73f`
 
@@ -31,9 +31,11 @@ The central idea is now demonstrated end to end:
 improved composed plate **0.6162 → 0.6930** and pick-up **0.1494 → 0.1982**
 on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 0.08**, bowl **0.3068**. This is a retained candidate, not a promoted >70%
-  four-family policy. The supplied trajectory covers only 19 updates; a
-  further 3M-action full resume is planned, and fresh-seed confirmation remains
-  pending. See the first entry in §14 and `CDPR_NEXT_CAMPAIGN_PLAN.md`.
+  four-family policy. A further 3M-action full resume has now completed at
+  3,540,208 cumulative steps. Its 121 continuation updates show modest gains,
+  with the last validation at 3,512,892; the final checkpoint still needs
+  separate evaluation. Fresh-seed confirmation remains pending. See §14 and
+  `CDPR_NEXT_CAMPAIGN_PLAN.md`.
 
 | Achievement | Strongest supported result | Evidence status |
 |---|---|---|
@@ -1054,6 +1056,74 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-09 — Additional 3M continuation completed; modest late gains, final evaluation pending
+
+- Source: user-uploaded complete TensorBoard event file
+  `events.out.tfevents.1788852032.VLAPU.1071244.0_complete` (1,772,446 bytes),
+  SHA-256 `5c884d6e87b5f027d6d6bac6cc625b57e0c1344499bca9476877a712fa31fc8d`.
+  Its scalar histories exactly preserve the preceding incomplete upload.
+- Lineage/config: full resume of release-recovery pilot step 527,307 with
+  `cdpr_smolvla_release_recovery_pilot.yaml`; four fixed instruction settings,
+  uncaught containers, 40-decision composed budget. No new SFT.
+- End: **3,540,208 cumulative selected actions**, **3,012,901 additional**,
+  **121 continuation updates**, **24,066,340 sampled candidate actions**.
+  Logged training elapsed time 52,781 seconds (14h40m); last event
+  2026-09-09 01:00:37 MSK. Nominal target 3,527,307 was crossed at an update
+  boundary. The displayed update counter restarted after resume.
+- There are **30 validation checkpoints**. The last is **3,512,892**:
+  **do not assign these scores to final step 3,540,208**. Expected final
+  checkpoint directory is `rl/step_3540208/`; its file and checksum have not
+  been supplied or inspected locally. The comparison helper verifies them
+  remotely when it runs.
+
+| Step | move_to (`validation`) | pick_up (`validation`) | plate (`validation_composed`) | bowl (`validation_composed`) |
+|---|---:|---:|---:|---:|
+| 3003730 | 0.6836 | 0.1500 | 0.5691 | 0.3750 |
+| 3122124 | **0.7422** | 0.1800 | 0.5987 | 0.3826 |
+| 3211063 | 0.7070 | **0.2200** | 0.5822 | 0.3977 |
+| 3318446 | 0.6602 | 0.1850 | 0.5987 | 0.3258 |
+| 3416645 | 0.6914 | 0.2100 | **0.6447** | 0.3220 |
+| 3512892 | 0.6836 | 0.1850 | 0.5921 | 0.3485 |
+
+- Latest denominators are 256, 200, 304, 264 respectively: successes
+  **175, 37, 180, 92**. Companion-leg latest scores are move-to 0.7969,
+  pick-up 0.1600 (`validation_composed`) and plate 0.6546, bowl 0.3636
+  (`validation`). Keep the series separate; these are not fresh independent
+  confirmation scenes, and neither is the pilot's 3×512 recording protocol.
+- Best plate remains **196/304 = 0.6447**, now tied at **1,505,251** and
+  **3,416,645**. The late tie has stronger pick-up on this validation series
+  (0.2100 versus 0.1050), but weaker bowl (0.3220 versus 0.3939). Bowl's best
+  remains **112/264 = 0.4242 at 2,117,145**. Best pick-up is now **44/200 =
+  0.2200 at 3,211,063**. These maxima do not constitute one shared policy.
+- First-five → last-five primary validation means: move-to **0.6344 →
+  0.6969**, pick-up **0.1530 → 0.1960**, plate **0.5513 → 0.6033**, bowl
+  **0.3318 → 0.3553**. The late improvement qualifies the incomplete upload's
+  plateau reading; it is not evidence of convergence or progress toward 70%
+  at a predictable rate. Companion pick-up averages 0.1720 → 0.1880.
+- First20 → last20 training-update pooled success: move-to **0.6849 →
+  0.6958**, pick-up **0.1711 → 0.1784**, plate **0.5070 → 0.5409**, bowl
+  **0.2197 → 0.2520**. Final-window pick-up grasp frequency is **0.5228**,
+  with **0.3413** success conditional on ever grasping. Grasp frequency
+  recovered from the earlier snapshot's last-window 0.4873; a large
+  post-grasp completion gap persists. Training and deterministic evaluation
+  remain different distributions.
+- No obvious optimizer blow-up: KL 0.0656–0.0894, mean gradient norm
+  3.981–4.647; logged contact/constraint overflows zero. Non-finite simulator
+  reset-event metric remains nonzero (12–50 after round/rank aggregation).
+  Zero validation final reward/distance non-finites do not prove no resets.
+  Global usable-group fraction is 53.61% in the last20 updates, from counts;
+  raw fraction tags can be summed across ranks and should not be read as
+  global percentages.
+- Next evaluation: final versus both placement peaks. Use the later plate
+  tie via `--plate-step 3416645` to emphasize pick-up retention; the original
+  peak is still retained and remains the helper's explicit default. No
+  checkpoint is promoted. All candidates must be evaluated on all four
+  instructions under the same protocol.
+- Local evidence: `runs/analysis/release_recovery_complete_20260909/`
+  contains the complete event copy, manifest, all scalars, validation CSV,
+  and PNG/PDF plot. These large artifacts are ignored by Git. This analysis
+  did not launch or alter remote training.
 
 ### 2026-09-08 — Fixed-cap joint RL: plate 0.6162 → 0.6930, pick-up 0.1494 → 0.1982
 

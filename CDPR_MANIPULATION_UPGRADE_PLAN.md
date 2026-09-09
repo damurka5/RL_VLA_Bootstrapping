@@ -1,8 +1,10 @@
 # Improving pick-up and composed manipulation after the 3M continuation
 
-2026-09-08. Status: comparison utility implemented and CPU-tested; training
+2026-09-08; updated 2026-09-09. Status: comparison utility implemented and CPU-tested; training
 architecture below is a proposed experiment, not an implemented trainer or a
-measured improvement. The current remote training run is unchanged.
+measured improvement. The remote continuation has now completed at 3,540,208
+steps; its final checkpoint still needs separate evaluation. Full-log results
+and qualifications are recorded in §14 of the consolidated report.
 
 ## Compare final with the two placement peaks
 
@@ -11,14 +13,18 @@ After training exits, run from `/root/repo/RL_VLA_Bootstrapping`:
 ```bash
 git pull --ff-only
 conda run --no-capture-output -n cdpr-mjlab python3 \
-  tools/audit/compare_release_recovery_checkpoints.py
+  tools/audit/compare_release_recovery_checkpoints.py --plate-step 3416645
 ```
 
 The helper resolves the run only when exactly one
 `runs/release_recovery_continue_3m_*` directory exists. Otherwise supply
 `--run-dir runs/<exact-continuation-directory>`. It selects the greatest
 numeric step and requires it to be at least 3,527,307, then compares it with
-step **1,505,251** (plate peak) and **2,117,145** (bowl peak). Both can be
+step **1,505,251** (original plate peak) and **2,117,145** (bowl peak) by
+default. The command above selects the newly observed **3,416,645** plate
+tie instead: plate remains 0.6447, pick-up is 0.2100 versus 0.1050 at the
+earlier tie, and bowl is lower (0.3220 versus 0.3939). This is a transparent
+retention tradeoff, not a claim of dominance. Both peak choices can be
 overridden with `--plate-step` / `--bowl-step`. It does not monitor completion;
 invoke it once the training process has finished and released both GPUs.
 
@@ -107,7 +113,7 @@ the repository's old scalar reverse-distance curriculum.
 
 ### Give lift exploration temporal coherence
 
-Pick-up's current training grasp rate is approximately 49%, with about 34%
+Pick-up's final-window training grasp rate is approximately 52%, with about 34%
 completion conditional on ever grasping. Lift is a major bottleneck, but
 perfect lift alone at that grasp frequency cannot produce >70% overall.
 For example, 90% grasp × 85% completion conditional on grasp would give 76.5%.

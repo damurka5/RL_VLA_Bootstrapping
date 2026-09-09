@@ -4,9 +4,13 @@ Date: 2026-09-07. Source review: `26cddf6`, consolidated report §§1, 4, 7,
 10 and the current resetter, collector, and Phase 7 config.
 
 Status: pilot completed on the user's remote 2×A40 host; results supplied on
-2026-09-08. The additional 3M-action continuation is running. Its uploaded
-TensorBoard snapshot reaches 2,981,624 cumulative selected actions, with 97
-continuation updates and 24 validation checkpoints. See
+2026-09-08. The additional 3M-action continuation completed at **3,540,208**
+cumulative selected actions, with **121** continuation updates and **30**
+validation checkpoints (complete logs supplied 2026-09-09). The last validation
+at **3,512,892** scored move-to 0.6836, pick-up 0.1850, composed plate 0.5921,
+and bowl 0.3485; final-checkpoint evaluation is still pending. Late pick-up
+and plate gains qualify the earlier snapshot's plateau reading. See §14 of
+the consolidated report for provenance and the full interpretation, and
 `CDPR_MANIPULATION_UPGRADE_PLAN.md` for the final-versus-two-peaks comparison
 command and the proposed actor–critic/skill-curriculum upgrade. Later training
 interventions remain proposed, not measured improvements.
@@ -30,7 +34,7 @@ pick-up ended at 0.0950. The trajectory is mixed, not evidence that every
 family improves monotonically or that the run has converged.
 
 **User steering, 2026-09-08:** multi-million-step training is welcome; do not
-keep the campaign at short pilot budgets. The running continuation is a **full
+keep the campaign at short pilot budgets. The completed continuation was a **full
 resume for 3,000,000 additional selected actions**, to cumulative 3,527,307,
 with identical fixed task settings and validation/checkpoints every 100,000
 actions. Use the existing configurable full-resume launcher
