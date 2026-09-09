@@ -8,7 +8,8 @@ import unittest
 import numpy as np
 
 from tools.audit.compare_release_recovery_checkpoints import (
-    main, outcome_counts, pairing_issues, resolve_run, select_checkpoints, summarize,
+    comparison_exit_code, inspect_existing, main, outcome_counts, pairing_issues,
+    resolve_run, select_checkpoints, summarize,
 )
 from tools.audit.sil_record import _Recording, _instruction_name
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import INSTRUCTION_TO_ID
@@ -112,7 +113,16 @@ class CompareReleaseRecoveryTests(unittest.TestCase):
             self.assertEqual(delta['delta'], .375)
             self.assertEqual(delta['paired_verdicts'], {'final_only': 3, 'peak_only': 0})
             self.assertIsNone(report['final_minus_peak']['bowl_peak']['pick_up']['paired_verdicts'])
+            self.assertEqual(comparison_exit_code(report), 0)
+            report['pairing']['bowl_peak']['rounds'][0]['issues'].append('horizons')
+            self.assertEqual(comparison_exit_code(report), 2)
             self.assertTrue((root / 'comparison.json').exists())
+            before = (root / 'comparison.json').read_bytes()
+            capture = io.StringIO()
+            with contextlib.redirect_stdout(capture):
+                self.assertEqual(inspect_existing(root), 0)
+            self.assertIn('POST-ACTION', capture.getvalue())
+            self.assertEqual(before, (root / 'comparison.json').read_bytes())
             with self.assertRaisesRegex(ValueError, 'expected 2 recordings'):
                 summarize(root, 2, 0)
 

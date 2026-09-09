@@ -1,10 +1,17 @@
 # Improving pick-up and composed manipulation after the 3M continuation
 
+**2026-09-09 user correction: keep GRPO.** The actor–critic proposal below is
+archived, not the active plan. The comparison commands remain valid. Active
+demonstration/curriculum work is in `CDPR_GRPO_DEMONSTRATION_PLAN.md`; no PPO
+or critic-based trainer is being implemented or scheduled.
+
 2026-09-08; updated 2026-09-09. Status: comparison utility implemented and CPU-tested; training
 architecture below is a proposed experiment, not an implemented trainer or a
 measured improvement. The remote continuation has now completed at 3,540,208
-steps; its final checkpoint still needs separate evaluation. Full-log results
-and qualifications are recorded in §14 of the consolidated report.
+steps; the final/peak comparison has now been supplied. Full-log and matched
+comparison results and qualifications are recorded in §14 of the consolidated
+report. `--inspect-existing` explains the comparison's pairing status without
+rerunning GPU evaluation; the original step-0 object poses are post-action.
 
 ## Compare final with the two placement peaks
 
@@ -37,9 +44,10 @@ development recording protocol, not the in-training validation set.
 Outputs are under the continuation's `eval/final_vs_peaks_<timestamp>/`:
 `comparison.md`, `comparison.json`, checkpoint/config SHA-256 manifest,
 per-arm recordings and logs, and per-arm container failure decompositions.
-Existing output directories are never overwritten. Scene identity mismatches
-suppress episode-wise verdict comparisons and produce exit status 2; rates
-remain available descriptively. The recorded scene check cannot certify every
+Existing output directories are never overwritten. Recorded-field mismatches
+suppress episode-wise verdict comparisons; metadata mismatches produce exit
+status 2. Post-action pose differences alone no longer fail a completed job;
+rates remain available descriptively. The recorded scene check cannot certify every
 hidden simulator/controller state. There is no automatic checkpoint promotion.
 
 Use `--dry-run` to inspect the selected files and commands without GPU work.

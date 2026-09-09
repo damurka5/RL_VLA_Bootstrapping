@@ -6,6 +6,15 @@
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
+**Active user direction, 2026-09-09:** retain GRPO; do not switch to another RL
+algorithm. Develop demonstrations of the shared grasp/lift prefix with plate
+or bowl present and use them to teach the missing transitions. The active
+design is `CDPR_GRPO_DEMONSTRATION_PLAN.md`; the earlier actor–critic proposal
+is superseded. A CPU extractor now creates production-predicate-validated
+pick-up action clips and linked complete placements from existing recordings.
+These are demonstration archives, not ready-to-restore simulator states or
+on-policy GRPO records. Training handoff integration is not yet implemented.
+
 This is the campaign's canonical high-level progress record. It consolidates the results that are still technically relevant, backed by retained evidence, or used by the current training loop. Failed branches and measurements later shown to be invalid are not presented as achievements. They are named only in §10 so they are not accidentally revived.
 
 Filesystem creation times in §2 describe when a file appeared on this machine. They are not treated as experiment timestamps unless the report or artifact also identifies the run date.
@@ -27,7 +36,16 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
-**Latest candidate, 2026-09-08:** the fixed-cap joint-RL release-recovery pilot
+**Latest matched comparison, 2026-09-09:** final continuation checkpoint:
+move-to **0.7800**, pick-up **0.2744**, composed plate **0.5943**, bowl
+**0.3381**. The retained bowl-peak checkpoint is stronger for placement:
+**0.7018 plate / 0.3778 bowl**, with move-to 0.7650 and pick-up 0.2195.
+This is a checkpoint tradeoff, not a promoted four-family >70% policy.
+The helper's recorded-field pairing gate returned status 2; its earliest
+object poses are post-action, so that check cannot establish different
+resets by itself. Full evidence and limits are in the latest §14 entry.
+
+**Previous pilot candidate, 2026-09-08:** the fixed-cap joint-RL release-recovery pilot
 improved composed plate **0.6162 → 0.6930** and pick-up **0.1494 → 0.1982**
 on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 0.08**, bowl **0.3068**. This is a retained candidate, not a promoted >70%
@@ -1057,7 +1075,64 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
-### 2026-09-09 — Additional 3M continuation completed; modest late gains, final evaluation pending
+### 2026-09-09 — Matched final/peak evaluation: pick-up improves in final; bowl-peak retains strongest placement
+
+- Evidence: user console output from
+  `runs/release_recovery_continue_3m_20260908_102004/eval/final_vs_peaks_20260909_083221_340502/`.
+  Run command included `--plate-step 3416645`; expected numbered checkpoints
+  are final 3,540,208, plate 3,416,645, bowl 2,117,145. Remote manifest holds
+  the file hashes; it has not been supplied locally. Counts/decompositions are
+  console evidence, not independently imported remote artifacts.
+- Protocol: all four families per checkpoint, 3×512 worlds, seed-torch 0,
+  rounds 0–2, group size 8, fixed pilot config and uncaught composed starts
+  with 40 decisions. Nominal independent scene groups by family are 50, 41,
+  57 and 44, not the full candidate episode denominators below.
+
+| Instruction | Final | Plate peak | Bowl peak |
+|---|---:|---:|---:|
+| move_to_object | 312/400 = 0.7800 | 324/400 = 0.8100 | 306/400 = 0.7650 |
+| pick_up | **90/328 = 0.2744** | 80/328 = 0.2439 | 72/328 = 0.2195 |
+| put_into_plate | 271/456 = 0.5943 | 287/456 = 0.6294 | **320/456 = 0.7018** |
+| put_into_bowl | 119/352 = 0.3381 | 108/352 = 0.3068 | **133/352 = 0.3778** |
+
+- The final checkpoint wins pick-up; bowl-peak wins both placements. Relative
+  to final, bowl-peak has 49 more plate successes (+0.1075), 14 more bowl
+  (+0.0398), 18 fewer pick-up (-0.0549), and six fewer move-to (-0.0150).
+  These are descriptive differences. Plate has the minimum integer count
+  needed to exceed 70% (320/456); no strong confidence claim follows.
+- For final / plate-peak / bowl-peak, plate grasp counts are 404 / 407 / 420,
+  release counts 299 / 317 / 347, settled counts 284 / 295 / 337. Bowl grasp
+  counts are 219 / 218 / 233, release 145 / 137 / 167, settled 132 / 122 / 152.
+  All recorded settled candidates satisfy the z term in these decompositions.
+- Bowl-peak plate failures: no-grasp 36, no-release 73, not-settled 10,
+  XY-miss 17. Bowl failures: no-grasp 119, no-release 66, not-settled 15,
+  XY-miss 19. Bowl's grasp frequency is 233/352 = 0.6619, so improving only
+  post-grasp behavior cannot exceed 70% with those grasp outcomes fixed.
+  Plate's no-release group is the largest failure category. No-release plus
+  ended-unheld is not sufficient to infer where/when an object was dropped.
+- Thresholds: plate radius 0.091 m, bowl 0.057 m, container z tolerances
+  0.12 m, settle margin 0.045 m, release opening 0.55; release-height gate
+  off, nominal spawn interval 0.06–0.10 m. Realized clipping/spawn patterns
+  remain visible and must not be treated as a clean uniform interval.
+- All three evaluations and decompositions wrote their outputs. The helper
+  printed its final comparison path, then returned nonzero. In that code path
+  status 2 denotes its recorded-scene pairing gate. The pasted excerpt omits
+  `comparison.json["pairing"]`, so exact mismatching fields are still pending.
+  Source inspection found a limitation: `object_xyz[0]` is recorded AFTER
+  the first policy action. Comparing it across checkpoints as a reset pose is
+  too strong and can reject legitimate policy differences. The helper now
+  explains this limitation and provides CPU-only `--inspect-existing`;
+  do not rerun all evaluations or relax tolerances merely to clear the status.
+- Next direction remains **GRPO with demonstrations of shared transitions**.
+  Bowl-peak is a placement donor/retention reference; final is a pick-up
+  donor/control. No weight merging or automatic promotion. Existing evaluation
+  clips can prototype extraction, but using their states/actions in training
+  retires those scenes from held-out status. Collect training-only demo scenes
+  to preserve the current evaluation set.
+- Local transcription: `runs/analysis/release_recovery_matched_comparison_20260909/reported_results.json`.
+  This supersedes the earlier “final evaluation pending” status below.
+
+### 2026-09-09 — Additional 3M continuation completed; modest late gains, final evaluation pending at that time
 
 - Source: user-uploaded complete TensorBoard event file
   `events.out.tfevents.1788852032.VLAPU.1071244.0_complete` (1,772,446 bytes),

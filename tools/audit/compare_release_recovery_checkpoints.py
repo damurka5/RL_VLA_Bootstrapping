@@ -69,7 +69,7 @@ def sha256(path: Path) -> str:
 
 
 def pairing_issues(a, b) -> list[str]:
-    """Gate episode-wise comparisons on recorded reset identity, not seed labels."""
+    """Conservatively gate pairing on available fields, not seed labels alone."""
     issues = []
     for name in ('round_index', 'actions_per_decision', 'pick_lift_success_height',
                  'instruction_ids', 'instructions', 'target_slots', 'reference_slots',
@@ -78,12 +78,46 @@ def pairing_issues(a, b) -> list[str]:
                  'support_surface_z'):
         if not np.array_equal(getattr(a, name), getattr(b, name)):
             issues.append(name)
-    # This is the existing recorder's authoritative scene-layout check. The
-    # older initial_target_xyz predates composed-object repositioning.
+    # This is the earliest stored layout, AFTER the first action. It can differ
+    # legitimately between policies; mismatch is not proof of different resets.
+    # The older initial_target_xyz predates composed-object repositioning, so
+    # neither can certify a true pre-action reset for these legacy recordings.
     aa, bb = a.object_xyz[0], b.object_xyz[0]
     if aa.shape != bb.shape or not np.allclose(aa, bb, atol=1e-6, rtol=0, equal_nan=False):
         issues.append('object_xyz_at_step_0')
     return issues
+
+
+def inspect_existing(output: Path) -> int:
+    """Explain an existing comparison's pairing gate without GPU work or writes."""
+    from tools.audit.sil_record import _Recording
+    output = output.expanduser().resolve()
+    report = json.loads((output / 'comparison.json').read_text())
+    print('Evaluation artifacts already exist. This inspection does not rerun evaluation.')
+    for peak, check in report['pairing'].items():
+        print(f'{peak}: recorded_scene_identity_matches={check["recorded_scene_identity_matches"]}')
+        for row in check['rounds']:
+            print(f'  round {row["round"]}: {row["issues"] or "no recorded-field mismatch"}')
+            if 'object_xyz_at_step_0' in row['issues']:
+                file = f'record_{row["round"]:02d}.npz'
+                a = _Recording.from_npz(output / 'final' / file)
+                b = _Recording.from_npz(output / peak / file)
+                if a.object_xyz.shape[1:] == b.object_xyz.shape[1:]:
+                    delta = np.abs(a.object_xyz[0].astype(np.float64) - b.object_xyz[0].astype(np.float64))
+                    print(f'    first POST-ACTION coordinate max difference: {delta.max():.9g} m')
+    print('Step-0 object poses were logged AFTER the first policy action. Differences can be '
+          'policy effects; these recordings cannot certify pre-action reset identity. '
+          'Do not reinterpret the gate as a training crash or relax its tolerance blindly.')
+    return 0
+
+
+def comparison_exit_code(report: dict) -> int:
+    # Different first-action outcomes alone are not a failed comparison job.
+    # Keep pairing unverified and paired_verdicts=None; do not waive metadata
+    # mismatches such as different instructions, horizons or success thresholds.
+    issues = [issue for check in report['pairing'].values()
+              for row in check['rounds'] for issue in row['issues']]
+    return 2 if any(issue != 'object_xyz_at_step_0' for issue in issues) else 0
 
 
 def outcome_counts(recording, instruction_name) -> dict:
@@ -142,7 +176,9 @@ def summarize(output: Path, rounds: int, first_round: int) -> dict:
             name: {'delta': report['arms']['final'][name]['rate'] - report['arms'][peak][name]['rate'],
                    'paired_verdicts': flips[name] if paired else None} for name in TASKS}
     report['interpretation'] = (
-        'Development comparison; no automatic promotion. Matching recorded reset fields '
+        'Development comparison; no automatic promotion. The earliest object positions '
+        'were recorded after the first action, not at the true reset. A pairing mismatch '
+        'does not by itself establish different initial scenes. Matching fields likewise '
         'does not establish identical simulator hidden state. Candidates sharing a reset '
         'group are correlated; these are descriptive rates, not significance claims. '
         'Confirm the selected shared checkpoint on fresh scene seeds.')
@@ -194,7 +230,11 @@ def main(argv=None) -> int:
     parser.add_argument('--devices', default='cuda:0,cuda:1')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--dry-run', action='store_true')
+    parser.add_argument('--inspect-existing', type=Path,
+                        help='Explain a saved comparison and its pairing gate, CPU only, without writes')
     args = parser.parse_args(argv)
+    if args.inspect_existing is not None:
+        return inspect_existing(args.inspect_existing)
     if args.rounds <= 0 or args.round_index < 0 or args.min_final_step <= 0:
         parser.error('rounds/min-final-step must be positive; round-index must be nonnegative')
     try:
@@ -245,7 +285,14 @@ def main(argv=None) -> int:
                     '--recordings', str(output / arm / 'record_*.npz'), '--config', str(config),
                     '--output', str(output / arm / 'decomposition')], output / f'{arm}_decomposition.log')
     print(f'Comparison saved to {output / "comparison.json"}', flush=True)
-    return 0 if all(v['recorded_scene_identity_matches'] for v in report['pairing'].values()) else 2
+    if not all(v['recorded_scene_identity_matches'] for v in report['pairing'].values()):
+        code = comparison_exit_code(report)
+        print(f'Evaluation completed. Pairing is unverified; exit status {code}. '
+              'Post-action pose differences alone do not fail the job; metadata mismatches return 2. '
+              'Rates and decompositions are saved; paired verdict claims remain suppressed. '
+              'Use --inspect-existing with this output directory before making paired claims.', flush=True)
+        return code
+    return 0
 
 
 if __name__ == '__main__':

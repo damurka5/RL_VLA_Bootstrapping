@@ -1,18 +1,29 @@
 # Four instructions above 70%: next campaign
 
+**User steering, 2026-09-09: remain on GRPO.** The active next direction is
+demonstrations of grasp/lift/carry/release and demonstration-guided training
+starts, described in `CDPR_GRPO_DEMONSTRATION_PLAN.md`. The actor–critic
+recommendation in the earlier upgrade plan is superseded. A CPU extractor for
+validated shared pick-up/placement action clips is implemented; GRPO handoff
+integration and any auxiliary imitation ablation remain future work.
+
 Date: 2026-09-07. Source review: `26cddf6`, consolidated report §§1, 4, 7,
 10 and the current resetter, collector, and Phase 7 config.
 
 Status: pilot completed on the user's remote 2×A40 host; results supplied on
 2026-09-08. The additional 3M-action continuation completed at **3,540,208**
 cumulative selected actions, with **121** continuation updates and **30**
-validation checkpoints (complete logs supplied 2026-09-09). The last validation
-at **3,512,892** scored move-to 0.6836, pick-up 0.1850, composed plate 0.5921,
-and bowl 0.3485; final-checkpoint evaluation is still pending. Late pick-up
+validation checkpoints (complete logs supplied 2026-09-09). The separate
+final/peak recording evaluation is now available: final scores move-to
+**0.7800**, pick-up **0.2744**, plate **0.5943**, bowl **0.3381**; bowl-peak
+scores **0.7650 / 0.2195 / 0.7018 / 0.3778**. Its pairing-gate status is
+being diagnosed from existing files; no GPU rerun is needed merely for that.
+The final checkpoint was evaluated separately from the last in-run validation
+at 3,512,892. Late pick-up
 and plate gains qualify the earlier snapshot's plateau reading. See §14 of
 the consolidated report for provenance and the full interpretation, and
 `CDPR_MANIPULATION_UPGRADE_PLAN.md` for the final-versus-two-peaks comparison
-command and the proposed actor–critic/skill-curriculum upgrade. Later training
+command; use `CDPR_GRPO_DEMONSTRATION_PLAN.md` for the active training direction. Later training
 interventions remain proposed, not measured improvements.
 
 Latest matched baseline → final results from
