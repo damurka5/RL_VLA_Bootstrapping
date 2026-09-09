@@ -41,6 +41,12 @@ move-to **0.7800**, pick-up **0.2744**, composed plate **0.5943**, bowl
 **0.3381**. The retained bowl-peak checkpoint is stronger for placement:
 **0.7018 plate / 0.3778 bowl**, with move-to 0.7650 and pick-up 0.2195.
 This is a checkpoint tradeoff, not a promoted four-family >70% policy.
+**And plate's 0.7018 is not a placement result.** 92.6% of composed plate
+episodes begin with the object already inside the 0.091 m success radius,
+because the configured spawn range (0.06-0.10) is smaller than the plate and
+the workspace clamp pulls more of it in; bowl starts inside only 42.7% of the
+time. The two families are being asked different questions and their rates are
+not comparable. See §7.14 and §10.
 The helper's recorded-field pairing gate returned status 2; its earliest
 object poses are post-action, so that check cannot establish different
 resets by itself. Full evidence and limits are in the latest §14 entry.
@@ -635,6 +641,55 @@ grasp quality. Under one sparse binary reward `pick_up` succeeds 0.003-0.05 of
 the time, so its GRPO groups are near-degenerate and carry almost no advantage
 — it has effectively not been trained while its ladder kept promoting it.
 
+### 7.14 A spawn range smaller than the goal measures a different task
+
+Composed `put_into_plate` reads 0.7018 and composed `put_into_bowl` 0.3778, and
+the gap is not only manipulation difficulty. Measured over six 512-world
+composed rounds, from recordings already on disk:
+
+```
+plate  radius 0.091   start xy p10 0.0134  p50 0.0667  p90 0.0898
+       started ALREADY inside the radius   0.9259
+       successes starting inside           0.9461   xy displacement p50 0.0430
+bowl   radius 0.057   start xy p10 0.0136  p50 0.0809  p90 0.1011
+       started ALREADY inside the radius   0.4271
+       successes starting inside           0.8033   xy displacement p50 0.0389
+```
+
+**93% of composed plate episodes begin with the object inside the success
+radius.** The family is therefore not measuring "bring the object to the
+receptacle"; it is measuring approach, grasp, lift and release without ejecting
+the object from a region it started in. `xy_ok|settle` of 0.9496 is that, and
+`minimum_target_motion` is 0.0 in the dense branch, so no displacement is
+required of the policy at all.
+
+Two causes, and only one is the clamp:
+
+- **plate: the configured range is smaller than the target.**
+  `placement_grasp_object_min/max_distance` is 0.06-0.10 against a 0.091 m
+  radius, so about 78% of the spawn range lies inside the goal before any
+  clamp runs.
+- **bowl: the clamp is the whole story.** Its range starts at 0.06, above the
+  0.057 radius, so by construction nothing should start inside -- yet 42.7%
+  does. The composed reset clamps the sampled position into the workspace
+  bounds, and a receptacle near an edge has its object pulled back on top of
+  it.
+
+The tell is enrichment, not the base rate. On bowl, starting inside nearly
+doubles success -- 42.7% of episodes against 80.3% of successes. On plate there
+is nothing left to enrich, which is exactly what a free term looks like.
+
+The rule: **check the start distribution against the success region before
+reading a placement rate.** A spawn sampled inside the goal, or clamped into
+it, turns a placement task into a retention task with the same name, the same
+predicate and the same number. Neither the funnel in §8 nor `cap_check` can see
+it; both describe what happened after the reset.
+
+Fixing it means a minimum spawn distance above the larger receptacle radius and
+a reset that resamples the direction rather than clamping the position. Both
+change the task and invalidate every composed number on record, so it is a
+deliberate re-baseline rather than a config edit.
+
 ---
 
 ## 8. Composing grasp with placement — measured
@@ -943,6 +998,18 @@ The following should not be reused as current headline results:
 - Composed pick-and-place as achieved. Only the missing-prefix data path is implemented.
 - Legacy LCHOL-based relabelling on the MJWarp path; that implementation is not connected to the active batched trainer.
 
+- Composed `put_into_plate` rates as evidence that the policy moves an object
+  to a receptacle, and the **0.7018** figure as the 70% target reached on the
+  hard protocol. 92.6% of those episodes begin with the object already inside
+  the 0.091 m success radius, and 94.6% of the successes do; the median object
+  displacement in a successful placement is 0.0430 m inside a 0.091 m region it
+  never left. The plate spawn range (0.06-0.10) is smaller than the plate
+  radius, and the workspace clamp pulls a further share of both families back
+  onto their receptacle. The number is real for the task as configured -- grasp
+  0.9211, and about 5% of episodes still eject the object -- but it is not a
+  placement result and must not be quoted as one, nor compared against bowl,
+  which starts inside only 42.7% of the time and is being asked the harder
+  question. See §7.14.
 - The reading of the composed `put_into` loss as the policy dropping the object
   mid-carry, and the **0.7622** plate figure derived from it. 61% of plate's
   `no_release` grasp losses were `wrong_place_settled` firing on an object
@@ -1095,6 +1162,11 @@ Newest first. Entries follow the §13 template.
 | put_into_plate | 271/456 = 0.5943 | 287/456 = 0.6294 | **320/456 = 0.7018** |
 | put_into_bowl | 119/352 = 0.3381 | 108/352 = 0.3068 | **133/352 = 0.3778** |
 
+- **`put_into_plate` here is not a placement measurement.** 92.6% of composed
+  plate episodes start with the object already inside the 0.091 m success
+  radius against 42.7% for bowl, so the two columns answer different questions
+  and 0.7018 must not be read against the 70% target as a placement rate. §7.14
+  has the distribution and the two causes.
 - The final checkpoint wins pick-up; bowl-peak wins both placements. Relative
   to final, bowl-peak has 49 more plate successes (+0.1075), 14 more bowl
   (+0.0398), 18 fewer pick-up (-0.0549), and six fewer move-to (-0.0150).
