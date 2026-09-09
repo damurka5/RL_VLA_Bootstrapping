@@ -247,9 +247,10 @@ class LiveHandoffTests(unittest.TestCase):
             prepared = resetter.reset(**kwargs)
             calls.append(prepared)
             self.assertEqual(backend.steps, 4)  # All teacher steps precede record collection.
-            self.assertTrue(torch.all(prepared.task_state.instruction_ids == 8))
-            self.assertTrue(torch.all(prepared.horizons == 39))  # Four actions consume one decision.
-            self.assertTrue(torch.all(prepared.task_state.ever_grasped))
+            if len(calls) == 1:  # The canonical two-group pick_up handoff.
+                self.assertTrue(torch.all(prepared.task_state.instruction_ids == 8))
+                self.assertTrue(torch.all(prepared.horizons == 39))  # Four actions consume one decision.
+                self.assertTrue(torch.all(prepared.task_state.ever_grasped))
             return SimpleNamespace(metrics={}, loss_mask=torch.ones(16), vla_records=None,
                                    candidate_rewards=torch.zeros(2, 8), candidate_success=torch.zeros(2, 8, dtype=torch.bool))
         collector = SimpleNamespace(actions_per_policy_decision=4, resetter=resetter,
@@ -282,6 +283,34 @@ class LiveHandoffTests(unittest.TestCase):
                            position_tolerance=.002, opening_tolerance=.03, suffix_decisions=40, seed_torch=0)
         self.assertEqual(terminal['status'], 'destination_task_already_terminal')
         self.assertEqual(len(calls), 1)
+        # The recording's row 0 is stored AFTER the first env step, so a gap
+        # between it and the reset pose is the object's settle, not replay
+        # drift. It must not be judged by the 2 mm replay tolerance, and the
+        # live datum is what pick_up actually lifts against.
+        collector.catch_release_dense_reward = BatchedCatchReleaseDenseReward()
+        for offset, tolerance, expected, gated in (
+            (-.008, .02, 'fresh_suffixes_collected_no_training', False),
+            (-.030, .02, 'no_verified_handoffs', True),
+        ):
+            backend.steps = 0
+            low.object_positions = torch.tensor(r.object_xyz[0]) + offset
+            result = run_job(world, r, jobs[0], 'pick_up', group_size=8,
+                             position_tolerance=.002, opening_tolerance=.03,
+                             suffix_decisions=40, seed_torch=0,
+                             lift_datum_tolerance=tolerance)
+            self.assertEqual(result['status'], expected)
+            for entry in result['episodes']:
+                self.assertAlmostEqual(entry['baseline_error_m'], abs(offset), places=6)
+                self.assertEqual('reset_vs_first_post_action_lift_datum' in entry['rejected'], gated)
+        # Placement success reads no Z lift datum, so it is never gated on one.
+        placement, _ = plan_boundaries(r, episodes(r), 'placement')
+        backend.steps = 0
+        low.object_positions = torch.tensor(r.object_xyz[0]) - .030
+        result = run_job(world, r, placement[0], 'placement', group_size=8,
+                         position_tolerance=.002, opening_tolerance=.03,
+                         suffix_decisions=40, seed_torch=0, lift_datum_tolerance=.02)
+        self.assertTrue(all('reset_vs_first_post_action_lift_datum' not in e['rejected']
+                            for e in result['episodes']))
 
 
 if __name__ == '__main__':

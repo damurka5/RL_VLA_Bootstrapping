@@ -170,7 +170,8 @@ def _score(collector, reset, low, caught, active, diagnostics, *, state=None):
 
 
 def run_job(world, recording, job, task, *, group_size, position_tolerance,
-            opening_tolerance, suffix_decisions, seed_torch):
+            opening_tolerance, suffix_decisions, seed_torch,
+            lift_datum_tolerance=.02):
     """Replay source actions, validate landmarks, broadcast, collect (not train)."""
     from tools.audit.sil_record import _apply_determinism
     from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import INSTRUCTION_TO_ID
@@ -254,15 +255,27 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
             reasons.append('replay_terminated_before_handoff')
         if not bool(reset.task_state.grasped[w]):
             reasons.append('handoff_not_held')
-        baseline_error = float(abs(_host(initial_target)[w, 2]
-                                   - recording.object_xyz[0, w, int(recording.target_slots[w]), 2]))
-        if baseline_error > position_tolerance:
+        # The recording stores a row per PREDICATE call, so object_xyz[0] is
+        # the pose after the first env step, while initial_target is the pose
+        # at reset. Their difference measures the object's settle during that
+        # step; it is not replay error, and the 2 mm replay tolerance does not
+        # apply to it. Only pick_up consumes this datum's Z (target_lift ->
+        # pick_success), and the live pre-action value below REPLACES the
+        # source's, so what remains is a scene-sanity ceiling: a datum off by
+        # a large fraction of the 5 cm lift would mean the reconstructed scene
+        # is not the recorded one. Placement success reads no Z datum.
+        recorded_z = float(recording.object_xyz[0, w, int(recording.target_slots[w]), 2])
+        reset_z = float(_host(initial_target)[w, 2])
+        baseline_error = abs(reset_z - recorded_z)
+        if task == 'pick_up' and baseline_error > lift_datum_tolerance:
             reasons.append('reset_vs_first_post_action_lift_datum')
         entry = {'world': w, 'group': w // group_size,
                  'source_instruction': episode['source_instruction'],
                  'target_instruction': 'pick_up' if task == 'pick_up' else episode['source_instruction'],
                  'source_episode_uid': episode.get('episode_uid'),
                  'errors': errors, 'baseline_error_m': baseline_error,
+                 'reset_lift_datum_z_m': reset_z,
+                 'recorded_first_post_action_z_m': recorded_z,
                  'rejected': reasons}
         report['episodes'].append(entry)
         if not reasons:
@@ -362,10 +375,16 @@ def main(argv=None):
     parser.add_argument('--suffix-decisions', type=int, default=40)
     parser.add_argument('--position-tolerance-m', type=float, default=.002)
     parser.add_argument('--opening-tolerance', type=float, default=.03)
+    # Settle between reset and the recording's first stored pose, not replay
+    # drift. Bounded below the 5 cm lift so a datum gap can never be most of
+    # an earned pick-up lift.
+    parser.add_argument('--lift-datum-tolerance-m', type=float, default=.02)
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args(argv)
     if args.suffix_decisions < 1 or not 0 < args.position_tolerance_m < .01 or not 0 < args.opening_tolerance < .1:
         parser.error('Require positive suffix budget and strict replay tolerances')
+    if not 0 < args.lift_datum_tolerance_m < .05:
+        parser.error('Lift datum tolerance must be positive and below the lift success height')
     if args.output.exists():
         parser.error('Output already exists; choose a new directory')
     from tools.audit.sil_record import _Recording
@@ -402,10 +421,12 @@ def main(argv=None):
             'config_sha256': pilot['config_sha256'], 'manifest_sha256': sha256(args.manifest),
             'source_round': args.source_round, 'group_size': 8,
             'position_tolerance_m': args.position_tolerance_m,
-            'opening_tolerance': args.opening_tolerance, 'rejected_landmarks': rejected,
+            'opening_tolerance': args.opening_tolerance,
+            'lift_datum_tolerance_m': args.lift_datum_tolerance_m,
+            'rejected_landmarks': rejected,
             'jobs': jobs, 'optimizer_updates': 0,
             'limitations': ['Evaluation scenes are prototype only; collect training-only scenes before learning.',
-                            'Legacy recordings lack pre-action/full-state snapshots.',
+                            'Legacy recordings lack pre-action/full-state snapshots; the reset lift datum is measured live, not read from the source.',
                             'Assisted suffix success is not ordinary-start success.',
                             'Source placement geometry is legacy; this is not an outside-goal benchmark.']}
     print(json.dumps({'checkpoint': str(checkpoint), 'task': args.task,
@@ -443,7 +464,8 @@ def main(argv=None):
                          position_tolerance=args.position_tolerance_m,
                          opening_tolerance=args.opening_tolerance,
                          suffix_decisions=args.suffix_decisions,
-                         seed_torch=int(pilot['evaluation_seed_torch']))
+                         seed_torch=int(pilot['evaluation_seed_torch']),
+                         lift_datum_tolerance=args.lift_datum_tolerance_m)
         reports.append(result)
         (args.output / 'report.json').write_text(json.dumps({'plan': plan, 'results': reports}, indent=2) + '\n')
         print(f"[handoff] prefix={job['prefix_steps']} status={result['status']} groups={result.get('groups', [])}", flush=True)

@@ -1257,6 +1257,66 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-09 — First GPU handoff probe: replay is sound, the lift-datum gate rejected all 22 candidates
+
+- Evidence: user-supplied `summary.json` from
+  `runs/demo_handoff_probe_20260909_193440`. Both arms ran on GPU and both
+  returned exit status 2, `no_verified_handoffs` on all four batches:
+  pick_up at 40 env steps (6 planned) and 28 (5), placement at 44 (6) and
+  60 (5). Zero suffixes were collected, so there is still **no** measured
+  assisted-start success, reward variation or transfer number.
+- Replay fidelity was in fact good. Over the 22 candidates the whole-prefix
+  maxima were object ≤ 3.41 mm (median ≈ 0.9 mm), end-effector ≤ 1.02 mm and
+  opening ≤ 0.0086; only 2 of 22 exceeded the 2 mm pose tolerance and 4 of 22
+  disagreed on grasp history. No divergence and no early termination.
+- Every one of the 22 was rejected by `reset_vs_first_post_action_lift_datum`,
+  with `baseline_error_m` from 0.21 mm to 9.99 mm. That comparison is between
+  two different instants, not two estimates of one state: `sil_record` appends
+  a row per **predicate** call, which runs after `_original_step`, so
+  `object_xyz[0]` is the pose after the first env step while the probe's
+  `initial_target` is the pose at reset. The gap is the object's settle during
+  that step, and it was being judged by the 2 mm replay-drift tolerance.
+- Three independent checks confirm the reading. (1) `baseline_error_m` is
+  constant per source scene group and independent of prefix length and of
+  task — group 46 gives 0.008206292986869812 in both the pick_up and the
+  placement arm, group 39 gives 0.00705774/0.00705801/0.00705786 across three
+  worlds — so it is a deterministic per-scene datum offset, not stochastic
+  replay error. (2) At step 0 the replayed pose matches the recorded pose to
+  1.8 mm while the reset pose differs from it by 3.2 mm, so the replay
+  reproduces the settle. (3) The offsets are the same size as the discrepancy
+  the extractor already reports for these legacy NPZs, which carry no
+  pre-action snapshot.
+- The gate was also redundant with its own remedy. `run_job` overwrites
+  `reset.task_state.initial_target_positions` with the live pre-action
+  `initial_target` before collection, so the source's stale Z is not consumed
+  afterwards. Only pick_up reads that Z at all: it enters `target_lift` and
+  `pick_success` in `evaluate_active_sparse_tasks`, while container success
+  reads `target_motion_xy` from the datum's **XY**, which the probe never
+  overwrites. The placement arm was therefore being rejected on a quantity its
+  success predicate does not use.
+- Change, not a loosened threshold: the 2 mm figure is retained for replay
+  drift, and the settle now has its own `--lift-datum-tolerance-m`, default
+  0.02 m and rejected by argparse at or above the 0.05 m lift success height
+  so a datum gap can never be most of an earned lift. It gates `pick_up` only.
+  The report now also carries `reset_lift_datum_z_m` and
+  `recorded_first_post_action_z_m` so the settle stays visible per episode.
+- Protections that make this safe are unchanged and independent of the source
+  datum: `peak_lift` is seeded from the live datum so an already-raised object
+  cannot re-earn its lift, `prelifted` is set, and the admission re-score on a
+  deep-copied task state still returns `destination_task_already_terminal`.
+- Expected effect on this same source round, from the recorded rejection
+  reasons alone: 17 of 22 candidates become eligible — pick_up 5/6 at 40 steps
+  and 5/5 at 28, placement 4/6 at 44 and 3/5 at 60. The remaining 5 are the
+  genuine `replay_grasp_mismatch` (4) and `replay_pose_mismatch` (2, one
+  overlapping) rejections, which stay rejections.
+- Status: local change only, 10 handoff tests and 17 extractor tests pass on
+  CPU. **No GPU handoff has yet been verified and no demonstration-guided
+  learning gain is claimed.** The next rerun produces the first
+  `clean_groups_with_reward_variation` reading.
+- Missing provenance: GPU rerun output; the settle magnitude is inferred from
+  the datum gap, not from a recorded pre-action snapshot, which legacy NPZs
+  still lack.
+
 ### 2026-09-09 — Handoff launcher preflight import repaired; GPU result still pending
 
 - Remote attempt: `runs/demo_handoff_probe_20260909_172122`. CPU planning
