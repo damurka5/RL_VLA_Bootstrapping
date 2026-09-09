@@ -5,7 +5,12 @@ demonstrations of grasp/lift/carry/release and demonstration-guided training
 starts, described in `CDPR_GRPO_DEMONSTRATION_PLAN.md`. The actor–critic
 recommendation in the earlier upgrade plan is superseded. A CPU extractor for
 validated shared pick-up/placement action clips is implemented; GRPO handoff
-integration and any auxiliary imitation ablation remain future work.
+training integration and any auxiliary imitation ablation remain future work.
+The remote extraction prototype now has 293 lift prefixes, including 156
+complete placements and 137 lifts from failed placements. The next runnable
+step is `bash scripts/run_cdpr_demo_handoff_probe.sh`: two-GPU verified replay
+and fresh suffix collection with zero optimizer updates. See the demonstration
+plan for its defaults, output and remaining training/benchmark work.
 
 Latest review: `release_recovery_pilot_20260909_130003` changed pick-up
 **0.2774 → 0.2561**, bowl **0.3466 → 0.2926**, configured plate

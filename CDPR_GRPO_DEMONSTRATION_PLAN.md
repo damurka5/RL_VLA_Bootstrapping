@@ -5,8 +5,8 @@
 No alternative RL algorithm is being implemented or scheduled.
 
 **Adopted by the user after the z-offset pilot review, 2026-09-09.** This is
-the active implementation plan. The extractor exists; validated simulator
-handoff and GRPO integration are still pending. Full evidence is recorded in
+the active implementation plan. The extractor and an inference-only handoff
+probe exist; GPU validation and GRPO training integration are still pending. Full evidence is recorded in
 `CDPR_CONSOLIDATED_PROGRESS_REPORT.md` §§4.2, 7.15 and the latest §14 entry.
 
 `release_recovery_pilot_20260909_130003` regressed pick-up **91/328 → 84/328**
@@ -215,11 +215,46 @@ prefix demonstrations cannot replace training the rest of that sequence.
 
 ## Engineering required before training from these starts
 
+**Prototype extraction received:** 293 lift prefixes (76 bowl / 217 plate),
+156 complete placements, 137 prefixes from failed placements, and 192
+desk-start rejections. See the newest report ledger entry for all denominators.
+The manifest is `runs/grpo_demo_prototype_20260909_170619/manifest.json`.
+
+**Runnable now: handoff verification, zero optimizer updates.**
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping && git pull --ff-only
+bash scripts/run_cdpr_demo_handoff_probe.sh
+```
+
+The launcher defaults to that manifest and its pilot baseline, selects source
+round 0, and runs pickup/placement independently on cuda:0/cuda:1. It resolves
+the donor from `pilot_manifest.json` and checks source/config hashes; it does
+not guess the latest checkpoint. `DRY_RUN=1` checks provenance and plans
+landmarks on CPU. `SOURCE_ROUND=1` or `2` selects another recorded round;
+`MAX_BOUNDARIES` and `MAX_GROUPS` default to 2 and 8 for each task. These are
+limits on the audit, not training hyperparameters. Logs and `summary.json`
+are written under a new `runs/demo_handoff_probe_<timestamp>/` directory.
+
+Each batch uses one common prefix length, because masking actions does not
+freeze MJWarp physics. A source group's selected live state and task/contact
+history are broadcast to all eight candidates, then the existing collector
+generates fresh suffixes. No optimizer is called; prefix actions precede all
+residual and LoRA record capture. The default trace tolerances are 2 mm for
+object/EE coordinates and 0.03 normalized opening, with exact grasp-history
+agreement. Failures identify replay errors, lost grasp, contained divergence,
+or already-terminal destination tasks; investigate rather than silently
+loosening thresholds. Suffix budgets preserve the unused source horizon.
+Report clean groups with reward variation separately from all-failure or
+all-success groups. Assisted suffix success does not count toward the 70%
+ordinary-start objective. The first probe is under legacy source geometry;
+training-only scenes and the outside-goal transport benchmark still need work.
+
 The existing NPZs have actions, observations/positions and task metadata, but
 not complete qpos/qvel, object orientations, controller integrators/targets,
 contact persistence, grasp/release history and simulator continuation state.
-The exported clips are not restorable snapshots. Implement and test either
-replay-and-handoff or full state capture/restore on MJWarp. Match every
+The exported clips are not restorable snapshots. Validate the new live
+replay-and-handoff probe on MJWarp before connecting it to training. Match every
 candidate's reset and freeze ordinary-start evaluation.
 
 Handoff is at a policy-decision boundary; a grasp event inside a four-action
@@ -267,7 +302,8 @@ the user's objective: one shared checkpoint above 70% at declared easier fixed
 settings before expanding distances. No demonstration count or curriculum
 method guarantees that result.
 
-Current deliverable: extraction tool plus this adopted GRPO-only implementation
-plan. The GRPO handoff/reset integration is not yet implemented; updating the
-plan/report does not establish that demonstration-guided training has run. No
-new remote demos or training were run from the local machine.
+Current deliverable: extraction tool, live replay/handoff suffix-collection
+probe, two-GPU probe launcher, CPU tests and this adopted GRPO-only plan.
+The training loop does not yet load demonstration starts; no local change
+establishes a GPU handoff pass or demonstration-guided learning gain. No new
+remote demos or training were run from the local machine.

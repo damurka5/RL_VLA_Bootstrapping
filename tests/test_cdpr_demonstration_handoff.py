@@ -1,0 +1,268 @@
+import contextlib
+import copy
+from dataclasses import dataclass
+import io
+import json
+from pathlib import Path
+import tempfile
+from types import SimpleNamespace
+import unittest
+
+import numpy as np
+import torch
+
+from tests.test_extract_cdpr_transition_demonstrations import recording
+from tools.audit.extract_cdpr_transition_demonstrations import main as extract
+from tools.audit.probe_cdpr_demonstration_handoff import (
+    clone_reset_groups, collect_suffix_once, main, plan_boundaries, run_job, sha256,
+)
+
+
+def grouped_recording():
+    r = recording()
+    # Two true scene groups of eight, plate and bowl. Clone the source fixture
+    # to test that eight accepted candidates do not become eight demo groups.
+    indices = np.repeat([0, 1], 8)
+    for name in r._REQUIRED_ARRAYS:
+        value = getattr(r, name)
+        setattr(r, name, value[:, indices].copy() if name in (
+            'actions', 'active', 'success', 'terminated', 'caught_target',
+            'ee_xyz', 'gripper_opening', 'object_xyz') else value[indices].copy())
+    r.gripper_opening[6:] = .8
+    return r
+
+
+def episodes(r):
+    from tools.audit.extract_cdpr_transition_demonstrations import select_episodes
+    return select_episodes(r)[0]
+
+
+@dataclass(frozen=True)
+class ResetFixture:
+    horizons: object
+    instructions: tuple
+    physical_grasp: object
+    bilateral_contact_steps: object
+    previous_relative_position: object
+    task_state: object
+    group_instruction_ids: object
+    prelifted: object = None
+
+
+@dataclass
+class TaskFixture:
+    grasped: object
+    ever_grasped: object
+    step_count: object
+    initial_target_positions: object
+
+
+class HandoffPlanningTests(unittest.TestCase):
+    def test_prefix_is_a_count_at_boundary_before_success(self):
+        r = grouped_recording()
+        jobs, rejected = plan_boundaries(r, episodes(r), 'pick_up')
+        self.assertEqual(rejected, {})
+        self.assertEqual(len(jobs), 1)
+        self.assertEqual(jobs[0]['prefix_steps'], 4)
+        self.assertEqual([e['world'] for e in jobs[0]['episodes']], [8, 0])
+        self.assertTrue(all(e['pickup_success_env_step'] == 4 for e in jobs[0]['episodes']))
+        # The replay stops after row 3; success-producing action row 4 is fresh.
+        self.assertEqual(len(jobs[0]['episodes']), 2)
+
+    def test_placement_requires_complete_placement_and_held_before_release(self):
+        r = grouped_recording()
+        jobs, rejected = plan_boundaries(r, episodes(r), 'placement')
+        self.assertEqual(rejected, {'no_complete_placement': 8})
+        self.assertEqual(jobs[0]['prefix_steps'], 4)
+        self.assertEqual([e['world'] for e in jobs[0]['episodes']], [0])
+
+    def test_lift_before_first_boundary_is_not_an_admissible_start(self):
+        r = grouped_recording()
+        eps = episodes(r)
+        for ep in eps:
+            ep['pickup_success_env_step'] = 3
+        jobs, rejected = plan_boundaries(r, eps, 'pick_up')
+        self.assertFalse(jobs)
+        self.assertEqual(rejected['no_held_decision_boundary_before_event'], 16)
+
+    def test_terminal_prefix_and_exhausted_budget_are_excluded(self):
+        r = grouped_recording()
+        eps = episodes(r)
+        r.terminated[2, :8] = True
+        r.horizons[8:] = 1
+        jobs, rejected = plan_boundaries(r, eps, 'pick_up')
+        self.assertFalse(jobs)
+        self.assertEqual(sum(rejected.values()), 16)
+
+    def test_mixed_instruction_group_is_rejected(self):
+        r = grouped_recording()
+        eps = episodes(r)
+        r.instruction_ids[1] = 8
+        with self.assertRaisesRegex(ValueError, 'mixes instruction'):
+            plan_boundaries(r, eps, 'pick_up')
+
+    def test_dry_run_checks_hashes_and_writes_nothing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            pilot, bank, output = root / 'pilot', root / 'bank', root / 'output'
+            source = pilot / 'baseline' / 'record_00.npz'
+            grouped_recording().to_npz(source)
+            checkpoint, config = root / 'donor.pt', root / 'config.yaml'
+            checkpoint.write_bytes(b'not loaded in dry run')
+            config.write_text('test: true\n')
+            (pilot / 'pilot_manifest.json').write_text(json.dumps({
+                'source': str(checkpoint), 'source_sha256': sha256(checkpoint),
+                'config': str(config), 'config_sha256': sha256(config)}))
+            with contextlib.redirect_stdout(io.StringIO()):
+                extract(['--recordings', str(source), '--output', str(bank)])
+                result = main(['--manifest', str(bank / 'manifest.json'),
+                               '--pilot-run', str(pilot), '--output', str(output), '--dry-run'])
+            self.assertEqual(result, 0)
+            self.assertFalse(output.exists())
+            checkpoint.write_bytes(b'changed')
+            with self.assertRaisesRegex(ValueError, 'Provenance hash mismatch'):
+                main(['--manifest', str(bank / 'manifest.json'), '--pilot-run', str(pilot),
+                      '--output', str(output), '--dry-run'])
+
+
+class LiveHandoffTests(unittest.TestCase):
+    def test_task_and_contact_history_are_cloned_with_the_physics_group(self):
+        values = torch.arange(16)
+        task = TaskFixture(values.clone(), values.clone(), values.clone(),
+                           values[:, None].repeat(1, 3))
+        reset = ResetFixture(values.clone(), tuple(map(str, range(16))), values.clone(),
+                             values.clone(), values[:, None].repeat(1, 3), task,
+                             torch.tensor([3, 4]))
+        result = clone_reset_groups(reset, [3], 8, torch)
+        self.assertEqual(result.instructions[:8], ('3',) * 8)
+        self.assertTrue(torch.all(result.bilateral_contact_steps[:8] == 3))
+        self.assertTrue(torch.all(result.previous_relative_position[:8] == 3))
+        self.assertTrue(torch.all(result.task_state.step_count[:8] == 3))
+        self.assertTrue(torch.equal(result.horizons[8:], values[8:]))
+        self.assertTrue(torch.equal(result.group_instruction_ids, torch.tensor([3, 4])))
+
+    def test_suffix_collection_begins_at_prepared_state_and_restores_resetter(self):
+        class Resetter:
+            def reset(self, **kwargs):
+                raise AssertionError('ordinary reset would destroy handoff')
+        resetter = Resetter()
+        handoff = object()
+        seen = []
+
+        def collect(**kwargs):
+            seen.append(resetter.reset(**kwargs))
+            return {'fresh_records': [1, 2]}
+
+        collector = SimpleNamespace(resetter=resetter, collect_round=collect)
+        result = collect_suffix_once(collector, handoff, round_index=0)
+        self.assertEqual(seen, [handoff])
+        self.assertEqual(result, {'fresh_records': [1, 2]})
+        self.assertNotIn('reset', vars(resetter))
+
+    def test_failure_restores_an_existing_reset_override(self):
+        original = lambda **kwargs: 'original'
+        resetter = SimpleNamespace(reset=original)
+
+        def collect(**kwargs):
+            resetter.reset(**kwargs)
+            resetter.reset(**kwargs)
+
+        collector = SimpleNamespace(resetter=resetter, collect_round=collect)
+        with self.assertRaisesRegex(RuntimeError, 'once'):
+            collect_suffix_once(collector, object(), round_index=0)
+        self.assertIs(resetter.reset, original)
+
+    def test_replay_handoff_and_fresh_collection_with_real_task_predicate(self):
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            BatchedTaskState, BatchedCatchReleaseDenseReward,
+        )
+        r = grouped_recording()
+        jobs, _ = plan_boundaries(r, episodes(r), 'pick_up')
+        task = BatchedTaskState(
+            instruction_ids=torch.tensor(r.instruction_ids), target_slots=torch.tensor(r.target_slots),
+            reference_slots=torch.tensor(r.reference_slots), second_reference_slots=torch.tensor(r.second_reference_slots),
+            initial_target_positions=torch.tensor(r.initial_target_xyz), ever_grasped=torch.zeros(16, dtype=torch.bool),
+            grasped=torch.zeros(16, dtype=torch.bool), step_count=torch.zeros(16, dtype=torch.long),
+            release_threshold=torch.tensor(r.release_threshold), support_surface_z=torch.tensor(r.support_surface_z),
+            target_rest_height=torch.tensor(r.target_rest_height))
+        reset = ResetFixture(torch.tensor(r.horizons), tuple(r.instructions),
+                             torch.zeros(16, dtype=torch.bool), torch.zeros(16, dtype=torch.long),
+                             torch.zeros(16, 3), task, torch.tensor([4, 3]))
+        # No catalogs in this source fixture, so the live optional field is unused.
+        low = SimpleNamespace(object_positions=torch.tensor(r.object_xyz[0]),
+                              ee_position=torch.tensor(r.ee_xyz[0]), gripper_opening=torch.tensor(r.gripper_opening[0]))
+        class Backend:
+            _qpos = torch.zeros(16, 5)
+            _qvel = torch.zeros(16, 5)
+            steps = 0
+            pose_offset = 0.
+            def low_dim_observations(self):
+                return low
+            def step(self, actions, active):
+                index = self.steps
+                self.steps += 1
+                low.object_positions = torch.tensor(r.object_xyz[index]) + self.pose_offset
+                low.ee_position = torch.tensor(r.ee_xyz[index])
+                low.gripper_opening = torch.tensor(r.gripper_opening[index])
+                return low
+            def pop_nonfinite_world_events(self):
+                return 0
+            def pop_nonfinite_world_report(self):
+                return 0, np.zeros(16, dtype=bool)
+            def broadcast_group_state(self, representatives):
+                for w in representatives.tolist():
+                    start = w // 8 * 8
+                    for v in (low.object_positions, low.ee_position, low.gripper_opening):
+                        v[start:start + 8] = v[w].clone()
+            def controller_state(self):
+                return {'target': np.zeros((16, 3)), 'gripper': np.zeros(16)}
+        backend = Backend()
+        resetter = SimpleNamespace(reset=lambda **kwargs: copy.deepcopy(reset))
+        def grasp(current, obs, active):
+            caught = torch.tensor(r.caught_target[backend.steps - 1])
+            current.physical_grasp.copy_(caught)
+            return obs, caught, {'bilateral_contact': caught}
+        calls = []
+        def collect(**kwargs):
+            prepared = resetter.reset(**kwargs)
+            calls.append(prepared)
+            self.assertEqual(backend.steps, 4)  # All teacher steps precede record collection.
+            self.assertTrue(torch.all(prepared.task_state.instruction_ids == 8))
+            self.assertTrue(torch.all(prepared.horizons == 39))  # Four actions consume one decision.
+            self.assertTrue(torch.all(prepared.task_state.ever_grasped))
+            return SimpleNamespace(metrics={}, loss_mask=torch.ones(16), vla_records=None,
+                                   candidate_rewards=torch.zeros(2, 8), candidate_success=torch.zeros(2, 8, dtype=torch.bool))
+        collector = SimpleNamespace(actions_per_policy_decision=4, resetter=resetter,
+                                    _update_physical_grasp=grasp, _task_thresholds=lambda: None,
+                                    move_to_distance_reward=None,
+                                    catch_release_dense_reward=BatchedCatchReleaseDenseReward(), collect_round=collect)
+        world = SimpleNamespace(torch=torch, backend=backend, collector=collector,
+                                resetter=resetter, device=torch.device('cpu'))
+        report = run_job(world, r, jobs[0], 'pick_up', group_size=8,
+                         position_tolerance=.002, opening_tolerance=.03, suffix_decisions=40, seed_torch=0)
+        self.assertEqual(report['status'], 'fresh_suffixes_collected_no_training')
+        self.assertEqual(report['optimizer_updates'], 0)
+        self.assertEqual(len(report['groups']), 2)
+        self.assertEqual(len(calls), 1)
+        # Replay drift must stop BEFORE any fresh suffix is collected.
+        backend.steps = 0
+        backend.pose_offset = .01
+        low.object_positions = torch.tensor(r.object_xyz[0])
+        rejected = run_job(world, r, jobs[0], 'pick_up', group_size=8,
+                           position_tolerance=.002, opening_tolerance=.03, suffix_decisions=40, seed_torch=0)
+        self.assertEqual(rejected['status'], 'no_verified_handoffs')
+        self.assertTrue(all('replay_pose_mismatch' in e['rejected'] for e in rejected['episodes']))
+        self.assertEqual(len(calls), 1)
+        # A destination success at admission must never become a free reward.
+        backend.steps = 0
+        backend.pose_offset = 0.
+        low.object_positions = torch.tensor(r.object_xyz[0])
+        collector.catch_release_dense_reward = BatchedCatchReleaseDenseReward(pick_lift_success_height=.01)
+        terminal = run_job(world, r, jobs[0], 'pick_up', group_size=8,
+                           position_tolerance=.002, opening_tolerance=.03, suffix_decisions=40, seed_torch=0)
+        self.assertEqual(terminal['status'], 'destination_task_already_terminal')
+        self.assertEqual(len(calls), 1)
+
+
+if __name__ == '__main__':
+    unittest.main()

@@ -42,8 +42,11 @@ on all four instructions at declared easier fixed settings, then expand
 distances. Demonstrations initialize missing grasp/lift/carry/release
 transitions; only fresh current-policy continuations enter GRPO. Keep ordinary
 starts in training and evaluate transfer without assistance. The extractor is
-implemented; validated simulator handoff and the training integration remain
-to be implemented. See §7.15 and `CDPR_GRPO_DEMONSTRATION_PLAN.md`.
+implemented and the remote prototype now contains **293 lift prefixes**, of
+which **156** also have complete placements and **137** come from failed
+placements. A replay-and-handoff probe collecting fresh suffixes without
+optimizer updates is implemented; its GPU validation and the training
+integration remain pending. See §7.15 and `CDPR_GRPO_DEMONSTRATION_PLAN.md`.
 
 **Latest z-offset pilot, diagnostic only:**
 `release_recovery_pilot_20260909_130003` moved pick-up **0.2774 → 0.2561**
@@ -724,7 +727,7 @@ the new outside-goal protocol.
 
 ### 7.15 Demonstration-guided GRPO after the z-offset pilot
 
-**Adopted by the user on 2026-09-09; implementation pending.** Retain GRPO and
+**Adopted by the user on 2026-09-09; training integration pending.** Retain GRPO and
 use demonstrations to select useful initial states for its current-policy
 groups. The missing transitions are approached backwards: pick-up from
 before lift to before grasp to ordinary approach; placement from before
@@ -777,6 +780,23 @@ ordinary GRPO from the same checkpoint; multi-million-step blocks are welcome
 once ordinary-start manipulation improves with retention. This is a testable
 training direction, not a guaranteed route to 70% or a return to broad residual
 SFT, whose prior composition regression remains relevant.
+
+The first implementation is `tools/audit/probe_cdpr_demonstration_handoff.py`,
+launched by `scripts/run_cdpr_demo_handoff_probe.sh`. It resolves the donor and
+config through the prototype's pilot manifest, verifies hashes, revalidates
+the source episodes, and selects held decision boundaries before lift or
+release. It replays full source rounds up to a COMMON boundary: MJWarp's
+`active_mask` masks actions but does not freeze physics, so independently
+stopping worlds at different times would let early handoffs drift. Verified
+live states are broadcast within their original eight-candidate scene groups,
+including backend/controller state and task/contact histories. Pick-up uses
+the reconstructed pre-action desk datum and recomputed prompt; terminal
+destination states are refused. The existing collector then writes only fresh
+suffix records, including its LoRA capture path, with **zero optimizer updates**.
+The probe reports prefix cost, replay errors, divergence, suffix success and
+reward variation. This is a prototype on evaluation scenes under legacy
+geometry, not an ordinary-start score or training launcher. GPU validation is
+still required before connecting handoffs to optimization.
 
 ---
 
@@ -1236,6 +1256,40 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-09 — Demonstration prototype yields 293 lift prefixes; handoff probe prepared
+
+- Evidence: user-supplied extractor output from
+  `runs/grpo_demo_prototype_20260909_170619/manifest.json`, using baseline
+  recordings in `runs/release_recovery_pilot_20260909_130003/`. The remote
+  manifest/NPZ files have not been imported locally; hashes remain in those
+  artifacts. Status: **usable extraction prototype, no demonstration-guided
+  learning result**.
+- Per round 0 / 1 / 2: **80 / 110 / 103** accepted lift prefixes and
+  **46 / 58 / 52** complete placements. Total **293** lift prefixes, including
+  **156** complete placements and **137** lift prefixes from failed placements.
+  Source instruction split: **76 bowl / 217 plate**. Complete placement clips
+  overlap the lift-prefix episodes; these are not 449 distinct demonstrations.
+  The eight candidates in each source scene group are also not independent
+  scenes. Unique accepted scene groups must be counted from the manifest.
+- Rejections total **728 non-container sources**, **192 not-a-desk-start**
+  (88 / 40 / 64), and **323 no-pickup-success** (104 / 114 / 105).
+  Counts reconcile: 728 + 192 + 323 + 293 = 1,536. Among 808 container
+  episodes, prefix yield is **293/808 = 0.3626**; among the 616 that passed
+  desk-start selection it is **293/616 = 0.4756**. These filtered denominators
+  are extraction statistics, not ordinary pick-up success. Keep the desk-start
+  filter; investigate its 192 rejected episodes separately.
+- The empty-bank issue is no longer blocking this prototype. The 137 usable
+  lifts from failed placements establish why full-placement success must not
+  be the only harvest filter. These data do not demonstrate ordinary approach
+  or outside-goal transport coverage; retain evaluation-scene provenance.
+- Next executable step: two-GPU handoff probe (§7.15), pickup on CUDA 0 and
+  placement on CUDA 1. It verifies decision-boundary replay, copies live states
+  into candidate groups and collects current-policy suffixes without training.
+  Local validation includes 10 new CPU tests (including a mocked replay/handoff
+  with the real task predicate), plus 111 extraction/comparison/recording tests.
+  Shell syntax and whitespace checks pass. Real MJWarp replay and fresh-suffix
+  results remain pending remote execution.
 
 ### 2026-09-09 — Z-offset pilot regresses manipulation; demonstration-guided GRPO adopted
 
