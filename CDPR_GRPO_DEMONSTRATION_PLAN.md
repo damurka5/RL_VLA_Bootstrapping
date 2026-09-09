@@ -4,6 +4,36 @@
 `CDPR_MANIPULATION_UPGRADE_PLAN.md` is superseded as an active campaign proposal.
 No alternative RL algorithm is being implemented or scheduled.
 
+**Adopted by the user after the z-offset pilot review, 2026-09-09.** This is
+the active implementation plan. The extractor exists; validated simulator
+handoff and GRPO integration are still pending. Full evidence is recorded in
+`CDPR_CONSOLIDATED_PROGRESS_REPORT.md` §§4.2, 7.15 and the latest §14 entry.
+
+`release_recovery_pilot_20260909_130003` regressed pick-up **91/328 → 84/328**
+and bowl **122/352 → 103/352**, while move-to improved **321/400 → 331/400**
+and configured plate **276/456 → 283/456**. Retain it as a negative experiment,
+without promoting its candidate. The z-offset config also gates the existing
+gripper offset, and the gate remains active after grasp loss. This does not
+isolate z exploration or establish the cause of regression. The lift probe
+uses a different baseline/opening rule from production success; reconcile
+those definitions before using its conditional rate as a success funnel.
+
+The implementation order is:
+
+1. Reconcile recorded pick-up success with rescoring under the production and
+   first-post-action height references. Capture true pre-action reset poses
+   for future comparisons; retain legacy scores under their original protocol.
+2. Establish an easier fixed transport benchmark with the object outside the
+   receptacle's success region. Enforce realized distances after workspace
+   handling; keep existing success radii. §7.14 shows why legacy plate scores
+   dominated by inside-goal starts cannot certify transport.
+3. Build a training-only demonstration bank with actual lift and transport
+   transitions, then implement and verify decision-boundary replay/restore
+   and handoff. No teacher-prefix action enters residual or LoRA GRPO losses.
+4. Compare ordinary GRPO with demonstration-start GRPO from the same learner
+   checkpoint under the same new evaluation contract. Use an initial transfer
+   check before multi-million-step continuation, maintaining all four families.
+
 The user proposes pick-up demonstrations with the plate or bowl present so the
 grasp-and-lift behavior can also support placement. This is useful, provided we
 separate a placement prefix from a completed placement and preserve the real
@@ -76,10 +106,13 @@ recordings on CPU and exports:
 - source hashes, shared episode IDs, grasp/lift landmarks and distances,
   original/derived task labels, and rejection reasons.
 
-The extractor rescores pick-up with `evaluate_active_sparse_tasks`. It rejects
-caught or visibly raised starts, inconsistent lift-height baselines, missing
-receptacles, malformed prompts, non-finite clips, and recordings that report
-divergence. It keeps valid lift prefixes even when placement failed. Complete
+The extractor rescores pick-up with `evaluate_active_sparse_tasks`, using the
+first recorded post-action pose as the composed lift reference and reporting
+its discrepancy from the stored production datum. It rejects caught or
+visibly raised starts, missing receptacles, unresolved object labels/prompt
+disagreements and non-finite clips. Divergence is quarantined per world when
+the recording identifies the affected worlds, otherwise per round. It keeps
+valid lift prefixes even when placement failed. Complete
 placements without a valid 5 cm held lift do not enter this shared-prefix bank;
 their original recordings remain available for placement retention.
 
@@ -174,8 +207,9 @@ from before-release to short carry to grasp/lift to ordinary composed starts.
 Keep a separate per-family assisted-start score and ordinary-start score.
 Reduce assistance based on ordinary-start transfer, not assisted success alone.
 
-At the final-window 52% pick-up grasp rate, improving lift alone cannot yield
-70% overall. The backwards progression must reach the approach/grasp phase.
+The latest z-offset pilot's reported grasp rates are 46.65% for pick-up and
+59.09% for bowl. With those grasp outcomes fixed, improving downstream behavior
+alone cannot yield 70% overall. The backwards progression must reach the approach/grasp phase.
 Likewise, full container success requires grasp, carry, release and settling;
 prefix demonstrations cannot replace training the rest of that sequence.
 
@@ -233,6 +267,7 @@ the user's objective: one shared checkpoint above 70% at declared easier fixed
 settings before expanding distances. No demonstration count or curriculum
 method guarantees that result.
 
-Current deliverable: extraction tool plus this GRPO-only design. The GRPO
-handoff/reset integration is not yet implemented. No new remote demos or
-training were run from the local machine.
+Current deliverable: extraction tool plus this adopted GRPO-only implementation
+plan. The GRPO handoff/reset integration is not yet implemented; updating the
+plan/report does not establish that demonstration-guided training has run. No
+new remote demos or training were run from the local machine.

@@ -36,6 +36,24 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
+**Campaign decision, 2026-09-09: demonstration-guided GRPO is adopted as the
+next implementation direction.** Keep one shared policy and first exceed 70%
+on all four instructions at declared easier fixed settings, then expand
+distances. Demonstrations initialize missing grasp/lift/carry/release
+transitions; only fresh current-policy continuations enter GRPO. Keep ordinary
+starts in training and evaluate transfer without assistance. The extractor is
+implemented; validated simulator handoff and the training integration remain
+to be implemented. See §7.15 and `CDPR_GRPO_DEMONSTRATION_PLAN.md`.
+
+**Latest z-offset pilot, diagnostic only:**
+`release_recovery_pilot_20260909_130003` moved pick-up **0.2774 → 0.2561**
+and bowl **0.3466 → 0.2926**, while move-to rose **0.8025 → 0.8275** and
+configured composed plate **0.6053 → 0.6206**. Retain the experiment and
+previous checkpoints; do not promote this candidate or extrapolate a benefit
+from longer training with the same configuration. The gate also changes
+gripper exploration, and the lift probe does not reproduce the task's lift
+definition. Full counts, command diagnostics and provenance limits are in §14.
+
 **Latest matched comparison, 2026-09-09:** final continuation checkpoint:
 move-to **0.7800**, pick-up **0.2744**, composed plate **0.5943**, bowl
 **0.3381**. The retained bowl-peak checkpoint is stronger for placement:
@@ -57,8 +75,8 @@ on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 0.08**, bowl **0.3068**. This is a retained candidate, not a promoted >70%
   four-family policy. A further 3M-action full resume has now completed at
   3,540,208 cumulative steps. Its 121 continuation updates show modest gains,
-  with the last validation at 3,512,892; the final checkpoint still needs
-  separate evaluation. Fresh-seed confirmation remains pending. See §14 and
+  with the last validation at 3,512,892; the final checkpoint's separate
+  evaluation is recorded above. Fresh-seed confirmation remains pending. See §14 and
   `CDPR_NEXT_CAMPAIGN_PLAN.md`.
 
 | Achievement | Strongest supported result | Evidence status |
@@ -286,6 +304,19 @@ the binding constraint by a factor of eight, and effort still aimed at the
 grasp is aimed at a bottleneck that moved. See §7.13 for the mechanism: the
 policy commands +0.02 mean `a_z` after grasping under `pick_up` and +0.40 under
 `put_into`, on the same adapter.
+
+**Current qualification, 2026-09-09:** the z-offset pilot does not support
+treating lift as the only remaining bottleneck. Pick-up's reported grasp
+frequency fell **0.5488 → 0.4665**, while its median held-step mean z command
+was essentially unchanged (**+0.275 → +0.269**). The probe's conditional
+lift rose **0.3556 → 0.4183**, but implies about 64 lifted episodes in each
+arm, whereas production reports 91 and 84 successes. These use different
+height references and grasp definitions; reconcile them before constructing
+a success funnel. With the observed grasp outcomes fixed, perfect downstream
+execution still cannot reach 70%. The adopted curriculum must therefore
+progress back through grasp acquisition to ordinary approach, as well as
+teaching lift. This updates the current diagnosis without changing the older
+checkpoint-specific measurements above.
 
 ### 4.3 `put_into_plate` and `put_into_bowl`: placement
 
@@ -687,8 +718,65 @@ it; both describe what happened after the reset.
 
 Fixing it means a minimum spawn distance above the larger receptacle radius and
 a reset that resamples the direction rather than clamping the position. Both
-change the task and invalidate every composed number on record, so it is a
-deliberate re-baseline rather than a config edit.
+change the task and require a new composed baseline. Historical numbers remain
+valid for their recorded protocol; they do not establish performance under
+the new outside-goal protocol.
+
+### 7.15 Demonstration-guided GRPO after the z-offset pilot
+
+**Adopted by the user on 2026-09-09; implementation pending.** Retain GRPO and
+use demonstrations to select useful initial states for its current-policy
+groups. The missing transitions are approached backwards: pick-up from
+before lift to before grasp to ordinary approach; placement from before
+release to short transport to grasp/lift and ordinary starts. Retain ordinary
+starts and all four instructions throughout. Assisted success is a training
+diagnostic, not achievement of the ordinary-start target.
+
+The review of `356b497..5288a26` established these implementation constraints:
+
+- `04929bd` adds z offset standard deviation 0.10 and enables
+  `episode_offset_after_grasp`. The gate applies to the entire offset vector,
+  including the existing gripper standard deviation 0.15. It therefore also
+  removes pre-grasp gripper-offset exploration; this is not an isolated z
+  ablation. In `mjwarp_rank_local_collector.py`, the gate tests
+  `first_grasp_step >= 0`, so it remains enabled after grasp loss. It is an
+  after-first-grasp gate, not a current-holding gate. Gating exploration also
+  does not prevent shared policy updates from changing subsequent approach
+  behavior. These confounds do not establish which caused the regression.
+- `5288a26` measures lift from `object_xyz[0]`, a post-action pose, for every
+  instruction. Production pick-up uses `initial_target_xyz` and requires
+  `caught_target & (gripper_opening <= 0.94)`; the probe omits the opening
+  check. Report recorded success and rescoring under both height references
+  side by side. Held-step averages also select different episodes/states after
+  training and cannot alone prove whether stochastic exploration engaged.
+- `356b497` corrects the stale composed lift datum in extraction;
+  `60757ee`/`b952704` provide per-world divergence attribution with whole-round
+  fallback when attribution is unavailable; `fc019bf` uses object catalog
+  labels instead of rejecting plate's different prompt template. `85f5c14`
+  probes desk-height discrepancies, and `2e30a23` propagates cap reporting
+  through sharding. These improve evidence and extraction; they do not yet
+  implement a restorable demonstration state or a GRPO handoff.
+- §7.14's start-distribution audit must carry into the new benchmark. Use
+  genuine outside-goal starts for transport, enforce realized distances after
+  workspace handling, and separately label legacy inside-goal scores.
+
+For each transition group, restore a validated full simulator state or replay
+and verify a prefix at a decision boundary, then generate eight fresh
+current-policy suffixes from the same state. Recompute observations and
+instruction-conditioned priors. Exclude every teacher-prefix action from
+residual and action-expert LoRA losses. Preserve the desk lift reference and
+remaining budget; never earn pick-up success by resetting already above its
+lift threshold. A pick-up clip with a bowl/plate visible is a placement prefix,
+not a completed placement demonstration.
+
+Use training-only scenes for the demonstration bank; evaluation scenes used
+for training lose their held-out status. Measure replay survival, ordinary
+and assisted success separately, informative groups and actual gradient rows,
+and count prefix replay in compute cost. Start with a transfer check against
+ordinary GRPO from the same checkpoint; multi-million-step blocks are welcome
+once ordinary-start manipulation improves with retention. This is a testable
+training direction, not a guaranteed route to 70% or a return to broad residual
+SFT, whose prior composition regression remains relevant.
 
 ---
 
@@ -975,6 +1063,11 @@ task rather than a collapse.
 
 The following should not be reused as current headline results:
 
+- The z-offset pilot as a demonstrated pick-up improvement, its conditional
+  probe lift as the production success funnel, or its gate as proof that
+  approach/grasp behavior is unchanged. See §7.15 and the latest §14 entry.
+- Demonstration-guided GRPO as an achieved result. It is the adopted next
+  implementation direction; validated handoff and training remain pending.
 - Preflight oracle zeros produced before placement reward/reset geometry was repaired.
 - Validation numbers produced without restoring curriculum state.
 - Unseeded single-round comparisons that treated SmolVLA's stochastic prior as deterministic.
@@ -989,8 +1082,10 @@ The following should not be reused as current headline results:
   desk and clear the lift predicate, and about two thirds of those go on to
   place successfully. That is a 0.60 yield of valid `pick_up` prefixes against
   0.1465 from `pick_up`'s own rollouts at cap 0.06. Any use of them must
-  reckon with the 2026-09-07 SFT result below, which is why this is listed as
-  reopened rather than adopted.
+  reckon with the 2026-09-07 SFT result below. **Updated 2026-09-09:** verified
+  prefixes are adopted for a demonstration-start GRPO curriculum (§7.15),
+  with fresh policy suffixes and no teacher actions in the GRPO loss. Broad
+  relabel-and-re-SFT remains unadopted; no new curriculum gain is claimed yet.
 - Cross-checkpoint simulator replay as a way to refresh priors/state; it destroys trajectory survival and has been replaced by frame inference.
 - Vision-tower LoRA as an active contributor to the current policy; it is disabled in active RL and no Cycle 2 LoRA epoch beat baseline.
 - Phase 5 placement `iter4` and `iter5` as promoted checkpoints. Both are superseded by `step_2754052`; the active release-height gate is off and the attempted ladder extension was reverted.
@@ -1142,6 +1237,60 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-09 — Z-offset pilot regresses manipulation; demonstration-guided GRPO adopted
+
+- Status: **diagnostic-only negative pilot; next direction adopted, not yet
+  trained**. Evidence is the user's pasted remote console output, reviewed
+  against local commits through `5288a26`. No new GPU run was performed locally.
+- Run: `runs/release_recovery_pilot_20260909_130003/`; config:
+  `configs/examples/cdpr_smolvla_zlift_offset.yaml`, introduced by `04929bd`.
+  Requested budget: 500,000 selected actions. Actual final step, update count,
+  wall time and checkpoint SHA-256 have not been supplied.
+- Source lineage: the first pasted command selects bowl-peak 2,117,145, but
+  the next overwrites `CKPT` with the largest numbered continuation checkpoint,
+  expected to be 3,540,208. Confirm the actual source/hash from this pilot's
+  `pilot_manifest.json`; do not label it a bowl-peak warm start. The displayed
+  `DRY_RUN=1` command itself only previews; completed console results establish
+  that a real run was also executed, whose launch provenance is still pending.
+- Launcher protocol: baseline and final, each 3×512 worlds, group size 8,
+  rounds 0–2, seed-torch 0; fixed config caps move-to 0.08 m, pick-up 0.06 m,
+  containers 0.20 m, uncaught composed starts and 40 decisions. Verify actual
+  caps in remote artifacts. Nominal independent reset groups are 50 / 41 /
+  57 / 44 for move-to / pick-up / plate / bowl, not 1,536 independent scenes.
+  Matching settings alone do not certify exact pre-action reset identity.
+
+| Instruction | Baseline | Final | Delta, percentage points |
+|---|---:|---:|---:|
+| move_to_object | 321/400 = 0.8025 | 331/400 = 0.8275 | +2.50 |
+| pick_up | 91/328 = 0.2774 | 84/328 = 0.2561 | −2.13 |
+| put_into_plate | 276/456 = 0.6053 | 283/456 = 0.6206 | +1.54 |
+| put_into_bowl | 122/352 = 0.3466 | 103/352 = 0.2926 | −5.40 |
+
+| Probe family | Grasp, before → after | Lift given grasp, before → after | Median held-step mean a_z, before → after | Median peak lift, m |
+|---|---:|---:|---:|---:|
+| pick_up | 0.5488 → 0.4665 | 0.3556 → 0.4183 | +0.275 → +0.269 | 0.0486 → 0.0493 |
+| put_into_plate | 0.8947 → 0.8640 | 0.6471 → 0.6244 | +0.344 → +0.399 | 0.0682 → 0.0643 |
+| put_into_bowl | 0.6307 → 0.5909 | 0.5360 → 0.5144 | +0.295 → +0.317 | 0.0565 → 0.0515 |
+
+- Probe values are as supplied, not harmonized with production success. For
+  pick-up, `328 × grasp × lift|grasp` implies about **64 → 64** lifted
+  episodes, versus **91 → 84** recorded successes. Height-reference and
+  opening-check differences are established in code; their individual
+  contributions to this discrepancy require rescoring the remote recordings.
+- This supports retaining the experiment as negative for its manipulation
+  objective, with no promotion or automatic longer continuation. It does not
+  prove statistical significance, identify the cause of regression, rule out
+  useful z exploration, or establish that demonstrations are unnecessary.
+  Pickup and bowl acquisition must improve too: holding the final observed
+  grasp outcomes fixed caps downstream-only success at 46.65% and 59.09%.
+- Review validation: **125 relevant CPU tests passed** across z-offset config,
+  extraction, comparison, recording reporting and episode-offset exploration.
+  They check implementation behavior, not GPU learning efficacy. Findings and
+  the adopted demonstration-guided GRPO contract are in §7.15.
+- Remote artifacts: `pilot_manifest.json`, `pilot_config_snapshot.yaml`,
+  `pilot_comparison.json`, `baseline/record_*.npz`, `final_eval/record_*.npz`
+  beneath the run above. No local artifact copy or file hash is claimed.
+
 ### 2026-09-09 — Matched final/peak evaluation: pick-up improves in final; bowl-peak retains strongest placement
 
 - Evidence: user console output from
@@ -1188,13 +1337,15 @@ Newest first. Entries follow the §13 template.
   remain visible and must not be treated as a clean uniform interval.
 - All three evaluations and decompositions wrote their outputs. The helper
   printed its final comparison path, then returned nonzero. In that code path
-  status 2 denotes its recorded-scene pairing gate. The pasted excerpt omits
-  `comparison.json["pairing"]`, so exact mismatching fields are still pending.
-  Source inspection found a limitation: `object_xyz[0]` is recorded AFTER
-  the first policy action. Comparing it across checkpoints as a reset pose is
-  too strong and can reject legitimate policy differences. The helper now
-  explains this limitation and provides CPU-only `--inspect-existing`;
-  do not rerun all evaluations or relax tolerances merely to clear the status.
+  status 2 denotes its recorded-scene pairing gate. Subsequent CPU inspection
+  supplied by the user found only `object_xyz_at_step_0` differences: maximum
+  coordinate differences per round were 1.701 / 1.179 / 0.471 mm for plate-peak
+  and 0.760 / 1.206 / 0.468 mm for bowl-peak. These poses are recorded AFTER
+  the first policy action and cannot certify pre-action reset identity. No
+  metadata mismatch was reported. The helper now explains this limitation
+  through `--inspect-existing` and does not fail a completed job for this
+  post-action-only mismatch; paired verdicts remain uncertified. Do not rerun
+  all evaluations or relax tolerances merely to clear the status.
 - Next direction remains **GRPO with demonstrations of shared transitions**.
   Bowl-peak is a placement donor/retention reference; final is a pick-up
   donor/control. No weight merging or automatic promotion. Existing evaluation

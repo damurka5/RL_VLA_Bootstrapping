@@ -1,11 +1,21 @@
 # Four instructions above 70%: next campaign
 
-**User steering, 2026-09-09: remain on GRPO.** The active next direction is
+**User decision, 2026-09-09: demonstration-guided GRPO adopted.** The active next direction is
 demonstrations of grasp/lift/carry/release and demonstration-guided training
 starts, described in `CDPR_GRPO_DEMONSTRATION_PLAN.md`. The actor–critic
 recommendation in the earlier upgrade plan is superseded. A CPU extractor for
 validated shared pick-up/placement action clips is implemented; GRPO handoff
 integration and any auxiliary imitation ablation remain future work.
+
+Latest review: `release_recovery_pilot_20260909_130003` changed pick-up
+**0.2774 → 0.2561**, bowl **0.3466 → 0.2926**, configured plate
+**0.6053 → 0.6206**, and move-to **0.8025 → 0.8275**. Keep the pilot as a
+negative manipulation experiment. Its z-offset gate also changes gripper
+exploration, and its lift probe does not use the production success definition.
+Do not promote or automatically extend this config. See consolidated report
+§7.15 and the latest §14 entry for the review and provenance limits. Implement
+validated demonstration handoff with fresh GRPO suffixes, excluding teacher
+actions from every policy loss; evaluate transfer on ordinary starts.
 
 Date: 2026-09-07. Source review: `26cddf6`, consolidated report §§1, 4, 7,
 10 and the current resetter, collector, and Phase 7 config.
@@ -16,8 +26,9 @@ cumulative selected actions, with **121** continuation updates and **30**
 validation checkpoints (complete logs supplied 2026-09-09). The separate
 final/peak recording evaluation is now available: final scores move-to
 **0.7800**, pick-up **0.2744**, plate **0.5943**, bowl **0.3381**; bowl-peak
-scores **0.7650 / 0.2195 / 0.7018 / 0.3778**. Its pairing-gate status is
-being diagnosed from existing files; no GPU rerun is needed merely for that.
+scores **0.7650 / 0.2195 / 0.7018 / 0.3778**. Inspection found only first
+post-action object-coordinate differences in its pairing gate; these cannot
+certify different pre-action resets. No GPU rerun is needed merely for that.
 The final checkpoint was evaluated separately from the last in-run validation
 at 3,512,892. Late pick-up
 and plate gains qualify the earlier snapshot's plateau reading. See §14 of
@@ -26,7 +37,7 @@ the consolidated report for provenance and the full interpretation, and
 command; use `CDPR_GRPO_DEMONSTRATION_PLAN.md` for the active training direction. Later training
 interventions remain proposed, not measured improvements.
 
-Latest matched baseline → final results from
+Earlier matched baseline → final results from
 `release_recovery_pilot_20260907_193019`: move-to **279/400 → 285/400**
 (0.6975 → 0.7125 at 0.08 m), pick-up **49/328 → 65/328** (0.1494 → 0.1982
 at 0.06 m), composed plate **281/456 → 316/456** (0.6162 → 0.6930), bowl
@@ -72,8 +83,12 @@ instruction separately; a mean above 70% does not meet the objective.
 - Containers start uncaught on the desk; keep the existing radii, release,
   grasp-history, and settling requirements. Keep the current 40-decision
   composed budget for the first comparison.
-- Do not choose an easier container spawn range until its reset geometry has
-  been checked. The current default is 0.06–0.10 m object-to-receptacle distance.
+- Re-baseline transport on outside-goal starts with a small fixed clearance
+  beyond each success radius, or beyond the larger radius for a shared absolute
+  range. Enforce realized separation after workspace handling. The legacy
+  0.06–0.10 m range plus clamping starts about 92.6% of plate and 42.7% of bowl
+  episodes inside the goal (§7.14); retain those results with their protocol
+  label rather than treating them as evidence of transport into the receptacle.
 - Record actual initial distances and poses, target catalogs, reset seed/group
   identities, caught fraction, per-instruction horizons, checkpoint checksum,
   resolved configuration and code revision. Fix them within each comparison.
