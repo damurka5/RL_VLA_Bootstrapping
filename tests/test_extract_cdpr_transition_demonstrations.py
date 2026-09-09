@@ -60,14 +60,49 @@ class TransitionDemonstrationTests(unittest.TestCase):
         self.assertEqual(rejected['starts_grasped'], 1)
         self.assertEqual(rejected['not_a_desk_start'], 1)
 
-    def test_wrong_height_reference_and_missing_receptacle_are_excluded(self):
+    def test_missing_receptacle_is_excluded(self):
+        r = recording()
+        r.reference_slots[1] = r.target_slots[1]
+        _, rejected = select_episodes(r)
+        self.assertEqual(rejected['missing_distinct_receptacle'], 1)
+
+    def test_a_stale_production_baseline_is_recorded_not_rejected(self):
+        """`initial_target_positions` is stale for uncaught_container starts.
+
+        The resetter updates it for `held_group` and `grasp_learning` and not
+        for composed container starts, so on the population this file exists to
+        harvest it holds a pre-repositioning lattice point. Rejecting on it
+        threw away every composed episode -- the guard excluded exactly what it
+        was written to protect. The lift is scored from the recorded start pose
+        instead, and the production datum's disagreement is reported.
+        """
+
         r = recording()
         r.initial_target_xyz[0, 2] = -.2
-        r.reference_slots[1] = r.target_slots[1]
         episodes, rejected = select_episodes(r)
-        self.assertEqual(episodes, [])
-        self.assertEqual(rejected['inconsistent_lift_baseline'], 1)
-        self.assertEqual(rejected['missing_distinct_receptacle'], 1)
+        self.assertNotIn('inconsistent_lift_baseline', rejected)
+        chosen = [e for e in episodes if e['world'] == 0]
+        self.assertEqual(len(chosen), 1)
+        # object_xyz[0, 0, target, 2] is 0.10, so the disagreement is 0.30 m.
+        self.assertAlmostEqual(
+            chosen[0]['production_lift_baseline_delta_m'], .30, places=5
+        )
+
+    def test_the_lift_is_measured_from_the_recorded_start_pose(self):
+        """A stale baseline must not decide the verdict in either direction.
+
+        Set it 0.2 m ABOVE the desk: scored against it, a real 0.06 m lift
+        reads as no lift at all and the episode disappears. Scored against
+        where the object actually was, it is the same demonstration it was
+        before the field was corrupted.
+        """
+
+        r = recording()
+        before = [e['world'] for e in select_episodes(r)[0]]
+        r.initial_target_xyz[:, 2] += .2
+        after = [e['world'] for e in select_episodes(r)[0]]
+        self.assertEqual(before, after)
+        self.assertTrue(before)
 
     def test_inactive_success_and_open_gripper_do_not_count(self):
         r = recording()

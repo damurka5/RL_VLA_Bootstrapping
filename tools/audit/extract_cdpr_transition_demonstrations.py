@@ -21,8 +21,37 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 
-def pickup_success_mask(recording):
-    """Rescore each recorded transition under pick_up, including active masking."""
+def recorded_start_positions(recording):
+    """Where the target object ACTUALLY was when the episode began.
+
+    `pick_up` success is `target_z - initial_target_positions_z >= lift`, and
+    `initial_target_positions` is the wrong datum for exactly the population
+    this file harvests. The resetter updates it for `held_group` and for
+    `grasp_learning` and NOT for `uncaught_container`, so a composed episode's
+    entry still holds the pre-repositioning lattice point somewhere in the
+    workspace -- `placement_failure_decomposition` documents the same trap and
+    works around it the same way. Scoring a lift against that datum measures the
+    distance from a point the object never occupied.
+
+    `object_xyz[0]` is one env step of physics after the reset. For an object at
+    rest on the support surface that is a sub-millimetre difference from the
+    reset pose, and it is recorded for every episode rather than for some.
+    """
+
+    worlds = np.arange(recording.worlds)
+    return np.asarray(
+        recording.object_xyz[0, worlds, np.asarray(recording.target_slots, dtype=int), :],
+        dtype=np.float32,
+    )
+
+
+def pickup_success_mask(recording, lift_baseline=None):
+    """Rescore each recorded transition under pick_up, including active masking.
+
+    ``lift_baseline`` is the [worlds, 3] datum the lift is measured from; it
+    defaults to the recorded start pose rather than to the recording's
+    ``initial_target_xyz``, for the reason in ``recorded_start_positions``.
+    """
     import torch
     from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
         BatchedCatchReleaseDenseReward, BatchedTaskState, INSTRUCTION_TO_ID,
@@ -30,6 +59,8 @@ def pickup_success_mask(recording):
     )
     steps, worlds = recording.active.shape
     size = steps * worlds
+    if lift_baseline is None:
+        lift_baseline = recorded_start_positions(recording)
 
     def repeated(array, dtype):
         a = np.asarray(array)
@@ -40,7 +71,7 @@ def pickup_success_mask(recording):
         target_slots=repeated(recording.target_slots, torch.int64),
         reference_slots=repeated(recording.reference_slots, torch.int64),
         second_reference_slots=repeated(recording.second_reference_slots, torch.int64),
-        initial_target_positions=repeated(recording.initial_target_xyz, torch.float32),
+        initial_target_positions=repeated(lift_baseline, torch.float32),
         ever_grasped=torch.zeros(size, dtype=torch.bool), grasped=torch.zeros(size, dtype=torch.bool),
         step_count=torch.zeros(size, dtype=torch.int64),
         release_threshold=repeated(recording.release_threshold, torch.float32),
@@ -69,7 +100,8 @@ def select_episodes(recording, *, max_start_clearance=.01):
 
     if recording.diverged_worlds:
         return [], {'recording_reported_divergence': recording.worlds}
-    scored = pickup_success_mask(recording)
+    lift_baseline = recorded_start_positions(recording)
+    scored = pickup_success_mask(recording, lift_baseline)
     selected, rejected = [], {}
 
     def reject(reason):
@@ -92,11 +124,19 @@ def select_episodes(recording, *, max_start_clearance=.01):
         if not np.isfinite(start_z) or abs(start_z - desk_z) > max_start_clearance:
             reject('not_a_desk_start')
             continue
-        # The production lift baseline predates composed repositioning in old
-        # recordings. It must still be consistent with the actual desk height.
-        if not np.isfinite(recording.initial_target_xyz[world, 2]) or abs(
-                float(recording.initial_target_xyz[world, 2]) - desk_z) > max_start_clearance:
-            reject('inconsistent_lift_baseline')
+        # No `inconsistent_lift_baseline` rejection any more. That guard tested
+        # `initial_target_xyz`, which is stale for uncaught_container starts by
+        # construction -- so it rejected the entire composed population it was
+        # meant to protect. The lift is now scored from `object_xyz[0]`, whose
+        # sanity is what `not_a_desk_start` above already establishes. The
+        # production datum's disagreement is RECORDED per episode instead of
+        # being used, so a recording where it happens to be correct stays
+        # distinguishable from one where it is not.
+        baseline_delta = float(
+            abs(float(recording.initial_target_xyz[world, 2]) - float(lift_baseline[world, 2]))
+        ) if np.isfinite(recording.initial_target_xyz[world, 2]) else float('nan')
+        if not np.isfinite(lift_baseline[world]).all():
+            reject('nonfinite_lift_baseline')
             continue
         hits = np.flatnonzero(scored[:, world])
         if not hits.size:
@@ -124,6 +164,7 @@ def select_episodes(recording, *, max_start_clearance=.01):
         grasps = np.flatnonzero(recording.caught_target[:stop + 1, world]
                                & (recording.gripper_opening[:stop + 1, world] <= .94))
         selected.append(dict(world=world, source_instruction=name,
+                             production_lift_baseline_delta_m=baseline_delta,
                              source_prompt=str(recording.instructions[world]),
                              pickup_prompt=f'pick up {match[1]}', target_slot=target,
                              receptacle_slot=ref, first_grasp_env_step=int(grasps[0]),
@@ -165,6 +206,8 @@ def main(argv=None):
                     'Composed starts may skip approach; desk-start here means uncaught object on support.',
                     'Reported divergence is quarantined; unrecorded contained resets cannot be certified absent.',
                     'Source episodes and relabelled views are not independent demonstration scenes.',
+                    'Lift is scored from the recorded start pose, not initial_target_positions,'
+                    ' which is stale for uncaught_container starts; see production_lift_baseline_delta_m.',
                 ]}
     seen = set()
     for path in paths:
