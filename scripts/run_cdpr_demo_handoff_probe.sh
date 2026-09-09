@@ -25,8 +25,12 @@ done
 printf 'Output: %s\nTwo handoff audits; optimizer updates=0\n' "$PROBE_DIR"
 [[ "${DRY_RUN:-0}" == 1 ]] && exit 0
 # tests/ is not a Python package. Discover by directory so an installed
-# package named "tests" cannot shadow this repository's preflight.
-"${PY[@]}" -m unittest discover -s tests -p test_cdpr_demonstration_handoff.py
+# package named "tests" cannot shadow this repository's preflight. Discovery
+# reports "OK" on a pattern that matches nothing, so a checkout without the
+# preflight would reach GPU work unverified; require the file first.
+PREFLIGHT=tests/test_cdpr_demonstration_handoff.py
+[[ -f "$PREFLIGHT" ]] || { echo "Missing preflight: $PREFLIGHT (git pull --ff-only)" >&2; exit 2; }
+"${PY[@]}" -m unittest discover -s tests -p "$(basename "$PREFLIGHT")"
 mkdir -p "$PROBE_DIR"
 git rev-parse HEAD > "$PROBE_DIR/git_head.txt"
 git diff HEAD > "$PROBE_DIR/tracked_changes.patch"
