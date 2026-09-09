@@ -95,6 +95,40 @@ def pickup_success_mask(recording, lift_baseline=None):
     return result.success.cpu().numpy().reshape(steps, worlds)
 
 
+RECEPTACLE_WORD = {'put_into_plate': 'plate', 'put_into_bowl': 'bowl'}
+
+
+def target_object_label(recording, world):
+    """The object's name, from the catalog the scene was built with.
+
+    NOT parsed out of the prompt, and the difference cost the entire plate
+    family. `RankLocalMJWarpGRPOCollector` builds the text per instruction from
+    different templates -- `put X into bowl` but `put X on the plate` -- so a
+    regex written against one silently discards the other. It rejected 440
+    episodes that had already passed the pick-up predicate, every one of them a
+    verified lift, purely because the sentence was phrased the other way.
+
+    `target_catalog_ids` is the id the collector itself read to WRITE that
+    sentence, so it is the same answer without the prose in between. It is
+    optional on a recording; when it is absent the prompt is parsed as a
+    fallback, and only an episode with neither is refused.
+    """
+
+    from rl_vla_bootstrapping.simulation.cdpr_object_catalog import OBJECT_VARIANTS
+    from tools.audit.sil_record import _catalog_name
+
+    catalog_ids = getattr(recording, 'target_catalog_ids', None)
+    if catalog_ids is not None:
+        variant = OBJECT_VARIANTS.get(_catalog_name(int(catalog_ids[world])))
+        if variant is not None and getattr(variant, 'label', None):
+            return str(variant.label), 'target_catalog_ids'
+    match = re.fullmatch(r'put (.+?)(?: into | on the )(plate|bowl)',
+                         str(recording.instructions[world]).strip())
+    if match is None:
+        return None, 'unparsed'
+    return match[1], f'prompt:{match[2]}'
+
+
 def select_episodes(recording, *, max_start_clearance=.01):
     from tools.audit.sil_record import _instruction_name
 
@@ -183,16 +217,24 @@ def select_episodes(recording, *, max_start_clearance=.01):
         if not all(np.isfinite(a).all() for a in arrays):
             reject('nonfinite_clip')
             continue
-        match = re.fullmatch(r'put (.+) into (plate|bowl)', str(recording.instructions[world]).strip())
-        if match is None or name != 'put_into_' + match[2]:
+        label, label_source = target_object_label(recording, world)
+        if label is None:
             reject('unrecognized_source_prompt')
+            continue
+        # The prompt still has to agree with the instruction id about WHICH
+        # receptacle, when it is parseable at all. That check is about the
+        # scene, not about phrasing, so it survives the template difference.
+        prompt = str(recording.instructions[world]).strip()
+        if RECEPTACLE_WORD[name] not in prompt:
+            reject('prompt_receptacle_disagrees_with_instruction')
             continue
         grasps = np.flatnonzero(recording.caught_target[:stop + 1, world]
                                & (recording.gripper_opening[:stop + 1, world] <= .94))
         selected.append(dict(world=world, source_instruction=name,
                              production_lift_baseline_delta_m=baseline_delta,
                              source_prompt=str(recording.instructions[world]),
-                             pickup_prompt=f'pick up {match[1]}', target_slot=target,
+                             pickup_prompt=f'pick up {label}', target_slot=target,
+                             object_label_source=label_source,
                              receptacle_slot=ref, first_grasp_env_step=int(grasps[0]),
                              pickup_success_env_step=stop, placement_success_env_step=full_stop,
                              placement_prefix_only=full_stop is None,

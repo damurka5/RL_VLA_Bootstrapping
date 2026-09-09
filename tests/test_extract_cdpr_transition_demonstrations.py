@@ -7,7 +7,9 @@ import unittest
 
 import numpy as np
 
-from tools.audit.extract_cdpr_transition_demonstrations import main, select_episodes
+from tools.audit.extract_cdpr_transition_demonstrations import (
+    main, select_episodes, target_object_label,
+)
 from tools.audit.sil_record import _Recording
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import INSTRUCTION_TO_ID
 
@@ -190,3 +192,64 @@ class TransitionDemonstrationTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class ObjectLabelSourceTests(unittest.TestCase):
+    """The object's name comes from the catalog, not from the sentence.
+
+    `RankLocalMJWarpGRPOCollector` writes a different template per instruction
+    -- `put X into bowl` but `put X on the plate` -- so the original regex,
+    `put (.+) into (plate|bowl)`, matched every bowl episode and no plate one.
+    It sat LAST in the gate order, so the 440 episodes it rejected on a real
+    harvest had already passed the pick-up predicate: verified lifts, thrown
+    away over phrasing, and the family with the higher success rate was the one
+    silently missing.
+    """
+
+    def test_the_plate_template_is_accepted(self):
+        r = recording()
+        r.instructions = np.array(['put apple on the plate', 'put tomato into bowl',
+                                   'put apple on the plate'])
+        episodes, rejected = select_episodes(r)
+        self.assertNotIn('unrecognized_source_prompt', rejected)
+        self.assertEqual([e['pickup_prompt'] for e in episodes],
+                         ['pick up apple', 'pick up tomato'])
+
+    def test_the_catalog_id_outranks_the_prompt(self):
+        """Phrasing cannot decide identity when the scene already recorded it."""
+
+        r = recording()
+        r.target_catalog_ids = np.array([0, 4, 0])  # apple, tomato, apple
+        r.instructions = np.array(['put whatever on the plate', 'put whatever into bowl',
+                                   'put whatever on the plate'])
+        episodes, _ = select_episodes(r)
+        self.assertEqual([e['pickup_prompt'] for e in episodes],
+                         ['pick up apple', 'pick up tomato'])
+        self.assertEqual({e['object_label_source'] for e in episodes},
+                         {'target_catalog_ids'})
+
+    def test_the_prompt_is_the_fallback_when_no_catalog_was_recorded(self):
+        r = recording()
+        self.assertIsNone(r.target_catalog_ids)
+        episodes, _ = select_episodes(r)
+        self.assertEqual({e['object_label_source'] for e in episodes},
+                         {'prompt:plate', 'prompt:bowl'})
+
+    def test_a_prompt_naming_the_other_receptacle_is_refused(self):
+        """Identity is phrasing-independent; the SCENE still has to agree."""
+
+        r = recording()
+        r.target_catalog_ids = np.array([0, 4, 0])
+        r.instructions = np.array(['put apple into bowl', 'put tomato into bowl',
+                                   'put apple on the plate'])
+        _, rejected = select_episodes(r)
+        self.assertEqual(rejected['prompt_receptacle_disagrees_with_instruction'], 1)
+
+    def test_neither_source_available_is_still_refused(self):
+        r = recording()
+        r.instructions = np.array(['do something', 'do something', 'do something'])
+        episodes, rejected = select_episodes(r)
+        self.assertEqual(episodes, [])
+        self.assertEqual(rejected['unrecognized_source_prompt'], 2)
+        self.assertIsNone(target_object_label(r, 0)[0])
+
