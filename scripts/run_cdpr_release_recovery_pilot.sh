@@ -5,7 +5,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="${REPO_ROOT:-$(cd -- "$SCRIPT_DIR/.." && pwd)}"
 ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
-CONFIG="$REPO_ROOT/configs/examples/cdpr_smolvla_release_recovery_pilot.yaml"
+# Overridable so a single-variable successor (see cdpr_smolvla_zlift_offset.yaml)
+# reuses this harness -- same baseline eval, same budget, same final comparison --
+# instead of a second script that could drift from it.
+CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/cdpr_smolvla_release_recovery_pilot.yaml}"
 WARMSTART_CHECKPOINT="${WARMSTART_CHECKPOINT:-$REPO_ROOT/runs/phase7_sparse_joint_20260904_212930/rl/step_2017690/smolvla_grpo_adapter.pt}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-500000}"
 DRY_RUN="${DRY_RUN:-0}"
@@ -35,6 +38,11 @@ cd "$REPO_ROOT"
 "${PY[@]}" -c 'import torch'
 "${PY[@]}" -m unittest discover -s tests -p test_fixed_approach_pilot.py
 "${PY[@]}" -m unittest discover -s tests -p test_wrong_place_settled.py
+# Only when the z-lift successor is the config: it pins that this run differs
+# from its parent in exactly the two settings under test, which is what makes
+# the before/after readable at all.
+[[ "$CONFIG" != *zlift_offset* ]] || \
+  "${PY[@]}" -m unittest discover -s tests -p test_zlift_offset_config.py
 mkdir -p "$RUN_DIR"
 "${PY[@]}" - "$CONFIG" "$WARMSTART_CHECKPOINT" "$RUN_DIR" "$MAX_TRAIN_STEPS" <<'PY'
 import hashlib, json, subprocess, sys

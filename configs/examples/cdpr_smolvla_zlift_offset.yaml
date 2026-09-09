@@ -1,0 +1,415 @@
+# Derived from the current Phase 7 config; see CDPR_NEXT_CAMPAIGN_PLAN.md.
+project:
+  name: cdpr_smolvla_release_recovery_pilot
+  output_root: ../../runs
+  python_executable: python3
+repos:
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+remote:
+  env_vars:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8
+    TOKENIZERS_PARALLELISM: 'false'
+    TRANSFORMERS_VERBOSITY: error
+    HF_HUB_DISABLE_PROGRESS_BARS: '1'
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: '1'
+    NCCL_DEBUG: WARN
+  notes:
+  - Bounded joint-RL pilot from step_2017690 under the corrected wrong_place_settled
+    predicate. No SFT.
+  - Fixed approach caps use one-rung ladders. Containers keep aligned uncaught desk
+    starts and their existing spawn geometry; cap 0.20 is not a carry-distance curriculum.
+  - All container training and evaluation starts are uncaught. Sparse reward and success
+    geometry are unchanged from the current Phase 7 config.
+  - Gripper episode-offset exploration is inherited from the current Phase 7 config,
+    not added post-grasp globally. No pick-up-specific z exploration in this control
+    pilot.
+  - 500000 selected environment actions across both ranks, checked at update boundaries;
+    this is a learning screen, not an expected convergence budget.
+  - Keep baseline and all checkpoints; evaluate all four before continuing. In-run
+    validation uses different seeds from the saved sil_record baseline and final comparison.
+embodiment:
+  name: cdpr_5dof_mjwarp
+  kind: mjlab_mjwarp
+  robot_root: ../../robots/cdpr/cdpr_mujoco
+  xml_path: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+  dof: 5
+  extra_python_paths:
+  - ../../robots/cdpr
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    file: ../../robots/cdpr/cdpr_mujoco/headless_cdpr_egl.py
+    class_name: HeadlessCDPRSimulation
+    init_kwargs: {}
+    method_map:
+      initialize: initialize
+      step: run_simulation_step
+      cleanup: cleanup
+      capture_frame: capture_frame
+    frame_buffers:
+      overview: overview_frames
+      wrist: ee_camera_frames
+    camera_handles:
+      overview: overview_cam
+      wrist: ee_cam
+    preview_steps: 1
+  action_adapter:
+    common_action_keys:
+    - x
+    - y
+    - z
+    - yaw
+    - gripper
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x:
+      - -0.8
+      - 0.8
+      y:
+      - -0.8
+      - 0.8
+      z:
+      - 0.08
+      - 1.2
+      yaw:
+      - -3.141592653589793
+      - 3.141592653589793
+      gripper:
+      - 0.0
+      - 1.0
+task:
+  instruction_types:
+  - move_to_object
+  - pick_up
+  - put_into_plate
+  - put_into_bowl
+  target_objects:
+  - robocasa_apple
+  - robocasa_banana
+  - robocasa_tomato
+  - robocasa_orange
+  - robocasa_potato
+  - robocasa_mug
+  - robocasa_plate
+  - robocasa_bowl
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    sparse_binary_reward: true
+    instruction_sampling: uniform_cycle
+    reward_mode: dense
+    excluded_target_catalogs:
+    - robocasa_banana
+    - robocasa_mug
+    target_object_pool:
+    - robocasa_apple
+    - robocasa_tomato
+    - robocasa_orange
+    - robocasa_potato
+    catchable_object_pool:
+    - robocasa_apple
+    - robocasa_tomato
+    - robocasa_orange
+    - robocasa_potato
+    container_object_pool:
+    - robocasa_plate
+    - robocasa_bowl
+    required_scene_object_pool:
+    - robocasa_plate
+    - robocasa_bowl
+    distractor_object_pool:
+    - robocasa_apple
+    - robocasa_banana
+    - robocasa_tomato
+    - robocasa_orange
+    - robocasa_potato
+    - robocasa_mug
+    - robocasa_plate
+    - robocasa_bowl
+    scene_object_pool:
+    - robocasa_apple
+    - robocasa_banana
+    - robocasa_tomato
+    - robocasa_orange
+    - robocasa_potato
+    - robocasa_mug
+    - robocasa_plate
+    - robocasa_bowl
+    min_scene_objects: 1
+    max_scene_objects: 2
+    scene_object_curriculum_steps:
+    - 0
+    random_workspace_gripper_start: true
+    placement_start_with_caught_object: true
+    ee_workspace_x_bounds:
+    - -0.19
+    - 0.19
+    ee_workspace_y_bounds:
+    - -0.19
+    - 0.19
+    ee_workspace_z_bounds:
+    - 0.19
+    - 0.32
+    placement_far_rung_z_bounds:
+    - 0.2
+    - 0.25
+    placement_far_rung_min_cap: 0.19
+    random_workspace_min_goal_xy_distance: 0.1
+    random_workspace_horizon_low: 24
+    random_workspace_horizon_high: 32
+    distance_reward_exponent: 2.0
+    move_to_object_xy_reward_scale: 0.08
+    move_to_object_distance_reward_weight: 1.0
+    catch_release_distance_reward_scale: 0.08
+    catch_release_distance_reward_weight: 1.0
+    placement_distance_window: 0.02
+    catch_release_fine_distance_reward_weight: 0.5
+    catch_release_fine_distance_reward_scale: 0.01
+    catch_release_fine_distance_window: 0.0
+    catch_release_distance_include_z: true
+    put_plate_release_height: 0.1
+    put_bowl_release_height: 0.1
+    put_plate_xy_tolerance: 0.091
+    put_bowl_xy_tolerance: 0.057
+    put_container_z_tolerance: 0.12
+    placement_release_success_bonus: 2.0
+    placement_wrong_drop_penalty: 0.25
+    placement_wrong_drop_settle_margin: 0.045
+    placement_grasp_horizon_min_decisions: 40
+    approach_gate_uncaught_only: true
+    placement_caught_curriculum_enabled: false
+    placement_caught_object_fraction: 0.0
+    placement_caught_fraction_min: 0.25
+    placement_caught_fraction_step: 0.1
+    placement_caught_reduce_success: 0.45
+    placement_caught_restore_success: 0.3
+    placement_caught_success_ema_decay: 0.9
+    placement_caught_cooldown_updates: 40
+    put_require_release: true
+    put_require_target_grasp_history: true
+    put_plate_release_max_height: 0.0
+    put_bowl_release_max_height: 0.0
+    put_release_max_height: 0.0
+    caught_object_start_release_opening_margin: 0.04
+    pick_grasp_height_offset: 0.0075
+    pick_contact_bonus: 0.25
+    pick_distance_window: 0.02
+    pick_grasp_bonus: 1.0
+    pick_lift_reward_weight: 1.0
+    pick_lift_reward_scale: 0.05
+    pick_lift_success_height: 0.05
+    pick_success_bonus: 2.0
+    random_workspace_start_distance_curriculum_enabled: true
+    curriculum_cap_includes_z: true
+    random_workspace_start_distance_initial: 0.03
+    random_workspace_start_distance_ladder_by_instruction:
+      move_to_object:
+      - 0.08
+      pick_up:
+      - 0.06
+      put_into_plate:
+      - 0.2
+      put_into_bowl:
+      - 0.2
+    random_workspace_start_distance_initial_by_instruction:
+      move_to_object: 0.08
+      pick_up: 0.06
+      put_into_plate: 0.2
+      put_into_bowl: 0.2
+    random_workspace_start_distance_final: 0.34
+    random_workspace_start_distance_increment: 0.02
+    random_workspace_start_distance_promote_pass_rate: 0.45
+    random_workspace_start_distance_demote_pass_rate: 0.3
+    random_workspace_start_distance_promote_dwell_updates: 5
+    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    random_workspace_start_distance_cooldown_updates: 15
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 16
+    curriculum_horizon_max: 32
+    reset_on_drift_enabled: false
+    pick_up_prelifted_group_fraction: 0.0
+    pick_up_prelifted_curriculum_enabled: false
+    pick_up_aligned_group_fraction: 0.0
+    placement_grasp_object_min_distance: 0.06
+    placement_grasp_object_max_distance: 0.1
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects:
+  - robocasa_apple
+  - robocasa_plate
+  - robocasa_bowl
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  build_kwargs:
+    table_z: 0.15
+    ee_start:
+    - 0.0
+    - 0.0
+    - 0.4
+  randomization:
+    random_scene_count: 256
+    max_objects: 4
+    use_domain_randomization: true
+simulator:
+  backend: mjlab_mjwarp
+  worlds_per_rank: 512
+  groups_per_rank: 64
+  nconmax: 256
+  njmax: 1024
+  render_width: 320
+  render_height: 240
+  object_slots: 4
+  fixed_scene_xml: ../../robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml
+policy:
+  type: smolvla_cdpr
+  base_checkpoint: lerobot/smolvla_base
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+  num_images_in_input: 3
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: false
+      bins: 256
+    export_filename: smolvla_action_codec.json
+training:
+  preview_before_rl: false
+  rl:
+    enabled: true
+    algorithm: smolvla_residual_grpo_mjwarp
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
+    args:
+      max_train_steps: 500000
+      max_env_steps: 128
+      controller_workspace_z_bounds:
+      - 0.18
+      - 0.6
+      chunk_size: 8
+      replan_every: 4
+      image_size: 256
+      smolvla_model_image_size: 256
+      smolvla_compile_model: true
+      smolvla_compile_mode: max-autotune-no-cudagraphs
+      smolvla_inference_microbatch_size: 256
+      state_dim: 6
+      residual_relative_target: false
+      residual_vision_features: true
+      residual_vision_dim: 512
+      train_vla_lora: true
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      lora_include_mlp: true
+      lora_expert_name_contains: lm_expert
+      train_vla_vision_lora: false
+      lora_vision_name_contains: vision
+      lora_vision_leaf_names: q_proj,k_proj,v_proj,out_proj,fc1,fc2
+      vla_lr: 1.0e-05
+      vla_kl_coef: 0.1
+      vla_microbatch_size: 16
+      vla_update_max_records: 128
+      include_wrist: true
+      include_aux_camera: true
+      mask_empty_aux_camera: true
+      mixed_precision: bf16
+      smolvla_action_normalization: tanh
+      hidden_dim: 1024
+      residual_scale: 1.0
+      learning_rate: 0.0001
+      adam_eps: 1.0e-05
+      weight_decay: 0.0
+      init_log_std: -1.2
+      min_log_std: -1.72
+      max_log_std: -1.1
+      clip_range_low: 0.2
+      clip_range_high: 0.28
+      # Sustained post-grasp z bias, the one channel the lift needs and the
+      # only one never given an episode offset. Measured on the bowl_peak
+      # checkpoint: pick_up commands mean a_z +0.232 while holding (p10 -0.020)
+      # and lifts a median 0.0334 m against a 0.05 m threshold, while
+      # put_into_plate commands +0.371 and lifts 0.0676. §4.2 puts the loaded
+      # plant's ineffective->reliable transition at a_z 0.20-0.30, so pick_up's
+      # median sits INSIDE that band and the containers clear it -- which is
+      # exactly the ordering of their lift|grasp rates (0.2584 against 0.6747).
+      #
+      # 0.10 rather than the gripper's 0.15. At action_step_xyz 0.015 a 0.10
+      # offset is 1.5 mm of commanded bias per step, and the lift needs the mean
+      # held above the dead zone for ~13 consecutive steps -- about 2 cm, against
+      # a measured shortfall of 1.66 cm. The +1 sigma candidate lands on the
+      # requirement rather than past it, and 0.15 is the value with a recorded
+      # cost: it stalled the curriculum and collapsed entropy when the gripper
+      # channel carried it.
+      episode_offset_std:
+      - 0.0
+      - 0.0
+      - 0.10
+      - 0.0
+      - 0.15
+      entropy_coef: 0.0002
+      max_grad_norm: 1.0
+      grpo_group_size: 8
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      grpo_min_group_reward_std: 0.05
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.1
+      grpo_dynamic_max_pass_rate: 0.9
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 256
+      grpo_target_informative_groups: 64
+      grpo_max_collection_seconds_per_update: 600
+      ppo_epochs: 4
+      minibatch_size: 512
+      microbatch_size: 512
+      complex_training_approach: none
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      hold_steps: 6
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      validation_every_steps: 100000
+      validation_episodes_per_instruction: 256
+      composed_validation_episodes_per_instruction: 128
+      validation_seed: 2000000
+      validation_video_count: 0
+      save_every_steps: 100000
+      mjwarp_profile_timers: true
+      mjwarp_profile_updates: 4
+      distributed: true
+      distributed_backend: nccl
+      distributed_timeout_seconds: 21600
+      progress: true
+      progress_only: true
+      device: cuda
+      # Gate the offset on holding, so it cannot perturb the approach or the
+      # descent. That matters beyond tidiness: bowl's binding constraint is its
+      # grasp (0.6003, and 54% of its failures never grasp), and its lift is
+      # already fine (lift|grasp 0.6334). The gate leaves bowl's grasp
+      # untouched and spends the exploration only where the deficit is.
+      episode_offset_after_grasp: true
+      split_credit_at_grasp: false
+  sft:
+    enabled: false
+evaluation:
+  benchmarks: []
