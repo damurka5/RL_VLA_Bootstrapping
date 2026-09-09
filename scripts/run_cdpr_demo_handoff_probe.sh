@@ -10,6 +10,7 @@ DEMO_MANIFEST="${DEMO_MANIFEST:-runs/grpo_demo_prototype_20260909_170619/manifes
 SOURCE_ROUND="${SOURCE_ROUND:-0}"
 MAX_BOUNDARIES="${MAX_BOUNDARIES:-2}"
 MAX_GROUPS="${MAX_GROUPS:-8}"
+BOUNDARY_BACKOFF="${BOUNDARY_BACKOFF:-0}"
 source "$SCRIPT_DIR/run_naming.sh"
 PROBE_NAME="$(cdpr_compose_run_name demo_handoff_probe)"
 PROBE_DIR="$REPO_ROOT/runs/$PROBE_NAME"
@@ -17,7 +18,8 @@ PROBE_DIR="$REPO_ROOT/runs/$PROBE_NAME"
 PY=(conda run --no-capture-output -n "$ENV_NAME" python3)
 COMMON=(tools/audit/probe_cdpr_demonstration_handoff.py
   --manifest "$DEMO_MANIFEST" --pilot-run "$PILOT_RUN"
-  --source-round "$SOURCE_ROUND" --max-boundaries "$MAX_BOUNDARIES" --max-groups "$MAX_GROUPS")
+  --source-round "$SOURCE_ROUND" --max-boundaries "$MAX_BOUNDARIES" --max-groups "$MAX_GROUPS"
+  --boundary-backoff "$BOUNDARY_BACKOFF")
 # CPU-only provenance and landmark planning for both arms, before GPU work.
 for task in pick_up placement; do
   "${PY[@]}" "${COMMON[@]}" --task "$task" --output "$PROBE_DIR/$task" --dry-run
@@ -65,6 +67,8 @@ for task, code in zip(('pick_up', 'placement'), map(int, sys.argv[2:])):
             'clean_groups_with_reward_variation': sum(g['reward_std'] > 1e-6 for g in clean),
             'clean_suffix_successes': sum(g['successes'] for g in clean),
             'clean_suffix_candidates': sum(g['candidates'] for g in clean),
+            'terminal_groups': result.get('destination_terminal_groups', []),
+            'earliest_dropped_live_datum_lift_step': result.get('earliest_dropped_live_datum_lift_step'),
             'rejections': [e for e in result['episodes'] if e['rejected']]})
 (root / 'summary.json').write_text(json.dumps(summary, indent=2) + '\n')
 print(json.dumps(summary, indent=2))

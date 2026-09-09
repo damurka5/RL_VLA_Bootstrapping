@@ -52,6 +52,37 @@ def grouped_recording():
     )
 
 
+def long_recording():
+    # Same two scene groups, stretched in time so several decision boundaries
+    # precede the release. One boundary cannot exercise a backoff.
+    steps, worlds = 16, 16
+    xyz = np.zeros((steps, worlds, 2, 3), dtype=np.float32)
+    xyz[..., 2] = .10
+    xyz[3, :, 0, 2] = .12
+    xyz[4:, :, 0, 2] = .16
+    held = np.zeros((steps, worlds), dtype=bool)
+    held[2:14] = True
+    success = np.zeros_like(held)
+    success[14, :8] = True
+    active = np.ones_like(held)
+    active[15, :8] = False
+    opening = np.zeros((steps, worlds))
+    opening[14:] = .8
+    return _Recording(
+        actions=np.zeros((steps, worlds, 5)), active=active, success=success,
+        terminated=success.copy(), caught_target=held, ee_xyz=np.zeros((steps, worlds, 3)),
+        gripper_opening=opening, object_xyz=xyz,
+        instruction_ids=np.repeat([INSTRUCTION_TO_ID['put_into_plate'], INSTRUCTION_TO_ID['put_into_bowl']], 8),
+        target_slots=np.zeros(worlds, dtype=int), reference_slots=np.ones(worlds, dtype=int),
+        second_reference_slots=np.full(worlds, -1), horizons=np.full(worlds, 40),
+        initial_target_xyz=xyz[0, :, 0].copy(), support_surface_z=np.zeros(worlds),
+        release_threshold=np.full(worlds, .55), target_rest_height=np.full(worlds, .10),
+        physical_grasp_at_reset=np.zeros(worlds, dtype=bool),
+        instructions=np.repeat(['put apple into plate', 'put tomato into bowl'], 8),
+        actions_per_decision=4, round_index=0, diverged_worlds=0, pick_lift_success_height=.05,
+    )
+
+
 def episodes(r):
     from tools.audit.extract_cdpr_transition_demonstrations import select_episodes
     return select_episodes(r)[0]
@@ -95,6 +126,21 @@ class HandoffPlanningTests(unittest.TestCase):
         self.assertEqual(rejected, {'no_complete_placement': 8})
         self.assertEqual(jobs[0]['prefix_steps'], 4)
         self.assertEqual([e['world'] for e in jobs[0]['episodes']], [0])
+
+    def test_boundary_backoff_steps_through_validated_boundaries_only(self):
+        r = long_recording()
+        stride = int(r.actions_per_decision)
+        seen = [plan_boundaries(r, episodes(r), 'placement', boundary_backoff=b)[0][0]['prefix_steps']
+                for b in (0, 1, 2, 99)]
+        # Each step back lands on the previous validated boundary, and backing
+        # off past the first clamps rather than inventing one.
+        self.assertEqual(seen, [3 * stride, 2 * stride, stride, stride])
+        for boundary in seen:
+            self.assertTrue(r.caught_target[boundary - 1, 0])
+            self.assertTrue(r.active[:boundary, 0].all())
+            self.assertFalse(r.terminated[:boundary, 0].any())
+        with self.assertRaises(ValueError):
+            plan_boundaries(r, episodes(r), 'placement', boundary_backoff=-1)
 
     def test_lift_before_first_boundary_is_not_an_admissible_start(self):
         r = grouped_recording()
@@ -283,6 +329,23 @@ class LiveHandoffTests(unittest.TestCase):
                            position_tolerance=.002, opening_tolerance=.03, suffix_decisions=40, seed_torch=0)
         self.assertEqual(terminal['status'], 'destination_task_already_terminal')
         self.assertEqual(len(calls), 1)
+        # One already-satisfied destination must not abandon the whole batch:
+        # its group is dropped and the remaining groups still collect.
+        collector.catch_release_dense_reward = BatchedCatchReleaseDenseReward()
+        backend.steps = 0
+        low.object_positions = torch.tensor(r.object_xyz[0])
+        # Only the second group's datum sits far enough below the object for
+        # its relabelled pick_up to be satisfied at the handoff.
+        low.object_positions[8:, 0, 2] -= .05
+        partial = run_job(world, r, jobs[0], 'pick_up', group_size=8,
+                          position_tolerance=.002, opening_tolerance=.03,
+                          suffix_decisions=40, seed_torch=0, lift_datum_tolerance=.06)
+        self.assertEqual(partial['status'], 'fresh_suffixes_collected_no_training')
+        self.assertEqual(partial['destination_terminal_groups'], [1])
+        self.assertEqual([g['group'] for g in partial['groups']], [0])
+        self.assertIn('destination_task_already_terminal',
+                      [reason for e in partial['episodes'] if e['group'] == 1
+                       for reason in e['rejected']])
         # The recording's row 0 is stored AFTER the first env step, so a gap
         # between it and the reset pose is the object's settle, not replay
         # drift. It must not be judged by the 2 mm replay tolerance, and the

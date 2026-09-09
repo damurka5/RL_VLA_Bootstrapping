@@ -34,18 +34,27 @@ def sha256(path):
 
 
 def plan_boundaries(recording, episodes, task, *, group_size=8,
-                    max_boundaries=2, max_groups=8):
+                    max_boundaries=2, max_groups=8, boundary_backoff=0):
     """One representative per original scene group; never eight demo candidates.
 
     prefix_steps is a COUNT. Its last recorded state is prefix_steps - 1 and
     its next action is prefix_steps. Pick-up uses the last held boundary before
     its first lift success. Placement uses the last held boundary before first
     threshold-qualified release in a verified complete placement.
+
+    boundary_backoff moves each episode back that many of its OWN validated
+    boundaries, which is how "move the handoff earlier" is applied without
+    inventing a boundary that was never held, active and unterminated. Pick-up
+    landmarks are cut against the recording's first post-action datum, which
+    sits above the live reset datum, so their last boundary can already be past
+    the lift the destination task scores; this is the knob for that.
     """
     if recording.worlds % group_size:
         raise ValueError('Recording does not contain complete scene groups')
     if max_boundaries < 1 or max_groups < 1:
         raise ValueError('Audit limits must be positive')
+    if boundary_backoff < 0:
+        raise ValueError('Boundary backoff cannot be negative')
     stride = int(recording.actions_per_decision)
     if stride < 1:
         raise ValueError('Invalid action chunk size')
@@ -85,7 +94,7 @@ def plan_boundaries(recording, episodes, task, *, group_size=8,
         if not boundaries:
             rejected['no_held_decision_boundary_before_event'] += 1
             continue
-        b = boundaries[-1]
+        b = boundaries[max(0, len(boundaries) - 1 - boundary_backoff)]
         start, end = group * group_size, (group + 1) * group_size
         if not np.all(recording.instruction_ids[start:end] == recording.instruction_ids[w]):
             raise ValueError('A source group mixes instruction identities')
@@ -208,6 +217,14 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
     max_errors = {w: {'object_m': 0., 'ee_m': 0., 'opening': 0.,
                       'grasp_mismatch': False, 'early_termination': False}
                   for w in representatives}
+    # The extractor cut pick_up at a success step measured against the
+    # recording's first POST-action pose. This replay measures it against the
+    # live pre-action datum, which is lower, so the same lift crosses 5 cm
+    # earlier here. Record where, per world, instead of inferring it.
+    lift_height = getattr(collector.catch_release_dense_reward,
+                          'pick_lift_success_height', None)
+    datum_z = _host(initial_target)[:, 2]
+    lift_step = {w: None for w in representatives}
     prefix_actions = 0
     for step in range(boundary):
         active = torch.as_tensor(recording.active[step], device=world.device, dtype=torch.bool)
@@ -230,6 +247,9 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
                 error[name] = max(error[name], float(delta.max()) if np.isfinite(delta).all() else float('inf'))
             error['grasp_mismatch'] |= bool(held[w] != recording.caught_target[step, w])
             error['early_termination'] |= bool(done[w])
+            if lift_height is not None and lift_step[w] is None and held[w] and (
+                    poses[w][int(recording.target_slots[w]), 2] - datum_z[w] >= lift_height):
+                lift_step[w] = step
     events, divergence = backend.pop_nonfinite_world_report()
     if divergence is None and events:
         raise RuntimeError('Replay divergence cannot be attributed to worlds')
@@ -276,6 +296,7 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
                  'errors': errors, 'baseline_error_m': baseline_error,
                  'reset_lift_datum_z_m': reset_z,
                  'recorded_first_post_action_z_m': recorded_z,
+                 'live_datum_lift_env_step': lift_step[w],
                  'rejected': reasons}
         report['episodes'].append(entry)
         if not reasons:
@@ -325,11 +346,32 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
     low = backend.low_dim_observations()
     admission = _score(collector, reset, low, reset.physical_grasp, selected,
                        diagnostics, state=copy.deepcopy(reset.task_state))
-    if bool(((admission.success | admission.terminated) & selected).any()):
-        terminal = _host((admission.success | admission.terminated) & selected)
-        report['destination_terminal_worlds'] = np.flatnonzero(terminal).tolist()
-        report['status'] = 'destination_task_already_terminal'
-        return report
+    terminal = np.flatnonzero(_host((admission.success | admission.terminated) & selected))
+    if terminal.size:
+        # An already-satisfied destination would be a free reward, so these
+        # groups never reach collection. Drop them PER GROUP: the batch shares
+        # one prefix length, not the fate of one scene. A group left with a
+        # zero horizon is inert here exactly as an unplanned group already is.
+        report['destination_terminal_worlds'] = terminal.tolist()
+        dropped = sorted({int(w) // group_size for w in terminal})
+        report['destination_terminal_groups'] = dropped
+        for g in dropped:
+            horizons[g * group_size:(g + 1) * group_size] = 0
+        for entry in report['episodes']:
+            if not entry['rejected'] and entry['group'] in dropped:
+                entry['rejected'].append('destination_task_already_terminal')
+        accepted = [e for e in accepted if int(e['world']) // group_size not in dropped]
+        if not accepted:
+            report['status'] = 'destination_task_already_terminal'
+            return report
+        # The earliest live-datum lift among the dropped groups is how far the
+        # common boundary would have to move back to keep them; --boundary-backoff
+        # steps every episode back through its own validated boundary list.
+        steps = [lift_step[int(e['world'])] for e in job['episodes']
+                 if int(e['world']) // group_size in dropped
+                 and lift_step[int(e['world'])] is not None]
+        if steps:
+            report['earliest_dropped_live_datum_lift_step'] = int(min(steps))
     started = time.monotonic()
     # Fresh sampling, rendering, state encoding and prompt priors happen inside
     # collect_round. No runtime calls from the teacher prefix enter its records.
@@ -372,6 +414,9 @@ def main(argv=None):
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--max-boundaries', type=int, default=2)
     parser.add_argument('--max-groups', type=int, default=8)
+    # Steps every episode back through its own validated boundary list. Use it
+    # when groups are dropped as already-terminal, or when suffixes saturate.
+    parser.add_argument('--boundary-backoff', type=int, default=0)
     parser.add_argument('--suffix-decisions', type=int, default=40)
     parser.add_argument('--position-tolerance-m', type=float, default=.002)
     parser.add_argument('--opening-tolerance', type=float, default=.03)
@@ -415,11 +460,13 @@ def main(argv=None):
             episode['episode_uid'] = supplied[w]['episode_uid']
             episodes.append(episode)
     jobs, rejected = plan_boundaries(recording, episodes, args.task,
-                                     max_boundaries=args.max_boundaries, max_groups=args.max_groups)
+                                     max_boundaries=args.max_boundaries, max_groups=args.max_groups,
+                                     boundary_backoff=args.boundary_backoff)
     plan = {'task': args.task, 'source': source, 'checkpoint': str(checkpoint),
             'checkpoint_sha256': pilot['source_sha256'], 'config': str(config),
             'config_sha256': pilot['config_sha256'], 'manifest_sha256': sha256(args.manifest),
             'source_round': args.source_round, 'group_size': 8,
+            'boundary_backoff': args.boundary_backoff,
             'position_tolerance_m': args.position_tolerance_m,
             'opening_tolerance': args.opening_tolerance,
             'lift_datum_tolerance_m': args.lift_datum_tolerance_m,

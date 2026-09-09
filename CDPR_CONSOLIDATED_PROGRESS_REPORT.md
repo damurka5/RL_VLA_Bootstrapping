@@ -1257,6 +1257,66 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-09 — First verified handoffs: placement collects and saturates, pick_up is terminal at its own planned boundary
+
+- Evidence: user-supplied `runs/demo_handoff_probe_20260909_194319` at
+  `git_head.txt` = `f6edc13`, empty `tracked_changes.patch`. Placement exit 0,
+  pick_up exit 2. `optimizer_updates` 0 and `teacher_prefix_loss_rows` 0 in
+  every batch; no promotion.
+- **Placement collected fresh suffixes for the first time.** Prefix 44: 6
+  planned, 4 clean groups, successes 8/8, 8/8, 8/8, 7/8. Prefix 60: 5 planned,
+  2 clean groups, 7/8 and 5/8. Assisted suffix success **43/48 = 0.896**.
+  Rewards are binary, so `reward_std` is 0 or ≈0.331/0.484.
+- **Only 3 of those 6 groups can produce a gradient.** Three groups are 8/8
+  with `reward_std` exactly 0, and `min_group_reward_std` is 0.05, so they are
+  filtered. Gradient-contributing rows were 213 of 59 392 record rows at
+  prefix 44 and 640 of 51 200 at prefix 60; `selected_environment_actions`
+  51 and 111 against `sampled_environment_actions` 485 and 640, i.e.
+  `trajectory_work_amplification` 9.51 and 5.77. Assisted success of 0.896 is
+  not an ordinary-start number and does not count toward the 70% objective.
+- Cost, for the budget line in §"Measurement and budget": suffix wall 202.1 s
+  and 173.8 s, of which SmolVLA inference is 193.8 s and 167.0 s. Physics is
+  6.5 s and 5.6 s. The handoff is inference-bound, not replay-bound.
+- **pick_up returned `destination_task_already_terminal` on both batches, and
+  the cause is a datum disagreement between planning and admission.** The
+  extractor cuts pick_up at a success step rescored against the recording's
+  first POST-action pose; the probe admits against the live pre-action reset
+  pose. For w259 those are 0.19387 m and 0.18456 m. Lift is `z - datum`, so
+  the lower live datum reaches the 0.05 m threshold about 9.3 mm of travel
+  earlier, which can fall before the planned boundary. The landmark is late by
+  construction, not by accident.
+- It was a partial failure reported as a total one. At prefix 40, 5 of 6
+  candidates were admitted and 3 of those groups (46, 57, 60) were already
+  terminal; groups 22 and 39 were not. At prefix 28, 4 admitted and 2 terminal
+  (24, 61). The batch aborted on the first terminal world and discarded the
+  usable groups with it.
+- Changes: already-terminal destinations are now dropped **per group** — the
+  group's horizon goes to zero, which is the same inert state an unplanned
+  group already has, and the batch proceeds — with `destination_terminal_groups`
+  and a per-episode `destination_task_already_terminal` reason in the report.
+  A batch returns that status only when nothing survives. Each episode also
+  reports `live_datum_lift_env_step`, the replay step where the relabelled
+  pick_up predicate first fires against the live datum, and a dropped batch
+  reports `earliest_dropped_live_datum_lift_step`.
+- New knob, matching plan step 4's "move the handoff earlier":
+  `--boundary-backoff` / `BOUNDARY_BACKOFF` steps every episode back through
+  its OWN validated boundary list, so a backed-off handoff is still held,
+  active and unterminated. It never invents a boundary and clamps at the
+  first one.
+- **Replay is not bit-reproducible and grasp history flips at the margin.**
+  Between the 19:34 and 19:43 runs, at identical source, seed and prefix, w374
+  went from `grasp_mismatch` true to false while w259 went false to true, and
+  w479's `object_m` moved 0.001985 → 0.002046. `_apply_determinism` runs with
+  `deterministic_kernels=False`, so MJWarp contact ordering is free to differ.
+  Roughly 1 in 6 candidates is decided near the tolerance and admission is
+  therefore partly a coin flip. This does not change any success number above,
+  but candidate sets should not be treated as reproducible.
+- Status: local change only, 11 handoff tests and 17 extractor tests pass on
+  CPU. Placement has a verified GPU handoff; **pick_up still has none**, and no
+  demonstration-guided learning gain is claimed for either.
+- Missing provenance: a pick_up rerun that clears the terminal groups; an
+  ordinary-start control for the same checkpoint; training-only scenes.
+
 ### 2026-09-09 — First GPU handoff probe: replay is sound, the lift-datum gate rejected all 22 candidates
 
 - Evidence: user-supplied `summary.json` from
