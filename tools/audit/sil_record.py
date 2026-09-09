@@ -757,10 +757,22 @@ class _RoundRecorder:
             deterministic_kernels=self.deterministic_kernels,
         )
         collector.validate_round(round_index=round_index)
-        diverged, diverged_mask = (
-            self.world.backend.pop_nonfinite_world_report()
-        )
-        diverged = int(diverged)
+        # Prefer the per-world report; fall back to the count alone for a
+        # backend that predates it. The fallback leaves the mask as None, which
+        # downstream reads as "this recording cannot name its diverged worlds"
+        # and quarantines the whole round -- the old behaviour, conservative and
+        # correct. Never silently an all-clear, and never a crash that costs a
+        # finished rollout over a missing accessor.
+        report = getattr(self.world.backend, "pop_nonfinite_world_report", None)
+        if report is None:
+            diverged = int(self.world.backend.pop_nonfinite_world_events())
+            diverged_mask = None
+        else:
+            diverged, raw_mask = report()
+            diverged = int(diverged)
+            diverged_mask = (
+                None if raw_mask is None else np.asarray(raw_mask, dtype=bool)
+            )
 
         if len(self._rows_step) != len(self._rows_eval):
             raise RuntimeError(
@@ -859,7 +871,7 @@ class _RoundRecorder:
             ),
             round_index=int(round_index),
             diverged_worlds=diverged,
-            diverged_world_mask=np.asarray(diverged_mask, dtype=bool),
+            diverged_world_mask=diverged_mask,
             pick_lift_success_height=float(
                 getattr(catch_release, "pick_lift_success_height", 0.05)
             ),
