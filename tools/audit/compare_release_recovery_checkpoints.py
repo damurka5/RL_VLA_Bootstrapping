@@ -135,19 +135,56 @@ def outcome_counts(recording, instruction_name) -> dict:
     return result
 
 
+def cap_report(arm_output: Path, applied_cap) -> dict:
+    """What cap this arm's rates were measured at, and whether it was earned.
+
+    §7.7: `--start-distance-cap` applies to EVERY instruction while the approach
+    ladders end at different rungs, so one evaluation can be at the right cap for
+    the families it was aimed at and above the earned cap for the rest. That has
+    inverted a conclusion twice. `sil_record` writes a per-instruction verdict,
+    and this pulls it beside the rates so a reader of `comparison.json` cannot
+    quote a number without its cap.
+
+    Absent rather than assumed when the summary carries no verdict: a missing
+    `cap_check` means the evaluation could not certify its own caps, and saying
+    so is the point. Sharded runs written before the merge carried it through
+    are exactly that case.
+    """
+
+    summary_path = arm_output / 'summary.json'
+    verdicts = None
+    if summary_path.is_file():
+        try:
+            verdicts = json.loads(summary_path.read_text()).get('cap_check')
+        except json.JSONDecodeError:
+            verdicts = None
+    above = sorted(name for name, entry in (verdicts or {}).items()
+                   if isinstance(entry, dict) and entry.get('verdict') == 'above_earned_cap')
+    return {'applied_start_distance_cap': applied_cap, 'cap_check': verdicts,
+            'cap_check_available': verdicts is not None,
+            'above_earned_cap': above}
+
+
 def summarize(output: Path, rounds: int, first_round: int) -> dict:
     from tools.audit.sil_record import _Recording, _instruction_name
 
-    report = {'arms': {}, 'pairing': {}, 'final_minus_peak': {}}
+    report = {'arms': {}, 'caps': {}, 'pairing': {}, 'final_minus_peak': {}}
     for arm in ('final', 'plate_peak', 'bowl_peak'):
         totals = {name: {'episodes': 0, 'successes': 0} for name in TASKS}
         files = sorted((output / arm).glob('record_*.npz'))
         if len(files) != rounds:
             raise ValueError(f'{arm}: expected {rounds} recordings, found {len(files)}')
+        applied_caps = set()
         for index in range(first_round, first_round + rounds):
             recording = _Recording.from_npz(output / arm / f'record_{index:02d}.npz')
             if recording.round_index != index:
                 raise ValueError(f'{arm}: unexpected round identity in record_{index:02d}')
+            # The cap the RESET actually applied, not the one requested. Rounds
+            # of one arm must agree; if they do not, the arm's pooled rate spans
+            # two reset distributions and is not one number.
+            applied_caps.add(
+                None if not np.isfinite(recording.start_distance_cap)
+                else round(float(recording.start_distance_cap), 5))
             for name, counts in outcome_counts(recording, _instruction_name).items():
                 for key, value in counts.items():
                     totals[name][key] += value
@@ -155,7 +192,12 @@ def summarize(output: Path, rounds: int, first_round: int) -> dict:
             if not counts['episodes']:
                 raise ValueError(f'{arm}: no evaluation episodes for {name}')
             counts['rate'] = counts['successes'] / counts['episodes']
+        if len(applied_caps) != 1:
+            raise ValueError(
+                f'{arm}: rounds disagree on the applied start-distance cap {sorted(applied_caps, key=str)}; '
+                'the pooled rate would span two reset distributions')
         report['arms'][arm] = totals
+        report['caps'][arm] = cap_report(output / arm, applied_caps.pop())
     for peak in ('plate_peak', 'bowl_peak'):
         checks = []
         flips = {name: {'final_only': 0, 'peak_only': 0} for name in TASKS}
@@ -191,7 +233,20 @@ def summarize(output: Path, rounds: int, first_round: int) -> dict:
             c = report['arms'][arm][name]
             cells.append(f"{c['successes']}/{c['episodes']} = {c['rate']:.4f}")
         lines.append('| ' + ' | '.join([name] + cells) + ' |')
-    lines.extend(['', report['interpretation'], ''])
+    lines.extend(['', '## Caps', '',
+                  '| Arm | Applied cap | Instructions above their earned cap |', '|---|---|---|'])
+    for arm in ('final', 'plate_peak', 'bowl_peak'):
+        entry = report['caps'][arm]
+        if not entry['cap_check_available']:
+            verdict = 'UNVERIFIED - the evaluation summary carries no cap_check'
+        elif entry['above_earned_cap']:
+            verdict = 'ABOVE EARNED CAP: ' + ', '.join(entry['above_earned_cap'])
+        else:
+            verdict = 'all at or below their earned caps'
+        lines.append(f"| {arm} | {entry['applied_start_distance_cap']} | {verdict} |")
+    lines.extend(['', 'A rate for an instruction above its earned cap is measured at a start '
+                  'distance that instruction never trained at; §7.7. Score it at its own cap '
+                  'before quoting it.', '', report['interpretation'], ''])
     for peak, check in report['pairing'].items():
         lines.append(f"Recorded scene identity, final vs {peak}: {check['recorded_scene_identity_matches']}")
     (output / 'comparison.md').write_text('\n'.join(lines) + '\n')
@@ -227,6 +282,11 @@ def main(argv=None) -> int:
     parser.add_argument('--rounds', type=int, default=3)
     parser.add_argument('--round-index', type=int, default=0)
     parser.add_argument('--seed-torch', type=int, default=0)
+    parser.add_argument('--start-distance-cap', type=float, default=None,
+                        help='Requested approach cap (m) for every arm. Omitted by default, '
+                             'which leaves each checkpoint on its own earned curriculum cap; '
+                             'either way the realized cap and per-instruction cap_check are '
+                             'recorded, because a rate whose cap is unknown cannot be read.')
     parser.add_argument('--devices', default='cuda:0,cuda:1')
     parser.add_argument('--output', type=Path)
     parser.add_argument('--dry-run', action='store_true')
@@ -252,6 +312,8 @@ def main(argv=None) -> int:
                          '--worlds', '512', '--group-size', '8', '--rounds', str(args.rounds),
                          '--round-index', str(args.round_index), '--devices', args.devices,
                          '--seed-torch', str(args.seed_torch), '--output', str(output / arm)]
+        if args.start_distance_cap is not None:
+            commands[arm] += ['--start-distance-cap', str(args.start_distance_cap)]
         print(f'{arm}: {checkpoint}', flush=True)
     if args.dry_run:
         for command in commands.values():
@@ -264,6 +326,7 @@ def main(argv=None) -> int:
                                 for arm, path in checkpoints.items()},
                 'rounds': list(range(args.round_index, args.round_index + args.rounds)),
                 'seed_torch': args.seed_torch, 'devices': args.devices,
+                'requested_start_distance_cap': args.start_distance_cap,
                 'worlds_per_round': 512, 'group_size': 8,
                 'git_head': subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=ROOT, text=True).strip(),
                 'commands': commands}

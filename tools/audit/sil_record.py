@@ -2368,7 +2368,9 @@ def _run_sharded(
         if path.is_file():
             summaries.append(json.loads(path.read_text(encoding="utf-8")))
     pooled = _merge_shard_summaries(summaries)
+    merged_cap_check = _merge_shard_cap_check(summaries)
     merged = {
+        "cap_check": merged_cap_check,
         "mode": "record",
         "sharded": True,
         "devices": [device for device, _s, _p in processes],
@@ -2491,6 +2493,43 @@ def strip_argv_flags(argv: Sequence[str], flags: Sequence[str]) -> list[str]:
             continue
         out.append(text)
     return out
+
+
+def _merge_shard_cap_check(
+    summaries: Sequence[Mapping[str, Any]],
+) -> Any:
+    """Carry §7.7's cap verdict across the shard boundary.
+
+    `cap_check` is written per child, and the sharded merge used to rebuild the
+    summary from a fixed key set that did not include it -- so every
+    multi-device evaluation wrote a summary with no cap verdict at all. The
+    check exists because scoring an instruction at a cap it never earned
+    produced two wrong conclusions, and it was silently inert on exactly the
+    runs this campaign actually does. The console warning still fired in each
+    child's log; the JSON that outlives the log did not carry it.
+
+    The shards run one checkpoint at one requested cap, so their verdicts must
+    be identical. A disagreement means the children were not given the same cap,
+    which makes the pooled rates a mixture of two reset distributions -- fatal
+    rather than cosmetic, so it is raised rather than resolved by picking one.
+    """
+
+    checks = [
+        summary["cap_check"]
+        for summary in summaries
+        if summary.get("cap_check") is not None
+    ]
+    if not checks:
+        return None
+    first = json.dumps(checks[0], sort_keys=True)
+    for other in checks[1:]:
+        if json.dumps(other, sort_keys=True) != first:
+            raise RuntimeError(
+                "Shards disagree on cap_check; they were not given the same "
+                "start-distance cap, so their pooled rates describe two "
+                "different reset distributions."
+            )
+    return checks[0]
 
 
 def _merge_shard_summaries(

@@ -8,9 +8,10 @@ import unittest
 import numpy as np
 
 from tools.audit.compare_release_recovery_checkpoints import (
-    comparison_exit_code, inspect_existing, main, outcome_counts, pairing_issues,
-    resolve_run, select_checkpoints, summarize,
+    cap_report, comparison_exit_code, inspect_existing, main, outcome_counts,
+    pairing_issues, resolve_run, select_checkpoints, summarize,
 )
+import json
 from tools.audit.sil_record import _Recording, _instruction_name
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import INSTRUCTION_TO_ID
 
@@ -125,6 +126,80 @@ class CompareReleaseRecoveryTests(unittest.TestCase):
             self.assertEqual(before, (root / 'comparison.json').read_bytes())
             with self.assertRaisesRegex(ValueError, 'expected 2 recordings'):
                 summarize(root, 2, 0)
+            # No summary.json in this fixture, so no arm can certify its caps.
+            for arm in ('final', 'plate_peak', 'bowl_peak'):
+                self.assertFalse(report['caps'][arm]['cap_check_available'])
+                self.assertIsNone(report['caps'][arm]['applied_start_distance_cap'])
+            self.assertIn('UNVERIFIED', (root / 'comparison.md').read_text())
+
+
+class CapRecordingTests(unittest.TestCase):
+    """A rate whose cap is unknown cannot be read; §7.7.
+
+    `--start-distance-cap` applies to every instruction while the approach
+    ladders end at different rungs, so one evaluation is routinely at the right
+    cap for the families it was aimed at and above the earned cap for the rest.
+    That has inverted a conclusion twice, which is why the cap travels with the
+    number rather than with the console log.
+    """
+
+    def _arm(self, root, cap, verdicts=None):
+        r = recording()
+        r.start_distance_cap = cap
+        r.to_npz(root / 'final' / 'record_00.npz')
+        for other in ('plate_peak', 'bowl_peak'):
+            copy.deepcopy(r).to_npz(root / other / 'record_00.npz')
+            if verdicts is not None:
+                (root / other / 'summary.json').write_text(json.dumps({'cap_check': verdicts}))
+        if verdicts is not None:
+            (root / 'final' / 'summary.json').write_text(json.dumps({'cap_check': verdicts}))
+
+    def test_the_applied_cap_is_read_from_the_recordings(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._arm(root, .17)
+            with contextlib.redirect_stdout(io.StringIO()):
+                report = summarize(root, 1, 0)
+            self.assertEqual(report['caps']['final']['applied_start_distance_cap'], .17)
+
+    def test_an_above_earned_cap_instruction_is_named(self):
+        verdicts = {'pick_up': {'earned_cap': .06, 'requested_cap': .2,
+                                'verdict': 'above_earned_cap'},
+                    'put_into_plate': {'earned_cap': .2, 'requested_cap': .2,
+                                       'verdict': 'at_earned_cap'}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._arm(root, .2, verdicts)
+            with contextlib.redirect_stdout(io.StringIO()):
+                report = summarize(root, 1, 0)
+            self.assertEqual(report['caps']['final']['above_earned_cap'], ['pick_up'])
+            self.assertTrue(report['caps']['final']['cap_check_available'])
+            markdown = (root / 'comparison.md').read_text()
+            self.assertIn('ABOVE EARNED CAP: pick_up', markdown)
+
+    def test_rounds_disagreeing_on_the_cap_are_fatal(self):
+        """Two caps in one arm is two reset distributions, not one rate."""
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for arm in ('final', 'plate_peak', 'bowl_peak'):
+                for index, cap in enumerate((.10, .20)):
+                    r = recording()
+                    r.round_index = index
+                    r.start_distance_cap = cap
+                    r.to_npz(root / arm / f'record_{index:02d}.npz')
+            with self.assertRaisesRegex(ValueError, 'disagree on the applied start-distance cap'):
+                with contextlib.redirect_stdout(io.StringIO()):
+                    summarize(root, 2, 0)
+
+    def test_a_missing_cap_check_is_reported_absent_not_assumed_clean(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / 'final').mkdir(parents=True)
+            entry = cap_report(root / 'final', .2)
+            self.assertFalse(entry['cap_check_available'])
+            self.assertEqual(entry['above_earned_cap'], [])
+            self.assertEqual(entry['applied_start_distance_cap'], .2)
 
 
 if __name__ == '__main__':

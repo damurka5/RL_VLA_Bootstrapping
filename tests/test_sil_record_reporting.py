@@ -26,6 +26,7 @@ from tools.audit.sil_record import (
     apply_instruction_relabel,
     parse_relabel_rules,
     relabel_instruction_text,
+    _merge_shard_cap_check,
     _merge_shard_summaries,
     plan_device_shards,
     record_file_index,
@@ -1064,3 +1065,54 @@ class InstructionRelabelTests(unittest.TestCase):
             with self.subTest(bad=bad):
                 with self.assertRaises(ValueError):
                     parse_relabel_rules(bad)
+
+
+class MergeShardCapCheckTest(unittest.TestCase):
+    """§7.7's verdict must survive the shard boundary.
+
+    The sharded merge rebuilds the summary from a fixed key set. `cap_check`
+    was not in it, so every multi-device evaluation -- which on a 2xA40 box is
+    all of them -- wrote a summary with no cap verdict, and the safeguard that
+    exists because an unearned cap produced two wrong conclusions was inert on
+    exactly the runs that matter. The console warning fired in each child's log;
+    the JSON that outlives the log did not carry it.
+    """
+
+    VERDICTS = {
+        "pick_up": {"earned_cap": 0.06, "requested_cap": 0.2,
+                    "verdict": "above_earned_cap"},
+        "put_into_plate": {"earned_cap": 0.2, "requested_cap": 0.2,
+                           "verdict": "at_earned_cap"},
+    }
+
+    def test_agreeing_shards_carry_the_verdict_through(self):
+        merged = _merge_shard_cap_check(
+            [{"cap_check": self.VERDICTS}, {"cap_check": dict(self.VERDICTS)}]
+        )
+        self.assertEqual(merged, self.VERDICTS)
+
+    def test_no_verdict_is_none_rather_than_an_empty_pass(self):
+        """Absent must not read as "checked, and nothing was wrong"."""
+
+        self.assertIsNone(_merge_shard_cap_check([{}, {"cap_check": None}]))
+
+    def test_disagreeing_shards_are_fatal(self):
+        """Two caps across shards pool two reset distributions into one rate."""
+
+        other = {"pick_up": {"earned_cap": 0.06, "requested_cap": 0.06,
+                             "verdict": "at_earned_cap"}}
+        with self.assertRaisesRegex(RuntimeError, "disagree on cap_check"):
+            _merge_shard_cap_check(
+                [{"cap_check": self.VERDICTS}, {"cap_check": other}]
+            )
+
+    def test_key_order_is_not_a_disagreement(self):
+        reordered = {name: dict(reversed(list(entry.items())))
+                     for name, entry in reversed(list(self.VERDICTS.items()))}
+        self.assertEqual(
+            _merge_shard_cap_check(
+                [{"cap_check": self.VERDICTS}, {"cap_check": reordered}]
+            ),
+            self.VERDICTS,
+        )
+
