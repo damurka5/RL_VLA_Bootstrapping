@@ -294,6 +294,165 @@ class AcceptanceTests(unittest.TestCase):
         self.assertEqual(str(reasons[0]), "diverged")
 
 
+class OpeningReleaseAcceptanceTests(unittest.TestCase):
+    def trace(self):
+        # Remote scene_44833e357637587f, steps 246..251 mapped to 26..31.
+        record = _round([_chain(destination='bowl', radius=.057)])
+        record.physical_grasp[20:28, 0] = True
+        record.physical_grasp[28:, 0] = False
+        record.released[:, 0] = False
+        record.released[31, 0] = True
+        record.actions[26:32, 0, 4] = [.77253, .72526, .75347, .73081, .77435, .75195]
+        record.gripper_opening[25:32, 0] = [.37, .39806, .42498, .45603, .48946, .5255, .56235]
+        record.object_xyz[26:32, 0, 0, 0] = [.00636, .00679, .007, .00722, .00749, .00784]
+        record.target_lift[26:32, 0] = [.12478, .1231, .12071, .11655, .11048, .10249]
+        return record
+
+    def test_recorded_tomato_release_is_accepted_before_threshold_crossing(self):
+        from tools.audit.inspect_cdpr_staged_rounds import inspect_round
+        record = self.trace()
+        self.assertTrue(record.acceptance()[0][0])
+        self.assertEqual(record.carry_release_start_steps().tolist(), [28])
+        episode = inspect_round(record)['episodes'][0]
+        self.assertEqual(episode['carry_loss_step_count'], 3)
+        self.assertEqual(episode['unexplained_carry_loss_step_count'], 0)
+        self.assertEqual(episode['verified_release_contact_loss_step'], 28)
+
+    def test_opening_away_from_receptacle_is_still_rejected(self):
+        record = self.trace()
+        record.object_xyz[28, 0, 0, 0] = .10
+        self.assertEqual(record.acceptance()[1][0], 'carry_interrupted')
+
+    def test_gripper_command_without_observed_opening_is_not_release(self):
+        record = self.trace()
+        record.gripper_opening[29, 0] = record.gripper_opening[28, 0]
+        self.assertEqual(record.acceptance()[1][0], 'carry_interrupted')
+
+    def test_passive_opening_without_open_command_is_not_release(self):
+        record = self.trace()
+        record.actions[28, 0, 4] = -.1
+        self.assertEqual(record.acceptance()[1][0], 'carry_interrupted')
+
+    def test_later_release_does_not_forgive_an_earlier_transport_slip(self):
+        record = self.trace()
+        record.physical_grasp[23, 0] = False
+        self.assertEqual(record.acceptance()[1][0], 'carry_interrupted')
+
+    def test_opening_that_never_crosses_threshold_is_not_verified_release(self):
+        record = self.trace()
+        record.released[:, 0] = False
+        self.assertEqual(record.acceptance()[1][0], 'carry_interrupted')
+
+    def test_regrasp_during_opening_does_not_qualify_as_continuous_release(self):
+        record = self.trace()
+        record.physical_grasp[29, 0] = True
+        self.assertEqual(record.acceptance()[1][0], 'carry_interrupted')
+
+    def test_the_live_slip_test_forgives_the_same_trace(self):
+        """The rule the stage machine and the student evaluation both apply.
+
+        Offline acceptance verifies the whole opening suffix; the two LIVE
+        callers cannot -- they see one step at a time. They share this test, and
+        it must not fire on the recorded release. `strict` requires
+        `~carry_slip`, so a false positive here strikes every successful
+        placement from the headline verdict.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            contact_ended_without_release,
+            release_opening_over_goal,
+        )
+
+        record = self.trace()
+        slipped = False
+        for step in range(26, 32):
+            in_progress = release_opening_over_goal(
+                command=torch.tensor([float(record.actions[step, 0, 4])]),
+                opening=torch.tensor(
+                    [float(record.gripper_opening[step, 0])]
+                ),
+                previous_opening=torch.tensor(
+                    [float(record.gripper_opening[step - 1, 0])]
+                ),
+                target_xy=torch.tensor(
+                    [[float(record.object_xyz[step, 0, 0, 0]), 0.0]]
+                ),
+                receptacle_xy=torch.zeros(1, 2),
+                radius=torch.tensor([0.057]),
+            )
+            slipped |= bool(
+                contact_ended_without_release(
+                    physical_grasp=torch.tensor(
+                        [bool(record.physical_grasp[step, 0])]
+                    ),
+                    released=torch.tensor([bool(record.released[step, 0])]),
+                    release_in_progress=in_progress,
+                )[0]
+            )
+        self.assertFalse(slipped)
+
+    def test_the_live_slip_test_still_catches_a_closed_hand_losing_it(self):
+        import torch
+
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            contact_ended_without_release,
+        )
+
+        self.assertTrue(
+            bool(
+                contact_ended_without_release(
+                    physical_grasp=torch.tensor([False]),
+                    released=torch.tensor([False]),
+                    release_in_progress=torch.tensor([False]),
+                )[0]
+            )
+        )
+
+    def test_a_one_step_pause_in_the_ramp_is_still_a_release_when_latched(self):
+        """Why the live signal is latched over the chunk rather than sampled.
+
+        The stage machine reads at decision boundaries, and an opening ramp is
+        not obliged to be increasing on the exact step the boundary lands on.
+        Reading the instant would end a correct placement for a one-step pause
+        in a release that is plainly under way.
+        """
+
+        import torch
+
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            release_opening_over_goal,
+        )
+
+        record = self.trace()
+        # Freeze the opening on the step a boundary would land on.
+        record.gripper_opening[30, 0] = record.gripper_opening[29, 0]
+        chunk = range(28, 32)
+        latched = False
+        for step in chunk:
+            latched |= bool(
+                release_opening_over_goal(
+                    command=torch.tensor([float(record.actions[step, 0, 4])]),
+                    opening=torch.tensor(
+                        [float(record.gripper_opening[step, 0])]
+                    ),
+                    previous_opening=torch.tensor(
+                        [float(record.gripper_opening[step - 1, 0])]
+                    ),
+                    target_xy=torch.tensor(
+                        [[float(record.object_xyz[step, 0, 0, 0]), 0.0]]
+                    ),
+                    receptacle_xy=torch.zeros(1, 2),
+                    radius=torch.tensor([0.057]),
+                )[0]
+            )
+        self.assertTrue(latched)
+        # Offline acceptance is deliberately stricter and refuses the same
+        # chain, because it can see the whole suffix and this one is broken.
+        self.assertEqual(record.acceptance()[1][0], "carry_interrupted")
+
+
 class RowAssemblyTests(unittest.TestCase):
     def _build(self, chains, **kwargs):
         record = _round(chains)

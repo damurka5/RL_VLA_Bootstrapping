@@ -70,8 +70,10 @@ from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (  # noqa: E4
     PickupYawCalibration,
     YawTailController,
     clone_task_state,
+    contact_ended_without_release,
     destination_instruction_id,
     object_label,
+    release_opening_over_goal,
     student_instruction_text,
 )
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (  # noqa: E402
@@ -159,6 +161,12 @@ def run_unassisted(
         (worlds,), dtype=torch.float32, device=torch_device
     )
     proprio_dim = int(world.payload["state_dim"]) - int(vision_dim)
+    world_rows = torch.arange(worlds, dtype=torch.int64, device=torch_device)
+    release_xy_radius = torch.tensor(
+        [scene.destination_success_radius for scene in scenes],
+        dtype=torch.float32,
+        device=torch_device,
+    )
 
     with torch.inference_mode():
         for _ in range(int(decisions) + int(settle_decisions)):
@@ -215,7 +223,20 @@ def run_unassisted(
                     # The assisted DIAGNOSTIC arm, and it is labelled as such
                     # in the report. It measures a policy plus a controller.
                     action[:, 3] = servo.yaw_command(low_dim.ee_yaw)
+                previous_opening = low_dim.gripper_opening.clone()
                 low_dim = world.backend.step(action, step_active)
+                release_in_progress = release_opening_over_goal(
+                    command=action[:, 4],
+                    opening=low_dim.gripper_opening,
+                    previous_opening=previous_opening,
+                    target_xy=low_dim.object_positions[
+                        world_rows, place_state.target_slots, :2
+                    ],
+                    receptacle_xy=low_dim.object_positions[
+                        world_rows, place_state.reference_slots, :2
+                    ],
+                    radius=release_xy_radius,
+                )
                 low_dim, caught, grasp_diagnostics = (
                     collector._update_physical_grasp(reset, low_dim, step_active)
                 )
@@ -257,12 +278,23 @@ def run_unassisted(
                 ever_lifted |= pick_result.success
                 ever_released |= released & step_active & ever_grasped
                 wrong_place |= place_result.diagnostics["wrong_place_drop"]
-                # A slip is the object leaving a hand that is still CLOSED, the
-                # same distinction the collector makes -- otherwise the
-                # intentional release at the end of every success would be
-                # counted as a drop.
+                # The SAME slip test the collector uses, imported rather than
+                # restated. This call site carried its own copy of the naive
+                # rule -- "not holding it any more" -- and `strict` requires
+                # `~carry_slip`, so every successful placement would have
+                # latched a slip during its release ramp and been struck from
+                # the headline verdict. Contact ends several steps before the
+                # opening crosses its threshold; measured on the remote screen,
+                # three steps with the object 7 mm from the bowl centre.
                 carry_slip |= (
-                    ever_lifted & ~caught & ~released & step_active & ~native
+                    ever_lifted
+                    & contact_ended_without_release(
+                        physical_grasp=caught,
+                        released=released,
+                        release_in_progress=release_in_progress,
+                    )
+                    & step_active
+                    & ~native
                 )
                 approached |= (
                     pick_result.diagnostics["pick_grasp_distance"] <= 0.03

@@ -616,6 +616,69 @@ class PickupReadiness:
     forbid_grasp: bool = True
 
 
+CARRY_ACCEPTANCE_VERSION = "opening_over_goal_v2"
+
+
+def release_opening_over_goal(
+    *,
+    command: Any,
+    opening: Any,
+    previous_opening: Any,
+    target_xy: Any,
+    receptacle_xy: Any,
+    radius: Any,
+) -> Any:
+    """Observed opening above the goal, before the release threshold.
+
+    Works with NumPy arrays and torch tensors so recording acceptance and the
+    live stage machine use the same test. Height/settling remain the native
+    placement predicate's responsibility: release starts above the receptacle.
+
+    Three conjuncts, and each excludes a different false positive. The COMMAND
+    must ask for opening, so a hand prised apart by a collision is not a
+    release. The opening must actually INCREASE, so a saturated command against
+    a stuck finger is not one either. And the object must be over the goal, so
+    a hand that opens mid-carry and drops the object is still a slip -- which
+    is what stops this exemption from forgiving the failure it is next to.
+    """
+
+    delta = target_xy - receptacle_xy
+    return ((command > 1e-6) & (opening > previous_opening + 1e-6)
+            & (delta[..., 0] ** 2 + delta[..., 1] ** 2 <= radius ** 2))
+
+
+def contact_ended_without_release(
+    *,
+    physical_grasp: Any,
+    released: Any,
+    release_in_progress: Any,
+) -> Any:
+    """The live slip test, in ONE place for both callers.
+
+    ``physical_grasp`` is a contact test that already includes
+    ``~release_open``, so it goes False the instant the pads unload -- which is
+    what the first steps of an intentional release look like, several env steps
+    before the opening crosses the threshold and ``released`` becomes true. A
+    rule that read "not holding it any more" therefore fires on every correct
+    placement, at the moment the policy starts letting go.
+
+    Measured on the remote screen, scene_44833e357637587f: contact ends at env
+    step 248 with the opening at 0.456 and the object 7 mm from the bowl
+    centre; the opening crosses its 0.55 threshold at step 251. Three steps in
+    which the object is being placed correctly and every naive test calls it a
+    dropped carry.
+
+    This is the campaign's §7.11 shape for the third time -- a terminal
+    condition sharing a conjunct with success and firing because the conjunct
+    is not satisfied YET. It was fixed in the production ``wrong_place_settled``
+    predicate, then again in this module's stage machine, and the recorder's
+    acceptance check and the student evaluation each still carried their own
+    copy of the mistake. Hence one function.
+    """
+
+    return ~physical_grasp & ~released & ~release_in_progress
+
+
 class StageMachine:
     """Per-world stage status for a batch of chains.
 
@@ -744,6 +807,7 @@ class StageMachine:
         yaw_aligned: Any,
         diverged: Any,
         alignment_ready: Any = None,
+        release_in_progress: Any = None,
     ) -> dict[str, Any]:
         """One decision-boundary update. Every argument is a [W] tensor.
 
@@ -792,26 +856,19 @@ class StageMachine:
         # that ends holding something.
         premature = (moved | aligning) & physical_grasp
 
-        # MID-CARRY SLIP, and the qualifier `~released` is the whole condition.
-        #
-        # `physical_grasp` is a live contact test that includes `~release_open`,
-        # so it goes False the instant the gripper starts opening -- which is
-        # what an INTENTIONAL release looks like, and which happens several env
-        # steps before `container_ok` can latch (the opening has to cross the
-        # release threshold, and at action_step_gripper 0.05 that takes ~11
-        # steps). A rule that failed a world for "not holding it any more"
-        # would therefore terminate every correct placement on the step the
-        # policy starts letting go.
-        #
-        # This is §7.8 of the campaign report in a new place: a terminal
-        # condition sharing a conjunct with success, firing because that
-        # conjunct is not satisfied YET. The production predicate already had to
-        # be fixed for exactly this in `wrong_place_settled`. So a slip is:
-        # the object left the hand WHILE THE HAND WAS STILL CLOSED.
+        # Contact can end before the opening crosses the release threshold.
+        # Allow observed, commanded opening over the goal to finish. Offline
+        # acceptance additionally requires an uninterrupted opening suffix to
+        # threshold crossing; a later release cannot erase an earlier slip.
+        opening_release = (torch.zeros_like(released) if release_in_progress is None
+                           else release_in_progress)
         carry_loss = (
             placing
-            & ~physical_grasp
-            & ~released
+            & contact_ended_without_release(
+                physical_grasp=physical_grasp,
+                released=released,
+                release_in_progress=opening_release,
+            )
             & ~placement_success
             & ~wrong_place_settled
         )
@@ -1688,6 +1745,10 @@ def run_staged_chains(
 
     role_switches = 0
     world_rows = torch.arange(worlds, dtype=torch.int64, device=device)
+    release_xy_radius = torch.tensor(
+        [scene.destination_success_radius for scene in scenes], device=device
+    )
+    release_latched = torch.zeros((worlds,), dtype=torch.bool, device=device)
     diverged_any = torch.zeros((worlds,), dtype=torch.bool, device=device)
     with torch.inference_mode():
         for decision in range(total_decisions):
@@ -1732,6 +1793,14 @@ def run_staged_chains(
                 machine.stage_decisions.to(torch.int32).cpu().numpy()
             )
 
+            # Latched over the chunk, not read at its last step. The stage
+            # machine reads at decision boundaries, and an opening ramp is not
+            # obliged to be increasing on the exact step the boundary lands on
+            # -- the controller saturates, a finger sticks for a step. Reading
+            # the instant would end a correct placement for a one-step pause in
+            # a release that is plainly under way. The recording's own
+            # acceptance check is the strict one; this is the live guard.
+            release_latched.zero_()
             for action_index in range(per_decision):
                 step = decision * per_decision + action_index
                 step_active = machine.active.clone()
@@ -1755,7 +1824,16 @@ def run_staged_chains(
                 buffers.active[step] = step_active.cpu().numpy()
                 buffers.step_stage[step] = machine.stage.to(torch.int8).cpu().numpy()
 
+                previous_opening = low_dim.gripper_opening.clone()
                 low_dim = backend.step(applied, step_active)
+                release_in_progress = release_opening_over_goal(
+                    command=applied[:, 4], opening=low_dim.gripper_opening,
+                    previous_opening=previous_opening,
+                    target_xy=low_dim.object_positions[world_rows, place_state.target_slots, :2],
+                    receptacle_xy=low_dim.object_positions[world_rows, place_state.reference_slots, :2],
+                    radius=release_xy_radius,
+                )
+                release_latched |= release_in_progress & step_active
                 low_dim, caught, grasp_diagnostics = (
                     collector._update_physical_grasp(reset, low_dim, step_active)
                 )
@@ -1855,6 +1933,7 @@ def run_staged_chains(
                 wrong_place_settled=latched(buffers.wrong_place_settled),
                 physical_grasp=caught.clone(),
                 released=place_result.diagnostics["released"].clone(),
+                release_in_progress=release_latched,
                 gripper_opening=low_dim.gripper_opening.clone(),
                 ee_position=low_dim.ee_position.clone(),
                 target_lift=pick_result.diagnostics["target_lift"].clone(),
@@ -2426,6 +2505,7 @@ class StagedRound:
                     "action_step_yaw": float(config.action_step_yaw),
                     "pickup_height_above_grasp": float(config.pickup_height_above_grasp),
                     "pickup_height_tolerance": float(config.pickup_height_tolerance),
+                    "carry_acceptance": CARRY_ACCEPTANCE_VERSION,
                     "yaw_hold_during_pickup": bool(
                         config.yaw_hold_during_pickup
                     ),
@@ -2541,37 +2621,54 @@ class StagedRound:
             counts[str(reason)] = int((reasons == reason).sum())
         return accepted, reasons, counts
 
-    def continuous_carry(self) -> Any:
-        """Did the object stay held from the pickup handoff to the release?
+    def carry_release_start_steps(self) -> Any:
+        """First contact-loss step in a verified opening sequence, or threshold.
 
-        A mid-carry drop-and-regrasp is a recoverable behaviour and a real
-        thing to study, but it is not a clean demonstration of a carry, and the
-        design keeps it out of the first bank and labelled apart. The window is
-        the pickup handoff decision to the first step the gripper crosses its
-        release threshold, so the intentional opening at the end is outside it.
+        Only the suffix immediately leading to the first release threshold is
+        eligible. Every step must command and realize opening over the goal,
+        with no regrasp. This does not forgive a slip followed by later opening.
+        A missing release leaves the entire active carry window checked.
         """
-
         import numpy as np
 
-        per = int(self.actions_per_decision)
-        worlds = self.worlds
-        result = np.zeros((worlds,), dtype=bool)
-        for world in range(worlds):
-            start_decision = int(self.pickup_event[world])
-            if start_decision < 0:
+        previous = np.concatenate([self.gripper_opening[:1], self.gripper_opening[:-1]])
+        opening = release_opening_over_goal(
+            command=self.actions[..., 4], opening=self.gripper_opening,
+            previous_opening=previous, target_xy=self.object_xyz[:, :, 0, :2],
+            receptacle_xy=self.object_xyz[:, :, 1, :2], radius=self.destination_success_radius,
+        )
+        stops = np.full(self.worlds, self.actions.shape[0], dtype=np.int64)
+        for world in range(self.worlds):
+            if self.pickup_event[world] < 0:
                 continue
-            start = (start_decision + 1) * per
-            opened = np.flatnonzero(self.released[start:, world])
-            stop = int(opened[0]) + start if opened.size else self.actions.shape[0]
-            live = self.active[start:stop, world]
-            if not live.any():
-                # A release on the very next step after the handoff. There is
-                # no carry to interrupt, and calling that "interrupted" would
-                # reject the shortest valid chains.
-                result[world] = True
+            start = (int(self.pickup_event[world]) + 1) * int(self.actions_per_decision)
+            opened = np.flatnonzero(self.released[start:, world] & self.active[start:, world])
+            if not opened.size:
                 continue
-            held = self.physical_grasp[start:stop, world]
-            result[world] = bool(held[live].all())
+            stop = start + int(opened[0])
+            stops[world] = stop
+            lost = np.flatnonzero(self.active[start:stop, world] & ~self.physical_grasp[start:stop, world])
+            if not lost.size:
+                continue
+            first_loss = start + int(lost[0])
+            suffix = slice(first_loss, stop + 1)
+            if (self.active[suffix, world].all() and opening[suffix, world].all()
+                    and not self.physical_grasp[suffix, world].any()):
+                stops[world] = first_loss
+        return stops
+
+    def continuous_carry(self) -> Any:
+        """Continuous hold until contact ends during the verified release."""
+        import numpy as np
+
+        result = np.zeros(self.worlds, dtype=bool)
+        stops = self.carry_release_start_steps()
+        for world in range(self.worlds):
+            if self.pickup_event[world] < 0:
+                continue
+            start = (int(self.pickup_event[world]) + 1) * int(self.actions_per_decision)
+            live = self.active[start:stops[world], world]
+            result[world] = bool(self.physical_grasp[start:stops[world], world][live].all())
         return result
 
     # -- diagnostics ----------------------------------------------------

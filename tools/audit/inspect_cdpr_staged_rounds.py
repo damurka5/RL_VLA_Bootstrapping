@@ -18,12 +18,13 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
-    FAILURE_NAMES, STAGE_NAMES, StagedRound,
+    CARRY_ACCEPTANCE_VERSION, FAILURE_NAMES, STAGE_NAMES, StagedRound,
 )
 
 
 def inspect_round(record, *, all_pickups=False):
     accepted, reasons, counts = record.acceptance()
+    release_starts = record.carry_release_start_steps()
     per = int(record.actions_per_decision)
     rows = []
     interesting = record.align_event >= 0 if all_pickups else record.placement_event >= 0
@@ -66,11 +67,16 @@ def inspect_round(record, *, all_pickups=False):
             "events": {name: int(getattr(record, name)[world]) for name in
                        ("reach_event", "align_event", "pickup_event", "placement_event")},
             "first_release_step_after_handoff": int(stop) if release.size else None,
+            "verified_release_contact_loss_step": (
+                int(release_starts[world]) if release_starts[world] < stop else None),
             "carry_loss_steps_before_release": losses[:20].tolist(),
             "carry_loss_step_count": int(losses.size),
+            "unexplained_carry_loss_step_count": int((losses < release_starts[world]).sum()),
             "post_action_trace": trace,
         })
     return {"worlds": record.worlds, "accepted": int(accepted.sum()),
+            "carry_acceptance": CARRY_ACCEPTANCE_VERSION,
+            "recorded_carry_acceptance": json.loads(record.config_json).get("carry_acceptance", "threshold_v1"),
             "rejections": counts, "episodes": rows}
 
 

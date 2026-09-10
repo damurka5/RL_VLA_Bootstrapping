@@ -274,6 +274,24 @@ class StageTransitionTests(unittest.TestCase):
             self.assertEqual(int(machine.failure[0]), 0)
             self.assertEqual(int(machine.stage[0]), STAGE_PLACEMENT)
 
+    def test_contact_loss_during_goal_opening_can_cross_a_decision_boundary(self):
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import release_opening_over_goal
+        opening_release = release_opening_over_goal(
+            command=torch.tensor([.75347]), opening=torch.tensor([.45603]),
+            previous_opening=torch.tensor([.42498]), target_xy=torch.tensor([[.007, 0.]]),
+            receptacle_xy=torch.zeros(1, 2), radius=torch.tensor([.057]),
+        )
+        machine = _machine()
+        machine.stage[:] = STAGE_PLACEMENT
+        _advance(machine, 0, physical_grasp=torch.tensor([False]),
+                 released=torch.tensor([False]), release_in_progress=opening_release)
+        self.assertEqual(int(machine.stage[0]), STAGE_PLACEMENT)
+        self.assertEqual(int(machine.failure[0]), 0)
+        # A discontinued opening is not an indefinite exemption from carry loss.
+        _advance(machine, 1, physical_grasp=torch.tensor([False]),
+                 released=torch.tensor([False]), release_in_progress=torch.tensor([False]))
+        self.assertEqual(int(machine.failure[0]), FAILURE_TO_ID['carry_loss'])
+
     def test_slip_with_a_closed_hand_is_a_carry_loss(self):
         machine = _machine()
         _advance(machine, 0, reach_success=torch.tensor([True]))

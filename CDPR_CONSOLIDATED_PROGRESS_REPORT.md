@@ -1083,6 +1083,37 @@ has **negative** slack, so no yaw of a fixed-yaw contract can bracket it —
 and `robocasa_potato`, whose capsule gives it a 0.054 m hull radius at its
 widest presentation, is in the same position and will be reported as such.
 
+**The release boundary, found from a real trace.** The first chain to ever
+reach a bowl was rejected as a broken carry. `scene_44833e357637587f`, a
+tomato: `final_stage: complete`, `failure: none`, and the acceptance check
+saying `carry_interrupted`. The recorded trace shows why — contact ends at env
+step 248 with the opening at 0.456 and the object **7 mm** from the bowl
+centre, and the opening does not cross its 0.55 release threshold until step
+251. Three steps in which the object is being placed correctly and every
+"is it still held?" test calls it a dropped carry.
+
+This is §7.11 for the **third** time: a terminal condition sharing a conjunct
+with success and firing because the conjunct is not satisfied YET. It was
+fixed in the production `wrong_place_settled` predicate, then again in the
+staged stage machine — and the recorder's acceptance check and the student
+evaluation each still carried their own copy of the mistake.
+
+The rule is now one shared predicate. A release is in progress when the
+command asks for opening, the opening actually increases, **and** the object is
+over the goal — three conjuncts excluding three different false positives: a
+hand prised apart by a collision, a saturated command against a stuck finger,
+and a hand that opens mid-carry and drops the object. That last conjunct is
+what stops the exemption forgiving the failure it sits next to. Offline
+acceptance is stricter still: the whole suffix from contact loss to the
+threshold crossing must be one uninterrupted opening with no regrasp, so a
+later release cannot retroactively excuse an earlier slip.
+
+The evaluation copy was the dangerous one. `strict` requires `~carry_slip`, so
+every successful student placement would have latched a slip during its own
+release ramp and been struck from **the headline number of the project** — a
+zero that would have looked like a policy result. It is fixed and the two live
+callers now import one function.
+
 **Retained results:** at 0.06–0.10 m starts the reach predicate is met on
 21/64 scenes by `step_11009573` and 13/64 by `step_3416645` with the gripper
 hold on, and on 29–35/64 by `step_3416645` without it; alignment converts
