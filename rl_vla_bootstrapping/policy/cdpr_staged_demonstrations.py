@@ -395,11 +395,11 @@ def reachable_yaw_error(
 class YawTailController:
     """A bounded yaw servo expressed in the ordinary five-dim action.
 
-    Holds the XYZ setpoint, holds the hand OPEN, and drives the wrist toward
+    Holds XY and the hand OPEN, and drives the wrist toward
     the calibrated yaw at whatever fraction of ``action_step_yaw`` the
     remaining error justifies. Every command it produces is executed by the
-    plant and recorded, so the alignment is part of the demonstration rather
-    than a hidden state change between two of them.
+    plant and recorded. With a pickup height configured, it climbs before
+    rotating and descends to the pickup pose once yaw is aligned.
     """
 
     def __init__(
@@ -410,12 +410,16 @@ class YawTailController:
         action_step_yaw: float,
         action_step_xyz: float,
         action_step_gripper: float = 0.05,
+        pickup_height_above_grasp: float | None = None,
+        pickup_height_tolerance: float = 0.003,
     ) -> None:
         self.torch = torch
         self.calibration = calibration
         self.action_step_yaw = float(action_step_yaw)
         self.action_step_xyz = float(action_step_xyz)
         self.action_step_gripper = float(action_step_gripper)
+        self.pickup_height_above_grasp = pickup_height_above_grasp
+        self.pickup_height_tolerance = float(pickup_height_tolerance)
         if self.action_step_yaw <= 0.0 or self.action_step_xyz <= 0.0:
             raise ValueError("Action steps must be positive.")
         if self.action_step_gripper <= 0.0:
@@ -445,7 +449,8 @@ class YawTailController:
         return (error / self.action_step_yaw).clamp(-1.0, 1.0)
 
     def actions(
-        self, *, ee_position: Any, ee_yaw: Any, gripper_opening: Any = None
+        self, *, ee_position: Any, ee_yaw: Any, gripper_opening: Any = None,
+        grasp_point_z: Any = None,
     ) -> Any:
         """[W, 5] alignment command: hold XY, bridge Z, open the hand, rotate."""
 
@@ -454,14 +459,30 @@ class YawTailController:
         command = torch.zeros(
             (worlds, 5), dtype=torch.float32, device=ee_yaw.device
         )
-        # A reach that ended below the safe rotation height gets an explicit,
-        # recorded lift before the fingers sweep. Only ever upward: descending
-        # here would be an unrequested approach.
+        # The legacy yaw-only mode bridges upward. Three-stage collection also
+        # supplies a pickup height, adding a recorded descent after alignment.
         rise = (
             float(self.calibration.safe_rotation_z) - ee_position[:, 2]
         ).clamp_min(0.0)
         command[:, 2] = (rise / self.action_step_xyz).clamp(0.0, 1.0)
         command[:, 3] = self.yaw_command(ee_yaw)
+        if self.pickup_height_above_grasp is not None:
+            if grasp_point_z is None:
+                raise ValueError("Pickup alignment requires the live grasp point height.")
+            # Finish at the teacher's aligned training height, not at the
+            # rotation clearance. All motion remains recorded plant actions.
+            yaw_ready = self.aligned(ee_yaw)
+            clearance = ee_position[:, 2] >= (
+                float(self.calibration.safe_rotation_z) - self.pickup_height_tolerance
+            )
+            target_z = grasp_point_z + float(self.pickup_height_above_grasp)
+            descend = ((target_z - ee_position[:, 2]) / self.action_step_xyz).clamp(-1.0, 1.0)
+            command[:, 2] = torch.where(yaw_ready, descend, command[:, 2])
+            # Do not sweep the fingers through the object while climbing.
+            # Once aligned, small yaw corrections may hold that angle on descent.
+            command[:, 3] = torch.where(
+                clearance | yaw_ready, command[:, 3], torch.zeros_like(ee_yaw)
+            )
         if gripper_opening is not None:
             command[:, 4] = self.open_command(gripper_opening)
         return command
@@ -475,6 +496,13 @@ class YawTailController:
             self.calibration.yaw_joint_limits,
         )
         return error.abs() <= float(self.calibration.tolerance_rad)
+
+    def handoff_ready(self, *, ee_yaw: Any, ee_position: Any, grasp_point_z: Any) -> Any:
+        ready = self.aligned(ee_yaw)
+        if self.pickup_height_above_grasp is not None:
+            error = ee_position[:, 2] - grasp_point_z - float(self.pickup_height_above_grasp)
+            ready = ready & (error.abs() <= self.pickup_height_tolerance)
+        return ready
 
 
 # --------------------------------------------------------------------------
@@ -715,6 +743,7 @@ class StageMachine:
         target_lift: Any,
         yaw_aligned: Any,
         diverged: Any,
+        alignment_ready: Any = None,
     ) -> dict[str, Any]:
         """One decision-boundary update. Every argument is a [W] tensor.
 
@@ -805,8 +834,9 @@ class StageMachine:
             self.reach_event,
         )
 
+        pose_ready = yaw_aligned if alignment_ready is None else yaw_aligned & alignment_ready
         self.aligned_streak = torch.where(
-            aligning & yaw_aligned & opening_ok & height_ok & centred_ok & ~physical_grasp,
+            aligning & pose_ready & opening_ok & height_ok & centred_ok & ~physical_grasp,
             self.aligned_streak + 1,
             torch.where(aligning, torch.zeros_like(self.aligned_streak), self.aligned_streak),
         )
@@ -1329,6 +1359,10 @@ class StagedRolloutConfig:
     # the readiness band is expressed against that point rather than against an
     # absolute height -- see PickupReadiness.
     pick_grasp_height_offset: float = 0.0075
+    # Match the open aligned pickup reset in MjWarp's curriculum. The tail
+    # physically descends here after rotating; it never resets the hand pose.
+    pickup_height_above_grasp: float = 0.01
+    pickup_height_tolerance: float = 0.003
     # Hold the calibrated yaw through the pickup stage. On by default as the
     # design's "initial controlled variant": the pickup teacher was trained
     # under a uniformly sampled yaw and has no reason to preserve one, so
@@ -1345,6 +1379,11 @@ class StagedRolloutConfig:
     def validate(self) -> None:
         self.budgets.validate()
         self.calibration.validate()
+        if not math.isfinite(self.pickup_height_tolerance) or self.pickup_height_tolerance <= 0:
+            raise ValueError("pickup_height_tolerance must be finite and positive.")
+        if not (self.readiness.min_height_above_grasp <= self.pickup_height_above_grasp
+                <= self.readiness.max_height_above_grasp):
+            raise ValueError("Pickup alignment height must lie inside the readiness band.")
         if self.actions_per_decision < 1:
             raise ValueError("actions_per_decision must be positive.")
         if self.pickup_prompt not in {"pick_up", "destination"}:
@@ -1577,6 +1616,8 @@ def run_staged_chains(
         action_step_yaw=config.action_step_yaw,
         action_step_xyz=config.action_step_xyz,
         action_step_gripper=config.action_step_gripper,
+        pickup_height_above_grasp=config.pickup_height_above_grasp,
+        pickup_height_tolerance=config.pickup_height_tolerance,
     )
 
     # Per-object lateral slack, constant for the round. Reported loudly when a
@@ -1584,6 +1625,14 @@ def run_staged_chains(
     initial_low_dim = backend.low_dim_observations()
     reset_object_xyz = initial_low_dim.object_positions.cpu().numpy().copy()
     reset_ee_xyz = initial_low_dim.ee_position.cpu().numpy().copy()
+    pickup_z = (initial_low_dim.object_positions[:, 0, 2]
+                + config.pick_grasp_height_offset + config.pickup_height_above_grasp)
+    if bool(((pickup_z < backend.config.workspace_z[0]) |
+             (pickup_z > backend.config.workspace_z[1])).any().item()):
+        raise ValueError("Pickup alignment height is outside the controller Z bounds.")
+    print(f"[staged] alignment handoff: grasp point + {config.pickup_height_above_grasp:.3f} m "
+          f"(tolerance {config.pickup_height_tolerance:.3f} m), fixed yaw; recorded descent",
+          flush=True)
     quaternions = initial_low_dim.object_quaternions[:, 0].cpu().numpy()
     slack = [projected_grasp_xy_offset(
         scene.target_catalog, quaternion, config.calibration.target_yaw,
@@ -1694,6 +1743,8 @@ def run_staged_chains(
                     hold_pickup=config.yaw_hold_during_pickup,
                     hold_placement=config.yaw_hold_during_placement,
                     hold_gripper_open=config.gripper_hold_open_before_pickup,
+                    grasp_point_z=(low_dim.object_positions[world_rows, place_state.target_slots, 2]
+                                   + config.pick_grasp_height_offset),
                 )
 
                 buffers.teacher_actions[step] = raw.float().cpu().numpy()
@@ -1820,6 +1871,11 @@ def run_staged_chains(
                 ),
                 max_grasp_xy_offset=max_xy_offset,
                 yaw_aligned=servo.aligned(low_dim.ee_yaw),
+                alignment_ready=servo.handoff_ready(
+                    ee_yaw=low_dim.ee_yaw, ee_position=low_dim.ee_position,
+                    grasp_point_z=(low_dim.object_positions[world_rows, place_state.target_slots, 2]
+                                   + config.pick_grasp_height_offset),
+                ),
                 diverged=diverged_now,
             )
 
@@ -1957,6 +2013,7 @@ def _apply_overrides(
     hold_pickup: bool,
     hold_placement: bool,
     hold_gripper_open: bool = True,
+    grasp_point_z: Any = None,
 ) -> tuple[Any, Any]:
     """Substitute the recorded controllers where the stage calls for them.
 
@@ -1985,6 +2042,7 @@ def _apply_overrides(
         tail = servo.actions(
             ee_position=low_dim.ee_position,
             ee_yaw=low_dim.ee_yaw,
+            grasp_point_z=grasp_point_z,
             gripper_opening=(
                 low_dim.gripper_opening if hold_gripper_open else None
             ),
@@ -2364,6 +2422,8 @@ class StagedRound:
                     ),
                     "action_step_xyz": float(config.action_step_xyz),
                     "action_step_yaw": float(config.action_step_yaw),
+                    "pickup_height_above_grasp": float(config.pickup_height_above_grasp),
+                    "pickup_height_tolerance": float(config.pickup_height_tolerance),
                     "yaw_hold_during_pickup": bool(
                         config.yaw_hold_during_pickup
                     ),
@@ -2727,6 +2787,14 @@ class StagedRound:
         grasped = (self.physical_grasp & live).any(axis=0)
         lifted = (self.pickup_success & live).any(axis=0)
         handed_off = np.asarray(self.pickup_event) >= 0
+        # The handoff is the LAST alignment observation, before the first
+        # pickup action. Reading the first pickup row instead confounds the
+        # initial pose with the teacher's first movement.
+        handoff_steps = np.clip(
+            (np.asarray(self.align_event) + 1) * int(self.actions_per_decision) - 1,
+            0, above.shape[0] - 1,
+        )
+        world_indices = np.arange(above.shape[1])
 
         def percentiles(values: Any, mask: Any) -> dict[str, float] | None:
             selected = values[mask & np.isfinite(values)]
@@ -2764,7 +2832,10 @@ class StagedRound:
                 per_world(lateral, _Min), entered
             ),
             "handoff_xy_error_m": percentiles(
-                _first_step_value(self, lateral, STAGE_PICK_UP), entered
+                lateral[handoff_steps, world_indices], entered
+            ),
+            "handoff_height_above_grasp_m": percentiles(
+                above[handoff_steps, world_indices], entered
             ),
             # THE discriminator. A grasp that never rises is a different
             # failure from a grasp that never happens, and they have opposite

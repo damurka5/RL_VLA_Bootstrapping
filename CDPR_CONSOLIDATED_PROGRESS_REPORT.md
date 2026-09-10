@@ -29,11 +29,13 @@ whole change map is now implemented and unit-tested locally — the scene/yaw
 contract, the continuous three-stage recorder, teacher screening, the dataset
 builder, the prior refresh and SFT changes, and the unassisted full-task
 evaluation. See §7.12. **Update from the supplied remote screens:** scene
-generation and teacher screening have now run, but full-chain acceptance is
-still 0/64 in the latest supplied screen. Local review found a checkpoint-owned
-controller floor and mixed-stage teacher-weight routing defects; fixes and
-regression tests are recorded in the newest §14 entry. Corrected GPU screening,
-a usable full-chain bank and SFT remain unverified. The yaw calibration is
+generation and teacher screening have now run. The latest run, on `70af67d`,
+stopped at pickup: 3 entered, 1 grasped, 0 lifted; full-chain confirmation was
+not reached. After the controller-floor and teacher-routing fixes, review found
+that yaw alignment still handed off at its 0.26 m rotation height. A recorded
+descent to the teacher's aligned pickup height is now implemented and tested
+locally; see the newest §14 entry. Its GPU result, a usable full-chain bank and
+SFT remain unverified. The yaw calibration is
 kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
 **0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
 p90 19.8°, max 25.3°** camera-bearing residual across the ±0.19 m workspace,
@@ -1556,6 +1558,48 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-10 — Rotation clearance was incorrectly used as the pickup handoff height
+
+- Remote evidence: user-pasted output from
+  `runs/three_stage/selection_fixed_20260910_195629`, following `70af67d`.
+  The two move candidates scored 3/64 and 4/64 aligned handoffs. The pickup
+  screen had 3 entered episodes, 1 detected grasp and no lift, so the selector
+  correctly stopped with exit 2. The conda error is the wrapper reporting that
+  intentional stop. Placement was not screened or confirmed.
+- The previous fixes did not establish a successful pickup. In particular,
+  `YawTailController` lifted to `safe_rotation_z=0.26`, rotated and never
+  descended. The broad readiness band allowed handoff there. This creates a
+  roughly 6–7 cm offset above these objects' grasp points even with the
+  controller floor lowered to 0.18 m. The curriculum's open aligned pickup
+  reset in `mjwarp_rank_local_collector.py` uses grasp point + 0.01 m.
+- Change: three-stage alignment now lifts before an unaligned wrist rotates,
+  then descends with the gripper open to grasp point + 0.010 m. Yaw and height
+  (within 0.003 m) must be ready at consecutive decision boundaries, alongside
+  the existing opening and centering checks. A wrist already aligned can
+  descend directly. The calibrated fixed yaw is preserved.
+- This is an explicit collection controller using simulator grasp geometry,
+  not a demonstrated improvement in the teacher's approach policy. Each
+  descent action is recorded with the alignment-controller source and raw
+  teacher action beside it, retaining a physically continuous demonstration.
+  Pickup XYZ, closure and lift remain teacher-controlled. The unassisted
+  student evaluator gains no height controller.
+- Selector and recorder both use this shared rollout behavior. Selection now
+  also reads the task's configured grasp offset, matching recording. NPZ
+  metadata stores alignment height/tolerance, and the pickup table reports
+  `handoff_height_above_grasp_m` at the last alignment observation, before any
+  pickup action. The XY handoff diagnostic now uses that same boundary.
+- Validation: 16 focused regressions (including five new height/controller and
+  boundary-diagnostic checks), 30 staged transition/controller tests, 26 dataset
+  tests and 19 SFT sampling tests pass locally: **91 tests**. The controller
+  trajectory test uses a simple action integrator, not MuJoCo physics. GPU
+  grasp/lift yield remains unverified, especially with only 3 pickup trials in
+  the supplied screen.
+- Next remote run, after pulling: `bash scripts/diagnose_cdpr_three_stage_remote.sh`.
+  Existing scenes and calibration can be reused. Check the new handoff-height
+  table for approximately 0.010 m, then assess grasp and lift counts. A further
+  zero must be investigated from the saved per-step rounds; it does not justify
+  promoting teachers or launching SFT.
 
 ### 2026-09-10 — Three-stage zero-grasp screen: controller floor and teacher routing repaired locally
 

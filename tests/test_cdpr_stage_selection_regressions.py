@@ -18,6 +18,8 @@ from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
     sample_staged_teacher_actions, projected_grasp_xy_offset,
     TeacherBank, TeacherEntry, PickupReadiness, PickupYawCalibration,
     StageMachine, StageBudgets, STAGE_ALIGN,
+    STAGE_PICK_UP, YawTailController, _apply_overrides, SOURCE_YAW_TAIL,
+    StagedRound,
 )
 from tools.audit.select_cdpr_stage_teachers import score_rounds, main
 from tools.audit.xy_approach_probe import _set_config_controller_workspace
@@ -123,6 +125,86 @@ class PresentationTests(unittest.TestCase):
                 target_lift=torch.zeros(1), yaw_aligned=~false, diverged=false)
         self.assertEqual(int(machine.align_event[0]), -1)
         self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+
+
+class PickupHeightBridgeTests(unittest.TestCase):
+    def servo(self):
+        return YawTailController(torch=torch,
+            calibration=PickupYawCalibration(target_yaw=0, source='unit-test'),
+            action_step_yaw=.08, action_step_xyz=.015,
+            pickup_height_above_grasp=.01)
+
+    def test_rotation_clearance_is_not_a_valid_pickup_handoff(self):
+        servo = self.servo()
+        pose = torch.tensor([[0., 0., .26], [0., 0., .202]])
+        ready = servo.handoff_ready(ee_yaw=torch.zeros(2), ee_position=pose,
+                                   grasp_point_z=torch.full((2,), .192))
+        self.assertEqual(ready.tolist(), [False, True])
+
+    def test_bridge_climbs_before_rotating_then_descends_with_open_hand(self):
+        servo = self.servo()
+        pose = torch.tensor([[.01, -.02, .20]])
+        yaw = torch.tensor([1.])
+        opening = torch.ones(1)
+        grasp = torch.tensor([.192])
+        saw_rotation = saw_descent = False
+        for _ in range(100):
+            a = servo.actions(ee_position=pose, ee_yaw=yaw,
+                              gripper_opening=opening, grasp_point_z=grasp)
+            self.assertTrue(torch.equal(a[:, :2], torch.zeros(1, 2)))
+            self.assertGreaterEqual(float(a[0, 4]), 0.)
+            if not bool(servo.aligned(yaw)[0]) and float(pose[0, 2]) < .257:
+                self.assertEqual(float(a[0, 3]), 0.)
+            if float(a[0, 2]) < 0:
+                self.assertTrue(bool(servo.aligned(yaw)[0]))
+                saw_descent = True
+            saw_rotation |= abs(float(a[0, 3])) > 0
+            pose += a[:, :3] * .015
+            yaw += a[:, 3] * .08
+        self.assertTrue(saw_rotation and saw_descent)
+        self.assertAlmostEqual(float(pose[0, 2]), .202, places=5)
+        self.assertTrue(bool(servo.handoff_ready(ee_yaw=yaw, ee_position=pose,
+                                               grasp_point_z=grasp)[0]))
+
+    def test_descent_is_recorded_override_and_pickup_retains_xyz_gripper(self):
+        low = SimpleNamespace(ee_position=torch.tensor([[0., 0., .26]] * 2),
+                              ee_yaw=torch.zeros(2), gripper_opening=torch.ones(2))
+        raw = torch.full((2, 5), .4)
+        applied, source = _apply_overrides(torch, raw=raw,
+            stage=torch.tensor([STAGE_ALIGN, STAGE_PICK_UP]), low_dim=low,
+            servo=self.servo(), hold_pickup=True, hold_placement=False,
+            grasp_point_z=torch.full((2,), .192))
+        self.assertEqual(float(applied[0, 2]), -1.)
+        self.assertEqual(int(source[0]), SOURCE_YAW_TAIL)
+        self.assertTrue(torch.equal(applied[1, [0, 1, 2, 4]], raw[1, [0, 1, 2, 4]]))
+
+    def test_stage_waits_for_height_and_requires_consecutive_ready_boundaries(self):
+        machine = StageMachine(torch=torch, device='cpu', worlds=1,
+            budgets=StageBudgets(8, 8, 8), calibration=self.servo().calibration)
+        machine.stage[:] = STAGE_ALIGN
+        false = torch.tensor([False])
+        for decision, ready in enumerate([False, False, True, True]):
+            machine.advance(decision=decision, reach_success=~false, pickup_success=false,
+                placement_success=false, placement_geometry_ok=false, wrong_place_settled=false,
+                physical_grasp=false, released=false, gripper_opening=torch.ones(1),
+                ee_position=torch.tensor([[0., 0., .202 if ready else .26]]),
+                grasp_point_z=torch.tensor([.192]), target_xy_error=torch.zeros(1),
+                max_grasp_xy_offset=torch.tensor([.013]), target_lift=torch.zeros(1),
+                yaw_aligned=~false, diverged=false, alignment_ready=torch.tensor([ready]))
+            self.assertEqual(int(machine.stage[0]), STAGE_PICK_UP if decision == 3 else STAGE_ALIGN)
+
+    def test_report_uses_last_alignment_pose_before_pickup_action(self):
+        steps = 4
+        record = SimpleNamespace(config_json='{}', actions_per_decision=2,
+            active=np.ones((steps, 1), bool), step_stage=np.array([[STAGE_ALIGN]] * 2 + [[STAGE_PICK_UP]] * 2),
+            align_event=np.array([0]), pickup_event=np.array([-1]),
+            object_xyz=np.zeros((steps, 1, 1, 3)), ee_xyz=np.zeros((steps, 1, 3)),
+            target_lift=np.zeros((steps, 1)), physical_grasp=np.zeros((steps, 1), bool),
+            pickup_success=np.zeros((steps, 1), bool), actions=np.zeros((steps, 1, 5)),
+            pickup_regrasp_total=lambda: 0)
+        record.ee_xyz[:, 0, 2] = [.0675, .0175, .04, .05]
+        report = StagedRound.pickup_diagnostics(record)
+        self.assertEqual(report['handoff_height_above_grasp_m']['median'], .01)
 
 
 class ScoreTests(unittest.TestCase):

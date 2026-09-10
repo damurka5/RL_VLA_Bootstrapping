@@ -396,6 +396,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             readiness=PickupReadiness(
                 grasp_xy_margin=float(args.grasp_xy_margin)
             ),
+            pick_grasp_height_offset=float(
+                world.task_metadata.get("pick_grasp_height_offset", 0.0075)
+            ),
             include_relative_target=bool(
                 getattr(world.args, "residual_relative_target", False)
             ),

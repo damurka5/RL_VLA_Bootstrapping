@@ -136,6 +136,10 @@ task:
     three_stage_yaw_tolerance_degrees: 5.0
     three_stage_yaw_consecutive_decisions: 2
     three_stage_yaw_safe_rotation_z: 0.26
+    # The staged collector now descends after yaw alignment to grasp_point_z
+    # + 0.010 m (within 0.003 m), matching the open aligned training reset.
+    # This is a recorded alignment controller, before the pickup teacher starts.
+    # safe_rotation_z is clearance for turning, not the final pickup height.
     three_stage_yaw_hold_during_pickup: true
     three_stage_yaw_hold_during_placement: false
 
