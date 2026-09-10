@@ -535,6 +535,49 @@ class ReachDiagnosticTests(unittest.TestCase):
 class StageDiagnosticTests(unittest.TestCase):
     """The pickup and placement ladders, and the command underneath them."""
 
+    def test_offline_inspector_explains_rejected_native_completion(self):
+        from tools.audit.inspect_cdpr_staged_rounds import inspect_round
+        record = _round([_chain(carry_slip_at=22)])
+        result = inspect_round(record)
+        self.assertEqual(result['accepted'], 0)
+        episode = result['episodes'][0]
+        self.assertEqual(episode['rejection'], 'carry_interrupted')
+        self.assertEqual(episode['carry_loss_steps_before_release'][0], 22)
+        self.assertEqual(episode['carry_loss_step_count'], 10)
+        self.assertEqual(episode['post_action_trace'][2]['step'], 22)
+        self.assertFalse(episode['post_action_trace'][2]['grasped'])
+
+    def test_offline_inspector_does_not_call_release_a_carry_loss(self):
+        from tools.audit.inspect_cdpr_staged_rounds import inspect_round
+        result = inspect_round(_round([_chain()]))
+        self.assertEqual(result['accepted'], 1)
+        self.assertEqual(result['episodes'][0]['carry_loss_step_count'], 0)
+        self.assertEqual(result['episodes'][0]['first_release_step_after_handoff'], 28)
+
+    def test_initial_comparison_separates_reset_and_prior_differences(self):
+        from tools.audit.inspect_cdpr_staged_rounds import initial_difference
+        first, second = _round([_chain()]), _round([_chain()])
+        second.priors[0] += .5
+        result = initial_difference(first, second)['max_absolute_difference']
+        self.assertEqual(result['reset_ee_m'], 0.)
+        self.assertEqual(result['first_state'], 0.)
+        self.assertEqual(result['first_prior'], .5)
+
+    def test_offline_inspector_reads_saved_round_on_cpu(self):
+        from contextlib import redirect_stdout
+        import io
+        from pathlib import Path
+        import tempfile
+        from tools.audit.inspect_cdpr_staged_rounds import main
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / 'screen.npz'
+            _round([_chain(carry_slip_at=22)]).to_npz(path)
+            output = io.StringIO()
+            with redirect_stdout(output):
+                self.assertEqual(main([str(path)]), 0)
+            report = json.loads(output.getvalue())
+            self.assertEqual(report['episodes'][0]['rejection'], 'carry_interrupted')
+
     def _pickup_round(self, *, grasp_at, lift_to, action_z):
         record = _round([_chain()])
         record.config_json = json.dumps({"pick_grasp_height_offset": 0.0075})

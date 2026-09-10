@@ -505,6 +505,12 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"[select]   placement: {scored['placement_diagnostics'][0]}",
                 flush=True,
             )
+            print(
+                f"[select]   acceptance: {scored['accepted']}; "
+                f"rejections {scored['rejection_reasons']}; "
+                f"stage failures {scored['failure_counts']}",
+                flush=True,
+            )
         best = max(rows, key=lambda row: (row["primary"]["rate"] or 0.0))
         if not best["primary"]["rate"]:
             report["phases"][phase] = {"candidates": rows, "chosen": None}
@@ -513,8 +519,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             report["wall_seconds"] = round(time.perf_counter() - started, 1)
             (output / "teacher_selection.json").write_text(json.dumps(report, indent=2))
             (output / "selected_teachers.json").unlink(missing_ok=True)
-            print(f"[select] STOP: no successful {phase} candidate. Saved diagnostics; "
-                  "no selected_teachers.json. Downstream roles cannot be selected.", flush=True)
+            verdict = ("no accepted full-chain demonstration from any placement candidate"
+                       if phase == "placement" else f"no successful {phase} candidate")
+            print(f"[select] STOP: {verdict}. Saved diagnostics; "
+                  "no selected_teachers.json. See rejection reasons above.", flush=True)
             return 2
         chosen[phase] = Path(best["candidate"])
         # Overlapping intervals mean the screen did not separate these two, and

@@ -854,7 +854,9 @@ class StageMachine:
         # it is latched at the instant it fired; the handoff condition is that
         # the world is STILL in that state when the placement teacher takes
         # over.
-        promote_place = picking & pickup_success & physical_grasp
+        promote_place = (
+            picking & pickup_success & physical_grasp & (target_lift >= 0.05 - 1e-6)
+        )
         self.pickup_event = torch.where(
             promote_place & (self.pickup_event < 0),
             torch.full_like(self.pickup_event, int(decision)),

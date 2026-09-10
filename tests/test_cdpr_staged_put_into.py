@@ -236,6 +236,18 @@ class StageTransitionTests(unittest.TestCase):
         self.assertEqual(int(machine.stage[0]), STAGE_PLACEMENT)
         self.assertAlmostEqual(float(machine.handoff_lift[0]), 0.061, places=5)
 
+    def test_pickup_handoff_requires_lift_at_boundary_not_just_latched_success(self):
+        machine = _machine()
+        machine.stage[:] = STAGE_PICK_UP
+        _advance(machine, 0, pickup_success=torch.tensor([True]),
+                 physical_grasp=torch.tensor([True]), target_lift=torch.tensor([0.049]))
+        self.assertEqual(int(machine.stage[0]), STAGE_PICK_UP)
+        self.assertEqual(int(machine.pickup_event[0]), -1)
+        _advance(machine, 1, pickup_success=torch.tensor([True]),
+                 physical_grasp=torch.tensor([True]), target_lift=torch.tensor([0.051]))
+        self.assertEqual(int(machine.stage[0]), STAGE_PLACEMENT)
+        self.assertAlmostEqual(float(machine.handoff_lift[0]), .051, places=6)
+
     def test_release_in_progress_is_not_a_carry_loss(self):
         """The §7.8 trap: a conjunct of success used as a terminal condition."""
 

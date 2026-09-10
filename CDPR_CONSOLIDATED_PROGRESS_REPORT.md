@@ -29,13 +29,13 @@ whole change map is now implemented and unit-tested locally — the scene/yaw
 contract, the continuous three-stage recorder, teacher screening, the dataset
 builder, the prior refresh and SFT changes, and the unassisted full-task
 evaluation. See §7.12. **Update from the supplied remote screens:** scene
-generation and teacher screening have now run. The latest run, on `70af67d`,
-stopped at pickup: 3 entered, 1 grasped, 0 lifted; full-chain confirmation was
-not reached. After the controller-floor and teacher-routing fixes, review found
-that yaw alignment still handed off at its 0.26 m rotation height. A recorded
-descent to the teacher's aligned pickup height is now implemented and tested
-locally; see the newest §14 entry. Its GPU result, a usable full-chain bank and
-SFT remain unverified. The yaw calibration is
+generation and teacher screening have now run. The latest run, on `5370e80`,
+verified pickup handoffs near grasp point + 0.01 m and produced a native
+placement success. That episode was rejected as `carry_interrupted`; accepted
+full-chain yield remains zero and confirmation was not reached. The exact
+contact-loss steps still need inspection from the saved NPZ; an offline audit
+tool and clearer selection reporting are now available. See the newest §14
+entry. A usable full-chain bank and SFT remain unverified. The yaw calibration is
 kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
 **0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
 p90 19.8°, max 25.3°** camera-bearing residual across the ±0.19 m workspace,
@@ -1558,6 +1558,53 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-10 — First native placement after the height fix; rejected for interrupted carry
+
+- Evidence: user console output and the subsequently pasted rejection census
+  from `runs/three_stage/selection_fixed_20260910_200853/teacher_selection.json`,
+  run after `5370e80`. These are remote observations; the NPZ files remain on
+  the user's server.
+- The phase-4 move checkpoint produced two aligned handoffs in its screen,
+  with height p10/median/p90 0.0095/0.0106/0.0116 m above the grasp point.
+  The pickup screen entered two episodes, grasped in both and lifted/handed off
+  one. This supports that the height bridge executes remotely; two trials do
+  not establish reliable pickup yield.
+- Placement `step_2117145` received zero upstream handoffs: its 64 rejections
+  were `chain_did_not_complete`, with 59 move-budget and five alignment-budget
+  failures. It has not been measured on a successful handoff in this screen.
+  Placement `step_2754052` received one handoff and achieved native placement
+  (geometry, release and placement all one), but accepted demonstrations were
+  zero: `carry_interrupted: 1`, `chain_did_not_complete: 63`. The latter had
+  60 move-budget and three alignment-budget failures.
+- `carry_interrupted` means at least one active transport step had a false
+  persistent physical-grasp signal before the first release-threshold step.
+  The predicate requires bilateral contact, force, relative-pose stability and
+  persistence; the signal alone does not identify which condition failed or
+  whether contact loss was transport slip versus the beginning of release.
+  Neither weakening acceptance nor claiming a clean completed demonstration
+  is supported by the console output. The acceptance rule is unchanged.
+- New CPU audit: `tools/audit/inspect_cdpr_staged_rounds.py DIRECTORY` reads the
+  saved rounds, prints native completions and exact rejection reasons, first
+  carry-loss/release steps, handoff lift, and nearby actions/openings/object
+  positions/target-receptacle distances. Initial-state/prior comparisons for
+  rounds with the same move teacher help localize the upstream variation;
+  they do not guarantee deterministic GPU simulation.
+- Selection now prints pooled acceptance/rejection and stage-failure counts.
+  A zero placement-primary score is described as no accepted full-chain
+  demonstration, so a native placement success is not falsely described as
+  no placement success.
+- Separate code defect repaired: pickup-to-placement promotion checked a
+  latched lift success and current grasp, but not CURRENT lift height. It now
+  requires at least 0.05 m at the decision boundary, consistent with final
+  acceptance. This is not the cause of the supplied `carry_interrupted`
+  rejection, and is not presented as its fix.
+- Validation: 31 staged transition/controller, 30 staged dataset/audit and
+  16 selection-regression tests pass locally (**77 total**), including a saved
+  NPZ audit on CPU. Next action is inspecting the existing screen, not another
+  GPU rollout: `conda run --no-capture-output -n cdpr-mjlab python
+  tools/audit/inspect_cdpr_staged_rounds.py
+  runs/three_stage/selection_fixed_20260910_200853` after pulling the changes.
 
 ### 2026-09-10 — Rotation clearance was incorrectly used as the pickup handoff height
 
