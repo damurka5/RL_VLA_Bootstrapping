@@ -1,25 +1,28 @@
 #!/usr/bin/env python3
-"""Fit the residual actor to the self-imitation demonstrations.
+"""Fit the residual actor -- and optionally the action-expert LoRA -- to a
+demonstration bank.
 
-Part 4. Reads a ``demonstrations.npz`` written by ``sil_record.py --mode
-dataset`` and trains the residual MLP to reproduce the recorded actions,
-starting from the RL checkpoint that generated them.
+Reads a ``demonstrations.npz`` written by ``sil_record.py --mode dataset`` or
+by ``build_cdpr_staged_sft_dataset.py``, and trains the residual MLP to
+reproduce the recorded actions, starting from a chosen initialization.
 
 
-What this trains, and what it cannot
-------------------------------------
+What this trains
+----------------
 
-The policy is a frozen SmolVLA prior, a trainable residual MLP, and LoRA on
-the action expert. This trains the **residual only**. The LoRA lives on the
-SmolVLA runtime and updating it needs gradients through the vision tower,
-which needs the 256x256 camera frames -- and the dataset stores the pooled
-512-wide vision feature, not the images (~37 MB per round against ~5.0 GB).
+The policy is a frozen SmolVLA prior, a trainable residual MLP, and LoRA on the
+action expert (and, when asked, on the vision tower). Stage (a) trains the
+**residual only**, from the stored ``state``/``prior`` columns. Stage (b) runs
+only when ``--frames`` is given: it re-derives the prior from the pictures
+through a grad-carrying SmolVLA forward and trains the LoRA with the residual
+tracking it. The module header used to say "residual only" flatly; that has
+been stale since ``train_lora_stage`` was added, and the distinction decides
+whether the vision tower moves.
 
-That is not a silent omission. The source checkpoint's ``vla_lora`` tensors
-are copied verbatim into the output, because the trainer that writes these
-checkpoints warns that dropping them makes a resumed phase restart from a
-zero adapter and throw away every step of VLA adaptation. The saved file is a
-complete policy: new residual, original LoRA.
+When no LoRA stage runs, the source checkpoint's ``vla_lora`` tensors are
+copied verbatim into the output, because dropping them makes a resumed phase
+restart from a zero adapter and throw away every step of VLA adaptation. The
+saved file is a complete policy either way.
 
 
 The algebra, which decides the loss
@@ -72,6 +75,31 @@ Held out by EPISODE, never by row. Decisions from one episode share an
 observation history and are near-duplicates of each other; a random row split
 puts step 3 of an episode in train and step 4 in validation, and the
 validation loss then measures memorization rather than generalization.
+
+For a bank whose episodes share SCENES -- retries of one start, several rollout
+seeds of it, the same chain viewed under two labels -- episode splitting is not
+enough. Two episodes of one scene differ by the policy's sampling noise and
+almost nothing else, so one in train and one in validation is the same
+memorization with extra steps. ``--split-by scene`` holds out whole
+``scene_uid`` groups instead, and is the correct setting for any bank built by
+``build_cdpr_staged_sft_dataset.py``.
+
+
+Sampling
+--------
+
+``--sampler natural`` visits every training row once per epoch, which weights
+each stage by how long it happens to take: a placement carry is ~25 decisions
+against a pickup's ~9, so the carry gets three times the gradient purely from
+duration. ``--sampler balanced`` instead draws destination uniformly, then
+semantic stage uniformly, then object, then a row -- with replacement, so a
+smaller stratum is revisited rather than padded with fake rows.
+
+Balanced sampling changes EXPOSURE, never the recorded episodes: no trajectory
+is truncated and no action is invented. Because it draws with replacement, an
+"epoch" is a number of sampled rows rather than a pass over the data, so the
+report carries the optimizer updates and the supervised action count that
+actually ran.
 """
 
 from __future__ import annotations
@@ -245,6 +273,320 @@ def _reachability(
         "mean_shortfall": round(float(shortfall.mean()), 6),
         "max_shortfall": round(float(shortfall.max()), 6),
     }
+
+
+
+
+def _scene_split(
+    scene_uid: np.ndarray, *, val_fraction: float, seed: int
+) -> tuple[np.ndarray, np.ndarray]:
+    """Hold out whole SCENES, not whole episodes.
+
+    ``_episode_split`` groups individual episode ids, which is right for a bank
+    where each episode is an independent start. It is not enough for a staged
+    bank: retries, extra rollout seeds and the relabelled views of one chain all
+    share a ``scene_uid``, differ by the policy's sampling noise, and would
+    otherwise land on both sides of the line. The validation number would then
+    be measuring memorization of a start it has already seen.
+    """
+
+    scenes = np.unique(scene_uid)
+    if scenes.size < 2:
+        raise SystemExit(
+            f"The bank holds {scenes.size} distinct scene(s); a scene-level "
+            "split cannot hold anything out. Collect more scenes or pass "
+            "--split-by episode deliberately."
+        )
+    generator = np.random.default_rng(int(seed))
+    shuffled = generator.permutation(scenes)
+    held = max(1, int(round(len(shuffled) * float(val_fraction))))
+    validation = set(shuffled[:held].tolist())
+    is_val = np.array(
+        [uid in validation for uid in scene_uid.tolist()], dtype=bool
+    )
+    return ~is_val, is_val
+
+
+class BalancedRowSampler:
+    """Equal exposure by destination, then stage, then object -- not by length.
+
+    The user's intuition, made precise: draw the destination uniformly, then the
+    semantic stage uniformly, then the object with bounded imbalance, then a
+    valid decision inside that cell. With replacement, so a stratum with fewer
+    rows is revisited instead of padded.
+
+    What this deliberately does NOT do is change the recorded data. The design's
+    rule is that a chain with 12 move, 9 pickup and 25 placement decisions keeps
+    all 46 -- truncating placement to nine, repeating the last frame, or padding
+    pickup with invented actions would all "balance" the bank by corrupting it.
+    Repeated draws are exposure, not new demonstrations, and the report keeps
+    the raw and effective counts apart.
+
+    An empty stratum is an ERROR. Silently replacing a missing (bowl, pick_up)
+    cell with plate rows produces a run that trains on one destination while
+    every log says two.
+    """
+
+    def __init__(
+        self,
+        dataset: Mapping[str, np.ndarray],
+        rows: np.ndarray,
+        *,
+        seed: int,
+        stage_column: str = "stage_name",
+        destination_column: str = "destination",
+        object_column: str = "target_catalog",
+    ) -> None:
+        missing = [
+            name
+            for name in (stage_column, destination_column, object_column)
+            if name not in dataset
+        ]
+        if missing:
+            raise SystemExit(
+                f"--sampler balanced needs the columns {missing}, which this "
+                "bank does not carry. It is written by "
+                "build_cdpr_staged_sft_dataset.py; an older demonstrations.npz "
+                "must use --sampler natural."
+            )
+        self.generator = np.random.default_rng(int(seed))
+        index = np.flatnonzero(np.asarray(rows, dtype=bool))
+        if index.size == 0:
+            raise SystemExit("The balanced sampler was given no rows.")
+        destinations = np.unique(dataset[destination_column][index])
+        stages = np.unique(dataset[stage_column][index])
+        self.cells: list[tuple[str, str, list[np.ndarray]]] = []
+        self.census: dict[str, int] = {}
+        empty: list[str] = []
+        for destination in destinations:
+            for stage in stages:
+                mask = (dataset[destination_column][index] == destination) & (
+                    dataset[stage_column][index] == stage
+                )
+                cell = index[mask]
+                name = f"{destination}/{stage}"
+                self.census[name] = int(cell.size)
+                if cell.size == 0:
+                    empty.append(name)
+                    continue
+                objects = [
+                    cell[dataset[object_column][cell] == value]
+                    for value in np.unique(dataset[object_column][cell])
+                ]
+                self.cells.append((str(destination), str(stage), objects))
+        if empty:
+            raise SystemExit(
+                f"Empty strata {empty}. A balanced sampler cannot draw from a "
+                "cell with no rows, and substituting another cell would train "
+                "on a composition nothing reports. Collect the missing "
+                "material or narrow --sampler-destinations / --sampler-stages."
+            )
+        self.rows = index
+
+    def draw(self, count: int) -> np.ndarray:
+        cell_choice = self.generator.integers(len(self.cells), size=int(count))
+        picked = np.empty((int(count),), dtype=np.int64)
+        for position, cell_index in enumerate(cell_choice.tolist()):
+            _, _, objects = self.cells[cell_index]
+            bucket = objects[self.generator.integers(len(objects))]
+            picked[position] = int(
+                bucket[self.generator.integers(bucket.size)]
+            )
+        return picked
+
+    def report(self) -> dict[str, Any]:
+        return {
+            "cells": len(self.cells),
+            "rows_available": int(self.rows.size),
+            "rows_by_cell": dict(sorted(self.census.items())),
+        }
+
+
+class RetentionMixer:
+    """A declared share of each batch drawn from the original-label bank.
+
+    Retention is a REQUIREMENT here, not a regularizer: the campaign's four
+    instruction families are served by one policy, and a full-task SFT that
+    saw only relabelled ``put_into`` rows would erase the others. Phase 3
+    measured exactly that -- pick_up went to 0.000, not "degraded", because it
+    was excluded from the SFT mix.
+
+    The fraction is a starting experiment and is reported as realized counts,
+    because a mixer that silently cannot supply its share is the same class of
+    bug as the composed-fraction sweep that realized 0.981 three times.
+    """
+
+    def __init__(
+        self,
+        retention: Mapping[str, np.ndarray] | None,
+        *,
+        fraction: float,
+        seed: int,
+    ) -> None:
+        self.retention = retention
+        self.fraction = min(1.0, max(0.0, float(fraction)))
+        self.generator = np.random.default_rng(int(seed) + 977)
+        if self.retention is not None and self.fraction <= 0.0:
+            raise SystemExit(
+                "A retention bank was supplied with --retention-fraction 0. "
+                "Either drop the bank or ask for a share of it."
+            )
+        if self.retention is None and self.fraction > 0.0:
+            raise SystemExit(
+                "--retention-fraction is positive but no --retention-dataset "
+                "was given. Retention cannot come from the full-task bank: "
+                "every row of it carries a put_into label."
+            )
+        self.drawn = 0
+
+    @property
+    def active(self) -> bool:
+        return self.retention is not None and self.fraction > 0.0
+
+    def split_counts(self, batch: int) -> tuple[int, int]:
+        if not self.active:
+            return int(batch), 0
+        retained = int(round(int(batch) * self.fraction))
+        return int(batch) - retained, retained
+
+    def draw(self, count: int) -> np.ndarray:
+        if count <= 0 or not self.active:
+            return np.empty((0,), dtype=np.int64)
+        total = int(self.retention["state"].shape[0])
+        self.drawn += int(count)
+        return self.generator.integers(total, size=int(count)).astype(np.int64)
+
+
+def per_group_metrics(
+    actor: Any,
+    torch: Any,
+    *,
+    dataset: Mapping[str, np.ndarray],
+    rows: np.ndarray,
+    state: Any,
+    prior: Any,
+    action: Any,
+    mask: Any,
+    batch_size: int,
+    column: str,
+) -> dict[str, Any]:
+    """Validation loss broken out by a categorical column.
+
+    A single validation MSE cannot say WHERE a bank is failing to fit, and the
+    three stages of a chain have very different action statistics: the approach
+    is smooth XY, the grasp is a gripper step, the carry is a long traverse with
+    a release at the end. A pooled number that improves while the release gets
+    worse looks exactly like a number that improves.
+    """
+
+    if column not in dataset:
+        return {}
+    labels = dataset[column][rows]
+    out: dict[str, Any] = {}
+    for name in np.unique(labels):
+        selected = np.flatnonzero(labels == name)
+        if selected.size == 0:
+            continue
+        index = torch.as_tensor(selected, dtype=torch.int64, device=state.device)
+        metrics = _evaluate(
+            actor,
+            torch,
+            state=state.index_select(0, index),
+            prior=prior.index_select(0, index),
+            action=action.index_select(0, index),
+            mask=mask.index_select(0, index),
+            batch_size=int(batch_size),
+        )
+        out[str(name)] = {"rows": int(selected.size), **metrics}
+    return out
+
+
+def per_group_reachability(
+    dataset: Mapping[str, np.ndarray],
+    rows: np.ndarray,
+    *,
+    residual_scale: float,
+    column: str,
+) -> dict[str, Any]:
+    """Target reachability by group, and by action axis inside each group.
+
+    A relabelled prefix can sit outside the residual's bounded correction range
+    even when the pooled fraction looks fine: the move-to prefix is now
+    conditioned on a placement prompt, and the prior it gets under that prompt
+    is a different prediction than the one that produced the recorded action.
+    Reported per axis because "unreachable" almost always means one axis --
+    typically the gripper or Z -- rather than a diffuse gap.
+    """
+
+    if column not in dataset:
+        return {}
+    labels = dataset[column][rows]
+    prior = dataset["prior"][rows]
+    action = dataset["action"][rows]
+    mask = dataset["action_mask"][rows]
+    out: dict[str, Any] = {}
+    axes = ("x", "y", "z", "yaw", "gripper")
+    for name in np.unique(labels):
+        selected = labels == name
+        entry = _reachability(
+            prior[selected],
+            action[selected],
+            mask[selected],
+            residual_scale=residual_scale,
+        )
+        slots = action.shape[1]
+        low = np.tanh(prior[selected][:, :slots] - float(residual_scale))
+        high = np.tanh(prior[selected][:, :slots] + float(residual_scale))
+        reachable = (
+            action[selected] >= low - 1e-6
+        ) & (action[selected] <= high + 1e-6)
+        live = mask[selected]
+        entry["by_axis"] = {
+            axes[axis]: round(
+                float(reachable[..., axis][live].mean()), 5
+            )
+            for axis in range(min(len(axes), action.shape[-1]))
+            if live.any()
+        }
+        out[str(name)] = entry
+    return out
+
+
+def refuse_stale_priors(dataset_path: Path, *, allow: bool) -> dict[str, Any]:
+    """A relabelled bank whose priors were never refreshed is not trainable.
+
+    ``build_cdpr_staged_sft_dataset.py`` rewrites the instruction on every row
+    of a chain, including its move-to prefix, but ``state`` and ``prior`` were
+    computed under the TEACHERS' prompts and adapters. Training on that pair
+    fits the residual to correct a prediction the student will never make, and
+    nothing about the loss curve says so. ``sil_refresh_priors.py`` clears the
+    marker; this refuses the run until it has.
+    """
+
+    report = dataset_path.parent / "dataset.json"
+    if not report.is_file():
+        return {}
+    try:
+        payload = json.loads(report.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not bool(payload.get("priors_stale")):
+        return payload
+    if allow:
+        print(
+            "[sft] WARNING: this bank is marked priors_stale and "
+            "--allow-stale-priors was passed. The residual is being fitted "
+            "against priors drawn under the teachers' prompts.",
+            flush=True,
+        )
+        return payload
+    raise SystemExit(
+        f"{report} marks this bank priors_stale: "
+        f"{payload.get('priors_stale_reason')}\n"
+        "Run tools/audit/sil_refresh_priors.py with the student "
+        "initialization first, or pass --allow-stale-priors to train on the "
+        "teachers' priors deliberately."
+    )
 
 
 # --------------------------------------------------------------------------
@@ -444,6 +786,109 @@ def resolve_frame_rows(
         keep[row] = True
         lookups.append((stem, int(decision), int(column)))
     return keep, lookups
+
+
+def load_frame_meta_by_uid(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
+    """Index staged frames files by the EPISODE ID they carry.
+
+    The positional convention -- parse a world number out of a uid, look it up
+    in ``world_index``, hope the file stem matches -- worked, but its failure
+    mode is silence: the first version of that join matched 0 of 33 102 rows
+    after a whole harvest had been paid for, because two writers spelled the
+    same episode differently. A staged frames file carries the episode ids
+    themselves, so the join is an identity comparison and a miss is a miss
+    rather than a naming disagreement.
+
+    Nothing is decompressed here; only the id array and the decision count.
+    """
+
+    index: dict[str, dict[str, Any]] = {}
+    for path in paths:
+        with np.load(path, allow_pickle=False) as data:
+            if "episode_uid" not in data.files:
+                raise SystemExit(
+                    f"{path} carries no episode_uid array, so it cannot be "
+                    "joined by explicit id. Use the positional join "
+                    "(load_frame_meta) for frames written by sil_record."
+                )
+            uids = [str(value) for value in data["episode_uid"]]
+            decisions = (
+                int(data["decisions"])
+                if "decisions" in data.files
+                else int(_npz_member_shape(Path(path), "overview")[0])
+            )
+        for column, uid in enumerate(uids):
+            if uid in index:
+                raise SystemExit(
+                    f"Episode {uid!r} appears in two frames files "
+                    f"({index[uid]['path']} and {path}). One of them would "
+                    "silently win and half the bank would be paired with the "
+                    "wrong pictures."
+                )
+            index[uid] = {
+                "path": str(path),
+                "column": int(column),
+                "decisions": int(decisions),
+            }
+    return index
+
+
+def resolve_frame_rows_by_uid(
+    episode_uid: np.ndarray,
+    decision_index: np.ndarray,
+    frames: Mapping[str, Mapping[str, Any]],
+) -> tuple[np.ndarray, list[tuple[str, int, int]]]:
+    """Map each row to (frames path, decision, world column) by explicit id.
+
+    Returns the same shape ``resolve_frame_rows`` does -- a keep mask and the
+    lookups for the kept rows -- so ``materialize_frames`` is unchanged. The
+    key in each lookup is the FILE PATH rather than a derived stem, because
+    there is no stem convention left to get wrong.
+    """
+
+    keep = np.zeros(episode_uid.shape[0], dtype=bool)
+    lookups: list[tuple[str, int, int]] = []
+    for row, (uid, decision) in enumerate(zip(episode_uid, decision_index)):
+        entry = frames.get(str(uid))
+        if entry is None or int(decision) >= int(entry["decisions"]):
+            continue
+        keep[row] = True
+        lookups.append((str(entry["path"]), int(decision), int(entry["column"])))
+    return keep, lookups
+
+
+def materialize_frames_by_path(
+    lookups: Sequence[tuple[str, int, int]], rows: Sequence[int]
+) -> tuple[np.ndarray, np.ndarray]:
+    """``materialize_frames`` for lookups keyed by file path.
+
+    Same one-pass-per-file discipline: a file is decompressed once, every
+    selected row it holds is taken, and it is released. Peak host memory is one
+    file plus the result.
+    """
+
+    if not rows:
+        empty = np.zeros((0, 0, 0, 3), dtype=np.uint8)
+        return empty, empty.copy()
+    wanted: dict[str, list[tuple[int, int, int]]] = {}
+    for position, row in enumerate(rows):
+        path, decision, column = lookups[row]
+        wanted.setdefault(path, []).append((position, decision, column))
+    overview: np.ndarray | None = None
+    wrist: np.ndarray | None = None
+    for path, items in wanted.items():
+        with np.load(path, allow_pickle=False) as data:
+            source_overview = data["overview"]
+            source_wrist = data["wrist"]
+            if overview is None:
+                shape = (len(rows),) + tuple(source_overview.shape[2:])
+                overview = np.empty(shape, dtype=source_overview.dtype)
+                wrist = np.empty(shape, dtype=source_wrist.dtype)
+            for position, decision, column in items:
+                overview[position] = source_overview[decision, column]
+                wrist[position] = source_wrist[decision, column]
+            del source_overview, source_wrist
+    return overview, wrist
 
 
 def projected_frame_bytes(
@@ -823,6 +1268,7 @@ def train_lora_stage(
     seed: int,
     actor_lr: float,
     show_progress: bool = False,
+    sampler_mode: str = "natural",
 ) -> dict[str, Any]:
     """Fit LoRA + residual through a grad-carrying SmolVLA forward.
 
@@ -921,6 +1367,21 @@ def train_lora_stage(
     best_state: dict[str, Any] | None = None
 
     train_rows = np.flatnonzero(rows_train)
+    # The SAME sampling rule as the residual stage. Two stages of one run
+    # drawing from two different distributions would make the second stage's
+    # contribution impossible to attribute: the design's requirement is
+    # identical sampling logic in both training paths.
+    stage_sampler = (
+        BalancedRowSampler(dataset, rows_train, seed=int(seed))
+        if str(sampler_mode) == "balanced"
+        else None
+    )
+    if stage_sampler is not None:
+        print(
+            f"[sft][lora] balanced sampler over the frame budget: "
+            f"{stage_sampler.report()}",
+            flush=True,
+        )
     lora_bar = progress_iter(
         range(int(epochs)),
         total=int(epochs),
@@ -929,7 +1390,11 @@ def train_lora_stage(
         enabled=show_progress,
     )
     for epoch in lora_bar:
-        picked = generator.permutation(train_rows)
+        picked = (
+            generator.permutation(train_rows)
+            if stage_sampler is None
+            else stage_sampler.draw(int(train_rows.size))
+        )
         running = 0.0
         batches = 0
         lora_starts = list(range(0, picked.size, int(microbatch)))
@@ -1046,6 +1511,71 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--val-fraction", type=float, default=0.1)
     parser.add_argument("--seed", type=int, default=20260815)
     parser.add_argument(
+        "--split-by",
+        choices=("episode", "scene"),
+        default="episode",
+        help=(
+            "What the held-out unit is. 'episode' is right when each episode "
+            "is an independent start. 'scene' is REQUIRED for a bank whose "
+            "episodes share starts -- retries, extra rollout seeds, relabelled "
+            "views -- because two rollouts of one scene differ by sampling "
+            "noise and splitting between them measures memorization."
+        ),
+    )
+    parser.add_argument(
+        "--sampler",
+        choices=("natural", "balanced"),
+        default="natural",
+        help=(
+            "'natural' visits every training row once per epoch, which weights "
+            "each stage by how long it takes. 'balanced' draws destination, "
+            "then semantic stage, then object uniformly, with replacement. "
+            "Balancing changes EXPOSURE only: no episode is truncated and no "
+            "action is invented."
+        ),
+    )
+    parser.add_argument(
+        "--steps-per-epoch",
+        type=int,
+        default=0,
+        help=(
+            "Optimizer steps per epoch under --sampler balanced. 0 means as "
+            "many as a natural pass would take, so the two samplers are "
+            "compared at a matched optimizer budget."
+        ),
+    )
+    parser.add_argument(
+        "--retention-dataset",
+        type=Path,
+        default=None,
+        help=(
+            "Original-label move/pickup/placement successes, mixed in at "
+            "--retention-fraction. Retention cannot come from the full-task "
+            "bank: every row of that carries a put_into label, and a run "
+            "trained on it alone erases the other instructions -- measured, "
+            "pick_up went to exactly 0.000 when it was left out of a mix."
+        ),
+    )
+    parser.add_argument(
+        "--retention-fraction",
+        type=float,
+        default=0.0,
+        help=(
+            "Share of each batch drawn from --retention-dataset. The design's "
+            "starting point is 0.2 against 0.8 full-task; it is an experiment "
+            "to report, not a proven optimum."
+        ),
+    )
+    parser.add_argument(
+        "--allow-stale-priors",
+        action="store_true",
+        help=(
+            "Train on a bank whose dataset.json still marks its priors stale. "
+            "A relabelled bank's state/prior were computed under the teachers' "
+            "prompts; sil_refresh_priors.py exists to fix that."
+        ),
+    )
+    parser.add_argument(
         "--instructions",
         nargs="*",
         default=[],
@@ -1160,7 +1690,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
 
-    dataset = _load_dataset(args.dataset.expanduser().resolve())
+    dataset_path = args.dataset.expanduser().resolve()
+    bank_report = refuse_stale_priors(
+        dataset_path, allow=bool(args.allow_stale_priors)
+    )
+    dataset = _load_dataset(dataset_path)
     rows = _filter_instructions(dataset, list(args.instructions or []))
     if not rows.any():
         raise SystemExit("The instruction filter selected no rows.")
@@ -1188,11 +1722,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         residual_scale=residual_scale,
     )
 
-    train_rows, val_rows = _episode_split(
-        dataset["episode_uid"],
-        val_fraction=float(args.val_fraction),
-        seed=int(args.seed),
-    )
+    if str(args.split_by) == "scene":
+        if "scene_uid" not in dataset:
+            raise SystemExit(
+                "--split-by scene needs a scene_uid column. It is written by "
+                "build_cdpr_staged_sft_dataset.py; an older bank has only "
+                "episode ids and must use --split-by episode."
+            )
+        train_rows, val_rows = _scene_split(
+            dataset["scene_uid"],
+            val_fraction=float(args.val_fraction),
+            seed=int(args.seed),
+        )
+    else:
+        train_rows, val_rows = _episode_split(
+            dataset["episode_uid"],
+            val_fraction=float(args.val_fraction),
+            seed=int(args.seed),
+        )
+    if "scene_uid" in dataset:
+        # Explicit, because it is the failure this split exists to prevent and
+        # a silent overlap looks like an unusually good validation curve.
+        shared = set(dataset["scene_uid"][train_rows].tolist()) & set(
+            dataset["scene_uid"][val_rows].tolist()
+        )
+        if shared and str(args.split_by) == "scene":
+            raise SystemExit(
+                f"{len(shared)} scenes appear on both sides of a scene split."
+            )
+        scene_leakage = len(shared)
+    else:
+        scene_leakage = None
 
     def tensors(mask: np.ndarray) -> tuple[Any, Any, Any, Any]:
         return (
@@ -1208,6 +1768,60 @@ def main(argv: Sequence[str] | None = None) -> int:
     tr_state, tr_prior, tr_action, tr_mask = tensors(train_rows)
     va_state, va_prior, va_action, va_mask = tensors(val_rows)
     slots = int(tr_action.shape[1])
+
+    retention = None
+    if args.retention_dataset is not None:
+        retention = _load_dataset(args.retention_dataset.expanduser().resolve())
+        if int(retention["state"].shape[-1]) != state_dim:
+            raise SystemExit(
+                f"The retention bank carries "
+                f"{retention['state'].shape[-1]}-wide states against the "
+                f"checkpoint's {state_dim}. The two banks were recorded under "
+                "different observation layouts and cannot be mixed."
+            )
+        if int(retention["action"].shape[1]) != slots:
+            raise SystemExit(
+                "The retention bank supervises "
+                f"{retention['action'].shape[1]} action slots against the "
+                f"full-task bank's {slots}."
+            )
+        if "scene_uid" in retention and "scene_uid" in dataset:
+            overlap = set(retention["scene_uid"].tolist()) & set(
+                dataset["scene_uid"].tolist()
+            )
+            if overlap:
+                raise SystemExit(
+                    f"{len(overlap)} scenes appear in BOTH the full-task bank "
+                    "and the retention bank. A shared scene must stay on one "
+                    "side of the split across both views."
+                )
+    mixer = RetentionMixer(
+        retention, fraction=float(args.retention_fraction), seed=int(args.seed)
+    )
+    if mixer.active:
+        ret_state = torch.as_tensor(
+            retention["state"], dtype=torch.float32, device=device
+        )
+        ret_prior = torch.as_tensor(
+            retention["prior"], dtype=torch.float32, device=device
+        )
+        ret_action = torch.as_tensor(
+            retention["action"], dtype=torch.float32, device=device
+        )
+        ret_mask = torch.as_tensor(retention["action_mask"], device=device)
+
+    # Dataset row -> position in the training tensors, so a sampler that thinks
+    # in dataset rows can index the tensors that were gathered from them.
+    train_positions = np.full((int(train_rows.shape[0]),), -1, dtype=np.int64)
+    train_positions[np.flatnonzero(train_rows)] = np.arange(
+        int(train_rows.sum()), dtype=np.int64
+    )
+    sampler = None
+    sampler_report: dict[str, Any] | None = None
+    if str(args.sampler) == "balanced":
+        sampler = BalancedRowSampler(dataset, train_rows, seed=int(args.seed))
+        sampler_report = sampler.report()
+        print(f"[sft] balanced sampler: {sampler_report}", flush=True)
 
     actor = _build_actor(payload, device)
     optimizer = torch.optim.AdamW(
@@ -1259,6 +1873,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         leave=True,
         enabled=show_progress,
     )
+    # An "epoch" under replacement sampling is a number of SAMPLED rows, not a
+    # pass over the data, so the two counters below are reported rather than
+    # inferred from the epoch count.
+    natural_batches = max(
+        1,
+        (int(tr_state.shape[0]) + int(args.batch_size) - 1)
+        // int(args.batch_size),
+    )
+    batches_per_epoch = (
+        natural_batches
+        if sampler is None or int(args.steps_per_epoch) <= 0
+        else int(args.steps_per_epoch)
+    )
+    optimizer_updates = 0
+    supervised_actions = 0
+    retention_rows_drawn = 0
     for epoch in epoch_bar:
         order = torch.randperm(
             int(tr_state.shape[0]), generator=generator
@@ -1266,6 +1896,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         running = 0.0
         batches = 0
         starts = list(range(0, int(order.numel()), int(args.batch_size)))
+        if sampler is not None:
+            starts = list(range(batches_per_epoch))
         for start in progress_iter(
             starts,
             total=len(starts),
@@ -1273,13 +1905,44 @@ def main(argv: Sequence[str] | None = None) -> int:
             leave=False,
             enabled=show_progress,
         ):
-            index = order[start : start + int(args.batch_size)]
-            out = actor(
-                tr_state.index_select(0, index),
-                tr_prior.index_select(0, index),
-            )[:, :slots]
+            main_count, retained_count = mixer.split_counts(
+                int(args.batch_size)
+            )
+            if sampler is None:
+                index = order[start : start + main_count]
+            else:
+                drawn = sampler.draw(main_count)
+                positions = train_positions[drawn]
+                index = torch.as_tensor(
+                    positions, dtype=torch.int64, device=device
+                )
+            batch_state = tr_state.index_select(0, index)
+            batch_prior = tr_prior.index_select(0, index)
             target = tr_action.index_select(0, index)
-            weight = tr_mask.index_select(0, index).unsqueeze(-1).float()
+            weight_mask = tr_mask.index_select(0, index)
+            if retained_count > 0:
+                # Concatenated rather than alternated, so every optimizer step
+                # sees both distributions. Alternating batches would let the
+                # last batch of an epoch decide which one the step ends on.
+                retained = mixer.draw(retained_count)
+                retention_rows_drawn += int(retained.size)
+                keep = torch.as_tensor(
+                    retained, dtype=torch.int64, device=device
+                )
+                batch_state = torch.cat(
+                    [batch_state, ret_state.index_select(0, keep)], dim=0
+                )
+                batch_prior = torch.cat(
+                    [batch_prior, ret_prior.index_select(0, keep)], dim=0
+                )
+                target = torch.cat(
+                    [target, ret_action.index_select(0, keep)], dim=0
+                )
+                weight_mask = torch.cat(
+                    [weight_mask, ret_mask.index_select(0, keep)], dim=0
+                )
+            out = actor(batch_state, batch_prior)[:, :slots]
+            weight = weight_mask.unsqueeze(-1).float()
             residual = (out - target) * weight
             denominator = weight.sum().clamp_min(1.0) * float(target.shape[-1])
             if str(args.loss) == "l1":
@@ -1291,6 +1954,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             optimizer.step()
             running += float(loss.item())
             batches += 1
+            optimizer_updates += 1
+            supervised_actions += int(weight_mask.sum().item())
 
         train_metrics = _evaluate(
             actor, torch, state=tr_state, prior=tr_prior, action=tr_action,
@@ -1514,6 +2179,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             microbatch=int(args.lora_microbatch),
             seed=int(args.seed),
             actor_lr=float(args.lora_actor_lr) or float(args.lr) / 10.0,
+            sampler_mode=str(args.sampler),
         )
         lora_report["frame_state_integrity"] = integrity
         lora_report["rows_with_frames"] = int(found.sum())
@@ -1561,10 +2227,83 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
 
+    # Per-stage and per-destination validation, taken on the BEST residual
+    # rather than on whatever the last epoch left behind. A pooled MSE that
+    # improves while the release gets worse looks exactly like a pooled MSE
+    # that improves, and the three stages of a chain have very different action
+    # statistics.
+    per_stage: dict[str, Any] = {}
+    if best_policy_state is not None:
+        restored = _build_actor(payload, device)
+        restored.load_state_dict(
+            {
+                key[len("actor.") :]: value
+                for key, value in best_policy_state.items()
+                if key.startswith("actor.")
+            },
+            strict=True,
+        )
+        val_index = np.flatnonzero(val_rows)
+        for column in ("stage_name", "destination", "target_catalog"):
+            per_stage[f"val_by_{column}"] = per_group_metrics(
+                restored,
+                torch,
+                dataset=dataset,
+                rows=val_index,
+                state=va_state,
+                prior=va_prior,
+                action=va_action,
+                mask=va_mask,
+                batch_size=int(args.batch_size),
+                column=column,
+            )
+    reach_by_group = {
+        f"reachability_by_{column}": per_group_reachability(
+            dataset,
+            np.flatnonzero(train_rows),
+            residual_scale=residual_scale,
+            column=column,
+        )
+        for column in ("stage_name", "destination")
+    }
+
     report = {
         "dataset": str(args.dataset),
         "source_checkpoint": str(args.checkpoint),
         "lora": lora_report,
+        "bank_report": bank_report or None,
+        "split_by": str(args.split_by),
+        "scene_leakage": scene_leakage,
+        "sampler": str(args.sampler),
+        "sampler_report": sampler_report,
+        "batches_per_epoch": int(batches_per_epoch),
+        "optimizer_updates": int(optimizer_updates),
+        "supervised_actions_sampled": int(supervised_actions),
+        "retention": {
+            "dataset": (
+                None
+                if args.retention_dataset is None
+                else str(args.retention_dataset)
+            ),
+            "requested_fraction": float(args.retention_fraction),
+            "rows_drawn": int(retention_rows_drawn),
+            "realized_fraction": (
+                round(
+                    float(retention_rows_drawn)
+                    / max(
+                        float(
+                            optimizer_updates * int(args.batch_size)
+                        ),
+                        1.0,
+                    ),
+                    4,
+                )
+                if retention_rows_drawn
+                else 0.0
+            ),
+        },
+        "per_stage": per_stage,
+        **reach_by_group,
         "instructions": list(args.instructions or []),
         "residual_scale": residual_scale,
         "state_dim": state_dim,
@@ -1592,6 +2331,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         f"{output / 'sil_sft_adapter.pt'}",
         flush=True,
     )
+    print(
+        f"[sft] {optimizer_updates} optimizer updates over "
+        f"{supervised_actions} sampled supervised actions "
+        f"(sampler={args.sampler}, split_by={args.split_by})",
+        flush=True,
+    )
+    if per_stage.get("val_by_stage_name"):
+        print(
+            f"[sft] val by stage: {per_stage['val_by_stage_name']}", flush=True
+        )
+    if reach_by_group.get("reachability_by_stage_name"):
+        print(
+            "[sft] reachability by stage: "
+            f"{ {name: entry['reachable_fraction'] for name, entry in reach_by_group['reachability_by_stage_name'].items()} }",
+            flush=True,
+        )
     return 0
 
 

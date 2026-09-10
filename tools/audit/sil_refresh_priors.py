@@ -53,7 +53,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 
 import numpy as np
 
@@ -66,9 +66,12 @@ from tools.audit.sil_sft import (  # noqa: E402
     build_runtime_and_trainer,
     check_recomputed_vision,
     load_frame_meta,
+    load_frame_meta_by_uid,
     materialize_frames,
+    materialize_frames_by_path,
     recompute_state_and_prior,
     resolve_frame_rows,
+    resolve_frame_rows_by_uid,
 )
 
 
@@ -103,6 +106,60 @@ def group_rows_by_file(
         key = lookups[budget_position[int(row)]][0]
         grouped.setdefault(key, []).append(int(row))
     return grouped
+
+
+def _frames_carry_uids(paths: Sequence[Path]) -> bool:
+    """Do ALL the frames files carry episode ids? Half is not enough.
+
+    A mixed set would silently fall back to the positional join for every file,
+    including the ones that could have been joined exactly -- so the answer has
+    to be about the whole set.
+    """
+
+    for path in paths:
+        with np.load(path, allow_pickle=False) as data:
+            if "episode_uid" not in data.files:
+                return False
+    return True
+
+
+def check_final_prompt(
+    dataset: Mapping[str, Any], *, prefix: str
+) -> dict[str, Any]:
+    """One instruction per chain, and it is the student's final one.
+
+    Two distinct failures, both silent afterwards. A chain whose rows carry
+    different instructions was never relabelled as a unit, so its move-to
+    prefix would be refreshed under "move to apple" while its carry is
+    refreshed under "put apple into plate" -- and the SFT would then be fitting
+    a single residual to two different conditioning distributions. A chain
+    whose instruction still starts with the teacher's wording was not
+    relabelled at all.
+    """
+
+    texts = dataset.get("instruction_text")
+    uids = dataset.get("episode_uid")
+    if texts is None or uids is None:
+        return {"checked": False}
+    violations: list[str] = []
+    for uid in np.unique(uids):
+        distinct = np.unique(texts[uids == uid])
+        if distinct.size != 1:
+            violations.append(
+                f"{uid}: {distinct.size} distinct instructions "
+                f"{list(distinct[:3])}"
+            )
+        elif prefix and not str(distinct[0]).startswith(prefix):
+            violations.append(f"{uid}: {distinct[0]!r} lacks {prefix!r}")
+    return {
+        "checked": True,
+        "prefix": prefix,
+        "episodes": int(np.unique(uids).size),
+        "distinct_prompts": sorted(
+            {str(value) for value in np.unique(texts)}
+        )[:8],
+        "violations": violations,
+    }
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -140,6 +197,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--final-prompt-prefix",
+        default="put ",
+        help=(
+            "Every row of a relabelled full-task bank must carry the STUDENT's "
+            "final prompt, and every row of one chain must carry the same one. "
+            "A prefix of '' disables the check, which is right for a retention "
+            "bank of original labels and wrong for a put_into bank."
+        ),
+    )
+    parser.add_argument(
         "--min-resolved-fraction",
         type=float,
         default=0.99,
@@ -163,23 +230,53 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "sil_record --mode dataset."
             )
 
-    frames = load_frame_meta(
-        [path.expanduser().resolve() for path in args.frames]
+    # The FINAL-PROMPT check, before a single forward. This tool exists to make
+    # the network-dependent columns agree with the instruction, so a bank whose
+    # instruction is still the teacher's -- or whose rows disagree with each
+    # other inside one chain -- would be refreshed into a consistent-looking
+    # dataset that trains the wrong thing.
+    prompt_report = check_final_prompt(
+        dataset, prefix=str(args.final_prompt_prefix)
     )
-    found, lookups = resolve_frame_rows(
-        dataset["episode_uid"], dataset["decision_index"], frames
-    )
+    if prompt_report.get("violations"):
+        raise SystemExit(
+            "The bank's instruction column is not a single final prompt per "
+            f"chain: {prompt_report['violations'][:3]}. Relabel with "
+            "build_cdpr_staged_sft_dataset.py, or pass --final-prompt-prefix "
+            "'' if this is deliberately an original-label retention bank."
+        )
+
+    frame_paths = [path.expanduser().resolve() for path in args.frames]
+    # Explicit-id join when both sides can do it. The positional join is kept
+    # for banks written by the older recorder, which carry no episode ids in
+    # their frames files.
+    by_uid = "frame_uid" in dataset and _frames_carry_uids(frame_paths)
+    if by_uid:
+        frames = load_frame_meta_by_uid(frame_paths)
+        found, lookups = resolve_frame_rows_by_uid(
+            dataset["episode_uid"], dataset["decision_index"], frames
+        )
+        gather = materialize_frames_by_path
+        required = max(float(args.min_resolved_fraction), 1.0)
+    else:
+        frames = load_frame_meta(frame_paths)
+        found, lookups = resolve_frame_rows(
+            dataset["episode_uid"], dataset["decision_index"], frames
+        )
+        gather = None
+        required = float(args.min_resolved_fraction)
     resolved = np.flatnonzero(found)
     fraction = resolved.size / max(total, 1)
     print(
         f"[refresh] {resolved.size}/{total} rows resolved to a frame "
-        f"({fraction:.4f}) across {len(frames)} files",
+        f"({fraction:.4f}) across {len(frames)} entries, join="
+        f"{'episode_uid' if by_uid else 'positional'}",
         flush=True,
     )
-    if fraction < float(args.min_resolved_fraction):
+    if fraction < required:
         raise SystemExit(
             f"[refresh] only {fraction:.4f} of rows resolved, below "
-            f"{args.min_resolved_fraction}. Re-replay the bank with "
+            f"{required}. Re-replay the bank with "
             "--record-frames --frame-worlds 0 so every kept episode has "
             "pictures, or lower --min-resolved-fraction deliberately."
         )
@@ -213,13 +310,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     # so a row's lookup is at its index within flatnonzero(found).
     budget_position = {int(row): i for i, row in enumerate(resolved)}
     grouped = group_rows_by_file(resolved.tolist(), lookups, budget_position)
+    take = (
+        (lambda positions: gather(lookups, positions))
+        if gather is not None
+        else (lambda positions: materialize_frames(frames, lookups, positions))
+    )
 
     integrity: dict[str, Any] | None = None
     done = 0
     for key in sorted(grouped):
         rows = grouped[key]
-        overview_all, wrist_all = materialize_frames(
-            frames, lookups, [budget_position[row] for row in rows]
+        overview_all, wrist_all = take(
+            [budget_position[row] for row in rows]
         )
         for start in range(0, len(rows), int(args.batch_size)):
             chunk = rows[start : start + int(args.batch_size)]
@@ -319,9 +421,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         if "instruction_text" in refreshed
         else None,
     }
+    report["final_prompt"] = prompt_report
+    report["frame_join"] = "episode_uid" if by_uid else "positional"
     (output / "refresh.json").write_text(
         json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
     )
+    # Carry the source bank's census forward with the stale marker CLEARED, so
+    # sil_sft.py accepts the refreshed copy and still refuses the original.
+    # Writing a fresh dataset.json rather than editing the source in place: the
+    # source is still stale and a later run of this tool must still be able to
+    # tell.
+    source_report = args.dataset.expanduser().resolve().parent / "dataset.json"
+    if source_report.is_file():
+        try:
+            carried = json.loads(source_report.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            carried = {}
+        carried["priors_stale"] = False
+        carried["priors_refreshed_from"] = str(args.dataset)
+        carried["priors_refreshed_with"] = str(args.checkpoint)
+        carried["priors_refresh_report"] = str(output / "refresh.json")
+        (output / "dataset.json").write_text(
+            json.dumps(carried, indent=2, sort_keys=True), encoding="utf-8"
+        )
     print(
         f"[refresh] wrote {output / 'demonstrations.npz'} "
         f"({report['rows_out']} rows, {report['episodes_out']} episodes)",

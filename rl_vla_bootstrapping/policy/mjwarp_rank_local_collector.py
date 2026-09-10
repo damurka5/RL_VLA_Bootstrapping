@@ -2508,6 +2508,320 @@ class BatchedReverseFrontierResetter:
         )
 
 
+# --------------------------------------------------------------------------
+# Full-task scene reset
+# --------------------------------------------------------------------------
+
+# The XML park poses the object slots return to when they are disabled: far
+# outside the desk and every camera frustum, with their collision geoms already
+# switched off. Restated here rather than re-derived so the full-task route
+# disables an unused slot exactly the way the GRPO reset does.
+_PARKED_SLOT_POSITIONS = (
+    (-4.0, -4.0, 4.0),
+    (-4.0, 4.0, 4.0),
+    (4.0, -4.0, 4.0),
+    (4.0, 4.0, 4.0),
+)
+
+
+class FullTaskSceneResetter:
+    """Reset a batch from an explicit scene manifest and nothing else.
+
+    This is the "explicit full-task reset route" of the three-stage design, and
+    it exists because every existing route is owned by something that must not
+    own a demonstration bank.
+
+    ``BatchedReverseFrontierResetter.reset`` reads the approach cap, the shell
+    and the caught fraction out of the restored curriculum, so a scene would be
+    a function of whichever checkpoint happened to be loaded -- and three
+    teachers would then disagree about the geometry of one episode. Its
+    container branch additionally OVERWRITES the end-effector XY with the
+    object's, one centimetre above the grasp point, so a container episode has
+    no approach at all. That branch is correct for the phase-5/6 curriculum and
+    fatal here: the whole point of a full ``put_into`` demonstration is that it
+    starts with the gripper away from the object.
+
+    Nothing about GRPO collection changes. This class is additive, it is
+    selected explicitly by the staged recorder, and ``BatchedReset`` comes out
+    the other side in exactly the shape every existing consumer expects -- so
+    the production predicate, the physical-grasp detector and the observation
+    builder are the same code on this path as on the training path.
+
+    The batch is FLAT: one scene per world, no groups, no broadcast. GRPO's
+    group structure exists so eight candidates can be compared against one
+    start; a demonstration collector wants as many distinct starts as it has
+    worlds.
+    """
+
+    def __init__(
+        self,
+        *,
+        backend: Any,
+        worlds_per_rank: int,
+        support_surface_z: float = 0.15,
+        task_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        self.backend = backend
+        self.worlds_per_rank = int(worlds_per_rank)
+        self.support_surface_z = float(support_surface_z)
+        self.torch = backend.torch
+        self.device = backend.device
+        metadata = dict(task_metadata or {})
+        self.pick_grasp_height_offset = float(
+            metadata.get("pick_grasp_height_offset", 0.0075)
+        )
+        # Instruction-scoped state the production predicate reads. Taken from
+        # the run config's metadata so the demonstration bank and the training
+        # runs share one definition of success.
+        self.plate_radius = float(metadata.get("put_plate_xy_tolerance", 0.091))
+        self.bowl_radius = float(metadata.get("put_bowl_xy_tolerance", 0.057))
+
+    def reset(
+        self,
+        scenes: Sequence[Any],
+        *,
+        instruction_ids: Sequence[int],
+        instruction_texts: Sequence[str],
+        horizons: Sequence[int],
+    ) -> BatchedReset:
+        """Realize one scene per world and return the FINAL-task reset.
+
+        ``instruction_ids`` and ``instruction_texts`` are the episode's final
+        goal -- ``put_into_plate`` / ``put_into_bowl`` -- from env step zero.
+        The persistent observer has to be the placement one: a native reach or
+        pickup success is an event inside the episode, not the episode's
+        verdict, and a task state that starts as ``move_to_object`` and is
+        rewritten at a handoff would lose the grasp history and the lift datum
+        that the placement predicate depends on.
+        """
+
+        torch = self.torch
+        worlds = self.worlds_per_rank
+        if len(scenes) != worlds:
+            raise ValueError(
+                f"{len(scenes)} scenes for {worlds} worlds. The full-task "
+                "route places exactly one scene per world; pad the batch "
+                "explicitly rather than repeating a scene by accident."
+            )
+        if not (len(instruction_ids) == len(instruction_texts) == worlds):
+            raise ValueError("One instruction id and text is required per world.")
+
+        catalogs = torch.tensor(
+            [scene.catalog_ids() for scene in scenes],
+            dtype=torch.int64,
+            device=self.device,
+        )
+        positions = torch.tensor(
+            [_scene_slot_positions(scene) for scene in scenes],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        yaws = torch.tensor(
+            [_scene_slot_yaws(scene) for scene in scenes],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        quaternions = torch.zeros(
+            (worlds, 4, 4), dtype=torch.float32, device=self.device
+        )
+        quaternions[..., 0] = torch.cos(0.5 * yaws)
+        quaternions[..., 3] = torch.sin(0.5 * yaws)
+        ee_positions = torch.tensor(
+            [list(scene.ee_xyz) for scene in scenes],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        ee_yaw = torch.tensor(
+            [float(scene.ee_yaw) for scene in scenes],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        openings = torch.tensor(
+            [float(scene.gripper_opening) for scene in scenes],
+            dtype=torch.float32,
+            device=self.device,
+        )
+
+        all_worlds = torch.arange(
+            worlds, dtype=torch.int64, device=self.device
+        )
+        self.backend.reset_worlds(all_worlds)
+        self.backend.set_object_catalogs(catalogs)
+        self.backend.set_free_body_poses(
+            self.backend.object_body_ids, positions, quaternions
+        )
+        self.backend.set_end_effector_poses(ee_positions, ee_yaw)
+        self.backend.set_gripper_openings(openings)
+        # Twice, exactly as the GRPO reset does: `set_end_effector_poses` runs
+        # its own settle loop and `mjw.forward`, which can nudge a free body
+        # that the gripper was placed on top of.
+        self.backend.set_free_body_poses(
+            self.backend.object_body_ids, positions, quaternions
+        )
+        self.backend.set_visual_variants(
+            torch.tensor(
+                [int(scene.texture_id) for scene in scenes],
+                dtype=torch.int64,
+                device=self.device,
+            ),
+            torch.tensor(
+                [list(scene.background_rgba) for scene in scenes],
+                dtype=torch.float32,
+                device=self.device,
+            ),
+            torch.tensor(
+                [float(scene.shade) for scene in scenes],
+                dtype=torch.float32,
+                device=self.device,
+            ),
+        )
+
+        task_ids = torch.tensor(
+            [int(value) for value in instruction_ids],
+            dtype=torch.int64,
+            device=self.device,
+        )
+        target_slots = torch.zeros(
+            (worlds,), dtype=torch.int64, device=self.device
+        )
+        reference_slots = torch.ones(
+            (worlds,), dtype=torch.int64, device=self.device
+        )
+        second_reference_slots = torch.full(
+            (worlds,), -1, dtype=torch.int64, device=self.device
+        )
+
+        # The lift datum comes from the SETTLED pre-action pose, read back off
+        # the plant, not from the manifest's nominal rest height and not from
+        # any pre-relocation value. Composed recordings have already been
+        # corrupted once by a stale `initial_target_positions`: the placement
+        # reset moved the object and left the datum behind, so the 5 cm lift
+        # test measured against a position the object had never occupied.
+        low_dim = self.backend.low_dim_observations()
+        world_rows = torch.arange(
+            worlds, dtype=torch.int64, device=self.device
+        )
+        settled_target = low_dim.object_positions[world_rows, target_slots]
+        rest_heights = torch.tensor(
+            [
+                OBJECT_VARIANTS[scene.target.catalog].rest_height
+                for scene in scenes
+            ],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        fitted = torch.tensor(
+            [
+                OBJECT_VARIANTS[scene.target.catalog].fitted_gripper_opening
+                for scene in scenes
+            ],
+            dtype=torch.float32,
+            device=self.device,
+        )
+        release_threshold = torch.maximum(
+            torch.full_like(fitted, 0.55), (fitted + 0.04).clamp(max=1.0)
+        )
+
+        task_state = BatchedTaskState(
+            instruction_ids=task_ids,
+            target_slots=target_slots,
+            reference_slots=reference_slots,
+            second_reference_slots=second_reference_slots,
+            initial_target_positions=settled_target.clone(),
+            # Empty hand, no grasp history: this is the whole premise of the
+            # bank and it is asserted rather than assumed by the caller.
+            ever_grasped=torch.zeros(
+                (worlds,), dtype=torch.bool, device=self.device
+            ),
+            grasped=torch.zeros(
+                (worlds,), dtype=torch.bool, device=self.device
+            ),
+            step_count=torch.zeros(
+                (worlds,), dtype=torch.int64, device=self.device
+            ),
+            release_threshold=release_threshold,
+            support_surface_z=torch.full(
+                (worlds,),
+                self.support_surface_z,
+                dtype=torch.float32,
+                device=self.device,
+            ),
+            target_rest_height=rest_heights,
+            peak_lift=torch.zeros(
+                (worlds,), dtype=torch.float32, device=self.device
+            ),
+            release_clearance=torch.full(
+                (worlds,),
+                float("nan"),
+                dtype=torch.float32,
+                device=self.device,
+            ),
+        )
+
+        target_quaternion = low_dim.object_quaternions[world_rows, target_slots]
+        return BatchedReset(
+            instructions=tuple(str(text) for text in instruction_texts),
+            task_state=task_state,
+            group_instruction_ids=task_ids.clone(),
+            group_shell_ids=torch.zeros(
+                (worlds,), dtype=torch.int64, device=self.device
+            ),
+            horizons=torch.tensor(
+                [int(value) for value in horizons],
+                dtype=torch.int64,
+                device=self.device,
+            ),
+            physical_grasp=torch.zeros(
+                (worlds,), dtype=torch.bool, device=self.device
+            ),
+            # Every world is grasp-eligible: the episode's job is to pick the
+            # object up.
+            grasp_eligible=torch.ones(
+                (worlds,), dtype=torch.bool, device=self.device
+            ),
+            bilateral_contact_steps=torch.zeros(
+                (worlds,), dtype=torch.int64, device=self.device
+            ),
+            previous_relative_position=settled_target - low_dim.ee_position,
+            previous_relative_quaternion=_relative_quaternion(
+                low_dim.ee_quaternion, target_quaternion
+            ),
+            target_rest_height=rest_heights.clone(),
+            group_ids=world_rows.clone(),
+            group_target_catalog_ids=torch.tensor(
+                [
+                    int(CATALOG_TO_ID[scene.target.catalog])
+                    for scene in scenes
+                ],
+                dtype=torch.int64,
+                device=self.device,
+            ),
+            prelifted=torch.zeros(
+                (worlds,), dtype=torch.bool, device=self.device
+            ),
+            aligned=torch.zeros(
+                (worlds,), dtype=torch.bool, device=self.device
+            ),
+            curriculum_goal_xyz=None,
+        )
+
+
+def _scene_slot_positions(scene: Any) -> list[list[float]]:
+    """Per-slot XYZ, with unused slots at their XML park poses."""
+
+    rows = [list(pose) for pose in _PARKED_SLOT_POSITIONS]
+    for entry in scene.objects:
+        rows[entry.slot] = [float(entry.xy[0]), float(entry.xy[1]), float(entry.z)]
+    return rows
+
+
+def _scene_slot_yaws(scene: Any) -> list[float]:
+    yaws = [0.0, 0.0, 0.0, 0.0]
+    for entry in scene.objects:
+        yaws[entry.slot] = float(entry.yaw)
+    return yaws
+
+
 @dataclass(frozen=True)
 class CollectorRound:
     records: dict[str, Any]

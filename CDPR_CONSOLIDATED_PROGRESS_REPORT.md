@@ -1,19 +1,43 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — current through 2026-09-09, Europe/Moscow**
+**Living report — current through 2026-09-10, Europe/Moscow**
 
-**Repository state reviewed:** `fd0c73f`
+**Repository state reviewed:** `e56b7fb` (local review; remote run commit not supplied)
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
-**Active user direction, 2026-09-09:** retain GRPO; do not switch to another RL
-algorithm. Develop demonstrations of the shared grasp/lift prefix with plate
-or bowl present and use them to teach the missing transitions. The active
-design is `CDPR_GRPO_DEMONSTRATION_PLAN.md`; the earlier actor–critic proposal
-is superseded. A CPU extractor now creates production-predicate-validated
-pick-up action clips and linked complete placements from existing recordings.
-These are demonstration archives, not ready-to-restore simulator states or
-on-policy GRPO records. Training handoff integration is not yet implemented.
+**Active user direction, 2026-09-10:** complete the entire `put_into` task:
+empty gripper approaches an object, grasps it, carries it to a plate/bowl and
+releases it there. The proposed self-imitation data concatenate pickup and
+placement stages under the final `put_into` instruction. Those stages must be
+physically continuous; a pickup prefix alone is not a completed placement.
+The prior GRPO direction remains the campaign context. The demonstration-start
+training integration now exists locally and the first remote 1M-action pilot
+has completed, with lower final scores on all four families. It trains fresh
+GRPO suffixes, not the proposed full-trajectory imitation dataset. See the
+newest §14 entry for results, evaluation limitations and the next experiment.
+
+**Three-stage collection/SFT specification, 2026-09-10:**
+[`CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`](CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md)
+defines continuous `move_to → pick_up → put_into` demonstrations, with the
+user-confirmed fixed calibrated pickup yaw, stage-balanced SFT sampling and
+full-task evaluation. It includes a provisional teacher shortlist and the
+repository change map.
+
+**Implementation status, 2026-09-10 (same day, later):** the specification's
+whole change map is now implemented and unit-tested locally — the scene/yaw
+contract, the continuous three-stage recorder, teacher screening, the dataset
+builder, the prior refresh and SFT changes, and the unassisted full-task
+evaluation. See §7.12. **No GPU run has been executed against it:** no scene
+manifest, no teacher screen, no bank, no SFT and no evaluation number exists
+yet. The one measurement that does exist is the yaw calibration, which is
+kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
+**0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
+p90 19.8°, max 25.3°** camera-bearing residual across the ±0.19 m workspace,
+with 18.4% of a 7×7 grid inside a 5° band. That number is the measured cost of
+the user-confirmed fixed-yaw choice and is not a reason to change it; it is the
+quantity a later per-position facing mode would be compared against. Teacher
+screening on the new scene/handoff distribution remains the first GPU step.
 
 This is the campaign's canonical high-level progress record. It consolidates the results that are still technically relevant, backed by retained evidence, or used by the current training loop. Failed branches and measurements later shown to be invalid are not presented as achievements. They are named only in §10 so they are not accidentally revived.
 
@@ -36,6 +60,22 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
+**Latest completed experiment, 2026-09-10: demonstration-start GRPO shows no
+ordinary-evaluation improvement.** `demo_grpo_pilot_20260910_110040` completes
+91 updates / 1,005,877 selected actions. Baseline → final: move-to
+**314/400 → 311/400**, pickup **83/328 → 68/328**, configured plate
+**274/456 → 263/456**, bowl **115/352 → 90/352**. All recorded pre-action
+reset poses and compared metadata match exactly. These placement evaluations
+still omit the approach: the gripper starts at the object's XY in every
+container episode. **424/456 plate and 144/352 bowl starts are already inside
+the XY goal radius.** Outside-radius success is **12/32 → 8/32 plate** and
+**15/208 → 13/208 bowl**, over only four and 26 reset groups respectively.
+Retain the donor and candidate as evidence; do not promote or extend this
+configuration on these results. The full user task has not been demonstrated.
+Per-rank demonstration logs, the training-bank manifest and the run's config
+snapshot are still needed to establish assisted gradient coverage and remote
+provenance. See the newest §14 entry and its linked reproducible CPU audit.
+
 **Campaign decision, 2026-09-09: demonstration-guided GRPO is adopted as the
 next implementation direction.** Keep one shared policy and first exceed 70%
 on all four instructions at declared easier fixed settings, then expand
@@ -52,8 +92,9 @@ two variable groups, **712** usable residual rows) and one bowl scene
 **24 nonzero-advantage rows** across those three groups. The previous probe
 supplied four variable plate groups / 1,314 residual rows. These are assisted
 suffix diagnostics, not trained success rates; no weights were updated.
-Training-only demonstrations, broader scene coverage and optimizer integration
-remain pending. See §7.15, the latest §14 entry and
+At that probe stage, training-only demonstrations, broader scene coverage and
+optimizer integration remained pending; the completed pilot above supersedes
+that implementation status. See §7.15, the latest §14 entry and
 `CDPR_GRPO_DEMONSTRATION_PLAN.md`.
 
 **Latest z-offset pilot, diagnostic only:**
@@ -349,7 +390,10 @@ Later results strengthened the family:
 
 Validation and `sil_record` harvest rates are different protocols and must not be plotted as one uninterrupted curve without a protocol marker.
 
-Placement episodes currently begin with the object already held. The current bank therefore teaches carry-and-release, not the preceding grasp. Phase 6 preparation in §8 addresses this missing prefix.
+Those historical placement episodes begin with the object already held, so
+that bank teaches carry-and-release. Phase 6 in §8 adds an uncaught prefix.
+The September 10 pilot uses uncaught but object-aligned container starts;
+ordinary approach under the placement instruction remains untested there.
 
 ---
 
@@ -811,8 +855,85 @@ insufficient coverage. Review of the earlier run found LoRA capture selected
 inactive worlds 0–127. The collector now selects whole positive-horizon groups;
 the latest GPU reports confirm exact active-group capture and 24 nonzero
 advantages. Ordinary all-active collection retains its previous indices and
-cap. Actual optimization, transfer to ordinary starts and throughput improvements
-remain unverified.
+cap. At the probe stage, actual optimization and transfer remained unverified.
+The September 10 training pilot now completes optimization but its final
+ordinary-evaluation scores decline; see the newest §14 entry. These container
+starts are still object-aligned, and assisted gradient coverage cannot be
+audited from the supplied progress log alone.
+
+### 7.16 The three-stage `put_into` collection and SFT pipeline
+
+**Implemented 2026-09-10; no GPU run yet.** `CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`'s
+change map is complete in the repository and unit-tested on CPU (1336 tests
+pass; the three pre-existing local failures are unchanged). Nothing below is a
+result about the policy. It is a description of what will produce one, and the
+five design decisions inside it that are load-bearing.
+
+| Artefact | What it does |
+|---|---|
+| `rl_vla_bootstrapping/simulation/cdpr_composition_scenes.py` | Generates and validates the full-task scene manifest; hash-derived disjoint splits |
+| `mjwarp_rank_local_collector.FullTaskSceneResetter` | The explicit full-task reset route; one manifest scene per world, no curriculum, no forced EE alignment |
+| `rl_vla_bootstrapping/policy/cdpr_staged_demonstrations.py` | Stage machine, yaw tail controller, teacher bank, the continuous rollout, the durable recording and its acceptance |
+| `tools/audit/calibrate_cdpr_pickup_yaw.py` | Solves the fixed pickup yaw from the MJCF camera extrinsics; reports the workspace residual |
+| `tools/audit/build_cdpr_composition_scenes.py` | Scene manifest CLI and audit |
+| `tools/audit/select_cdpr_stage_teachers.py` | Sequential teacher screening on real upstream handoffs, scene-clustered intervals |
+| `tools/audit/record_cdpr_staged_put_into.py` | Collection CLI; per-GPU shards, durable frames/actions/manifests, no optimizer |
+| `tools/audit/build_cdpr_staged_sft_dataset.py` | Acceptance, row assembly, relabelling; writes the bank and its partial-pickup sibling |
+| `tools/audit/sil_refresh_priors.py` | Extended: explicit frame ids, final-prompt check, complete-coverage requirement, clears the stale marker |
+| `tools/audit/sil_sft.py` | Extended: scene-level split, stage/destination-balanced sampler in both stages, retention mixture, per-stage loss and reachability, stale-prior refusal |
+| `tools/audit/evaluate_cdpr_full_put_into.py` | One student prompt from step 0, no stage machine and no servo; native and strict verdicts side by side |
+| `configs/examples/cdpr_smolvla_three_stage_put_into.yaml` | The declared contract; predicate geometry unchanged from phase 7 |
+| `scripts/run_cdpr_three_stage_{collection,sft}.sh` | Separate remote entry points, resumable by step |
+
+**The pickup yaw is 0.000 rad, and the fixed choice costs 10.7° on average.**
+Solved from the loaded model's camera extrinsics rather than guessed: the wrist
+camera hangs at `(0, 0.05, 0.045)` under the yaw joint with a fixed −15° tilt,
+so its horizontal bearing is `yaw − π/2`, and the overview camera sits at
+`(0, −0.5412, 0.5125)`. At the desk centre those coincide at yaw 0 to
+4×10⁻¹³ degrees. The same fixed angle over a 7×7 grid of the ±0.19 m workspace
+leaves mean 10.7°, p90 19.8°, max 25.3° of bearing error, with 18.4% of the
+grid inside a 5° band. **That is the measured price of the user-confirmed
+fixed-yaw mode**, and it is stated so a later per-position facing mode has a
+number to beat rather than an intuition.
+
+**A release in progress is not a dropped object — again.** The chain's carry-loss
+condition initially read "in placement and not holding it", which is §7.11 in a
+new place: `physical_grasp` includes `~release_open`, so it goes False several
+env steps before `container_ok` can latch, and at `action_step_gripper` 0.05 the
+opening needs ~11 steps to cross the threshold. That rule would have terminated
+every correct placement on the step the policy began letting go. A carry loss
+now requires the hand to still be CLOSED. The unit test that pins this is named
+after the failure.
+
+**Stage observers are separately allocated.** `evaluate_active_sparse_tasks`
+writes `ever_grasped`, `grasped`, `step_count`, `peak_lift` and
+`release_clearance` in place. The chain runs three: a move-to and a pick_up
+observer for the stage events, and the PERSISTENT placement observer that is
+the reset's own task state and runs from env step zero. A shared
+`ever_grasped` would have had the pickup evaluator rewriting the history
+`container_ok` depends on.
+
+**Balancing changes exposure, never length.** A carry is ~25 decisions against
+a pickup's ~9, so a natural pass gives the carry three times the gradient from
+duration alone. The sampler draws destination, then stage, then object
+uniformly, with replacement; no episode is truncated and no action is invented,
+and an empty stratum is an error rather than a silent substitution. The report
+carries optimizer updates and sampled supervised actions because "epoch" is
+ambiguous under replacement.
+
+**The bank is marked unusable until its priors are refreshed.** Relabelling
+rewrites the instruction on every row of a chain, including its move-to prefix,
+but `state` and `prior` were computed under the teachers' prompts and adapters.
+The dataset builder writes `priors_stale: true` and `sil_sft.py` refuses the
+bank until `sil_refresh_priors.py` has cleared it. This is a mechanical guard
+because nothing about the resulting loss curve would say otherwise.
+
+**What this pipeline still cannot tell you.** Whether any teacher triple
+produces usable chains at a usable rate; whether the relabelled prefix is
+inside the residual's bounded correction range under the final prompt; and
+whether the student learns the alignment rather than needing the servo. The
+first two are the first GPU steps; the third is the `--assisted-yaw` diagnostic
+arm reported beside the unassisted headline.
 
 ---
 
@@ -1273,6 +1394,153 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-10 — First demonstration-start GRPO pilot completes; full approach and transport remain unproven
+
+**Status: retained negative experiment, no candidate promotion.** This
+supersedes the earlier statements that the training launcher/integration did
+not exist. It does not invalidate physically continuous trajectory composition,
+which this pilot did not train by imitation.
+
+- Run: `runs/demo_grpo_pilot_20260910_110040`, launched remotely with
+  `CUDA_VISIBLE_DEVICES=0,1 MAX_TRAIN_STEPS=1000000 DEMO_ROUNDS=12 nohup bash scripts/run_cdpr_demo_grpo_pilot.sh`.
+- Source checkpoint:
+  `runs/release_recovery_continue_3m_20260908_102004/rl/step_3540208/smolvla_grpo_adapter.pt`,
+  identified by the baseline shard summaries. Candidate:
+  `runs/demo_grpo_pilot_20260910_110040/rl/step_1005877/smolvla_grpo_adapter.pt`.
+  Neither adapter was supplied for checksum verification.
+- Local implementation reviewed: `e56b7fb`; remote git revision and dirty
+  changes are absent. The launcher selects a warmstart with a fresh optimizer.
+  Its intended bank partition is rounds 1000–1011, versus evaluations 0–2;
+  verify this against the missing remote manifest/bank before certifying it.
+- Training: **1,005,877 selected actions, 91 updates, 3:56:43** on the training
+  progress bar. Two A40 GPUs, 512 worlds/rank, groups of eight, residual GRPO
+  and action-expert LoRA; vision tower not adapted. Source collection, replay
+  and external evaluation cost are additional. Selected actions are not total
+  simulator steps and exclude teacher replay work.
+- What the code trains: one ordinary rollout and one assisted attempt per
+  update/rank, with assisted pickup:bowl:pickup:plate scheduling. Earlier
+  handoffs are mixed in after half the budget. Replay actions initialize
+  state; only fresh suffixes enter the residual and LoRA GRPO losses. This is
+  **not full-trajectory SIL or direct imitation of the pickup prefix**.
+  There is no matched ordinary-only training control.
+- Evaluation: three rounds × 512 worlds = 1536 episodes/arm, **192 reset
+  groups**: 50 move-to, 41 pickup, 57 plate, 44 bowl. Candidates within a
+  group share a scene and are not independent trials. Config path:
+  `configs/examples/cdpr_smolvla_demo_grpo_pilot.yaml`; shard summaries report
+  Torch seed 0 and nondeterministic kernels. Logged validation seed: 2,000,000.
+  Saved caps: move-to 0.08, pickup 0.06, containers 0.20; requested cap is null,
+  so `cap_check=unknown`, not failure. Horizons: 19, 18, 40, 40 policy decisions,
+  four actions/decision. Container spawn distance uses the separate 0.06–0.10 m
+  configuration; cap 0.20 does not mean a 20 cm transport task.
+
+| Instruction | Baseline | Final | Change, percentage points |
+|---|---:|---:|---:|
+| `move_to_object` | 314/400 = 78.50% | 311/400 = 77.75% | −0.75 |
+| `pick_up` | 83/328 = 25.30% | 68/328 = 20.73% | −4.57 |
+| configured `put_into_plate` | 274/456 = 60.09% | 263/456 = 57.68% | −2.41 |
+| configured `put_into_bowl` | 115/352 = 32.67% | 90/352 = 25.57% | −7.10 |
+
+**Reset identity and task mismatch.** True pre-action object/EE poses, stored
+initial target positions, support/rest heights, release thresholds, task text,
+instruction/catalog/slot identities, horizons and round indices match exactly.
+Orientations and velocities are absent: this certifies the recorded fields,
+not complete simulator-state identity. First recorded caught flags are all
+false, but are post-action rather than serialized pre-action grasp flags.
+
+The inspected resetter explicitly places uncaught container EE at object XY;
+the recordings confirm **zero EE–object XY distance in all 808 container
+starts**. Even the outside-goal subset therefore omits the ordinary approach
+required by the user. Existing "composed" here means uncaught from alignment.
+
+| Geometry from true pre-action positions | Plate | Bowl |
+|---|---:|---:|
+| Inside XY success radius at reset | 424/456 = 92.98% | 144/352 = 40.91% |
+| Outside-radius episodes / reset groups | 32 / 4 | 208 / 26 |
+| Outside-radius baseline success | 12/32 = 37.50% | 15/208 = 7.21% |
+| Outside-radius final success | 8/32 = 25.00% | 13/208 = 6.25% |
+
+These descriptive subsets use the existing 0.091/0.057 m XY radii with no
+extra transport margin. Four plate scenes do not support a broad placement
+claim. Inside-XY starts still need grasp/release and the other success terms,
+but can succeed with little transport. Neither subset alone certifies a
+sustained held carry, and neither tests approach from away from the object.
+
+**Failure diagnosis:** the existing placement decomposition reproduces all
+808 verdicts per arm with **zero predicate disagreements**. Bowl grasp falls
+**223/352 → 194/352**. Final bowl failures: 158 no-grasp, 68 no-release,
+20 not-settled, 16 XY-miss. Final plate failures: 68 no-grasp, 91 no-release,
+21 not-settled, 13 XY-miss. Pickup ever-held frequency falls **183/328 →
+177/328**, while successful lifts fall **83 → 68**. Among held episodes this
+is **45.36% → 38.42%**, a descriptive comparison of different selected episodes,
+not an isolated causal effect. "No release" names a predicate stage;
+ended-unheld alone does not prove the object fell during transport.
+
+The additional lift trace uses true pre-action target height and opening
+≤0.94. It is a descriptive measurement, not a replacement success predicate.
+Raw scores retain divergent episodes to match the supplied summaries:
+32 baseline and 39 final unique worlds, including 27 and 31 pickup worlds.
+Exclude these from demonstration construction. EPA warnings and omitted
+non-finite contact metrics occur in the log; they do not establish the cause
+of the lower scores.
+
+**In-run validation is separate.** Ordinary overall validation peaks at
+0.5039 at step 300,654 and ends at 0.4473. The printed `COMPOSED` overall
+score peaks at 0.4922 at step 600,253 and ends at 0.4297, with final plate/bowl
+components 0.4803/0.2992. These are not the external final scores above.
+Retain intermediate checkpoints, but do not promote one solely from these
+differently sampled validation maxima.
+
+**Next experiment for the user's concatenation idea:**
+
+1. Define full-task resets with a separate EE approach distance and an object
+   outside the destination's success radius by a declared margin. Validate
+   realized distances after workspace handling; changing only the cap is
+   insufficient. Keep training and held-out scene groups separate.
+2. Execute a pickup teacher with the destination present, then continue a
+   placement teacher from that **exact live state**, at a valid policy decision
+   boundary. Preserve object/receptacle poses, velocities, contacts, controller
+   state, task history and the desk-height reference. Keep the full-task
+   observer alive so pickup success does not terminate the composed episode.
+   Regenerate placement caches/priors at the prompt switch and allow enough
+   remaining actions. Arbitrary archived clips cannot simply be appended;
+   archived suffixes require replay from the actual pickup result and verified
+   continuity and completion.
+3. Keep continuous successful placements as full-task positive demonstrations.
+   Store original executed observations/actions and stage provenance; relabel
+   the whole accepted trajectory to its actual destination's `put_into` prompt.
+   Failed placement after valid pickup provides pickup/partial-prefix data,
+   never a placement success. Sequential teacher success measures data yield,
+   not the final learner's ability.
+4. Rebuild prompt-dependent inputs under that final instruction. The current
+   residual controller needs refreshed VLA priors, residual features/targets
+   and correct chunk masks; replacing text while retaining pickup priors is
+   insufficient. Keep every relabelled view of one scene in one data split.
+5. Test a bounded imitation or auxiliary-imitation arm with GRPO and matched
+   controls. Evaluate the learner with `put_into` **throughout**, from empty
+   ordinary starts, with no teacher switch or demonstration reset. Also
+   measure retention. Historical broad residual SFT erased composed capability
+   (September 7 entry); this motivates a small controlled experiment, not a
+   conclusion that continuous relabelled demonstrations cannot work.
+
+**Local evidence:**
+[`attachment_analysis.json`](docs/artifacts/demo_grpo_pilot_20260910/attachment_analysis.json),
+its NumPy-only [`analyze.py`](docs/artifacts/demo_grpo_pilot_20260910/analyze.py),
+and baseline/final decomposition JSON/CSV under the same directory. The audit
+cross-checks CSV/NPZ success against both supplied summaries, verifies recorded
+reset identity and stores all input SHA-256 values. Source attachments remain
+under `/Users/damirnurtdinov/Downloads/{baseline,final_eval}` and `train.log`.
+Training-log SHA-256:
+`f0458e80f8fd150a4e5ca0c39fa203079e4f7fb330639b5020dec5416d9deeb6`.
+No remote training or simulator rollout was executed by this local review.
+
+**Missing evidence before attributing the regression:** `pilot_manifest.json`,
+`config_snapshot.yaml`, `tracked_changes.patch`, `training_bank.json`,
+`pilot_comparison.json`, `rl/demonstration_rank*.jsonl` and training metrics /
+TensorBoard events. The supplied progress log establishes completion, not
+per-family assisted acceptance, variable groups, actual gradient coverage or
+replay cost. The launcher normally bundles these under the run directory as
+`review_logs.tar.gz`.
 
 ### 2026-09-10 — Earlier pickup and bowl handoffs produce usable GRPO records; active LoRA capture verified
 
@@ -2124,3 +2392,19 @@ which is five times slower and more reliable).
 - What it does not support: abandoning relabelling in general — it fails on scene geometry, not on principle
 - Status: diagnostic only; superseded by the oracle route
 - Missing provenance: none
+
+### 2026-09-10 — Three-stage `put_into` pipeline implemented; yaw calibrated; no rollout yet
+
+- Git commit: this change
+- Run/config: `configs/examples/cdpr_smolvla_three_stage_put_into.yaml`, derived from `cdpr_smolvla_phase7_sparse_joint.yaml` with the scene/reset route, the yaw contract and the stage budgets changed and the predicate geometry untouched
+- Source checkpoint and lineage: none — nothing was trained
+- Training steps / updates: **zero**
+- Evaluation protocol: none executed. The tools are `tools/audit/record_cdpr_staged_put_into.py`, `select_cdpr_stage_teachers.py` and `evaluate_cdpr_full_put_into.py`; all three run no optimizer and all three refuse a yaw calibration whose provenance is unset
+- Measured result: the fixed pickup yaw is **0.000 rad** (residual 4×10⁻¹³ deg at the calibration pose, desk centre, EE z 0.26). Fixed-angle bearing residual over a 7×7 grid of the ±0.19 m workspace: mean **10.7°**, median 10.0°, p90 **19.8°**, max **25.3°**; **18.4%** of the grid inside a 5° band. This is kinematics from `robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml`, not a rollout
+- Local verification: 1336 unit tests pass; the three pre-existing local failures (`_qpos`, `predict_normalized_action_chunk`, `grpo_bootstraps_from_td3`) are unchanged. New suites: `test_cdpr_staged_put_into.py` (21), `test_cdpr_staged_dataset.py` (17), `test_cdpr_composition_scenes.py` (22), `test_cdpr_staged_sft_sampling.py` (19)
+- What this result supports: the yaw the user described is a solvable pose and not a guess, and the cost of pinning it to one angle across the workspace is now a number
+- What it does not support: **any claim about the task**. No scene manifest, teacher screen, demonstration bank, SFT or full-task score exists. In particular the provisional teacher shortlist in the design remains a list of candidates to test, not a ranking
+- Status: implementation landed; the first GPU step is scene generation followed by teacher screening on the `teacher_selection` split
+- Local artifact path: none yet; the calibration is regenerated in one second by `tools/audit/calibrate_cdpr_pickup_yaw.py`
+- SHA-256: not applicable
+- Missing provenance: every rollout number in the pipeline

@@ -1,0 +1,439 @@
+"""Acceptance, relabelling and row assembly for the three-stage bank.
+
+The traps these cover, all of them named in the design because they have
+happened before in this campaign:
+
+RELABELLING IS PER TRAJECTORY, NOT PER SCENE. A bowl chain is not a plate
+demonstration because a plate is visible. Every row of an accepted chain --
+including its move-to prefix -- takes the chain's own final instruction.
+
+A FAILED CHAIN IS NOT A DEMONSTRATION OF THE TASK IT FAILED. Its pickup prefix
+may still be a valid pick_up demonstration, and it is written to a SEPARATE
+file under the pick_up label so it can never leak into the full-task bank.
+
+NO WINDOW CROSSES AN EPISODE. Rows are per decision, per world, and the last
+row is the decision the chain finished on -- decisions after that ran against a
+frozen world and are not demonstrations of anything.
+
+RELABELLED TEXT WITHOUT A REFRESHED PRIOR IS A CORRUPT BANK. ``state`` and
+``prior`` were computed under the teachers' prompts; the written report marks
+them stale so the SFT entry point can refuse the bank rather than relying on
+somebody remembering.
+"""
+
+from __future__ import annotations
+
+import json
+import unittest
+
+import numpy as np
+
+from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+    SOURCE_YAW_TAIL,
+    STAGE_ALIGN,
+    STAGE_COMPLETE,
+    STAGE_FAILED,
+    STAGE_MOVE_TO,
+    STAGE_PICK_UP,
+    STAGE_PLACEMENT,
+    StagedRound,
+)
+from tools.audit.build_cdpr_staged_sft_dataset import (
+    build_rows,
+    dataset_report,
+)
+
+PER = 4
+DECISIONS = 10
+STEPS = DECISIONS * PER
+
+
+def _chain(
+    *,
+    destination="plate",
+    complete=True,
+    live_decisions=8,
+    reach=1,
+    align=2,
+    pickup=4,
+    placement=7,
+    carry_slip_at=None,
+    approach=0.08,
+    transport=0.15,
+    radius=0.091,
+    handoff_lift=0.06,
+):
+    """One world's worth of arrays, shaped like a real recording."""
+
+    live_steps = live_decisions * PER
+    active = np.zeros((STEPS,), bool)
+    active[:live_steps] = True
+    stage = np.full((STEPS,), STAGE_MOVE_TO, np.int8)
+    stage[(reach + 1) * PER :] = STAGE_ALIGN
+    stage[(align + 1) * PER :] = STAGE_PICK_UP
+    stage[(pickup + 1) * PER :] = STAGE_PLACEMENT
+    decision_stage = stage[::PER].copy()
+
+    grasp = np.zeros((STEPS,), bool)
+    grasp[(pickup + 1) * PER - 1 :] = True
+    released = np.zeros((STEPS,), bool)
+    released[placement * PER :] = True
+    grasp[placement * PER :] = False
+    if carry_slip_at is not None:
+        grasp[carry_slip_at:] = False
+        released[:] = False
+
+    reset_objects = np.zeros((4, 3), np.float32)
+    reset_objects[0, :2] = (0.0, 0.0)
+    reset_objects[1, :2] = (transport, 0.0)
+    return {
+        "active": active,
+        "decision_active": active[::PER].copy(),
+        "step_stage": stage,
+        "decision_stage": decision_stage,
+        "physical_grasp": grasp,
+        "released": released,
+        "reset_object_xyz": reset_objects,
+        "reset_ee_xyz": np.array([approach, 0.0, 0.28], np.float32),
+        "reach_event": reach,
+        "align_event": align,
+        "pickup_event": pickup,
+        "placement_event": placement if complete else -1,
+        "final_stage": STAGE_COMPLETE if complete else STAGE_FAILED,
+        "destination": destination,
+        "radius": radius,
+        "handoff_lift": handoff_lift,
+        "approach": approach,
+        "transport": transport,
+    }
+
+
+def _round(chains, *, round_index=0):
+    worlds = len(chains)
+    zeros_step = lambda shape=(): np.zeros(  # noqa: E731
+        (STEPS, worlds, *shape), np.float32
+    )
+    stack = lambda key, dtype: np.stack(  # noqa: E731
+        [np.asarray(chain[key], dtype=dtype) for chain in chains], axis=-1
+    )
+
+    action_source = np.zeros((STEPS, worlds), np.int8)
+    step_stage = stack("step_stage", np.int8)
+    action_source[step_stage == STAGE_ALIGN] = SOURCE_YAW_TAIL
+
+    labels = {"plate": "apple", "bowl": "orange"}
+    return StagedRound(
+        actions=np.linspace(-1.0, 1.0, STEPS * worlds * 5, dtype=np.float32).reshape(
+            STEPS, worlds, 5
+        ),
+        teacher_actions=zeros_step((5,)),
+        action_source=action_source,
+        active=stack("active", bool),
+        step_stage=step_stage,
+        ee_xyz=zeros_step((3,)),
+        ee_quaternion=zeros_step((4,)),
+        ee_yaw=zeros_step(),
+        gripper_opening=np.ones((STEPS, worlds), np.float32),
+        object_xyz=zeros_step((4, 3)),
+        object_quaternion=zeros_step((4, 4)),
+        physical_grasp=stack("physical_grasp", bool),
+        released=stack("released", bool),
+        reach_success=np.zeros((STEPS, worlds), bool),
+        pickup_success=np.zeros((STEPS, worlds), bool),
+        placement_success=np.zeros((STEPS, worlds), bool),
+        wrong_place_settled=np.zeros((STEPS, worlds), bool),
+        placement_geometry_ok=np.zeros((STEPS, worlds), bool),
+        target_lift=np.zeros((STEPS, worlds), np.float32),
+        states=np.zeros((DECISIONS, worlds, 6), np.float32),
+        priors=np.zeros((DECISIONS, worlds, 8, 5), np.float32),
+        teacher_role=np.zeros((DECISIONS, worlds), np.int8),
+        decision_stage=stack("decision_stage", np.int8),
+        decision_active=stack("decision_active", bool),
+        stage_local_index=np.zeros((DECISIONS, worlds), np.int32),
+        episode_uid=np.asarray(
+            [f"tag_s0_r{round_index}/r{round_index}w{i}" for i in range(worlds)],
+            dtype="U128",
+        ),
+        rollout_index=np.zeros((worlds,), np.int64),
+        scene_uid=np.asarray(
+            [f"scene_{i:016x}" for i in range(worlds)], dtype="U64"
+        ),
+        split=np.asarray(["collection"] * worlds, dtype="U24"),
+        destination=np.asarray(
+            [chain["destination"] for chain in chains], dtype="U8"
+        ),
+        target_catalog=np.asarray(
+            [
+                "robocasa_apple" if chain["destination"] == "plate" else "robocasa_orange"
+                for chain in chains
+            ],
+            dtype="U32",
+        ),
+        instruction_id=np.asarray(
+            [4 if chain["destination"] == "plate" else 3 for chain in chains],
+            dtype=np.int64,
+        ),
+        instruction_text=np.asarray(
+            [
+                f"put {labels[chain['destination']]} into {chain['destination']}"
+                for chain in chains
+            ],
+            dtype="U256",
+        ),
+        move_teacher_text=np.asarray(
+            [f"move to {labels[chain['destination']]}" for chain in chains],
+            dtype="U256",
+        ),
+        pickup_teacher_text=np.asarray(
+            [f"pick up {labels[chain['destination']]}" for chain in chains],
+            dtype="U256",
+        ),
+        placement_teacher_text=np.asarray(
+            [
+                "put apple on the plate"
+                if chain["destination"] == "plate"
+                else "put orange into bowl"
+                for chain in chains
+            ],
+            dtype="U256",
+        ),
+        approach_xy_distance=np.asarray(
+            [chain["approach"] for chain in chains], np.float32
+        ),
+        transport_xy_distance=np.asarray(
+            [chain["transport"] for chain in chains], np.float32
+        ),
+        destination_success_radius=np.asarray(
+            [chain["radius"] for chain in chains], np.float32
+        ),
+        reset_object_xyz=np.stack(
+            [chain["reset_object_xyz"] for chain in chains], axis=0
+        ),
+        reset_ee_xyz=np.stack(
+            [chain["reset_ee_xyz"] for chain in chains], axis=0
+        ),
+        reach_event=np.asarray([chain["reach_event"] for chain in chains], np.int64),
+        align_event=np.asarray([chain["align_event"] for chain in chains], np.int64),
+        pickup_event=np.asarray(
+            [chain["pickup_event"] for chain in chains], np.int64
+        ),
+        placement_event=np.asarray(
+            [chain["placement_event"] for chain in chains], np.int64
+        ),
+        final_stage=np.asarray(
+            [chain["final_stage"] for chain in chains], np.int64
+        ),
+        failure_code=np.zeros((worlds,), np.int64),
+        handoff_lift=np.asarray(
+            [chain["handoff_lift"] for chain in chains], np.float32
+        ),
+        diverged_world_mask=np.zeros((worlds,), bool),
+        actions_per_decision=PER,
+        round_index=round_index,
+        role_switches=3,
+        budgets_json=json.dumps({"move_decisions": 3}),
+        calibration_json=json.dumps({"target_yaw": 0.0, "source": "test"}),
+        teacher_manifest_json=json.dumps(
+            {
+                role: {"sha256": f"{index:064x}"}
+                for index, role in enumerate(("move_to", "pick_up", "placement"))
+            }
+        ),
+        config_json=json.dumps({"state_dim": 6}),
+    )
+
+
+class AcceptanceTests(unittest.TestCase):
+    def test_a_complete_chain_is_accepted(self):
+        record = _round([_chain()])
+        accepted, reasons, _ = record.acceptance()
+        self.assertTrue(bool(accepted[0]), msg=str(reasons[0]))
+
+    def test_an_incomplete_chain_is_rejected_once(self):
+        record = _round([_chain(complete=False)])
+        accepted, reasons, counts = record.acceptance()
+        self.assertFalse(bool(accepted[0]))
+        self.assertEqual(str(reasons[0]), "chain_did_not_complete")
+        # One reason per world; the census must sum to the batch.
+        self.assertEqual(sum(counts.values()), record.worlds)
+
+    def test_a_scene_that_starts_inside_the_goal_is_rejected(self):
+        record = _round([_chain(transport=0.05, radius=0.091)])
+        accepted, reasons, _ = record.acceptance()
+        self.assertFalse(bool(accepted[0]))
+        self.assertEqual(str(reasons[0]), "started_inside_goal")
+
+    def test_a_short_approach_is_rejected(self):
+        record = _round([_chain(approach=0.01)])
+        accepted, reasons, _ = record.acceptance()
+        self.assertFalse(bool(accepted[0]))
+        self.assertEqual(str(reasons[0]), "approach_too_short")
+
+    def test_a_lift_below_the_production_height_is_rejected(self):
+        record = _round([_chain(handoff_lift=0.02)])
+        accepted, reasons, _ = record.acceptance()
+        self.assertFalse(bool(accepted[0]))
+        self.assertEqual(str(reasons[0]), "no_lift_at_handoff")
+
+    def test_a_mid_carry_slip_is_rejected_but_the_release_is_not(self):
+        clean = _round([_chain()])
+        self.assertTrue(bool(clean.acceptance()[0][0]))
+        # Same chain, but the object leaves the hand three decisions into the
+        # carry rather than at the release.
+        slipped = _round([_chain(carry_slip_at=(4 + 2) * PER)])
+        accepted, reasons, _ = slipped.acceptance()
+        self.assertFalse(bool(accepted[0]))
+        self.assertEqual(str(reasons[0]), "carry_interrupted")
+
+    def test_a_diverged_world_is_never_accepted(self):
+        record = _round([_chain()])
+        record.diverged_world_mask = np.array([True])
+        accepted, reasons, _ = record.acceptance()
+        self.assertFalse(bool(accepted[0]))
+        self.assertEqual(str(reasons[0]), "diverged")
+
+
+class RowAssemblyTests(unittest.TestCase):
+    def _build(self, chains, **kwargs):
+        record = _round(chains)
+        settings = dict(
+            min_approach_xy=0.06,
+            min_handoff_lift=0.05,
+            include_rejected_pickup_prefix=True,
+        )
+        settings.update(kwargs)
+        return build_rows([(("memory"), record)], **settings)
+
+    def test_every_row_of_a_chain_carries_the_final_instruction(self):
+        dataset, _, _ = self._build([_chain(destination="bowl")])
+        self.assertEqual(
+            sorted(set(dataset["instruction_text"].tolist())),
+            ["put orange into bowl"],
+        )
+        self.assertEqual(sorted(set(dataset["instruction_id"].tolist())), [3])
+        # Including the move-to prefix, which is the whole point.
+        self.assertIn("move_to", set(dataset["stage_name"].tolist()))
+
+    def test_the_teacher_wording_is_kept_beside_the_new_one(self):
+        dataset, _, _ = self._build([_chain(destination="plate")])
+        teacher = set(dataset["teacher_instruction_text"].tolist())
+        self.assertIn("move to apple", teacher)
+        self.assertIn("pick up apple", teacher)
+        self.assertIn("put apple on the plate", teacher)
+        self.assertNotIn("put apple on the plate", set(
+            dataset["instruction_text"].tolist()
+        ))
+
+    def test_rows_stop_at_the_last_live_decision(self):
+        dataset, _, _ = self._build([_chain(live_decisions=6)])
+        self.assertEqual(int(dataset["decision_index"].max()), 5)
+        self.assertEqual(int(dataset["state"].shape[0]), 6)
+
+    def test_actions_are_the_executed_chunk_not_the_predicted_one(self):
+        record = _round([_chain()])
+        dataset, _, _ = build_rows(
+            [("memory", record)],
+            min_approach_xy=0.06,
+            min_handoff_lift=0.05,
+            include_rejected_pickup_prefix=False,
+        )
+        # Four executed actions supervised against eight emitted slots.
+        self.assertEqual(dataset["action"].shape[1], PER)
+        self.assertEqual(dataset["prior"].shape[1], 8)
+        row = int(np.flatnonzero(dataset["decision_index"] == 3)[0])
+        np.testing.assert_allclose(
+            dataset["action"][row], record.actions[12:16, 0]
+        )
+
+    def test_a_failed_chain_supplies_pickup_material_in_a_separate_file(self):
+        dataset, partial, census = self._build(
+            [_chain(), _chain(destination="bowl", complete=False)]
+        )
+        self.assertEqual(census["accepted_chains"], 1)
+        self.assertEqual(census["partial_pickup_chains"], 1)
+        # The full-task bank holds ONLY the accepted chain.
+        self.assertEqual(
+            sorted(set(dataset["instruction_text"].tolist())),
+            ["put apple into plate"],
+        )
+        self.assertTrue(bool(dataset["full_chain_success"].all()))
+        # And the partial material is labelled pick_up, never put_into.
+        self.assertEqual(
+            sorted(set(partial["instruction_text"].tolist())),
+            ["pick up orange"],
+        )
+        self.assertFalse(bool(partial["full_chain_success"].any()))
+
+    def test_the_boundary_distance_finds_the_nearest_handoff(self):
+        dataset, _, _ = self._build([_chain(reach=1, align=2, pickup=4)])
+        by_decision = {
+            int(row): int(value)
+            for row, value in zip(
+                dataset["decision_index"], dataset["stage_boundary_distance"]
+            )
+        }
+        self.assertEqual(by_decision[2], 0)
+        self.assertEqual(by_decision[3], 1)
+        self.assertEqual(by_decision[6], 2)
+
+    def test_the_census_reports_every_destination_stage_cell(self):
+        dataset, _, _ = self._build(
+            [_chain(destination="plate"), _chain(destination="bowl")]
+        )
+        report = dataset_report(dataset)
+        self.assertEqual(report["empty_strata"], [])
+        self.assertEqual(
+            sorted(report["rows_by_destination_stage"]),
+            [
+                "bowl/move_to",
+                "bowl/pick_up",
+                "bowl/placement",
+                "plate/move_to",
+                "plate/pick_up",
+                "plate/placement",
+            ],
+        )
+
+    def test_a_missing_stratum_is_named_rather_than_substituted(self):
+        dataset, _, _ = self._build([_chain(destination="plate")])
+        report = dataset_report(dataset)
+        self.assertEqual(report["rows_by_destination"], {"plate": 8})
+        self.assertNotIn("bowl", report["rows_by_destination"])
+
+    def test_the_alignment_tail_is_marked_and_counted(self):
+        dataset, _, _ = self._build([_chain(reach=1, align=3)])
+        align_rows = dataset["substage_id"] == STAGE_ALIGN
+        self.assertTrue(bool(align_rows.any()))
+        # The tail is a move_to row, not a fourth stage.
+        self.assertEqual(
+            sorted(set(dataset["stage_name"][align_rows].tolist())), ["move_to"]
+        )
+        report = dataset_report(dataset)
+        self.assertGreater(report["alignment_tail_share_of_move_to"], 0.0)
+        self.assertLess(report["alignment_tail_share_of_move_to"], 1.0)
+        self.assertIn("yaw_tail", report["actions_by_source"])
+
+
+class RoundTripTests(unittest.TestCase):
+    def test_npz_round_trip_preserves_every_column(self):
+        import tempfile
+
+        record = _round([_chain(), _chain(destination="bowl")])
+        with tempfile.TemporaryDirectory() as directory:
+            path = f"{directory}/staged.npz"
+            record.to_npz(path)
+            restored = StagedRound.from_npz(path)
+        np.testing.assert_array_equal(restored.actions, record.actions)
+        np.testing.assert_array_equal(restored.episode_uid, record.episode_uid)
+        self.assertEqual(restored.actions_per_decision, PER)
+        self.assertEqual(
+            json.loads(restored.teacher_manifest_json).keys(),
+            json.loads(record.teacher_manifest_json).keys(),
+        )
+        accepted_before = record.acceptance()[0]
+        accepted_after = restored.acceptance()[0]
+        np.testing.assert_array_equal(accepted_before, accepted_after)
+
+
+if __name__ == "__main__":  # pragma: no cover
+    unittest.main()
