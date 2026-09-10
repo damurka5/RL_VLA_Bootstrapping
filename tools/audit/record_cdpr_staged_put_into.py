@@ -288,6 +288,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--pickup-prompt",
+        choices=("pick_up", "destination"),
+        default="pick_up",
+        help=(
+            "Which prompt drives the pickup stage. 'destination' uses the "
+            "episode's final put_into prompt instead of 'pick up X'. It is a "
+            "screening variable because the same adapter commands +0.40 mean "
+            "a_z while holding under a put_into prompt and +0.02 under a "
+            "pick_up one, and the lift is the pickup stage's known bottleneck."
+        ),
+    )
+    parser.add_argument(
         "--no-gripper-hold-before-pickup",
         action="store_true",
         help=(
@@ -452,6 +464,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         gripper_hold_open_before_pickup=not bool(
             args.no_gripper_hold_before_pickup
         ),
+        pickup_prompt=str(args.pickup_prompt),
         yaw_hold_during_pickup=not bool(args.no_yaw_hold_during_pickup),
         yaw_hold_during_placement=bool(args.yaw_hold_during_placement),
         record_frames=not bool(args.no_frames),
@@ -536,6 +549,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"[staged]   rejections: {summary['rejection_reasons']}", flush=True)
         print(f"[staged]   reach: {summary['reach_diagnostics']}", flush=True)
+        print(f"[staged]   pickup: {summary['pickup_diagnostics']}", flush=True)
+        print(
+            f"[staged]   placement: {summary['placement_diagnostics']}",
+            flush=True,
+        )
         print(f"[staged]   endpoint yaw: {summary['endpoint_yaw']}", flush=True)
 
     report = {

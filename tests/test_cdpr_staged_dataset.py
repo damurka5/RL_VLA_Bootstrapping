@@ -30,6 +30,7 @@ import numpy as np
 
 from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
     SOURCE_YAW_TAIL,
+    STAGE_SETTLE,
     STAGE_ALIGN,
     STAGE_COMPLETE,
     STAGE_FAILED,
@@ -529,6 +530,103 @@ class ReachDiagnosticTests(unittest.TestCase):
         self.assertEqual(report["predicate_fired_worlds"], 0)
         self.assertNotIn("among_predicate_steps", report)
         self.assertGreater(report["closest_xy_distance_m"]["median"], 0.02)
+
+
+class StageDiagnosticTests(unittest.TestCase):
+    """The pickup and placement ladders, and the command underneath them."""
+
+    def _pickup_round(self, *, grasp_at, lift_to, action_z):
+        record = _round([_chain()])
+        record.config_json = json.dumps({"pick_grasp_height_offset": 0.0075})
+        # Object resting; gripper descends into the pickup stage.
+        record.object_xyz[:, 0, 0, 2] = 0.1781
+        record.ee_xyz[:, 0, 2] = 0.20
+        pickup = record.step_stage[:, 0] == STAGE_PICK_UP
+        record.physical_grasp[:, 0] = False
+        record.physical_grasp[grasp_at:, 0] = True
+        record.target_lift[:, 0] = 0.0
+        record.target_lift[grasp_at:, 0] = lift_to
+        record.pickup_success[:, 0] = pickup & (record.target_lift[:, 0] >= 0.05)
+        record.actions[:, 0, 2] = 0.0
+        record.actions[pickup, 0, 2] = action_z
+        return record
+
+    def test_a_grasp_that_never_rises_reads_apart_from_no_grasp(self):
+        """The two failures have opposite fixes, so they must not pool."""
+
+        held = self._pickup_round(grasp_at=13, lift_to=0.008, action_z=0.02)
+        report = held.pickup_diagnostics()
+        self.assertEqual(report["entered_pickup"], 1)
+        self.assertEqual(report["grasped"], 1)
+        self.assertEqual(report["lifted"], 0)
+        self.assertEqual(report["lift_given_grasp"], 0.0)
+        self.assertAlmostEqual(
+            report["max_lift_when_grasped_m"]["median"], 0.008, places=4
+        )
+        # And the COMMAND is what says whether it was even trying.
+        self.assertAlmostEqual(
+            report["mean_action_z_while_grasped"], 0.02, places=4
+        )
+
+        never = self._pickup_round(grasp_at=10**6, lift_to=0.0, action_z=0.0)
+        empty = never.pickup_diagnostics()
+        self.assertEqual(empty["grasped"], 0)
+        self.assertIsNone(empty["lift_given_grasp"])
+        self.assertIsNone(empty["mean_action_z_while_grasped"])
+
+    def test_a_grasp_that_lifts_completes_the_ladder(self):
+        record = self._pickup_round(
+            grasp_at=13, lift_to=0.061, action_z=0.40
+        )
+        report = record.pickup_diagnostics()
+        self.assertEqual(report["grasped"], 1)
+        self.assertEqual(report["lifted"], 1)
+        self.assertEqual(report["lift_given_grasp"], 1.0)
+        self.assertAlmostEqual(
+            report["mean_action_z_while_grasped"], 0.40, places=4
+        )
+
+    def test_the_reach_table_ignores_later_stages(self):
+        """A pickup closing its hand is not a reach failure.
+
+        Unscoped, the pick_up phase's gate table reported gripper_closed 0.38
+        and already_grasping 0.15 -- both of them correct behaviour of a stage
+        that runs after the reach gate has already been passed.
+        """
+
+        record = _round([_chain()])
+        record.config_json = json.dumps({"pick_grasp_height_offset": 0.0075})
+        record.reach_success[:, 0] = True
+        record.gripper_opening[:, 0] = 1.0
+        # The pickup stage closes the hand and takes hold, as it should.
+        pickup = record.step_stage[:, 0] == STAGE_PICK_UP
+        record.gripper_opening[pickup, 0] = 0.3
+        record.physical_grasp[pickup, 0] = True
+        record.ee_xyz[:, 0, 2] = 0.20
+        record.object_xyz[:, 0, 0, 2] = 0.1781
+        gates = record.reach_diagnostics()["among_predicate_steps"]
+        self.assertEqual(gates["gripper_closed"], 0.0)
+        self.assertEqual(gates["already_grasping"], 0.0)
+
+    def test_the_placement_ladder_separates_carry_from_release(self):
+        record = _round([_chain()])
+        record.config_json = json.dumps({"pick_grasp_height_offset": 0.0075})
+        placement = record.step_stage[:, 0] == STAGE_PLACEMENT
+        # Carried to the receptacle but never let go.
+        record.object_xyz[:, 0, 1, :2] = 0.0
+        record.object_xyz[placement, 0, 0, 0] = 0.01
+        record.placement_geometry_ok[placement, 0] = True
+        record.released[:, 0] = False
+        record.placement_success[:, 0] = False
+        report = record.placement_diagnostics()
+        self.assertEqual(report["entered_placement"], 1)
+        self.assertEqual(report["reached_goal_geometry"], 1)
+        self.assertEqual(report["released"], 0)
+        self.assertEqual(report["placed"], 0)
+        self.assertEqual(report["release_given_geometry"], 0.0)
+        self.assertLess(
+            report["closest_target_receptacle_xy_m"]["median"], 0.02
+        )
 
 
 class RoundTripTests(unittest.TestCase):

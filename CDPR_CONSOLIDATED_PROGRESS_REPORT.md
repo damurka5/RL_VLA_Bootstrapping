@@ -981,11 +981,60 @@ squeeze, with the raw teacher command stored beside the applied one and
 it makes these policy-plus-controller demonstrations, and that provenance
 travels with the bank.
 
-**Retained result:** at 0.06–0.10 m starts the move-to reach predicate is met
-on roughly **half** of full-task scenes (29–35 of 64), which is the first
-measurement of that teacher on this scene distribution. **No teacher has been
-ranked:** every candidate was floored by the same harness gate both times, so
-the screen has to be re-run before any donor claim is made.
+**Third screen: the chain runs, and the bottleneck is the grasp.** With the
+gripper held open the chain produces its first end-to-end numbers on the
+`teacher_selection` split, 64 scenes:
+
+| stage | `step_3416645` | `step_11009573` |
+|---|---|---|
+| reach predicate met | 13/64 | **21/64** |
+| pickup-ready | 12 | 21 |
+| aligned (primary) | 9/64 = 0.141 | **15/64 = 0.234** |
+| align given reach | 0.75 (12) | 0.714 (21) |
+
+`step_11009573`, the dedicated long-distance reaching reference, leads — but
+the two intervals overlap and the tool says so; neither is separated at 64
+scenes. Downstream, with move-to fixed: **16 chains aligned, 1 picked up
+(1/16), 0 placed.** Full-chain acceptance 0/64.
+
+Two things this changes. First, holding the hand open is **not free**: the same
+`step_3416645` went from 29/64 reaches to 13/64 once the hold was applied, and
+its closest-approach XY median moved 0.0215 → 0.0619 m. `gripper_opening` is a
+column of the residual's state vector and the fingers are in the wrist camera,
+so the hold changes the observation the reach is conditioned on. The
+intervention that made the handoff possible measurably degraded the approach,
+and both halves belong in the record.
+
+Second, the handoff pose is not the pickup teacher's trained pose. Median
+height above the grasp point at the handoff is **0.0946 m**; the pickup
+teacher's own aligned start is **0.01 m**. Whether that gap is what costs
+15 of 16 chains is not yet established — and guessing a gate has already been
+wrong once and right once in this sequence, so the next step is measurement,
+not another intervention.
+
+`StagedRound` now carries `pickup_diagnostics()` and
+`placement_diagnostics()` alongside the reach one, reporting the ladders
+(entered → descended → grasped → lifted; entered → geometry → released →
+placed) with the distances underneath them. The pickup table includes
+`mean_action_z_while_grasped`, which reproduces the retained measurement that
+the same adapter commands **+0.40** mean `a_z` while holding under a
+`put_into` prompt and **+0.02** under a `pick_up` one — so a lift failure can
+be attributed to the prompt or exonerated in one read. `--pickup-prompt
+destination` exists as the corresponding screening arm.
+
+A flaw the third screen exposed: `reach_success` is the move-to predicate
+evaluated on every step, so once a world is holding the object the predicate
+keeps firing and the unscoped gate table attributed the pickup stage's
+deliberate closure to the reach — `gripper_closed` 0.38 and `already_grasping`
+0.15, both of them correct behaviour of a later stage. The reach table is now
+scoped to the approach stages.
+
+**Retained results:** at 0.06–0.10 m starts the reach predicate is met on
+21/64 scenes by `step_11009573` and 13/64 by `step_3416645` with the gripper
+hold on, and on 29–35/64 by `step_3416645` without it; alignment converts
+71–75% of reaches; the grasp converts 1 of 16. **No teacher is ranked** —
+neither move-to candidate is separated at this budget, and the pickup and
+placement roles have not yet been compared on a chain that reaches them.
 
 **What this pipeline still cannot tell you.** Whether any teacher triple
 produces usable chains at a usable rate; whether the relabelled prefix is

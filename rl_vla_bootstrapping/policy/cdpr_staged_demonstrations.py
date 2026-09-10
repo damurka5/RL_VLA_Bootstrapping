@@ -1194,6 +1194,20 @@ class StagedRolloutConfig:
     # bounded, recorded, single-channel hold, with the raw teacher command
     # stored beside the applied one. It can only open; it can never squeeze.
     gripper_hold_open_before_pickup: bool = True
+    # WHICH PROMPT DRIVES THE PICKUP STAGE.
+    #
+    # "pick_up" is the design's default and the teacher's own template.
+    # "destination" runs the pickup stage under the episode's FINAL put_into
+    # prompt instead, and it exists because of a retained measurement: the same
+    # adapter commands +0.40 mean a_z while holding the object under a
+    # put_into prompt and +0.02 under a pick_up one. The lift is the pickup
+    # stage's known bottleneck (grasps 28-41%, lifts 3-12% of those), so which
+    # prompt is asked is a screening variable, not a formality.
+    #
+    # It changes provenance, not physics: the stage is still the pickup
+    # teacher's checkpoint driving a continuous trajectory, and the recorded
+    # teacher text says which prompt produced it.
+    pickup_prompt: str = "pick_up"
     # The pad offset below the body ``ee_position`` tracks, measured from the
     # MJCF. The grasp point of a resting object is its centre plus this, and
     # the readiness band is expressed against that point rather than against an
@@ -1217,6 +1231,11 @@ class StagedRolloutConfig:
         self.calibration.validate()
         if self.actions_per_decision < 1:
             raise ValueError("actions_per_decision must be positive.")
+        if self.pickup_prompt not in {"pick_up", "destination"}:
+            raise ValueError(
+                f"Unknown pickup_prompt {self.pickup_prompt!r}; expected "
+                "'pick_up' or 'destination'."
+            )
         if self.actions_per_decision > self.chunk_size:
             raise ValueError(
                 f"{self.actions_per_decision} executed actions per decision "
@@ -1352,6 +1371,11 @@ def run_staged_chains(
         ]
         for role in TEACHER_ROLES
     }
+    if config.pickup_prompt == "destination":
+        # The pickup stage is driven by the final goal instead of "pick up X".
+        # Recorded, so `pickup_teacher_text` in the bank says which prompt this
+        # chain's grasp was actually produced under.
+        role_texts["pick_up"] = list(student_texts)
     instruction_ids = [
         destination_instruction_id(destination) for destination in destinations
     ]
@@ -2179,6 +2203,7 @@ class StagedRound:
                     "gripper_hold_open_before_pickup": bool(
                         config.gripper_hold_open_before_pickup
                     ),
+                    "pickup_prompt": str(config.pickup_prompt),
                     "action_step_gripper": float(config.action_step_gripper),
                     "pick_grasp_height_offset": float(
                         config.pick_grasp_height_offset
@@ -2349,7 +2374,18 @@ class StagedRound:
         min_z = float(readiness.get("min_ee_z", 0.18))
         max_z = float(readiness.get("max_ee_z", 0.40))
 
-        live = self.active
+        # Scoped to the stages the reach gate actually runs in. `reach_success`
+        # is the move_to predicate evaluated on EVERY step, and once a world is
+        # holding the object two centimetres from where it started, the
+        # predicate keeps firing -- so an unscoped gate table reports the
+        # pickup stage's deliberate closure as "gripper_closed" and reads as a
+        # reach failure. Measured: the pick_up phase's table showed
+        # gripper_closed 0.38 and already_grasping 0.15 that way, both of them
+        # correct behaviour of a later stage.
+        approach = (self.step_stage == STAGE_MOVE_TO) | (
+            self.step_stage == STAGE_ALIGN
+        )
+        live = self.active & approach
         target = self.object_xyz[:, :, 0, :]
         xy_distance = np.linalg.norm(
             target[..., :2] - self.ee_xyz[..., :2], axis=-1
@@ -2434,6 +2470,178 @@ class StagedRound:
             }
         return report
 
+    def pickup_diagnostics(self) -> dict[str, Any]:
+        """Where the grasp stage loses its chains: descend, close, or lift.
+
+        The campaign has already been wrong about this once at a whole-phase
+        scale: composed ``put_into`` was assumed to fail at placement and
+        measured to fail at the grasp. Within the grasp there is a second
+        split, and it is the one the retained pick_up measurements point at --
+        grasps land at 28-41% while lifts are 3-12% OF THOSE, with the post-
+        grasp rise sitting at 7-19 mm against a 50 mm success height.
+
+        So this reports the ladder and the two distances underneath it, rather
+        than one conversion rate. ``max_lift_when_grasped`` is the number that
+        discriminates "it never got hold of the object" from "it held it and
+        did not raise it".
+        """
+
+        import json
+
+        import numpy as np
+
+        settings = json.loads(self.config_json)
+        offset = float(settings.get("pick_grasp_height_offset", 0.0075))
+        live = self.active & (self.step_stage == STAGE_PICK_UP)
+        entered = np.asarray(self.align_event) >= 0
+
+        target = self.object_xyz[:, :, 0, :]
+        grasp_point = target.copy()
+        grasp_point[..., 2] += offset
+        above = self.ee_xyz[..., 2] - grasp_point[..., 2]
+        distance = np.linalg.norm(self.ee_xyz - grasp_point, axis=-1)
+
+        def per_world(values: Any, reduce: Any) -> Any:
+            masked = np.where(live, values, reduce.identity)
+            return reduce.fn(masked, axis=0)
+
+        class _Min:
+            identity = np.inf
+            fn = staticmethod(np.min)
+
+        class _Max:
+            identity = -np.inf
+            fn = staticmethod(np.max)
+
+        closest_above = per_world(above, _Min)
+        closest_distance = per_world(distance, _Min)
+        peak_lift = per_world(self.target_lift, _Max)
+        grasped = (self.physical_grasp & live).any(axis=0)
+        lifted = (self.pickup_success & live).any(axis=0)
+        handed_off = np.asarray(self.pickup_event) >= 0
+
+        def percentiles(values: Any, mask: Any) -> dict[str, float] | None:
+            selected = values[mask & np.isfinite(values)]
+            if selected.size == 0:
+                return None
+            return {
+                "p10": round(float(np.percentile(selected, 10)), 4),
+                "median": round(float(np.median(selected)), 4),
+                "p90": round(float(np.percentile(selected, 90)), 4),
+            }
+
+        return {
+            "entered_pickup": int(entered.sum()),
+            "grasped": int((grasped & entered).sum()),
+            "lifted": int((lifted & entered).sum()),
+            "handed_off": int(handed_off.sum()),
+            "grasp_given_entered": _ratio(
+                int((grasped & entered).sum()), int(entered.sum())
+            ),
+            "lift_given_grasp": _ratio(
+                int((lifted & grasped).sum()), int(grasped.sum())
+            ),
+            # How far down it got. The pickup teacher's own aligned start is
+            # 0.01 m above the grasp point; anything much larger means the
+            # descend never happened and the close is irrelevant.
+            "closest_height_above_grasp_m": percentiles(closest_above, entered),
+            "closest_3d_distance_to_grasp_m": percentiles(
+                closest_distance, entered
+            ),
+            # THE discriminator. A grasp that never rises is a different
+            # failure from a grasp that never happens, and they have opposite
+            # fixes.
+            "max_lift_when_grasped_m": percentiles(peak_lift, grasped & entered),
+            "max_lift_all_entered_m": percentiles(peak_lift, entered),
+            "regrasp_decisions": int(np.asarray(self.pickup_regrasp_total())),
+            # The COMMAND, not the outcome. The retained measurement this
+            # reproduces: the same adapter commands +0.40 mean a_z under a
+            # put_into prompt and +0.02 under a pick_up one, which is a
+            # statement about the prompt rather than about the policy's
+            # ability to lift. If the lift is failing and this is near zero,
+            # the pickup stage is being asked the wrong question.
+            "mean_action_z_while_grasped": (
+                round(
+                    float(
+                        self.actions[..., 2][
+                            self.physical_grasp & live
+                        ].mean()
+                    ),
+                    4,
+                )
+                if bool((self.physical_grasp & live).any())
+                else None
+            ),
+            "mean_action_gripper_while_grasped": (
+                round(
+                    float(
+                        self.actions[..., 4][
+                            self.physical_grasp & live
+                        ].mean()
+                    ),
+                    4,
+                )
+                if bool((self.physical_grasp & live).any())
+                else None
+            ),
+        }
+
+    def pickup_regrasp_total(self) -> int:
+        """Decisions spent having lost a grasp inside the pickup stage."""
+
+        import numpy as np
+
+        live = self.active & (self.step_stage == STAGE_PICK_UP)
+        held = self.physical_grasp & live
+        lost = np.zeros_like(held)
+        lost[1:] = held[:-1] & ~held[1:] & live[1:]
+        return int(lost.sum())
+
+    def placement_diagnostics(self) -> dict[str, Any]:
+        """Carry, release, and where the object ended up."""
+
+        import numpy as np
+
+        live = self.active & (
+            (self.step_stage == STAGE_PLACEMENT)
+            | (self.step_stage == STAGE_SETTLE)
+        )
+        entered = np.asarray(self.pickup_event) >= 0
+        target = self.object_xyz[:, :, 0, :2]
+        receptacle = self.object_xyz[:, :, 1, :2]
+        separation = np.linalg.norm(target - receptacle, axis=-1)
+        closest = np.where(live, separation, np.inf).min(axis=0)
+
+        released = (self.released & live).any(axis=0)
+        placed = (self.placement_success & live).any(axis=0)
+        wrong = (self.wrong_place_settled & live).any(axis=0)
+        geometry = (self.placement_geometry_ok & live).any(axis=0)
+
+        def percentiles(values: Any, mask: Any) -> dict[str, float] | None:
+            selected = values[mask & np.isfinite(values)]
+            if selected.size == 0:
+                return None
+            return {
+                "p10": round(float(np.percentile(selected, 10)), 4),
+                "median": round(float(np.median(selected)), 4),
+                "p90": round(float(np.percentile(selected, 90)), 4),
+            }
+
+        return {
+            "entered_placement": int(entered.sum()),
+            "reached_goal_geometry": int((geometry & entered).sum()),
+            "released": int((released & entered).sum()),
+            "placed": int((placed & entered).sum()),
+            "wrong_place_settled": int((wrong & entered).sum()),
+            "release_given_geometry": _ratio(
+                int((released & geometry).sum()), int(geometry.sum())
+            ),
+            # How close the CARRY got, independent of the release. A carry that
+            # never reaches the receptacle and a release that never happens are
+            # different problems.
+            "closest_target_receptacle_xy_m": percentiles(closest, entered),
+        }
+
     # -- reporting ------------------------------------------------------
 
     def summary(
@@ -2494,6 +2702,8 @@ class StagedRound:
             # "reached 41" without saying how close the other 23 got cannot be
             # used to decide whether to widen a gate or change a teacher.
             "reach_diagnostics": self.reach_diagnostics(),
+            "pickup_diagnostics": self.pickup_diagnostics(),
+            "placement_diagnostics": self.placement_diagnostics(),
         }
 
     # -- serialization --------------------------------------------------

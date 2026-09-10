@@ -180,6 +180,8 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
     reasons: dict[str, int] = {}
     failures: dict[str, int] = {}
     diagnostics: list[dict[str, Any]] = []
+    pickup: list[dict[str, Any]] = []
+    placement: list[dict[str, Any]] = []
     for row in results:
         summary = row.summary()
         for name, count in summary["rejection_reasons"].items():
@@ -187,6 +189,8 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
         for name, count in summary["failure_counts"].items():
             failures[name] = failures.get(name, 0) + int(count)
         diagnostics.append(summary["reach_diagnostics"])
+        pickup.append(summary["pickup_diagnostics"])
+        placement.append(summary["placement_diagnostics"])
 
     if phase == "move_to":
         # READINESS, not XY success: the chain has to arrive somewhere a pickup
@@ -209,6 +213,8 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
         "failure_counts": dict(sorted(failures.items())),
         # Per round, because a zero has to be readable without a second run.
         "reach_diagnostics": diagnostics,
+        "pickup_diagnostics": pickup,
+        "placement_diagnostics": placement,
     }
     # Conditional yields, which is where a comparison becomes actionable: a
     # pickup candidate that converts 40% of the reaches it is given is better
@@ -245,6 +251,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--worlds", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=1)
+    parser.add_argument(
+        "--pickup-prompt",
+        choices=("pick_up", "destination"),
+        default="pick_up",
+        help=(
+            "Which prompt drives the pickup stage. 'destination' uses the "
+            "episode's final put_into prompt instead of 'pick up X'. It is a "
+            "screening variable because the same adapter commands +0.40 mean "
+            "a_z while holding under a put_into prompt and +0.02 under a "
+            "pick_up one, and the lift is the pickup stage's known bottleneck."
+        ),
+    )
     parser.add_argument(
         "--no-gripper-hold-before-pickup",
         action="store_true",
@@ -366,6 +384,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             gripper_hold_open_before_pickup=not bool(
                 args.no_gripper_hold_before_pickup
             ),
+            pickup_prompt=str(args.pickup_prompt),
             record_frames=False,
         )
 
@@ -453,6 +472,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"[select]   gates: {head['among_predicate_steps']}",
                     flush=True,
                 )
+            print(f"[select]   pickup: {scored['pickup_diagnostics'][0]}", flush=True)
+            print(
+                f"[select]   placement: {scored['placement_diagnostics'][0]}",
+                flush=True,
+            )
         best = max(rows, key=lambda row: (row["primary"]["rate"] or 0.0))
         chosen[phase] = Path(best["candidate"])
         # Overlapping intervals mean the screen did not separate these two, and
