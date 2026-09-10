@@ -348,6 +348,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--align-yaw-servo-gain",
+        type=float,
+        default=0.35,
+        help=(
+            "Damping on the yaw servo. The command is recomputed every action "
+            "and the plant integrates it, so at unity gain the setpoint "
+            "absorbs the full measured error four times per decision while the "
+            "wrist is still travelling -- integrator windup, and it rings at "
+            "0.0824 rad against an 0.0873 rad acceptance band. 1.0 reproduces "
+            "the undamped behaviour."
+        ),
+    )
+    parser.add_argument(
         "--grasp-xy-margin",
         type=float,
         default=0.003,
@@ -547,6 +560,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         align_xy_deadband=float(args.align_xy_deadband),
         align_xy_abort=float(args.align_xy_abort),
         align_handoff_at_clearance=bool(args.align_handoff_at_clearance),
+        align_yaw_servo_gain=float(args.align_yaw_servo_gain),
         pickup_prompt=str(args.pickup_prompt),
         yaw_hold_during_pickup=not bool(args.no_yaw_hold_during_pickup),
         yaw_hold_during_placement=bool(args.yaw_hold_during_placement),

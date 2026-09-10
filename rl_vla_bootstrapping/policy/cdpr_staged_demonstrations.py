@@ -421,6 +421,7 @@ class YawTailController:
         xy_centring_deadband: float | None = None,
         xy_centring_abort: float | None = None,
         handoff_at_clearance: bool = False,
+        yaw_servo_gain: float = 0.35,
     ) -> None:
         self.torch = torch
         self.calibration = calibration
@@ -444,6 +445,29 @@ class YawTailController:
         # trained pose for one it can reach, and which of those the teacher
         # prefers is a measurement.
         self.handoff_at_clearance = bool(handoff_at_clearance)
+        # DAMPING on the yaw servo, and without it the tail never promotes.
+        #
+        # The command is recomputed every ACTION, four times per decision, and
+        # the plant integrates it: `setpoint += a3 * action_step_yaw` with
+        # `a3 = error / action_step_yaw` means the setpoint absorbs the FULL
+        # measured error every action while a kp=30 actuator, through a damped
+        # ball joint, on a cable-suspended platform, is still travelling toward
+        # the previous one. That is textbook integrator windup and it rings.
+        #
+        # Measured: median yaw error 0.0824 rad against an 0.0873 rad
+        # acceptance band -- 94% of tolerance, sitting exactly on the boundary
+        # -- with 47% of tail steps outside it and 0 of 10 chains promoted,
+        # while centring in the same runs held 0.0039 m.
+        #
+        # Large errors are untouched: at this gain an error of 1.73 rad still
+        # saturates the command, so the initial rotation runs at full rate and
+        # only the final approach is damped. The XY servo is deliberately NOT
+        # damped -- it converges to 4 mm at unity gain, because the cable
+        # platform tracks a translation far faster than the wrist tracks a
+        # rotation.
+        self.yaw_servo_gain = float(yaw_servo_gain)
+        if not 0.0 < self.yaw_servo_gain <= 1.0:
+            raise ValueError("The yaw servo gain must be in (0, 1].")
         # None disables the XY centring bridge entirely, which is the default.
         self.xy_centring_deadband = xy_centring_deadband
         # HYSTERESIS. Entering the descent needs the tight deadband; staying in
@@ -529,7 +553,9 @@ class YawTailController:
             self.calibration.target_yaw,
             self.calibration.yaw_joint_limits,
         )
-        return (error / self.action_step_yaw).clamp(-1.0, 1.0)
+        return (
+            self.yaw_servo_gain * error / self.action_step_yaw
+        ).clamp(-1.0, 1.0)
 
     def actions(
         self, *, ee_position: Any, ee_yaw: Any, gripper_opening: Any = None,
@@ -1641,6 +1667,9 @@ class StagedRolloutConfig:
     # teacher's trained height. Every descent abort lives in that descent, and
     # the teacher is trained to approach from within 0.20 m anyway.
     align_handoff_at_clearance: bool = False
+    # Damping on the yaw servo; see YawTailController for the windup this
+    # exists to stop. 1.0 reproduces the undamped behaviour.
+    align_yaw_servo_gain: float = 0.35
     # WHICH PROMPT DRIVES THE PICKUP STAGE.
     #
     # "pick_up" is the design's default and the teacher's own template.
@@ -1928,6 +1957,7 @@ def run_staged_chains(
             float(config.align_xy_abort) if config.align_xy_centring else None
         ),
         handoff_at_clearance=bool(config.align_handoff_at_clearance),
+        yaw_servo_gain=float(config.align_yaw_servo_gain),
     )
 
     # Per-object lateral slack, constant for the round. Reported loudly when a
@@ -2789,6 +2819,7 @@ class StagedRound:
                     "align_handoff_at_clearance": bool(
                         config.align_handoff_at_clearance
                     ),
+                    "align_yaw_servo_gain": float(config.align_yaw_servo_gain),
                     "require_centred_at_reach": bool(
                         config.readiness.require_centred_at_reach
                     ),

@@ -481,6 +481,60 @@ class StageTransitionTests(unittest.TestCase):
         self.assertEqual(SEMANTIC_STAGE_OF[STAGE_SETTLE], "placement")
 
 
+class YawServoDampingTests(unittest.TestCase):
+    """Why the tail rings instead of promoting.
+
+    The command is recomputed every ACTION and the plant integrates it:
+    `setpoint += a3 * action_step_yaw` with `a3 = error / action_step_yaw`
+    means the setpoint absorbs the FULL measured error four times per decision
+    while a kp=30 actuator through a damped ball joint is still travelling.
+
+    Measured on the clearance-handoff arm, where centring held 0.0039 m and
+    there were zero descent aborts: median yaw error 0.0824 rad against an
+    0.0873 rad band -- 94% of tolerance -- with 47% of tail steps outside it
+    and 0 of 10 chains promoted.
+    """
+
+    def _servo(self, gain):
+        return YawTailController(
+            torch=torch,
+            calibration=_calibration(),
+            action_step_yaw=0.08,
+            action_step_xyz=0.015,
+            yaw_servo_gain=gain,
+        )
+
+    def test_damping_scales_the_small_signal_command(self):
+        error = torch.tensor([0.04])
+        undamped = float(self._servo(1.0).yaw_command(error)[0])
+        damped = float(self._servo(0.35).yaw_command(error)[0])
+        # Sign is toward the target either way; magnitude is reduced.
+        self.assertLess(abs(damped), abs(undamped))
+        self.assertAlmostEqual(damped, 0.35 * undamped, places=6)
+        self.assertLess(damped, 0.0)
+
+    def test_a_large_error_still_saturates(self):
+        """The initial rotation must not be slowed by the damping."""
+
+        far = torch.tensor([1.73])
+        self.assertAlmostEqual(
+            float(self._servo(0.35).yaw_command(far)[0]), -1.0, places=6
+        )
+
+    def test_an_out_of_range_gain_is_refused(self):
+        for gain in (0.0, -0.2, 1.5):
+            with self.assertRaises(ValueError):
+                self._servo(gain)
+
+    def test_unity_gain_reproduces_the_undamped_servo(self):
+        error = torch.tensor([0.04])
+        self.assertAlmostEqual(
+            float(self._servo(1.0).yaw_command(error)[0]),
+            float(-0.04 / 0.08),
+            places=6,
+        )
+
+
 class LateralReadinessTests(unittest.TestCase):
     """The gate the third screen was missing, and the geometry behind it.
 

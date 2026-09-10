@@ -1197,6 +1197,47 @@ the clearance height is inside its distribution and it simply descends itself
 -- which is the thing it was trained to do. Which handoff the teacher prefers
 is a measurement, so both are one flag apart.
 
+**Centring is solved; the yaw servo rings.** The two tail arms, same scenes,
+one flag apart:
+
+| | descent to trained height | **handoff at clearance** |
+|---|---|---|
+| descent aborts | 53 (4 worlds) | **0** |
+| XY error median / p90 | 0.0274 / 0.0644 m | **0.0039 / 0.0052 m** |
+| off-centre share | 0.822 | **0.122** |
+| height above grasp | drifting | **0.0696 +- 0.004 m** |
+| yaw unaligned share | 0.337 | 0.466 |
+| promoted | 0 / 11 | 0 / 10 |
+
+The clearance arm holds the wrist 3.9 mm from the object's centre against a
+13 mm slack, with zero aborts and a rock-steady height. **The descent arm is
+retired:** it re-introduces the drift ratchet whenever the wrist is low and the
+yaw is not yet ready, which is a quarter of its steps, and it buys a handoff
+pose the pickup teacher can reach for itself from within its 0.20 m curriculum
+cap.
+
+What blocks promotion now is the yaw. Median error **0.0824 rad against an
+0.0873 rad acceptance band** -- 94% of tolerance, sitting exactly on the
+boundary -- with 47% of tail steps outside it, and the promotion needs two
+CONSECUTIVE decisions inside. The p90 of 1.73 rad is the initial rotation and
+is expected; the median is the problem.
+
+The cause is integrator windup in this harness's own servo. The command is
+recomputed every ACTION, four times per decision, and the plant integrates it:
+`setpoint += a3 * action_step_yaw` with `a3 = error / action_step_yaw` means
+the setpoint absorbs the FULL measured error every action while a kp=30
+actuator, through a damped ball joint, on a cable-suspended platform, is still
+travelling toward the previous one. A damping gain of 0.35 leaves 18% of the
+error after a four-action decision instead of driving it to zero and past.
+Large errors are untouched -- 1.73 rad still saturates the command -- so only
+the final approach is damped. The XY servo is deliberately left at unity: it
+converges to 4 mm, because the cable platform tracks a translation far faster
+than the wrist tracks a rotation.
+
+This is also the design's "validate the tolerance on GPU" arriving: 5 degrees
+is not yet demonstrated to be reachable, and if damping does not close it the
+honest next step is to widen the band rather than to keep tuning toward it.
+
 **The release boundary, found from a real trace.** The first chain to ever
 reach a bowl was rejected as a broken carry. `scene_44833e357637587f`, a
 tomato: `final_stage: complete`, `failure: none`, and the acceptance check
