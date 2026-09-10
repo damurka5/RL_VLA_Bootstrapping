@@ -288,6 +288,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--no-gripper-hold-before-pickup",
+        action="store_true",
+        help=(
+            "Let the move-to teacher control the gripper through the approach. "
+            "This is the ablation arm. The controlled variant holds the hand "
+            "open, because the move-to reward has no gripper term under "
+            "sparse_binary_reward and the shared policy arrives closed on ~100% "
+            "of reaches -- a hand the pickup teacher cannot grasp with."
+        ),
+    )
+    parser.add_argument(
         "--yaw-hold-during-placement",
         action="store_true",
         help=(
@@ -437,6 +448,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         microbatch_size=int(args.microbatch),
         action_step_xyz=float(world.args.action_step_xyz),
         action_step_yaw=float(world.args.action_step_yaw),
+        action_step_gripper=float(world.args.action_step_gripper),
+        gripper_hold_open_before_pickup=not bool(
+            args.no_gripper_hold_before_pickup
+        ),
         yaw_hold_during_pickup=not bool(args.no_yaw_hold_during_pickup),
         yaw_hold_during_placement=bool(args.yaw_hold_during_placement),
         record_frames=not bool(args.no_frames),

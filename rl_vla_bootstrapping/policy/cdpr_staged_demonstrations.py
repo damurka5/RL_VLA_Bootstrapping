@@ -140,11 +140,13 @@ SOURCE_TEACHER = 0
 SOURCE_YAW_TAIL = 1
 SOURCE_YAW_HOLD = 2
 SOURCE_SETTLE_HOLD = 3
+SOURCE_GRIPPER_HOLD = 4
 SOURCE_NAMES: tuple[str, ...] = (
     "teacher",
     "yaw_tail",
     "yaw_hold",
     "settle_hold",
+    "gripper_hold",
 )
 
 
@@ -318,8 +320,8 @@ def reachable_yaw_error(
 class YawTailController:
     """A bounded yaw servo expressed in the ordinary five-dim action.
 
-    Holds the XYZ setpoint, keeps the gripper where it is, and drives the wrist
-    toward the calibrated yaw at whatever fraction of ``action_step_yaw`` the
+    Holds the XYZ setpoint, holds the hand OPEN, and drives the wrist toward
+    the calibrated yaw at whatever fraction of ``action_step_yaw`` the
     remaining error justifies. Every command it produces is executed by the
     plant and recorded, so the alignment is part of the demonstration rather
     than a hidden state change between two of them.
@@ -332,13 +334,28 @@ class YawTailController:
         calibration: PickupYawCalibration,
         action_step_yaw: float,
         action_step_xyz: float,
+        action_step_gripper: float = 0.05,
     ) -> None:
         self.torch = torch
         self.calibration = calibration
         self.action_step_yaw = float(action_step_yaw)
         self.action_step_xyz = float(action_step_xyz)
+        self.action_step_gripper = float(action_step_gripper)
         if self.action_step_yaw <= 0.0 or self.action_step_xyz <= 0.0:
             raise ValueError("Action steps must be positive.")
+        if self.action_step_gripper <= 0.0:
+            raise ValueError("The gripper action step must be positive.")
+
+    def open_command(self, gripper_opening: Any) -> Any:
+        """Normalized gripper action that opens toward 1.0 and never closes.
+
+        Clamped at zero from below on purpose: this is a HOLD, not control of
+        the gripper. It can undo a closure the approach did not need and it can
+        never squeeze.
+        """
+
+        deficit = (1.0 - gripper_opening).clamp_min(0.0)
+        return (deficit / self.action_step_gripper).clamp(0.0, 1.0)
 
     def yaw_command(self, current_yaw: Any) -> Any:
         """Normalized yaw action in [-1, 1] that closes the error."""
@@ -352,8 +369,10 @@ class YawTailController:
         )
         return (error / self.action_step_yaw).clamp(-1.0, 1.0)
 
-    def actions(self, *, ee_position: Any, ee_yaw: Any) -> Any:
-        """[W, 5] alignment command: hold XY, bridge Z if low, rotate."""
+    def actions(
+        self, *, ee_position: Any, ee_yaw: Any, gripper_opening: Any = None
+    ) -> Any:
+        """[W, 5] alignment command: hold XY, bridge Z, open the hand, rotate."""
 
         torch = self.torch
         worlds = int(ee_yaw.shape[0])
@@ -368,6 +387,8 @@ class YawTailController:
         ).clamp_min(0.0)
         command[:, 2] = (rise / self.action_step_xyz).clamp(0.0, 1.0)
         command[:, 3] = self.yaw_command(ee_yaw)
+        if gripper_opening is not None:
+            command[:, 4] = self.open_command(gripper_opening)
         return command
 
     def aligned(self, ee_yaw: Any) -> Any:
@@ -1151,6 +1172,28 @@ class StagedRolloutConfig:
     microbatch_size: int = 0
     action_step_xyz: float = 0.015
     action_step_yaw: float = 0.08
+    action_step_gripper: float = 0.05
+    # HOLD THE HAND OPEN THROUGH THE APPROACH, as a recorded override.
+    #
+    # Measured 2026-09-10 on the teacher screen: the reach predicate fired on
+    # 29-35 of 64 worlds, and 100% of those steps arrived with the gripper
+    # already closed -- 1075 of 1075 for the first candidate. Seven to sixteen
+    # chains of 64 closed hard enough to grasp the object outright, which is a
+    # skipped stage.
+    #
+    # This is not a broken teacher. Under sparse_binary_reward the move-to
+    # reward is where(success, 1.0, 0.0) with no gripper term at all, so that
+    # channel is completely unconstrained for move_to -- and this is a shared
+    # four-instruction policy whose pick_up and put_into experience is all
+    # about closing. Nothing ever asked it to keep the hand open, so it does
+    # not.
+    #
+    # A closed hand cannot be handed to the pickup teacher: its aligned start
+    # is an OPEN gripper bracketing the object, and it was never trained to
+    # open first. So the approach gets the same treatment the yaw does -- a
+    # bounded, recorded, single-channel hold, with the raw teacher command
+    # stored beside the applied one. It can only open; it can never squeeze.
+    gripper_hold_open_before_pickup: bool = True
     # The pad offset below the body ``ee_position`` tracks, measured from the
     # MJCF. The grasp point of a resting object is its centre plus this, and
     # the readiness band is expressed against that point rather than against an
@@ -1346,6 +1389,7 @@ def run_staged_chains(
         calibration=config.calibration,
         action_step_yaw=config.action_step_yaw,
         action_step_xyz=config.action_step_xyz,
+        action_step_gripper=config.action_step_gripper,
     )
 
     object_slots = int(backend.low_dim_observations().object_positions.shape[1])
@@ -1473,6 +1517,7 @@ def run_staged_chains(
                     servo=servo,
                     hold_pickup=config.yaw_hold_during_pickup,
                     hold_placement=config.yaw_hold_during_placement,
+                    hold_gripper_open=config.gripper_hold_open_before_pickup,
                 )
 
                 buffers.teacher_actions[step] = raw.float().cpu().numpy()
@@ -1718,17 +1763,38 @@ def _apply_overrides(
     servo: YawTailController,
     hold_pickup: bool,
     hold_placement: bool,
+    hold_gripper_open: bool = True,
 ) -> tuple[Any, Any]:
-    """Substitute the alignment controller where the stage calls for it."""
+    """Substitute the recorded controllers where the stage calls for them.
+
+    Applied in order of increasing authority: the single-channel holds relabel
+    a teacher action, and the whole-command controllers (the alignment tail and
+    the settle hold) replace it. Every substitution is recorded per action in
+    ``action_source``, and the raw teacher command is stored beside the applied
+    one, so no row of the bank can be mistaken for pure policy output.
+    """
 
     applied = raw.clone()
     source = torch.zeros(
         (raw.shape[0],), dtype=torch.int64, device=raw.device
     )
+    # Channel 4 only, during the approach: keep the hand open so there is a
+    # hand to grasp with when the pickup teacher takes over.
+    approaching = stage == STAGE_MOVE_TO
+    if hold_gripper_open and bool(approaching.any().item()):
+        open_command = servo.open_command(low_dim.gripper_opening)
+        applied[:, 4] = torch.where(approaching, open_command, applied[:, 4])
+        source = torch.where(
+            approaching, torch.full_like(source, SOURCE_GRIPPER_HOLD), source
+        )
     aligning = stage == STAGE_ALIGN
     if bool(aligning.any().item()):
         tail = servo.actions(
-            ee_position=low_dim.ee_position, ee_yaw=low_dim.ee_yaw
+            ee_position=low_dim.ee_position,
+            ee_yaw=low_dim.ee_yaw,
+            gripper_opening=(
+                low_dim.gripper_opening if hold_gripper_open else None
+            ),
         )
         applied = torch.where(aligning[:, None], tail, applied)
         source = torch.where(
@@ -2110,6 +2176,10 @@ class StagedRound:
                     "yaw_hold_during_placement": bool(
                         config.yaw_hold_during_placement
                     ),
+                    "gripper_hold_open_before_pickup": bool(
+                        config.gripper_hold_open_before_pickup
+                    ),
+                    "action_step_gripper": float(config.action_step_gripper),
                     "pick_grasp_height_offset": float(
                         config.pick_grasp_height_offset
                     ),

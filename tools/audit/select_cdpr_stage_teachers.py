@@ -246,6 +246,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--worlds", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument(
+        "--no-gripper-hold-before-pickup",
+        action="store_true",
+        help=(
+            "Ablation: let the move-to teacher control the gripper through the "
+            "approach. The screen must use the SAME setting the collection "
+            "will, or it ranks teachers on a protocol the bank will not use."
+        ),
+    )
+    parser.add_argument(
         "--dump-rounds",
         action="store_true",
         help=(
@@ -353,6 +362,10 @@ def main(argv: Sequence[str] | None = None) -> int:
             microbatch_size=int(args.microbatch),
             action_step_xyz=float(world.args.action_step_xyz),
             action_step_yaw=float(world.args.action_step_yaw),
+            action_step_gripper=float(world.args.action_step_gripper),
+            gripper_hold_open_before_pickup=not bool(
+                args.no_gripper_hold_before_pickup
+            ),
             record_frames=False,
         )
 

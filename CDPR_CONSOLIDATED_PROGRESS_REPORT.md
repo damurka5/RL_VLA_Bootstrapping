@@ -954,10 +954,38 @@ ceiling, which is a rule derived from the pickup teacher's own reset rather
 than invented. And `StagedRound.reach_diagnostics()` now decomposes the
 conjunction on every round — how many worlds the raw predicate fired on, how
 many passed readiness, the closest XY approach, the height above the grasp
-point, and the share of predicate steps rejected by each individual gate — so
-the next zero is readable without a second GPU run. **No teacher has been
-ranked yet;** the screen has to be re-run, and its earlier numbers say nothing
-about any checkpoint.
+point, and the share of predicate steps rejected by each individual gate.
+
+**Second screen, same day: the teachers reach, and they arrive with the hand
+closed.** With the diagnostic in place the same protocol reported the reach
+predicate firing on **29–35 of 64 worlds** (closest-approach XY median
+0.0145–0.0215 m against a 0.02 m window), height above the grasp point
+comfortably inside the band (median 0.059–0.068 m), the absolute rails never
+touched — and `gripper_closed` at **1.000 of 1075, 1276 and 1041 predicate
+steps** for the three candidates. `premature_grasp_before_handoff` fired on
+7–16 chains of 64, so the hand does not merely close, it grasps.
+
+This is not a broken teacher. Under `sparse_binary_reward` the move-to reward
+is `where(success, 1.0, 0.0)` with **no gripper term at all**, so that channel
+is entirely unconstrained for `move_to`, and this is a shared four-instruction
+policy whose `pick_up` and `put_into` experience is all about closing. Nothing
+ever asked it to keep the hand open, and it does not. A closed hand cannot be
+handed to the pickup teacher, whose aligned start is an open gripper
+bracketing the object and which was never trained to open first.
+
+So the approach now gets the same treatment the wrist does: a bounded,
+recorded, **single-channel gripper hold** that can only open and can never
+squeeze, with the raw teacher command stored beside the applied one and
+`action_source` marking every substituted action. It is switchable off
+(`--no-gripper-hold-before-pickup`) so the ablation exists. Like the yaw tail,
+it makes these policy-plus-controller demonstrations, and that provenance
+travels with the bank.
+
+**Retained result:** at 0.06–0.10 m starts the move-to reach predicate is met
+on roughly **half** of full-task scenes (29–35 of 64), which is the first
+measurement of that teacher on this scene distribution. **No teacher has been
+ranked:** every candidate was floored by the same harness gate both times, so
+the screen has to be re-run before any donor claim is made.
 
 **What this pipeline still cannot tell you.** Whether any teacher triple
 produces usable chains at a usable rate; whether the relabelled prefix is

@@ -139,6 +139,24 @@ task:
     three_stage_yaw_hold_during_pickup: true
     three_stage_yaw_hold_during_placement: false
 
+    # HOLD THE HAND OPEN THROUGH THE APPROACH, as a recorded single-channel
+    # override. Measured 2026-09-10 on the teacher screen: the reach predicate
+    # fired on 29-35 of 64 worlds and 100% of those steps arrived with the
+    # gripper already CLOSED (1075 of 1075 for the first candidate), and 7-16
+    # chains of 64 closed hard enough to grasp the object outright.
+    #
+    # That is not a broken teacher. Under sparse_binary_reward the move-to
+    # reward is where(success, 1.0, 0.0) with no gripper term at all, so the
+    # channel is unconstrained for move_to -- and this is a shared
+    # four-instruction policy whose pick_up and put_into experience is entirely
+    # about closing. Nothing ever asked it to keep the hand open.
+    #
+    # A closed hand cannot be handed to the pickup teacher, whose aligned start
+    # is an OPEN gripper bracketing the object. The hold can only open and can
+    # never squeeze, and it is recorded per action in action_source, so the
+    # provenance travels with the bank.
+    three_stage_gripper_hold_open_before_pickup: true
+
     # Stage budgets, in policy decisions at replan_every executed actions.
     three_stage_move_decisions: 32
     three_stage_pickup_decisions: 32

@@ -441,6 +441,7 @@ class YawTests(unittest.TestCase):
         self.assertAlmostEqual(float(low[0, 2]), 1.0, places=6)
         # Rotating the wrong way would be worse than not rotating.
         self.assertLess(float(low[0, 3]), 0.0)
+        # No gripper opening supplied: the tail leaves that channel alone.
         self.assertEqual(float(low[0, 4]), 0.0)
 
         high = servo.actions(
@@ -450,6 +451,117 @@ class YawTests(unittest.TestCase):
         self.assertEqual(float(high[0, 2]), 0.0)
         # Inside a fifth of one yaw step, the command is proportional and small.
         self.assertLess(abs(float(high[0, 3])), 0.2)
+
+    def test_the_hand_is_held_open_and_never_squeezed(self):
+        """The gate that scored 0 of 64 on the SECOND teacher screen.
+
+        Measured: the reach predicate fired on 29-35 of 64 worlds and 100% of
+        those steps arrived with the gripper already closed. Under
+        sparse_binary_reward the move-to reward is where(success, 1.0, 0.0)
+        with no gripper term, so that channel is unconstrained for move_to --
+        and a shared four-instruction policy whose pick_up experience is all
+        about closing simply closes. A closed hand cannot be handed to a pickup
+        teacher whose aligned start is an open one.
+        """
+
+        servo = YawTailController(
+            torch=torch,
+            calibration=_calibration(),
+            action_step_yaw=0.08,
+            action_step_xyz=0.015,
+            action_step_gripper=0.05,
+        )
+        # Fully closed: saturate the opening command.
+        self.assertAlmostEqual(
+            float(servo.open_command(torch.tensor([0.0]))[0]), 1.0, places=6
+        )
+        # Half a step from open: proportional.
+        self.assertAlmostEqual(
+            float(servo.open_command(torch.tensor([0.975]))[0]), 0.5, places=6
+        )
+        # Already open: no command at all. It is a hold, not control.
+        self.assertEqual(
+            float(servo.open_command(torch.tensor([1.0]))[0]), 0.0
+        )
+        # It can never squeeze, whatever it is handed.
+        self.assertGreaterEqual(
+            float(servo.open_command(torch.tensor([1.5]))[0]), 0.0
+        )
+
+    def test_the_override_relabels_only_the_channel_it_touched(self):
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            SOURCE_GRIPPER_HOLD,
+            SOURCE_TEACHER,
+            SOURCE_YAW_TAIL,
+            _apply_overrides,
+        )
+
+        class _LowDim:
+            ee_position = torch.tensor([[0.0, 0.0, 0.27]] * 3)
+            ee_yaw = torch.zeros(3)
+            gripper_opening = torch.tensor([0.4, 0.4, 0.4])
+
+        servo = YawTailController(
+            torch=torch,
+            calibration=_calibration(),
+            action_step_yaw=0.08,
+            action_step_xyz=0.015,
+            action_step_gripper=0.05,
+        )
+        raw = torch.full((3, 5), -0.7)
+        stage = torch.tensor([STAGE_MOVE_TO, STAGE_ALIGN, STAGE_PICK_UP])
+        applied, source = _apply_overrides(
+            torch,
+            raw=raw,
+            stage=stage,
+            low_dim=_LowDim(),
+            servo=servo,
+            hold_pickup=False,
+            hold_placement=False,
+            hold_gripper_open=True,
+        )
+        # Approach: the gripper is opened and the other four channels are the
+        # teacher's, untouched.
+        self.assertEqual(float(applied[0, 4]), 1.0)
+        self.assertAlmostEqual(float(applied[0, 0]), -0.7, places=6)
+        self.assertEqual(int(source[0]), SOURCE_GRIPPER_HOLD)
+        # Alignment: the whole command is the controller's.
+        self.assertEqual(int(source[1]), SOURCE_YAW_TAIL)
+        self.assertEqual(float(applied[1, 0]), 0.0)
+        self.assertEqual(float(applied[1, 4]), 1.0)
+        # Pickup with both holds off: pure teacher.
+        self.assertEqual(int(source[2]), SOURCE_TEACHER)
+        self.assertAlmostEqual(float(applied[2, 4]), -0.7, places=6)
+
+    def test_the_hold_can_be_switched_off_for_the_ablation(self):
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            SOURCE_TEACHER,
+            _apply_overrides,
+        )
+
+        class _LowDim:
+            ee_position = torch.tensor([[0.0, 0.0, 0.27]])
+            ee_yaw = torch.zeros(1)
+            gripper_opening = torch.tensor([0.2])
+
+        servo = YawTailController(
+            torch=torch,
+            calibration=_calibration(),
+            action_step_yaw=0.08,
+            action_step_xyz=0.015,
+        )
+        applied, source = _apply_overrides(
+            torch,
+            raw=torch.full((1, 5), -0.7),
+            stage=torch.tensor([STAGE_MOVE_TO]),
+            low_dim=_LowDim(),
+            servo=servo,
+            hold_pickup=False,
+            hold_placement=False,
+            hold_gripper_open=False,
+        )
+        self.assertEqual(int(source[0]), SOURCE_TEACHER)
+        self.assertAlmostEqual(float(applied[0, 4]), -0.7, places=6)
 
     def test_a_calibration_without_provenance_is_refused(self):
         with self.assertRaises(ValueError):
