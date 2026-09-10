@@ -18,7 +18,8 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
-    CARRY_ACCEPTANCE_VERSION, FAILURE_NAMES, STAGE_NAMES, StagedRound,
+    CARRY_ACCEPTANCE_VERSION, FAILURE_NAMES, STAGE_COMPLETE, STAGE_FAILED,
+    STAGE_NAMES, StagedRound,
 )
 
 
@@ -86,12 +87,38 @@ def inspect_round(record, *, all_pickups=False):
                      for code in range(1, len(FAILURE_NAMES))
                      if int((record.failure_code == code).sum())}
     stale = recorded != CARRY_ACCEPTANCE_VERSION
+    # Worlds the loop ended while they were still running: no failure code, no
+    # completion, nothing decided about them. They are invisible in both the
+    # failure histogram and the rejection census -- the census only says
+    # "chain_did_not_complete", which is also what a real failure says -- so
+    # they have to be counted on their own.
+    #
+    # They exist when the global loop is shorter than the sum of the stage
+    # caps. `stage_decisions` resets at every transition, so the alignment tail
+    # gets its own fresh counter, and a total that forgot to include it left a
+    # worst case of 160 decisions against a 128-decision loop.
+    undecided = int(
+        ((record.failure_code == 0)
+         & (record.final_stage != STAGE_COMPLETE)
+         & (record.final_stage != STAGE_FAILED)).sum()
+    )
     return {"worlds": record.worlds, "accepted": int(accepted.sum()),
             "carry_acceptance": CARRY_ACCEPTANCE_VERSION,
             "recorded_carry_acceptance": recorded,
             "live_failures": live_failures,
             "unrecoverable_live_carry_loss": (
                 int(live_failures.get("carry_loss", 0)) if stale else 0),
+            "truncated_by_loop_budget": undecided,
+            "stage_when_truncated": {
+                STAGE_NAMES[code]: int(
+                    ((record.failure_code == 0)
+                     & (record.final_stage == code)).sum()
+                )
+                for code in range(len(STAGE_NAMES))
+                if code not in (STAGE_COMPLETE, STAGE_FAILED)
+                and int(((record.failure_code == 0)
+                         & (record.final_stage == code)).sum())
+            },
             "rejections": counts, "episodes": rows}
 
 

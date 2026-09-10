@@ -266,6 +266,17 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--microbatch", type=int, default=32)
     parser.add_argument("--move-decisions", type=int, default=32)
+    parser.add_argument(
+        "--align-decisions",
+        type=int,
+        default=0,
+        help=(
+            "Cap on the yaw-alignment tail, in decisions. 0 means the same as "
+            "--move-decisions. It is counted separately in the global loop "
+            "budget: the tail gets its own counter, and a loop shorter than "
+            "the sum of the stage caps cuts chains off with no failure code."
+        ),
+    )
     parser.add_argument("--pickup-decisions", type=int, default=32)
     parser.add_argument("--placement-decisions", type=int, default=64)
     parser.add_argument(
@@ -452,6 +463,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         chunk_size=int(world.payload["chunk_size"]),
         budgets=StageBudgets(
             move_decisions=int(args.move_decisions),
+            align_decisions=int(args.align_decisions) or None,
             pickup_decisions=int(args.pickup_decisions),
             placement_decisions=int(args.placement_decisions),
             settle_decisions=int(args.settle_decisions),

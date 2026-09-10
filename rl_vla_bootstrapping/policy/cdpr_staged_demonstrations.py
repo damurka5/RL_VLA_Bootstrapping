@@ -525,6 +525,27 @@ class StageBudgets:
     move_decisions: int = 32
     pickup_decisions: int = 32
     placement_decisions: int = 64
+    # The alignment tail's OWN cap, not a share of the move budget.
+    #
+    # This class's docstring used to claim the two shared one, and the code
+    # never did: `stage_decisions` resets on every transition, so the tail
+    # always got a fresh `move_decisions`. The claim and the code disagreeing
+    # is how the global loop came to be shorter than the worst case a chain
+    # could need -- 32 + 32 + 32 + 64 = 160 decisions against a 128-decision
+    # loop -- and a chain that ran past it stopped with no failure code and no
+    # acceptance. Measured: 6 of 64 worlds per move-to screen ended that way,
+    # invisible in the failure histogram because nothing decided anything
+    # about them.
+    #
+    # Fixed by counting the tail rather than by starving a late reach: a chain
+    # that reaches at decision 29 and needs twelve decisions to rotate is a
+    # perfectly good chain, and the observed tail length is ~21 decisions.
+    # None means "the same cap as move_decisions".
+    #
+    # Declared AFTER placement_decisions on purpose: the positional form
+    # StageBudgets(move, pickup, placement) is used across the tests and would
+    # silently re-map if this field were inserted before them.
+    align_decisions: int | None = None
     # 0 disables the stability check entirely, which is the default: turning it
     # on makes the bank's acceptance strictly stricter than the production
     # placement predicate, and the two must then be reported separately rather
@@ -532,9 +553,25 @@ class StageBudgets:
     settle_decisions: int = 0
 
     @property
+    def align_budget(self) -> int:
+        return int(
+            self.move_decisions
+            if self.align_decisions is None
+            else self.align_decisions
+        )
+
+    @property
     def total_decisions(self) -> int:
+        """The loop length, and it must COVER the sum of the stage caps.
+
+        If it is shorter, a chain is cut off mid-stage with no failure code and
+        no acceptance -- invisible in every census, because nothing decided
+        anything about it.
+        """
+
         return (
             int(self.move_decisions)
+            + self.align_budget
             + int(self.pickup_decisions)
             + int(self.placement_decisions)
             + int(self.settle_decisions)
@@ -544,6 +581,8 @@ class StageBudgets:
         for name in ("move_decisions", "pickup_decisions", "placement_decisions"):
             if int(getattr(self, name)) < 1:
                 raise ValueError(f"{name} must be at least one decision.")
+        if self.align_budget < 1:
+            raise ValueError("align_decisions must be at least one decision.")
         if int(self.settle_decisions) < 0:
             raise ValueError("settle_decisions cannot be negative.")
 
@@ -755,9 +794,10 @@ class StageMachine:
     def budget_for_stage(self) -> Any:
         """Per-world decision cap of the stage that world is currently in.
 
-        Move-to and its alignment tail SHARE the move budget: the tail is part
-        of the move stage, so a chain that spends thirty decisions reaching does
-        not get a fresh thirty to rotate.
+        The alignment tail carries its OWN cap. It is a substage of move-to for
+        labelling and for the stage-balanced sampler, but not for budgeting:
+        `stage_decisions` resets at the transition, and pretending otherwise is
+        what made the global loop shorter than the worst case.
         """
 
         torch = self.torch
@@ -767,10 +807,14 @@ class StageMachine:
             dtype=torch.int64,
             device=self.device,
         )
-        move = (self.stage == STAGE_MOVE_TO) | (self.stage == STAGE_ALIGN)
         budget = torch.where(
-            move,
+            self.stage == STAGE_MOVE_TO,
             torch.full_like(budget, int(self.budgets.move_decisions)),
+            budget,
+        )
+        budget = torch.where(
+            self.stage == STAGE_ALIGN,
+            torch.full_like(budget, self.budgets.align_budget),
             budget,
         )
         budget = torch.where(
@@ -2477,6 +2521,7 @@ class StagedRound:
             budgets_json=json.dumps(
                 {
                     "move_decisions": int(config.budgets.move_decisions),
+                    "align_decisions": int(config.budgets.align_budget),
                     "pickup_decisions": int(config.budgets.pickup_decisions),
                     "placement_decisions": int(
                         config.budgets.placement_decisions

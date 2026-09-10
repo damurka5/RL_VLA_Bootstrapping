@@ -338,14 +338,62 @@ class StageTransitionTests(unittest.TestCase):
             FAILURE_TO_ID["premature_grasp_before_handoff"],
         )
 
-    def test_move_budget_covers_the_alignment_tail(self):
-        """The tail is inside move-to and does not get a fresh budget."""
+    def test_the_loop_budget_covers_the_sum_of_the_stage_caps(self):
+        """A loop shorter than the worst case truncates chains invisibly.
 
-        machine = _machine(budgets=StageBudgets(3, 8, 8))
+        `stage_decisions` resets at every transition, so the alignment tail
+        always got a fresh `move_decisions` however long the reach took. With
+        the tail uncounted, the worst case was 32 + 32 + 32 + 64 = 160 against
+        a 128-decision loop, and a chain that ran past it stopped with no
+        failure code and no acceptance -- invisible in every census, because
+        nothing decided anything about it. Measured: 6 of 64 worlds per move-to
+        screen.
+        """
+
+        budgets = StageBudgets(32, 32, 64)
+        self.assertEqual(budgets.align_budget, 32)
+        self.assertEqual(budgets.total_decisions, 32 + 32 + 32 + 64)
+
+        explicit = StageBudgets(32, 32, 64, align_decisions=12, settle_decisions=4)
+        self.assertEqual(explicit.align_budget, 12)
+        self.assertEqual(
+            explicit.total_decisions, 32 + 12 + 32 + 64 + 4
+        )
+
+    def test_the_tail_gets_its_own_cap_not_a_share_of_the_move_budget(self):
+        machine = _machine(budgets=StageBudgets(3, 8, 8, align_decisions=6))
+        _advance(machine, 0, reach_success=torch.tensor([True]))
+        self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+        # Five more decisions of tail: still inside its own six-decision cap,
+        # even though the move budget was three.
+        for decision in range(1, 6):
+            _advance(machine, decision)
+            self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+        _advance(machine, 6)
+        self.assertEqual(int(machine.stage[0]), STAGE_FAILED)
+        self.assertEqual(
+            int(machine.failure[0]), FAILURE_TO_ID["align_budget_exhausted"]
+        )
+
+    def test_the_tail_defaults_to_the_move_cap_and_is_counted(self):
+        """Default: same cap as move-to, but its OWN counter, and in the total.
+
+        The tail is a substage of move-to for labelling and for the sampler,
+        and not for budgeting -- `stage_decisions` resets at the transition.
+        Pretending otherwise is what made the loop shorter than the worst case.
+        """
+
+        budgets = StageBudgets(3, 8, 8)
+        self.assertEqual(budgets.align_budget, 3)
+        self.assertEqual(budgets.total_decisions, 3 + 3 + 8 + 8)
+
+        machine = _machine(budgets=budgets)
         _advance(machine, 0, reach_success=torch.tensor([True]))
         self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
         for decision in range(1, 4):
             _advance(machine, decision)
+            if decision < 3:
+                self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
         self.assertEqual(int(machine.stage[0]), STAGE_FAILED)
         self.assertEqual(
             int(machine.failure[0]), FAILURE_TO_ID["align_budget_exhausted"]
