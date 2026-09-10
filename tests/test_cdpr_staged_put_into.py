@@ -579,6 +579,173 @@ class LateralReadinessTests(unittest.TestCase):
         self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
 
 
+class XYCentringBridgeTests(unittest.TestCase):
+    """The bridge that closes the reach's lateral error, and its sequencing.
+
+    Measured on the teacher screen: 57-60 of 64 chains die at
+    move_budget_exhausted because the reach lands 0.0166-0.0186 m off against a
+    0.0130-0.0185 m lateral tolerance. The bridge exists to close exactly that
+    error, and it is off by default because it is the one part of the tail that
+    reads privileged geometry.
+    """
+
+    def _servo(self, **overrides):
+        values = dict(
+            torch=torch,
+            calibration=_calibration(safe_rotation_z=0.26),
+            action_step_yaw=0.08,
+            action_step_xyz=0.015,
+            action_step_gripper=0.05,
+            pickup_height_above_grasp=0.01,
+            xy_centring_deadband=0.005,
+        )
+        values.update(overrides)
+        return YawTailController(**values)
+
+    def test_it_translates_toward_the_object_at_the_clearance_height(self):
+        servo = self._servo()
+        command = servo.actions(
+            ee_position=torch.tensor([[0.00, 0.00, 0.26]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.017, 0.0]]),
+        )
+        # 17 mm of error against a 15 mm step saturates the X channel.
+        self.assertAlmostEqual(float(command[0, 0]), 1.0, places=6)
+        self.assertEqual(float(command[0, 1]), 0.0)
+
+    def test_it_commands_nothing_inside_the_deadband(self):
+        servo = self._servo()
+        command = servo.actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.26]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.003, 0.0]]),
+        )
+        self.assertEqual(float(command[0, 0]), 0.0)
+        self.assertEqual(float(command[0, 1]), 0.0)
+
+    def test_it_does_not_translate_while_climbing(self):
+        """A low lateral sweep is how a finger is dragged through the object."""
+
+        servo = self._servo()
+        command = servo.actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.21]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.017, 0.0]]),
+        )
+        self.assertEqual(float(command[0, 0]), 0.0)
+        self.assertGreater(float(command[0, 2]), 0.0)
+
+    def test_it_does_not_descend_until_it_is_centred(self):
+        """The failure the whole bridge exists to prevent."""
+
+        servo = self._servo()
+        off_centre = servo.actions(
+            # Yaw already aligned, so only the centring gate can hold it up.
+            ee_position=torch.tensor([[0.0, 0.0, 0.26]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.017, 0.0]]),
+        )
+        self.assertGreaterEqual(float(off_centre[0, 2]), 0.0)
+        centred = servo.actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.26]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.001, 0.0]]),
+        )
+        # Now it descends toward grasp_point_z + 0.01 = 0.20, from 0.26.
+        self.assertLess(float(centred[0, 2]), 0.0)
+
+    def test_it_is_absent_unless_asked_for(self):
+        servo = self._servo(xy_centring_deadband=None)
+        command = servo.actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.26]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.017, 0.0]]),
+        )
+        self.assertEqual(float(command[0, 0]), 0.0)
+        self.assertEqual(float(command[0, 1]), 0.0)
+
+    def test_its_actions_carry_their_own_source_code(self):
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            SOURCE_ALIGN_BRIDGE,
+            SOURCE_YAW_TAIL,
+            _apply_overrides,
+        )
+
+        class _LowDim:
+            ee_position = torch.tensor([[0.0, 0.0, 0.26]])
+            ee_yaw = torch.zeros(1)
+            gripper_opening = torch.ones(1)
+
+        for target_xy, expected in (
+            (torch.tensor([[0.017, 0.0]]), SOURCE_ALIGN_BRIDGE),
+            (None, SOURCE_YAW_TAIL),
+        ):
+            _, source = _apply_overrides(
+                torch,
+                raw=torch.zeros((1, 5)),
+                stage=torch.tensor([STAGE_ALIGN]),
+                low_dim=_LowDim(),
+                servo=self._servo(),
+                hold_pickup=False,
+                hold_placement=False,
+                grasp_point_z=torch.tensor([0.19]),
+                target_xy=target_xy,
+            )
+            self.assertEqual(int(source[0]), expected)
+
+    def test_the_reach_gate_yields_to_the_bridge_but_the_handoff_does_not(self):
+        """Gating the reach on centring would stop the bridge ever running."""
+
+        gated = _machine(readiness=PickupReadiness(require_centred_at_reach=True))
+        _advance(
+            gated,
+            0,
+            reach_success=torch.tensor([True]),
+            target_xy_error=torch.tensor([0.017]),
+            max_grasp_xy_offset=torch.tensor([0.0130]),
+        )
+        self.assertEqual(int(gated.stage[0]), STAGE_MOVE_TO)
+
+        bridged = _machine(
+            readiness=PickupReadiness(require_centred_at_reach=False)
+        )
+        _advance(
+            bridged,
+            0,
+            reach_success=torch.tensor([True]),
+            target_xy_error=torch.tensor([0.017]),
+            max_grasp_xy_offset=torch.tensor([0.0130]),
+        )
+        self.assertEqual(int(bridged.stage[0]), STAGE_ALIGN)
+
+        # The handoff still refuses an off-centre pose, however it got here.
+        for decision in (1, 2, 3):
+            _advance(
+                bridged,
+                decision,
+                yaw_aligned=torch.tensor([True]),
+                target_xy_error=torch.tensor([0.017]),
+                max_grasp_xy_offset=torch.tensor([0.0130]),
+            )
+        self.assertNotEqual(int(bridged.stage[0]), STAGE_PICK_UP)
+        # Once the bridge has closed the error, it promotes.
+        for decision in (4, 5):
+            _advance(
+                bridged,
+                decision,
+                yaw_aligned=torch.tensor([True]),
+                target_xy_error=torch.tensor([0.004]),
+                max_grasp_xy_offset=torch.tensor([0.0130]),
+            )
+        self.assertEqual(int(bridged.stage[0]), STAGE_PICK_UP)
+
+
 class YawTests(unittest.TestCase):
     def test_shortest_path_is_refused_when_it_crosses_the_joint_stop(self):
         current = torch.tensor([3.10])

@@ -259,6 +259,30 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--worlds", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument(
+        "--align-xy-centring",
+        action="store_true",
+        help=(
+            "Close the lateral error between the reach endpoint and the object "
+            "during the alignment tail, so the descent starts from over the "
+            "object rather than beside it. OFF by default: it is the one part "
+            "of the tail that reads privileged geometry (the object's live XY), "
+            "and it hands the controller a materially larger share of the "
+            "demonstration than the yaw tail does. With it on, the lateral "
+            "readiness bound stops gating the REACH transition -- otherwise the "
+            "bridge never runs on the chains that need it -- and keeps gating "
+            "the handoff, which is where it matters."
+        ),
+    )
+    parser.add_argument(
+        "--align-xy-deadband",
+        type=float,
+        default=0.005,
+        help=(
+            "Inside this the bridge commands exactly zero. 5 mm sits well "
+            "inside the apple's 13 mm lateral slack."
+        ),
+    )
+    parser.add_argument(
         "--grasp-xy-margin",
         type=float,
         default=0.003,
@@ -406,7 +430,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             budgets=StageBudgets(move, pick, place, align),
             calibration=calibration,
             readiness=PickupReadiness(
-                grasp_xy_margin=float(args.grasp_xy_margin)
+                grasp_xy_margin=float(args.grasp_xy_margin),
+                require_centred_at_reach=not bool(args.align_xy_centring),
             ),
             pick_grasp_height_offset=float(
                 world.task_metadata.get("pick_grasp_height_offset", 0.0075)
@@ -422,6 +447,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             gripper_hold_open_before_pickup=not bool(
                 args.no_gripper_hold_before_pickup
             ),
+            align_xy_centring=bool(args.align_xy_centring),
+            align_xy_deadband=float(args.align_xy_deadband),
             pickup_prompt=str(args.pickup_prompt),
             record_frames=False,
         )

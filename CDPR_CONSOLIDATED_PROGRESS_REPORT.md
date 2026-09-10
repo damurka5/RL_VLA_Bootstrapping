@@ -1083,6 +1083,45 @@ has **negative** slack, so no yaw of a fixed-yaw contract can bracket it —
 and `robocasa_potato`, whose capsule gives it a 0.054 m hull radius at its
 widest presentation, is in the same position and will be reported as such.
 
+**The reach centres 8% of the time, and the XY bridge is the answer to it.**
+With the lateral gate in place the failure histogram is unambiguous: **57-60 of
+64 chains die at `move_budget_exhausted`**, 3-5 more at `align_budget_exhausted`,
+and the pickup and placement stages barely see a chain. The reach predicate
+itself fires on roughly a third of scenes; only about a twelfth land inside the
+0.0130-0.0185 m the open gripper needs. The teachers reach. They do not centre.
+
+`tools/audit/inspect_cdpr_staged_rounds.py` also exposed a budget bug of this
+harness's own making. The failure histograms did not sum to 64: six worlds per
+move-to screen had **no failure code, no acceptance and no completion**, and
+`stage_when_truncated` puts five or six of them mid-**alignment**. The global
+loop summed move + pickup + placement, but `stage_decisions` resets at every
+transition so the tail always got a fresh `move_decisions` -- a 160-decision
+worst case against a 128-decision loop. The class docstring claimed the two
+shared a budget; the code never did. So the move-to teacher comparison was
+biased too: about a third of the reaches that entered the tail never finished
+it. The tail now has its own counted cap.
+
+**The XY centring bridge (`--align-xy-centring`, off by default).** It closes
+the lateral error while the wrist sits at the rotation clearance, so the
+descent starts from over the object rather than beside it, and it is sequenced:
+climb, then rotate and translate at a height where nothing can be struck, then
+descend only once the wrist is both aligned and centred. With it enabled the
+lateral bound stops gating the REACH transition -- gating the thing the bridge
+exists to fix would stop it ever running -- and keeps gating the handoff, which
+is where it matters.
+
+It is off by default and that is a judgement, not an oversight. It is the one
+part of the tail that reads privileged geometry: the object's live XY, which is
+exactly the oracle vector §10 removed from the policy's observation for being
+deployment-invalid. As a CONTROLLER whose output is a recorded action it is
+admissible, and the design contemplates it by name -- "any lift/repositioning
+must also be an explicit recorded bridge, or the chain is rejected" -- but it
+hands the controller a materially larger share of the demonstration than the
+yaw tail does. Its actions carry their own `SOURCE_ALIGN_BRIDGE` code so the
+share is countable in the bank rather than inferred from a config flag, and
+the student is never given the vector: it has to learn the translation from
+pixels like everything else.
+
 **The release boundary, found from a real trace.** The first chain to ever
 reach a bowl was rejected as a broken carry. `scene_44833e357637587f`, a
 tomato: `final_stage: complete`, `failure: none`, and the acceptance check

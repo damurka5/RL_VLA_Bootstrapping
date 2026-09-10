@@ -216,12 +216,18 @@ SOURCE_YAW_TAIL = 1
 SOURCE_YAW_HOLD = 2
 SOURCE_SETTLE_HOLD = 3
 SOURCE_GRIPPER_HOLD = 4
+# The alignment tail WITH the XY centring bridge active. Distinct from
+# `yaw_tail` so a bank can report exactly how many of its actions came from a
+# controller that translated the gripper, not merely rotated it -- that is a
+# materially larger share of the demonstration and it must be countable.
+SOURCE_ALIGN_BRIDGE = 5
 SOURCE_NAMES: tuple[str, ...] = (
     "teacher",
     "yaw_tail",
     "yaw_hold",
     "settle_hold",
     "gripper_hold",
+    "align_bridge",
 )
 
 
@@ -412,6 +418,7 @@ class YawTailController:
         action_step_gripper: float = 0.05,
         pickup_height_above_grasp: float | None = None,
         pickup_height_tolerance: float = 0.003,
+        xy_centring_deadband: float | None = None,
     ) -> None:
         self.torch = torch
         self.calibration = calibration
@@ -420,6 +427,8 @@ class YawTailController:
         self.action_step_gripper = float(action_step_gripper)
         self.pickup_height_above_grasp = pickup_height_above_grasp
         self.pickup_height_tolerance = float(pickup_height_tolerance)
+        # None disables the XY centring bridge entirely, which is the default.
+        self.xy_centring_deadband = xy_centring_deadband
         if self.action_step_yaw <= 0.0 or self.action_step_xyz <= 0.0:
             raise ValueError("Action steps must be positive.")
         if self.action_step_gripper <= 0.0:
@@ -436,6 +445,43 @@ class YawTailController:
         deficit = (1.0 - gripper_opening).clamp_min(0.0)
         return (deficit / self.action_step_gripper).clamp(0.0, 1.0)
 
+    def xy_command(self, *, ee_position: Any, target_xy: Any) -> Any:
+        """[W, 2] translation that closes the lateral error, with a deadband.
+
+        THE PRIVILEGED STEP, and it is worth naming as such. Every other
+        channel this controller drives is a function of proprioception or of a
+        world constant: the gripper opening it can read, the yaw target is
+        calibrated once, the safe height is declared. This one reads the
+        object's live XY, which is exactly the oracle vector the campaign
+        removed from the policy's OBSERVATION for being deployment-invalid.
+
+        The distinction that makes it admissible is that it is a CONTROLLER,
+        not an input: its output is a recorded action the student has to learn
+        to reproduce from pixels, and the student is never given the vector.
+        The design contemplates precisely this -- "any lift/repositioning must
+        also be an explicit recorded bridge, or the chain is rejected".
+
+        What it costs is honest provenance: these become demonstrations of a
+        policy plus a controller that also translates, and the actions it
+        produces carry their own source code so the share is countable.
+        """
+
+        torch = self.torch
+        error = target_xy - ee_position[:, :2]
+        distance = torch.linalg.vector_norm(error, dim=-1, keepdim=True)
+        # Inside the deadband the command is exactly zero, so a centred wrist
+        # does not jitter against the controller's own quantisation.
+        inside = distance <= float(self.xy_centring_deadband)
+        command = (error / self.action_step_xyz).clamp(-1.0, 1.0)
+        return torch.where(inside, torch.zeros_like(command), command)
+
+    def centred(self, *, ee_position: Any, target_xy: Any) -> Any:
+        torch = self.torch
+        distance = torch.linalg.vector_norm(
+            target_xy - ee_position[:, :2], dim=-1
+        )
+        return distance <= float(self.xy_centring_deadband)
+
     def yaw_command(self, current_yaw: Any) -> Any:
         """Normalized yaw action in [-1, 1] that closes the error."""
 
@@ -450,9 +496,16 @@ class YawTailController:
 
     def actions(
         self, *, ee_position: Any, ee_yaw: Any, gripper_opening: Any = None,
-        grasp_point_z: Any = None,
+        grasp_point_z: Any = None, target_xy: Any = None,
     ) -> Any:
-        """[W, 5] alignment command: hold XY, bridge Z, open the hand, rotate."""
+        """[W, 5] alignment command: bridge Z, open the hand, rotate, centre.
+
+        The sequence is ordered and each step gates the next, because doing
+        them together is how a finger gets swept through the object: climb to
+        the rotation clearance, then rotate and (when the bridge is enabled)
+        translate at that height where nothing can be struck, and only descend
+        once the wrist is both aligned and centred.
+        """
 
         torch = self.torch
         worlds = int(ee_yaw.shape[0])
@@ -475,14 +528,36 @@ class YawTailController:
             clearance = ee_position[:, 2] >= (
                 float(self.calibration.safe_rotation_z) - self.pickup_height_tolerance
             )
+            centred = (
+                torch.ones_like(yaw_ready)
+                if target_xy is None or self.xy_centring_deadband is None
+                else self.centred(ee_position=ee_position, target_xy=target_xy)
+            )
             target_z = grasp_point_z + float(self.pickup_height_above_grasp)
             descend = ((target_z - ee_position[:, 2]) / self.action_step_xyz).clamp(-1.0, 1.0)
-            command[:, 2] = torch.where(yaw_ready, descend, command[:, 2])
+            # Descend only once the wrist is aligned AND over the object. A
+            # descent from a lateral offset is what lands the fingers on the
+            # object's shoulder and stops the grasp dead -- measured, 0 grasps
+            # in 48 chains at a 0.0166-0.0186 m handoff offset.
+            command[:, 2] = torch.where(
+                yaw_ready & centred, descend, command[:, 2]
+            )
             # Do not sweep the fingers through the object while climbing.
             # Once aligned, small yaw corrections may hold that angle on descent.
             command[:, 3] = torch.where(
                 clearance | yaw_ready, command[:, 3], torch.zeros_like(ee_yaw)
             )
+            if target_xy is not None and self.xy_centring_deadband is not None:
+                # Translate only at the rotation clearance, never on the way up
+                # and never on the way down.
+                lateral = self.xy_command(
+                    ee_position=ee_position, target_xy=target_xy
+                )
+                command[:, :2] = torch.where(
+                    (clearance & ~(yaw_ready & centred))[:, None],
+                    lateral,
+                    torch.zeros_like(lateral),
+                )
         if gripper_opening is not None:
             command[:, 4] = self.open_command(gripper_opening)
         return command
@@ -650,6 +725,20 @@ class PickupReadiness:
     # measured aperture rather than inherited from a reward window that was
     # never about grasping.
     grasp_xy_margin: float = 0.003
+    # Whether the lateral bound also gates the REACH transition.
+    #
+    # It always gates the handoff (align -> pickup), which is where it matters.
+    # Gating the reach as well is right only when nothing downstream can fix an
+    # off-centre pose: without a bridge, a chain that reaches 17 mm off will
+    # still be 17 mm off at the handoff, so promoting it just burns the tail
+    # budget. With the XY centring bridge enabled the opposite holds -- the
+    # tail exists to close exactly that error, and gating the reach on it means
+    # the bridge never runs on the 90% of chains that need it.
+    #
+    # Set False by the recorder whenever the bridge is on. Measured on the
+    # teacher screen: 57-60 of 64 chains die at move_budget_exhausted, and the
+    # reach predicate itself fires on roughly a third of them.
+    require_centred_at_reach: bool = True
     # No grasp: a reach that has already closed on the object has skipped the
     # stage this chain exists to record.
     forbid_grasp: bool = True
@@ -885,7 +974,9 @@ class StageMachine:
         # The lateral gate, per object. Without it the reach window (0.02 m)
         # promotes poses the open gripper cannot bracket.
         centred_ok = target_xy_error <= max_grasp_xy_offset
-        pickup_ready = reach_success & opening_ok & height_ok & centred_ok
+        pickup_ready = reach_success & opening_ok & height_ok
+        if self.readiness.require_centred_at_reach:
+            pickup_ready = pickup_ready & centred_ok
         if self.readiness.forbid_grasp:
             pickup_ready = pickup_ready & ~physical_grasp
 
@@ -1443,6 +1534,25 @@ class StagedRolloutConfig:
     # bounded, recorded, single-channel hold, with the raw teacher command
     # stored beside the applied one. It can only open; it can never squeeze.
     gripper_hold_open_before_pickup: bool = True
+    # THE XY CENTRING BRIDGE, off by default.
+    #
+    # It closes the lateral error between the reach endpoint and the object
+    # while the wrist is at the rotation clearance, so the descent starts from
+    # over the object rather than beside it. It is the difference between a
+    # bank and no bank: 57-60 of 64 chains currently die at the reach because
+    # they land 17 mm off against a 13-18 mm tolerance.
+    #
+    # It is OFF by default because it is the one part of the tail that reads
+    # privileged geometry -- the object's live XY, the oracle vector this
+    # campaign removed from the policy's observation. As a controller whose
+    # output is a recorded action it is admissible and the design contemplates
+    # it by name, but it hands the controller a materially larger share of the
+    # demonstration than the yaw tail does, and that is a decision to take
+    # deliberately rather than inherit from a default.
+    align_xy_centring: bool = False
+    # Inside this the bridge commands exactly zero. 5 mm sits well inside the
+    # apple's 13 mm slack, so a centred wrist is centred by a real margin.
+    align_xy_deadband: float = 0.005
     # WHICH PROMPT DRIVES THE PICKUP STAGE.
     #
     # "pick_up" is the design's default and the teacher's own template.
@@ -1860,6 +1970,13 @@ def run_staged_chains(
                     hold_gripper_open=config.gripper_hold_open_before_pickup,
                     grasp_point_z=(low_dim.object_positions[world_rows, place_state.target_slots, 2]
                                    + config.pick_grasp_height_offset),
+                    target_xy=(
+                        low_dim.object_positions[
+                            world_rows, place_state.target_slots, :2
+                        ]
+                        if config.align_xy_centring
+                        else None
+                    ),
                 )
 
                 buffers.teacher_actions[step] = raw.float().cpu().numpy()
@@ -2139,6 +2256,7 @@ def _apply_overrides(
     hold_placement: bool,
     hold_gripper_open: bool = True,
     grasp_point_z: Any = None,
+    target_xy: Any = None,
 ) -> tuple[Any, Any]:
     """Substitute the recorded controllers where the stage calls for them.
 
@@ -2171,10 +2289,18 @@ def _apply_overrides(
             gripper_opening=(
                 low_dim.gripper_opening if hold_gripper_open else None
             ),
+            target_xy=target_xy,
         )
         applied = torch.where(aligning[:, None], tail, applied)
+        # A distinct source when the bridge is active: these actions include a
+        # translation derived from the object's live position, which is a
+        # larger claim on the demonstration than a rotation and has to be
+        # countable in the bank rather than inferred from a config flag.
+        tail_source = (
+            SOURCE_ALIGN_BRIDGE if target_xy is not None else SOURCE_YAW_TAIL
+        )
         source = torch.where(
-            aligning, torch.full_like(source, SOURCE_YAW_TAIL), source
+            aligning, torch.full_like(source, tail_source), source
         )
     settling = stage == STAGE_SETTLE
     if bool(settling.any().item()):
@@ -2559,6 +2685,11 @@ class StagedRound:
                     ),
                     "gripper_hold_open_before_pickup": bool(
                         config.gripper_hold_open_before_pickup
+                    ),
+                    "align_xy_centring": bool(config.align_xy_centring),
+                    "align_xy_deadband": float(config.align_xy_deadband),
+                    "require_centred_at_reach": bool(
+                        config.readiness.require_centred_at_reach
                     ),
                     "pickup_prompt": str(config.pickup_prompt),
                     "action_step_gripper": float(config.action_step_gripper),
