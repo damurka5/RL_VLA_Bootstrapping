@@ -351,7 +351,8 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
         # An already-satisfied destination would be a free reward, so these
         # groups never reach collection. Drop them PER GROUP: the batch shares
         # one prefix length, not the fate of one scene. A group left with a
-        # zero horizon is inert here exactly as an unplanned group already is.
+        # zero horizon contributes no suffix actions/rewards. Its physics still
+        # runs, as for unplanned worlds; LoRA capture must exclude these rows.
         report['destination_terminal_worlds'] = terminal.tolist()
         dropped = sorted({int(w) // group_size for w in terminal})
         report['destination_terminal_groups'] = dropped
@@ -386,6 +387,10 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
     report['suffix_loss_rows'] = int((suffix.loss_mask > 0).sum().item())
     report['suffix_vla_record_rows'] = (0 if suffix.vla_records is None
                                        else int(suffix.vla_records['advantage'].numel()))
+    report['suffix_vla_nonzero_advantage_rows'] = (0 if suffix.vla_records is None else
+        int((suffix.vla_records['advantage'].abs() > 1e-6).sum().item()))
+    report['suffix_vla_record_worlds'] = ([] if suffix.vla_records is None else
+        _host(suffix.vla_records['world_index']).tolist())
     report['groups'] = []
     for episode in accepted:
         g = int(episode['world']) // group_size
@@ -395,6 +400,8 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
         if suffix_divergence is not None:
             bad = bool(np.asarray(suffix_divergence)[g * group_size:(g + 1) * group_size].any())
         report['groups'].append({'source_world': int(episode['world']), 'group': g,
+                                 'source_instruction': episode['source_instruction'],
+                                 'target_instruction': 'pick_up' if task == 'pick_up' else episode['source_instruction'],
                                  'successes': int(successes.sum()), 'candidates': group_size,
                                  'rewards': rewards.tolist(),
                                  'reward_std': float(rewards.std()),
@@ -410,6 +417,8 @@ def main(argv=None):
     parser.add_argument('--pilot-run', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--task', choices=('pick_up', 'placement'), default='pick_up')
+    parser.add_argument('--source-instruction', choices=('put_into_plate', 'put_into_bowl'),
+                        help='Restrict demonstration sources before choosing common boundaries')
     parser.add_argument('--source-round', type=int, default=0)
     parser.add_argument('--device', default='cuda:0')
     parser.add_argument('--max-boundaries', type=int, default=2)
@@ -456,13 +465,15 @@ def main(argv=None):
     episodes = []
     for episode in revalidated:
         w = int(episode['world'])
-        if w in supplied:
+        if w in supplied and (args.source_instruction is None or
+                               episode['source_instruction'] == args.source_instruction):
             episode['episode_uid'] = supplied[w]['episode_uid']
             episodes.append(episode)
     jobs, rejected = plan_boundaries(recording, episodes, args.task,
                                      max_boundaries=args.max_boundaries, max_groups=args.max_groups,
                                      boundary_backoff=args.boundary_backoff)
-    plan = {'task': args.task, 'source': source, 'checkpoint': str(checkpoint),
+    plan = {'task': args.task, 'source_instruction_filter': args.source_instruction,
+            'source': source, 'checkpoint': str(checkpoint),
             'checkpoint_sha256': pilot['source_sha256'], 'config': str(config),
             'config_sha256': pilot['config_sha256'], 'manifest_sha256': sha256(args.manifest),
             'source_round': args.source_round, 'group_size': 8,

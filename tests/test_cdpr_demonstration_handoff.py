@@ -13,6 +13,7 @@ import torch
 
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import INSTRUCTION_TO_ID
 from tools.audit.sil_record import _Recording
+from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import vla_capture_world_indices
 from tools.audit.extract_cdpr_transition_demonstrations import main as extract
 from tools.audit.probe_cdpr_demonstration_handoff import (
     clone_reset_groups, collect_suffix_once, main, plan_boundaries, run_job, sha256,
@@ -185,10 +186,42 @@ class HandoffPlanningTests(unittest.TestCase):
                                '--pilot-run', str(pilot), '--output', str(output), '--dry-run'])
             self.assertEqual(result, 0)
             self.assertFalse(output.exists())
+            capture = io.StringIO()
+            with contextlib.redirect_stdout(capture):
+                main(['--manifest', str(bank / 'manifest.json'), '--pilot-run', str(pilot),
+                      '--output', str(output), '--dry-run', '--source-instruction', 'put_into_bowl'])
+            self.assertEqual(json.loads(capture.getvalue())['jobs'][0]['groups'], 1)
             checkpoint.write_bytes(b'changed')
             with self.assertRaisesRegex(ValueError, 'Provenance hash mismatch'):
                 main(['--manifest', str(bank / 'manifest.json'), '--pilot-run', str(pilot),
                       '--output', str(output), '--dry-run'])
+
+
+class VLACaptureTests(unittest.TestCase):
+    def test_sparse_handoffs_after_world_127_are_captured(self):
+        horizons = torch.zeros(512, dtype=torch.long)
+        groups = [17, 46, 60]
+        for group in groups:
+            horizons[group * 8:group * 8 + 8] = 29
+        indices = vla_capture_world_indices(horizons, 8, 128)
+        self.assertEqual(indices.tolist(), [w for g in groups for w in range(g * 8, g * 8 + 8)])
+        self.assertTrue(torch.all(horizons[indices] > 0))
+
+    def test_ordinary_all_active_collection_keeps_previous_order_and_cap(self):
+        for cap in (1, 9, 128, 1000):
+            expected = max(8, min(cap, 512) // 8 * 8)
+            actual = vla_capture_world_indices(torch.ones(512, dtype=torch.long), 8, cap)
+            self.assertTrue(torch.equal(actual, torch.arange(expected)))
+
+    def test_empty_or_disabled_capture_has_no_inactive_rows(self):
+        self.assertEqual(vla_capture_world_indices(torch.zeros(512), 8, 128).numel(), 0)
+        self.assertEqual(vla_capture_world_indices(torch.ones(512), 8, 0).numel(), 0)
+
+    def test_partial_scene_group_is_rejected(self):
+        horizons = torch.zeros(16)
+        horizons[3] = 10
+        with self.assertRaisesRegex(ValueError, 'mixes active'):
+            vla_capture_world_indices(horizons, 8, 128)
 
 
 class LiveHandoffTests(unittest.TestCase):

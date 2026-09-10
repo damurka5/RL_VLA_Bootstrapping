@@ -6,7 +6,9 @@ No alternative RL algorithm is being implemented or scheduled.
 
 **Adopted by the user after the z-offset pilot review, 2026-09-09.** This is
 the active implementation plan. The extractor and an inference-only handoff
-probe exist; GPU validation and GRPO training integration are still pending. Full evidence is recorded in
+probe exist; GPU handoffs have passed for a subset of pick-up and plate scenes.
+Pick-up reward variation, bowl handoffs and GRPO training integration are still
+pending. Full evidence is recorded in
 `CDPR_CONSOLIDATED_PROGRESS_REPORT.md` §§4.2, 7.15 and the latest §14 entry.
 
 `release_recovery_pilot_20260909_130003` regressed pick-up **91/328 → 84/328**
@@ -222,6 +224,34 @@ The manifest is `runs/grpo_demo_prototype_20260909_170619/manifest.json`.
 
 **Runnable now: handoff verification, zero optimizer updates.**
 
+The attached `demo_handoff_probe_20260909_195836` produced 24/24 pickup
+suffix successes with zero usable rows, and 40/48 plate suffix successes with
+four variable-reward groups / 1,314 usable rows. No bowl suffix survived replay
+verification. These are assisted diagnostics on repeated evaluation scenes.
+Review also found the LoRA capture's first 128 worlds were all inactive; the
+collector now selects active complete groups and reports capture coverage.
+
+Next targeted probe (same tolerances, no optimizer updates):
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping && git pull --ff-only
+PICKUP_BOUNDARY_BACKOFF=2 \
+PLACEMENT_SOURCE_ROUND=1 \
+PLACEMENT_SOURCE_INSTRUCTION=put_into_bowl \
+bash scripts/run_cdpr_demo_handoff_probe.sh
+```
+
+This moves pickup earlier on round 0 and measures bowl-only sources on round 1.
+Two is an initial backoff to test, not a demonstrated optimal curriculum.
+`PICKUP_BOUNDARY_BACKOFF` / `PLACEMENT_BOUNDARY_BACKOFF` inherit
+`BOUNDARY_BACKOFF` when unspecified; per-arm source rounds inherit
+`SOURCE_ROUND`. The source-instruction filter runs before boundary ranking so
+plate frequency cannot crowd bowl out of the selected batches. Inspect
+`clean_target_instructions`, `suffix_loss_rows`, `suffix_vla_record_rows` and
+`suffix_vla_nonzero_advantage_rows` in the printed summary.
+
+For the original mixed-source baseline command:
+
 ```bash
 cd /root/repo/RL_VLA_Bootstrapping && git pull --ff-only
 bash scripts/run_cdpr_demo_handoff_probe.sh
@@ -304,6 +334,7 @@ method guarantees that result.
 
 Current deliverable: extraction tool, live replay/handoff suffix-collection
 probe, two-GPU probe launcher, CPU tests and this adopted GRPO-only plan.
-The training loop does not yet load demonstration starts; no local change
-establishes a GPU handoff pass or demonstration-guided learning gain. No new
-remote demos or training were run from the local machine.
+The training loop does not yet load demonstration starts. The attached GPU
+run verifies some pickup/plate handoffs, not a learning gain. Active LoRA
+capture has been repaired locally and awaits its remote check. No new remote
+demos or training were run from the local machine.

@@ -12,6 +12,14 @@ step is `bash scripts/run_cdpr_demo_handoff_probe.sh`: two-GPU verified replay
 and fresh suffix collection with zero optimizer updates. See the demonstration
 plan for its defaults, output and remaining training/benchmark work.
 
+**2026-09-10 attachment review:** the 19:58 probe verifies pickup and plate
+handoffs. Pickup 24/24 assisted success supplies zero usable GRPO rows;
+plate 40/48 supplies four variable-reward groups and 1,314 usable rows. No
+bowl suffix was accepted. Next use earlier pickup boundaries and bowl-only
+placement selection, with the repaired active-group LoRA capture; the exact
+command is in `CDPR_GRPO_DEMONSTRATION_PLAN.md`. These remain collection
+diagnostics on evaluation scenes under legacy geometry, with zero updates.
+
 Latest review: `release_recovery_pilot_20260909_130003` changed pick-up
 **0.2774 → 0.2561**, bowl **0.3466 → 0.2926**, configured plate
 **0.6053 → 0.6206**, and move-to **0.8025 → 0.8275**. Keep the pilot as a

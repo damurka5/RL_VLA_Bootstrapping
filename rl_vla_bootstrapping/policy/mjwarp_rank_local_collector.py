@@ -61,6 +61,28 @@ _GRASP_MIN_LIFT_M = 0.015
 _DEGENERATE_GROUP_REWARD_STD = 0.05
 
 
+def vla_capture_world_indices(horizons: Any, group_size: int, max_records: int) -> Any:
+    """Select whole active groups for decision-zero LoRA capture.
+
+    The handoff probe leaves rejected/unplanned groups at horizon zero. Taking
+    worlds 0..127 captured only inactive worlds in its first successful run.
+    With every world active this preserves the previous index order and cap.
+    """
+    import torch
+
+    if group_size < 2 or horizons.ndim != 1 or horizons.numel() % group_size:
+        raise ValueError('LoRA capture requires complete scene groups')
+    live = (horizons > 0).reshape(-1, group_size)
+    if bool((live.any(dim=1) != live.all(dim=1)).any()):
+        raise ValueError('LoRA capture group mixes active and inactive candidates')
+    groups = torch.nonzero(live.all(dim=1), as_tuple=False).reshape(-1)
+    if max_records <= 0:
+        return torch.empty(0, dtype=torch.long, device=horizons.device)
+    groups = groups[:max(1, max_records // group_size)]
+    return (groups[:, None] * group_size
+            + torch.arange(group_size, device=horizons.device)[None, :]).reshape(-1)
+
+
 def _post_grasp_action_z_metrics(
     action_z_sum: Any,
     action_steps: Any,
@@ -3103,10 +3125,10 @@ class RankLocalMJWarpGRPOCollector:
                     # store the SmolVLA inputs + taken first action + behaviour
                     # log-prob + detached prior (KL reference). Images as fp16
                     # to bound memory; advantages are filled in after the round.
-                    cap = min(self.vla_update_max_records, worlds)
-                    cap -= cap % group_size
-                    cap = max(group_size, cap)
-                    idx = torch.arange(cap, device=self.device)
+                    idx = vla_capture_world_indices(
+                        reset.horizons, group_size, self.vla_update_max_records
+                    )
+                    cap = int(idx.numel())
                     vla_capture = {
                         "world_index": idx,
                         "overview": cameras.overview[idx].to(torch.float16),
@@ -3499,6 +3521,9 @@ class RankLocalMJWarpGRPOCollector:
             vla_capture["advantage"] = world_advantage.index_select(
                 0, world_idx
             )
+            # Rank-local provenance; the optimizer consumes the existing loss
+            # fields, while audits can verify capture actually covered live rows.
+            vla_capture["world_index"] = world_idx
             vla_records = vla_capture
         self._sync_for_profile()
         total_time = reset_time + sum(timings.values())

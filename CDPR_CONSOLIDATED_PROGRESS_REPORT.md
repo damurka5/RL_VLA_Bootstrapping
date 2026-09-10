@@ -45,8 +45,12 @@ starts in training and evaluate transfer without assistance. The extractor is
 implemented and the remote prototype now contains **293 lift prefixes**, of
 which **156** also have complete placements and **137** come from failed
 placements. A replay-and-handoff probe collecting fresh suffixes without
-optimizer updates is implemented; its GPU validation and the training
-integration remain pending. See §7.15 and `CDPR_GRPO_DEMONSTRATION_PLAN.md`.
+optimizer updates is implemented. The attached **19:58 GPU run** verifies
+pick-up and plate handoffs: pick-up **24/24** assisted suffix successes but
+**zero usable GRPO rows**, plate **40/48** with **1,314 usable rows** from
+four variable-reward groups. No bowl suffix was accepted, and no weights were
+updated. Earlier pick-up starts, bowl coverage and training integration remain
+pending. See §7.15, the latest §14 entry and `CDPR_GRPO_DEMONSTRATION_PLAN.md`.
 
 **Latest z-offset pilot, diagnostic only:**
 `release_recovery_pilot_20260909_130003` moved pick-up **0.2774 → 0.2561**
@@ -795,8 +799,13 @@ destination states are refused. The existing collector then writes only fresh
 suffix records, including its LoRA capture path, with **zero optimizer updates**.
 The probe reports prefix cost, replay errors, divergence, suffix success and
 reward variation. This is a prototype on evaluation scenes under legacy
-geometry, not an ordinary-start score or training launcher. GPU validation is
-still required before connecting handoffs to optimization.
+geometry, not an ordinary-start score or training launcher. The 19:58 GPU run
+has now verified a subset of pick-up and plate handoffs. Its pick-up groups
+are too easy to supply GRPO advantages; bowl handoffs and actual learning
+remain unverified. Review also found that LoRA capture selected inactive worlds
+0–127 instead of the later-numbered handoff groups. The collector now selects
+whole positive-horizon groups and reports their world indices/nonzero-advantage
+counts. Ordinary all-active collection retains its previous indices and cap.
 
 ---
 
@@ -1256,6 +1265,86 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-10 — Review of attached 19:58 handoffs: usable plate signal, saturated pick-up, no bowl suffixes
+
+- Evidence: locally inspected attachment
+  `/Users/damirnurtdinov/Downloads/demo_handoff_probe_20260909_195836/`.
+  Run revision `793dde54ba7a2a08ef47b061e107c3b75ecaee7a`, empty tracked
+  patch, both arms exit 0. This is a different run from the 19:43 results
+  below. Archived files and SHA-256 inventory:
+  `runs/analysis/demo_handoff_probe_20260909_195836_review/`.
+- Donor: continuation `step_3540208/smolvla_grpo_adapter.pt`, SHA-256
+  `69bc284949d0837469d5396d789805f2967582e704ceedf2ab7db797003b09bc`.
+  Config hash `975e63f14fdb17a04b6fbe05a08b971dd43adee20bcc2460da8fdb58e1638c66`,
+  prototype manifest hash `89c407085c38cbc354dc2f96455a37cf61b49e20ca7fe1f16870fed89d3e1ee3`.
+  Source round 0, group size 8, boundary backoff 0; replay tolerance 2 mm,
+  opening tolerance 0.03, lift-datum sanity ceiling 0.02 m. Although the scene
+  config is named `zlift_offset`, suffix exploration uses the DONOR's saved
+  settings: offset std `[0,0,0,0,0.15]`, after-grasp gate false. No z-offset
+  experiment or weight update took place here.
+
+| Destination / prefix env steps | Planned groups | Accepted groups | Assisted suffix success | Groups with reward variation | Usable residual rows |
+|---|---:|---:|---:|---:|---:|
+| pick_up / 40 | 6 | 1 | 8/8 | 0 | 0 |
+| pick_up / 28 | 5 | 2 | 16/16 | 0 | 0 |
+| plate / 44 | 6 (including a bowl candidate) | 3 | 23/24 | 1 | 218 |
+| plate / 60 | 5 | 3 | 17/24 | 3 | 1,096 |
+
+- Pick-up: three accepted group/boundary trials from **two** distinct source
+  scene groups (22 and 42), all sourced from bowl trajectories. Group 22
+  appears at both boundaries with different candidate demonstrations. All
+  rewards equal 1, group std equals 0, and usable rows equal 0. At prefix 40,
+  every candidate succeeds after one new env action (8 actions total); prefix
+  28 uses 34 active actions across 16 candidates. The teacher has already done
+  nearly all the work at these starts. This verifies continuation plumbing;
+  it is not a learned 100% pick-up policy. Move handoffs earlier to seek
+  nondegenerate current-policy outcomes.
+- Placement: **40/48 = 0.8333**, six accepted group/boundary trials from
+  **five** distinct scene groups (17, 24, 46, 60, 61). Group 60 is repeated.
+  All six are **plate**, with group successes 8, 8, 7, 5, 6, 6. Four groups
+  have reward std 0.331–0.484 and supply 1,314 masked-in residual rows. These
+  are usable records, not measured gradients or completed optimizer updates.
+  Every accepted plate source starts inside the 0.091 m XY radius (distances
+  0.0069–0.0751 m), so this is release/retention evidence under legacy geometry,
+  not proof of outside-goal transport. The planned bowl world 479 fails the
+  replay pose check (5.10 mm), leaving **no bowl suffix measurement**.
+- Across 22 planned group/boundary trials, 9 collect suffixes. Pick-up drops
+  four already-terminal groups, three grasp-history mismatches and one pose
+  mismatch. Placement drops five trials for pose and/or grasp mismatch.
+  Accepted source traces remain inside the 2 mm pose bound with exact grasp
+  history agreement. There are two contained prefix divergence events in the
+  60-step placement batch, none in the other prefixes, and zero suffix
+  divergence events. Do not describe the entire run as divergence-free.
+- **Commit review:** `99098c7` correctly rejects a missing preflight file;
+  `f6edc13` separates first-step Z motion from replay error and removes a
+  placement gate on an unused lift Z datum; `793dde5` correctly drops terminal
+  groups individually and adds earlier-boundary selection. The first-step
+  delta is measurable, but its cause cannot be certified as settling alone
+  from old NPZs. The 2 cm ceiling is a sanity check, not reset-identity proof.
+  Zero horizons suppress actions/rewards, not simulator physics.
+- **New capture issue found in review:** each batch reports 128 LoRA rows,
+  while the collector at this revision always captures worlds 0–127. All
+  accepted groups are later (minimum accepted source world 138), so none of
+  those captured rows is an active handoff. This follows from the recorded
+  accepted indices and the exact producer code; raw LoRA tensors were not
+  attached. Fixed by selecting complete positive-horizon groups, retaining
+  ordinary all-active behavior, and exposing captured indices plus nonzero
+  advantage counts. GPU verification of this fix is pending.
+- Cost: suffix collection takes 209.1 / 229.3 s for pickup and 202.1 / 173.8 s
+  for placement. The collector still iterates the allocated horizon with
+  512-world forwards after most/all candidates terminate: e.g. 8 active
+  actions produce 61,440 padded rows. This audit is not a training-throughput
+  benchmark. Stop empty batches and avoid inactive-world inference when
+  building the training integration.
+- Next probe: back off pickup by two validated boundaries on source round 0;
+  request bowl-only placement sources on round 1. New per-arm launcher
+  controls prevent changing the already-useful plate handoffs merely to move
+  pickup earlier. Keep tolerances fixed. Acceptance requires reward variation
+  and active LoRA coverage, not merely high assisted success. Training-only
+  scenes, ordinary-start controls and outside-goal transport remain required
+  before a manipulation learning claim. Validation: **149 CPU tests passed**,
+  including 15 handoff/capture tests; shell syntax and whitespace checks pass.
 
 ### 2026-09-09 — First verified handoffs: placement collects and saturates, pick_up is terminal at its own planned boundary
 
