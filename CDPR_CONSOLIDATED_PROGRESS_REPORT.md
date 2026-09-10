@@ -950,14 +950,50 @@ Per 64 `teacher_selection` scenes, with the centring bridge on:
 | centring after the bridge | **0.0039–0.0056 m** median (13 mm slack) |
 | yaw after damping | **0.0 rad** median, 20.5% of steps unaligned |
 | handoff height | 0.0696 m ± 0.004 at clearance, 0.0094 m descending |
-| grasp given a centred handoff | **2 / 2** |
-| lift given a grasp | **2 / 2**, peak 0.064 m, mean commanded `a_z` +0.60 |
+| align promoted (descent arm) | 2 / 10; 33 descent aborts remain |
+| grasp given the trained handoff | **4 / 4** pooled |
+| lift given a grasp | **2 / 4**, peak 0.032–0.064 m against a 0.050 m bar |
 | carry to the receptacle | 0 / 2, closest approach **0.155 m** |
 
-The pickup teacher is **not** the problem: handed the pose its own curriculum
-trains it from, it grasps and lifts every time, which also retires the
-`pick_up`-prompt hypothesis (the `--pickup-prompt destination` arm made no
-difference because there was no grasp to lift from).
+The pickup teacher **grasps** reliably once handed the pose its own curriculum
+trains it from: pooled over the two corrected descent runs, **4 entered, 4
+grasped**.
+
+**Correction to an earlier claim in this section.** It previously said this
+"retires the `pick_up`-prompt hypothesis". That was an overclaim from two
+chains. With a working handoff the lift is now measurable and it is **2 of 4**,
+which puts the retained `pick_up`-bottleneck finding back in play:
+
+| run | max lift | mean `a_z` while grasped | lifted |
+|---|---|---|---|
+| A | 0.064 m | **+0.60** | yes |
+| B | 0.032 m | **+0.14** | no |
+| success bar | 0.050 m | | |
+
+The retained campaign measurement is grasps 28–41%, lifts **3–12% of those**,
+post-grasp rise 7–19 mm against the 50 mm bar, and **+0.40 mean `a_z` under a
+`put_into` prompt against +0.02 under `pick_up`, same adapter**. Both runs above
+used the `pick_up` prompt and straddle those figures. The
+`--pickup-prompt destination` arm was declared refuted earlier in this
+bring-up; that was premature — it was **untestable**, not refuted, because
+there was no grasp beneath it. It is now the first experiment that can be run
+against a working grasp.
+
+### The two handoff arms, decided
+
+| | clearance handoff | **descent to trained height** |
+|---|---|---|
+| align promoted / entered | 7 / 13 | 2 / 10 |
+| descent aborts | 0 | 33 |
+| grasp / entered pickup | 1 / 14 | **4 / 4** |
+| grasps per 64 scenes | ~0.5 | **~2** |
+
+The descent costs promotions — its aborts are now centring-driven, with the
+align-stage XY error at 0.0242 m median against the clearance arm's 0.0039 m,
+most plausibly because the fingers reach within 1.8 mm of the grasp point and
+nudge the object they are closing on. It wins anyway, four times over, because
+a promotion that hands over an unusable pose is not worth having. Reducing the
+aborts is the yield optimization; the lift is the blocker.
 
 ### What is still unknown
 
