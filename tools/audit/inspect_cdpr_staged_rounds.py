@@ -74,9 +74,24 @@ def inspect_round(record, *, all_pickups=False):
             "unexplained_carry_loss_step_count": int((losses < release_starts[world]).sum()),
             "post_action_trace": trace,
         })
+    # What the LIVE stage machine did, as opposed to what acceptance now says.
+    # Acceptance is recomputed from the stored arrays, so a rule change reaches
+    # old recordings for free -- but a chain the live machine TERMINATED stops
+    # being stepped, and the trajectory after that point does not exist. No
+    # offline rule can recover it. `carry_loss` is the one the pre-fix live rule
+    # could fire wrongly, so it is the number that decides whether the round has
+    # to be collected again.
+    recorded = json.loads(record.config_json).get("carry_acceptance", "threshold_v1")
+    live_failures = {FAILURE_NAMES[code]: int((record.failure_code == code).sum())
+                     for code in range(1, len(FAILURE_NAMES))
+                     if int((record.failure_code == code).sum())}
+    stale = recorded != CARRY_ACCEPTANCE_VERSION
     return {"worlds": record.worlds, "accepted": int(accepted.sum()),
             "carry_acceptance": CARRY_ACCEPTANCE_VERSION,
-            "recorded_carry_acceptance": json.loads(record.config_json).get("carry_acceptance", "threshold_v1"),
+            "recorded_carry_acceptance": recorded,
+            "live_failures": live_failures,
+            "unrecoverable_live_carry_loss": (
+                int(live_failures.get("carry_loss", 0)) if stale else 0),
             "rejections": counts, "episodes": rows}
 
 
