@@ -323,6 +323,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--align-xy-abort",
+        type=float,
+        default=0.009,
+        help=(
+            "Hysteresis on the centring bridge: the drift tolerated once the "
+            "descent has begun. Entering needs --align-xy-deadband; without "
+            "the split, a millimetre of drift on the way down sends the wrist "
+            "back to the rotation clearance and the tail chatters away its "
+            "budget."
+        ),
+    )
+    parser.add_argument(
         "--grasp-xy-margin",
         type=float,
         default=0.003,
@@ -520,6 +532,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         align_xy_centring=bool(args.align_xy_centring),
         align_xy_deadband=float(args.align_xy_deadband),
+        align_xy_abort=float(args.align_xy_abort),
         pickup_prompt=str(args.pickup_prompt),
         yaw_hold_during_pickup=not bool(args.no_yaw_hold_during_pickup),
         yaw_hold_during_placement=bool(args.yaw_hold_during_placement),
@@ -605,6 +618,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         print(f"[staged]   rejections: {summary['rejection_reasons']}", flush=True)
         print(f"[staged]   reach: {summary['reach_diagnostics']}", flush=True)
+        print(f"[staged]   align: {summary['align_diagnostics']}", flush=True)
         print(f"[staged]   pickup: {summary['pickup_diagnostics']}", flush=True)
         print(
             f"[staged]   placement: {summary['placement_diagnostics']}",

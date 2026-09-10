@@ -419,6 +419,7 @@ class YawTailController:
         pickup_height_above_grasp: float | None = None,
         pickup_height_tolerance: float = 0.003,
         xy_centring_deadband: float | None = None,
+        xy_centring_abort: float | None = None,
     ) -> None:
         self.torch = torch
         self.calibration = calibration
@@ -429,6 +430,26 @@ class YawTailController:
         self.pickup_height_tolerance = float(pickup_height_tolerance)
         # None disables the XY centring bridge entirely, which is the default.
         self.xy_centring_deadband = xy_centring_deadband
+        # HYSTERESIS. Entering the descent needs the tight deadband; staying in
+        # it tolerates more drift. Without the split the descend gate's else
+        # branch is a CLIMB, so a wrist that drifts a millimetre past the
+        # deadband on the way down climbs all the way back to the rotation
+        # clearance and starts again -- chatter that burns the tail budget
+        # while every instantaneous reading looks correct.
+        #
+        # Re-centring mid-descent is not the alternative: by then the fingers
+        # straddle the object and a lateral command would scrape it. Climbing
+        # out is the right response to a REAL loss of centring; the point of
+        # the wider band is to stop calling ordinary compliance a real loss.
+        self.xy_centring_abort = (
+            xy_centring_abort
+            if xy_centring_abort is not None
+            else (
+                None
+                if xy_centring_deadband is None
+                else 2.0 * float(xy_centring_deadband)
+            )
+        )
         if self.action_step_yaw <= 0.0 or self.action_step_xyz <= 0.0:
             raise ValueError("Action steps must be positive.")
         if self.action_step_gripper <= 0.0:
@@ -528,11 +549,23 @@ class YawTailController:
             clearance = ee_position[:, 2] >= (
                 float(self.calibration.safe_rotation_z) - self.pickup_height_tolerance
             )
-            centred = (
-                torch.ones_like(yaw_ready)
-                if target_xy is None or self.xy_centring_deadband is None
-                else self.centred(ee_position=ee_position, target_xy=target_xy)
-            )
+            if target_xy is None or self.xy_centring_deadband is None:
+                centred = torch.ones_like(yaw_ready)
+            else:
+                error = torch.linalg.vector_norm(
+                    target_xy - ee_position[:, :2], dim=-1
+                )
+                # Below the clearance the wrist is already on its way down, so
+                # judge it by the wider band.
+                descending_now = ee_position[:, 2] < (
+                    float(self.calibration.safe_rotation_z)
+                    - self.pickup_height_tolerance
+                )
+                centred = torch.where(
+                    descending_now,
+                    error <= float(self.xy_centring_abort),
+                    error <= float(self.xy_centring_deadband),
+                )
             target_z = grasp_point_z + float(self.pickup_height_above_grasp)
             descend = ((target_z - ee_position[:, 2]) / self.action_step_xyz).clamp(-1.0, 1.0)
             # Descend only once the wrist is aligned AND over the object. A
@@ -1553,6 +1586,10 @@ class StagedRolloutConfig:
     # Inside this the bridge commands exactly zero. 5 mm sits well inside the
     # apple's 13 mm slack, so a centred wrist is centred by a real margin.
     align_xy_deadband: float = 0.005
+    # Hysteresis: the drift tolerated once the descent has begun. 9 mm still
+    # sits inside the apple's 13 mm lateral slack, so a descent continuing at
+    # this error is still one that can bracket the object.
+    align_xy_abort: float = 0.009
     # WHICH PROMPT DRIVES THE PICKUP STAGE.
     #
     # "pick_up" is the design's default and the teacher's own template.
@@ -1831,6 +1868,14 @@ def run_staged_chains(
         action_step_gripper=config.action_step_gripper,
         pickup_height_above_grasp=config.pickup_height_above_grasp,
         pickup_height_tolerance=config.pickup_height_tolerance,
+        xy_centring_deadband=(
+            float(config.align_xy_deadband)
+            if config.align_xy_centring
+            else None
+        ),
+        xy_centring_abort=(
+            float(config.align_xy_abort) if config.align_xy_centring else None
+        ),
     )
 
     # Per-object lateral slack, constant for the round. Reported loudly when a
@@ -2688,6 +2733,7 @@ class StagedRound:
                     ),
                     "align_xy_centring": bool(config.align_xy_centring),
                     "align_xy_deadband": float(config.align_xy_deadband),
+                    "align_xy_abort": float(config.align_xy_abort),
                     "require_centred_at_reach": bool(
                         config.readiness.require_centred_at_reach
                     ),
@@ -2919,7 +2965,15 @@ class StagedRound:
         )
         grasp_ok = ~self.physical_grasp
         fired = self.reach_success & live
-        ready = fired & opening_ok & height_ok & grasp_ok & centred_ok
+        # Honour the gate that ACTUALLY ran. With the centring bridge enabled
+        # the lateral bound does not gate the reach -- the tail exists to close
+        # that error -- so ANDing it here would report a promotion rate lower
+        # than the one the machine applied, which is the diagnostic telling a
+        # different story from the run.
+        require_centred = bool(readiness.get("require_centred_at_reach", True))
+        ready = fired & opening_ok & height_ok & grasp_ok
+        if require_centred:
+            ready = ready & centred_ok
 
         def percentiles(values: Any, mask: Any) -> dict[str, float] | None:
             selected = values[mask]
@@ -2964,6 +3018,7 @@ class StagedRound:
                 for name in np.unique(self.target_catalog)
             },
             "readiness_settings": {
+                "require_centred_at_reach": require_centred,
                 "min_gripper_opening": min_open,
                 "min_height_above_grasp": min_above,
                 "max_height_above_grasp": max_above,
@@ -3007,6 +3062,96 @@ class StagedRound:
                 "ee_z_m": percentiles(self.ee_xyz[..., 2], fired),
             }
         return report
+
+    def align_diagnostics(self) -> dict[str, Any]:
+        """Why the alignment tail runs out of budget.
+
+        The tail has four jobs -- climb, rotate, centre, descend -- and each
+        one gates the next, so "align_budget_exhausted" is four different
+        failures wearing one name. This splits them, and additionally counts
+        DESCENT ABORTS: the descend gate is `yaw_ready & centred`, and its else
+        branch is a climb, so a wrist that loses centring on the way down
+        climbs back to the rotation clearance and starts again. That chatter
+        burns the budget while every instantaneous reading looks correct.
+        """
+
+        import json
+
+        import numpy as np
+
+        settings = json.loads(self.config_json)
+        calibration = json.loads(self.calibration_json)
+        offset = float(settings.get("pick_grasp_height_offset", 0.0075))
+        deadband = float(settings.get("align_xy_deadband", 0.005))
+        safe_z = float(calibration.get("safe_rotation_z", 0.26))
+        tolerance = float(settings.get("pickup_height_tolerance", 0.003))
+        target_yaw = float(calibration.get("target_yaw", 0.0))
+        yaw_tolerance = float(calibration.get("tolerance_rad", 0.0873))
+
+        live = self.active & (self.step_stage == STAGE_ALIGN)
+        entered = live.any(axis=0)
+        if not bool(entered.any()):
+            return {"entered_align": 0}
+
+        target = self.object_xyz[:, :, 0, :]
+        grasp_z = target[..., 2] + offset
+        above = self.ee_xyz[..., 2] - grasp_z
+        lateral = np.linalg.norm(
+            self.ee_xyz[..., :2] - target[..., :2], axis=-1
+        )
+        yaw_error = np.abs(
+            np.angle(np.exp(1j * (self.ee_yaw - target_yaw)))
+        )
+        at_clearance = self.ee_xyz[..., 2] >= (safe_z - tolerance)
+        yaw_ok = yaw_error <= yaw_tolerance
+        centred = lateral <= deadband
+        descending = yaw_ok & centred
+
+        # A climb commanded after a descent, inside the tail: the abort.
+        climbed_back = np.zeros_like(live)
+        climbed_back[1:] = (
+            live[1:]
+            & (self.actions[1:, :, 2] > 0.5)
+            & descending[:-1]
+            & live[:-1]
+        )
+
+        def percentiles(values: Any) -> dict[str, float] | None:
+            selected = values[live]
+            if selected.size == 0:
+                return None
+            return {
+                "p10": round(float(np.percentile(selected, 10)), 4),
+                "median": round(float(np.median(selected)), 4),
+                "p90": round(float(np.percentile(selected, 90)), 4),
+            }
+
+        return {
+            "entered_align": int(entered.sum()),
+            "promoted": int((np.asarray(self.align_event) >= 0).sum()),
+            "decisions_in_align": int(
+                live.sum() / max(int(self.actions_per_decision), 1)
+            ),
+            # Share of tail steps failing each of the four jobs in turn.
+            "share_below_clearance": round(
+                float((~at_clearance)[live].mean()), 4
+            ),
+            "share_yaw_unaligned": round(float((~yaw_ok)[live].mean()), 4),
+            "share_off_centre": round(float((~centred)[live].mean()), 4),
+            "share_descending": round(float(descending[live].mean()), 4),
+            # Worlds that ever got both gates open at once, i.e. ever started
+            # the descent at all. A tail that never reaches this is failing at
+            # rotation or centring; one that reaches it and still exhausts its
+            # budget is chattering.
+            "ever_started_descent": int((descending & live).any(axis=0).sum()),
+            "descent_aborts": int(climbed_back.sum()),
+            "worlds_with_a_descent_abort": int(
+                climbed_back.any(axis=0).sum()
+            ),
+            "yaw_error_rad": percentiles(yaw_error),
+            "xy_error_m": percentiles(lateral),
+            "height_above_grasp_m": percentiles(above),
+        }
 
     def pickup_diagnostics(self) -> dict[str, Any]:
         """Where the grasp stage loses its chains: descend, close, or lift.
@@ -3266,6 +3411,7 @@ class StagedRound:
             # "reached 41" without saying how close the other 23 got cannot be
             # used to decide whether to widen a gate or change a teacher.
             "reach_diagnostics": self.reach_diagnostics(),
+            "align_diagnostics": self.align_diagnostics(),
             "pickup_diagnostics": self.pickup_diagnostics(),
             "placement_diagnostics": self.placement_diagnostics(),
         }

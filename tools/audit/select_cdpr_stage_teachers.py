@@ -180,6 +180,7 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
     reasons: dict[str, int] = {}
     failures: dict[str, int] = {}
     diagnostics: list[dict[str, Any]] = []
+    align: list[dict[str, Any]] = []
     pickup: list[dict[str, Any]] = []
     placement: list[dict[str, Any]] = []
     for row in results:
@@ -188,9 +189,13 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
             reasons[name] = reasons.get(name, 0) + int(count)
         for name, count in summary["failure_counts"].items():
             failures[name] = failures.get(name, 0) + int(count)
-        diagnostics.append(summary["reach_diagnostics"])
-        pickup.append(summary["pickup_diagnostics"])
-        placement.append(summary["placement_diagnostics"])
+        # `.get`, not `[...]`: a round that predates a diagnostic -- or a
+        # stub in a regression test -- must not take the whole screen down
+        # over a reporting field.
+        diagnostics.append(summary.get("reach_diagnostics", {}))
+        align.append(summary.get("align_diagnostics", {}))
+        pickup.append(summary.get("pickup_diagnostics", {}))
+        placement.append(summary.get("placement_diagnostics", {}))
 
     if phase == "move_to":
         # READINESS, not XY success: the chain has to arrive somewhere a pickup
@@ -213,6 +218,7 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
         "failure_counts": dict(sorted(failures.items())),
         # Per round, because a zero has to be readable without a second run.
         "reach_diagnostics": diagnostics,
+        "align_diagnostics": align,
         "pickup_diagnostics": pickup,
         "placement_diagnostics": placement,
     }
@@ -280,6 +286,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "Inside this the bridge commands exactly zero. 5 mm sits well "
             "inside the apple's 13 mm lateral slack."
+        ),
+    )
+    parser.add_argument(
+        "--align-xy-abort",
+        type=float,
+        default=0.009,
+        help=(
+            "Hysteresis on the centring bridge: the drift tolerated once the "
+            "descent has begun. Entering needs --align-xy-deadband; without "
+            "the split, a millimetre of drift on the way down sends the wrist "
+            "back to the rotation clearance and the tail chatters away its "
+            "budget."
         ),
     )
     parser.add_argument(
@@ -449,6 +467,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             ),
             align_xy_centring=bool(args.align_xy_centring),
             align_xy_deadband=float(args.align_xy_deadband),
+            align_xy_abort=float(args.align_xy_abort),
             pickup_prompt=str(args.pickup_prompt),
             record_frames=False,
         )
@@ -539,7 +558,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                     f"[select]   gates: {head['among_predicate_steps']}",
                     flush=True,
                 )
-            print(f"[select]   pickup: {scored['pickup_diagnostics'][0]}", flush=True)
+            if scored["align_diagnostics"] and scored["align_diagnostics"][0]:
+                print(
+                    f"[select]   align: {scored['align_diagnostics'][0]}",
+                    flush=True,
+                )
+            if scored["pickup_diagnostics"] and scored["pickup_diagnostics"][0]:
+                print(
+                    f"[select]   pickup: {scored['pickup_diagnostics'][0]}",
+                    flush=True,
+                )
             print(
                 f"[select]   placement: {scored['placement_diagnostics'][0]}",
                 flush=True,

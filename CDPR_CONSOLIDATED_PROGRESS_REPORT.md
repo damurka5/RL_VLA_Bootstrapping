@@ -1122,6 +1122,51 @@ share is countable in the bank rather than inferred from a config flag, and
 the student is never given the vector: it has to learn the translation from
 pixels like everything else.
 
+**The bridge works, and the pickup teacher was never the problem.** First run
+with `--align-xy-centring`, `teacher_selection` split, 64 scenes:
+
+| | before the bridge | with the bridge |
+|---|---|---|
+| handoff XY error | 0.0166–0.0186 m | **0.0052 m** |
+| handoff height above grasp | ~0.09 m | **0.0094 m** (teacher's trained 0.010) |
+| grasped / entered pickup | 0 / 48 | **2 / 2** |
+| lifted / grasped | — | **2 / 2**, peak 0.064 m |
+| mean commanded `a_z` while holding | — | **+0.60** |
+
+Given the pose its own curriculum trains it from, `step_3540208` grasps and
+lifts every time. That also retires the retained `pick_up`-prompt worry for this
+path: the +0.40-vs-+0.02 `a_z` result is about a policy that has already closed
+on the object, and the `--pickup-prompt destination` arm made no difference
+because there was no grasp to lift from. **Five screens attributed to teachers
+what was a handoff pose no teacher could work from.**
+
+Two walls remain, and they are different in kind.
+
+**The reach still centres about 8% of the time.** 51–56 of 64 chains die at
+`move_budget_exhausted`; the reach predicate fires on 10–13. That is upstream of
+everything and is a property of the move-to teacher against a 0.06–0.10 m start.
+
+**The alignment tail now fails 70–85% of what enters it** — `align_budget_exhausted`
+rose from 3–5 to 7–11 as the bridge let more chains in. The tail has four jobs
+that gate each other (climb, rotate, centre, descend) and one name for failing
+any of them, so `align_diagnostics()` now splits them and counts **descent
+aborts** specifically: the descend gate is `yaw_ready & centred` and its else
+branch is a CLIMB, so a wrist that drifts a millimetre past the deadband on the
+way down returns to the rotation clearance and starts over. Hysteresis was
+added — entry at 5 mm, abort only past 9 mm, still inside the apple's 13 mm
+slack. Re-centring mid-descent is not the alternative: by then the fingers
+straddle the object and a lateral command would scrape it.
+
+**The placement teacher does not carry.** Two chains reached it and the object's
+closest approach to the bowl was **0.155 m** — it never set off. `step_2754052`
+was trained on caught starts that begin at a hover near the receptacle, and the
+design's warning that such a score "says nothing about this distribution" is now
+a measurement. Two chains is not a result, but it is the first time the question
+has been asked at all.
+
+The selector refused to write a teacher manifest with zero accepted chains,
+which is the guard behaving correctly: no donor set has been selected.
+
 **The release boundary, found from a real trace.** The first chain to ever
 reach a bowl was rejected as a broken carry. `scene_44833e357637587f`, a
 tomato: `final_stage: complete`, `failure: none`, and the acceptance check
