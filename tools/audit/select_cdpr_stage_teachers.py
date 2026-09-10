@@ -301,6 +301,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--align-handoff-at-clearance",
+        action="store_true",
+        help=(
+            "Stop the alignment tail at the rotation clearance and hand off "
+            "from there, instead of descending to the pickup teacher's trained "
+            "height. Every descent abort lives in that descent -- at grasp "
+            "point + 0.01 m the finger tips straddle the object, so neither "
+            "rotating nor translating is free -- and the teacher is trained to "
+            "approach from within a 0.20 m cap anyway. An arm to compare, not "
+            "a replacement."
+        ),
+    )
+    parser.add_argument(
         "--grasp-xy-margin",
         type=float,
         default=0.003,
@@ -468,6 +481,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             align_xy_centring=bool(args.align_xy_centring),
             align_xy_deadband=float(args.align_xy_deadband),
             align_xy_abort=float(args.align_xy_abort),
+            align_handoff_at_clearance=bool(args.align_handoff_at_clearance),
             pickup_prompt=str(args.pickup_prompt),
             record_frames=False,
         )

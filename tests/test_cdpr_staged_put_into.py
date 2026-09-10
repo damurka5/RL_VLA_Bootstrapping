@@ -626,12 +626,19 @@ class XYCentringBridgeTests(unittest.TestCase):
         self.assertEqual(float(command[0, 1]), 0.0)
 
     def test_it_does_not_translate_while_climbing(self):
-        """A low lateral sweep is how a finger is dragged through the object."""
+        """A low lateral sweep is how a finger is dragged through the object.
+
+        The climb is identified by the yaw NOT yet being aligned: rotation only
+        happens at the clearance, so an unaligned wrist below it has not been
+        up there yet. A wrist that is low AND aligned is on its way DOWN, and
+        there the servo must keep correcting -- see
+        test_the_lateral_servo_stays_active_through_the_descent.
+        """
 
         servo = self._servo()
         command = servo.actions(
             ee_position=torch.tensor([[0.0, 0.0, 0.21]]),
-            ee_yaw=torch.tensor([0.0]),
+            ee_yaw=torch.tensor([2.0]),
             grasp_point_z=torch.tensor([0.19]),
             target_xy=torch.tensor([[0.017, 0.0]]),
         )
@@ -700,6 +707,70 @@ class XYCentringBridgeTests(unittest.TestCase):
         )
         self.assertEqual(float(entering[0, 2]), 0.0)
         self.assertGreater(float(entering[0, 0]), 0.0)
+
+    def test_the_lateral_servo_stays_active_through_the_descent(self):
+        """A zero XY action is not "hold position", and that was the bug.
+
+        Under the production controller `proposed_target = ee_position + delta`,
+        so a zero delta makes the setpoint CHASE the measurement: drift is
+        accepted rather than corrected, and on a cable-suspended platform it
+        ratchets. Measured over a 48-decision tail with the servo zeroed on the
+        way down: lateral error p90 0.0294 m, 128 descent aborts across 8
+        worlds, 0 of 10 chains promoted.
+        """
+
+        servo = self._servo(xy_centring_abort=0.009)
+        descending = servo.actions(
+            # Below the clearance with yaw aligned: mid-descent.
+            ee_position=torch.tensor([[0.0, 0.0, 0.23]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.007, 0.0]]),
+        )
+        self.assertLess(float(descending[0, 2]), 0.0)
+        # And it is still correcting, toward the centre -- which is away from
+        # whichever finger is closest, so it is the safe direction.
+        self.assertGreater(float(descending[0, 0]), 0.0)
+
+    def test_the_initial_climb_still_does_not_translate(self):
+        servo = self._servo()
+        climbing = servo.actions(
+            # Below the clearance and yaw NOT aligned: the first ascent.
+            ee_position=torch.tensor([[0.0, 0.0, 0.21]]),
+            ee_yaw=torch.tensor([2.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.017, 0.0]]),
+        )
+        self.assertGreater(float(climbing[0, 2]), 0.0)
+        self.assertEqual(float(climbing[0, 0]), 0.0)
+        self.assertEqual(float(climbing[0, 3]), 0.0)
+
+    def test_the_clearance_handoff_arm_never_descends(self):
+        servo = self._servo(handoff_at_clearance=True)
+        at_clearance = servo.actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.26]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.001, 0.0]]),
+        )
+        # Aligned and centred, and it holds height rather than diving.
+        self.assertEqual(float(at_clearance[0, 2]), 0.0)
+        # It still climbs to the clearance and still centres there.
+        low = servo.actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.21]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.017, 0.0]]),
+        )
+        self.assertGreater(float(low[0, 2]), 0.0)
+        self.assertEqual(float(low[0, 0]), 0.0)
+        centring = servo.actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.26]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.017, 0.0]]),
+        )
+        self.assertGreater(float(centring[0, 0]), 0.0)
 
     def test_it_is_absent_unless_asked_for(self):
         servo = self._servo(xy_centring_deadband=None)

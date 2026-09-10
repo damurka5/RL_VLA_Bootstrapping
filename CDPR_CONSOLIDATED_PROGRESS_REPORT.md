@@ -1167,6 +1167,36 @@ has been asked at all.
 The selector refused to write a teacher manifest with zero accepted chains,
 which is the guard behaving correctly: no donor set has been selected.
 
+**A zero action is not "hold position", and it cost the tail every chain.**
+The run after the bridge regressed to 0 of 10 promoted, and the new align
+diagnostic named it: all 10 entered the tail, all 10 started the descent, and
+there were **128 descent aborts across 8 worlds** with lateral error reaching
+0.0294 m at p90.
+
+The descent commanded XY exactly zero. Under the production controller
+`proposed_target = ee_position + delta`, so a zero delta makes the setpoint
+CHASE the measurement -- drift is accepted rather than corrected, an integrator
+with no restoring force, and on a cable-suspended, ball-jointed platform it
+ratchets over a 48-decision tail. The first fix attempted was a wider abort
+band, which was treating the symptom: nothing was correcting.
+
+The lateral servo now runs whenever the yaw servo does, descent included.
+Correcting during the descent is also the SAFE direction -- the servo only ever
+moves toward the object's centre, which is away from whichever finger is
+closest, and at the <=9 mm error the descent tolerates the correction is under
+one action step. The initial climb still does not translate, identified by the
+yaw not yet being aligned: rotation only happens at the clearance, so an
+unaligned wrist below it has not been up there.
+
+**`--align-handoff-at-clearance`, as an arm.** Every abort lives in the
+descent, and the geometry there is genuinely awkward: at grasp point + 0.01 m
+the finger tips sit 0.029 m BELOW the object's centre, straddling it, so
+neither rotating nor translating is free. The pickup teacher's own curriculum
+trains it from within a 0.20 m three-dimensional cap, so a centred handoff at
+the clearance height is inside its distribution and it simply descends itself
+-- which is the thing it was trained to do. Which handoff the teacher prefers
+is a measurement, so both are one flag apart.
+
 **The release boundary, found from a real trace.** The first chain to ever
 reach a bowl was rejected as a broken carry. `scene_44833e357637587f`, a
 tomato: `final_stage: complete`, `failure: none`, and the acceptance check

@@ -420,6 +420,7 @@ class YawTailController:
         pickup_height_tolerance: float = 0.003,
         xy_centring_deadband: float | None = None,
         xy_centring_abort: float | None = None,
+        handoff_at_clearance: bool = False,
     ) -> None:
         self.torch = torch
         self.calibration = calibration
@@ -428,6 +429,21 @@ class YawTailController:
         self.action_step_gripper = float(action_step_gripper)
         self.pickup_height_above_grasp = pickup_height_above_grasp
         self.pickup_height_tolerance = float(pickup_height_tolerance)
+        # Stop the tail at the rotation clearance and hand off from there,
+        # instead of descending to the pickup teacher's trained height.
+        #
+        # Every abort lives in the descent, and the geometry there is genuinely
+        # awkward: at grasp point + 0.01 m the finger tips are 0.029 m BELOW the
+        # object's centre, straddling it, so neither rotating nor translating is
+        # free. The pickup teacher's own curriculum trains it from within a
+        # 0.20 m three-dimensional cap, so a centred handoff at the clearance
+        # height is inside its distribution -- it simply has to descend itself,
+        # which is the thing it was trained to do.
+        #
+        # An arm, not a replacement: it trades a handoff at the teacher's exact
+        # trained pose for one it can reach, and which of those the teacher
+        # prefers is a measurement.
+        self.handoff_at_clearance = bool(handoff_at_clearance)
         # None disables the XY centring bridge entirely, which is the default.
         self.xy_centring_deadband = xy_centring_deadband
         # HYSTERESIS. Entering the descent needs the tight deadband; staying in
@@ -540,7 +556,7 @@ class YawTailController:
         ).clamp_min(0.0)
         command[:, 2] = (rise / self.action_step_xyz).clamp(0.0, 1.0)
         command[:, 3] = self.yaw_command(ee_yaw)
-        if self.pickup_height_above_grasp is not None:
+        if self.pickup_height_above_grasp is not None and not self.handoff_at_clearance:
             if grasp_point_z is None:
                 raise ValueError("Pickup alignment requires the live grasp point height.")
             # Finish at the teacher's aligned training height, not at the
@@ -581,16 +597,47 @@ class YawTailController:
                 clearance | yaw_ready, command[:, 3], torch.zeros_like(ee_yaw)
             )
             if target_xy is not None and self.xy_centring_deadband is not None:
-                # Translate only at the rotation clearance, never on the way up
-                # and never on the way down.
+                # THE LATERAL SERVO RUNS WHENEVER THE YAW SERVO DOES, descent
+                # included, and zeroing it on the way down was the bug.
+                #
+                # A zero XY action is not "hold position". Under the production
+                # controller `proposed_target = ee_position + delta`, so a zero
+                # delta makes the setpoint CHASE the measurement: drift is
+                # accepted rather than corrected, and on a cable-suspended,
+                # ball-jointed platform it ratchets. Measured over a
+                # 48-decision tail: lateral error p90 0.0294 m, 128 descent
+                # aborts across 8 worlds, 0 of 10 chains promoted.
+                #
+                # Correcting during the descent is also the SAFE direction. The
+                # servo only ever moves toward the object's centre, which is
+                # away from whichever finger is closest; at the <=9 mm error the
+                # descent tolerates, the correction is under one action step.
+                # Widening the abort band was treating the symptom.
                 lateral = self.xy_command(
                     ee_position=ee_position, target_xy=target_xy
                 )
                 command[:, :2] = torch.where(
-                    (clearance & ~(yaw_ready & centred))[:, None],
+                    (clearance | yaw_ready)[:, None],
                     lateral,
                     torch.zeros_like(lateral),
                 )
+        if self.handoff_at_clearance and target_xy is not None and (
+            self.xy_centring_deadband is not None
+        ):
+            # No descent phase, so the only unsafe moment is the initial climb.
+            clearance = ee_position[:, 2] >= (
+                float(self.calibration.safe_rotation_z)
+                - self.pickup_height_tolerance
+            )
+            lateral = self.xy_command(
+                ee_position=ee_position, target_xy=target_xy
+            )
+            command[:, :2] = torch.where(
+                clearance[:, None], lateral, torch.zeros_like(lateral)
+            )
+            command[:, 3] = torch.where(
+                clearance, command[:, 3], torch.zeros_like(ee_yaw)
+            )
         if gripper_opening is not None:
             command[:, 4] = self.open_command(gripper_opening)
         return command
@@ -1590,6 +1637,10 @@ class StagedRolloutConfig:
     # sits inside the apple's 13 mm lateral slack, so a descent continuing at
     # this error is still one that can bracket the object.
     align_xy_abort: float = 0.009
+    # Hand off at the rotation clearance instead of descending to the pickup
+    # teacher's trained height. Every descent abort lives in that descent, and
+    # the teacher is trained to approach from within 0.20 m anyway.
+    align_handoff_at_clearance: bool = False
     # WHICH PROMPT DRIVES THE PICKUP STAGE.
     #
     # "pick_up" is the design's default and the teacher's own template.
@@ -1876,6 +1927,7 @@ def run_staged_chains(
         xy_centring_abort=(
             float(config.align_xy_abort) if config.align_xy_centring else None
         ),
+        handoff_at_clearance=bool(config.align_handoff_at_clearance),
     )
 
     # Per-object lateral slack, constant for the round. Reported loudly when a
@@ -2734,6 +2786,9 @@ class StagedRound:
                     "align_xy_centring": bool(config.align_xy_centring),
                     "align_xy_deadband": float(config.align_xy_deadband),
                     "align_xy_abort": float(config.align_xy_abort),
+                    "align_handoff_at_clearance": bool(
+                        config.align_handoff_at_clearance
+                    ),
                     "require_centred_at_reach": bool(
                         config.readiness.require_centred_at_reach
                     ),
