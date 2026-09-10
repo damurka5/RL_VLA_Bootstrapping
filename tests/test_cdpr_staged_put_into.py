@@ -100,6 +100,9 @@ def _advance(machine, decision, worlds=1, **overrides):
         # 0.0075 pad offset. The readiness band is measured against THIS, not
         # against an absolute height -- see PickupReadiness.
         grasp_point_z=torch.full((worlds,), 0.1921),
+        # Centred over the object, well inside an apple's 0.0130 m slack.
+        target_xy_error=torch.full((worlds,), 0.004),
+        max_grasp_xy_offset=torch.full((worlds,), 0.0130),
         target_lift=torch.zeros(worlds),
         yaw_aligned=false.clone(),
         diverged=false.clone(),
@@ -398,6 +401,104 @@ class StageTransitionTests(unittest.TestCase):
         self.assertEqual(SEMANTIC_STAGE_OF[STAGE_ALIGN], "move_to")
         self.assertEqual(SEMANTIC_STAGE_OF[STAGE_MOVE_TO], "move_to")
         self.assertEqual(SEMANTIC_STAGE_OF[STAGE_SETTLE], "placement")
+
+
+class LateralReadinessTests(unittest.TestCase):
+    """The gate the third screen was missing, and the geometry behind it.
+
+    The production move_to success window is 0.02 m. The open gripper's
+    half-aperture is 0.0475 m, so the lateral slack is 0.0130 m for an apple
+    and 0.0185 m for the others -- the reach window is WIDER than the grasp
+    tolerance. Measured: handoff XY error 0.0166-0.0186 m, the descent stopping
+    0.053-0.059 m above the grasp point with the object never moving, and not
+    one grasp in 48 chains across three screens.
+    """
+
+    def test_the_aperture_matches_the_model(self):
+        """A geometry fact must not drift into a constant nobody re-derives."""
+
+        import mujoco
+
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            FINGER_TIP_DEPTH_M,
+            OPEN_GRIPPER_HALF_APERTURE_M,
+        )
+
+        model = mujoco.MjModel.from_xml_path(
+            "robots/cdpr/cdpr_mujoco/cdpr_mjwarp_smoke.xml"
+        )
+        data = mujoco.MjData(model)
+        base = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, "ee_base")
+        for name in ("finger_l", "finger_r"):
+            joint = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, name)
+            data.qpos[model.jnt_qposadr[joint]] = float(
+                max(model.jnt_range[joint])
+            )
+        mujoco.mj_forward(model, data)
+        origin = data.xpos[base]
+
+        def inner_face(geom: str) -> float:
+            index = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_GEOM, geom)
+            offset = abs(float(data.geom_xpos[index][0] - origin[0]))
+            return offset - float(model.geom_size[index][0])
+
+        for geom in ("left_finger_pad", "right_finger_pad"):
+            self.assertAlmostEqual(
+                inner_face(geom), OPEN_GRIPPER_HALF_APERTURE_M, places=4
+            )
+        tip = mujoco.mj_name2id(
+            model, mujoco.mjtObj.mjOBJ_GEOM, "finger_l_tip"
+        )
+        depth = origin[2] - (
+            float(data.geom_xpos[tip][2]) - float(model.geom_size[tip][2])
+        )
+        self.assertAlmostEqual(depth, FINGER_TIP_DEPTH_M, places=4)
+
+    def test_the_slack_is_narrower_than_the_reach_window(self):
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            max_grasp_xy_offset,
+        )
+
+        # The production move_to success window, for comparison.
+        reach_window = 0.02
+        apple = max_grasp_xy_offset("robocasa_apple", margin=0.0)
+        orange = max_grasp_xy_offset("robocasa_orange", margin=0.0)
+        self.assertAlmostEqual(apple, 0.0130, places=4)
+        self.assertAlmostEqual(orange, 0.0185, places=4)
+        self.assertLess(apple, reach_window)
+        self.assertLess(orange, reach_window)
+
+    def test_a_catalog_wider_than_the_aperture_reports_negative_slack(self):
+        from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+            max_grasp_xy_offset,
+        )
+
+        # The geometry fact that removed banana and mug from the target pool,
+        # stated as a number instead of a note.
+        self.assertLess(max_grasp_xy_offset("robocasa_banana"), 0.0)
+
+    def test_an_off_centre_reach_does_not_promote(self):
+        machine = _machine()
+        _advance(
+            machine,
+            0,
+            reach_success=torch.tensor([True]),
+            # Inside the 0.02 m reach window and outside an apple's slack.
+            target_xy_error=torch.tensor([0.017]),
+            max_grasp_xy_offset=torch.tensor([0.0130]),
+        )
+        self.assertEqual(int(machine.stage[0]), STAGE_MOVE_TO)
+
+    def test_a_centred_reach_promotes(self):
+        machine = _machine()
+        _advance(
+            machine,
+            0,
+            reach_success=torch.tensor([True]),
+            target_xy_error=torch.tensor([0.009]),
+            max_grasp_xy_offset=torch.tensor([0.0130]),
+        )
+        self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
 
 
 class YawTests(unittest.TestCase):

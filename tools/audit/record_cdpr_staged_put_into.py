@@ -288,6 +288,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--grasp-xy-margin",
+        type=float,
+        default=0.003,
+        help=(
+            "Safety margin on the lateral readiness gate, in metres. The gate "
+            "is (0.0475 open half-aperture - object hull radius - margin), so "
+            "0.0130 m of slack for an apple and 0.0185 m for the others. The "
+            "production move_to window is 0.02 m -- WIDER than the grasp "
+            "tolerance -- which is why a chain can pass the reach predicate "
+            "and still hand the pickup teacher a pose it cannot grasp from."
+        ),
+    )
+    parser.add_argument(
         "--pickup-prompt",
         choices=("pick_up", "destination"),
         default="pick_up",
@@ -449,6 +462,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             min_ee_z=float(args.min_ee_z),
             max_ee_z=float(args.max_ee_z),
             min_gripper_opening=float(args.min_gripper_opening),
+            grasp_xy_margin=float(args.grasp_xy_margin),
         ),
         pick_grasp_height_offset=float(
             world.task_metadata.get("pick_grasp_height_offset", 0.0075)

@@ -1029,12 +1029,63 @@ deliberate closure to the reach — `gripper_closed` 0.38 and `already_grasping`
 0.15, both of them correct behaviour of a later stage. The reach table is now
 scoped to the approach stages.
 
+**Fourth and fifth screens: the reach window is wider than the grasp
+tolerance.** With the pickup diagnostics in place, and with the pickup prompt
+run both ways, the pickup stage reports the same thing on every arm:
+
+| | `--pickup-prompt pick_up` | `--pickup-prompt destination` |
+|---|---|---|
+| entered pickup | 14 | 18 |
+| **grasped** | **0** | **0** |
+| closest height above grasp | 0.0583 m | 0.0584 m |
+| closest 3-D distance to grasp | 0.0612 m | 0.0608 m |
+| max lift, all entered | 0.0019 m | 0.0019 m |
+
+The prompt arm is **refuted**: the two are indistinguishable, because the lift
+question was moot — there is no grasp to lift from. The retained `+0.40` vs
+`+0.02` `a_z` measurement is about a policy that has already closed on the
+object and says nothing about a policy that never reaches it.
+
+The distribution is what gives it away. `closest_height_above_grasp` runs p10
+0.0529, median 0.0583, **p90 0.0585** — six millimetres of spread across 18
+independent chains, tracking object radius. A policy declining to descend
+varies; this is a physical stop.
+
+Measured from the MJCF (`tests/test_cdpr_staged_put_into.py` re-derives it and
+fails if the model moves): both fingers are coupled by a weld equality, the
+open aperture is **0.095 m centred on `ee_base`**, and the finger tips reach
+**0.039 m** below it. The lateral slack — half-aperture minus the object's hull
+radius — is therefore **0.0130 m for an apple** and **0.0185 m for orange,
+tomato and potato**. The handoff XY error is **0.0166–0.0186 m**.
+
+So the fingers arrive laterally overlapping the object, land on its shoulder
+0.053–0.059 m above the grasp point, and stop. The stop height tracks the
+object radius, which is why the spread is six millimetres.
+
+**The finding, and it is about the campaign's protocol rather than this
+harness: the production `move_to` success window is 0.02 m, which is wider
+than the grasp's lateral tolerance for every target object.** A chain can pass
+the reach predicate and still hand the pickup teacher a pose from which the
+open gripper cannot bracket the object. The reach reward was never about
+grasping and there was no reason for its window to be a grasp tolerance; the
+composition is what makes the two meet.
+
+Readiness now carries its own per-object XY bound, derived from the measured
+aperture rather than inherited from the reward window, and the reach table
+names `not_centred_for_grasp` separately from the other gates. The same
+arithmetic restates the banana/mug exclusion quantitatively: `robocasa_banana`
+has **negative** slack, so no yaw of a fixed-yaw contract can bracket it —
+and `robocasa_potato`, whose capsule gives it a 0.054 m hull radius at its
+widest presentation, is in the same position and will be reported as such.
+
 **Retained results:** at 0.06–0.10 m starts the reach predicate is met on
 21/64 scenes by `step_11009573` and 13/64 by `step_3416645` with the gripper
 hold on, and on 29–35/64 by `step_3416645` without it; alignment converts
-71–75% of reaches; the grasp converts 1 of 16. **No teacher is ranked** —
-neither move-to candidate is separated at this budget, and the pickup and
-placement roles have not yet been compared on a chain that reaches them.
+71–75% of reaches; **the grasp converts 0 of 48 across three screens** with the
+handoff XY error above the lateral slack on essentially every chain. **No
+teacher is ranked** — every screen so far has been floored by a protocol gate,
+and the pickup and placement roles have never been compared on a chain that
+arrives graspable.
 
 **What this pipeline still cannot tell you.** Whether any teacher triple
 produces usable chains at a usable rate; whether the relabelled prefix is

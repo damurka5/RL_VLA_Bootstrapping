@@ -61,7 +61,48 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     INSTRUCTION_TO_ID,
     BatchedTaskState,
 )
+from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import (
+    catalog_xy_radius,
+)
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import OBJECT_VARIANTS
+
+
+# Half the gap between the finger pads with the gripper fully open, in metres,
+# measured from the MJCF: the finger slide range is [0, 0.03] on a pad whose
+# body sits at x = +-0.02, and the pad geom is 0.0025 half-thick, so the inner
+# faces sit at +-(0.02 + 0.03 - 0.0025) = +-0.0475. Both fingers are driven --
+# a weld equality couples finger_l and finger_r -- so the aperture is centred
+# on ee_base and is 0.095 m wide, which is the "0.0969 m open gap" the object
+# catalog's banana/mug note refers to.
+#
+# `tests/test_cdpr_staged_put_into.py` re-derives this from the model with
+# MuJoCo and fails if it moves, because it is a geometry fact that decides
+# which objects can be grasped at all and it must not drift into a config.
+OPEN_GRIPPER_HALF_APERTURE_M = 0.0475
+
+# How far the finger tips reach below ee_base, same source. It is why a descent
+# from a lateral offset stops early: the tips arrive level with the object's
+# upper surface before the pads are anywhere near bracketing it.
+FINGER_TIP_DEPTH_M = 0.0390
+
+
+def max_grasp_xy_offset(catalog: str, *, margin: float = 0.003) -> float:
+    """How far off-centre the gripper may be and still bracket this object.
+
+    The half-aperture minus the object's rotation-invariant hull radius, minus
+    a margin. Rotation-invariant because the object's yaw is sampled and the
+    gripper's is pinned, so the object may present any of its widths to the
+    closing axis; taking the widest is the only bound that holds for every
+    draw. A catalog whose widest presentation exceeds the aperture returns a
+    NEGATIVE slack and cannot be grasped at this yaw at all -- which is the
+    same geometry fact that removed banana and mug from the target pool.
+    """
+
+    return (
+        OPEN_GRIPPER_HALF_APERTURE_M
+        - catalog_xy_radius(catalog)
+        - float(margin)
+    )
 
 
 # --------------------------------------------------------------------------
@@ -490,6 +531,24 @@ class PickupReadiness:
     # is max(0.55, fitted + 0.04); this is stricter because the hand should not
     # have moved at all yet.
     min_gripper_opening: float = 0.90
+    # LATERAL tolerance, and it is the gate the third screen was missing.
+    #
+    # The production move_to success window is 0.02 m. The open gripper's
+    # lateral slack is 0.0475 minus the object's hull radius: 0.0130 m for an
+    # apple and 0.0185 m for the others. The window is WIDER than the grasp
+    # tolerance, so a chain promoted at the edge of it hands the pickup teacher
+    # a pose from which the fingers cannot bracket the object -- they descend
+    # 3.9 cm, land on its shoulder, and stop.
+    #
+    # Measured 2026-09-10: handoff XY error 0.0166-0.0186 m, closest approach
+    # during pickup stopping 0.053-0.059 m above the grasp point with the
+    # object never moving (max lift 0.002 m) and not one grasp in 48 chains
+    # across three screens.
+    #
+    # So readiness carries its own XY bound, derived per object from the
+    # measured aperture rather than inherited from a reward window that was
+    # never about grasping.
+    grasp_xy_margin: float = 0.003
     # No grasp: a reach that has already closed on the object has skipped the
     # stage this chain exists to record.
     forbid_grasp: bool = True
@@ -617,6 +676,8 @@ class StageMachine:
         gripper_opening: Any,
         ee_position: Any,
         grasp_point_z: Any,
+        target_xy_error: Any,
+        max_grasp_xy_offset: Any,
         target_lift: Any,
         yaw_aligned: Any,
         diverged: Any,
@@ -650,7 +711,10 @@ class StageMachine:
             & (ee_position[:, 2] >= float(self.readiness.min_ee_z))
             & (ee_position[:, 2] <= float(self.readiness.max_ee_z))
         )
-        pickup_ready = reach_success & opening_ok & height_ok
+        # The lateral gate, per object. Without it the reach window (0.02 m)
+        # promotes poses the open gripper cannot bracket.
+        centred_ok = target_xy_error <= max_grasp_xy_offset
+        pickup_ready = reach_success & opening_ok & height_ok & centred_ok
         if self.readiness.forbid_grasp:
             pickup_ready = pickup_ready & ~physical_grasp
 
@@ -870,6 +934,23 @@ class StageMachine:
                 if index > 0 and int((failure == index).sum()) > 0
             },
         }
+
+
+def _first_step_value(record: Any, values: Any, stage: int) -> Any:
+    """The per-world value at the FIRST step of a stage, or NaN.
+
+    The handoff state, as opposed to the best the stage ever achieved. A stage
+    that starts badly and improves and a stage that starts well and degrades
+    have the same minimum and different diagnoses.
+    """
+
+    import numpy as np
+
+    in_stage = (record.step_stage == stage) & record.active
+    first = np.argmax(in_stage, axis=0)
+    entered = in_stage.any(axis=0)
+    picked = values[first, np.arange(values.shape[1])]
+    return np.where(entered, picked, np.nan)
 
 
 def _ratio(numerator: int, denominator: int) -> float | None:
@@ -1416,6 +1497,35 @@ def run_staged_chains(
         action_step_gripper=config.action_step_gripper,
     )
 
+    # Per-object lateral slack, constant for the round. Reported loudly when a
+    # catalog cannot be grasped at all rather than silently yielding nothing.
+    slack = [
+        max_grasp_xy_offset(
+            scene.target_catalog, margin=config.readiness.grasp_xy_margin
+        )
+        for scene in scenes
+    ]
+    infeasible = sorted(
+        {
+            scene.target_catalog
+            for scene, value in zip(scenes, slack)
+            if value <= 0.0
+        }
+    )
+    if infeasible:
+        print(
+            "[staged] WARNING: "
+            f"{infeasible} are wider than the open gripper's 0.095 m aperture "
+            "at their widest presentation, so no yaw of this fixed-yaw "
+            "contract can bracket them. Their chains will never promote past "
+            "the reach. This is the banana/mug geometry fact again; drop them "
+            "from the scene manifest or accept the zero.",
+            flush=True,
+        )
+    max_xy_offset = torch.tensor(
+        slack, dtype=torch.float32, device=backend.device
+    )
+
     object_slots = int(backend.low_dim_observations().object_positions.shape[1])
     buffers = StagedRolloutBuffers(
         worlds=worlds,
@@ -1659,6 +1769,14 @@ def run_staged_chains(
                     ]
                     + float(config.pick_grasp_height_offset)
                 ),
+                target_xy_error=torch.linalg.vector_norm(
+                    low_dim.object_positions[
+                        world_rows, place_state.target_slots, :2
+                    ]
+                    - low_dim.ee_position[:, :2],
+                    dim=-1,
+                ),
+                max_grasp_xy_offset=max_xy_offset,
                 yaw_aligned=servo.aligned(low_dim.ee_yaw),
                 diverged=diverged_now,
             )
@@ -2392,6 +2510,17 @@ class StagedRound:
         )
         above_grasp = self.ee_xyz[..., 2] - (target[..., 2] + offset)
 
+        slack = np.array(
+            [
+                max_grasp_xy_offset(
+                    str(name),
+                    margin=float(readiness.get("grasp_xy_margin", 0.003)),
+                )
+                for name in self.target_catalog
+            ],
+            dtype=np.float32,
+        )
+        centred_ok = xy_distance <= slack[None, :]
         opening_ok = self.gripper_opening >= min_open
         height_ok = (
             (above_grasp >= min_above)
@@ -2401,7 +2530,7 @@ class StagedRound:
         )
         grasp_ok = ~self.physical_grasp
         fired = self.reach_success & live
-        ready = fired & opening_ok & height_ok & grasp_ok
+        ready = fired & opening_ok & height_ok & grasp_ok & centred_ok
 
         def percentiles(values: Any, mask: Any) -> dict[str, float] | None:
             selected = values[mask]
@@ -2431,6 +2560,20 @@ class StagedRound:
                 self.ee_xyz[..., 2], live
             ),
             "height_above_grasp_m": percentiles(above_grasp, live),
+            "grasp_xy_slack_m": {
+                str(name): round(
+                    float(
+                        max_grasp_xy_offset(
+                            str(name),
+                            margin=float(
+                                readiness.get("grasp_xy_margin", 0.003)
+                            ),
+                        )
+                    ),
+                    4,
+                )
+                for name in np.unique(self.target_catalog)
+            },
             "readiness_settings": {
                 "min_gripper_opening": min_open,
                 "min_height_above_grasp": min_above,
@@ -2465,6 +2608,12 @@ class StagedRound:
                     ),
                     4,
                 ),
+                # Laterally too far to bracket the object, even though the
+                # production reach window (0.02 m) says the reach succeeded.
+                "not_centred_for_grasp": round(
+                    float((~centred_ok)[fired].mean()), 4
+                ),
+                "xy_error_m": percentiles(xy_distance, fired),
                 "height_above_grasp_m": percentiles(above_grasp, fired),
                 "ee_z_m": percentiles(self.ee_xyz[..., 2], fired),
             }
@@ -2500,6 +2649,11 @@ class StagedRound:
         grasp_point[..., 2] += offset
         above = self.ee_xyz[..., 2] - grasp_point[..., 2]
         distance = np.linalg.norm(self.ee_xyz - grasp_point, axis=-1)
+        # The lateral component, reported rather than left to be recovered from
+        # sqrt(3d^2 - height^2) by whoever reads the table.
+        lateral = np.linalg.norm(
+            self.ee_xyz[..., :2] - grasp_point[..., :2], axis=-1
+        )
 
         def per_world(values: Any, reduce: Any) -> Any:
             masked = np.where(live, values, reduce.identity)
@@ -2547,6 +2701,16 @@ class StagedRound:
             "closest_height_above_grasp_m": percentiles(closest_above, entered),
             "closest_3d_distance_to_grasp_m": percentiles(
                 closest_distance, entered
+            ),
+            # THE number this stage turns on. The open gripper's lateral slack
+            # is 0.0130 m for an apple and 0.0185 m for the others; an XY error
+            # above that means the fingers land on the object instead of
+            # bracketing it, and the descent stops.
+            "closest_xy_distance_m": percentiles(
+                per_world(lateral, _Min), entered
+            ),
+            "handoff_xy_error_m": percentiles(
+                _first_step_value(self, lateral, STAGE_PICK_UP), entered
             ),
             # THE discriminator. A grasp that never rises is a different
             # failure from a grasp that never happens, and they have opposite

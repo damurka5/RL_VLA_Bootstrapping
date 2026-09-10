@@ -252,6 +252,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--worlds", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=1)
     parser.add_argument(
+        "--grasp-xy-margin",
+        type=float,
+        default=0.003,
+        help=(
+            "Safety margin on the lateral readiness gate, in metres. The gate "
+            "is (0.0475 open half-aperture - object hull radius - margin), so "
+            "0.0130 m of slack for an apple and 0.0185 m for the others. The "
+            "production move_to window is 0.02 m -- WIDER than the grasp "
+            "tolerance -- which is why a chain can pass the reach predicate "
+            "and still hand the pickup teacher a pose it cannot grasp from."
+        ),
+    )
+    parser.add_argument(
         "--pickup-prompt",
         choices=("pick_up", "destination"),
         default="pick_up",
@@ -372,7 +385,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             chunk_size=int(world.payload["chunk_size"]),
             budgets=StageBudgets(move, pick, place),
             calibration=calibration,
-            readiness=PickupReadiness(),
+            readiness=PickupReadiness(
+                grasp_xy_margin=float(args.grasp_xy_margin)
+            ),
             include_relative_target=bool(
                 getattr(world.args, "residual_relative_target", False)
             ),
