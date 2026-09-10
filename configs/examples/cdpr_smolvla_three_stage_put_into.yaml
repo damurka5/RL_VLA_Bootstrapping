@@ -150,7 +150,25 @@ task:
 
     # Pickup readiness at the reach handoff. XY success alone does not
     # establish a usable pickup pose.
-    three_stage_pickup_ready_z_bounds: [0.20, 0.34]
+    #
+    # RELATIVE TO THE GRASP POINT, not an absolute height, and the first
+    # teacher screen is why: the grasp point is object_z +
+    # pick_grasp_height_offset, which is 0.185-0.192 m for the four target
+    # catalogs, and the pickup teacher's own aligned start -- the pose it was
+    # TRAINED to begin from -- is one centimetre above that. An absolute
+    # 0.20 m floor therefore sits on top of the correct answer for three of the
+    # four objects. Nothing pushes the reach up to compensate either: under
+    # sparse_binary_reward the move-to reward's z_penalty_weight is zeroed and
+    # distance_include_z is off, so the reach has no Z term at all. Measured
+    # 2026-09-10: 0 of 64 chains for every candidate of every role.
+    #
+    # The band is deliberately permissive. It exists to exclude a hand that
+    # could not descend from here; whether a pose is actually graspable is
+    # measured by the pickup stage's own yield.
+    three_stage_pickup_ready_height_above_grasp: [-0.005, 0.12]
+    # Absolute rails only, from the controller workspace. These catch a
+    # diverged pose, not a low reach.
+    three_stage_pickup_ready_ee_z_rails: [0.18, 0.40]
     three_stage_pickup_ready_min_gripper_opening: 0.90
 
     # SFT sampling. Balanced exposure changes which rows are DRAWN; it never

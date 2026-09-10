@@ -296,8 +296,26 @@ def main(argv: Sequence[str] | None = None) -> int:
             "part of it is provenance nobody asked for."
         ),
     )
-    parser.add_argument("--min-ee-z", type=float, default=0.20)
-    parser.add_argument("--max-ee-z", type=float, default=0.34)
+    parser.add_argument(
+        "--min-height-above-grasp",
+        type=float,
+        default=-0.005,
+        help=(
+            "Pickup readiness, RELATIVE to the grasp point (object centre plus "
+            "the pad offset). An absolute floor is what broke the first "
+            "teacher screen: the pickup teacher's own aligned start is 0.195-"
+            "0.202 m for these objects, so a 0.20 m absolute floor sits on top "
+            "of the correct answer."
+        ),
+    )
+    parser.add_argument("--max-height-above-grasp", type=float, default=0.12)
+    parser.add_argument(
+        "--min-ee-z",
+        type=float,
+        default=0.18,
+        help="Absolute rail: the configured controller floor, not a reach gate.",
+    )
+    parser.add_argument("--max-ee-z", type=float, default=0.40)
     parser.add_argument("--min-gripper-opening", type=float, default=0.90)
     parser.add_argument(
         "--no-frames",
@@ -403,9 +421,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
         calibration=calibration,
         readiness=PickupReadiness(
+            min_height_above_grasp=float(args.min_height_above_grasp),
+            max_height_above_grasp=float(args.max_height_above_grasp),
             min_ee_z=float(args.min_ee_z),
             max_ee_z=float(args.max_ee_z),
             min_gripper_opening=float(args.min_gripper_opening),
+        ),
+        pick_grasp_height_offset=float(
+            world.task_metadata.get("pick_grasp_height_offset", 0.0075)
         ),
         include_relative_target=bool(
             getattr(world.args, "residual_relative_target", False)
@@ -497,6 +520,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             flush=True,
         )
         print(f"[staged]   rejections: {summary['rejection_reasons']}", flush=True)
+        print(f"[staged]   reach: {summary['reach_diagnostics']}", flush=True)
         print(f"[staged]   endpoint yaw: {summary['endpoint_yaw']}", flush=True)
 
     report = {

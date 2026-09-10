@@ -135,6 +135,13 @@ def bootstrap_interval(
     }
 
 
+def _stem(path: Path) -> str:
+    """A filename-safe identity for a checkpoint: its run and step."""
+
+    parts = Path(path).parts
+    return "_".join(part for part in parts[-3:-1]) or Path(path).stem
+
+
 def parse_candidates(specs: Sequence[str]) -> dict[str, list[Path]]:
     table: dict[str, list[Path]] = {role: [] for role in TEACHER_ROLES}
     for spec in specs:
@@ -172,12 +179,14 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
     accepted = cat(lambda row: row.acceptance()[0])
     reasons: dict[str, int] = {}
     failures: dict[str, int] = {}
+    diagnostics: list[dict[str, Any]] = []
     for row in results:
         summary = row.summary()
         for name, count in summary["rejection_reasons"].items():
             reasons[name] = reasons.get(name, 0) + int(count)
         for name, count in summary["failure_counts"].items():
             failures[name] = failures.get(name, 0) + int(count)
+        diagnostics.append(summary["reach_diagnostics"])
 
     if phase == "move_to":
         # READINESS, not XY success: the chain has to arrive somewhere a pickup
@@ -198,6 +207,8 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
         "accepted": bootstrap_interval(accepted, scenes),
         "rejection_reasons": dict(sorted(reasons.items())),
         "failure_counts": dict(sorted(failures.items())),
+        # Per round, because a zero has to be readable without a second run.
+        "reach_diagnostics": diagnostics,
     }
     # Conditional yields, which is where a comparison becomes actionable: a
     # pickup candidate that converts 40% of the reaches it is given is better
@@ -234,6 +245,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--worlds", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=1)
+    parser.add_argument(
+        "--dump-rounds",
+        action="store_true",
+        help=(
+            "Write each screening round's npz beside the report. Off by "
+            "default because a screen is throwaway, but a screen that scores "
+            "zero is not throwaway -- it is the thing to look at."
+        ),
+    )
     parser.add_argument("--microbatch", type=int, default=32)
     parser.add_argument("--move-decisions", type=int, default=32)
     parser.add_argument("--pickup-decisions", type=int, default=32)
@@ -361,6 +381,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 rollout_index=[round_index] * len(batch),
             )
             result.frames = None
+            if bool(args.dump_rounds):
+                result.to_npz(
+                    output / f"screen_{phase}_{_stem(roles[phase])}_r{round_index}.npz"
+                )
             collected.append(result)
         merged = score_rounds(collected, phase=phase)
         merged["rounds"] = int(args.rounds)
@@ -402,6 +426,20 @@ def main(argv: Sequence[str] | None = None) -> int:
                 f"conditional {scored.get('aligned_given_upstream')}",
                 flush=True,
             )
+            head = scored["reach_diagnostics"][0]
+            print(
+                "[select]   reach: predicate fired on "
+                f"{head['predicate_fired_worlds']}/{head['worlds']} worlds, "
+                f"ready {head['ready_worlds']}, closest XY "
+                f"{head['closest_xy_distance_m']}, height above grasp "
+                f"{head['height_above_grasp_m']}",
+                flush=True,
+            )
+            if head.get("among_predicate_steps"):
+                print(
+                    f"[select]   gates: {head['among_predicate_steps']}",
+                    flush=True,
+                )
         best = max(rows, key=lambda row: (row["primary"]["rate"] or 0.0))
         chosen[phase] = Path(best["candidate"])
         # Overlapping intervals mean the screen did not separate these two, and

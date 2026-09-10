@@ -430,18 +430,47 @@ class PickupReadiness:
 
     XY success alone does not establish a usable pickup pose, which is the
     §3 warning made operational: a reach that ends with the gripper closed, or
-    already touching the object, or 12 cm above it, satisfies ``move_to`` and
-    hands the pickup teacher a state it was never trained on.
+    already holding the object, or far above it, satisfies ``move_to`` and hands
+    the pickup teacher a state it was never trained on.
+
+    THE HEIGHT BAND IS RELATIVE TO THE GRASP POINT, and the first version of
+    this was an absolute [0.20, 0.34] that rejected everything. The grasp point
+    is ``object_z + pick_grasp_height_offset``, which for the four target
+    catalogs is 0.185-0.192 m, and the pickup teacher's own aligned start -- the
+    pose it was TRAINED to begin from -- is one centimetre above that, so
+    0.195-0.202 m. An absolute 0.20 m floor therefore sits on top of the
+    correct answer and is below it for three of the four objects.
+
+    Worse, nothing pushes the policy up to compensate: under
+    ``sparse_binary_reward`` the move-to reward's ``z_penalty_weight`` is zeroed
+    and ``distance_include_z`` is off, so the reach has no Z term at all and
+    settles wherever its warm start puts it -- plausibly against the 0.19 m
+    reset floor. Measured on the first teacher screen, that combination scored
+    0 of 64 chains for every candidate of every role.
+
+    The band is deliberately PERMISSIVE. Its job is to exclude a reach that
+    could not descend from here -- a hand that stalled near the ceiling, or one
+    that has already closed -- not to second-guess the pickup teacher. Whether
+    a pose is actually graspable is measured by the pickup stage's own yield,
+    which is the number the screen exists to produce.
     """
 
-    min_ee_z: float = 0.20
-    max_ee_z: float = 0.34
+    # Relative to the grasp point (object top plus the pad offset). Slightly
+    # negative at the bottom because the pads may sit a hair below the nominal
+    # point without anything being wrong.
+    min_height_above_grasp: float = -0.005
+    max_height_above_grasp: float = 0.12
+    # Absolute rails from the controller workspace, not from a guess: 0.18 is
+    # the configured controller floor and 0.40 is well above the reset band.
+    # These catch a diverged pose, not a low reach.
+    min_ee_z: float = 0.18
+    max_ee_z: float = 0.40
     # The gripper must still be essentially open. The production release test
     # is max(0.55, fitted + 0.04); this is stricter because the hand should not
     # have moved at all yet.
     min_gripper_opening: float = 0.90
-    # No contact with the target, and no grasp: a reach that has already closed
-    # on the object has skipped the stage this chain exists to record.
+    # No grasp: a reach that has already closed on the object has skipped the
+    # stage this chain exists to record.
     forbid_grasp: bool = True
 
 
@@ -566,6 +595,7 @@ class StageMachine:
         released: Any,
         gripper_opening: Any,
         ee_position: Any,
+        grasp_point_z: Any,
         target_lift: Any,
         yaw_aligned: Any,
         diverged: Any,
@@ -592,8 +622,12 @@ class StageMachine:
         opening_ok = gripper_opening >= float(
             self.readiness.min_gripper_opening
         )
-        height_ok = (ee_position[:, 2] >= float(self.readiness.min_ee_z)) & (
-            ee_position[:, 2] <= float(self.readiness.max_ee_z)
+        above_grasp = ee_position[:, 2] - grasp_point_z
+        height_ok = (
+            (above_grasp >= float(self.readiness.min_height_above_grasp))
+            & (above_grasp <= float(self.readiness.max_height_above_grasp))
+            & (ee_position[:, 2] >= float(self.readiness.min_ee_z))
+            & (ee_position[:, 2] <= float(self.readiness.max_ee_z))
         )
         pickup_ready = reach_success & opening_ok & height_ok
         if self.readiness.forbid_grasp:
@@ -1117,6 +1151,11 @@ class StagedRolloutConfig:
     microbatch_size: int = 0
     action_step_xyz: float = 0.015
     action_step_yaw: float = 0.08
+    # The pad offset below the body ``ee_position`` tracks, measured from the
+    # MJCF. The grasp point of a resting object is its centre plus this, and
+    # the readiness band is expressed against that point rather than against an
+    # absolute height -- see PickupReadiness.
+    pick_grasp_height_offset: float = 0.0075
     # Hold the calibrated yaw through the pickup stage. On by default as the
     # design's "initial controlled variant": the pickup teacher was trained
     # under a uniformly sampled yaw and has no reason to preserve one, so
@@ -1336,6 +1375,7 @@ def run_staged_chains(
         )
 
     role_switches = 0
+    world_rows = torch.arange(worlds, dtype=torch.int64, device=device)
     diverged_any = torch.zeros((worlds,), dtype=torch.bool, device=device)
     with torch.inference_mode():
         for decision in range(total_decisions):
@@ -1544,6 +1584,12 @@ def run_staged_chains(
                 gripper_opening=low_dim.gripper_opening.clone(),
                 ee_position=low_dim.ee_position.clone(),
                 target_lift=pick_result.diagnostics["target_lift"].clone(),
+                grasp_point_z=(
+                    low_dim.object_positions[
+                        world_rows, place_state.target_slots, 2
+                    ]
+                    + float(config.pick_grasp_height_offset)
+                ),
                 yaw_aligned=servo.aligned(low_dim.ee_yaw),
                 diverged=diverged_now,
             )
@@ -2064,7 +2110,16 @@ class StagedRound:
                     "yaw_hold_during_placement": bool(
                         config.yaw_hold_during_placement
                     ),
+                    "pick_grasp_height_offset": float(
+                        config.pick_grasp_height_offset
+                    ),
                     "readiness": {
+                        "min_height_above_grasp": float(
+                            config.readiness.min_height_above_grasp
+                        ),
+                        "max_height_above_grasp": float(
+                            config.readiness.max_height_above_grasp
+                        ),
                         "min_ee_z": float(config.readiness.min_ee_z),
                         "max_ee_z": float(config.readiness.max_ee_z),
                         "min_gripper_opening": float(
@@ -2192,6 +2247,123 @@ class StagedRound:
             result[world] = bool(held[live].all())
         return result
 
+    # -- diagnostics ----------------------------------------------------
+
+    def reach_diagnostics(self) -> dict[str, Any]:
+        """Decompose a failed reach stage into the gate that actually failed.
+
+        ``reached: 0`` is not a finding, it is a question. The reach event is a
+        CONJUNCTION -- the production XY predicate, an open gripper, no grasp,
+        and a height band -- and a zero says nothing about which conjunct was
+        false. The first teacher screen scored 0 of 64 for every candidate of
+        every role, which is not a plausible reading of two move-to teachers
+        that score 81% and 63% on their own protocols, and the answer turned
+        out to be a height band whose floor sat above three of the four
+        objects' natural pickup-ready heights.
+
+        So this reports each gate separately, and the distances underneath
+        them, so the next zero can be read in one pass instead of one GPU run
+        per hypothesis.
+        """
+
+        import json
+
+        import numpy as np
+
+        settings = json.loads(self.config_json)
+        readiness = dict(settings.get("readiness") or {})
+        offset = float(settings.get("pick_grasp_height_offset", 0.0075))
+        min_open = float(readiness.get("min_gripper_opening", 0.90))
+        min_above = float(readiness.get("min_height_above_grasp", -0.005))
+        max_above = float(readiness.get("max_height_above_grasp", 0.12))
+        min_z = float(readiness.get("min_ee_z", 0.18))
+        max_z = float(readiness.get("max_ee_z", 0.40))
+
+        live = self.active
+        target = self.object_xyz[:, :, 0, :]
+        xy_distance = np.linalg.norm(
+            target[..., :2] - self.ee_xyz[..., :2], axis=-1
+        )
+        above_grasp = self.ee_xyz[..., 2] - (target[..., 2] + offset)
+
+        opening_ok = self.gripper_opening >= min_open
+        height_ok = (
+            (above_grasp >= min_above)
+            & (above_grasp <= max_above)
+            & (self.ee_xyz[..., 2] >= min_z)
+            & (self.ee_xyz[..., 2] <= max_z)
+        )
+        grasp_ok = ~self.physical_grasp
+        fired = self.reach_success & live
+        ready = fired & opening_ok & height_ok & grasp_ok
+
+        def percentiles(values: Any, mask: Any) -> dict[str, float] | None:
+            selected = values[mask]
+            if selected.size == 0:
+                return None
+            return {
+                "p10": round(float(np.percentile(selected, 10)), 4),
+                "median": round(float(np.median(selected)), 4),
+                "p90": round(float(np.percentile(selected, 90)), 4),
+            }
+
+        # Closest approach per world, over the steps it was actually stepped.
+        masked = np.where(live, xy_distance, np.inf)
+        closest = masked.min(axis=0)
+        finite = np.isfinite(closest)
+
+        report: dict[str, Any] = {
+            "worlds": int(self.worlds),
+            # The PREDICATE alone, with no readiness attached. If this is zero
+            # the teacher never got within the window; if it is high and
+            # `reach_event` is zero, the readiness gate is what rejected them.
+            "predicate_fired_worlds": int(fired.any(axis=0).sum()),
+            "ready_worlds": int(ready.any(axis=0).sum()),
+            "reach_event_worlds": int((self.reach_event >= 0).sum()),
+            "closest_xy_distance_m": percentiles(closest, finite),
+            "final_ee_z_m": percentiles(
+                self.ee_xyz[..., 2], live
+            ),
+            "height_above_grasp_m": percentiles(above_grasp, live),
+            "readiness_settings": {
+                "min_gripper_opening": min_open,
+                "min_height_above_grasp": min_above,
+                "max_height_above_grasp": max_above,
+                "min_ee_z": min_z,
+                "max_ee_z": max_z,
+            },
+        }
+        if bool(fired.any()):
+            # Which conjunct rejected the steps where the predicate DID fire.
+            # Shares, not counts: a world can fire on many steps.
+            report["among_predicate_steps"] = {
+                "steps": int(fired.sum()),
+                "gripper_closed": round(
+                    float((~opening_ok)[fired].mean()), 4
+                ),
+                "already_grasping": round(
+                    float((~grasp_ok)[fired].mean()), 4
+                ),
+                "too_low_above_grasp": round(
+                    float((above_grasp < min_above)[fired].mean()), 4
+                ),
+                "too_high_above_grasp": round(
+                    float((above_grasp > max_above)[fired].mean()), 4
+                ),
+                "outside_absolute_rails": round(
+                    float(
+                        (
+                            (self.ee_xyz[..., 2] < min_z)
+                            | (self.ee_xyz[..., 2] > max_z)
+                        )[fired].mean()
+                    ),
+                    4,
+                ),
+                "height_above_grasp_m": percentiles(above_grasp, fired),
+                "ee_z_m": percentiles(self.ee_xyz[..., 2], fired),
+            }
+        return report
+
     # -- reporting ------------------------------------------------------
 
     def summary(
@@ -2248,6 +2420,10 @@ class StagedRound:
             "diverged_worlds": int(
                 np.asarray(self.diverged_world_mask, dtype=bool).sum()
             ),
+            # Always present, not only on a failure: a screen that reports
+            # "reached 41" without saying how close the other 23 got cannot be
+            # used to decide whether to widen a gate or change a teacher.
+            "reach_diagnostics": self.reach_diagnostics(),
         }
 
     # -- serialization --------------------------------------------------

@@ -928,6 +928,37 @@ The dataset builder writes `priors_stale: true` and `sil_sft.py` refuses the
 bank until `sil_refresh_priors.py` has cleared it. This is a mechanical guard
 because nothing about the resulting loss curve would say otherwise.
 
+**First teacher screen: 0 of 64 for every candidate, and the cause was the
+harness.** Run 2026-09-10 on the `teacher_selection` split, 64 scenes, two
+move-to candidates, one pickup, two placement. Every candidate of every role
+scored `reached = 0`, with the conditional yields undefined because their
+denominator was zero. Two move-to teachers that score 324/400 and 645/1024 on
+their own protocols do not both go to exactly zero, so this was read as a
+harness fault and not a teacher result.
+
+The reach event is a conjunction — the production XY predicate, an open
+gripper, no grasp, and a height band — and the height band was an absolute
+[0.20, 0.34] m invented in the harness. The grasp point is
+`object_z + pick_grasp_height_offset`, which is **0.185–0.192 m** for apple,
+orange, potato and tomato, and the pickup teacher's own aligned start — the
+pose its curriculum trains it to begin from — is one centimetre above that, so
+**0.195–0.202 m**. The absolute floor therefore sat on top of the correct
+answer, and below it for three of the four objects. Nothing in the reward
+pushed the reach up to compensate: under `sparse_binary_reward` the move-to
+reward's `z_penalty_weight` is zeroed and `distance_include_z` is off, so the
+approach has no Z term at all and settles wherever its warm start puts it.
+
+Two changes followed. Readiness is now expressed **relative to the grasp
+point** (−0.005 to +0.12 m) with absolute rails at the controller floor and
+ceiling, which is a rule derived from the pickup teacher's own reset rather
+than invented. And `StagedRound.reach_diagnostics()` now decomposes the
+conjunction on every round — how many worlds the raw predicate fired on, how
+many passed readiness, the closest XY approach, the height above the grasp
+point, and the share of predicate steps rejected by each individual gate — so
+the next zero is readable without a second GPU run. **No teacher has been
+ranked yet;** the screen has to be re-run, and its earlier numbers say nothing
+about any checkpoint.
+
 **What this pipeline still cannot tell you.** Whether any teacher triple
 produces usable chains at a usable rate; whether the relabelled prefix is
 inside the residual's bounded correction range under the final prompt; and

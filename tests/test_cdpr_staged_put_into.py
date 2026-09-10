@@ -95,7 +95,11 @@ def _advance(machine, decision, worlds=1, **overrides):
         physical_grasp=false.clone(),
         released=false.clone(),
         gripper_opening=torch.ones(worlds),
-        ee_position=torch.tensor([[0.0, 0.0, 0.27]] * worlds),
+        ee_position=torch.tensor([[0.0, 0.0, 0.20]] * worlds),
+        # The grasp point of a resting apple: desk 0.15 + rest 0.0345 + the
+        # 0.0075 pad offset. The readiness band is measured against THIS, not
+        # against an absolute height -- see PickupReadiness.
+        grasp_point_z=torch.full((worlds,), 0.1921),
         target_lift=torch.zeros(worlds),
         yaw_aligned=false.clone(),
         diverged=false.clone(),
@@ -129,6 +133,64 @@ class StageTransitionTests(unittest.TestCase):
         machine = _machine()
         _advance(machine, 0, reach_success=torch.tensor([True]))
         self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+
+    def test_readiness_follows_the_object_not_an_absolute_height(self):
+        """The gate that scored 0 of 64 on the first teacher screen.
+
+        The pickup teacher's own aligned start is one centimetre above the
+        grasp point, which for these catalogs is 0.195-0.202 m. An absolute
+        0.20 m floor rejects three of the four objects at the height the pickup
+        teacher was TRAINED to begin from, and under sparse_binary_reward
+        nothing in the move-to reward pushes the policy up to compensate.
+        """
+
+        # A tall object: grasp point 0.25, gripper hovering one centimetre
+        # above it. Correct, and an absolute [0.20, 0.34] band would also have
+        # accepted this one -- which is why the bug survived a spot check.
+        machine = _machine()
+        _advance(
+            machine,
+            0,
+            reach_success=torch.tensor([True]),
+            ee_position=torch.tensor([[0.0, 0.0, 0.26]]),
+            grasp_point_z=torch.tensor([0.25]),
+        )
+        self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+
+        # A short object: grasp point 0.1856 (tomato), gripper one centimetre
+        # above it at 0.1956. Also correct, and the absolute floor rejected it.
+        machine = _machine()
+        _advance(
+            machine,
+            0,
+            reach_success=torch.tensor([True]),
+            ee_position=torch.tensor([[0.0, 0.0, 0.1956]]),
+            grasp_point_z=torch.tensor([0.1856]),
+        )
+        self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+
+        # Far above the object is still refused: that is what the band is for.
+        machine = _machine()
+        _advance(
+            machine,
+            0,
+            reach_success=torch.tensor([True]),
+            ee_position=torch.tensor([[0.0, 0.0, 0.33]]),
+            grasp_point_z=torch.tensor([0.1856]),
+        )
+        self.assertEqual(int(machine.stage[0]), STAGE_MOVE_TO)
+
+        # And so is a pose below the controller floor, which is a diverged
+        # world rather than a low reach.
+        machine = _machine()
+        _advance(
+            machine,
+            0,
+            reach_success=torch.tensor([True]),
+            ee_position=torch.tensor([[0.0, 0.0, 0.10]]),
+            grasp_point_z=torch.tensor([0.105]),
+        )
+        self.assertEqual(int(machine.stage[0]), STAGE_MOVE_TO)
 
     def test_alignment_requires_consecutive_decisions(self):
         """One decision inside tolerance is a world swinging through it."""

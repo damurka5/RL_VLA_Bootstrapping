@@ -452,6 +452,85 @@ class RowAssemblyTests(unittest.TestCase):
         self.assertIn("yaw_tail", report["actions_by_source"])
 
 
+class ReachDiagnosticTests(unittest.TestCase):
+    """The decomposition that turns `reached: 0` into a named cause.
+
+    The first teacher screen scored 0 of 64 chains for every candidate of every
+    role. That is a conjunction failing, and a zero says nothing about which
+    conjunct: the production XY predicate, an open gripper, no grasp, or the
+    height band. The cause was the height band -- an absolute 0.20 m floor
+    against a pickup-ready height of 0.195-0.202 m for three of the four target
+    objects -- and finding it cost a GPU run that this report would have saved.
+    """
+
+    def _round_with_predicate(self, *, readiness, ee_z, target_z):
+        record = _round([_chain()])
+        record.reach_success[: 4 * PER, 0] = True
+        record.ee_xyz[:, 0, 2] = ee_z
+        record.object_xyz[:, 0, 0, 2] = target_z
+        record.gripper_opening[:, 0] = 1.0
+        record.config_json = json.dumps(
+            {"pick_grasp_height_offset": 0.0075, "readiness": readiness}
+        )
+        return record
+
+    def test_it_separates_the_predicate_from_the_readiness_gate(self):
+        # The historical band, and a tomato-height object: the reach predicate
+        # fires on every step and the gate rejects every one of them.
+        record = self._round_with_predicate(
+            readiness={
+                "min_gripper_opening": 0.90,
+                "min_height_above_grasp": -0.005,
+                "max_height_above_grasp": 0.12,
+                "min_ee_z": 0.20,
+                "max_ee_z": 0.34,
+            },
+            ee_z=0.1956,
+            target_z=0.1781,
+        )
+        report = record.reach_diagnostics()
+        self.assertEqual(report["predicate_fired_worlds"], 1)
+        self.assertEqual(report["ready_worlds"], 0)
+        gates = report["among_predicate_steps"]
+        # Named, and named correctly: not the gripper, not a grasp, not the
+        # relative band -- the absolute rail.
+        self.assertEqual(gates["outside_absolute_rails"], 1.0)
+        self.assertEqual(gates["gripper_closed"], 0.0)
+        self.assertEqual(gates["already_grasping"], 0.0)
+        self.assertEqual(gates["too_low_above_grasp"], 0.0)
+        self.assertEqual(gates["too_high_above_grasp"], 0.0)
+
+    def test_the_corrected_rail_accepts_the_same_pose(self):
+        record = self._round_with_predicate(
+            readiness={
+                "min_gripper_opening": 0.90,
+                "min_height_above_grasp": -0.005,
+                "max_height_above_grasp": 0.12,
+                "min_ee_z": 0.18,
+                "max_ee_z": 0.40,
+            },
+            ee_z=0.1956,
+            target_z=0.1781,
+        )
+        report = record.reach_diagnostics()
+        self.assertEqual(report["predicate_fired_worlds"], 1)
+        self.assertEqual(report["ready_worlds"], 1)
+        self.assertEqual(
+            report["among_predicate_steps"]["outside_absolute_rails"], 0.0
+        )
+
+    def test_a_teacher_that_never_gets_close_reads_differently(self):
+        record = _round([_chain()])
+        record.ee_xyz[:, 0, :2] = 0.25
+        record.config_json = json.dumps({"pick_grasp_height_offset": 0.0075})
+        report = record.reach_diagnostics()
+        # No predicate steps at all, so there is no gate to blame and the
+        # closest-approach distance is the number to read instead.
+        self.assertEqual(report["predicate_fired_worlds"], 0)
+        self.assertNotIn("among_predicate_steps", report)
+        self.assertGreater(report["closest_xy_distance_m"]["median"], 0.02)
+
+
 class RoundTripTests(unittest.TestCase):
     def test_npz_round_trip_preserves_every_column(self):
         import tempfile
