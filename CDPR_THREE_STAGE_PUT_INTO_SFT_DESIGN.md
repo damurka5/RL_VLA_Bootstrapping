@@ -2,16 +2,45 @@
 
 2026-09-10. Design prepared against local repository `e56b7fb` and the
 consolidated report, including the September 10 pilot attachment review.
-**Status, 2026-09-10 (updated): every module, flag and config field named in
-§12 now exists and is unit-tested on CPU.** The commands below are real. What
-has NOT happened is any GPU run: there is no scene manifest, no teacher screen,
-no demonstration bank, no SFT and no full-task score, and the teacher shortlist
-in §3 is still a list of candidates to test rather than a ranking. The one
-number produced so far is the yaw calibration (§5), which is kinematics from
-the MJCF and needs no GPU: 0.000 rad at the desk centre, leaving a mean 10.7°
-and max 25.3° camera-bearing residual across the workspace. Existing GRPO
-remains available for subsequent work; this document specifies the user's
-requested demonstration collection and SFT, and §13 is the order to run it in.
+**Status, 2026-09-10 (updated twice).** Every module, flag and config field
+named in §12 exists and is unit-tested; the commands below are real. Nine
+teacher screens have been run on the `teacher_selection` split and **no
+demonstration bank exists and no teacher has been ranked** — every screen was
+floored by a fault in the collection harness rather than by a policy. The full
+ledger is §7.16b of the consolidated report; the summary is below.
+
+**Stage-by-stage status, measured on 64 scenes per screen:**
+
+| stage | status | measured |
+|---|---|---|
+| scene manifest | done | 1024 scenes, splits disjoint, 0 start inside the goal |
+| yaw calibration (§5) | done | 0.000 rad; fixed-angle residual mean 10.7°, max 25.3° |
+| move-to → reach | **the ceiling** | predicate met on 10–14 / 64 |
+| alignment tail — centring | done | 0.0039–0.0056 m median against a 0.0130 m slack |
+| alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
+| align → pickup handoff | **untested** | the promotion gate was broken until now |
+| pickup: grasp | works | 2 / 2 given a centred handoff |
+| pickup: lift | works | 2 / 2, peak 0.064 m, mean commanded `a_z` +0.60 |
+| placement: carry | **failing** | 0 / 2, object closest 0.155 m from the bowl |
+| dataset / refresh / SFT / evaluation | implemented, never run | no bank to run them on |
+
+**Two corrections to this document's own assumptions**, both measured:
+
+1. §5 assumed the alignment tail would "keep the gripper open". It has to
+   OPEN it: the `move_to` reward has no gripper term under
+   `sparse_binary_reward`, so a shared four-instruction policy arrives with the
+   hand closed on ~100% of reaches.
+2. §6's handoff condition assumed the production `move_to` predicate was a
+   sufficient pickup-readiness test. It is not. The reach window is 0.02 m and
+   the open gripper's lateral slack is 0.0130 m (apple) to 0.0185 m (others),
+   so a chain can satisfy the reach and still hand over a pose from which the
+   fingers cannot bracket the object. Readiness now carries its own per-object
+   lateral bound derived from the measured aperture, and §5's "explicit
+   recorded bridge" is implemented as `--align-xy-centring`.
+
+Existing GRPO remains available for subsequent work; this document specifies
+the user's requested demonstration collection and SFT, and §13 is the order to
+run it in.
 
 ## 1. Result to build
 

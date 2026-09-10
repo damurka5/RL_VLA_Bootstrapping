@@ -799,6 +799,51 @@ class XYCentringBridgeTests(unittest.TestCase):
         self.assertEqual(float(climbing[0, 0]), 0.0)
         self.assertEqual(float(climbing[0, 3]), 0.0)
 
+    def test_the_clearance_arm_can_actually_promote(self):
+        """The gate must not require the descent the arm removes.
+
+        Measured cost of getting this wrong: two full screens in which the yaw
+        error was exactly 0.0 rad and the centring 5.6 mm, and every chain
+        still died at align_budget_exhausted, because handoff_ready was
+        checking a height band around the trained pickup pose that the arm
+        deliberately never reaches.
+        """
+
+        at_clearance = torch.tensor([[0.0, 0.0, 0.26]])
+        grasp_z = torch.tensor([0.19])
+        aligned_yaw = torch.tensor([0.0])
+
+        descending = self._servo(handoff_at_clearance=False)
+        self.assertFalse(
+            bool(
+                descending.handoff_ready(
+                    ee_yaw=aligned_yaw,
+                    ee_position=at_clearance,
+                    grasp_point_z=grasp_z,
+                )[0]
+            )
+        )
+        clearance = self._servo(handoff_at_clearance=True)
+        self.assertTrue(
+            bool(
+                clearance.handoff_ready(
+                    ee_yaw=aligned_yaw,
+                    ee_position=at_clearance,
+                    grasp_point_z=grasp_z,
+                )[0]
+            )
+        )
+        # It still requires the yaw, which is the tail's actual job.
+        self.assertFalse(
+            bool(
+                clearance.handoff_ready(
+                    ee_yaw=torch.tensor([1.5]),
+                    ee_position=at_clearance,
+                    grasp_point_z=grasp_z,
+                )[0]
+            )
+        )
+
     def test_the_clearance_handoff_arm_never_descends(self):
         servo = self._servo(handoff_at_clearance=True)
         at_clearance = servo.actions(

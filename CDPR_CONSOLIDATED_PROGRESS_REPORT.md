@@ -866,6 +866,79 @@ ordinary-evaluation scores decline; see the newest §14 entry. These container
 starts are still object-aligned, and assisted gradient coverage cannot be
 audited from the supplied progress log alone.
 
+### 7.16b Bring-up ledger: nine faults, all of them in the harness
+
+**Status 2026-09-10: no demonstration bank exists and no teacher has been
+ranked.** Nine screens were run on the `teacher_selection` split. Every one was
+floored by a fault in the collection harness rather than by a policy, and the
+sequence is recorded here because the pattern is the finding: *a staged
+collector is a pile of new predicates, and each one is an opportunity to
+measure the harness instead of the robot.*
+
+| # | Symptom | Cause | Where |
+|---|---|---|---|
+| 1 | `reached: 0/64`, every candidate, every role | Readiness height band was an absolute [0.20, 0.34] m; the grasp point is 0.185–0.192 m and the pickup teacher's trained start is 0.195–0.202 m | harness |
+| 2 | `gripper_closed: 1.000` of all predicate steps | `move_to` reward has **no gripper term** under `sparse_binary_reward`, so a shared four-instruction policy arrives closed | protocol |
+| 3 | `grasped: 0/48`, descent stopping 0.058 m above the grasp point | The `move_to` success window (0.02 m) is **wider than the grasp's lateral tolerance** (0.0130 m apple, 0.0185 m others) | protocol |
+| 4 | Failure histograms summed to 58, not 64 | Global loop budget omitted the alignment tail's own counter: 160-decision worst case against a 128-decision loop | harness |
+| 5 | First bowl-reaching chain rejected as a broken carry | Contact ends ~3 steps before the opening crosses the release threshold | harness |
+| 6 | Same fault present twice more | The student evaluation carried its own copy; `strict` requires `~carry_slip`, so it would have zeroed the project's headline number | harness |
+| 7 | 128 descent aborts, lateral error p90 0.0294 m | A zero XY action is not "hold position": `proposed_target = ee_position + delta` makes the setpoint chase the measurement, so drift ratchets | harness |
+| 8 | Yaw error median 0.0824 rad against an 0.0873 rad band | Integrator windup: the servo absorbs the full measured error four times per decision into a plant that is still travelling | harness |
+| 9 | `promoted: 0` with yaw error **exactly 0.0** and centring 5.6 mm | `handoff_ready` required the descent that `--align-handoff-at-clearance` removes; the arm could not promote whatever the controller did | harness |
+
+Two of the nine (#2 and #3) are facts about the **campaign's own protocol** and
+are the durable results of this bring-up:
+
+* The `move_to` reward has no gripper term, so that channel is unconstrained
+  for reaching and a shared policy closes the hand during the approach. The
+  approach now carries a recorded gripper-open hold.
+* **The reach success window is wider than the grasp tolerance.** Measured from
+  the MJCF: both fingers are coupled by a weld equality, the open aperture is
+  0.095 m centred on `ee_base`, the finger tips reach 0.039 m below it, so the
+  lateral slack is 0.0130 m for an apple and 0.0185 m for the others against a
+  0.02 m reach window. A chain can satisfy `move_to` and hand the pickup
+  teacher a pose from which the open gripper cannot bracket the object. The
+  reach reward was never about grasping and had no reason for its window to be
+  a grasp tolerance; composing the two is what makes them meet. The same
+  arithmetic restates the banana/mug exclusion quantitatively and puts
+  `robocasa_potato` in the same class at its widest presentation.
+
+### What the chain is now measured to do
+
+Per 64 `teacher_selection` scenes, with the centring bridge on:
+
+| stage | measured |
+|---|---|
+| reach predicate met | 10–14 / 64 |
+| centring after the bridge | **0.0039–0.0056 m** median (13 mm slack) |
+| yaw after damping | **0.0 rad** median, 20.5% of steps unaligned |
+| handoff height | 0.0696 m ± 0.004 at clearance, 0.0094 m descending |
+| grasp given a centred handoff | **2 / 2** |
+| lift given a grasp | **2 / 2**, peak 0.064 m, mean commanded `a_z` +0.60 |
+| carry to the receptacle | 0 / 2, closest approach **0.155 m** |
+
+The pickup teacher is **not** the problem: handed the pose its own curriculum
+trains it from, it grasps and lifts every time, which also retires the
+`pick_up`-prompt hypothesis (the `--pickup-prompt destination` arm made no
+difference because there was no grasp to lift from).
+
+### What is still unknown
+
+1. **Whether the tail promotes at all**, now that fault #9 is fixed. Every
+   number above the handoff is from at most two chains.
+2. **Whether the placement teacher carries.** Two chains reached it and the
+   object never set off — 0.155 m from the bowl. `step_2754052` was trained on
+   caught starts that begin hovering near the receptacle, and the design's
+   warning that such a score "says nothing about this distribution" is now a
+   measurement rather than a caution. Two chains is not a result.
+3. **Whether the reach ceiling is acceptable.** 10–14 of 64 bounds everything
+   downstream. Widening the scene's approach band would be changing the task to
+   fit the teacher, which is a decision to take deliberately if at all.
+4. **Whether a 5 degree yaw band is reachable.** The design said to validate it
+   on GPU; damping brought the median to 0.0 but a fifth of steps are still
+   outside, and widening the band is the honest step if it does not close.
+
 ### 7.16 The three-stage `put_into` collection and SFT pipeline
 
 **Implemented 2026-09-10; no GPU run yet.** `CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`'s

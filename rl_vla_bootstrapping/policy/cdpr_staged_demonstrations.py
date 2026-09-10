@@ -679,8 +679,25 @@ class YawTailController:
         return error.abs() <= float(self.calibration.tolerance_rad)
 
     def handoff_ready(self, *, ee_yaw: Any, ee_position: Any, grasp_point_z: Any) -> Any:
+        """Is the wrist in the pose the pickup teacher should be handed?
+
+        The height term is skipped in the clearance-handoff arm, and leaving it
+        in was a bug that made that arm untestable: the arm exists precisely so
+        the tail does NOT descend, so `ee_z - grasp_z` stays at the rotation
+        clearance (0.0696 m measured) against a 0.003 m band around 0.010 m.
+        The gate required the descent that the flag removes, so the streak
+        could never start and every chain died at align_budget_exhausted --
+        with the yaw error at exactly 0.0 and the centring at 5.6 mm.
+
+        Two runs were spent on an arm that could not promote whatever the
+        controller did.
+        """
+
         ready = self.aligned(ee_yaw)
-        if self.pickup_height_above_grasp is not None:
+        if (
+            self.pickup_height_above_grasp is not None
+            and not self.handoff_at_clearance
+        ):
             error = ee_position[:, 2] - grasp_point_z - float(self.pickup_height_above_grasp)
             ready = ready & (error.abs() <= self.pickup_height_tolerance)
         return ready
