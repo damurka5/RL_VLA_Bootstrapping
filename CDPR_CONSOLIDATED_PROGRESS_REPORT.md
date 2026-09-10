@@ -877,6 +877,7 @@ measure the harness instead of the robot.*
 
 | # | Symptom | Cause | Where |
 |---|---|---|---|
+| 0 | *(design assumption)* the clearance handoff would suffice | the pickup teacher does not descend 0.069 m on its own; it needs its trained 0.010 m pose | design |
 | 1 | `reached: 0/64`, every candidate, every role | Readiness height band was an absolute [0.20, 0.34] m; the grasp point is 0.185–0.192 m and the pickup teacher's trained start is 0.195–0.202 m | harness |
 | 2 | `gripper_closed: 1.000` of all predicate steps | `move_to` reward has **no gripper term** under `sparse_binary_reward`, so a shared four-instruction policy arrives closed | protocol |
 | 3 | `grasped: 0/48`, descent stopping 0.058 m above the grasp point | The `move_to` success window (0.02 m) is **wider than the grasp's lateral tolerance** (0.0130 m apple, 0.0185 m others) | protocol |
@@ -904,13 +905,48 @@ are the durable results of this bring-up:
   arithmetic restates the banana/mug exclusion quantitatively and puts
   `robocasa_potato` in the same class at its widest presentation.
 
+### The handoff height is the pickup teacher's binding constraint
+
+With fault #9 fixed the tail promotes (7 of 13 that enter it), and the first
+honest comparison of handoff poses is available. Same teacher, same scenes,
+same centring:
+
+| handoff height above grasp | entered | grasped | lifted | max lift | mean `a_z` held |
+|---|---|---|---|---|---|
+| **0.0094 m** (tail descends) | 2 | **2** | **2** | 0.064 m | **+0.60** |
+| 0.0687 m (clearance) | 7 | 0 | 0 | 0.002 m | — |
+| 0.0696 m (clearance) | 7 | 1 | 0 | 0.032 m | +0.09 |
+
+Pooled clearance arm: **14 entered, 1 grasped, 0 lifted**, with centring at
+0.0038 m in both — so this is not a lateral effect. The teacher's own
+curriculum aligned start is 0.010 m above the grasp point. Handed that, it
+grasps and lifts every time; handed 0.069 m it descends 4 mm and 33 mm of the
+69 it would need, in 32 decisions.
+
+**This refutes the reasoning that produced the clearance arm.** That arm was
+built on "the pickup teacher trains from within a 0.20 m three-dimensional cap,
+so a centred handoff at the clearance height is inside its distribution and it
+will descend itself". It does not. A curriculum cap on the START distance, in a
+run whose dense term pulled the gripper toward the grasp point, does not imply a
+descent behaviour under `sparse_binary_reward` where no such term exists. The
+descent is the tail's job after all, and `--align-handoff-at-clearance` is
+retained only as the ablation that establishes this.
+
+The descent arm has never been run in its corrected form. Its 53 aborts were
+measured with an **undamped** yaw, and the abort condition is
+`yaw_ready & centred` -- a ringing yaw makes `yaw_ok` flicker, which is itself
+an abort trigger. Damping brought the yaw error median to 0.0000-0.0002 rad, so
+the aborts and the drift ratchet both have fixes the descent arm has not yet
+seen together.
+
 ### What the chain is now measured to do
 
 Per 64 `teacher_selection` scenes, with the centring bridge on:
 
 | stage | measured |
 |---|---|
-| reach predicate met | 10–14 / 64 |
+| reach predicate met | 10–15 / 64 |
+| align promoted, given entered | **7 / 13** |
 | centring after the bridge | **0.0039–0.0056 m** median (13 mm slack) |
 | yaw after damping | **0.0 rad** median, 20.5% of steps unaligned |
 | handoff height | 0.0696 m ± 0.004 at clearance, 0.0094 m descending |
