@@ -6,9 +6,10 @@ No alternative RL algorithm is being implemented or scheduled.
 
 **Adopted by the user after the z-offset pilot review, 2026-09-09.** This is
 the active implementation plan. The extractor and an inference-only handoff
-probe exist; GPU handoffs have passed for a subset of pick-up and plate scenes.
-Pick-up reward variation, bowl handoffs and GRPO training integration are still
-pending. Full evidence is recorded in
+probe exist; GPU handoffs and variable-reward groups have now been observed
+for pickup, plate and bowl. The 2026-09-10 10:11 probe also verifies active
+LoRA capture. Training-only source coverage and GRPO optimizer integration
+remain pending. Full evidence is recorded in
 `CDPR_CONSOLIDATED_PROGRESS_REPORT.md` §§4.2, 7.15 and the latest §14 entry.
 
 `release_recovery_pilot_20260909_130003` regressed pick-up **91/328 → 84/328**
@@ -231,7 +232,22 @@ verification. These are assisted diagnostics on repeated evaluation scenes.
 Review also found the LoRA capture's first 128 worlds were all inactive; the
 collector now selects active complete groups and reports capture coverage.
 
-Next targeted probe (same tolerances, no optimizer updates):
+**Targeted probe completed on 2026-09-10:** `demo_handoff_probe_20260910_101110`
+produces pickup 52/56 over seven distinct scene groups, with two variable
+groups / 712 residual rows / 16 nonzero LoRA advantages. Bowl produces 1/8
+from one accepted scene, with 197 residual rows / eight nonzero LoRA
+advantages. Capture indices exactly match active groups. No weights changed.
+Five pickup groups still saturate; bowl replay acceptance is only one of three.
+See the report ledger for replay exclusions and transport-geometry limits.
+
+The next implementation step is a bounded training pilot, not another identical
+handoff audit. Use a separate training-only bank, integrate fresh suffixes into
+both existing GRPO update paths, retain ordinary-start groups and controls,
+and address the cost of sparse 512-world inference. Progress backwards into
+before-grasp and carry states; the current held-only probe cannot establish
+approach learning. The training launcher does not yet exist.
+
+For reproducing the completed targeted probe (same tolerances, zero updates):
 
 ```bash
 cd /root/repo/RL_VLA_Bootstrapping && git pull --ff-only
@@ -335,6 +351,6 @@ method guarantees that result.
 Current deliverable: extraction tool, live replay/handoff suffix-collection
 probe, two-GPU probe launcher, CPU tests and this adopted GRPO-only plan.
 The training loop does not yet load demonstration starts. The attached GPU
-run verifies some pickup/plate handoffs, not a learning gain. Active LoRA
-capture has been repaired locally and awaits its remote check. No new remote
-demos or training were run from the local machine.
+runs verify some pickup/plate/bowl handoffs and usable GRPO records, not a
+learning gain. Active LoRA capture passed its remote check in the 10:11 probe.
+No new remote demos or training were run from the local machine.

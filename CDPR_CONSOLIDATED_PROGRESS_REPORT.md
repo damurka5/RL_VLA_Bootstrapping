@@ -45,12 +45,16 @@ starts in training and evaluate transfer without assistance. The extractor is
 implemented and the remote prototype now contains **293 lift prefixes**, of
 which **156** also have complete placements and **137** come from failed
 placements. A replay-and-handoff probe collecting fresh suffixes without
-optimizer updates is implemented. The attached **19:58 GPU run** verifies
-pick-up and plate handoffs: pick-up **24/24** assisted suffix successes but
-**zero usable GRPO rows**, plate **40/48** with **1,314 usable rows** from
-four variable-reward groups. No bowl suffix was accepted, and no weights were
-updated. Earlier pick-up starts, bowl coverage and training integration remain
-pending. See §7.15, the latest §14 entry and `CDPR_GRPO_DEMONSTRATION_PLAN.md`.
+optimizer updates is implemented. The latest **2026-09-10 10:11 GPU probe**
+verifies learning-signal collection for earlier pick-up starts (**52/56**,
+two variable groups, **712** usable residual rows) and one bowl scene
+(**1/8**, one variable group, **197** rows). Active LoRA capture is verified:
+**24 nonzero-advantage rows** across those three groups. The previous probe
+supplied four variable plate groups / 1,314 residual rows. These are assisted
+suffix diagnostics, not trained success rates; no weights were updated.
+Training-only demonstrations, broader scene coverage and optimizer integration
+remain pending. See §7.15, the latest §14 entry and
+`CDPR_GRPO_DEMONSTRATION_PLAN.md`.
 
 **Latest z-offset pilot, diagnostic only:**
 `release_recovery_pilot_20260909_130003` moved pick-up **0.2774 → 0.2561**
@@ -800,12 +804,15 @@ suffix records, including its LoRA capture path, with **zero optimizer updates**
 The probe reports prefix cost, replay errors, divergence, suffix success and
 reward variation. This is a prototype on evaluation scenes under legacy
 geometry, not an ordinary-start score or training launcher. The 19:58 GPU run
-has now verified a subset of pick-up and plate handoffs. Its pick-up groups
-are too easy to supply GRPO advantages; bowl handoffs and actual learning
-remain unverified. Review also found that LoRA capture selected inactive worlds
-0–127 instead of the later-numbered handoff groups. The collector now selects
-whole positive-horizon groups and reports their world indices/nonzero-advantage
-counts. Ordinary all-active collection retains its previous indices and cap.
+verified pickup/plate handoffs but saturated pickup. The 2026-09-10 10:11 run
+moves pickup earlier and verifies two variable pickup groups plus one variable
+bowl group. Five of seven pickup groups remain all-success; one bowl scene is
+insufficient coverage. Review of the earlier run found LoRA capture selected
+inactive worlds 0–127. The collector now selects whole positive-horizon groups;
+the latest GPU reports confirm exact active-group capture and 24 nonzero
+advantages. Ordinary all-active collection retains its previous indices and
+cap. Actual optimization, transfer to ordinary starts and throughput improvements
+remain unverified.
 
 ---
 
@@ -1096,7 +1103,8 @@ The following should not be reused as current headline results:
   probe lift as the production success funnel, or its gate as proof that
   approach/grasp behavior is unchanged. See §7.15 and the latest §14 entry.
 - Demonstration-guided GRPO as an achieved result. It is the adopted next
-  implementation direction; validated handoff and training remain pending.
+  implementation direction; some handoffs and usable records are verified, but
+  optimizer integration and ordinary-start learning gains remain pending.
 - Preflight oracle zeros produced before placement reward/reset geometry was repaired.
 - Validation numbers produced without restoring curriculum state.
 - Unseeded single-round comparisons that treated SmolVLA's stochastic prior as deterministic.
@@ -1265,6 +1273,83 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-10 — Earlier pickup and bowl handoffs produce usable GRPO records; active LoRA capture verified
+
+- Evidence: attached `demo_handoff_probe_20260910_101110/`, revision
+  `fbfeb041b2ab5cfa8fdf3c918e85c09515dbd500`, empty tracked patch, both arms
+  exit 0. The nine uploaded files, SHA-256 inventory and checked aggregates
+  are archived locally under
+  `runs/analysis/demo_handoff_probe_20260910_101110_review/`.
+- Donor remains continuation `step_3540208`, SHA-256
+  `69bc284949d0837469d5396d789805f2967582e704ceedf2ab7db797003b09bc`.
+  Config and prototype-manifest hashes match the preceding probe. Pickup uses
+  round 0 / boundary backoff 2; placement uses round 1 / backoff 0 / bowl-only
+  sources. Group size remains 8, pose tolerance 2 mm, opening tolerance 0.03,
+  lift-datum sanity ceiling 2 cm. Saved donor exploration is still
+  `[0,0,0,0,0.15]`, after-grasp gate false; this is not another z-offset ablation.
+
+| Destination / prefix env steps | Planned / accepted groups | Assisted success | Variable groups | Usable residual rows | LoRA rows / nonzero advantages |
+|---|---:|---:|---:|---:|---:|
+| pick_up / 20 | 6 / 4 | 31/32 | 1 | 255 | 32 / 8 |
+| pick_up / 24 | 5 / 3 | 21/24 | 1 | 457 | 24 / 8 |
+| bowl / 76 | 2 / 1 | 1/8 | 1 | 197 | 8 / 8 |
+| bowl / 44 | 1 / 0 | unmeasured | 0 | 0 (no collection) | 0 / 0 |
+
+- **Pickup now has a nonzero training signal:** 52/56 = 0.9286 assisted
+  success across seven distinct source scene groups; two of seven groups
+  have reward variation, supplying 712 residual rows and 16 nonzero LoRA
+  advantages. The variable groups are source world 179 / group 22 (7/8,
+  std 0.3307) and world 511 / group 63 (5/8, std 0.4841). Both are orange
+  lift prefixes from failed bowl placements. Thus the failed-placement prefix
+  pool contributes useful pickup records in this audit. The other five groups
+  remain 8/8 and supply no GRPO advantage. All accepted pickup source traces
+  have no previous live-datum lift event; no destination-terminal groups were
+  dropped. This does not measure unassisted pickup or establish a learning gain.
+- **Bowl is now measured:** source world 498 / group 62 supplies 1/8 successes,
+  reward std 0.3307, 197 residual rows and eight nonzero LoRA advantages.
+  This is one source scene, not eight independent scenes. Its object begins
+  0.1011 m from the bowl center and is 0.1037 m away at the recorded lift,
+  outside the 0.057 m radius. It is therefore not an inside-goal source of the
+  kind dominating the earlier plate audit. However, the teacher runs for
+  76 environment steps before handoff; the report does not establish how much
+  transport remains at that boundary. It is not an outside-goal ordinary-start
+  success estimate or proof the suffix learned transport.
+- **LoRA capture fix verified on GPU:** recorded world indices exactly equal
+  all accepted groups' eight candidates in each collected batch. The three
+  variable groups contribute 24 nonzero-advantage rows, compared with inactive
+  capture in the preceding producer revision. These are eligible records;
+  optimizer updates and teacher-prefix loss rows remain exactly zero.
+- Replay rejects four of eleven pickup trials: one pose/opening/grasp/lost-hold
+  mismatch, two grasp mismatches and one pose mismatch (2.104 mm). Bowl rejects
+  two of three trials: 4.095 mm pose plus opening mismatch at prefix 76, and
+  30.177 mm pose/opening/grasp/lost-hold mismatch at prefix 44. Keep these
+  thresholds; a near-boundary rejection is not grounds to relax them.
+- All collected suffixes report zero divergence events and no diverged worlds.
+  The 76-step bowl prefix reports seven divergence events across the replayed
+  source batch; other prefixes report zero. Aggregate collector metrics also
+  report three non-finite EE worlds per collected batch. These are full-batch
+  diagnostics, not proof that an accepted source was affected or that all
+  source worlds were clean; retain per-episode provenance requirements.
+- Suffix collection costs 243.6 / 236.3 s for pickup and 146.7 s for bowl,
+  with SmolVLA inference accounting for about 96% of each duration. Total
+  active suffix actions are 1,233 versus 184,320 padded records; 909 residual
+  rows are usable. Sparse 512-world inference remains a scaling cost. These
+  timings describe the audit, not expected training throughput.
+- **Decision:** the requested targeted audit is complete: earlier pickup has
+  reward variation, bowl has a valid variable group, and active LoRA capture
+  works. Do not request another identical probe as the default next action.
+  Proceed to implementing a bounded demonstration-start GRPO training pilot:
+  collect separate training-only source scenes; integrate replay/validated
+  starts into fresh residual and LoRA updates with teacher exclusion; preserve
+  ordinary-start groups and per-family evaluation; count replay/inference cost.
+  Start with the planned 0.5–1M selected-action transfer check, then extend
+  only when one shared policy improves unassisted manipulation with retention.
+  Before-grasp boundaries and outside-goal carry stages are still required:
+  a held-only lift curriculum cannot fix the ordinary-start grasp bottleneck.
+- Validation of this review: recomputed group/candidate totals; checked exact
+  LoRA index coverage and all zero-update/teacher-mask counters directly from
+  JSON. Documentation-only update; no simulator or optimizer rerun locally.
 
 ### 2026-09-10 — Review of attached 19:58 handoffs: usable plate signal, saturated pick-up, no bowl suffixes
 
