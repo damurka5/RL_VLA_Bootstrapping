@@ -1934,6 +1934,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             ),
             profile=bool(args.mjwarp_profile_timers),
         )
+        demonstration_training = None
+        demo_bank_path = os.environ.get("RLVLA_CDPR_DEMO_BANK", "").strip()
+        if demo_bank_path:
+            from rl_vla_bootstrapping.policy.cdpr_demonstration_training import DemonstrationTraining
+            demonstration_training = DemonstrationTraining(
+                demo_bank_path, collector=collector, args=args,
+                task_metadata=task_metadata, run_dir=run_dir, rank=dist_ctx.rank,
+            )
         validation_collector = None
         if _validation_enabled(args):
             validation_resetter_kwargs = {
@@ -2137,7 +2145,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                 )
                 // int(layout.groups_per_rank),
             )
-            for round_index in range(max_rounds):
+            demo_metrics = {}
+            if demonstration_training is not None:
+                rounds, demo_metrics = demonstration_training.collect_update(update_index, global_step)
+                local_informative = sum(int(r.loss_mask.sum().item()) for r in rounds)
+                local_usable_groups = sum(
+                    int(r.usable_groups.sum().item())
+                    for r in rounds
+                    if r.usable_groups is not None
+                )
+            for round_index in range(0 if demonstration_training is not None else max_rounds):
                 item = collector.collect_round(
                     update_index=update_index,
                     round_index=round_index,
@@ -2207,6 +2224,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                     for item in rounds
                     if item.vla_records is not None
                 ]
+                if demonstration_training is not None:
+                    from rl_vla_bootstrapping.policy.cdpr_demonstration_training import balanced_vla_batches
+                    vla_batches = balanced_vla_batches(vla_batches, int(args.vla_update_max_records))
                 merged_vla: dict[str, Any] = {}
                 if vla_batches:
                     tensor_keys = (
@@ -2289,6 +2309,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             local_metrics = {
                 **rollout_metrics,
                 **update_metrics,
+                **demo_metrics,
                 **instruction_counts,
                 "candidate_successes": float(successes.sum().item()),
                 "candidate_worlds": float(successes.numel()),
@@ -2329,6 +2350,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             global_step += global_selected
             update_index += 1
+            if demonstration_training is not None and synchronized_metrics.get("demo/stalled_ranks", 0) > 0:
+                _append_jsonl(run_dir / f"demonstration_stop_rank{dist_ctx.rank}.jsonl", synchronized_metrics)
+                raise RuntimeError("Demonstration pilot stopped: 12 consecutive attempts for a family supplied no usable groups. Inspect demonstration_rank*.jsonl; do not silently continue ordinary-only training.")
             # Success-gate each instruction's approach curriculum on ITS OWN
             # global pass rate, so an easy task cannot promote a hard one's cap.
             # The counts are global sums, so every rank computes the same rates
@@ -2695,6 +2719,10 @@ def main(argv: Sequence[str] | None = None) -> None:
                     args=args,
                     latest=False,
                     extra_state={
+                        "demonstration_training": ({"bank": demonstration_training.bank_path,
+                            "bank_sha256": demonstration_training.bank_hash,
+                            "protocol": "paired_ordinary_and_assisted_v1"}
+                            if demonstration_training is not None else None),
                         "curriculum": curriculum.snapshot(),
                         "approach_curriculum": approach_curriculum.state_dict(),
                         "prelifted_curriculum": prelifted_curriculum.state_dict(),

@@ -34,7 +34,7 @@ def sha256(path):
 
 
 def plan_boundaries(recording, episodes, task, *, group_size=8,
-                    max_boundaries=2, max_groups=8, boundary_backoff=0):
+                    max_boundaries=2, max_groups=8, boundary_backoff=0, before_grasp=False):
     """One representative per original scene group; never eight demo candidates.
 
     prefix_steps is a COUNT. Its last recorded state is prefix_steps - 1 and
@@ -65,7 +65,9 @@ def plan_boundaries(recording, episodes, task, *, group_size=8,
         group = w // group_size
         held = (recording.caught_target[:, w] & recording.active[:, w]
                 & (recording.gripper_opening[:, w] <= .94))
-        if task == 'pick_up':
+        if before_grasp:
+            event = int(episode['first_grasp_env_step'])
+        elif task == 'pick_up':
             event = int(episode['pickup_success_env_step'])
         elif task == 'placement':
             stop = episode['placement_success_env_step']
@@ -87,7 +89,7 @@ def plan_boundaries(recording, episodes, task, *, group_size=8,
         else:
             raise ValueError(f'Unknown task: {task}')
         boundaries = [b for b in range(stride, event + 1, stride)
-                      if held[b - 1]
+                      if (not held[b - 1] if before_grasp else held[b - 1])
                       and recording.active[:b, w].all()
                       and not recording.terminated[:b, w].any()
                       and b // stride < int(recording.horizons[w])]
@@ -114,7 +116,8 @@ def plan_boundaries(recording, episodes, task, *, group_size=8,
             for family in sorted(by_family):
                 if by_family[family] and len(chosen) < max_groups:
                     chosen.append(by_family[family].pop(0))
-        jobs.append({'prefix_steps': boundary, 'episodes': chosen})
+        jobs.append({'prefix_steps': boundary, 'episodes': chosen,
+                     'require_held': not before_grasp})
     return jobs, dict(rejected)
 
 
@@ -137,7 +140,7 @@ def clone_reset_groups(reset, representatives, group_size, torch):
     return replace(reset, instructions=tuple(instructions))
 
 
-def collect_suffix_once(collector, reset, *, round_index):
+def collect_suffix_once(collector, reset, *, round_index, update_index=0):
     """The teacher prefix never goes through the collector's record writer."""
     resetter = collector.resetter
     owned = 'reset' in vars(resetter)
@@ -153,7 +156,7 @@ def collect_suffix_once(collector, reset, *, round_index):
 
     resetter.reset = prepared_reset
     try:
-        return collector.collect_round(update_index=0, round_index=round_index)
+        return collector.collect_round(update_index=update_index, round_index=round_index)
     finally:
         if owned:
             resetter.reset = original
@@ -180,7 +183,7 @@ def _score(collector, reset, low, caught, active, diagnostics, *, state=None):
 
 def run_job(world, recording, job, task, *, group_size, position_tolerance,
             opening_tolerance, suffix_decisions, seed_torch,
-            lift_datum_tolerance=.02):
+            lift_datum_tolerance=.02, suffix_consumer=None):
     """Replay source actions, validate landmarks, broadcast, collect (not train)."""
     from tools.audit.sil_record import _apply_determinism
     from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import INSTRUCTION_TO_ID
@@ -217,6 +220,16 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
     max_errors = {w: {'object_m': 0., 'ee_m': 0., 'opening': 0.,
                       'grasp_mismatch': False, 'early_termination': False}
                   for w in representatives}
+    # New training sources include true pre-action poses. Bound initial reset
+    # mismatch per source as well as every post-action replay observation.
+    for w in representatives:
+        for name, value, expected in (
+            ('object_m', low.object_positions, recording.reset_object_xyz),
+            ('ee_m', low.ee_position, recording.reset_ee_xyz),
+        ):
+            if expected is not None:
+                delta = np.abs(_host(value)[w] - expected[w])
+                max_errors[w][name] = float(delta.max()) if np.isfinite(delta).all() else float('inf')
     # The extractor cut pick_up at a success step measured against the
     # recording's first POST-action pose. This replay measures it against the
     # live pre-action datum, which is lower, so the same lift crosses 5 cm
@@ -273,8 +286,18 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
             reasons.append('replay_grasp_mismatch')
         if errors['early_termination']:
             reasons.append('replay_terminated_before_handoff')
-        if not bool(reset.task_state.grasped[w]):
+        if job.get('require_held', True) and not bool(reset.task_state.grasped[w]):
             reasons.append('handoff_not_held')
+        # The relabelled pick_up must not begin already solved. Two ways it
+        # can be, and they need different handling. A crossing STRICTLY inside
+        # the prefix means the teacher's own actions earned the lift, whether
+        # or not it still stands at the handoff, so the episode is rejected
+        # here. A crossing at the handoff state itself is left to the admission
+        # re-score below, which drops the whole group and reports
+        # `earliest_dropped_live_datum_lift_step` -- the number that says how
+        # far --boundary-backoff has to move to keep those scenes.
+        if task == 'pick_up' and lift_step[w] is not None and lift_step[w] < boundary - 1:
+            reasons.append('pickup_already_succeeded_in_prefix')
         # The recording stores a row per PREDICATE call, so object_xyz[0] is
         # the pose after the first env step, while initial_target is the pose
         # at reset. Their difference measures the object's settle during that
@@ -328,7 +351,7 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
                 z = backend.low_dim_observations().object_positions[w, int(recording.target_slots[w]), 2]
                 reset.task_state.peak_lift[start:end] = (z - initial_target[w, 2]).clamp_min(0.)
             instructions[start:end] = [episode['pickup_prompt']] * group_size
-            prelifted[start:end] = True
+            prelifted[start:end] = reset.physical_grasp[start:end]
     reset = replace(reset, instructions=tuple(instructions), horizons=horizons,
                     prelifted=prelifted)
     # Verify actual backend state broadcast, not merely identical scene labels.
@@ -376,7 +399,8 @@ def run_job(world, recording, job, task, *, group_size, position_tolerance,
     started = time.monotonic()
     # Fresh sampling, rendering, state encoding and prompt priors happen inside
     # collect_round. No runtime calls from the teacher prefix enter its records.
-    suffix = collect_suffix_once(collector, reset, round_index=recording.round_index)
+    suffix = (collect_suffix_once(collector, reset, round_index=recording.round_index)
+              if suffix_consumer is None else suffix_consumer(reset))
     report['suffix_wall_seconds'] = time.monotonic() - started
     suffix_events, suffix_divergence = backend.pop_nonfinite_world_report()
     report['suffix_divergence_events'] = int(suffix_events)

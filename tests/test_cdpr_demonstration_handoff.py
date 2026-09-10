@@ -368,8 +368,12 @@ class LiveHandoffTests(unittest.TestCase):
         backend.steps = 0
         low.object_positions = torch.tensor(r.object_xyz[0])
         # Only the second group's datum sits far enough below the object for
-        # its relabelled pick_up to be satisfied at the handoff.
-        low.object_positions[8:, 0, 2] -= .05
+        # its relabelled pick_up to be satisfied at the handoff. The offset is
+        # chosen so the 5 cm crossing happens AT the last prefix state (z .12
+        # against a .07 datum) and not before it: an earlier crossing is the
+        # teacher earning the lift, which the per-episode guard rejects, while
+        # a crossing that stands at the handoff is what the group drop is for.
+        low.object_positions[8:, 0, 2] -= .035
         partial = run_job(world, r, jobs[0], 'pick_up', group_size=8,
                           position_tolerance=.002, opening_tolerance=.03,
                           suffix_decisions=40, seed_torch=0, lift_datum_tolerance=.06)
@@ -398,6 +402,22 @@ class LiveHandoffTests(unittest.TestCase):
             for entry in result['episodes']:
                 self.assertAlmostEqual(entry['baseline_error_m'], abs(offset), places=6)
                 self.assertEqual('reset_vs_first_post_action_lift_datum' in entry['rejected'], gated)
+        # A lift the teacher earned INSIDE the prefix is rejected per episode,
+        # before any state is broadcast: the destination would otherwise be
+        # handed a pick_up its own actions had already solved.
+        collector.catch_release_dense_reward = BatchedCatchReleaseDenseReward()
+        backend.steps = 0
+        collected_so_far = len(calls)
+        low.object_positions = torch.tensor(r.object_xyz[0]) - .06
+        early = run_job(world, r, jobs[0], 'pick_up', group_size=8,
+                        position_tolerance=.002, opening_tolerance=.03,
+                        suffix_decisions=40, seed_torch=0, lift_datum_tolerance=.08)
+        self.assertEqual(early['status'], 'no_verified_handoffs')
+        self.assertTrue(all('pickup_already_succeeded_in_prefix' in e['rejected']
+                            for e in early['episodes']))
+        self.assertTrue(all(e['live_datum_lift_env_step'] < jobs[0]['prefix_steps'] - 1
+                            for e in early['episodes']))
+        self.assertEqual(len(calls), collected_so_far)
         # Placement success reads no Z lift datum, so it is never gated on one.
         placement, _ = plan_boundaries(r, episodes(r), 'placement')
         backend.steps = 0

@@ -61,6 +61,27 @@ _GRASP_MIN_LIFT_M = 0.015
 _DEGENERATE_GROUP_REWARD_STD = 0.05
 
 
+def sample_active_priors(runtime, cameras, states, instructions, indices, vision_dim, microbatch):
+    """Run VLA only on live worlds, scatter priors/features to collector shape.
+
+    This changes stochastic sampling order; it is opt-in and is not a claim of
+    bitwise equivalence to full-world inference. Both arms of the pilot use it.
+    """
+    kwargs = dict(primary_images=cameras.overview[indices], wrist_images=cameras.wrist[indices],
+                  states=states[indices], instructions=tuple(instructions[i] for i in indices.tolist()),
+                  microbatch_size=microbatch)
+    if vision_dim:
+        prior, features = runtime.sample_cdpr_chunks_and_vision_from_tensors(**kwargs, vision_dim=vision_dim)
+        full_features = features.new_zeros((states.shape[0], features.shape[1]))
+        full_features.index_copy_(0, indices, features)
+    else:
+        prior = runtime.sample_cdpr_chunks_from_tensors(**kwargs)
+        full_features = None
+    full_prior = prior.new_zeros((states.shape[0], *prior.shape[1:]))
+    full_prior.index_copy_(0, indices, prior)
+    return full_prior, full_features
+
+
 def vla_capture_world_indices(horizons: Any, group_size: int, max_records: int) -> Any:
     """Select whole active groups for decision-zero LoRA capture.
 
@@ -2589,6 +2610,7 @@ class RankLocalMJWarpGRPOCollector:
         profile: bool = False,
     ) -> None:
         layout.validate()
+        self.active_only_inference = False  # opt-in bounded demonstration pilot
         self.backend = backend
         self.runtime = smolvla_runtime
         self.trainer = trainer
@@ -3000,6 +3022,11 @@ class RankLocalMJWarpGRPOCollector:
         vla_capture: dict[str, Any] | None = None
 
         for decision in range(max_decisions):
+            live_indices = None
+            if self.active_only_inference:
+                live_indices = torch.nonzero(active & (decision < reset.horizons), as_tuple=False).flatten()
+                if live_indices.numel() == 0:
+                    break
             self._sync_for_profile()
             started = time.perf_counter()
             cameras = self.backend.render_policy_cameras()
@@ -3023,7 +3050,14 @@ class RankLocalMJWarpGRPOCollector:
             )
             self._sync_for_profile()
             started = time.perf_counter()
-            if self.vision_feature_dim > 0:
+            if live_indices is not None:
+                prior, vision_feature = sample_active_priors(
+                    self.runtime, cameras, state_tensor, reset.instructions,
+                    live_indices, self.vision_feature_dim, self.smolvla_microbatch_size,
+                )
+                if self.vision_feature_dim > 0:
+                    state_tensor = torch.cat([state_tensor, vision_feature.to(state_tensor.dtype)], dim=-1)
+            elif self.vision_feature_dim > 0:
                 prior, vision_feature = (
                     self.runtime.sample_cdpr_chunks_and_vision_from_tensors(
                         primary_images=cameras.overview,

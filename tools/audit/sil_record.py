@@ -220,9 +220,12 @@ class _Recording:
     # answer the second question, which is why a demonstration harvest had to
     # discard whole 512-world rounds to exclude the 8-21 that diverged.
     diverged_world_mask: Any = None
+    reset_object_xyz: Any = None  # true pre-action pose, not object_xyz[0]
+    reset_ee_xyz: Any = None
 
     _OPTIONAL_ARRAYS = (
         "states", "priors", "target_catalog_ids", "diverged_world_mask",
+        "reset_object_xyz", "reset_ee_xyz",
     )
     _REQUIRED_ARRAYS = (
         "actions", "active", "success", "terminated", "caught_target",
@@ -623,6 +626,9 @@ class _RoundRecorder:
             if self.horizon_override:
                 reset.horizons.fill_(self.horizon_override)
             self.reset = reset
+            initial_low = backend.low_dim_observations()
+            self.reset_object_xyz = _host_float(initial_low.object_positions).copy()
+            self.reset_ee_xyz = _host_float(initial_low.ee_position).copy()
             # `reset.physical_grasp` is LIVE state the grasp detector writes
             # into on every env step, so reading it when the recording is
             # assembled -- after the round -- gives the FINAL grasp, gated on
@@ -865,6 +871,7 @@ class _RoundRecorder:
                 )
             ),
             physical_grasp_at_reset=self.caught_at_reset,
+            reset_object_xyz=self.reset_object_xyz, reset_ee_xyz=self.reset_ee_xyz,
             instructions=np.asarray(list(self.reset.instructions), dtype="U256"),
             actions_per_decision=int(
                 self.world.collector.actions_per_policy_decision

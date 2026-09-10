@@ -1,5 +1,6 @@
 runs/
 outputs/
+/local_results/
 robots/cdpr/cdpr_dataset/wrappers/
 __pycache__/
 *.pyc
