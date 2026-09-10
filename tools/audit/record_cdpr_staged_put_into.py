@@ -407,6 +407,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         flush=True,
     )
     world = _build_world(
+        controller_workspace_from_config=True,
         checkpoint=runtime_checkpoint,
         config_path=args.config.expanduser().resolve(),
         device_str=str(args.device),

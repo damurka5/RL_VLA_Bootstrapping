@@ -455,6 +455,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         calibration.validate()
 
     world = _build_world(
+        controller_workspace_from_config=True,
         checkpoint=args.checkpoint.expanduser().resolve(),
         config_path=args.config.expanduser().resolve(),
         device_str=str(args.device),

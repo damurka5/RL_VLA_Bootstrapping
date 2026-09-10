@@ -2,7 +2,7 @@
 
 **Living report — current through 2026-09-10, Europe/Moscow**
 
-**Repository state reviewed:** `e56b7fb` (local review; remote run commit not supplied)
+**Repository state reviewed:** `c151de9` plus local three-stage fixes (remote run commit not supplied)
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
@@ -28,9 +28,12 @@ repository change map.
 whole change map is now implemented and unit-tested locally — the scene/yaw
 contract, the continuous three-stage recorder, teacher screening, the dataset
 builder, the prior refresh and SFT changes, and the unassisted full-task
-evaluation. See §7.12. **No GPU run has been executed against it:** no scene
-manifest, no teacher screen, no bank, no SFT and no evaluation number exists
-yet. The one measurement that does exist is the yaw calibration, which is
+evaluation. See §7.12. **Update from the supplied remote screens:** scene
+generation and teacher screening have now run, but full-chain acceptance is
+still 0/64 in the latest supplied screen. Local review found a checkpoint-owned
+controller floor and mixed-stage teacher-weight routing defects; fixes and
+regression tests are recorded in the newest §14 entry. Corrected GPU screening,
+a usable full-chain bank and SFT remain unverified. The yaw calibration is
 kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
 **0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
 p90 19.8°, max 25.3°** camera-bearing residual across the ±0.19 m workspace,
@@ -1553,6 +1556,59 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-10 — Three-stage zero-grasp screen: controller floor and teacher routing repaired locally
+
+- Evidence: user-supplied initial zero screen, `teacher_selection_v3` pasted
+  attachment and `centred_handoff` console excerpt. The latest excerpt shows
+  seven entered pickup episodes, no grasps, no placements, and closest pickup
+  height about 0.058 m above the grasp point. No remote checkpoint payload,
+  complete config snapshot or NPZ from this screen was supplied locally.
+- Code reviewed: `c151de9`. **Status: local fixes tested; corrected GPU result
+  pending.** The previous 0/64 is not a learning result or evidence that SFT
+  cannot learn the full instruction. Do not use its selected-teacher manifest
+  as a demonstrated working chain.
+- `_build_world` reconstructed control bounds from the architecture-reference
+  checkpoint and ignored the three-stage config's explicit `[0.18, 0.60]`.
+  A missing saved bound therefore used `CDPRBackendConfig.workspace_z`'s
+  `[0.25, 0.60]` default. A 0.25 m floor minus the roughly 0.192 m grasp point
+  predicts the observed 0.058 m gap. This is a code-supported explanation;
+  the next run logs the resolved bounds to establish the remote value.
+  Selection, recording and full-task evaluation now explicitly use the config
+  bounds. Legacy probes retain their checkpoint-based behavior.
+- The staged loop loaded each role's LoRA to infer its priors, then evaluated
+  every world's residual after the loop, under the LAST role's weights. With
+  simultaneous stages this executed hybrid policies and let a downstream
+  candidate change upstream actions. Prior, features and residual actions now
+  execute together while each role is active. The non-tensor residual scale
+  is restored on each switch as well.
+- Role/decision/round-specific RNG scopes make prior sampling repeatable and
+  prevent downstream sampling from consuming upstream random draws. They do
+  not guarantee bitwise deterministic GPU physics.
+- The printed conditional was always alignment-given-reach, even for pickup
+  and placement. It now reports the appropriate stage conversion and null / 0
+  trials when no upstream episode exists. Selection stops with exit status 2
+  and saves diagnostics if every candidate has zero stage success or final
+  confirmation has zero accepted chains. It does not export a usable teacher
+  manifest in those cases. Confirmation NPZs no longer overwrite screening NPZs.
+- The potato rejection used rotation-invariant circumradius as gripper width.
+  The updated gate projects collision primitives onto the calibrated gripper
+  closing axis at the settled reset orientation. Some potato orientations fit
+  and some do not; a warning no longer claims all yaws are impossible. The
+  margin remains conservative and fixed yaw is preserved. Alignment also
+  rechecks centering before handing off.
+- True pre-action reset poses and the actual per-world centering slack are
+  now saved in staged recordings; the old `object_xyz[0]` was post-action.
+  Diagnostics use the saved slack rather than recomputing the old all-yaw bound.
+- Validation: 11 focused regression tests, 30 staged transition/controller
+  tests, 26 staged dataset tests, 19 staged SFT sampling tests, 22 scene
+  tests and 66 legacy approach-probe tests pass on CPU (174 total).
+  CUDA policy/physics validation remains remote.
+- Remote rerun: `bash scripts/diagnose_cdpr_three_stage_remote.sh`, after
+  syncing the changes. It runs focused CPU checks, reuses
+  `runs/three_stage/scenes.json` and `yaw_calibration.json`, then screens the
+  five supplied candidates with `--dump-rounds` into a new timestamped
+  `selection_fixed_*` directory. No collection or SFT is launched.
 
 ### 2026-09-10 — First demonstration-start GRPO pilot completes; full approach and transport remain unproven
 

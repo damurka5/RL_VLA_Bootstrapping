@@ -52,6 +52,7 @@ same servo measures an assisted system and is reported as its own arm.
 from __future__ import annotations
 
 import hashlib
+import json
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -103,6 +104,39 @@ def max_grasp_xy_offset(catalog: str, *, margin: float = 0.003) -> float:
         - catalog_xy_radius(catalog)
         - float(margin)
     )
+
+
+def projected_grasp_xy_offset(catalog: str, object_quaternion: Sequence[float],
+                              gripper_yaw: float, *, margin: float = 0.003) -> float:
+    """Conservative radial centering slack for this object's actual presentation.
+
+    Project the primitive hull onto the fixed gripper's closing axis. A long
+    potato can exceed the aperture along Y while still fitting between X pads;
+    its XY circumradius is not its width along the closing axis.
+    """
+    from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import _quaternion_matrix
+
+    world_axis = (math.cos(gripper_yaw), math.sin(gripper_yaw), 0.0)
+    rotation = _quaternion_matrix(object_quaternion)
+    axis = [sum(rotation[j][i] * world_axis[j] for j in range(3)) for i in range(3)]
+    extent = 0.0
+    for primitive in OBJECT_VARIANTS[catalog].primitives:
+        rotation = _quaternion_matrix(primitive.quat)
+        direction = [sum(rotation[j][i] * axis[j] for j in range(3)) for i in range(3)]
+        centre = sum(axis[i] * primitive.pos[i] for i in range(3))
+        name, size = primitive.primitive, primitive.size
+        if name.startswith("sphere"):
+            radius = float(size[0])
+        elif name.startswith("capsule"):
+            radius = float(size[0]) + abs(direction[2]) * float(size[1])
+        elif name.startswith("cylinder"):
+            radius = math.hypot(*direction[:2]) * float(size[0]) + abs(direction[2]) * float(size[1])
+        elif name.startswith("box"):
+            radius = sum(abs(direction[i]) * float(size[i]) for i in range(3))
+        else:
+            raise ValueError(f"Unsupported grasp primitive {name}")
+        extent = max(extent, abs(centre) + radius)
+    return OPEN_GRIPPER_HALF_APERTURE_M - extent - float(margin)
 
 
 # --------------------------------------------------------------------------
@@ -772,7 +806,7 @@ class StageMachine:
         )
 
         self.aligned_streak = torch.where(
-            aligning & yaw_aligned & opening_ok & height_ok & ~physical_grasp,
+            aligning & yaw_aligned & opening_ok & height_ok & centred_ok & ~physical_grasp,
             self.aligned_streak + 1,
             torch.where(aligning, torch.zeros_like(self.aligned_streak), self.aligned_streak),
         )
@@ -1108,6 +1142,7 @@ class TeacherBank:
             },
             strict=True,
         )
+        base.residual_scale = float(entry.residual_scale)
         base.eval()
         if entry.lora_state:
             unknown = sorted(set(entry.lora_state) - self._lora_keys)
@@ -1409,6 +1444,53 @@ def _to_uint8_frames(torch: Any, camera: Any) -> Any:
     return picked.round().clamp(0.0, 255.0).to(torch.uint8).cpu().numpy()
 
 
+def sample_staged_teacher_actions(*, torch: Any, bank: Any, cameras: Any,
+                                 proprio: Any, roles: Any, active: Any,
+                                 role_texts: Mapping[str, Any], config: Any,
+                                 sampling_seed: int = 0):
+    """Evaluate each prior AND residual while that role's weights are resident."""
+    worlds = int(proprio.shape[0])
+    prior = torch.zeros((worlds, int(config.chunk_size), 5), device=proprio.device)
+    state = torch.zeros((worlds, int(config.state_dim)), device=proprio.device)
+    actions = torch.zeros((worlds, int(config.actions_per_decision), 5), device=proprio.device)
+    switches = 0
+    for role_index, role in enumerate(TEACHER_ROLES):
+        selected = torch.nonzero(active & (roles == role_index), as_tuple=False).flatten()
+        if selected.numel() == 0:
+            continue
+        switches += int(bank.active_role != role)
+        bank.activate(role)
+        devices = [proprio.device.index] if proprio.is_cuda else []
+        # A downstream candidate must not consume noise that changes the next
+        # decision of an upstream teacher. Preserve the caller's RNG as well.
+        with torch.random.fork_rng(devices=devices):
+            seed = int(sampling_seed) + role_index * 100_003
+            torch.random.default_generator.manual_seed(seed)
+            if proprio.is_cuda:
+                with torch.cuda.device(proprio.device):
+                    torch.cuda.manual_seed(seed)
+            chunk_prior, vision = _sample_role(
+                bank.runtime, cameras=cameras, states=proprio,
+                instructions=role_texts[role], indices=selected,
+                vision_dim=int(config.vision_feature_dim), microbatch=int(config.microbatch_size),
+            )
+        selected_state = proprio.index_select(0, selected)
+        if config.vision_feature_dim:
+            if vision is None:
+                raise ValueError(f"Teacher {role} did not return configured vision features")
+            selected_state = torch.cat([selected_state, vision.to(selected_state.dtype)], dim=-1)
+        # Delaying this until after the loop mixes all priors with the LAST
+        # teacher's residual as soon as different worlds reach different stages.
+        chunk = bank.trainer.deterministic_action_chunks_tensor(
+            states=selected_state, priors=chunk_prior,
+            action_count=int(config.actions_per_decision),
+        )
+        prior.index_copy_(0, selected, chunk_prior.to(prior.dtype))
+        state.index_copy_(0, selected, selected_state.to(state.dtype))
+        actions.index_copy_(0, selected, chunk.to(actions.dtype))
+    return state, prior, actions, switches
+
+
 def run_staged_chains(
     *,
     backend: Any,
@@ -1499,12 +1581,14 @@ def run_staged_chains(
 
     # Per-object lateral slack, constant for the round. Reported loudly when a
     # catalog cannot be grasped at all rather than silently yielding nothing.
-    slack = [
-        max_grasp_xy_offset(
-            scene.target_catalog, margin=config.readiness.grasp_xy_margin
-        )
-        for scene in scenes
-    ]
+    initial_low_dim = backend.low_dim_observations()
+    reset_object_xyz = initial_low_dim.object_positions.cpu().numpy().copy()
+    reset_ee_xyz = initial_low_dim.ee_position.cpu().numpy().copy()
+    quaternions = initial_low_dim.object_quaternions[:, 0].cpu().numpy()
+    slack = [projected_grasp_xy_offset(
+        scene.target_catalog, quaternion, config.calibration.target_yaw,
+        margin=config.readiness.grasp_xy_margin,
+    ) for scene, quaternion in zip(scenes, quaternions)]
     infeasible = sorted(
         {
             scene.target_catalog
@@ -1515,11 +1599,10 @@ def run_staged_chains(
     if infeasible:
         print(
             "[staged] WARNING: "
-            f"{infeasible} are wider than the open gripper's 0.095 m aperture "
-            "at their widest presentation, so no yaw of this fixed-yaw "
-            "contract can bracket them. Their chains will never promote past "
-            "the reach. This is the banana/mug geometry fact again; drop them "
-            "from the scene manifest or accept the zero.",
+            f"Some {infeasible} scenes have no positive centering clearance "
+            "at their recorded object orientation and calibrated pickup yaw. "
+            "This is a per-presentation gate, not a claim that every yaw of "
+            "the catalog is ungraspable.",
             flush=True,
         )
     max_xy_offset = torch.tensor(
@@ -1578,53 +1661,12 @@ def run_staged_chains(
                 include_relative_target=config.include_relative_target,
             )
             roles = machine.stage_role_ids()
-            prior = torch.zeros(
-                (worlds, int(config.chunk_size), 5),
-                dtype=torch.float32,
-                device=device,
+            state_tensor, prior, teacher_chunk, switches = sample_staged_teacher_actions(
+                torch=torch, bank=bank, cameras=cameras, proprio=proprio,
+                roles=roles, active=machine.active, role_texts=role_texts, config=config,
+                sampling_seed=int(round_index) * 10_000_019 + decision * 1_000_003,
             )
-            vision = (
-                torch.zeros(
-                    (worlds, int(config.vision_feature_dim)),
-                    dtype=torch.float32,
-                    device=device,
-                )
-                if config.vision_feature_dim > 0
-                else None
-            )
-            for role_index, role in enumerate(TEACHER_ROLES):
-                selected = torch.nonzero(
-                    machine.active & (roles == role_index), as_tuple=False
-                ).reshape(-1)
-                if int(selected.numel()) == 0:
-                    continue
-                if bank.active_role != role:
-                    role_switches += 1
-                bank.activate(role)
-                texts = role_texts[role]
-                chunk_prior, chunk_vision = _sample_role(
-                    bank.runtime,
-                    cameras=cameras,
-                    states=proprio,
-                    instructions=texts,
-                    indices=selected,
-                    vision_dim=int(config.vision_feature_dim),
-                    microbatch=int(config.microbatch_size),
-                )
-                prior.index_copy_(0, selected, chunk_prior)
-                if vision is not None and chunk_vision is not None:
-                    vision.index_copy_(0, selected, chunk_vision)
-
-            state_tensor = (
-                proprio
-                if vision is None
-                else torch.cat([proprio, vision.to(dtype=proprio.dtype)], dim=-1)
-            )
-            teacher_chunk = collector.trainer.deterministic_action_chunks_tensor(
-                states=state_tensor,
-                priors=prior,
-                action_count=per_decision,
-            )
+            role_switches += switches
 
             buffers.states[decision] = state_tensor.float().cpu().numpy()
             buffers.priors[decision] = prior.float().cpu().numpy()
@@ -1819,6 +1861,15 @@ def run_staged_chains(
             else [0] * worlds
         ),
     )
+    # from_buffers historically used object_xyz[0], which is POST action.
+    # Keep true reset poses and the exact gate used by this round instead.
+    round_result.reset_object_xyz = reset_object_xyz
+    round_result.reset_ee_xyz = reset_ee_xyz
+    settings = json.loads(round_result.config_json)
+    settings["grasp_xy_slack_m"] = slack
+    settings["reset_pose_timing"] = "pre_action"
+    settings["controller_workspace_z_bounds"] = list(backend.config.workspace_z)
+    round_result.config_json = json.dumps(settings, sort_keys=True)
     round_result.frames = buffers
     return round_result
 
@@ -2304,6 +2355,7 @@ class StagedRound:
             config_json=json.dumps(
                 {
                     "actions_per_decision": int(config.actions_per_decision),
+                    "teacher_sampling": "role_decision_seeded_v1",
                     "state_dim": int(config.state_dim),
                     "chunk_size": int(config.chunk_size),
                     "vision_feature_dim": int(config.vision_feature_dim),
@@ -2520,6 +2572,8 @@ class StagedRound:
             ],
             dtype=np.float32,
         )
+        if "grasp_xy_slack_m" in settings:
+            slack = np.asarray(settings["grasp_xy_slack_m"], dtype=np.float32)
         centred_ok = xy_distance <= slack[None, :]
         opening_ok = self.gripper_opening >= min_open
         height_ok = (

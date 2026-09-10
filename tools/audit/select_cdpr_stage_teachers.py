@@ -117,7 +117,7 @@ def bootstrap_interval(
     successes = np.asarray(successes, dtype=float)
     clusters = np.asarray(clusters)
     if successes.size == 0:
-        return {"rate": None, "low": None, "high": None, "clusters": 0}
+        return {"rate": None, "low": None, "high": None, "chains": 0, "clusters": 0}
     unique = np.unique(clusters)
     groups = [successes[clusters == name] for name in unique]
     generator = np.random.default_rng(int(seed))
@@ -228,6 +228,13 @@ def score_rounds(results: Sequence[Any], *, phase: str) -> dict[str, Any]:
         report[f"{name}_given_upstream"] = bootstrap_interval(
             values[selected], scenes[selected]
         )
+    conditional_key = {
+        "move_to": "aligned_given_upstream",
+        "pick_up": "picked_up_given_upstream",
+        "placement": "native_placement_given_upstream",
+    }[phase]
+    report["conditional_metric"] = conditional_key
+    report["conditional"] = report[conditional_key]
     for name in np.unique(destination):
         mask = destination == name
         report[f"primary_{name}"] = bootstrap_interval(
@@ -346,6 +353,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if int(args.worlds) % 2:
         raise SystemExit("--worlds must be even (the shared layout needs pairs).")
     world = _build_world(
+        controller_workspace_from_config=True,
         checkpoint=runtime_checkpoint,
         config_path=args.config.expanduser().resolve(),
         device_str=str(args.device),
@@ -403,7 +411,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             record_frames=False,
         )
 
-    def evaluate(roles: Mapping[str, Path], phase: str) -> dict[str, Any]:
+    def evaluate(roles: Mapping[str, Path], phase: str, *, artifact_tag: str = "screen") -> dict[str, Any]:
         entries = load_teacher_entries(torch, roles)
         bank = TeacherBank(
             torch=torch,
@@ -430,7 +438,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             result.frames = None
             if bool(args.dump_rounds):
                 result.to_npz(
-                    output / f"screen_{phase}_{_stem(roles[phase])}_r{round_index}.npz"
+                    output / f"{artifact_tag}_{phase}_{_stem(roles[phase])}_r{round_index}.npz"
                 )
             collected.append(result)
         merged = score_rounds(collected, phase=phase)
@@ -452,6 +460,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "split": str(args.split),
         "scenes_scored": len(batch),
         "yaw_calibration": calibration.to_json(),
+        "controller_workspace_z_bounds": list(world.args.controller_workspace_z_bounds),
+        "teacher_sampling": "role_decision_seeded_v1",
         "phases": {},
     }
     started = time.perf_counter()
@@ -470,7 +480,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             rows.append(scored)
             print(
                 f"[select]   primary {scored['primary']}; "
-                f"conditional {scored.get('aligned_given_upstream')}",
+                f"{scored['conditional_metric']} {scored['conditional']}",
                 flush=True,
             )
             head = scored["reach_diagnostics"][0]
@@ -493,6 +503,16 @@ def main(argv: Sequence[str] | None = None) -> int:
                 flush=True,
             )
         best = max(rows, key=lambda row: (row["primary"]["rate"] or 0.0))
+        if not best["primary"]["rate"]:
+            report["phases"][phase] = {"candidates": rows, "chosen": None}
+            report["status"] = "blocked_zero_stage_success"
+            report["blocked_phase"] = phase
+            report["wall_seconds"] = round(time.perf_counter() - started, 1)
+            (output / "teacher_selection.json").write_text(json.dumps(report, indent=2))
+            (output / "selected_teachers.json").unlink(missing_ok=True)
+            print(f"[select] STOP: no successful {phase} candidate. Saved diagnostics; "
+                  "no selected_teachers.json. Downstream roles cannot be selected.", flush=True)
+            return 2
         chosen[phase] = Path(best["candidate"])
         # Overlapping intervals mean the screen did not separate these two, and
         # saying so is the point of computing them.
@@ -521,13 +541,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
 
     print("[select] confirming the chosen triple on full chains", flush=True)
-    confirmation = evaluate(chosen, "placement")
+    confirmation = evaluate(chosen, "placement", artifact_tag="confirmation")
     report["confirmation"] = confirmation
     report["chosen"] = {role: str(path) for role, path in chosen.items()}
     report["wall_seconds"] = round(time.perf_counter() - started, 1)
+    report["status"] = ("selected" if confirmation["accepted"]["rate"]
+                        else "blocked_zero_full_chain_success")
     (output / "teacher_selection.json").write_text(
         json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
     )
+    if not confirmation["accepted"]["rate"]:
+        (output / "selected_teachers.json").unlink(missing_ok=True)
+        print(f"[select] STOP: chosen triple produced no accepted full chains; "
+              f"diagnostics saved to {output / 'teacher_selection.json'}", flush=True)
+        return 2
     (output / "selected_teachers.json").write_text(
         json.dumps(
             {

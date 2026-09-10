@@ -291,6 +291,19 @@ def _probe_args(
     return Namespace(**values)
 
 
+def _set_config_controller_workspace(args: Namespace, configured: Mapping[str, Any]) -> None:
+    """Full-task tools own their physical floor; legacy probes keep donor bounds."""
+    import math
+
+    bounds = configured.get("controller_workspace_z_bounds")
+    if bounds is None or len(bounds) != 2:
+        raise ValueError("Full-task config requires controller_workspace_z_bounds=[low, high]")
+    low, high = map(float, bounds)
+    if not all(map(math.isfinite, (low, high))) or low >= high:
+        raise ValueError(f"Invalid full-task controller Z bounds: {bounds}")
+    args.controller_workspace_z_bounds = [low, high]
+
+
 def _build_world(
     *,
     checkpoint: Path,
@@ -303,6 +316,7 @@ def _build_world(
     run_dir: Path,
     start_distance_cap: float | None = None,
     metadata_overrides: Sequence[str] = (),
+    controller_workspace_from_config: bool = False,
 ) -> _World:
     """Reproduce the training stack. ``load_policy`` False skips SmolVLA."""
 
@@ -401,6 +415,10 @@ def _build_world(
             flush=True,
         )
         args.allowed_objects = list(config_objects)
+
+    if controller_workspace_from_config:
+        _set_config_controller_workspace(args, project.training.rl.args)
+        print(f"[full-task] controller Z bounds from config: {args.controller_workspace_z_bounds}", flush=True)
 
     layout = RankLocalGroupLayout(
         worlds_per_rank=int(args.worlds_per_rank),
