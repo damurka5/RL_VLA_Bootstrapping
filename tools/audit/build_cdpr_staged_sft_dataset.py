@@ -81,6 +81,27 @@ def _last_active_decision(record: StagedRound, world: int) -> int:
     return int(live[-1]) if live.size else -1
 
 
+def _supervised_through(record: StagedRound, world: int, column: str) -> int:
+    """The last env step of this chain that is part of the demonstration.
+
+    A stage machine reads its transitions at DECISION boundaries, so the world
+    keeps executing the rest of the chunk after the predicate has already
+    fired. Those trailing actions are real -- they were executed and they moved
+    the plant -- but they happen after the object is already in the receptacle,
+    and supervising them teaches whatever the teacher happened to do next.
+
+    Returns the index of the step that produced the success, inclusive.
+    Everything after it is masked rather than dropped, so the chunk keeps its
+    shape and the action head stays aligned. This is the same rule
+    ``sil_record`` applies with ``first_success_step``; there the world is
+    frozen after success because the loop consumes ``terminated``, and here it
+    is not, so the rule has to be applied explicitly.
+    """
+
+    fired = np.flatnonzero(getattr(record, column)[:, world])
+    return int(fired[0]) if fired.size else record.actions.shape[0]
+
+
 def _stage_boundary_distance(
     record: StagedRound, world: int, decision: int
 ) -> int:
@@ -124,17 +145,22 @@ def build_rows(
         instruction_text: str,
         full_chain: bool,
         source_sha: str,
+        supervised_through: int,
     ) -> None:
         per = int(record.actions_per_decision)
         start = decision * per
         stop = start + per
         stage_raw = int(record.decision_stage[decision, world])
+        # Executed AND part of the demonstration. The second conjunct only
+        # bites on the final decision of a chain, where the predicate fired
+        # partway through the chunk.
+        supervised = record.active[start:stop, world] & (
+            np.arange(start, stop) <= int(supervised_through)
+        )
         table.setdefault("state", []).append(record.states[decision, world])
         table.setdefault("prior", []).append(record.priors[decision, world])
         table.setdefault("action", []).append(record.actions[start:stop, world])
-        table.setdefault("action_mask", []).append(
-            record.active[start:stop, world]
-        )
+        table.setdefault("action_mask", []).append(supervised)
         table.setdefault("action_source", []).append(
             record.action_source[start:stop, world]
         )
@@ -217,6 +243,9 @@ def build_rows(
                 continue
             if accepted[world]:
                 census["accepted_chains"] += 1
+                cutoff = _supervised_through(
+                    record, world, "placement_success"
+                )
                 for decision in range(last + 1):
                     emit(
                         columns,
@@ -227,6 +256,7 @@ def build_rows(
                         instruction_text=str(record.instruction_text[world]),
                         full_chain=True,
                         source_sha=source_sha,
+                        supervised_through=cutoff,
                     )
                 continue
             if not include_rejected_pickup_prefix:
@@ -240,6 +270,7 @@ def build_rows(
                 continue
             census["partial_pickup_chains"] += 1
             label = f"pick up {_object_label(record, world)}"
+            cutoff = _supervised_through(record, world, "pickup_success")
             for decision in range(handoff + 1):
                 emit(
                     partial,
@@ -250,6 +281,7 @@ def build_rows(
                     instruction_text=label,
                     full_chain=False,
                     source_sha=source_sha,
+                    supervised_through=cutoff,
                 )
     return _finalize(columns), _finalize(partial), census
 

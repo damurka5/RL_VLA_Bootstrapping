@@ -364,6 +364,44 @@ class RowAssemblyTests(unittest.TestCase):
         )
         self.assertFalse(bool(partial["full_chain_success"].any()))
 
+    def test_actions_after_the_success_are_masked_not_dropped(self):
+        """The chunk keeps its shape; the post-success tail carries mask zero.
+
+        The stage machine reads transitions at DECISION boundaries, so the
+        world keeps executing the rest of the chunk after the placement
+        predicate has fired. Those actions really happened, but they happen
+        after the object is already in the receptacle.
+        """
+
+        record = _round([_chain()])
+        # The predicate fires on the second action of decision 7.
+        record.placement_success[7 * PER + 1, 0] = True
+        dataset, _, _ = build_rows(
+            [("memory", record)],
+            min_approach_xy=0.06,
+            min_handoff_lift=0.05,
+            include_rejected_pickup_prefix=False,
+        )
+        final = int(np.flatnonzero(dataset["decision_index"] == 7)[0])
+        self.assertEqual(
+            dataset["action_mask"][final].tolist(), [True, True, False, False]
+        )
+        # Shape preserved, so the action head stays aligned.
+        self.assertEqual(dataset["action"][final].shape, (PER, 5))
+        # Earlier decisions are untouched.
+        earlier = int(np.flatnonzero(dataset["decision_index"] == 3)[0])
+        self.assertTrue(bool(dataset["action_mask"][earlier].all()))
+
+    def test_a_chain_with_no_latched_success_step_supervises_its_whole_span(self):
+        record = _round([_chain()])
+        dataset, _, _ = build_rows(
+            [("memory", record)],
+            min_approach_xy=0.06,
+            min_handoff_lift=0.05,
+            include_rejected_pickup_prefix=False,
+        )
+        self.assertTrue(bool(dataset["action_mask"].all()))
+
     def test_the_boundary_distance_finds_the_nearest_handoff(self):
         dataset, _, _ = self._build([_chain(reach=1, align=2, pickup=4)])
         by_decision = {
