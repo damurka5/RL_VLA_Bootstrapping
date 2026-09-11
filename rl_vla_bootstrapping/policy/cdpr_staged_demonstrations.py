@@ -3290,6 +3290,67 @@ class StagedRound:
             & (np.abs(self.actions[..., 2]) <= 0.05)
         )
 
+        # The stage machine promotes only at decision boundaries and requires
+        # the full conjunction to remain true for consecutive boundaries.
+        # Action-step medians can make every individual gate look healthy even
+        # when they never overlap, which is exactly what the gain-0.20 screen
+        # exposed (one promotion from 35 alignment entries).
+        per = max(int(self.actions_per_decision), 1)
+        boundary = np.zeros_like(live)
+        boundary[per - 1 :: per] = live[per - 1 :: per]
+        readiness = dict(settings.get("readiness") or {})
+        target_height = float(settings.get("pickup_height_above_grasp", 0.01))
+        if bool(settings.get("align_handoff_at_clearance", False)):
+            handoff_height_ok = np.ones_like(live)
+        else:
+            handoff_height_ok = np.abs(above - target_height) <= tolerance
+        broad_height_ok = (
+            (above >= float(readiness.get("min_height_above_grasp", -0.005)))
+            & (above <= float(readiness.get("max_height_above_grasp", 0.12)))
+            & (self.ee_xyz[..., 2] >= float(readiness.get("min_ee_z", 0.18)))
+            & (self.ee_xyz[..., 2] <= float(readiness.get("max_ee_z", 0.40)))
+        )
+        slack = np.asarray(
+            settings.get(
+                "grasp_xy_slack_m",
+                [
+                    max_grasp_xy_offset(
+                        str(name),
+                        margin=float(readiness.get("grasp_xy_margin", 0.003)),
+                    )
+                    for name in self.target_catalog
+                ],
+            ),
+            dtype=np.float32,
+        )
+        grasp_centred = lateral <= slack[None, :]
+        opening_ok = self.gripper_opening >= float(
+            readiness.get("min_gripper_opening", 0.90)
+        )
+        boundary_ready = (
+            boundary
+            & yaw_ok
+            & handoff_height_ok
+            & broad_height_ok
+            & grasp_centred
+            & opening_ok
+            & ~self.physical_grasp
+        )
+        ready_by_decision = boundary_ready[per - 1 :: per]
+        live_by_decision = boundary[per - 1 :: per]
+        max_streak = np.zeros((self.worlds,), dtype=np.int64)
+        running = np.zeros((self.worlds,), dtype=np.int64)
+        for ready_row, live_row in zip(ready_by_decision, live_by_decision):
+            running = np.where(live_row & ready_row, running + 1, 0)
+            max_streak = np.maximum(max_streak, running)
+
+        boundary_count = int(boundary.sum())
+
+        def boundary_failure_share(ok: Any) -> float | None:
+            if boundary_count == 0:
+                return None
+            return round(float((~np.asarray(ok, dtype=bool))[boundary].mean()), 4)
+
         def percentiles(values: Any) -> dict[str, float] | None:
             selected = values[live]
             if selected.size == 0:
@@ -3326,6 +3387,34 @@ class StagedRound:
             "worlds_with_a_recentering_pause": int(
                 recentering_pause.any(axis=0).sum()
             ),
+            "boundary_gate_diagnostics": {
+                "decision_boundaries": boundary_count,
+                "required_consecutive": int(
+                    calibration.get("consecutive_decisions", 2)
+                ),
+                "worlds_ever_all_ready": int(
+                    boundary_ready.any(axis=0).sum()
+                ),
+                "max_ready_streak": {
+                    "p10": round(float(np.percentile(max_streak[entered], 10)), 2),
+                    "median": round(float(np.median(max_streak[entered])), 2),
+                    "p90": round(float(np.percentile(max_streak[entered], 90)), 2),
+                },
+                "share_yaw_not_ready": boundary_failure_share(yaw_ok),
+                "share_handoff_height_not_ready": boundary_failure_share(
+                    handoff_height_ok
+                ),
+                "share_broad_height_not_ready": boundary_failure_share(
+                    broad_height_ok
+                ),
+                "share_not_centred_for_grasp": boundary_failure_share(
+                    grasp_centred
+                ),
+                "share_gripper_not_open": boundary_failure_share(opening_ok),
+                "share_already_grasping": boundary_failure_share(
+                    ~self.physical_grasp
+                ),
+            },
             "yaw_error_rad": percentiles(yaw_error),
             "xy_error_m": percentiles(lateral),
             "height_above_grasp_m": percentiles(above),

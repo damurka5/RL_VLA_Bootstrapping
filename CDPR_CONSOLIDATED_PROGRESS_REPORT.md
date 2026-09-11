@@ -1900,6 +1900,29 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-11 — Descent gain 0.20 rejected; boundary-conjunction telemetry added
+
+- Evidence: supplied `teacher_selection.json` from the two-round, 128-chain
+  `screen_move64_descent_gain020` run. Its recorded protocol carries descent
+  gain 0.20 and otherwise matches the retained low-handoff screen.
+- Reach held at **35/128 = 27.34%**, but alignment collapsed to **1/35 =
+  2.86%**. That one transition picked, lifted, placed and passed strict
+  acceptance, producing 1/128 overall (one bowl, zero plate). Failure counts
+  were 93 move-budget exhaustion, 33 alignment-budget exhaustion and one
+  simulator divergence.
+- This was not simply a descent that never reached the target height. The two
+  rounds had median height above grasp of 9.8 mm and 18.7 mm against the 10 mm
+  target, zero climb-after-descent aborts, lower off-centre shares of 52.95%
+  and 63.67%, and 2,024 recentering-pause steps. Individual action-step gates
+  improved, but almost never remained jointly true for the two consecutive
+  decision boundaries required for handoff.
+- Decision: reject gain 0.20. Keep unity as the best verified protocol while
+  testing one final intermediate gain, 0.50. `align_diagnostics` now reports
+  the exact decision-boundary conjuncts, worlds ever jointly ready and maximum
+  ready streak, so that screen will identify the limiting gate directly. If
+  0.50 does not beat the unity arm's 9/34 alignment without degrading its 7/9
+  pickup and 3/7 placement, stop controller tuning and retain unity.
+
 ### 2026-09-11 — Low handoff restores pickup/placement; descent is still the alignment ceiling
 
 - Evidence: supplied `teacher_selection.json` and canonical selected-teacher

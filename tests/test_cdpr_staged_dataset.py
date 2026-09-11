@@ -792,6 +792,45 @@ class ReachDiagnosticTests(unittest.TestCase):
 class StageDiagnosticTests(unittest.TestCase):
     """The pickup and placement ladders, and the command underneath them."""
 
+    def test_alignment_reports_the_exact_decision_boundary_conjunction(self):
+        record = _round([_chain()])
+        record.step_stage[:, 0] = STAGE_ALIGN
+        record.active[:, 0] = True
+        record.ee_xyz[:, 0, 2] = 0.1975
+        record.object_xyz[:, 0, 0, 2] = 0.18
+        record.gripper_opening[:, 0] = 1.0
+        record.physical_grasp[:, 0] = False
+        record.ee_yaw[:, 0] = 0.0
+        record.calibration_json = json.dumps(
+            {
+                "target_yaw": 0.0,
+                "tolerance_rad": 0.0873,
+                "safe_rotation_z": 0.26,
+                "consecutive_decisions": 2,
+            }
+        )
+        record.config_json = json.dumps(
+            {
+                "pick_grasp_height_offset": 0.0075,
+                "pickup_height_above_grasp": 0.01,
+                "pickup_height_tolerance": 0.003,
+                "grasp_xy_slack_m": [0.01],
+                "readiness": {
+                    "min_height_above_grasp": -0.005,
+                    "max_height_above_grasp": 0.12,
+                    "min_ee_z": 0.18,
+                    "max_ee_z": 0.40,
+                    "min_gripper_opening": 0.90,
+                },
+            }
+        )
+        gates = record.align_diagnostics()["boundary_gate_diagnostics"]
+        self.assertEqual(gates["decision_boundaries"], DECISIONS)
+        self.assertEqual(gates["worlds_ever_all_ready"], 1)
+        self.assertEqual(gates["max_ready_streak"]["median"], DECISIONS)
+        self.assertEqual(gates["share_handoff_height_not_ready"], 0.0)
+        self.assertEqual(gates["share_not_centred_for_grasp"], 0.0)
+
     def test_offline_inspector_explains_rejected_native_completion(self):
         from tools.audit.inspect_cdpr_staged_rounds import inspect_round
         record = _round([_chain(carry_slip_at=22)])

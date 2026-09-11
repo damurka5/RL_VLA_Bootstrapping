@@ -25,8 +25,11 @@ recentering instead of climbing to clearance and restarting; the first bank
 recorded 683 of those restart events. Its 64-decision confirmation restored
 pickup to 7/9 and placement to 3/7, but alignment remained 9/34 and spent 2,781
 action steps paused for recentering. The next bounded arm keeps the low handoff
-and scales only the recorded descent command to 0.20, giving lateral
-stabilization time before finger contact.
+and scales only the recorded descent command. Gain 0.20 was too damped: reach
+held at 35/128 but alignment collapsed to 1/35, despite zero descent aborts and
+improved action-step centring. One final 0.50 arm now carries exact
+decision-boundary conjunction/streak telemetry; if it does not beat unity's
+9/34 alignment while retaining downstream conversion, unity is locked.
 
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
@@ -38,6 +41,7 @@ stabilization time before finger contact.
 | alignment tail → pickup | second ceiling | 7/23 promoted in selection; 20/79 in collection |
 | clearance handoff ablation | **rejected** | 21/31 aligned, but only 5/21 picked and 0/5 placed |
 | low handoff + pause | downstream restored; alignment unchanged | 9/34 aligned, 7/9 picked, 3/7 placed |
+| low handoff + descent gain 0.20 | **rejected** | 1/35 aligned; its sole handoff completed |
 | alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
 | pickup under final destination prompt | reliable after handoff | 7/7 in selection; 17/20 in collection |
 | placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |
