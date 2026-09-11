@@ -2846,6 +2846,12 @@ class StagedRound:
                         config.pick_grasp_height_offset
                     ),
                     "readiness": {
+                        "require_centred_at_reach": bool(
+                            config.readiness.require_centred_at_reach
+                        ),
+                        "grasp_xy_margin": float(
+                            config.readiness.grasp_xy_margin
+                        ),
                         "min_height_above_grasp": float(
                             config.readiness.min_height_above_grasp
                         ),
@@ -3073,7 +3079,17 @@ class StagedRound:
         # that error -- so ANDing it here would report a promotion rate lower
         # than the one the machine applied, which is the diagnostic telling a
         # different story from the run.
-        require_centred = bool(readiness.get("require_centred_at_reach", True))
+        # Early staged recordings stored this flag at the config root while
+        # the diagnostic looked only inside ``readiness`` and therefore
+        # silently reported the default ``True``.  The state machine used the
+        # real value, so this is a reporting compatibility fallback, not a
+        # change to the gate that ran.
+        require_centred = bool(
+            readiness.get(
+                "require_centred_at_reach",
+                settings.get("require_centred_at_reach", True),
+            )
+        )
         ready = fired & opening_ok & height_ok & grasp_ok
         if require_centred:
             ready = ready & centred_ok
@@ -3106,17 +3122,16 @@ class StagedRound:
                 self.ee_xyz[..., 2], live
             ),
             "height_above_grasp_m": percentiles(above_grasp, live),
+            # The fixed-yaw bridge uses the projected, per-presentation
+            # aperture stored in ``grasp_xy_slack_m``.  Reporting the old
+            # rotation-invariant catalog scalar here made every potato look
+            # impossible even when its sampled orientation had positive
+            # clearance.  Keep the catalog grouping, but summarize the exact
+            # slack values that gated these worlds.
             "grasp_xy_slack_m": {
-                str(name): round(
-                    float(
-                        max_grasp_xy_offset(
-                            str(name),
-                            margin=float(
-                                readiness.get("grasp_xy_margin", 0.003)
-                            ),
-                        )
-                    ),
-                    4,
+                str(name): percentiles(
+                    slack,
+                    np.asarray(self.target_catalog) == name,
                 )
                 for name in np.unique(self.target_catalog)
             },

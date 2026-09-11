@@ -2,7 +2,8 @@
 
 **Living report — current through 2026-09-11, Europe/Moscow**
 
-**Repository state reviewed:** `9c63020` plus local dataset-provenance fixes
+**Repository state reviewed:** `1a738dc` plus the stage-transition changes in
+the newest ledger entry
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
@@ -1899,12 +1900,11 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
-### 2026-09-11 — First continuous bank: valid pipeline, five complete scenes, not yet an SFT corpus
+### 2026-09-11 — First continuous bank: valid pipeline, five complete scenes, transition bank chosen next
 
 - Evidence: user-pasted dataset-builder console output plus supplied
-  `dataset.json`, yaw calibration and 1,024-scene manifest. The two per-shard
-  `collection.json` files and trajectory NPZs were not supplied locally, so
-  stage-failure and per-destination episode counts remain unverified here.
+  `dataset.json`, yaw calibration, 1,024-scene manifest and both per-shard
+  `collection.json` reports. The trajectory NPZs remain on the remote host.
 - The preceding single-pass selector succeeded on **3/128 = 0.0234** strict
   chains, clustered over 64 scenes. It observed 23 reach handoffs, seven
   aligned handoffs, **7/7 pickup conversions**, and **3/7 native/strict
@@ -1916,6 +1916,18 @@ Newest first. Entries follow the §13 template.
   inside its reported 90% interval [0.0078, 0.0469]. The builder also isolated
   12 chains that completed pickup but not placement; together with the five
   complete chains, 17/512 reached a verified pickup-to-placement handoff.
+- The pooled transition ladder is now exact: **79/512 reached** the native
+  move-to predicate; **20/79 aligned**; **17/20 picked up**; and **5/17 placed
+  and passed strict acceptance**. Failure reasons partition the 507 rejected
+  chains: 433 move-budget exhaustion, 59 alignment-budget exhaustion, three
+  pickup-budget exhaustion, four carry losses, six wrong-place settlements and
+  two placement-budget exhaustion. Only two worlds diverged. Pickup is not the
+  current blocker once it receives a valid handoff (85.0% conditional); 492 of
+  507 rejections, or 97.0%, occur before pickup succeeds.
+- Destination coverage is three accepted bowl chains out of 247 attempts and
+  two plate chains out of 265. Object coverage is apple 2/132, orange 2/127,
+  tomato 1/117 and potato 0/136. The absent potato cell is therefore a measured
+  collection failure, not a sampling omission.
 - The full-task bank contains **365 decision rows / 1,454 supervised actions**:
   move-to 156, pickup 44, placement 165; bowl 217 rows and plate 148. Every row
   resolves to a frame. All six destination/stage cells are present. The five
@@ -1929,10 +1941,14 @@ Newest first. Entries follow the §13 template.
 - Decision: this is a successful end-to-end pipeline smoke test, not enough
   independent data for arms B/C. Five scenes make the validation split nearly
   an anecdote, leave one target catalog absent, and would make replacement
-  balancing repeatedly expose the same actions. Inspect the two collection
-  reports before spending a scaled collection budget; they name whether the
-  missing yield is move, alignment, pickup or placement and separate bowl from
-  plate.
+  balancing repeatedly expose the same actions. Do not scale the same
+  full-chain rejection filter yet. Preserve continuous rollouts, but derive a
+  separate final-prompt transition view that retains a move/alignment slice
+  only after alignment success, a pickup slice only after grasp-and-lift, and a
+  placement slice only after strict full-chain acceptance. At the measured
+  ladder this yields 20 verified move transitions, 17 pickup transitions and
+  five placement transitions rather than only five examples of each stage;
+  the original strict full-chain file remains unchanged.
 - Reporting defect found from the supplied census: `actions_by_source` knew
   only four legacy source codes, so it omitted the current `gripper_hold` and
   `align_bridge` actions. The action arrays are intact; only the JSON census is
@@ -1941,10 +1957,22 @@ Newest first. Entries follow the §13 template.
 - Durability defect fixed for future rounds: the recorder wrote frames only
   for complete chains, even though the builder preserved successful pickup
   prefixes in `partial_pickup.npz`. Those partial rows therefore could not be
-  refreshed from images. Future frame shards keep complete chains OR verified
-  pickup handoffs, and dataset construction verifies full frame coverage for
-  the partial bank as well. The already collected 12 partial prefixes cannot
-  recover their missing images without rerunning those episodes.
+  refreshed from images. Future frame shards keep every world that reaches a
+  verified alignment handoff, and dataset construction verifies full frame
+  coverage for both derived partial views. The retention boundary is alignment
+  success because successful move slices also belong in the verified
+  transition view.
+  The builder writes that view to `stage_transitions.npz`, relabelled to the
+  same final prompt, without including actions from any failed stage. The
+  already collected incomplete transitions cannot recover their missing images
+  without rerunning those episodes.
+- Telemetry defect fixed: these first recordings stored
+  `require_centred_at_reach=false` at the config root while
+  `reach_diagnostics()` looked only in its nested readiness object and
+  misleadingly printed `true`. The state machine itself used the correct
+  relaxed bridge gate. Diagnostics now read both schemas and report the exact
+  per-presentation projected grasp slack; the earlier scalar potato warning
+  must not be read as proof that all sampled potato yaws were infeasible.
 
 ### 2026-09-11 — Destination-prompt chain succeeds once; redundant confirmation discards it
 

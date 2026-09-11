@@ -8,7 +8,7 @@
 #   2 scenes    generate and audit the full-task scene manifest
 #   3 select    screen the teacher candidates on the teacher_selection split
 #   4 record    run the chains on the collection split, one shard per GPU
-#   5 dataset   assemble the accepted chains into relabelled SFT rows
+#   5 dataset   assemble strict chains and verified stage-transition SFT views
 #
 # STEPS is a space-separated subset, so a re-run can skip what already
 # succeeded: STEPS="record dataset" ./scripts/run_cdpr_three_stage_collection.sh
@@ -157,6 +157,8 @@ echo "  scenes:     $SCENES"
 echo "  yaw:        $YAW"
 echo "  bank:       $RUN_DIR/bank_shard*/collection.json"
 echo "  dataset:    $RUN_DIR/dataset/dataset.json"
+echo "  strict:     $RUN_DIR/dataset/demonstrations.npz"
+echo "  transitions:$RUN_DIR/dataset/stage_transitions.npz"
 echo
 echo "The dataset's priors are STALE by construction: its rows were relabelled"
 echo "to the student prompt but state/prior were computed under the teachers'."

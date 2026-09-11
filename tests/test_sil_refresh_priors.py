@@ -29,7 +29,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from tools.audit.sil_refresh_priors import group_rows_by_file  # noqa: E402
+from tools.audit.sil_refresh_priors import (  # noqa: E402
+    group_rows_by_file,
+    select_dataset_view_report,
+)
 from tools.audit.sil_sft import (  # noqa: E402
     frame_join_key,
     load_frame_meta,
@@ -75,6 +78,21 @@ def _bank_rows(rounds: tuple[int, ...]) -> tuple[np.ndarray, np.ndarray]:
 
 
 class FrameJoinTests(unittest.TestCase):
+    def test_carried_report_matches_the_selected_transition_view(self) -> None:
+        report = {
+            "dataset": {"rows": 10},
+            "stage_transitions": {"rows": 30},
+            "priors_stale": True,
+        }
+        carried = select_dataset_view_report(
+            report, Path("stage_transitions.npz")
+        )
+        self.assertEqual(carried["dataset"], {"rows": 30})
+        self.assertEqual(
+            carried["source_full_chain_dataset"], {"rows": 10}
+        )
+        self.assertEqual(carried["dataset_view"], "stage_transitions")
+
     def test_both_writers_reduce_to_the_same_identity(self) -> None:
         self.assertEqual(
             frame_join_key("frames_move_to_actions_record_00"),

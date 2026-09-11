@@ -32,7 +32,15 @@ CONFIG="${CONFIG:-configs/examples/cdpr_smolvla_three_stage_put_into.yaml}"
 : "${STUDENT_INIT:?set STUDENT_INIT to the checkpoint the student starts from}"
 
 SCENES="${SCENES:-$RUN_DIR/scenes.json}"
-DATASET="${DATASET:-$RUN_DIR/dataset/demonstrations.npz}"
+# The first bank measured 20 verified move transitions, 17 pickups and only
+# five complete chains. Train the explicitly gated transition view by default;
+# DATASET_VIEW=demonstrations keeps the strict end-to-end ablation available.
+DATASET_VIEW="${DATASET_VIEW:-stage_transitions}"
+case "$DATASET_VIEW" in
+  stage_transitions|demonstrations) ;;
+  *) echo "DATASET_VIEW must be stage_transitions or demonstrations" >&2; exit 2 ;;
+esac
+DATASET="${DATASET:-$RUN_DIR/dataset/$DATASET_VIEW.npz}"
 FRAMES_GLOB="${FRAMES_GLOB:-$RUN_DIR/bank_shard*/frames_*.npz}"
 REFRESHED="${REFRESHED:-$RUN_DIR/dataset_refreshed}"
 DEVICE="${DEVICE:-cuda:0}"
@@ -51,6 +59,7 @@ run() { conda run --no-capture-output -n "$ENV_NAME" python3 "$@"; }
 has_arm() { [[ " $ARMS " == *" $1 "* ]]; }
 
 echo "=== refresh: re-derive state/prior under the student initialization ==="
+echo "dataset view: $DATASET_VIEW ($DATASET)"
 # NOT a replay. Replaying the bank under a different checkpoint was tried and
 # destroyed it: 30 of 3072 episodes survived. What is wanted is a forward pass
 # over the stored pictures, which is what this does.

@@ -8,12 +8,15 @@ initial teacher screens were floored by collection-harness faults. The repaired
 single-pass destination-prompt screen accepted 3/128 continuous chains. Its
 selected triple then produced the first collection bank: 5/512 accepted chains
 over five unique scenes, 365 full-task decision rows with 100% frame coverage,
-plus 12 successful pickup prefixes stored separately. This is a valid pipeline
-smoke artifact, not yet a sufficient SFT corpus: the full bank has only five
-scenes and no successful potato chain. Future recordings retain frames for
-successful pickup prefixes as well as complete chains, and the dataset census
-now reports all controller action sources. The full ledger is §7.16b and §14
-of the consolidated report; the summary is below.
+plus 12 successful pickup prefixes stored separately. The exact pooled ladder
+from both shard reports is 79 reaches, 20 aligned handoffs, 17 pickups and five
+placements. This is a valid pipeline smoke artifact, not yet a sufficient SFT
+corpus: the full bank has only five scenes and no successful potato chain.
+Future recordings retain frames from alignment success onward and the builder
+also emits a strictly gated final-prompt transition view: at this yield, 20
+move/alignment transitions, 17 pickup transitions and five placement
+transitions. The original full-chain view remains unchanged. The full ledger is
+§7.16b and §14 of the consolidated report; the summary is below.
 
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
@@ -21,11 +24,11 @@ of the consolidated report; the summary is below.
 |---|---|---|
 | scene manifest | done | 1024 scenes, splits disjoint, 0 start inside the goal |
 | yaw calibration (§5) | done | 0.000 rad; fixed-angle residual mean 10.7°, max 25.3° |
-| move-to → reach | **the ceiling** | 23 upstream reach events across 128 selected chains |
-| alignment tail → pickup | low yield | 7/23 promoted in selection; only 17/512 collection chains reached a verified pickup handoff |
+| move-to → reach | **the ceiling** | 23/128 in selection; 79/512 in collection |
+| alignment tail → pickup | second ceiling | 7/23 promoted in selection; 20/79 in collection |
 | alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
-| pickup under final destination prompt | reliable after handoff in selection | 7/7 grasped, lifted and handed off |
-| placement: carry/release | usable, still sparse | 3/7 accepted in selection; 5 complete chains from the 512-chain bank |
+| pickup under final destination prompt | reliable after handoff | 7/7 in selection; 17/20 in collection |
+| placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |
 | dataset | first smoke bank built | 365 rows, 1,454 supervised actions, five scenes, bowl and plate present, potato absent |
 | refresh / SFT / evaluation | implemented, not run | bank is intentionally still marked `priors_stale` |
 
@@ -337,6 +340,16 @@ but not a positive full-placement episode. Store partial material separately
 so later recovery/imitation experiments can deliberately use it. The initial
 full-task bank contains only verified complete successes.
 
+Additionally derive a separate **final-prompt stage-transition view** from the
+same continuous trajectories. Include the move/alignment rows of a world only
+when its alignment handoff completed, its pickup rows only when grasp-and-lift
+completed, and its placement rows only when strict full-chain acceptance
+passed. This implements the distinct-transition proposal without losing the
+real continuous handoff state and without relabelling the actions of a failed
+stage as success. Keep this view separate from the end-to-end bank so an
+experiment chooses it explicitly and reports unique successful-transition
+counts by stage.
+
 ## 8. Durable recording schema and derived SFT rows
 
 Store immutable, versioned trajectory shards plus a JSON manifest. Required
@@ -351,8 +364,9 @@ raw fields:
 | Stage | Teacher instruction/checkpoint, semantic stage, optional alignment substage, stage-local index, transition events and boundary observations. |
 | Outcomes | Per-step grasp/release/active masks, native stage/final success, full-chain acceptance, divergence/failure reason, stage budgets and durations. |
 
-Stream compressed frames/shards to bounded buffers. All accepted episodes
-need frames; a fixed `frame-worlds` subset is not a complete reusable bank.
+Stream compressed frames/shards to bounded buffers. All retained successful
+transitions need frames; a fixed `frame-worlds` subset is not a complete
+reusable bank.
 Save the terminal post-action observation as well as every pre-action one.
 Record frame/action timing explicitly so future per-action windows do not
 pretend a frame exists at an unobserved timestep.
@@ -514,7 +528,7 @@ defaults unchanged and select the new path explicitly by config.
 | `rl_vla_bootstrapping/simulation/cdpr_backend.py` and `mjlab_mjwarp_backend.py` | Reuse control/pose observations and same-process state broadcast. Expose validated continuation capture/restore only if required by teacher comparison or deferred stage collection; include controller and task state, not just qpos. |
 | New `tools/audit/record_cdpr_staged_put_into.py` | CLI for full-chain recording, optional logical stage exports, per-GPU sharding, durable frames/actions/manifests, progress and failure summaries. No optimizer. |
 | `tools/audit/sil_record.py` | Factor/reuse recording/frame serialization; support global episode/decision identity and explicit stage metadata in the new schema. Avoid treating intermediate native success as final episode termination. |
-| New `tools/audit/build_cdpr_staged_sft_dataset.py` | Verify chain acceptance, assemble real consecutive action windows, relabel destination ID/text, retain source labels, create scene split and row/frame mappings. No fake boundary rows. |
+| New `tools/audit/build_cdpr_staged_sft_dataset.py` | Verify chain and per-stage transition acceptance, assemble real consecutive action windows, relabel destination ID/text, retain source labels, create strict `demonstrations.npz` and explicitly selected `stage_transitions.npz` views with row/frame mappings. No fake boundary rows. |
 | `tools/audit/sil_refresh_priors.py` | Support explicit frame IDs/new schema; require final-prompt student refresh and complete coverage; retain stage/scene metadata. |
 | `tools/audit/sil_sft.py` | Scene-level split override, destination/stage-balanced sampler in both training paths, per-stage loss/reachability/gradient reporting, explicit retention mixture and compatible full checkpoints. Update stale module documentation. |
 | New `tools/audit/evaluate_cdpr_full_put_into.py` | Same full-task scenes and observer, one student prompt from start, no stage-controller assistance; native and strict full-chain verdicts, phase diagnostics and videos. |

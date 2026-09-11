@@ -620,14 +620,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         result.to_npz(record_path)
         files = {"record": str(record_path)}
         if config.record_frames:
-            # Keep every accepted world's pictures AND the worlds that reached
-            # a verified pickup handoff. The latter are exported separately as
-            # partial pickup demonstrations. The old accepted-only mask wrote
-            # those rows to partial_pickup.npz but threw away their images, so
-            # they could never be refreshed under another prompt/checkpoint.
-            # Worlds that achieved neither subgoal remain omitted, keeping the
-            # frame shard bounded by reusable data rather than failure rate.
-            reusable = accepted | (np.asarray(result.pickup_event) >= 0)
+            # Keep every world that completed the move/alignment transition.
+            # Its successful move slice is reusable even when pickup later
+            # fails; pickup-success worlds additionally contribute their pick
+            # slice, and accepted worlds contribute placement. This is the
+            # earliest verified transition, so it is the broadest frame mask
+            # needed by ``stage_transitions.npz`` without retaining arbitrary
+            # failures. Older accepted/pickup-only masks made those successful
+            # move slices impossible to refresh from images.
+            reusable = accepted | (np.asarray(result.align_event) >= 0)
             files["frames"] = write_staged_frames(
                 output / f"frames_{stem}.npz",
                 buffers=result.frames,

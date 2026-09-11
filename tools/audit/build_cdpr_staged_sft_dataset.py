@@ -1,9 +1,16 @@
 #!/usr/bin/env python3
-"""Turn accepted three-stage chains into SFT rows under ONE final instruction.
+"""Turn verified three-stage transitions into SFT rows under ONE final instruction.
 
 Three things happen here and nothing else: acceptance is re-verified from the
 recordings, real consecutive executed actions are assembled into decision rows,
-and every row of a chain is relabelled to the student's single final prompt.
+and every retained row is relabelled to the student's single final prompt.
+
+Two final-prompt views are written. ``demonstrations.npz`` remains the strict
+end-to-end view and contains only accepted full chains.
+``stage_transitions.npz`` is the larger transition view: a move/alignment slice
+is retained only when alignment completed, a pickup slice only when grasp and
+lift completed, and a placement slice only when the full chain was accepted.
+Failed actions are never promoted to demonstrations.
 
 What relabelling is and is not
 ------------------------------
@@ -130,10 +137,16 @@ def build_rows(
     min_approach_xy: float,
     min_handoff_lift: float,
     include_rejected_pickup_prefix: bool,
-) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray], dict[str, Any]]:
-    """Accepted chains as full-task rows, plus the partial pickup material."""
+) -> tuple[
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+    dict[str, np.ndarray],
+    dict[str, Any],
+]:
+    """Accepted chains, verified stage slices, and partial pickup material."""
 
     columns: dict[str, list[Any]] = {}
+    transitions: dict[str, list[Any]] = {}
     partial: dict[str, list[Any]] = {}
 
     def emit(
@@ -218,6 +231,11 @@ def build_rows(
         "records": len(records),
         "worlds": 0,
         "accepted_chains": 0,
+        "transition_success_chains": {
+            "move_to": 0,
+            "pick_up": 0,
+            "placement": 0,
+        },
         "partial_pickup_chains": 0,
         "rejection_reasons": {},
     }
@@ -226,6 +244,25 @@ def build_rows(
         accepted, reasons, counts = record.acceptance(
             min_approach_xy=min_approach_xy,
             min_handoff_lift=min_handoff_lift,
+        )
+        reset_target_xy = record.reset_object_xyz[:, 0, :2]
+        reset_receptacle_xy = record.reset_object_xyz[:, 1, :2]
+        realized_approach = np.linalg.norm(
+            record.reset_ee_xyz[:, :2] - reset_target_xy, axis=-1
+        )
+        realized_transport = np.linalg.norm(
+            reset_target_xy - reset_receptacle_xy, axis=-1
+        )
+        finite = np.isfinite(record.actions).all(axis=-1) & np.isfinite(
+            record.ee_xyz
+        ).all(axis=-1)
+        transition_valid = (
+            ~np.asarray(record.diverged_world_mask, dtype=bool)
+            & ~np.asarray(record.physical_grasp[0], dtype=bool)
+            & (np.asarray(record.gripper_opening[0]) >= 0.90)
+            & (realized_approach >= float(min_approach_xy) - 1e-6)
+            & (realized_transport > record.destination_success_radius)
+            & (finite | ~record.active).all(axis=0)
         )
         census["worlds"] += int(record.worlds)
         for name, count in counts.items():
@@ -242,6 +279,46 @@ def build_rows(
             last = _last_active_decision(record, world)
             if last < 0:
                 continue
+            # Keep only stages whose own terminal event was verified. This is
+            # the stage-slice interpretation of the continuous rollout: true
+            # upstream handoff states are preserved, but actions from the
+            # stage that eventually failed never become positive examples.
+            completed = {
+                "move_to": bool(transition_valid[world])
+                and int(record.align_event[world]) >= 0,
+                "pick_up": bool(transition_valid[world])
+                and int(record.pickup_event[world]) >= 0,
+                "placement": bool(accepted[world]),
+            }
+            for name, success in completed.items():
+                census["transition_success_chains"][name] += int(success)
+            cutoffs = {
+                # Alignment readiness is sampled at the decision boundary;
+                # every active action in that final decision contributed.
+                "move_to": record.actions.shape[0],
+                "pick_up": _supervised_through(
+                    record, world, "pickup_success"
+                ),
+                "placement": _supervised_through(
+                    record, world, "placement_success"
+                ),
+            }
+            for decision in range(last + 1):
+                stage_raw = int(record.decision_stage[decision, world])
+                semantic = SEMANTIC_STAGE_OF.get(stage_raw)
+                if semantic is None or not completed[semantic]:
+                    continue
+                emit(
+                    transitions,
+                    record=record,
+                    world=world,
+                    decision=decision,
+                    instruction_id=int(record.instruction_id[world]),
+                    instruction_text=str(record.instruction_text[world]),
+                    full_chain=bool(accepted[world]),
+                    source_sha=source_sha,
+                    supervised_through=cutoffs[semantic],
+                )
             if accepted[world]:
                 census["accepted_chains"] += 1
                 cutoff = _supervised_through(
@@ -284,7 +361,12 @@ def build_rows(
                     source_sha=source_sha,
                     supervised_through=cutoff,
                 )
-    return _finalize(columns), _finalize(partial), census
+    return (
+        _finalize(columns),
+        _finalize(transitions),
+        _finalize(partial),
+        census,
+    )
 
 
 def _teacher_text(record: StagedRound, world: int, stage_raw: int) -> str:
@@ -484,7 +566,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     records = [(path, StagedRound.from_npz(path)) for path in paths]
     print(f"[dataset] {len(records)} staged rounds", flush=True)
 
-    dataset, partial, census = build_rows(
+    dataset, transitions, partial, census = build_rows(
         records,
         min_approach_xy=float(args.min_approach_xy),
         min_handoff_lift=float(args.min_handoff_lift),
@@ -500,6 +582,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     output.mkdir(parents=True, exist_ok=True)
 
     frame_report: dict[str, Any] | None = None
+    transition_frame_report: dict[str, Any] | None = None
     partial_frame_report: dict[str, Any] | None = None
     if args.frames:
         frame_paths = sorted(
@@ -520,6 +603,29 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "and accept that the bank is then selected by which episodes "
                 "kept pictures."
             )
+        if transitions:
+            transition_frame_report = verify_frame_coverage(
+                transitions, frame_paths
+            )
+            print(
+                f"[dataset] stage-transition frames resolve "
+                f"{transition_frame_report['resolved']}/"
+                f"{transition_frame_report['rows']} rows "
+                f"({transition_frame_report['resolved_fraction']:.4f})",
+                flush=True,
+            )
+            if (
+                transition_frame_report["resolved_fraction"] < 1.0
+                and not args.allow_missing_frames
+            ):
+                raise SystemExit(
+                    "Not every verified stage-transition row has a picture. "
+                    "Examples: "
+                    f"{transition_frame_report['unresolved_examples']}. "
+                    "Re-record with the current staged recorder, which keeps "
+                    "every alignment-success world, or pass "
+                    "--allow-missing-frames only for an action-only audit."
+                )
         if partial:
             partial_frame_report = verify_frame_coverage(partial, frame_paths)
             print(
@@ -560,11 +666,25 @@ def main(argv: Sequence[str] | None = None) -> int:
         "census": census,
         "dataset": dataset_report(dataset),
         "frames": frame_report,
+        "stage_transitions": dataset_report(transitions),
+        "stage_transition_frames": transition_frame_report,
         "acceptance": {
             "min_approach_xy": float(args.min_approach_xy),
             "min_handoff_lift": float(args.min_handoff_lift),
         },
     }
+    if transitions:
+        np.savez_compressed(
+            output / "stage_transitions.npz", **transitions
+        )
+        transition_rows = report["stage_transitions"]
+        print(
+            f"[dataset] wrote {output / 'stage_transitions.npz'}: "
+            f"{transition_rows['rows']} rows from "
+            f"{transition_rows['episodes']} chains; verified stage chains "
+            f"{census['transition_success_chains']}",
+            flush=True,
+        )
     if partial:
         np.savez_compressed(output / "partial_pickup.npz", **partial)
         report["partial_pickup"] = dataset_report(partial)

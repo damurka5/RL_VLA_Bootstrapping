@@ -467,7 +467,7 @@ class RowAssemblyTests(unittest.TestCase):
         return build_rows([(("memory"), record)], **settings)
 
     def test_every_row_of_a_chain_carries_the_final_instruction(self):
-        dataset, _, _ = self._build([_chain(destination="bowl")])
+        dataset, _, _, _ = self._build([_chain(destination="bowl")])
         self.assertEqual(
             sorted(set(dataset["instruction_text"].tolist())),
             ["put orange into bowl"],
@@ -477,7 +477,7 @@ class RowAssemblyTests(unittest.TestCase):
         self.assertIn("move_to", set(dataset["stage_name"].tolist()))
 
     def test_the_teacher_wording_is_kept_beside_the_new_one(self):
-        dataset, _, _ = self._build([_chain(destination="plate")])
+        dataset, _, _, _ = self._build([_chain(destination="plate")])
         teacher = set(dataset["teacher_instruction_text"].tolist())
         self.assertIn("move to apple", teacher)
         self.assertIn("pick up apple", teacher)
@@ -487,13 +487,13 @@ class RowAssemblyTests(unittest.TestCase):
         ))
 
     def test_rows_stop_at_the_last_live_decision(self):
-        dataset, _, _ = self._build([_chain(live_decisions=6)])
+        dataset, _, _, _ = self._build([_chain(live_decisions=6)])
         self.assertEqual(int(dataset["decision_index"].max()), 5)
         self.assertEqual(int(dataset["state"].shape[0]), 6)
 
     def test_actions_are_the_executed_chunk_not_the_predicted_one(self):
         record = _round([_chain()])
-        dataset, _, _ = build_rows(
+        dataset, _, _, _ = build_rows(
             [("memory", record)],
             min_approach_xy=0.06,
             min_handoff_lift=0.05,
@@ -508,7 +508,7 @@ class RowAssemblyTests(unittest.TestCase):
         )
 
     def test_a_failed_chain_supplies_pickup_material_in_a_separate_file(self):
-        dataset, partial, census = self._build(
+        dataset, _, partial, census = self._build(
             [_chain(), _chain(destination="bowl", complete=False)]
         )
         self.assertEqual(census["accepted_chains"], 1)
@@ -526,6 +526,57 @@ class RowAssemblyTests(unittest.TestCase):
         )
         self.assertFalse(bool(partial["full_chain_success"].any()))
 
+    def test_transition_view_keeps_only_each_verified_stage(self):
+        dataset, transitions, _, census = self._build(
+            [_chain(), _chain(destination="bowl", complete=False)]
+        )
+        self.assertEqual(dataset["episode_uid"].shape[0], 8)
+        self.assertEqual(
+            census["transition_success_chains"],
+            {"move_to": 2, "pick_up": 2, "placement": 1},
+        )
+        incomplete = ~transitions["full_chain_success"]
+        self.assertTrue(bool(incomplete.any()))
+        self.assertEqual(
+            set(transitions["stage_name"][incomplete].tolist()),
+            {"move_to", "pick_up"},
+        )
+        self.assertNotIn(
+            "placement", transitions["stage_name"][incomplete].tolist()
+        )
+        self.assertEqual(
+            set(transitions["instruction_text"][incomplete].tolist()),
+            {"put orange into bowl"},
+        )
+
+    def test_transition_view_does_not_keep_a_failed_pickup_slice(self):
+        record = _round([_chain(complete=False)])
+        record.pickup_event[0] = -1
+        _, transitions, partial, census = build_rows(
+            [("memory", record)],
+            min_approach_xy=0.06,
+            min_handoff_lift=0.05,
+            include_rejected_pickup_prefix=True,
+        )
+        self.assertEqual(
+            set(transitions["stage_name"].tolist()), {"move_to"}
+        )
+        self.assertEqual(partial, {})
+        self.assertEqual(
+            census["transition_success_chains"],
+            {"move_to": 1, "pick_up": 0, "placement": 0},
+        )
+
+    def test_transition_view_still_enforces_the_reset_contract(self):
+        _, transitions, _, census = self._build(
+            [_chain(complete=False, approach=0.01)]
+        )
+        self.assertEqual(transitions, {})
+        self.assertEqual(
+            census["transition_success_chains"],
+            {"move_to": 0, "pick_up": 0, "placement": 0},
+        )
+
     def test_actions_after_the_success_are_masked_not_dropped(self):
         """The chunk keeps its shape; the post-success tail carries mask zero.
 
@@ -538,7 +589,7 @@ class RowAssemblyTests(unittest.TestCase):
         record = _round([_chain()])
         # The predicate fires on the second action of decision 7.
         record.placement_success[7 * PER + 1, 0] = True
-        dataset, _, _ = build_rows(
+        dataset, _, _, _ = build_rows(
             [("memory", record)],
             min_approach_xy=0.06,
             min_handoff_lift=0.05,
@@ -556,7 +607,7 @@ class RowAssemblyTests(unittest.TestCase):
 
     def test_a_chain_with_no_latched_success_step_supervises_its_whole_span(self):
         record = _round([_chain()])
-        dataset, _, _ = build_rows(
+        dataset, _, _, _ = build_rows(
             [("memory", record)],
             min_approach_xy=0.06,
             min_handoff_lift=0.05,
@@ -565,7 +616,7 @@ class RowAssemblyTests(unittest.TestCase):
         self.assertTrue(bool(dataset["action_mask"].all()))
 
     def test_the_boundary_distance_finds_the_nearest_handoff(self):
-        dataset, _, _ = self._build([_chain(reach=1, align=2, pickup=4)])
+        dataset, _, _, _ = self._build([_chain(reach=1, align=2, pickup=4)])
         by_decision = {
             int(row): int(value)
             for row, value in zip(
@@ -577,7 +628,7 @@ class RowAssemblyTests(unittest.TestCase):
         self.assertEqual(by_decision[6], 2)
 
     def test_the_census_reports_every_destination_stage_cell(self):
-        dataset, _, _ = self._build(
+        dataset, _, _, _ = self._build(
             [_chain(destination="plate"), _chain(destination="bowl")]
         )
         report = dataset_report(dataset)
@@ -595,13 +646,13 @@ class RowAssemblyTests(unittest.TestCase):
         )
 
     def test_a_missing_stratum_is_named_rather_than_substituted(self):
-        dataset, _, _ = self._build([_chain(destination="plate")])
+        dataset, _, _, _ = self._build([_chain(destination="plate")])
         report = dataset_report(dataset)
         self.assertEqual(report["rows_by_destination"], {"plate": 8})
         self.assertNotIn("bowl", report["rows_by_destination"])
 
     def test_the_alignment_tail_is_marked_and_counted(self):
-        dataset, _, _ = self._build([_chain(reach=1, align=3)])
+        dataset, _, _, _ = self._build([_chain(reach=1, align=3)])
         align_rows = dataset["substage_id"] == STAGE_ALIGN
         self.assertTrue(bool(align_rows.any()))
         # The tail is a move_to row, not a fourth stage.
@@ -614,7 +665,7 @@ class RowAssemblyTests(unittest.TestCase):
         self.assertIn("yaw_tail", report["actions_by_source"])
 
     def test_the_census_names_every_current_controller_source(self):
-        dataset, _, _ = self._build([_chain(reach=1, align=3)])
+        dataset, _, _, _ = self._build([_chain(reach=1, align=3)])
         dataset["action_source"][0, 0] = SOURCE_GRIPPER_HOLD
         dataset["action_source"][1, 0] = SOURCE_ALIGN_BRIDGE
         report = dataset_report(dataset)
@@ -695,6 +746,35 @@ class ReachDiagnosticTests(unittest.TestCase):
         self.assertEqual(report["ready_worlds"], 1)
         self.assertEqual(
             report["among_predicate_steps"]["outside_absolute_rails"], 0.0
+        )
+
+    def test_old_bridge_record_reads_root_centring_flag_and_exact_slack(self):
+        record = self._round_with_predicate(
+            readiness={
+                "min_gripper_opening": 0.90,
+                "min_height_above_grasp": -0.005,
+                "max_height_above_grasp": 0.12,
+                "min_ee_z": 0.18,
+                "max_ee_z": 0.40,
+            },
+            ee_z=0.24,
+            target_z=0.18,
+        )
+        settings = json.loads(record.config_json)
+        # This is the schema written by the first collected bank: the state
+        # machine's flag lived at the root while diagnostics looked inside the
+        # nested readiness table and incorrectly defaulted to True.
+        settings["require_centred_at_reach"] = False
+        settings["grasp_xy_slack_m"] = [0.0123]
+        record.config_json = json.dumps(settings)
+        report = record.reach_diagnostics()
+        self.assertFalse(
+            report["readiness_settings"]["require_centred_at_reach"]
+        )
+        self.assertEqual(report["ready_worlds"], 1)
+        self.assertEqual(
+            report["grasp_xy_slack_m"]["robocasa_apple"]["median"],
+            0.0123,
         )
 
     def test_a_teacher_that_never_gets_close_reads_differently(self):

@@ -82,6 +82,21 @@ def _images(array: np.ndarray, torch: Any, device: str) -> Any:
     return (tensor / 255.0).permute(0, 3, 1, 2).contiguous()
 
 
+def select_dataset_view_report(
+    report: Mapping[str, Any], dataset_path: Path
+) -> dict[str, Any]:
+    """Make the carried census describe the NPZ that was actually refreshed."""
+
+    carried = dict(report)
+    view = dataset_path.stem
+    view_report = carried.get(view)
+    if isinstance(view_report, Mapping):
+        carried["source_full_chain_dataset"] = carried.get("dataset")
+        carried["dataset"] = dict(view_report)
+    carried["dataset_view"] = view
+    return carried
+
+
 def group_rows_by_file(
     rows: Sequence[int],
     lookups: Sequence[tuple[str, int, int]],
@@ -437,6 +452,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             carried = json.loads(source_report.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             carried = {}
+        carried = select_dataset_view_report(carried, args.dataset)
         carried["priors_stale"] = False
         carried["priors_refreshed_from"] = str(args.dataset)
         carried["priors_refreshed_with"] = str(args.checkpoint)
