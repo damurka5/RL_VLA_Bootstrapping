@@ -22,8 +22,11 @@ A subsequent 128-chain clearance-handoff screen promoted 21/31 reaches but
 pickup collapsed to 5/21 and placement to 0/5, so that arm is rejected. Keep
 the trained low handoff. The descent controller now pauses vertically while
 recentering instead of climbing to clearance and restarting; the first bank
-recorded 683 of those restart events. The next bounded screen combines this
-fix with the separately promising 64-decision move cap.
+recorded 683 of those restart events. Its 64-decision confirmation restored
+pickup to 7/9 and placement to 3/7, but alignment remained 9/34 and spent 2,781
+action steps paused for recentering. The next bounded arm keeps the low handoff
+and scales only the recorded descent command to 0.20, giving lateral
+stabilization time before finger contact.
 
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
@@ -34,6 +37,7 @@ fix with the separately promising 64-decision move cap.
 | move-to → reach | **the ceiling** | 23/128 in selection; 79/512 in collection |
 | alignment tail → pickup | second ceiling | 7/23 promoted in selection; 20/79 in collection |
 | clearance handoff ablation | **rejected** | 21/31 aligned, but only 5/21 picked and 0/5 placed |
+| low handoff + pause | downstream restored; alignment unchanged | 9/34 aligned, 7/9 picked, 3/7 placed |
 | alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
 | pickup under final destination prompt | reliable after handoff | 7/7 in selection; 17/20 in collection |
 | placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |

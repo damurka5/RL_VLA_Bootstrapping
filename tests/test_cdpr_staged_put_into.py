@@ -782,6 +782,24 @@ class XYCentringBridgeTests(unittest.TestCase):
         # whichever finger is closest, so it is the safe direction.
         self.assertGreater(float(descending[0, 0]), 0.0)
 
+    def test_descent_gain_slows_only_the_vertical_bridge(self):
+        fast = self._servo(descent_gain=1.0).actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.23]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.001, 0.0]]),
+        )
+        slow = self._servo(descent_gain=0.20).actions(
+            ee_position=torch.tensor([[0.0, 0.0, 0.23]]),
+            ee_yaw=torch.tensor([0.0]),
+            grasp_point_z=torch.tensor([0.19]),
+            target_xy=torch.tensor([[0.001, 0.0]]),
+        )
+        self.assertAlmostEqual(float(fast[0, 2]), -1.0, places=6)
+        self.assertAlmostEqual(float(slow[0, 2]), -0.4, places=6)
+        self.assertEqual(float(slow[0, 0]), float(fast[0, 0]))
+        self.assertEqual(float(slow[0, 3]), float(fast[0, 3]))
+
     def test_the_initial_climb_still_does_not_translate(self):
         servo = self._servo()
         climbing = servo.actions(

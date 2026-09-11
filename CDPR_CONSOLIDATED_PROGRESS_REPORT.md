@@ -1900,6 +1900,34 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-11 — Low handoff restores pickup/placement; descent is still the alignment ceiling
+
+- Evidence: supplied `teacher_selection.json` and canonical selected-teacher
+  manifest from the two-round, 128-chain `screen_move64_pause_recentre` run.
+  The manifests agree on teacher hashes, scene-manifest hash and protocol:
+  64 move decisions, 48 alignment decisions, low recorded descent, XY bridge,
+  yaw gain 0.35 and destination prompt during pickup.
+- The native reach fired in **34/128 = 26.56%**. Alignment promoted **9/34 =
+  26.47%**; pickup handed off **7/9 = 77.78%**; placement accepted **3/7 =
+  42.86%**. Strict full-chain yield returned to **3/128 = 2.34%**: one bowl
+  chain out of 70 and two plate chains out of 58. This independently confirms
+  that the low handoff, not clearance, matches the pickup teacher.
+- Failure partition: 94 move-budget exhaustion, 24 alignment-budget
+  exhaustion, two pickup-budget exhaustion, three carry losses, one
+  wrong-place settlement and one simulator divergence. Downstream behavior is
+  healthy conditional on handoff; approach and alignment still dominate.
+- The vertical pause did not improve alignment conversion. The two rounds
+  recorded **2,781 recentering-pause action steps**, while 72.16-86.49% of
+  alignment steps were off-centre and only 6.82-15.57% were in the descent
+  gate. The bridge still descended with unity gain, saturating the normalized
+  Z command while the lateral loop was settling. A new explicit
+  `align_descent_gain` now scales only this recorded bridge action; teacher
+  output and the calibrated yaw are untouched. Unity preserves the measured
+  protocol. The next bounded arm uses 0.20 before changing collection defaults.
+- The corrected projected-clearance telemetry shows why the potato warning is
+  per-presentation: potato slack spans p10 -7.8 mm, median -1.3 mm and p90
+  +7.8 mm in both rounds, while the other target catalogs remain positive.
+
 ### 2026-09-11 — Clearance handoff rejected; pause-and-recentre descent replaces climb/restart
 
 - Evidence: user-pasted two-round, 128-chain single-pass selector output on

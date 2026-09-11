@@ -422,6 +422,7 @@ class YawTailController:
         xy_centring_abort: float | None = None,
         handoff_at_clearance: bool = False,
         yaw_servo_gain: float = 0.35,
+        descent_gain: float = 1.0,
     ) -> None:
         self.torch = torch
         self.calibration = calibration
@@ -468,6 +469,12 @@ class YawTailController:
         self.yaw_servo_gain = float(yaw_servo_gain)
         if not 0.0 < self.yaw_servo_gain <= 1.0:
             raise ValueError("The yaw servo gain must be in (0, 1].")
+        # Scale only the recorded descent toward the pickup pose. At unity the
+        # 60 mm clearance-to-grasp error saturates a 15 mm/action controller;
+        # the cable platform descends before its lateral loop can settle.
+        self.descent_gain = float(descent_gain)
+        if not 0.0 < self.descent_gain <= 1.0:
+            raise ValueError("The descent gain must be in (0, 1].")
         # None disables the XY centring bridge entirely, which is the default.
         self.xy_centring_deadband = xy_centring_deadband
         # HYSTERESIS. Entering the descent needs the tight deadband; staying in
@@ -611,7 +618,11 @@ class YawTailController:
                     error <= float(self.xy_centring_deadband),
                 )
             target_z = grasp_point_z + float(self.pickup_height_above_grasp)
-            descend = ((target_z - ee_position[:, 2]) / self.action_step_xyz).clamp(-1.0, 1.0)
+            descend = (
+                self.descent_gain
+                * (target_z - ee_position[:, 2])
+                / self.action_step_xyz
+            ).clamp(-1.0, 1.0)
             # Descend only once the wrist is aligned AND over the object. A
             # descent from a lateral offset is what lands the fingers on the
             # object's shoulder and stops the grasp dead -- measured, 0 grasps
@@ -1702,6 +1713,10 @@ class StagedRolloutConfig:
     # Damping on the yaw servo; see YawTailController for the windup this
     # exists to stop. 1.0 reproduces the undamped behaviour.
     align_yaw_servo_gain: float = 0.35
+    # Gain on the alignment bridge's vertical descent only. The first
+    # pause-and-recentre screen spent 72-86% of tail steps off-centre because
+    # the unity-gain descent outran the lateral stabilization.
+    align_descent_gain: float = 1.0
     # WHICH PROMPT DRIVES THE PICKUP STAGE.
     #
     # "pick_up" is the design's default and the teacher's own template.
@@ -1748,6 +1763,10 @@ class StagedRolloutConfig:
             raise ValueError("Pickup alignment height must lie inside the readiness band.")
         if self.actions_per_decision < 1:
             raise ValueError("actions_per_decision must be positive.")
+        if not math.isfinite(self.align_descent_gain) or not (
+            0.0 < self.align_descent_gain <= 1.0
+        ):
+            raise ValueError("align_descent_gain must be in (0, 1].")
         if self.pickup_prompt not in {"pick_up", "destination"}:
             raise ValueError(
                 f"Unknown pickup_prompt {self.pickup_prompt!r}; expected "
@@ -1990,6 +2009,7 @@ def run_staged_chains(
         ),
         handoff_at_clearance=bool(config.align_handoff_at_clearance),
         yaw_servo_gain=float(config.align_yaw_servo_gain),
+        descent_gain=float(config.align_descent_gain),
     )
 
     # Per-object lateral slack, constant for the round. Reported loudly when a
@@ -2014,7 +2034,8 @@ def run_staged_chains(
             "[staged] alignment handoff: grasp point + "
             f"{config.pickup_height_above_grasp:.3f} m "
             f"(tolerance {config.pickup_height_tolerance:.3f} m), fixed yaw; "
-            "recorded descent with vertical pause for XY recentering",
+            "recorded descent with vertical pause for XY recentering, "
+            f"descent gain {config.align_descent_gain:.2f}",
             flush=True,
         )
     quaternions = initial_low_dim.object_quaternions[:, 0].cpu().numpy()
@@ -2864,6 +2885,7 @@ class StagedRound:
                         config.align_handoff_at_clearance
                     ),
                     "align_yaw_servo_gain": float(config.align_yaw_servo_gain),
+                    "align_descent_gain": float(config.align_descent_gain),
                     "require_centred_at_reach": bool(
                         config.readiness.require_centred_at_reach
                     ),

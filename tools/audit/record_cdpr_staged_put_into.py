@@ -329,9 +329,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         help=(
             "Hysteresis on the centring bridge: the drift tolerated once the "
             "descent has begun. Entering needs --align-xy-deadband; without "
-            "the split, a millimetre of drift on the way down sends the wrist "
-            "back to the rotation clearance and the tail chatters away its "
-            "budget."
+            "the split, ordinary drift repeatedly pauses the vertical bridge."
         ),
     )
     parser.add_argument(
@@ -358,6 +356,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             "wrist is still travelling -- integrator windup, and it rings at "
             "0.0824 rad against an 0.0873 rad acceptance band. 1.0 reproduces "
             "the undamped behaviour."
+        ),
+    )
+    parser.add_argument(
+        "--align-descent-gain",
+        type=float,
+        default=1.0,
+        help=(
+            "Gain on the recorded alignment descent only. Unity reproduces "
+            "the original saturated descent; a smaller value gives the "
+            "lateral centring loop time to settle before finger contact."
         ),
     )
     parser.add_argument(
@@ -561,6 +569,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         align_xy_abort=float(args.align_xy_abort),
         align_handoff_at_clearance=bool(args.align_handoff_at_clearance),
         align_yaw_servo_gain=float(args.align_yaw_servo_gain),
+        align_descent_gain=float(args.align_descent_gain),
         pickup_prompt=str(args.pickup_prompt),
         yaw_hold_during_pickup=not bool(args.no_yaw_hold_during_pickup),
         yaw_hold_during_placement=bool(args.yaw_hold_during_placement),
@@ -685,6 +694,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "align_xy_abort": float(args.align_xy_abort),
         "align_handoff_at_clearance": bool(args.align_handoff_at_clearance),
         "align_yaw_servo_gain": float(args.align_yaw_servo_gain),
+        "align_descent_gain": float(args.align_descent_gain),
         "pickup_prompt": str(args.pickup_prompt),
         "gripper_hold_open_before_pickup": not bool(
             args.no_gripper_hold_before_pickup
