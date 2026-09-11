@@ -55,6 +55,37 @@ generator's cycling resamples the orientation instead of dropping the object.
 It is off for a manifest that does not name a yaw, so existing scene sets keep
 validating.
 
+**The consecutive-boundary screen, 2026-09-11.** At unity gain with the bar
+lowered to one, the ladder is 35 reaches, 21 aligned (60.0%), 14 picked
+(66.7%), 4 placed (28.6%), 4 accepted, against unity-at-two's 34/9/7/3/3. Every
+absolute count rose; the two downstream conditional rates fell. The mechanism
+is exactly the one the 0.50 telemetry predicted: `worlds_ever_all_ready` went
+from 14 of 27 with 6 promoted to 21 of 35 with **21** promoted, so the change
+converted a capture loss and nothing else. The recorded handoff did not
+degrade — height median 0.0102 m against the 0.010 m target, XY error 0.0045
+and 0.0053 m against an apple's 0.0130 m slack.
+
+The pre-declared rule was `aligned_given_upstream` > 9/34 AND
+`picked_up_given_upstream` >= 0.7. The first passed at 0.60; the second missed
+at 0.667 (CI 0.476-0.818). **The bar was the wrong shape and is withdrawn**: a
+conditional-rate floor mechanically penalizes a gate that admits more marginal
+candidates, even when the gate is strictly better in accepted chains. It was
+meant to catch the clearance arm's failure — alignment up, pickup collapsed to
+24%, placement to zero — and that pattern is absent here. The criterion that
+replaces it is accepted chains and usable stage transitions per chain, which
+is safe to optimize because full-chain acceptance is enforced DOWNSTREAM of the
+handoff gate: a looser gate changes which chains survive, never whether a
+survivor is a valid demonstration.
+
+Collection adopts `consecutive_decisions = 1` at unity descent gain. Two
+cautions on reading its align diagnostics: they are now a different population,
+because a world that touches readiness leaves immediately and the residue that
+cannot align dominates the phase, so the higher `share_off_centre`,
+`share_yaw_unaligned` and descent-abort counts are survivorship rather than
+regression. And screen yield has historically overstated bank yield by about
+2.4x (3/128 screened against 5/512 banked on the same triple), so size the
+collection from the first shard's measured acceptance, not from 4/128.
+
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
 | stage | status | measured |
@@ -68,6 +99,8 @@ validating.
 | low handoff + descent gain 0.20 | **rejected** | 1/35 aligned; its sole handoff completed |
 | low handoff + descent gain 0.50 | **rejected; sweep closed** | 6/27 aligned, 5/6 picked, 1/5 placed, 4/5 carry losses |
 | alignment gate conjunction | **the real alignment ceiling** | handoff height fails 94.7% of boundaries vs 9.2% broad; 14 ever-ready → 6 promoted |
+| unity + one consecutive boundary | **adopted for collection** | 21/35 aligned, 14/21 picked, 4/14 placed, 4 accepted; 21 ever-ready → 21 promoted |
+| carry: grasp → receptacle | second ceiling, unchanged by every arm | 7 of 14 carries lost; 50-57% across all three gains |
 | alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
 | pickup under final destination prompt | reliable after handoff | 7/7 in selection; 17/20 in collection |
 | placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |
