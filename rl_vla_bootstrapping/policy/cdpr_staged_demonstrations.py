@@ -477,10 +477,12 @@ class YawTailController:
         # clearance and starts again -- chatter that burns the tail budget
         # while every instantaneous reading looks correct.
         #
-        # Re-centring mid-descent is not the alternative: by then the fingers
-        # straddle the object and a lateral command would scrape it. Climbing
-        # out is the right response to a REAL loss of centring; the point of
-        # the wider band is to stop calling ordinary compliance a real loss.
+        # A real loss of centring pauses vertical motion while the already
+        # active lateral servo moves toward the object's centre. Earlier code
+        # climbed all the way back to clearance, producing hundreds of
+        # climb/restart cycles. Moving toward the centre is away from the near
+        # finger; pausing Z makes that correction safer than combining it with
+        # either descent or a full retreat.
         self.xy_centring_abort = (
             xy_centring_abort
             if xy_centring_abort is not None
@@ -616,6 +618,19 @@ class YawTailController:
             # in 48 chains at a 0.0166-0.0186 m handoff offset.
             command[:, 2] = torch.where(
                 yaw_ready & centred, descend, command[:, 2]
+            )
+            # Below clearance, yaw is already safe. If lateral compliance
+            # exceeds the abort band, HOLD Z and re-centre rather than climbing
+            # back to clearance. The previous climb/restart loop consumed most
+            # of the 48-decision tail: 683 recorded aborts in the first
+            # 512-chain bank, with only 20/79 reaches promoted. A zero Z action
+            # is an explicit position hold under this controller.
+            below_clearance = ~clearance
+            recentering_pause = yaw_ready & ~centred & below_clearance
+            command[:, 2] = torch.where(
+                recentering_pause,
+                torch.zeros_like(command[:, 2]),
+                command[:, 2],
             )
             # Do not sweep the fingers through the object while climbing.
             # Once aligned, small yaw corrections may hold that angle on descent.
@@ -1987,9 +2002,21 @@ def run_staged_chains(
     if bool(((pickup_z < backend.config.workspace_z[0]) |
              (pickup_z > backend.config.workspace_z[1])).any().item()):
         raise ValueError("Pickup alignment height is outside the controller Z bounds.")
-    print(f"[staged] alignment handoff: grasp point + {config.pickup_height_above_grasp:.3f} m "
-          f"(tolerance {config.pickup_height_tolerance:.3f} m), fixed yaw; recorded descent",
-          flush=True)
+    if config.align_handoff_at_clearance:
+        print(
+            "[staged] alignment handoff: rotation clearance "
+            f"z={config.calibration.safe_rotation_z:.3f} m, fixed yaw; "
+            "pickup teacher owns descent",
+            flush=True,
+        )
+    else:
+        print(
+            "[staged] alignment handoff: grasp point + "
+            f"{config.pickup_height_above_grasp:.3f} m "
+            f"(tolerance {config.pickup_height_tolerance:.3f} m), fixed yaw; "
+            "recorded descent with vertical pause for XY recentering",
+            flush=True,
+        )
     quaternions = initial_low_dim.object_quaternions[:, 0].cpu().numpy()
     slack = [projected_grasp_xy_offset(
         scene.target_catalog, quaternion, config.calibration.target_yaw,
@@ -3187,10 +3214,10 @@ class StagedRound:
         The tail has four jobs -- climb, rotate, centre, descend -- and each
         one gates the next, so "align_budget_exhausted" is four different
         failures wearing one name. This splits them, and additionally counts
-        DESCENT ABORTS: the descend gate is `yaw_ready & centred`, and its else
-        branch is a climb, so a wrist that loses centring on the way down
-        climbs back to the rotation clearance and starts again. That chatter
-        burns the budget while every instantaneous reading looks correct.
+        DESCENT ABORTS in legacy recordings and RECENTRING PAUSES in the
+        current controller. The old descend gate's else branch climbed back to
+        rotation clearance; the current one holds Z while its lateral servo
+        restores centring.
         """
 
         import json
@@ -3233,6 +3260,13 @@ class StagedRound:
             & descending[:-1]
             & live[:-1]
         )
+        recentering_pause = (
+            live
+            & ~at_clearance
+            & yaw_ok
+            & (lateral > float(settings.get("align_xy_abort", 0.009)))
+            & (np.abs(self.actions[..., 2]) <= 0.05)
+        )
 
         def percentiles(values: Any) -> dict[str, float] | None:
             selected = values[live]
@@ -3265,6 +3299,10 @@ class StagedRound:
             "descent_aborts": int(climbed_back.sum()),
             "worlds_with_a_descent_abort": int(
                 climbed_back.any(axis=0).sum()
+            ),
+            "descent_recentering_pauses": int(recentering_pause.sum()),
+            "worlds_with_a_recentering_pause": int(
+                recentering_pause.any(axis=0).sum()
             ),
             "yaw_error_rad": percentiles(yaw_error),
             "xy_error_m": percentiles(lateral),

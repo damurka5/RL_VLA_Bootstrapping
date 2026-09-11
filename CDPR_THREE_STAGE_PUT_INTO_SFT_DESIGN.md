@@ -18,6 +18,13 @@ move/alignment transitions, 17 pickup transitions and five placement
 transitions. The original full-chain view remains unchanged. The full ledger is
 §7.16b and §14 of the consolidated report; the summary is below.
 
+A subsequent 128-chain clearance-handoff screen promoted 21/31 reaches but
+pickup collapsed to 5/21 and placement to 0/5, so that arm is rejected. Keep
+the trained low handoff. The descent controller now pauses vertically while
+recentering instead of climbing to clearance and restarting; the first bank
+recorded 683 of those restart events. The next bounded screen combines this
+fix with the separately promising 64-decision move cap.
+
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
 | stage | status | measured |
@@ -26,6 +33,7 @@ transitions. The original full-chain view remains unchanged. The full ledger is
 | yaw calibration (§5) | done | 0.000 rad; fixed-angle residual mean 10.7°, max 25.3° |
 | move-to → reach | **the ceiling** | 23/128 in selection; 79/512 in collection |
 | alignment tail → pickup | second ceiling | 7/23 promoted in selection; 20/79 in collection |
+| clearance handoff ablation | **rejected** | 21/31 aligned, but only 5/21 picked and 0/5 placed |
 | alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
 | pickup under final destination prompt | reliable after handoff | 7/7 in selection; 17/20 in collection |
 | placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |

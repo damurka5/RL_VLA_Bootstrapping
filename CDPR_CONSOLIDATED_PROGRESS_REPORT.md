@@ -1900,6 +1900,34 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-11 — Clearance handoff rejected; pause-and-recentre descent replaces climb/restart
+
+- Evidence: user-pasted two-round, 128-chain single-pass selector output on
+  `teacher_selection`, with the selected triple, 64 move decisions, 48 align
+  decisions, XY centring, fixed calibrated yaw, destination pickup prompt and
+  `--align-handoff-at-clearance`.
+- The longer/clearance arm produced 31 native reaches and **21/31 = 67.74%**
+  aligned handoffs, versus 7/23 in the earlier 32-decision recorded-descent
+  selector. But the pickup teacher converted only **5/21 = 23.81%**, versus
+  7/7 earlier and 17/20 in collection at the trained low handoff. None of the
+  five pickup handoffs placed. The selector correctly stopped with
+  `blocked_zero_stage_success`.
+- Decision: reject clearance handoff. It solves alignment by transferring the
+  descent to a teacher that does not reliably perform it from this fixed-yaw
+  state. Retain the low handoff at grasp point +0.010 m. The 64-decision move
+  cap remains promising but is confounded with the handoff change and needs a
+  low-handoff confirmation.
+- Controller fix for that confirmation: when XY error exceeds the 9 mm abort
+  band during a yaw-aligned descent, hold Z and continue the already-recorded
+  lateral correction instead of climbing to 0.26 m and restarting. The first
+  512-chain bank recorded 683 such climb-after-descent events. The correction
+  direction is toward object centre and the vertical pause avoids combining it
+  with either descent or retreat. Diagnostics now report recentering pauses.
+- Telemetry fix: the previous startup line always said `recorded descent`, even
+  in the clearance arm. It now names either the clearance handoff (pickup owns
+  descent) or the low handoff (recorded descent with a vertical recentering
+  pause), so protocol evidence is no longer contradicted by the log.
+
 ### 2026-09-11 — First continuous bank: valid pipeline, five complete scenes, transition bank chosen next
 
 - Evidence: user-pasted dataset-builder console output plus supplied

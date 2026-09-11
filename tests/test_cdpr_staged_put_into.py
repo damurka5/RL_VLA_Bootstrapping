@@ -720,18 +720,13 @@ class XYCentringBridgeTests(unittest.TestCase):
         # Now it descends toward grasp_point_z + 0.01 = 0.20, from 0.26.
         self.assertLess(float(centred[0, 2]), 0.0)
 
-    def test_the_descent_tolerates_drift_but_not_a_real_loss(self):
-        """Hysteresis, and why the alternative is chatter.
+    def test_the_descent_tolerates_drift_and_pauses_for_recentering(self):
+        """Hysteresis plus a vertical pause prevents climb/restart chatter.
 
-        The descend gate's else branch is a CLIMB, so without a wider band on
-        the way down, a millimetre of ordinary compliance sends the wrist back
-        to the rotation clearance and the tail starts over. Measured: 7-11 of
-        the ~10-13 chains that entered the tail exhausted its budget.
-
-        Re-centring mid-descent is not the alternative -- by then the fingers
-        straddle the object and a lateral command would scrape it. Climbing out
-        is right for a REAL loss; the band exists so ordinary drift is not
-        called one.
+        Ordinary drift inside the wider band keeps descending. Beyond that
+        band, the controller already moves laterally toward the object centre;
+        it now holds Z during that correction instead of climbing all the way
+        to clearance and restarting the descent.
         """
 
         servo = self._servo(xy_centring_abort=0.009)
@@ -743,13 +738,14 @@ class XYCentringBridgeTests(unittest.TestCase):
         )
         self.assertLess(float(descending[0, 2]), 0.0)
 
-        aborting = servo.actions(
+        recentering = servo.actions(
             ee_position=torch.tensor([[0.0, 0.0, 0.23]]),
             ee_yaw=torch.tensor([0.0]),
             grasp_point_z=torch.tensor([0.19]),
             target_xy=torch.tensor([[0.012, 0.0]]),
         )
-        self.assertGreater(float(aborting[0, 2]), 0.0)
+        self.assertEqual(float(recentering[0, 2]), 0.0)
+        self.assertGreater(float(recentering[0, 0]), 0.0)
 
         # Entry still needs the tight band: 7 mm at the clearance centres, it
         # does not start the descent.
