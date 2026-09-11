@@ -84,6 +84,7 @@ from tools.audit.xy_approach_probe import _build_world  # noqa: E402
 
 import argparse  # noqa: E402
 import json  # noqa: E402
+from dataclasses import replace  # noqa: E402
 import time  # noqa: E402
 from typing import Any, Mapping, Sequence  # noqa: E402
 
@@ -387,6 +388,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             "zero is not throwaway -- it is the thing to look at."
         ),
     )
+    parser.add_argument(
+        "--align-consecutive-decisions",
+        type=int,
+        default=None,
+        help=(
+            "Override how many CONSECUTIVE decision boundaries the full "
+            "alignment conjunction must hold before the pickup teacher takes "
+            "over. Defaults to the calibration file's value (2). The 0.50 "
+            "screen measured 14 of 27 aligning worlds reaching the full "
+            "conjunction at some boundary but only 6 holding it for two, with "
+            "max_ready_streak p90 exactly 2.0 -- the requirement sits on the "
+            "edge of the distribution. This does not move the handoff POSE, "
+            "unlike --align-handoff-at-clearance, which did and cost pickup, "
+            "so picked_up_given_upstream is what judges a change here."
+        ),
+    )
     parser.add_argument("--microbatch", type=int, default=32)
     parser.add_argument("--move-decisions", type=int, default=32)
     parser.add_argument(
@@ -429,6 +446,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     calibration = PickupYawCalibration.from_json(
         json.loads(args.yaw_calibration.expanduser().resolve().read_text("utf-8"))
     )
+    if args.align_consecutive_decisions is not None:
+        calibration = replace(
+            calibration,
+            consecutive_decisions=int(args.align_consecutive_decisions),
+        )
     calibration.validate()
     scenes, manifest = read_manifest(args.scene_manifest.expanduser().resolve())
     selection = select_split(scenes, str(args.split))
@@ -581,6 +603,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             "align_yaw_servo_gain": float(args.align_yaw_servo_gain),
             "align_descent_gain": float(args.align_descent_gain),
             "grasp_xy_margin": float(args.grasp_xy_margin),
+            # Restated beside the other protocol knobs because it is the one
+            # readiness parameter a flag can move away from the calibration
+            # file, and comparing two screens means comparing this.
+            "align_consecutive_decisions": int(calibration.consecutive_decisions),
+            "align_consecutive_decisions_overridden": (
+                args.align_consecutive_decisions is not None
+            ),
             "pickup_prompt": str(args.pickup_prompt),
             "gripper_hold_open_before_pickup": not bool(
                 args.no_gripper_hold_before_pickup

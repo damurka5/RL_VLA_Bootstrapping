@@ -43,11 +43,19 @@ from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import (
     catalog_xy_radius,
     generate_scenes,
     manifest_payload,
+    projected_grasp_xy_offset,
     read_manifest,
     scene_counts,
+    scene_object_quaternion,
     validate_scene,
     write_manifest,
 )
+
+# The calibrated fixed pickup yaw the screens ran at. Every scene test that
+# exercises the clearance filter uses this rather than a round number, because
+# the filter's whole point is that the manifest and the collector agree on ONE
+# measured angle.
+CALIBRATED_PICKUP_YAW = -7.936838537690663e-15
 
 
 class HullRadiusTests(unittest.TestCase):
@@ -259,6 +267,157 @@ class RejectionTests(unittest.TestCase):
     def test_a_non_graspable_target_is_refused_at_construction(self):
         with self.assertRaises(ValueError):
             SceneGeometryConfig(target_catalogs=("robocasa_plate",))
+
+
+class PickupClearanceFilterTests(unittest.TestCase):
+    """The manifest may refuse a presentation the open fingers cannot bracket.
+
+    The gripper's yaw is pinned for pickup while the object's is sampled, so an
+    elongated catalog shows a different width to the closing axis in every
+    scene. Roughly half of potato draws have NEGATIVE centring slack: no reach,
+    however accurate, can be followed by a grasp, and the screens spent chains
+    on them. The filter is OFF by default because the pickup yaw is a
+    calibration rather than a property of the scene.
+    """
+
+    def test_it_is_off_by_default_so_old_manifests_still_validate(self):
+        """A manifest written before this field existed must keep loading.
+
+        read_manifest reconstructs SceneGeometryConfig from the stored payload,
+        so a new field that defaulted to ON would retroactively reject every
+        scene set already on disk.
+        """
+
+        self.assertIsNone(SceneGeometryConfig().clearance_pickup_yaw)
+        scenes = generate_scenes(count=48, seed=11)
+        blocked = [
+            scene
+            for scene in scenes
+            if projected_grasp_xy_offset(
+                scene.target_catalog,
+                scene_object_quaternion(scene.target.yaw),
+                CALIBRATED_PICKUP_YAW,
+            ) <= 0.0
+        ]
+        # Not an assertion about the exact count -- an assertion that the
+        # unfiltered generator really does emit these, which is what makes the
+        # filter worth having.
+        self.assertTrue(blocked)
+        for scene in scenes:
+            validate_scene(scene, SceneGeometryConfig())
+
+    def test_every_accepted_target_is_bracketable_at_the_calibrated_yaw(self):
+        config = SceneGeometryConfig(clearance_pickup_yaw=CALIBRATED_PICKUP_YAW)
+        for scene in generate_scenes(count=96, seed=12, config=config):
+            slack = projected_grasp_xy_offset(
+                scene.target_catalog,
+                scene_object_quaternion(scene.target.yaw),
+                CALIBRATED_PICKUP_YAW,
+                margin=config.grasp_xy_margin,
+            )
+            self.assertGreater(slack, 0.0, scene.scene_uid)
+
+    def test_an_elongated_object_is_resampled_rather_than_dropped(self):
+        """The census must not change. Balance is by cycling over catalogs, so
+        a rejected potato yaw is redrawn; losing the stratum would trade one
+        silent bias for another."""
+
+        unfiltered = scene_counts(generate_scenes(count=96, seed=13))
+        filtered = scene_counts(
+            generate_scenes(
+                count=96,
+                seed=13,
+                config=SceneGeometryConfig(
+                    clearance_pickup_yaw=CALIBRATED_PICKUP_YAW
+                ),
+            )
+        )
+        self.assertEqual(unfiltered["by_target"], filtered["by_target"])
+        self.assertEqual(unfiltered["by_destination"], filtered["by_destination"])
+        self.assertIn("robocasa_potato", filtered["by_target"])
+
+    def test_only_the_elongated_catalog_is_ever_rejected(self):
+        """Spheres are yaw-invariant; if the filter touched them the projection
+        would be wrong rather than the objects ungraspable."""
+
+        config = SceneGeometryConfig(clearance_pickup_yaw=CALIBRATED_PICKUP_YAW)
+        rejected = []
+        for scene in generate_scenes(count=96, seed=14):
+            try:
+                validate_scene(scene, config)
+            except SceneRejection:
+                rejected.append(scene.target_catalog)
+        self.assertTrue(rejected)
+        self.assertEqual(set(rejected), {"robocasa_potato"})
+
+    def test_the_filter_survives_a_manifest_round_trip(self):
+        """The yaw a set was filtered against travels with it. A consumer
+        running a different calibration is running an unfiltered manifest and
+        has to be able to see that."""
+
+        import tempfile
+
+        config = SceneGeometryConfig(clearance_pickup_yaw=CALIBRATED_PICKUP_YAW)
+        scenes = generate_scenes(count=32, seed=15, config=config)
+        payload = manifest_payload(
+            scenes,
+            config=config,
+            seed=15,
+            split_weights=DEFAULT_SPLIT_WEIGHTS,
+            split_salt="test",
+        )
+        self.assertAlmostEqual(
+            payload["geometry"]["clearance_pickup_yaw"],
+            CALIBRATED_PICKUP_YAW,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = f"{directory}/scenes.json"
+            write_manifest(path, payload)
+            loaded, _ = read_manifest(path)
+        self.assertEqual(len(loaded), len(scenes))
+
+    def test_a_wider_margin_than_the_collector_would_admit_impossible_scenes(self):
+        """grasp_xy_margin has to match the collector's readiness margin. A
+        scene accepted against a wider margin hands the same impossible
+        presentation back through the other door."""
+
+        broadside = math.pi / 2.0
+        strict = projected_grasp_xy_offset(
+            "robocasa_potato",
+            scene_object_quaternion(broadside),
+            0.0,
+            margin=0.003,
+        )
+        loose = projected_grasp_xy_offset(
+            "robocasa_potato",
+            scene_object_quaternion(broadside),
+            0.0,
+            margin=0.0,
+        )
+        self.assertLess(strict, loose)
+        self.assertAlmostEqual(loose - strict, 0.003, places=9)
+
+
+class SceneObjectQuaternionTests(unittest.TestCase):
+    def test_it_matches_what_the_full_task_reset_writes(self):
+        """The filter predicts feasibility at the COMMANDED orientation. If this
+        helper and FullTaskSceneResetter ever disagree, the manifest would be
+        filtering scenes that are not the ones the collector runs."""
+
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            _scene_slot_yaws,
+        )
+
+        scene = generate_scenes(count=1, seed=16)[0]
+        yaws = _scene_slot_yaws(scene)
+        self.assertAlmostEqual(yaws[0], scene.target.yaw, places=12)
+        # The resetter builds (cos(yaw/2), 0, 0, sin(yaw/2)) per slot.
+        for yaw in yaws:
+            quaternion = scene_object_quaternion(yaw)
+            self.assertAlmostEqual(quaternion[0], math.cos(0.5 * yaw), places=12)
+            self.assertEqual(quaternion[1], 0.0)
+            self.assertEqual(quaternion[2], 0.0)
+            self.assertAlmostEqual(quaternion[3], math.sin(0.5 * yaw), places=12)
 
 
 if __name__ == "__main__":  # pragma: no cover

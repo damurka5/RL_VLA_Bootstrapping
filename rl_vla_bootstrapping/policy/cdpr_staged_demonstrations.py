@@ -63,80 +63,23 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     BatchedTaskState,
 )
 from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import (
+    # The gripper aperture and the two centring-slack functions live with the
+    # object hulls they are measured against, so that scene generation can
+    # reject an ungraspable presentation without importing torch. Re-exported
+    # here because this module is where every caller of them already looks.
+    OPEN_GRIPPER_HALF_APERTURE_M,
     catalog_xy_radius,
+    max_grasp_xy_offset,
+    projected_grasp_xy_offset,
+    scene_object_quaternion,
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import OBJECT_VARIANTS
 
 
-# Half the gap between the finger pads with the gripper fully open, in metres,
-# measured from the MJCF: the finger slide range is [0, 0.03] on a pad whose
-# body sits at x = +-0.02, and the pad geom is 0.0025 half-thick, so the inner
-# faces sit at +-(0.02 + 0.03 - 0.0025) = +-0.0475. Both fingers are driven --
-# a weld equality couples finger_l and finger_r -- so the aperture is centred
-# on ee_base and is 0.095 m wide, which is the "0.0969 m open gap" the object
-# catalog's banana/mug note refers to.
-#
-# `tests/test_cdpr_staged_put_into.py` re-derives this from the model with
-# MuJoCo and fails if it moves, because it is a geometry fact that decides
-# which objects can be grasped at all and it must not drift into a config.
-OPEN_GRIPPER_HALF_APERTURE_M = 0.0475
-
-# How far the finger tips reach below ee_base, same source. It is why a descent
-# from a lateral offset stops early: the tips arrive level with the object's
-# upper surface before the pads are anywhere near bracketing it.
+# How far the finger tips reach below ee_base, measured from the MJCF. It is
+# why a descent from a lateral offset stops early: the tips arrive level with
+# the object's upper surface before the pads are anywhere near bracketing it.
 FINGER_TIP_DEPTH_M = 0.0390
-
-
-def max_grasp_xy_offset(catalog: str, *, margin: float = 0.003) -> float:
-    """How far off-centre the gripper may be and still bracket this object.
-
-    The half-aperture minus the object's rotation-invariant hull radius, minus
-    a margin. Rotation-invariant because the object's yaw is sampled and the
-    gripper's is pinned, so the object may present any of its widths to the
-    closing axis; taking the widest is the only bound that holds for every
-    draw. A catalog whose widest presentation exceeds the aperture returns a
-    NEGATIVE slack and cannot be grasped at this yaw at all -- which is the
-    same geometry fact that removed banana and mug from the target pool.
-    """
-
-    return (
-        OPEN_GRIPPER_HALF_APERTURE_M
-        - catalog_xy_radius(catalog)
-        - float(margin)
-    )
-
-
-def projected_grasp_xy_offset(catalog: str, object_quaternion: Sequence[float],
-                              gripper_yaw: float, *, margin: float = 0.003) -> float:
-    """Conservative radial centering slack for this object's actual presentation.
-
-    Project the primitive hull onto the fixed gripper's closing axis. A long
-    potato can exceed the aperture along Y while still fitting between X pads;
-    its XY circumradius is not its width along the closing axis.
-    """
-    from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import _quaternion_matrix
-
-    world_axis = (math.cos(gripper_yaw), math.sin(gripper_yaw), 0.0)
-    rotation = _quaternion_matrix(object_quaternion)
-    axis = [sum(rotation[j][i] * world_axis[j] for j in range(3)) for i in range(3)]
-    extent = 0.0
-    for primitive in OBJECT_VARIANTS[catalog].primitives:
-        rotation = _quaternion_matrix(primitive.quat)
-        direction = [sum(rotation[j][i] * axis[j] for j in range(3)) for i in range(3)]
-        centre = sum(axis[i] * primitive.pos[i] for i in range(3))
-        name, size = primitive.primitive, primitive.size
-        if name.startswith("sphere"):
-            radius = float(size[0])
-        elif name.startswith("capsule"):
-            radius = float(size[0]) + abs(direction[2]) * float(size[1])
-        elif name.startswith("cylinder"):
-            radius = math.hypot(*direction[:2]) * float(size[0]) + abs(direction[2]) * float(size[1])
-        elif name.startswith("box"):
-            radius = sum(abs(direction[i]) * float(size[i]) for i in range(3))
-        else:
-            raise ValueError(f"Unsupported grasp primitive {name}")
-        extent = max(extent, abs(centre) + radius)
-    return OPEN_GRIPPER_HALF_APERTURE_M - extent - float(margin)
 
 
 # --------------------------------------------------------------------------
@@ -2043,20 +1986,35 @@ def run_staged_chains(
         scene.target_catalog, quaternion, config.calibration.target_yaw,
         margin=config.readiness.grasp_xy_margin,
     ) for scene, quaternion in zip(scenes, quaternions)]
-    infeasible = sorted(
-        {
-            scene.target_catalog
-            for scene, value in zip(scenes, slack)
-            if value <= 0.0
-        }
-    )
+    blocked = [scene for scene, value in zip(scenes, slack) if value <= 0.0]
+    infeasible = sorted({scene.target_catalog for scene in blocked})
     if infeasible:
+        # Split the blame. A manifest filtered with SceneGeometryConfig's
+        # clearance_pickup_yaw predicted feasibility at the COMMANDED
+        # orientation; anything infeasible here that the prediction passed was
+        # turned broadside by SETTLING, which is a physical fact the manifest
+        # cannot see and a reason to keep this measurement even when the
+        # filter is on.
+        settled_only = sum(
+            1
+            for scene in blocked
+            if projected_grasp_xy_offset(
+                scene.target_catalog,
+                scene_object_quaternion(scene.target.yaw),
+                config.calibration.target_yaw,
+                margin=config.readiness.grasp_xy_margin,
+            ) > 0.0
+        )
         print(
             "[staged] WARNING: "
-            f"Some {infeasible} scenes have no positive centering clearance "
-            "at their recorded object orientation and calibrated pickup yaw. "
-            "This is a per-presentation gate, not a claim that every yaw of "
-            "the catalog is ungraspable.",
+            f"{len(blocked)}/{len(scenes)} scenes {infeasible} have no "
+            "positive centering clearance at their settled object orientation "
+            "and calibrated pickup yaw; of those, "
+            f"{settled_only} were graspable at the yaw the manifest commanded "
+            "and were turned broadside by settling. This is a per-presentation "
+            "gate, not a claim that every yaw of the catalog is ungraspable. "
+            "Generate the manifest with --yaw-calibration to reject the "
+            "commanded-orientation cases before they reach the GPU.",
             flush=True,
         )
     max_xy_offset = torch.tensor(

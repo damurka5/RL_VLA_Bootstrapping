@@ -42,6 +42,19 @@ it. The second measured loss is the two-consecutive-boundary requirement: of
 boundary but only 6 held it for two, and `max_ready_streak` has p90 exactly
 2.0. Both are gate definitions, not controller parameters.
 
+Both are now knobs. `--align-consecutive-decisions` (on the selection tool and
+the recorder, `ALIGN_CONSECUTIVE_DECISIONS` in the collection script) overrides
+the calibration's bar without moving the handoff POSE, so unlike the rejected
+clearance arm it is judged on `picked_up_given_upstream`; the value that ran is
+recorded in the result's protocol block. Scene generation gained a separate
+feasibility gate: `--yaw-calibration` on the manifest builder rejects target
+presentations the open fingers cannot bracket at the calibrated pickup yaw.
+Measured on 512 scenes, 69 (54% of the potato stratum) were ungraspable before
+the filter and none after, with the per-catalog census unchanged — the
+generator's cycling resamples the orientation instead of dropping the object.
+It is off for a manifest that does not name a yaw, so existing scene sets keep
+validating.
+
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
 | stage | status | measured |

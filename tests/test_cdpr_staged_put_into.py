@@ -30,6 +30,7 @@ from __future__ import annotations
 
 import math
 import unittest
+from dataclasses import replace
 
 import torch
 
@@ -208,6 +209,47 @@ class StageTransitionTests(unittest.TestCase):
         _advance(machine, 3, yaw_aligned=torch.tensor([True]))
         _advance(machine, 4, yaw_aligned=torch.tensor([True]))
         self.assertEqual(int(machine.stage[0]), STAGE_PICK_UP)
+
+    def test_a_single_consecutive_decision_promotes_when_calibrated_to_one(self):
+        """The bar is a calibration value, not a constant of the machine.
+
+        The 0.50 descent screen measured 14 of 27 aligning worlds reaching the
+        full readiness conjunction at some boundary while only 6 held it for
+        two, with max_ready_streak p90 exactly 2.0 -- the requirement sits on
+        the edge of the distribution, so it is worth being able to move it.
+        Unlike the rejected clearance handoff, this does NOT change the pose
+        that is handed over, only how long it must persist.
+        """
+
+        machine = _machine(calibration=_calibration(consecutive_decisions=1))
+        _advance(machine, 0, reach_success=torch.tensor([True]))
+        self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+        _advance(machine, 1, yaw_aligned=torch.tensor([True]))
+        self.assertEqual(int(machine.stage[0]), STAGE_PICK_UP)
+
+    def test_one_ready_boundary_is_not_enough_at_the_default_bar(self):
+        """The same trace under the shipped calibration stays in alignment, so
+        the test above is measuring the knob and not a coincidence."""
+
+        machine = _machine(calibration=_calibration(consecutive_decisions=2))
+        _advance(machine, 0, reach_success=torch.tensor([True]))
+        _advance(machine, 1, yaw_aligned=torch.tensor([True]))
+        self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
+
+    def test_the_bar_still_requires_the_rest_of_the_conjunction(self):
+        """Lowering it to one must not turn the handoff into a yaw-only test."""
+
+        machine = _machine(calibration=_calibration(consecutive_decisions=1))
+        _advance(machine, 0, reach_success=torch.tensor([True]))
+        _advance(
+            machine,
+            1,
+            yaw_aligned=torch.tensor([True]),
+            # Inside the reach window, outside an apple's lateral slack.
+            target_xy_error=torch.tensor([0.017]),
+            max_grasp_xy_offset=torch.tensor([0.0130]),
+        )
+        self.assertEqual(int(machine.stage[0]), STAGE_ALIGN)
 
     def test_pickup_handoff_requires_still_holding_at_the_boundary(self):
         machine = _machine()
@@ -970,6 +1012,35 @@ class XYCentringBridgeTests(unittest.TestCase):
                 max_grasp_xy_offset=torch.tensor([0.0130]),
             )
         self.assertEqual(int(bridged.stage[0]), STAGE_PICK_UP)
+
+
+class CalibrationOverrideTests(unittest.TestCase):
+    """What ``--align-consecutive-decisions`` does to a loaded calibration.
+
+    Both CLIs apply it with ``dataclasses.replace`` on the frozen calibration
+    and then call ``validate()``, so the override cannot smuggle past the
+    checks the calibration file itself is held to, and the value that ends up
+    in the result manifest is the one that actually ran.
+    """
+
+    def test_the_override_replaces_only_the_bar(self):
+        loaded = _calibration(consecutive_decisions=2, target_yaw=0.25)
+        overridden = replace(loaded, consecutive_decisions=1)
+        overridden.validate()
+        self.assertEqual(overridden.consecutive_decisions, 1)
+        self.assertEqual(overridden.target_yaw, loaded.target_yaw)
+        self.assertEqual(overridden.tolerance_rad, loaded.tolerance_rad)
+        self.assertEqual(overridden.source, loaded.source)
+
+    def test_the_overridden_value_is_what_gets_serialized(self):
+        """The manifest records the protocol that ran, not the file on disk."""
+
+        overridden = replace(_calibration(), consecutive_decisions=1)
+        self.assertEqual(overridden.to_json()["consecutive_decisions"], 1)
+
+    def test_a_bar_below_one_is_still_rejected(self):
+        with self.assertRaises(ValueError):
+            replace(_calibration(), consecutive_decisions=0).validate()
 
 
 class YawTests(unittest.TestCase):

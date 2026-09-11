@@ -56,6 +56,7 @@ from tools.audit.xy_approach_probe import _build_world  # noqa: E402
 
 import argparse  # noqa: E402
 import json  # noqa: E402
+from dataclasses import replace  # noqa: E402
 import time  # noqa: E402
 from typing import Any, Mapping, Sequence  # noqa: E402
 
@@ -400,7 +401,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             "Let the move-to teacher control the gripper through the approach. "
             "This is the ablation arm. The controlled variant holds the hand "
             "open, because the move-to reward has no gripper term under "
-            "sparse_binary_reward and the shared policy arrives closed on ~100% "
+            # Escaped: argparse %-expands help strings, and a bare "% o" is
+            # read as the %o conversion, which crashed --help outright.
+            "sparse_binary_reward and the shared policy arrives closed on ~100%% "
             "of reaches -- a hand the pickup teacher cannot grasp with."
         ),
     )
@@ -423,6 +426,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             "teacher screen: the pickup teacher's own aligned start is 0.195-"
             "0.202 m for these objects, so a 0.20 m absolute floor sits on top "
             "of the correct answer."
+        ),
+    )
+    parser.add_argument(
+        "--align-consecutive-decisions",
+        type=int,
+        default=None,
+        help=(
+            "Override how many CONSECUTIVE decision boundaries the full "
+            "alignment conjunction must hold before the pickup teacher takes "
+            "over. Defaults to the calibration file's value (2). Collect with "
+            "whatever the teacher screen selected: this changes the recorded "
+            "handoff distribution, so a bank collected at 1 and a bank "
+            "collected at 2 are not the same dataset."
         ),
     )
     parser.add_argument("--max-height-above-grasp", type=float, default=0.12)
@@ -456,6 +472,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     calibration = PickupYawCalibration.from_json(
         json.loads(args.yaw_calibration.expanduser().resolve().read_text("utf-8"))
     )
+    if args.align_consecutive_decisions is not None:
+        calibration = replace(
+            calibration,
+            consecutive_decisions=int(args.align_consecutive_decisions),
+        )
     calibration.validate()
 
     scenes, manifest = read_manifest(args.scene_manifest.expanduser().resolve())

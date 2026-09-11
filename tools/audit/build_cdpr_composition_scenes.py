@@ -97,7 +97,30 @@ def geometry_from_config(path: Path | None, overrides: Any) -> SceneGeometryConf
         pick_grasp_height_offset=number("pick_grasp_height_offset", 0.0075),
         include_second_receptacle=bool(overrides.second_receptacle),
         distractor_catalogs=tuple(overrides.distractors),
+        clearance_pickup_yaw=_clearance_pickup_yaw(overrides),
+        grasp_xy_margin=float(overrides.grasp_xy_margin),
     )
+
+
+def _clearance_pickup_yaw(overrides: Any) -> float | None:
+    """The calibrated pickup yaw to filter presentations against, or None.
+
+    Read from the calibration FILE rather than accepted as a number, because a
+    manifest filtered against a yaw the collector does not actually use would
+    silently reject graspable scenes and keep ungraspable ones -- and a typed
+    float is exactly how that happens.
+    """
+
+    path = getattr(overrides, "yaw_calibration", None)
+    if path is None:
+        return None
+    payload = json.loads(Path(path).expanduser().resolve().read_text("utf-8"))
+    if "target_yaw" not in payload:
+        raise SystemExit(
+            f"{path}: no 'target_yaw'. Pass the output of "
+            "tools/audit/calibrate_cdpr_pickup_yaw.py."
+        )
+    return float(payload["target_yaw"])
 
 
 def audit(path: Path) -> int:
@@ -148,6 +171,24 @@ def audit(path: Path) -> int:
             f"{len(inside)} scenes begin with the object already inside its "
             "destination's success radius. Those are not put_into tasks."
         )
+    # Which pickup yaw, if any, this set was filtered against. A consumer that
+    # runs a different calibration is running an unfiltered manifest.
+    yaw = dict(payload.get("geometry", {})).get("clearance_pickup_yaw")
+    if yaw is None:
+        print(
+            "[scenes] pickup-yaw clearance filter: OFF. Presentations the "
+            "open fingers cannot bracket at the calibrated pickup yaw are "
+            "present and will burn chains. Regenerate with --yaw-calibration "
+            "to resample them.",
+            flush=True,
+        )
+    else:
+        print(
+            f"[scenes] pickup-yaw clearance filter: ON at yaw {float(yaw):.6f} "
+            "rad. Every target is bracketable at its commanded orientation; "
+            "settling can still turn one broadside.",
+            flush=True,
+        )
     return 0
 
 
@@ -189,6 +230,29 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--distractors", nargs="*", default=[])
+    parser.add_argument(
+        "--yaw-calibration",
+        type=Path,
+        default=None,
+        help=(
+            "Reject target presentations the open fingers cannot bracket at "
+            "this calibration's fixed pickup yaw. Off when omitted, which is "
+            "what every manifest written before this flag existed assumes. "
+            "Because generation balances by cycling over catalogs, an "
+            "elongated object is RESAMPLED into a graspable orientation "
+            "rather than dropped: the census keeps its strata and stops "
+            "carrying scenes no reach can convert."
+        ),
+    )
+    parser.add_argument(
+        "--grasp-xy-margin",
+        type=float,
+        default=0.003,
+        help=(
+            "Centring margin for --yaw-calibration. Must match the "
+            "collector's readiness grasp_xy_margin."
+        ),
+    )
     parser.add_argument(
         "--split-weights",
         nargs=4,

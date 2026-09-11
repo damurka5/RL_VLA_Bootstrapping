@@ -51,6 +51,18 @@ ALIGN_YAW_SERVO_GAIN="${ALIGN_YAW_SERVO_GAIN:-0.35}"
 ALIGN_DESCENT_GAIN="${ALIGN_DESCENT_GAIN:-1.0}"
 ALIGN_HANDOFF_AT_CLEARANCE="${ALIGN_HANDOFF_AT_CLEARANCE:-0}"
 PICKUP_PROMPT="${PICKUP_PROMPT:-destination}"
+# How many consecutive decision boundaries the alignment conjunction must hold
+# before the pickup teacher takes over. Empty means "whatever the calibration
+# file says" (2), which is the shipped protocol. Screen a change before
+# collecting with it: it alters the recorded handoff distribution, so two banks
+# collected at different values are not the same dataset.
+ALIGN_CONSECUTIVE_DECISIONS="${ALIGN_CONSECUTIVE_DECISIONS:-}"
+# Reject target presentations the open fingers cannot bracket at the calibrated
+# pickup yaw. On by default: roughly half of potato draws are ungraspable at a
+# pinned gripper yaw, and the generator resamples them into graspable
+# orientations rather than dropping the stratum, so the census is unchanged and
+# the chains are not spent on impossible work.
+SCENE_CLEARANCE_FILTER="${SCENE_CLEARANCE_FILTER:-1}"
 
 mkdir -p "$RUN_DIR"
 run() { conda run --no-capture-output -n "$ENV_NAME" python3 "$@"; }
@@ -70,6 +82,9 @@ fi
 if [[ "$ALIGN_HANDOFF_AT_CLEARANCE" == "1" ]]; then
   STAGED_PROTOCOL_ARGS+=(--align-handoff-at-clearance)
 fi
+if [[ -n "$ALIGN_CONSECUTIVE_DECISIONS" ]]; then
+  STAGED_PROTOCOL_ARGS+=(--align-consecutive-decisions "$ALIGN_CONSECUTIVE_DECISIONS")
+fi
 
 if has_step yaw; then
   echo "=== 1/5 yaw calibration ==="
@@ -86,8 +101,21 @@ if has_step scenes; then
   # Success radii come from the config; this never widens them. The audit at
   # the end refuses a manifest with overlapping splits or with any scene whose
   # object starts inside its destination's success radius.
+  SCENE_ARGS=()
+  if [[ "$SCENE_CLEARANCE_FILTER" == "1" ]]; then
+    # The filter needs the calibrated yaw, so the yaw step has to have run.
+    # Reading it from the file rather than taking a number keeps the manifest
+    # and the collector agreeing on ONE measured angle.
+    if [[ ! -f "$YAW" ]]; then
+      echo "SCENE_CLEARANCE_FILTER=1 needs $YAW; run the yaw step first or" \
+           "set SCENE_CLEARANCE_FILTER=0." >&2
+      exit 1
+    fi
+    SCENE_ARGS+=(--yaw-calibration "$YAW")
+  fi
   run tools/audit/build_cdpr_composition_scenes.py \
     --config "$CONFIG" --count "$SCENE_COUNT" --seed "$SCENE_SEED" \
+    "${SCENE_ARGS[@]}" \
     --output "$SCENES"
 fi
 

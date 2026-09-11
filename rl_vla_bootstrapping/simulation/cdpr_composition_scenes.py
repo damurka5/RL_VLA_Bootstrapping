@@ -292,6 +292,35 @@ class SceneGeometryConfig:
     include_second_receptacle: bool = False
     distractor_catalogs: tuple[str, ...] = ()
 
+    # Pickup-yaw feasibility, OFF by default.
+    #
+    # The gripper's yaw is pinned to one calibrated angle for pickup while the
+    # object's yaw is sampled, so an elongated catalog presents a different
+    # width to the closing axis in every scene. A potato drawn broadside has
+    # NEGATIVE centring slack: the open fingers cannot bracket it at all, and
+    # no reach, however accurate, can be followed by a grasp. Screens measured
+    # this on roughly half of potato presentations.
+    #
+    # When this holds the calibrated pickup yaw, such a presentation is
+    # rejected at generation time and the draw is retried. Because
+    # ``generate_scenes`` balances by cycling over catalogs, the effect is that
+    # potato scenes are RESAMPLED into graspable orientations, not dropped --
+    # the census keeps its strata and stops containing impossible work.
+    #
+    # None by default because the pickup yaw is a calibration, not a property
+    # of the scene: leaving it unset keeps every manifest written before this
+    # filter existed validating unchanged, and makes the coupling explicit in
+    # the manifest of any set that was filtered.
+    #
+    # The prediction is made at the COMMANDED orientation the full-task reset
+    # writes. The collector measures the SETTLED quaternion and reports any
+    # scene where the two disagree about feasibility.
+    clearance_pickup_yaw: float | None = None
+    # Matches StageReadiness.grasp_xy_margin. A scene accepted against a wider
+    # margin than the collector enforces would hand back the same impossible
+    # presentations through the other door.
+    grasp_xy_margin: float = 0.003
+
     # Rejection budget. A generator that cannot meet its bounds must say so
     # rather than relax them.
     max_attempts_per_scene: int = 512
@@ -465,6 +494,86 @@ class SceneRejection(ValueError):
     """A geometry proposal that failed a declared bound."""
 
 
+# Half the gap between the finger pads with the gripper fully open, in metres,
+# measured from the MJCF: the finger slide range is [0, 0.03] on a pad whose
+# body sits at x = +-0.02, and the pad geom is 0.0025 half-thick, so the inner
+# faces sit at +-(0.02 + 0.03 - 0.0025) = +-0.0475. Both fingers are driven --
+# a weld equality couples finger_l and finger_r -- so the aperture is centred
+# on ee_base and is 0.095 m wide, which is the "0.0969 m open gap" the object
+# catalog's banana/mug note refers to.
+#
+# `tests/test_cdpr_staged_put_into.py` re-derives this from the model with
+# MuJoCo and fails if it moves, because it is a geometry fact that decides
+# which objects can be grasped at all and it must not drift into a config.
+#
+# It lives here, beside the object hulls it is compared against, so that scene
+# generation can reject an ungraspable presentation without importing the
+# policy stack -- the staged collector re-exports it for its own callers.
+OPEN_GRIPPER_HALF_APERTURE_M = 0.0475
+
+
+def max_grasp_xy_offset(catalog: str, *, margin: float = 0.003) -> float:
+    """How far off-centre the gripper may be and still bracket this object.
+
+    The half-aperture minus the object's rotation-invariant hull radius, minus
+    a margin. Rotation-invariant because the object's yaw is sampled and the
+    gripper's is pinned, so the object may present any of its widths to the
+    closing axis; taking the widest is the only bound that holds for every
+    draw. A catalog whose widest presentation exceeds the aperture returns a
+    NEGATIVE slack and cannot be grasped at this yaw at all -- which is the
+    same geometry fact that removed banana and mug from the target pool.
+    """
+
+    return (
+        OPEN_GRIPPER_HALF_APERTURE_M
+        - catalog_xy_radius(catalog)
+        - float(margin)
+    )
+
+
+def projected_grasp_xy_offset(catalog: str, object_quaternion: Sequence[float],
+                              gripper_yaw: float, *, margin: float = 0.003) -> float:
+    """Conservative radial centering slack for this object's actual presentation.
+
+    Project the primitive hull onto the fixed gripper's closing axis. A long
+    potato can exceed the aperture along Y while still fitting between X pads;
+    its XY circumradius is not its width along the closing axis.
+    """
+
+    world_axis = (math.cos(gripper_yaw), math.sin(gripper_yaw), 0.0)
+    rotation = _quaternion_matrix(object_quaternion)
+    axis = [sum(rotation[j][i] * world_axis[j] for j in range(3)) for i in range(3)]
+    extent = 0.0
+    for primitive in OBJECT_VARIANTS[catalog].primitives:
+        rotation = _quaternion_matrix(primitive.quat)
+        direction = [sum(rotation[j][i] * axis[j] for j in range(3)) for i in range(3)]
+        centre = sum(axis[i] * primitive.pos[i] for i in range(3))
+        name, size = primitive.primitive, primitive.size
+        if name.startswith("sphere"):
+            radius = float(size[0])
+        elif name.startswith("capsule"):
+            radius = float(size[0]) + abs(direction[2]) * float(size[1])
+        elif name.startswith("cylinder"):
+            radius = math.hypot(*direction[:2]) * float(size[0]) + abs(direction[2]) * float(size[1])
+        elif name.startswith("box"):
+            radius = sum(abs(direction[i]) * float(size[i]) for i in range(3))
+        else:
+            raise ValueError(f"Unsupported grasp primitive {name}")
+        extent = max(extent, abs(centre) + radius)
+    return OPEN_GRIPPER_HALF_APERTURE_M - extent - float(margin)
+
+
+def scene_object_quaternion(yaw: float) -> tuple[float, float, float, float]:
+    """The (w, x, y, z) the full-task reset writes for a scene object's yaw.
+
+    Kept beside the check that consumes it so the manifest-time feasibility
+    prediction and ``FullTaskSceneReset`` cannot drift apart. This is the
+    COMMANDED orientation; what the collector reads back is the settled one.
+    """
+
+    return (math.cos(0.5 * float(yaw)), 0.0, 0.0, math.sin(0.5 * float(yaw)))
+
+
 def validate_scene(scene: CompositionScene, config: SceneGeometryConfig) -> None:
     """Re-derive every acceptance test from the stored geometry.
 
@@ -490,6 +599,20 @@ def validate_scene(scene: CompositionScene, config: SceneGeometryConfig) -> None
             f"{scene.scene_uid}: target {target.catalog!r} is not in the "
             "configured target catalogs."
         )
+    if config.clearance_pickup_yaw is not None:
+        slack = projected_grasp_xy_offset(
+            target.catalog,
+            scene_object_quaternion(target.yaw),
+            float(config.clearance_pickup_yaw),
+            margin=float(config.grasp_xy_margin),
+        )
+        if slack <= 0.0:
+            raise SceneRejection(
+                f"{scene.scene_uid}: {target.catalog} presented at yaw "
+                f"{target.yaw:.4f} leaves {slack:+.4f} m of centring slack at "
+                f"the calibrated pickup yaw {config.clearance_pickup_yaw:.4f}. "
+                "The open fingers cannot bracket it in this orientation."
+            )
 
     approach = math.dist(scene.ee_xyz[:2], target.xy)
     low, high = config.approach_xy_bounds
