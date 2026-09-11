@@ -77,6 +77,42 @@ is safe to optimize because full-chain acceptance is enforced DOWNSTREAM of the
 handoff gate: a looser gate changes which chains survive, never whether a
 survivor is a valid demonstration.
 
+**The 512-chain pilot bank, 2026-09-11.** Ladder 103 reached, 65 aligned, 43
+picked, 13 native placements, 11 accepted chains over 11 scenes; 755 strict
+rows, 3,294 stage-transition rows (64 move, 42 pickup, 11 placement), 1,724
+partial-pickup rows, 100% frame resolution on all three views. The screen's
+conditional rates transferred almost exactly — align|reach 0.600 -> 0.631,
+pickup|align 0.667 -> 0.662, placement|pickup 0.286 -> 0.302 — so the
+screen-to-bank discount that cost 2.4x on the first bank did not recur; only
+reach fell (27.3% -> 20.1%), giving accepted/chain 0.031 -> 0.021.
+
+The potato clearance filter is confirmed in production: per-round
+`grasp_xy_slack` for `robocasa_potato` is now median 0.0054-0.0089 m with p10
+0.0006-0.0026 m, entirely positive, against a pre-filter median of -0.0013 m
+and p10 -0.0078 m, and the collector emitted no infeasibility warning. Potato
+contributed an accepted chain and 167 dataset rows.
+
+**Unexplained: the two shards disagree on placement.** With identical code,
+identical teacher hashes, the same manifest and the same protocol, shard 0
+converted 1 of 22 pickups into a verified placement and shard 1 converted 12 of
+21 (Fisher exact two-sided p = 2.0e-4). The split is not a transient — shard 0
+is flat across all four of its rounds, and its carried objects stall at a
+median 0.154-0.187 m from the receptacle, which is the transport distance the
+scenes start at, so those carries approach the goal not at all. Ten of the
+eleven accepted chains came from shard 1. Until this is explained the bank is
+effectively a 256-chain bank, and a full collection would inherit the same
+halving. The decisive test is cheap: re-run each shard's scene set on the OTHER
+GPU. If the failure follows the scenes it is geometry; if it follows the
+device it is not a data problem at all.
+
+Also unexplained, and cheap to look at while that runs: reach endpoints report
+`already_within_tolerance: 0` in all eight rounds with mean absolute yaw error
+156-180 degrees, so the tail rotates ~170 degrees on essentially every chain.
+A parallel-jaw gripper is symmetric under 180 degrees, so half that travel may
+be unnecessary for the GRASP — but the calibration was chosen for wrist-camera
+framing, where pi is not equivalent, so this is a design question about what
+the fixed yaw is for, not a bug to patch.
+
 Collection adopts `consecutive_decisions = 1` at unity descent gain. Two
 cautions on reading its align diagnostics: they are now a different population,
 because a world that touches readiness leaves immediately and the residue that
@@ -105,6 +141,8 @@ collection from the first shard's measured acceptance, not from 4/128.
 | pickup under final destination prompt | reliable after handoff | 7/7 in selection; 17/20 in collection |
 | placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |
 | dataset | first smoke bank built | 365 rows, 1,454 supervised actions, five scenes, bowl and plate present, potato absent |
+| dataset, pilot at consec 1 | 2.1x the chains for the same 512 | 755 strict rows / 11 chains, 3,294 transition rows, 1,724 partial, 100% frames, potato present |
+| shard agreement | **unexplained, blocks scale-up** | placement given pickup 1/22 vs 12/21, p = 2.0e-4, same code and teachers |
 | refresh / SFT / evaluation | implemented, not run | bank is intentionally still marked `priors_stale` |
 
 **Two corrections to this document's own assumptions**, both measured:
