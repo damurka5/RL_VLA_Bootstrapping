@@ -2,7 +2,7 @@
 
 **Living report — current through 2026-09-11, Europe/Moscow**
 
-**Repository state reviewed:** `73e5be8` plus the local single-pass selection and protocol-propagation fix
+**Repository state reviewed:** `9c63020` plus local dataset-provenance fixes
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
@@ -39,7 +39,11 @@ The local selector now scores every stage and confirmation from one shared
 full-chain screen in that case, writes the canonical `checkpoint` manifest,
 and records the complete staged protocol. The collection launcher reuses the
 same centring, 48-decision alignment budget and destination pickup prompt.
-See the newest §14 entry. A usable full-chain bank and SFT remain unverified.
+The selected triple subsequently produced a 512-chain debugging bank with five
+strict accepted chains over five scenes and 365 full-task decision rows, all
+with resolvable frames. Both destinations are present, but potato has no
+accepted full chain and the bank is far too small for a meaningful SFT claim.
+See the newest §14 entry. Prior refresh and SFT remain unverified.
 The yaw calibration is
 kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
 **0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
@@ -1894,6 +1898,53 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-11 — First continuous bank: valid pipeline, five complete scenes, not yet an SFT corpus
+
+- Evidence: user-pasted dataset-builder console output plus supplied
+  `dataset.json`, yaw calibration and 1,024-scene manifest. The two per-shard
+  `collection.json` files and trajectory NPZs were not supplied locally, so
+  stage-failure and per-destination episode counts remain unverified here.
+- The preceding single-pass selector succeeded on **3/128 = 0.0234** strict
+  chains, clustered over 64 scenes. It observed 23 reach handoffs, seven
+  aligned handoffs, **7/7 pickup conversions**, and **3/7 native/strict
+  placement conversions**. The selected manifest records compatible complete
+  contracts and SHA-256 values for all three teachers.
+- Collection ran eight 64-world rounds across two shards: **512 attempts**, five
+  strict accepted chains over five unique scenes, and 507 incomplete chains.
+  The accepted yield is **0.0098**, below the selection point estimate but
+  inside its reported 90% interval [0.0078, 0.0469]. The builder also isolated
+  12 chains that completed pickup but not placement; together with the five
+  complete chains, 17/512 reached a verified pickup-to-placement handoff.
+- The full-task bank contains **365 decision rows / 1,454 supervised actions**:
+  move-to 156, pickup 44, placement 165; bowl 217 rows and plate 148. Every row
+  resolves to a frame. All six destination/stage cells are present. The five
+  observed instruction texts cover apple for both destinations, orange for
+  both destinations and tomato for bowl; **no accepted potato chain** appears.
+  Row counts are not episode counts, so exact bowl/plate episode yield must
+  come from the missing collection reports.
+- The bank remains correctly marked `priors_stale`: its state/prior tensors
+  were computed under role teachers while its text was relabelled to the final
+  student prompt. No SFT may consume it before image-backed prior refresh.
+- Decision: this is a successful end-to-end pipeline smoke test, not enough
+  independent data for arms B/C. Five scenes make the validation split nearly
+  an anecdote, leave one target catalog absent, and would make replacement
+  balancing repeatedly expose the same actions. Inspect the two collection
+  reports before spending a scaled collection budget; they name whether the
+  missing yield is move, alignment, pickup or placement and separate bowl from
+  plate.
+- Reporting defect found from the supplied census: `actions_by_source` knew
+  only four legacy source codes, so it omitted the current `gripper_hold` and
+  `align_bridge` actions. The action arrays are intact; only the JSON census is
+  incomplete. The builder now enumerates the shared source vocabulary and
+  separately reports all action slots and supervised action slots.
+- Durability defect fixed for future rounds: the recorder wrote frames only
+  for complete chains, even though the builder preserved successful pickup
+  prefixes in `partial_pickup.npz`. Those partial rows therefore could not be
+  refreshed from images. Future frame shards keep complete chains OR verified
+  pickup handoffs, and dataset construction verifies full frame coverage for
+  the partial bank as well. The already collected 12 partial prefixes cannot
+  recover their missing images without rerunning those episodes.
 
 ### 2026-09-11 — Destination-prompt chain succeeds once; redundant confirmation discards it
 

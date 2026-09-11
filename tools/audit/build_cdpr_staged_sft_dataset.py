@@ -65,6 +65,7 @@ if str(ROOT) not in sys.path:
 
 from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (  # noqa: E402
     SEMANTIC_STAGE_OF,
+    SOURCE_NAMES,
     STAGE_ALIGN,
     StagedRound,
 )
@@ -387,13 +388,19 @@ def dataset_report(dataset: Mapping[str, np.ndarray]) -> dict[str, Any]:
     )
     sources = dataset.get("action_source")
     if sources is not None:
-        report["actions_by_source"] = {
-            name: int((sources == index).sum())
-            for index, name in enumerate(
-                ("teacher", "yaw_tail", "yaw_hold", "settle_hold")
+        def source_counts(mask: np.ndarray | None = None) -> dict[str, int]:
+            selected = sources if mask is None else sources[np.asarray(mask, dtype=bool)]
+            return {
+                name: int((selected == index).sum())
+                for index, name in enumerate(SOURCE_NAMES)
+                if int((selected == index).sum()) > 0
+            }
+
+        report["actions_by_source"] = source_counts()
+        if "action_mask" in dataset:
+            report["supervised_actions_by_source"] = source_counts(
+                dataset["action_mask"]
             )
-            if int((sources == index).sum()) > 0
-        }
     return report
 
 
@@ -493,6 +500,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     output.mkdir(parents=True, exist_ok=True)
 
     frame_report: dict[str, Any] | None = None
+    partial_frame_report: dict[str, Any] | None = None
     if args.frames:
         frame_paths = sorted(
             {path.expanduser().resolve() for path in args.frames}
@@ -512,6 +520,27 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "and accept that the bank is then selected by which episodes "
                 "kept pictures."
             )
+        if partial:
+            partial_frame_report = verify_frame_coverage(partial, frame_paths)
+            print(
+                f"[dataset] partial-pickup frames resolve "
+                f"{partial_frame_report['resolved']}/"
+                f"{partial_frame_report['rows']} rows "
+                f"({partial_frame_report['resolved_fraction']:.4f})",
+                flush=True,
+            )
+            if (
+                partial_frame_report["resolved_fraction"] < 1.0
+                and not args.allow_missing_frames
+            ):
+                raise SystemExit(
+                    "Not every partial-pickup row has a picture. Examples: "
+                    f"{partial_frame_report['unresolved_examples']}. These "
+                    "prefixes cannot be refreshed or reused. Re-record with "
+                    "the current staged recorder, or pass "
+                    "--allow-missing-frames only to preserve the non-image "
+                    "audit artifact deliberately."
+                )
 
     np.savez_compressed(output / "demonstrations.npz", **dataset)
     report = {
@@ -539,6 +568,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if partial:
         np.savez_compressed(output / "partial_pickup.npz", **partial)
         report["partial_pickup"] = dataset_report(partial)
+        report["partial_pickup_frames"] = partial_frame_report
         print(
             f"[dataset] wrote {output / 'partial_pickup.npz'} "
             f"({partial['state'].shape[0]} rows from "

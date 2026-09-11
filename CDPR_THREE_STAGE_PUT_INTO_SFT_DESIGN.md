@@ -4,17 +4,16 @@
 consolidated report, including the September 10 pilot attachment review.
 **Status, 2026-09-11.** Every module, flag and config field
 named in §12 exists and is unit-tested; the commands below are real. Nine
-initial teacher screens were floored by collection-harness faults. The latest
-destination-prompt screen crossed the whole chain once: pickup converted all
-three handoffs it received, and placement converted and cleanly accepted the
-one handoff it received. No collection bank exists yet; one selected-screen
-trajectory is evidence that the continuous route works, not a sufficient
-training corpus or a reliable rate. The selector then discarded that evidence
-when a redundant stochastic confirmation rerun scored 0/64. Single-candidate
-verification now uses one shared full-chain screen for every stage score and
-confirmation, and the collection launcher carries the verified protocol
-unchanged into recording. The full ledger is §7.16b and §14 of the
-consolidated report; the summary is below.
+initial teacher screens were floored by collection-harness faults. The repaired
+single-pass destination-prompt screen accepted 3/128 continuous chains. Its
+selected triple then produced the first collection bank: 5/512 accepted chains
+over five unique scenes, 365 full-task decision rows with 100% frame coverage,
+plus 12 successful pickup prefixes stored separately. This is a valid pipeline
+smoke artifact, not yet a sufficient SFT corpus: the full bank has only five
+scenes and no successful potato chain. Future recordings retain frames for
+successful pickup prefixes as well as complete chains, and the dataset census
+now reports all controller action sources. The full ledger is §7.16b and §14
+of the consolidated report; the summary is below.
 
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
@@ -22,13 +21,13 @@ consolidated report; the summary is below.
 |---|---|---|
 | scene manifest | done | 1024 scenes, splits disjoint, 0 start inside the goal |
 | yaw calibration (§5) | done | 0.000 rad; fixed-angle residual mean 10.7°, max 25.3° |
-| move-to → reach | **the ceiling** | predicate met on 12–14 / 64 in the latest screens |
-| alignment tail → pickup | low yield | 2–3 / 64 promoted; centring/descent still consumes most of the 48-decision tail |
+| move-to → reach | **the ceiling** | 23 upstream reach events across 128 selected chains |
+| alignment tail → pickup | low yield | 7/23 promoted in selection; only 17/512 collection chains reached a verified pickup handoff |
 | alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
-| pickup under final destination prompt | works on tiny evidence | 3 / 3 grasped, lifted and handed off |
-| placement: carry/release | first clean success | 1 / 1 real pickup handoff reached geometry, released, placed and passed strict acceptance |
-| selector handoff to collection | fixed locally | single supplied triple is screened once; manifest schema and protocol now match the launcher |
-| dataset / refresh / SFT / evaluation | implemented, never run | no bank to run them on |
+| pickup under final destination prompt | reliable after handoff in selection | 7/7 grasped, lifted and handed off |
+| placement: carry/release | usable, still sparse | 3/7 accepted in selection; 5 complete chains from the 512-chain bank |
+| dataset | first smoke bank built | 365 rows, 1,454 supervised actions, five scenes, bowl and plate present, potato absent |
+| refresh / SFT / evaluation | implemented, not run | bank is intentionally still marked `priors_stale` |
 
 **Two corrections to this document's own assumptions**, both measured:
 

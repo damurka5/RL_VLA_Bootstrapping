@@ -29,6 +29,8 @@ import unittest
 import numpy as np
 
 from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+    SOURCE_ALIGN_BRIDGE,
+    SOURCE_GRIPPER_HOLD,
     SOURCE_YAW_TAIL,
     STAGE_SETTLE,
     STAGE_ALIGN,
@@ -610,6 +612,22 @@ class RowAssemblyTests(unittest.TestCase):
         self.assertGreater(report["alignment_tail_share_of_move_to"], 0.0)
         self.assertLess(report["alignment_tail_share_of_move_to"], 1.0)
         self.assertIn("yaw_tail", report["actions_by_source"])
+
+    def test_the_census_names_every_current_controller_source(self):
+        dataset, _, _ = self._build([_chain(reach=1, align=3)])
+        dataset["action_source"][0, 0] = SOURCE_GRIPPER_HOLD
+        dataset["action_source"][1, 0] = SOURCE_ALIGN_BRIDGE
+        report = dataset_report(dataset)
+        self.assertEqual(report["actions_by_source"]["gripper_hold"], 1)
+        self.assertEqual(report["actions_by_source"]["align_bridge"], 1)
+        self.assertEqual(
+            sum(report["actions_by_source"].values()),
+            int(dataset["action_source"].size),
+        )
+        self.assertEqual(
+            sum(report["supervised_actions_by_source"].values()),
+            int(dataset["action_mask"].sum()),
+        )
 
 
 class ReachDiagnosticTests(unittest.TestCase):

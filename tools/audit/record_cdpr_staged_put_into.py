@@ -15,9 +15,9 @@ What comes out
 ``staged_<tag>_r<N>.npz``   every executed action, every pre-decision
                             observation, the three predicates' verdicts per env
                             step, and the stage machine's events per world.
-``frames_<tag>_r<N>.npz``   overview and wrist pictures for the ACCEPTED worlds
-                            of that round, keyed by explicit ``episode_uid``,
-                            plus the terminal post-action frame.
+``frames_<tag>_r<N>.npz``   overview and wrist pictures for accepted worlds and
+                            successful pickup prefixes, keyed by explicit
+                            ``episode_uid``, plus the terminal post-action frame.
 ``collection.json``         teacher manifest with hashes, scene manifest hash,
                             budgets, yaw calibration, per-round and pooled
                             yields, and the rejection census.
@@ -620,16 +620,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         result.to_npz(record_path)
         files = {"record": str(record_path)}
         if config.record_frames:
-            # Only the ACCEPTED worlds' pictures are written. Every accepted
-            # episode gets a complete set, which is the contract the refresh
-            # tool enforces; keeping the rejected ones would multiply the bank's
-            # size by the failure rate for data nothing may train on.
+            # Keep every accepted world's pictures AND the worlds that reached
+            # a verified pickup handoff. The latter are exported separately as
+            # partial pickup demonstrations. The old accepted-only mask wrote
+            # those rows to partial_pickup.npz but threw away their images, so
+            # they could never be refreshed under another prompt/checkpoint.
+            # Worlds that achieved neither subgoal remain omitted, keeping the
+            # frame shard bounded by reusable data rather than failure rate.
+            reusable = accepted | (np.asarray(result.pickup_event) >= 0)
             files["frames"] = write_staged_frames(
                 output / f"frames_{stem}.npz",
                 buffers=result.frames,
                 episode_uids=episode_uids,
                 world_index=list(range(len(batch_scenes))),
-                keep=accepted,
+                keep=reusable,
             )
         # Release the pictures before the next round allocates its own. Holding
         # eight rounds of a 64-world budget would be 30 GB of uint8 for data
