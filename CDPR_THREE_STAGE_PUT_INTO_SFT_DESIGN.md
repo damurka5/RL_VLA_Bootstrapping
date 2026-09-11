@@ -92,20 +92,30 @@ The potato clearance filter is confirmed in production: per-round
 and p10 -0.0078 m, and the collector emitted no infeasibility warning. Potato
 contributed an accepted chain and 167 dataset rows.
 
-**Unexplained: the two shards disagree on placement.** With identical code,
-identical teacher hashes, the same manifest and the same protocol, shard 0
-converted 1 of 22 pickups into a verified placement and shard 1 converted 12 of
-21 (Fisher exact two-sided p = 2.0e-4). The split is not a transient — shard 0
-is flat across all four of its rounds, and its carried objects stall at a
-median 0.154-0.187 m from the receptacle, which is the transport distance the
-scenes start at, so those carries approach the goal not at all. Ten of the
-eleven accepted chains came from shard 1. Until this is explained the bank is
-effectively a 256-chain bank, and a full collection would inherit the same
-halving. The decisive test is cheap: re-run each shard's scene set on the OTHER
-GPU. If the failure follows the scenes it is geometry; if it follows the
-device it is not a data problem at all.
+**RETRACTED: the two shards did not really disagree.** The pilot's shard 0
+converted 1 of 22 pickups and shard 1 converted 12 of 21, which I reported as a
+p = 2.0e-4 finding. The pre-registered replication -- the same two scene sets
+with the GPUs exchanged -- refutes it. The four cells of that 2x2 are:
 
-Also unexplained, and cheap to look at while that runs: reach endpoints report
+| | GPU 0 | GPU 1 |
+|---|---|---|
+| scene set 0 | 1/22 = 0.045 | 8/25 = 0.320 |
+| scene set 1 | 7/19 = 0.368 | 12/21 = 0.571 |
+
+The effect followed neither the scenes nor the device; three cells sit at
+0.32-0.57 and one is low. Pooled placement-given-pickup is 13/43 = 0.302 in the
+first run and 15/44 = 0.341 in the swap, and P(<=1 of 22) under the common rate
+0.322 is 0.0022 -- unlikely in isolation, but that cell was SELECTED for being
+the most extreme quantity across two whole reports, so its nominal p-value was
+never the right test. The replication was, and it says the pipeline is fine.
+The lesson for this campaign's protocol: a discrepancy found by scanning
+reports is a hypothesis, and its p-value is not evidence until a pre-registered
+re-run reproduces it.
+
+Two runs of 512 chains therefore give a well-founded yield: 23 accepted chains
+per 1,024, 2.25%, with placement-given-pickup 28/87 = 0.322.
+
+Still open: reach endpoints report
 `already_within_tolerance: 0` in all eight rounds with mean absolute yaw error
 156-180 degrees, so the tail rotates ~170 degrees on essentially every chain.
 A parallel-jaw gripper is symmetric under 180 degrees, so half that travel may
@@ -142,7 +152,8 @@ collection from the first shard's measured acceptance, not from 4/128.
 | placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |
 | dataset | first smoke bank built | 365 rows, 1,454 supervised actions, five scenes, bowl and plate present, potato absent |
 | dataset, pilot at consec 1 | 2.1x the chains for the same 512 | 755 strict rows / 11 chains, 3,294 transition rows, 1,724 partial, 100% frames, potato present |
-| shard agreement | **unexplained, blocks scale-up** | placement given pickup 1/22 vs 12/21, p = 2.0e-4, same code and teachers |
+| shard agreement | **retracted; replication refutes it** | swap gives 8/25 and 7/19; pooled 28/87 = 0.322 over 1,024 chains |
+| merged banks | guarded | episode_uid was tag/shard/round/world only, so two runs collided; TAG now defaults per run and the builder refuses a collision |
 | refresh / SFT / evaluation | implemented, not run | bank is intentionally still marked `priors_stale` |
 
 **Two corrections to this document's own assumptions**, both measured:

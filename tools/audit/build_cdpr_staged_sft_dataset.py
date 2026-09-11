@@ -499,6 +499,15 @@ def verify_frame_coverage(
 
     available: set[str] = set()
     per_file: dict[str, int] = {}
+    # Which file each uid came from, so that two banks claiming the same
+    # episode cannot be merged silently. The recorder builds the uid from
+    # tag/shard/round/world only, so two collection runs that used the same
+    # --tag produce byte-identical uids for different physical episodes. The
+    # coverage set below is keyed by uid alone, so without this check such a
+    # merge reports resolved_fraction 1.0 while pairing rows against whichever
+    # run's pictures happened to be loaded -- the silent image/action join the
+    # schema's explicit ids exist to prevent.
+    owner: dict[str, str] = {}
     for path in frame_paths:
         with np.load(path, allow_pickle=False) as data:
             if "episode_uid" not in data.files:
@@ -511,6 +520,18 @@ def verify_frame_coverage(
             decisions = int(data["decisions"])
         per_file[str(path)] = len(uids)
         for uid in uids:
+            previous = owner.get(uid)
+            if previous is not None and previous != str(path):
+                raise SystemExit(
+                    f"episode_uid {uid!r} appears in two frame files:\n"
+                    f"  {previous}\n  {path}\n"
+                    "These are different physical episodes sharing an id, so "
+                    "the frame join would pair rows against the wrong "
+                    "pictures. Re-record one of the banks with a distinct "
+                    "--tag (TAG= in run_cdpr_three_stage_collection.sh), or "
+                    "build the two banks into separate datasets."
+                )
+            owner[uid] = str(path)
             for decision in range(decisions):
                 available.add(f"{uid}#{decision}")
     resolved = np.array(
@@ -564,6 +585,26 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not paths:
         raise SystemExit("--records matched nothing.")
     records = [(path, StagedRound.from_npz(path)) for path in paths]
+    # Same guard on the action side. A duplicated uid here does not mispair
+    # anything, but np.unique collapses the two episodes into one, so the
+    # reported episode count would UNDERSTATE the bank while the row count
+    # counted both -- and unique-data counts are what the split and the
+    # clustered uncertainty are computed from.
+    seen_records: dict[str, Path] = {}
+    for path, record in records:
+        for uid in (str(value) for value in record.episode_uid):
+            previous = seen_records.get(uid)
+            if previous is not None:
+                raise SystemExit(
+                    f"episode_uid {uid!r} appears in two record files:\n"
+                    f"  {previous}\n  {path}\n"
+                    "Two collection runs that shared a --tag produce "
+                    "identical ids for different episodes. Re-record one with "
+                    "a distinct --tag (TAG= in "
+                    "run_cdpr_three_stage_collection.sh), or build them "
+                    "separately."
+                )
+            seen_records[uid] = path
     print(f"[dataset] {len(records)} staged rounds", flush=True)
 
     dataset, transitions, partial, census = build_rows(

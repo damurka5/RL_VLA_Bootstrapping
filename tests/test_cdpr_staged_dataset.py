@@ -989,5 +989,79 @@ class RoundTripTests(unittest.TestCase):
         np.testing.assert_array_equal(accepted_before, accepted_after)
 
 
+class MergedBankIdentityTests(unittest.TestCase):
+    """Two banks may only be merged when their episode ids are distinct.
+
+    The recorder mints ``episode_uid`` from tag/shard/round/world and nothing
+    else, so two collection runs launched with the same --tag produce
+    byte-identical ids for physically different episodes. The frame join is
+    keyed by uid alone, so a merge of two such banks would report complete
+    coverage while pairing rows against whichever run's pictures were loaded
+    last -- the silent image/action join the explicit ids exist to prevent.
+    """
+
+    def _frames(self, directory, name, uids, decisions=2):
+        import numpy as np
+
+        path = f"{directory}/{name}.npz"
+        np.savez_compressed(
+            path,
+            episode_uid=np.asarray(uids, dtype="U128"),
+            decisions=np.asarray(decisions, dtype=np.int64),
+        )
+        return path
+
+    def test_a_uid_in_two_frame_files_is_refused(self):
+        import tempfile
+        from pathlib import Path
+
+        from tools.audit.build_cdpr_staged_sft_dataset import verify_frame_coverage
+
+        with tempfile.TemporaryDirectory() as directory:
+            first = self._frames(directory, "run_a", ["staged_s0_r0/r0w0"])
+            second = self._frames(directory, "run_b", ["staged_s0_r0/r0w0"])
+            dataset = {"frame_uid": np.asarray(["staged_s0_r0/r0w0#0"], dtype="U128")}
+            with self.assertRaises(SystemExit) as caught:
+                verify_frame_coverage(dataset, [Path(first), Path(second)])
+        message = str(caught.exception)
+        self.assertIn("staged_s0_r0/r0w0", message)
+        self.assertIn("--tag", message)
+
+    def test_distinct_ids_across_files_still_resolve(self):
+        import tempfile
+        from pathlib import Path
+
+        from tools.audit.build_cdpr_staged_sft_dataset import verify_frame_coverage
+
+        with tempfile.TemporaryDirectory() as directory:
+            first = self._frames(directory, "run_a", ["three_stage_s0_r0/r0w0"])
+            second = self._frames(directory, "run_b", ["three_stage_swap_s0_r0/r0w0"])
+            dataset = {
+                "frame_uid": np.asarray(
+                    ["three_stage_s0_r0/r0w0#1", "three_stage_swap_s0_r0/r0w0#0"],
+                    dtype="U128",
+                )
+            }
+            report = verify_frame_coverage(dataset, [Path(first), Path(second)])
+        self.assertEqual(report["resolved_fraction"], 1.0)
+        self.assertEqual(report["rows"], 2)
+
+    def test_the_same_file_twice_is_not_a_collision(self):
+        """Deduplication happens before this; a repeated path is not two banks."""
+
+        import tempfile
+        from pathlib import Path
+
+        from tools.audit.build_cdpr_staged_sft_dataset import verify_frame_coverage
+
+        with tempfile.TemporaryDirectory() as directory:
+            only = self._frames(directory, "run_a", ["three_stage_s0_r0/r0w0"])
+            dataset = {
+                "frame_uid": np.asarray(["three_stage_s0_r0/r0w0#0"], dtype="U128")
+            }
+            report = verify_frame_coverage(dataset, [Path(only), Path(only)])
+        self.assertEqual(report["resolved_fraction"], 1.0)
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

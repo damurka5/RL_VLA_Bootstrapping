@@ -51,6 +51,11 @@ ALIGN_YAW_SERVO_GAIN="${ALIGN_YAW_SERVO_GAIN:-0.35}"
 ALIGN_DESCENT_GAIN="${ALIGN_DESCENT_GAIN:-1.0}"
 ALIGN_HANDOFF_AT_CLEARANCE="${ALIGN_HANDOFF_AT_CLEARANCE:-0}"
 PICKUP_PROMPT="${PICKUP_PROMPT:-destination}"
+# Episode ids are built from TAG/shard/round/world and nothing else, so two
+# collection runs that share a tag mint identical ids for different episodes.
+# Default it to the run directory so separate banks can be merged; the
+# dataset builder now refuses a merge whose ids collide either way.
+TAG="${TAG:-$(basename "$RUN_DIR")}"
 # How many consecutive decision boundaries the alignment conjunction must hold
 # before the pickup teacher takes over. Empty means "whatever the calibration
 # file says" (2), which is the shipped protocol. Screen a change before
@@ -167,6 +172,7 @@ if has_step record; then
       --pickup-decisions "${PICKUP_DECISIONS:-32}" \
       --placement-decisions "${PLACEMENT_DECISIONS:-64}" \
       --settle-decisions "${SETTLE_DECISIONS:-0}" \
+      --tag "$TAG" \
       --output "$OUT" 2>&1 | sed "s/^/[shard$SHARD] /" &
     PIDS+=($!)
     SHARD=$((SHARD + 1))
