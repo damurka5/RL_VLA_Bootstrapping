@@ -34,6 +34,15 @@ stand-in:
 4. **Confirmation** of the winning triple on full chains, because the quantity
    that matters is complete-chain yield and not the sum of three stage maxima.
 
+When exactly one checkpoint is supplied for every role there is nothing to
+select and no selection bias to remove with an independent confirmation. In
+that common case the tool runs the triple ONCE with the full stage budgets and
+scores all three roles from that same set of continuous chains. Re-running the
+same stochastic prefix once per role and once more for confirmation can turn a
+real 1/64 full-chain observation into 0/64 by chance, while spending roughly
+four times the inference budget. The shared screen is itself full-chain
+confirmation and is recorded as such in the manifest.
+
 Stages 1-3 stop early by setting the DOWNSTREAM budgets to one decision, so a
 reach comparison does not pay for 96 decisions of placement it will discard.
 
@@ -532,13 +541,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             collected.append(result)
         merged = score_rounds(collected, phase=phase)
         merged["rounds"] = int(args.rounds)
-        merged["teachers"] = {
-            role: {
-                "path": str(entry.checkpoint),
-                "sha256": entry.sha256,
-            }
-            for role, entry in bank.entries.items()
-        }
+        # Use the same schema the recorder and collection launcher consume.
+        # The older hand-written table called this field ``path`` while the
+        # launcher read ``checkpoint``, so a successful screen could never
+        # advance to collection. The canonical manifest also retains the
+        # residual scale and observation/action compatibility contract.
+        merged["teachers"] = bank.manifest()
         return merged
 
     report: dict[str, Any] = {
@@ -551,12 +559,145 @@ def main(argv: Sequence[str] | None = None) -> int:
         "yaw_calibration": calibration.to_json(),
         "controller_workspace_z_bounds": list(world.args.controller_workspace_z_bounds),
         "teacher_sampling": "role_decision_seeded_v1",
+        "protocol": {
+            "move_decisions": int(args.move_decisions),
+            "align_decisions": int(args.align_decisions) or int(args.move_decisions),
+            "pickup_decisions": int(args.pickup_decisions),
+            "placement_decisions": int(args.placement_decisions),
+            "align_xy_centring": bool(args.align_xy_centring),
+            "align_xy_deadband": float(args.align_xy_deadband),
+            "align_xy_abort": float(args.align_xy_abort),
+            "align_handoff_at_clearance": bool(args.align_handoff_at_clearance),
+            "align_yaw_servo_gain": float(args.align_yaw_servo_gain),
+            "grasp_xy_margin": float(args.grasp_xy_margin),
+            "pickup_prompt": str(args.pickup_prompt),
+            "gripper_hold_open_before_pickup": not bool(
+                args.no_gripper_hold_before_pickup
+            ),
+            "yaw_hold_during_pickup": True,
+            "yaw_hold_during_placement": False,
+        },
         "phases": {},
     }
     started = time.perf_counter()
     chosen: dict[str, Path] = {
         role: paths[0] for role, paths in candidates.items()
     }
+
+    # A single candidate per role is a verification run, not a ranking. Run
+    # one set of full continuous chains and project each stage's score from the
+    # SAME physical trajectories. Apart from saving the inference budget, this
+    # prevents a rare but valid complete chain from being discarded merely
+    # because a redundant fourth stochastic rollout did not reproduce it.
+    single_candidate = all(len(paths) == 1 for paths in candidates.values())
+    if single_candidate:
+        print(
+            "[select] one candidate per role: one shared full-chain screen "
+            "will score all stages and serve as confirmation",
+            flush=True,
+        )
+        entries = load_teacher_entries(torch, chosen)
+        bank = TeacherBank(
+            torch=torch,
+            runtime=world.runtime,
+            trainer=world.trainer,
+            entries=entries,
+        )
+        collected: list[Any] = []
+        for round_index in range(int(args.rounds)):
+            result = run_staged_chains(
+                backend=world.backend,
+                collector=world.collector,
+                resetter=resetter,
+                bank=bank,
+                scenes=batch,
+                config=make_config("placement"),
+                round_index=round_index,
+                episode_uids=[
+                    f"select_shared_r{round_index}/r{round_index}w{index}"
+                    for index in range(len(batch))
+                ],
+                rollout_index=[round_index] * len(batch),
+            )
+            result.frames = None
+            if bool(args.dump_rounds):
+                result.to_npz(output / f"single_pass_full_chain_r{round_index}.npz")
+            collected.append(result)
+
+        teachers = bank.manifest()
+        blocked_phase: str | None = None
+        for phase in TEACHER_ROLES:
+            scored = score_rounds(collected, phase=phase)
+            scored["rounds"] = int(args.rounds)
+            scored["teachers"] = teachers
+            scored["candidate"] = str(chosen[phase])
+            report["phases"][phase] = {
+                "candidates": [scored],
+                "chosen": (
+                    str(chosen[phase]) if scored["primary"]["rate"] else None
+                ),
+                "not_separated_from_chosen": [],
+                "evidence": "shared_full_chain_screen",
+            }
+            print(
+                f"[select] {phase}: primary {scored['primary']}; "
+                f"{scored['conditional_metric']} {scored['conditional']}",
+                flush=True,
+            )
+            if not scored["primary"]["rate"] and blocked_phase is None:
+                blocked_phase = phase
+
+        confirmation = score_rounds(collected, phase="placement")
+        confirmation["rounds"] = int(args.rounds)
+        confirmation["teachers"] = teachers
+        confirmation["evidence"] = "shared_full_chain_screen"
+        report["confirmation"] = confirmation
+        report["confirmation_source"] = "shared_full_chain_screen"
+        report["chosen"] = {role: str(path) for role, path in chosen.items()}
+        report["wall_seconds"] = round(time.perf_counter() - started, 1)
+
+        if blocked_phase is not None:
+            report["status"] = "blocked_zero_stage_success"
+            report["blocked_phase"] = blocked_phase
+        elif not confirmation["accepted"]["rate"]:
+            report["status"] = "blocked_zero_full_chain_success"
+        else:
+            report["status"] = "selected"
+
+        (output / "teacher_selection.json").write_text(
+            json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
+        )
+        if report["status"] != "selected":
+            (output / "selected_teachers.json").unlink(missing_ok=True)
+            print(
+                f"[select] STOP: shared screen status {report['status']}; "
+                f"diagnostics saved to {output / 'teacher_selection.json'}",
+                flush=True,
+            )
+            return 2
+
+        (output / "selected_teachers.json").write_text(
+            json.dumps(
+                {
+                    "teachers": teachers,
+                    "scene_manifest_sha256": manifest.get("manifest_sha256"),
+                    "split": str(args.split),
+                    "accepted": confirmation["accepted"],
+                    "protocol": report["protocol"],
+                    "confirmation_source": "shared_full_chain_screen",
+                },
+                indent=2,
+                sort_keys=True,
+            ),
+            encoding="utf-8",
+        )
+        print(
+            f"[select] chosen {report['chosen']}; shared full-chain acceptance "
+            f"{confirmation['accepted']}",
+            flush=True,
+        )
+        print(f"[select] wrote {output / 'teacher_selection.json'}", flush=True)
+        return 0
 
     for phase in ("move_to", "pick_up", "placement"):
         rows: list[dict[str, Any]] = []
@@ -668,6 +809,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "scene_manifest_sha256": manifest.get("manifest_sha256"),
                 "split": str(args.split),
                 "accepted": confirmation["accepted"],
+                "protocol": report["protocol"],
+                "confirmation_source": "independent_confirmation",
             },
             indent=2,
             sort_keys=True,

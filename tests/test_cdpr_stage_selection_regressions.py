@@ -239,6 +239,10 @@ class ScoreTests(unittest.TestCase):
                            action_step_gripper=.05, controller_workspace_z_bounds=[.18, .6]))
         entries = {role: SimpleNamespace(checkpoint=Path(role), sha256=role)
                    for role in ('move_to', 'pick_up', 'placement')}
+        teacher_manifest = {
+            role: {'checkpoint': role, 'sha256': role}
+            for role in ('move_to', 'pick_up', 'placement')
+        }
         with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
             output = Path(tmp)
             yaw = output / 'yaw.json'
@@ -248,7 +252,9 @@ class ScoreTests(unittest.TestCase):
             mocks = {'_build_world': world, 'FullTaskSceneResetter': None,
                 'read_manifest': ([object(), object()], {}),
                 'select_split': [object(), object()], 'load_teacher_entries': [],
-                'TeacherBank': SimpleNamespace(entries=entries), 'run_staged_chains': result}
+                'TeacherBank': SimpleNamespace(entries=entries,
+                    manifest=lambda: teacher_manifest),
+                'run_staged_chains': result}
             handles = {}
             for name, value in mocks.items():
                 handles[name] = stack.enter_context(patch(
@@ -259,11 +265,73 @@ class ScoreTests(unittest.TestCase):
                 '--candidate', 'move_to=move.pt', '--candidate', 'pick_up=pick.pt',
                 '--candidate', 'placement=place.pt', '--output', str(output)])
             self.assertEqual(code, 2)
-            self.assertEqual(handles['run_staged_chains'].call_count, 2)
+            # One candidate per role is scored from one shared continuous run.
+            # Pickup's zero must not require rerunning the stochastic prefix.
+            self.assertEqual(handles['run_staged_chains'].call_count, 1)
             self.assertFalse((output / 'selected_teachers.json').exists())
             report = json.loads((output / 'teacher_selection.json').read_text())
             self.assertEqual(report['blocked_phase'], 'pick_up')
             self.assertIsNone(report['phases']['pick_up']['chosen'])
+
+    def test_one_candidate_per_role_reuses_full_chain_evidence(self):
+        result = self.round([2, 2])
+        result.placement_event = np.array([3, 3])
+        result.acceptance = lambda: (np.array([True, True]), {})
+        result.summary = lambda: {
+            'rejection_reasons': {'accepted': 2}, 'failure_counts': {},
+            'reach_diagnostics': {'predicate_fired_worlds': 2, 'worlds': 2,
+                'ready_worlds': 2, 'closest_xy_distance_m': {},
+                'height_above_grasp_m': {}},
+            'align_diagnostics': {}, 'pickup_diagnostics': {},
+            'placement_diagnostics': {},
+        }
+        world = SimpleNamespace(backend=None, collector=None, runtime=None, trainer=None,
+            task_metadata={}, payload={'state_dim': 6, 'chunk_size': 8},
+            args=Namespace(replan_every=4, action_step_xyz=.015, action_step_yaw=.08,
+                           action_step_gripper=.05,
+                           controller_workspace_z_bounds=[.18, .6]))
+        entries = {role: SimpleNamespace(checkpoint=Path(role), sha256=role)
+                   for role in ('move_to', 'pick_up', 'placement')}
+        teacher_manifest = {
+            role: {'checkpoint': role, 'sha256': role}
+            for role in ('move_to', 'pick_up', 'placement')
+        }
+        with tempfile.TemporaryDirectory() as tmp, ExitStack() as stack:
+            output = Path(tmp)
+            yaw = output / 'yaw.json'
+            yaw.write_text(json.dumps(
+                PickupYawCalibration(target_yaw=0, source='unit-test').to_json()
+            ))
+            mocks = {'_build_world': world, 'FullTaskSceneResetter': None,
+                'read_manifest': ([object(), object()], {'manifest_sha256': 'scenes'}),
+                'select_split': [object(), object()], 'load_teacher_entries': [],
+                'TeacherBank': SimpleNamespace(entries=entries,
+                    manifest=lambda: teacher_manifest),
+                'run_staged_chains': result}
+            handles = {}
+            for name, value in mocks.items():
+                handles[name] = stack.enter_context(patch(
+                    'tools.audit.select_cdpr_stage_teachers.' + name,
+                    return_value=value))
+            stack.enter_context(redirect_stdout(io.StringIO()))
+            code = main(['--config', 'config.yaml', '--scene-manifest', 'scenes.json',
+                '--yaw-calibration', str(yaw), '--worlds', '2', '--rounds', '1',
+                '--candidate', 'move_to=move.pt', '--candidate', 'pick_up=pick.pt',
+                '--candidate', 'placement=place.pt', '--align-xy-centring',
+                '--align-decisions', '48', '--pickup-prompt', 'destination',
+                '--output', str(output)])
+            self.assertEqual(code, 0)
+            self.assertEqual(handles['run_staged_chains'].call_count, 1)
+            selected = json.loads((output / 'selected_teachers.json').read_text())
+            self.assertEqual(selected['confirmation_source'],
+                             'shared_full_chain_screen')
+            self.assertEqual(selected['accepted']['rate'], 1.)
+            self.assertEqual(selected['teachers']['move_to']['checkpoint'],
+                             'move_to')
+            self.assertNotIn('path', selected['teachers']['move_to'])
+            self.assertTrue(selected['protocol']['align_xy_centring'])
+            self.assertEqual(selected['protocol']['align_decisions'], 48)
+            self.assertEqual(selected['protocol']['pickup_prompt'], 'destination')
 
 
 if __name__ == '__main__':

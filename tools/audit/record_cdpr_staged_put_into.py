@@ -670,10 +670,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         "yaw_calibration": calibration.to_json(),
         "budgets": {
             "move_decisions": int(args.move_decisions),
+            "align_decisions": int(args.align_decisions) or int(args.move_decisions),
             "pickup_decisions": int(args.pickup_decisions),
             "placement_decisions": int(args.placement_decisions),
             "settle_decisions": int(args.settle_decisions),
         },
+        "align_xy_centring": bool(args.align_xy_centring),
+        "align_xy_deadband": float(args.align_xy_deadband),
+        "align_xy_abort": float(args.align_xy_abort),
+        "align_handoff_at_clearance": bool(args.align_handoff_at_clearance),
+        "align_yaw_servo_gain": float(args.align_yaw_servo_gain),
+        "pickup_prompt": str(args.pickup_prompt),
+        "gripper_hold_open_before_pickup": not bool(
+            args.no_gripper_hold_before_pickup
+        ),
         "yaw_hold_during_pickup": not bool(args.no_yaw_hold_during_pickup),
         "yaw_hold_during_placement": bool(args.yaw_hold_during_placement),
         "record_frames": bool(config.record_frames),

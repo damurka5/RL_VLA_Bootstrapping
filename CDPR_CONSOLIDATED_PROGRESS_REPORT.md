@@ -1,8 +1,8 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — current through 2026-09-10, Europe/Moscow**
+**Living report — current through 2026-09-11, Europe/Moscow**
 
-**Repository state reviewed:** `c151de9` plus local three-stage fixes (remote run commit not supplied)
+**Repository state reviewed:** `73e5be8` plus the local single-pass selection and protocol-propagation fix
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
@@ -24,18 +24,23 @@ user-confirmed fixed calibrated pickup yaw, stage-balanced SFT sampling and
 full-task evaluation. It includes a provisional teacher shortlist and the
 repository change map.
 
-**Implementation status, 2026-09-10 (same day, later):** the specification's
+**Implementation status, 2026-09-11:** the specification's
 whole change map is now implemented and unit-tested locally — the scene/yaw
 contract, the continuous three-stage recorder, teacher screening, the dataset
 builder, the prior refresh and SFT changes, and the unassisted full-task
-evaluation. See §7.12. **Update from the supplied remote screens:** scene
-generation and teacher screening have now run. The latest run, on `5370e80`,
-verified pickup handoffs near grasp point + 0.01 m and produced a native
-placement success. That episode was rejected as `carry_interrupted`; accepted
-full-chain yield remains zero and confirmation was not reached. The exact
-contact-loss steps still need inspection from the saved NPZ; an offline audit
-tool and clearer selection reporting are now available. See the newest §14
-entry. A usable full-chain bank and SFT remain unverified. The yaw calibration is
+evaluation. See §7.12. **Update from the supplied remote screen:** the
+destination-prompt triple produced three pickups from three aligned handoffs
+and one strict accepted placement from its one placement handoff. This is the
+first clean complete chain, but it occurred in the placement screening run;
+the old selector then ran the same triple again, obtained 0/64, and refused to
+write `selected_teachers.json`. That is a selection-harness defect for the
+one-candidate-per-role case, not evidence that the fixed-yaw handoff failed.
+The local selector now scores every stage and confirmation from one shared
+full-chain screen in that case, writes the canonical `checkpoint` manifest,
+and records the complete staged protocol. The collection launcher reuses the
+same centring, 48-decision alignment budget and destination pickup prompt.
+See the newest §14 entry. A usable full-chain bank and SFT remain unverified.
+The yaw calibration is
 kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
 **0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
 p90 19.8°, max 25.3°** camera-bearing residual across the ±0.19 m workspace,
@@ -1889,6 +1894,64 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-11 — Destination-prompt chain succeeds once; redundant confirmation discards it
+
+- Evidence: user-pasted console output from
+  `runs/three_stage/prompt_destination`, using `--align-xy-centring`, a
+  48-decision alignment tail, the calibrated fixed yaw and
+  `--pickup-prompt destination`. The three supplied roles each had exactly one
+  candidate. The remote Git revision and saved NPZ/JSON were not supplied, so
+  these are console-supported observations rather than a locally re-audited
+  artifact.
+- Move screen: native reach fired in 12/64 worlds, 11 entered alignment and
+  three were promoted. With its intentionally collapsed one-decision pickup
+  suffix it recorded no grasp. Pickup screen: reach fired in 14/64, three
+  entered pickup, and **3/3 grasped, lifted and handed off**. Median peak lift
+  was 0.0567 m against the 0.050 m production bar. This is the first direct
+  evidence that the final destination prompt resolves the previously variable
+  lift at the trained fixed-yaw/height handoff; three trials are not a stable
+  rate.
+- Placement screen: two worlds entered pickup, both grasped and lifted, one
+  remained held at the placement boundary, and that one **reached destination
+  geometry, intentionally released, satisfied native placement and passed the
+  strict full-chain acceptance**. The unconditional accepted yield was 1/64;
+  placement given its one real upstream handoff was 1/1. The other pickup was
+  not a placement trial, because it did not survive the held handoff.
+- The fixed yaw is not the observed blocker at either teacher switch: pickup
+  converted every handoff it was given and placement converted its only
+  handoff. The dominant ceiling remains the prefix: only 12–14/64 reaches and
+  2–3/64 alignment promotions. Alignment still reports high off-centre share
+  and repeated descent aborts, so its yield remains optimization work even
+  though the pose it eventually hands off is usable.
+- The selector then reran the already chosen triple for confirmation and
+  happened to obtain zero accepted chains. It deleted/refused
+  `selected_teachers.json` despite the clean full chain in the immediately
+  preceding placement screen. With one candidate per role there is no ranking
+  selection bias to remove, and all four runs differ only by stochastic policy
+  draws while repeating expensive prefixes. This was a harness problem.
+- Local change: one-candidate-per-role selection now executes one shared set of
+  full-budget continuous chains, derives move/pickup/placement scores from those
+  exact trajectories, and uses the same evidence as confirmation. Multi-candidate
+  selection retains the independent confirmation. The change cuts the supplied
+  command from four stochastic passes to one and cannot erase a witnessed chain
+  on a redundant rerun.
+- Two follow-on plumbing defects are also fixed. `selected_teachers.json` now
+  uses the canonical teacher-bank schema (`checkpoint`, SHA-256, residual
+  scale and observation/action contract), matching what the collection script
+  reads. The selection manifest saves the staged protocol, and the collection
+  launcher passes the same XY bridge, 48-decision alignment budget, damping,
+  deadbands and destination pickup prompt to both screening and recording.
+- Strategy decision: retain one live continuous episode as the source of
+  demonstrations, then expose its real stage slices as shuffled SFT decision
+  rows under the final instruction. This preserves physical/contact continuity
+  at joins while obtaining the user's desired distinct-transition training.
+  Independently reset “similar” stage demonstrations remain a weaker fallback
+  because they do not demonstrate the state distribution induced by the
+  preceding teacher.
+- Local validation: 17 selection regressions, 50 staged state/controller tests
+  and 40 staged dataset tests pass (**107 total**); Python and shell syntax
+  checks pass. GPU policy/physics validation remains the next remote step.
 
 ### 2026-09-10 — First native placement after the height fix; rejected for interrupted carry
 

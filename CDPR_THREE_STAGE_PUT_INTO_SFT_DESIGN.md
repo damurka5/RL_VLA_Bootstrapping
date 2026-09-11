@@ -2,12 +2,19 @@
 
 2026-09-10. Design prepared against local repository `e56b7fb` and the
 consolidated report, including the September 10 pilot attachment review.
-**Status, 2026-09-10 (updated twice).** Every module, flag and config field
+**Status, 2026-09-11.** Every module, flag and config field
 named in §12 exists and is unit-tested; the commands below are real. Nine
-teacher screens have been run on the `teacher_selection` split and **no
-demonstration bank exists and no teacher has been ranked** — every screen was
-floored by a fault in the collection harness rather than by a policy. The full
-ledger is §7.16b of the consolidated report; the summary is below.
+initial teacher screens were floored by collection-harness faults. The latest
+destination-prompt screen crossed the whole chain once: pickup converted all
+three handoffs it received, and placement converted and cleanly accepted the
+one handoff it received. No collection bank exists yet; one selected-screen
+trajectory is evidence that the continuous route works, not a sufficient
+training corpus or a reliable rate. The selector then discarded that evidence
+when a redundant stochastic confirmation rerun scored 0/64. Single-candidate
+verification now uses one shared full-chain screen for every stage score and
+confirmation, and the collection launcher carries the verified protocol
+unchanged into recording. The full ledger is §7.16b and §14 of the
+consolidated report; the summary is below.
 
 **Stage-by-stage status, measured on 64 scenes per screen:**
 
@@ -15,13 +22,12 @@ ledger is §7.16b of the consolidated report; the summary is below.
 |---|---|---|
 | scene manifest | done | 1024 scenes, splits disjoint, 0 start inside the goal |
 | yaw calibration (§5) | done | 0.000 rad; fixed-angle residual mean 10.7°, max 25.3° |
-| move-to → reach | **the ceiling** | predicate met on 10–14 / 64 |
-| alignment tail — centring | done | 0.0039–0.0056 m median against a 0.0130 m slack |
+| move-to → reach | **the ceiling** | predicate met on 12–14 / 64 in the latest screens |
+| alignment tail → pickup | low yield | 2–3 / 64 promoted; centring/descent still consumes most of the 48-decision tail |
 | alignment tail — yaw | done after damping | 0.0 rad median; 20.5% of steps outside the 5° band |
-| align → pickup handoff | **untested** | the promotion gate was broken until now |
-| pickup: grasp | works | 2 / 2 given a centred handoff |
-| pickup: lift | works | 2 / 2, peak 0.064 m, mean commanded `a_z` +0.60 |
-| placement: carry | **failing** | 0 / 2, object closest 0.155 m from the bowl |
+| pickup under final destination prompt | works on tiny evidence | 3 / 3 grasped, lifted and handed off |
+| placement: carry/release | first clean success | 1 / 1 real pickup handoff reached geometry, released, placed and passed strict acceptance |
+| selector handoff to collection | fixed locally | single supplied triple is screened once; manifest schema and protocol now match the launcher |
 | dataset / refresh / SFT / evaluation | implemented, never run | no bank to run them on |
 
 **Two corrections to this document's own assumptions**, both measured:

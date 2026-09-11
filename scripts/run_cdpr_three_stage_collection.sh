@@ -38,10 +38,32 @@ ROUNDS="${ROUNDS:-4}"
 MICROBATCH="${MICROBATCH:-32}"
 GPUS="${GPUS:-0 1}"
 STEPS="${STEPS:-yaw scenes select record dataset}"
+# These are one protocol, shared by teacher screening and collection. The
+# defaults are the remotely verified handoff: an explicit XY bridge, a 48
+# decision alignment budget, and the final destination prompt during pickup.
+# Setting one only for selection used to produce a manifest that collection
+# could not reproduce.
+ALIGN_XY_CENTRING="${ALIGN_XY_CENTRING:-1}"
+ALIGN_DECISIONS="${ALIGN_DECISIONS:-48}"
+ALIGN_XY_DEADBAND="${ALIGN_XY_DEADBAND:-0.005}"
+ALIGN_XY_ABORT="${ALIGN_XY_ABORT:-0.009}"
+ALIGN_YAW_SERVO_GAIN="${ALIGN_YAW_SERVO_GAIN:-0.35}"
+PICKUP_PROMPT="${PICKUP_PROMPT:-destination}"
 
 mkdir -p "$RUN_DIR"
 run() { conda run --no-capture-output -n "$ENV_NAME" python3 "$@"; }
 has_step() { [[ " $STEPS " == *" $1 "* ]]; }
+
+STAGED_PROTOCOL_ARGS=(
+  --align-decisions "$ALIGN_DECISIONS"
+  --align-xy-deadband "$ALIGN_XY_DEADBAND"
+  --align-xy-abort "$ALIGN_XY_ABORT"
+  --align-yaw-servo-gain "$ALIGN_YAW_SERVO_GAIN"
+  --pickup-prompt "$PICKUP_PROMPT"
+)
+if [[ "$ALIGN_XY_CENTRING" == "1" ]]; then
+  STAGED_PROTOCOL_ARGS+=(--align-xy-centring)
+fi
 
 if has_step yaw; then
   echo "=== 1/5 yaw calibration ==="
@@ -70,6 +92,7 @@ if has_step select && [[ -n "${CANDIDATES:-}" ]]; then
   run tools/audit/select_cdpr_stage_teachers.py \
     --config "$CONFIG" --scene-manifest "$SCENES" --yaw-calibration "$YAW" \
     "${CANDIDATE_ARGS[@]}" \
+    "${STAGED_PROTOCOL_ARGS[@]}" \
     --worlds "$WORLDS" --rounds "${SELECT_ROUNDS:-1}" \
     --microbatch "$MICROBATCH" --device "cuda:${GPUS%% *}" \
     --output "$RUN_DIR/teacher_selection"
@@ -102,6 +125,7 @@ if has_step record; then
       --teacher "pick_up=$TEACHER_PICK_UP" \
       --teacher "placement=$TEACHER_PLACEMENT" \
       --yaw-calibration "$YAW" \
+      "${STAGED_PROTOCOL_ARGS[@]}" \
       --worlds "$WORLDS" --rounds "$ROUNDS" \
       --shard "$SHARD" --num-shards "$NUM_SHARDS" \
       --microbatch "$MICROBATCH" --device cuda:0 \
