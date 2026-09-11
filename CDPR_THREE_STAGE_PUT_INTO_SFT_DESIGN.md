@@ -115,6 +115,37 @@ re-run reproduces it.
 Two runs of 512 chains therefore give a well-founded yield: 23 accepted chains
 per 1,024, 2.25%, with placement-given-pickup 28/87 = 0.322.
 
+**The full bank, 2026-09-11.** 3,968 chains on an 8,192-scene manifest (4,960
+collection scenes, clearance filter on, strata exactly balanced): 830 reached,
+524 aligned, 307 picked, 95 native placements, **71 accepted chains over 71
+unique scenes** — one chain per scene, so no cluster carries two. 5,336 strict
+rows, 26,227 stage-transition rows over 517 verified move, 303 pickup and 71
+placement chains, 1,724 partial-pickup rows, 100% frame resolution on every
+view.
+
+The 1,024-chain forecast held on three of four conditionals and overshot the
+headline by 20%: reach|chain 0.201 -> 0.209, align|reach 0.631 -> 0.631,
+place|pickup 0.322 -> 0.309, but pickup|align 0.662 -> 0.586 (z = 1.21 against
+the earlier n=65, so not a real shift, just a better estimate) and
+accepted|chain 0.0225 -> **0.0179**. Plan future budgets from 1.79%.
+
+Destination balance is resolved and the earlier plate worry is dead: 39 bowl
+and 32 plate accepted chains, 2,961 and 2,375 rows. The zero-plate readings in
+the three screens were small-n, exactly as the 0/4 binomial said.
+
+Both ceilings are confirmed at scale and neither moved. `move_budget_exhausted`
+is 3,136 of 3,968 chains (**79.0%**) — the reach limit is the whole funnel, and
+it is the encoder's 3-5 cm localization against a 2 cm window, not a budget.
+Carry loss is 121 of 307 pickups (**39.4%**), down from the 50-57% the small
+samples suggested but still the second ceiling.
+
+Against §13's debugging target of 50 accepted chains per destination the bank is
+short by 11 bowl and 18 plate; topping up costs about 2,200 more chains, some
+34 minutes. That is a known, always-available option and it is deliberately NOT
+the next step: §11's reachability measurement under refreshed final-prompt
+priors needs no more data and is the gate that decides whether any of this is
+trainable through the residual at all.
+
 Still open: reach endpoints report
 `already_within_tolerance: 0` in all eight rounds with mean absolute yaw error
 156-180 degrees, so the tail rotates ~170 degrees on essentially every chain.
@@ -152,6 +183,9 @@ collection from the first shard's measured acceptance, not from 4/128.
 | placement: carry/release | usable, still sparse | 3/7 in selection; 5/17 in collection |
 | dataset | first smoke bank built | 365 rows, 1,454 supervised actions, five scenes, bowl and plate present, potato absent |
 | dataset, pilot at consec 1 | 2.1x the chains for the same 512 | 755 strict rows / 11 chains, 3,294 transition rows, 1,724 partial, 100% frames, potato present |
+| **dataset, full bank** | **ready for SFT** | 5,336 strict rows / 71 chains over 71 unique scenes, 26,227 transition rows, 100% frames, bowl 39 / plate 32 |
+| reach ceiling at scale | unmoved | move_budget_exhausted 3,136/3,968 = 79.0% |
+| carry ceiling at scale | unmoved | 121/307 pickups lost = 39.4% |
 | shard agreement | **retracted; replication refutes it** | swap gives 8/25 and 7/19; pooled 28/87 = 0.322 over 1,024 chains |
 | merged banks | guarded | episode_uid was tag/shard/round/world only, so two runs collided; TAG now defaults per run and the builder refuses a collision |
 | refresh / SFT / evaluation | implemented, not run | bank is intentionally still marked `priors_stale` |
