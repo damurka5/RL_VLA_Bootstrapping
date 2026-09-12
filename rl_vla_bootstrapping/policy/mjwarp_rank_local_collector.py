@@ -8,6 +8,13 @@ from rl_vla_bootstrapping.policy.rank_local_grpo import (
     RankLocalGroupLayout,
     torch_group_advantages,
 )
+from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
+    contact_ended_without_release,
+    destination_instruction_id,
+    object_label,
+    release_opening_over_goal,
+    student_instruction_text,
+)
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     ACTIVE_INSTRUCTION_TYPES,
     INSTRUCTION_TO_ID,
@@ -59,6 +66,190 @@ _GRASP_MIN_LIFT_M = 0.015
 # groups_collected on every update of every run), so nothing else excludes them.
 # Counting them is the cheapest way to see how much of an update is noise.
 _DEGENERATE_GROUP_REWARD_STD = 0.05
+
+THREE_STAGE_APPROACH = 0
+THREE_STAGE_PICKUP = 1
+THREE_STAGE_PLACEMENT = 2
+THREE_STAGE_COUNT = 3
+
+
+def three_stage_group_credit(
+    milestone_returns: Any,
+    *,
+    normalize: bool,
+    clip_abs: float,
+    dynamic_sampling: bool,
+    dynamic_min_pass_rate: float,
+    dynamic_max_pass_rate: float,
+    min_group_reward_std: float,
+) -> tuple[Any, Any]:
+    """Compute independent GRPO advantages and masks for three milestones.
+
+    ``milestone_returns`` is ``[stage, group, candidate]`` and contains one
+    binary return for each ordered milestone.  Keeping the stage dimension here
+    is the essential difference from a cumulative 0/1/2/3 reward: a placement
+    failure cannot turn a successful pickup action into a negative example.
+    """
+
+    import torch
+
+    if milestone_returns.ndim != 3 or int(milestone_returns.shape[0]) != 3:
+        raise ValueError(
+            "three-stage returns must have shape [3, groups, candidates], got "
+            f"{tuple(milestone_returns.shape)}."
+        )
+    advantages = torch.stack(
+        [
+            torch_group_advantages(
+                milestone_returns[stage],
+                normalize=normalize,
+                clip_abs=clip_abs,
+            )
+            for stage in range(THREE_STAGE_COUNT)
+        ],
+        dim=0,
+    )
+    pass_rate = milestone_returns.to(dtype=torch.float32).mean(dim=-1)
+    if dynamic_sampling:
+        usable = (
+            (pass_rate > float(dynamic_min_pass_rate))
+            & (pass_rate < float(dynamic_max_pass_rate))
+        )
+    else:
+        usable = torch.ones_like(pass_rate, dtype=torch.bool)
+    if float(min_group_reward_std) > 0.0:
+        usable &= milestone_returns.std(dim=-1, unbiased=False) >= float(
+            min_group_reward_std
+        )
+    return advantages, usable
+
+
+def stage_balanced_record_weights(
+    credit_stage: Any, valid_mask: Any, *, stage_count: int = THREE_STAGE_COUNT
+) -> Any:
+    """Give every represented stage equal total loss mass.
+
+    Long approach/carry segments otherwise dominate solely because they emit
+    more transitions.  The returned weights average to one over valid rows, so
+    enabling the split does not silently change the optimizer's overall scale.
+    """
+
+    import torch
+
+    stage = credit_stage.to(dtype=torch.int64).reshape(-1)
+    valid = valid_mask.to(dtype=torch.bool).reshape(-1)
+    if int(stage.numel()) != int(valid.numel()):
+        raise ValueError("credit_stage and valid_mask lengths differ.")
+    weights = torch.zeros_like(stage, dtype=torch.float32)
+    represented = []
+    for value in range(int(stage_count)):
+        selected = valid & (stage == value)
+        if bool(selected.any().item()):
+            represented.append(selected)
+    if not represented:
+        return weights
+    total = valid.sum().to(dtype=torch.float32)
+    per_stage = total / float(len(represented))
+    for selected in represented:
+        weights[selected] = per_stage / selected.sum().to(dtype=torch.float32)
+    return weights
+
+
+@dataclass(frozen=True)
+class ThreeStageMilestones:
+    approached: Any
+    picked_up: Any
+    placed: Any
+    released: Any
+    carry_slip: Any
+    wrong_place: Any
+
+    @classmethod
+    def zeros(cls, torch: Any, worlds: int, device: Any) -> "ThreeStageMilestones":
+        empty = torch.zeros((worlds,), dtype=torch.bool, device=device)
+        return cls(*(empty.clone() for _ in range(6)))
+
+
+def advance_three_stage_milestones(
+    state: ThreeStageMilestones,
+    *,
+    reset: Any,
+    low_dim: Any,
+    result: Any,
+    physical_grasp: Any,
+    gripper_command: Any,
+    previous_opening: Any,
+    active_mask: Any,
+    approach_distance_m: float = 0.03,
+    approach_min_opening: float = 0.90,
+    approach_max_object_displacement_m: float = 0.01,
+    lift_height_m: float = 0.05,
+) -> ThreeStageMilestones:
+    """Advance ordered, one-way task milestones from production diagnostics."""
+
+    import torch
+
+    target = gather_world_slots(
+        low_dim.object_positions, reset.task_state.target_slots
+    )
+    receptacle = gather_world_slots(
+        low_dim.object_positions, reset.task_state.reference_slots
+    )
+    displacement = torch.linalg.vector_norm(
+        target - reset.task_state.initial_target_positions, dim=-1
+    )
+    approached = state.approached | (
+        active_mask
+        & (result.diagnostics["pick_grasp_distance"] <= float(approach_distance_m))
+        & (low_dim.gripper_opening >= float(approach_min_opening))
+        & (displacement <= float(approach_max_object_displacement_m))
+    )
+    picked_up = state.picked_up | (
+        active_mask
+        & approached
+        & result.diagnostics["ever_grasped"].to(dtype=torch.bool)
+        & (result.diagnostics["credited_lift"] >= float(lift_height_m))
+    )
+    released = state.released | (
+        active_mask & result.diagnostics["released"].to(dtype=torch.bool)
+    )
+    release_in_progress = release_opening_over_goal(
+        command=gripper_command,
+        opening=low_dim.gripper_opening,
+        previous_opening=previous_opening,
+        target_xy=target[:, :2],
+        receptacle_xy=receptacle[:, :2],
+        radius=result.diagnostics["container_xy_radius"],
+    )
+    carry_slip = state.carry_slip | (
+        active_mask
+        & picked_up
+        & contact_ended_without_release(
+            physical_grasp=physical_grasp,
+            released=released,
+            release_in_progress=release_in_progress,
+        )
+    )
+    wrong_place = state.wrong_place | (
+        active_mask & result.diagnostics["wrong_place_drop"].to(dtype=torch.bool)
+    )
+    placed = state.placed | (
+        active_mask
+        & approached
+        & picked_up
+        & released
+        & result.success.to(dtype=torch.bool)
+        & ~carry_slip
+        & ~wrong_place
+    )
+    return ThreeStageMilestones(
+        approached=approached,
+        picked_up=picked_up,
+        placed=placed,
+        released=released,
+        carry_slip=carry_slip,
+        wrong_place=wrong_place,
+    )
 
 
 def sample_active_priors(runtime, cameras, states, instructions, indices, vision_dim, microbatch):
@@ -2806,6 +2997,163 @@ class FullTaskSceneResetter:
         )
 
 
+class GroupedFullTaskSceneResetter:
+    """GRPO resetter for manifest-backed, end-to-end ``put_into`` episodes.
+
+    One verified manifest scene is selected per group and repeated for every
+    candidate, preserving GRPO's shared-start contract.  Unlike the historical
+    container curriculum this never moves the gripper onto the object, never
+    starts caught, and never rewrites the prompt at a stage boundary.
+    """
+
+    def __init__(
+        self,
+        *,
+        backend: Any,
+        layout: RankLocalGroupLayout,
+        scenes: Sequence[Any],
+        horizon_decisions: int,
+        base_seed: int,
+        rank: int,
+        support_surface_z: float = 0.15,
+        task_metadata: Mapping[str, Any] | None = None,
+    ) -> None:
+        if not scenes:
+            raise ValueError("The full-task GRPO scene split is empty.")
+        self.backend = backend
+        self.layout = layout
+        self.scenes = tuple(sorted(scenes, key=lambda item: item.scene_index))
+        self.horizon_decisions = max(1, int(horizon_decisions))
+        self.base_seed = int(base_seed)
+        self.rank = int(rank)
+        self.torch = backend.torch
+        self.device = backend.device
+        self._flat = FullTaskSceneResetter(
+            backend=backend,
+            worlds_per_rank=int(layout.worlds_per_rank),
+            support_surface_z=support_surface_z,
+            task_metadata=task_metadata,
+        )
+        # Collector compatibility. These curricula do not own manifest starts.
+        self.reset_on_drift = False
+        self.scene_object_bounds = (4, 4)
+        self.scene_object_range = (4, 4)
+
+    def set_random_start_max_goal_distance(self, _value: Any) -> None:
+        return None
+
+    def set_caught_container_fraction(self, _value: Any) -> None:
+        return None
+
+    def set_prelifted_group_fraction(self, _value: Any) -> None:
+        return None
+
+    def set_scene_object_range(self, low: int, high: int) -> None:
+        del low, high  # A manifest's verified topology is immutable.
+
+    def _group_scenes(self, update_index: int, round_index: int) -> list[Any]:
+        groups = int(self.layout.groups_per_rank)
+        # Ranks receive disjoint consecutive windows; rounds and updates advance
+        # over the split without consulting checkpoint curriculum state.
+        start = (
+            self.rank * groups
+            + int(round_index) * groups * 1_009
+            + int(update_index) * groups * 1_000_003
+            + self.base_seed
+        ) % len(self.scenes)
+        return [
+            self.scenes[(start + group) % len(self.scenes)]
+            for group in range(groups)
+        ]
+
+    def reset(
+        self,
+        *,
+        update_index: int,
+        round_index: int,
+        allow_prelifted: bool = False,
+        force_uncaught_container: bool = False,
+    ) -> BatchedReset:
+        if allow_prelifted:
+            raise ValueError("Full-task manifest episodes cannot start prelifted.")
+        del force_uncaught_container  # They are always uncaught by construction.
+        group_scenes = self._group_scenes(update_index, round_index)
+        scenes = [
+            scene
+            for scene in group_scenes
+            for _ in range(int(self.layout.group_size))
+        ]
+        instruction_ids = [
+            destination_instruction_id(scene.destination) for scene in scenes
+        ]
+        instruction_texts = [
+            student_instruction_text(
+                object_label(scene.target.catalog), scene.destination
+            )
+            for scene in scenes
+        ]
+        reset = self._flat.reset(
+            scenes,
+            instruction_ids=instruction_ids,
+            instruction_texts=instruction_texts,
+            horizons=[self.horizon_decisions] * len(scenes),
+        )
+        group_size = int(self.layout.group_size)
+        group_rows = self.torch.arange(
+            int(self.layout.groups_per_rank),
+            dtype=self.torch.int64,
+            device=self.device,
+        )
+        # The manifest entries are repeated nominally, but settling free bodies
+        # independently can leave candidates microscopically different. Copy
+        # candidate zero's complete physical state across its group, exactly as
+        # the production GRPO resetter does, then rebuild the pose-dependent
+        # observer datum from the broadcast state.
+        base_worlds = group_rows * group_size
+        self.backend.broadcast_group_state(base_worlds)
+        low_dim = self.backend.low_dim_observations()
+        world_rows = self.torch.arange(
+            int(self.layout.worlds_per_rank),
+            dtype=self.torch.int64,
+            device=self.device,
+        )
+        settled_target = gather_world_slots(
+            low_dim.object_positions, reset.task_state.target_slots
+        )
+        reset.task_state.initial_target_positions.copy_(settled_target)
+        target_quaternion = low_dim.object_quaternions[
+            world_rows, reset.task_state.target_slots
+        ]
+        reset.previous_relative_position.copy_(
+            settled_target - low_dim.ee_position
+        )
+        reset.previous_relative_quaternion.copy_(
+            _relative_quaternion(low_dim.ee_quaternion, target_quaternion)
+        )
+        return BatchedReset(
+            instructions=reset.instructions,
+            task_state=reset.task_state,
+            group_instruction_ids=reset.task_state.instruction_ids[
+                ::group_size
+            ].clone(),
+            group_shell_ids=self.torch.full_like(group_rows, -1),
+            horizons=reset.horizons,
+            physical_grasp=reset.physical_grasp,
+            grasp_eligible=reset.grasp_eligible,
+            bilateral_contact_steps=reset.bilateral_contact_steps,
+            previous_relative_position=reset.previous_relative_position,
+            previous_relative_quaternion=reset.previous_relative_quaternion,
+            target_rest_height=reset.target_rest_height,
+            group_ids=group_rows.repeat_interleave(group_size),
+            group_target_catalog_ids=reset.group_target_catalog_ids[
+                ::group_size
+            ].clone(),
+            prelifted=reset.prelifted,
+            aligned=reset.aligned,
+            curriculum_goal_xyz=None,
+        )
+
+
 def _scene_slot_positions(scene: Any) -> list[list[float]]:
     """Per-slot XYZ, with unused slots at their XML park poses."""
 
@@ -2920,6 +3268,11 @@ class RankLocalMJWarpGRPOCollector:
         vla_update_max_records: int = 128,
         episode_offset_after_grasp: bool = False,
         split_credit_at_grasp: bool = False,
+        three_stage_sparse_credit: bool = False,
+        three_stage_approach_distance_m: float = 0.03,
+        three_stage_approach_min_opening: float = 0.90,
+        three_stage_approach_max_object_displacement_m: float = 0.01,
+        three_stage_lift_height_m: float = 0.05,
         min_group_reward_std: float = 0.0,
         profile: bool = False,
     ) -> None:
@@ -2939,6 +3292,22 @@ class RankLocalMJWarpGRPOCollector:
         # terminal reward, instead of giving every step of an episode the same
         # scalar. See the two-advantage block in collect_round.
         self.split_credit_at_grasp = bool(split_credit_at_grasp)
+        self.three_stage_sparse_credit = bool(three_stage_sparse_credit)
+        if self.split_credit_at_grasp and self.three_stage_sparse_credit:
+            raise ValueError(
+                "--split-credit-at-grasp and --three-stage-sparse-credit are "
+                "alternative credit schemes; enable only one."
+            )
+        self.three_stage_approach_distance_m = float(
+            three_stage_approach_distance_m
+        )
+        self.three_stage_approach_min_opening = float(
+            three_stage_approach_min_opening
+        )
+        self.three_stage_approach_max_object_displacement_m = float(
+            three_stage_approach_max_object_displacement_m
+        )
+        self.three_stage_lift_height_m = float(three_stage_lift_height_m)
         # Drop groups whose eight candidates scored within this of each other.
         #
         # The advantage is the centred reward divided by the group std floored
@@ -3187,6 +3556,10 @@ class RankLocalMJWarpGRPOCollector:
         candidate_rewards = torch.zeros(
             (worlds,), dtype=torch.float32, device=self.device
         )
+        three_stage = ThreeStageMilestones.zeros(torch, worlds, self.device)
+        previous_opening = (
+            self.backend.low_dim_observations().gripper_opening.clone()
+        )
         sampled_actions = torch.zeros((), dtype=torch.int64, device=self.device)
         actions_per_world = torch.zeros(
             (worlds,), dtype=torch.int64, device=self.device
@@ -3203,6 +3576,12 @@ class RankLocalMJWarpGRPOCollector:
             # Which phase each record belongs to. Appended BEFORE the physics
             # step, so it reads "was this action taken while already holding?"
             record_lists["post_grasp_record"] = []
+        if self.three_stage_sparse_credit:
+            # Stage pursued by the action about to be taken: 0 approach,
+            # 1 pickup, 2 placement. Appended before physics, like the legacy
+            # grasp split, so the action that earns a milestone belongs to the
+            # milestone it was trying to earn.
+            record_lists["credit_stage"] = []
         # Per-episode exploration offset: one draw per world, drawn HERE (after
         # the reset, before the first decision) and held for the whole episode.
         # The eight candidates of a GRPO group share a start and get eight
@@ -3410,9 +3789,23 @@ class RankLocalMJWarpGRPOCollector:
             # was never the fix.
             step_offsets = episode_offsets
             step_offset_std = offset_std_row
-            if episode_offsets is not None and self.episode_offset_after_grasp:
-                holding = first_grasp_step >= 0
-                if reset.prelifted is not None:
+            if episode_offsets is not None and (
+                self.episode_offset_after_grasp
+                or self.three_stage_sparse_credit
+            ):
+                # Exact-task mode waits for the 5 cm held-lift milestone. A
+                # gripper offset immediately after contact can open the hand
+                # before pickup is earned; after M2 it explores the sustained
+                # opening that placement needs without perturbing M1/M2.
+                holding = (
+                    three_stage.picked_up
+                    if self.three_stage_sparse_credit
+                    else first_grasp_step >= 0
+                )
+                if (
+                    reset.prelifted is not None
+                    and not self.three_stage_sparse_credit
+                ):
                     # Pre-grasped worlds start holding, but first_grasp_step is
                     # only set once an env step has run. Without this they would
                     # miss the offset on decision 0 -- and they are exactly the
@@ -3530,6 +3923,17 @@ class RankLocalMJWarpGRPOCollector:
                     record_lists["post_grasp_record"].append(
                         holding_now.clone()
                     )
+                if self.three_stage_sparse_credit:
+                    credit_stage = torch.where(
+                        three_stage.approached,
+                        torch.where(
+                            three_stage.picked_up,
+                            torch.full_like(first_grasp_step, THREE_STAGE_PLACEMENT),
+                            torch.full_like(first_grasp_step, THREE_STAGE_PICKUP),
+                        ),
+                        torch.full_like(first_grasp_step, THREE_STAGE_APPROACH),
+                    )
+                    record_lists["credit_stage"].append(credit_stage)
                 if step_offset_std is not None:
                     # The width ACTUALLY in effect for this decision, gated or
                     # not. Recording the ungated constant would price a
@@ -3645,20 +4049,48 @@ class RankLocalMJWarpGRPOCollector:
                     ),
                     bilateral_contact=grasp_diagnostics["bilateral_contact"],
                 )
-                candidate_rewards.copy_(
-                    torch.where(
-                        step_active,
-                        result.rewards.to(dtype=torch.float32),
-                        candidate_rewards,
+                if self.three_stage_sparse_credit:
+                    three_stage = advance_three_stage_milestones(
+                        three_stage,
+                        reset=reset,
+                        low_dim=low_dim,
+                        result=result,
+                        physical_grasp=caught_target,
+                        gripper_command=actions[:, action_index, 4],
+                        previous_opening=previous_opening,
+                        active_mask=step_active,
+                        approach_distance_m=self.three_stage_approach_distance_m,
+                        approach_min_opening=self.three_stage_approach_min_opening,
+                        approach_max_object_displacement_m=(
+                            self.three_stage_approach_max_object_displacement_m
+                        ),
+                        lift_height_m=self.three_stage_lift_height_m,
                     )
-                )
+                    candidate_rewards.copy_(
+                        three_stage.approached.to(dtype=torch.float32)
+                        + three_stage.picked_up.to(dtype=torch.float32)
+                        + three_stage.placed.to(dtype=torch.float32)
+                    )
+                    candidate_success.copy_(three_stage.placed)
+                else:
+                    candidate_rewards.copy_(
+                        torch.where(
+                            step_active,
+                            result.rewards.to(dtype=torch.float32),
+                            candidate_rewards,
+                        )
+                    )
                 if self.split_credit_at_grasp:
                     reward_at_first_grasp = torch.where(
                         newly_grasped,
                         result.rewards.to(dtype=torch.float32),
                         reward_at_first_grasp,
                     )
-                candidate_success.logical_or_(result.success)
+                if not self.three_stage_sparse_credit:
+                    candidate_success.logical_or_(result.success)
+                previous_opening = torch.where(
+                    step_active, low_dim.gripper_opening, previous_opening
+                )
                 active.logical_and_(~result.terminated)
                 if self.reset_on_drift:
                     goal_pos = low_dim.object_positions[
@@ -3797,7 +4229,44 @@ class RankLocalMJWarpGRPOCollector:
         record_world = records.pop("world_index")
         record_post = None
         usable_pre_world = usable_terminal_world
-        if self.split_credit_at_grasp:
+        stage_usable = None
+        stage_advantage = None
+        if self.three_stage_sparse_credit:
+            milestone_returns = torch.stack(
+                (
+                    three_stage.approached,
+                    three_stage.picked_up,
+                    three_stage.placed,
+                ),
+                dim=0,
+            ).to(dtype=torch.float32).reshape(
+                THREE_STAGE_COUNT,
+                self.layout.groups_per_rank,
+                group_size,
+            )
+            stage_advantage, stage_usable = three_stage_group_credit(
+                milestone_returns,
+                normalize=self.normalize_advantage,
+                clip_abs=self.advantage_clip_abs,
+                dynamic_sampling=self.dynamic_sampling,
+                dynamic_min_pass_rate=self.dynamic_min_pass_rate,
+                dynamic_max_pass_rate=self.dynamic_max_pass_rate,
+                min_group_reward_std=self.min_group_reward_std,
+            )
+            record_stage = records["credit_stage"].to(dtype=torch.int64)
+            stage_advantage_world = stage_advantage.reshape(
+                THREE_STAGE_COUNT, worlds
+            )
+            stage_usable_world = stage_usable.repeat_interleave(
+                group_size, dim=1
+            )
+            records["advantage"] = stage_advantage_world[
+                record_stage, record_world
+            ]
+            record_usable = stage_usable_world[
+                record_stage, record_world
+            ]
+        elif self.split_credit_at_grasp:
             # Two returns per world instead of one.
             #
             # The GRPO return is the last active step's reward, and that single
@@ -3845,7 +4314,9 @@ class RankLocalMJWarpGRPOCollector:
             records["advantage"] = world_advantage.index_select(
                 0, record_world
             )
-        if record_post is None:
+        if self.three_stage_sparse_credit:
+            pass
+        elif record_post is None:
             record_usable = usable_terminal_world.index_select(0, record_world)
         else:
             record_usable = torch.where(
@@ -3854,25 +4325,92 @@ class RankLocalMJWarpGRPOCollector:
                 usable_pre_world.index_select(0, record_world),
             )
         loss_mask = record_valid & record_usable
+        if self.three_stage_sparse_credit:
+            records["loss_weight"] = stage_balanced_record_weights(
+                records["credit_stage"], loss_mask
+            )
         # A group counts as usable if EITHER return stream survived the filter.
         # With split_credit_at_grasp the two streams are filtered separately --
         # a group can separate the approach while the lift is uniform -- and a
         # group that contributes approach gradient is not a wasted rollout.
         usable_groups = informative_group & ~degenerate_terminal
-        if self.split_credit_at_grasp and self.min_group_reward_std > 0.0:
+        if self.three_stage_sparse_credit:
+            usable_groups = stage_usable.any(dim=0)
+            informative_group = usable_groups
+            degenerate_terminal = ~stage_usable[THREE_STAGE_PLACEMENT]
+        elif self.split_credit_at_grasp and self.min_group_reward_std > 0.0:
             usable_groups = usable_groups | (
                 informative_group & ~degenerate_pre
             )
         vla_records = None
         if vla_capture is not None:
             world_idx = vla_capture.pop("world_index")
-            vla_capture["advantage"] = world_advantage.index_select(
-                0, world_idx
-            )
+            if self.three_stage_sparse_credit:
+                # Capture is decision zero, hence always an approach record.
+                vla_capture["advantage"] = stage_advantage.reshape(
+                    THREE_STAGE_COUNT, worlds
+                )[THREE_STAGE_APPROACH].index_select(0, world_idx)
+            else:
+                vla_capture["advantage"] = world_advantage.index_select(
+                    0, world_idx
+                )
             # Rank-local provenance; the optimizer consumes the existing loss
             # fields, while audits can verify capture actually covered live rows.
             vla_capture["world_index"] = world_idx
             vla_records = vla_capture
+        three_stage_metrics: dict[str, float] = {}
+        if self.three_stage_sparse_credit:
+            valid_stage = records["credit_stage"][record_valid]
+            for stage, name, achieved in (
+                (THREE_STAGE_APPROACH, "approach", three_stage.approached),
+                (THREE_STAGE_PICKUP, "pickup", three_stage.picked_up),
+                (THREE_STAGE_PLACEMENT, "placement", three_stage.placed),
+            ):
+                three_stage_metrics[f"three_stage/{name}_successes"] = float(
+                    achieved.sum().item()
+                )
+                three_stage_metrics[f"three_stage/{name}_success_rate"] = float(
+                    achieved.to(dtype=torch.float32).mean().item()
+                )
+                three_stage_metrics[f"three_stage/{name}_usable_groups"] = float(
+                    stage_usable[stage].sum().item()
+                )
+                three_stage_metrics[f"three_stage/{name}_records"] = float(
+                    (valid_stage == stage).sum().item()
+                )
+                for destination, instruction_name in (
+                    ("plate", "put_into_plate"),
+                    ("bowl", "put_into_bowl"),
+                ):
+                    world_destination = (
+                        reset.task_state.instruction_ids
+                        == int(INSTRUCTION_TO_ID[instruction_name])
+                    )
+                    destination_worlds = int(world_destination.sum().item())
+                    three_stage_metrics[
+                        f"three_stage/{destination}_{name}_success_rate"
+                    ] = float(
+                        (achieved & world_destination).sum().item()
+                        / max(1, destination_worlds)
+                    )
+                    group_destination = (
+                        reset.group_instruction_ids
+                        == int(INSTRUCTION_TO_ID[instruction_name])
+                    )
+                    three_stage_metrics[
+                        f"three_stage/{destination}_{name}_usable_groups"
+                    ] = float(
+                        (stage_usable[stage] & group_destination).sum().item()
+                    )
+            three_stage_metrics["three_stage/cumulative_score_mean"] = float(
+                candidate_rewards.mean().item()
+            )
+            three_stage_metrics["three_stage/carry_slip_rate"] = float(
+                three_stage.carry_slip.to(dtype=torch.float32).mean().item()
+            )
+            three_stage_metrics["three_stage/wrong_place_rate"] = float(
+                three_stage.wrong_place.to(dtype=torch.float32).mean().item()
+            )
         self._sync_for_profile()
         total_time = reset_time + sum(timings.values())
         grasp_observations = float(
@@ -3946,6 +4484,7 @@ class RankLocalMJWarpGRPOCollector:
             return float(group_reward_std[selected].mean().item())
         metrics = {
             **timings,
+            **three_stage_metrics,
             "reset_time_s": float(reset_time),
             "rollout_time_s": float(total_time),
             "sampled_environment_actions": float(sampled_actions.item()),
@@ -4238,6 +4777,10 @@ class RankLocalMJWarpGRPOCollector:
         candidate_rewards = torch.zeros(
             (worlds,), dtype=torch.float32, device=self.device
         )
+        three_stage = ThreeStageMilestones.zeros(torch, worlds, self.device)
+        previous_opening = (
+            self.backend.low_dim_observations().gripper_opening.clone()
+        )
         final_xy_distance = torch.full(
             (worlds,),
             float("nan"),
@@ -4402,13 +4945,41 @@ class RankLocalMJWarpGRPOCollector:
                             "bilateral_contact"
                         ],
                     )
-                    candidate_rewards.copy_(
-                        torch.where(
-                            step_active,
-                            result.rewards.to(dtype=torch.float32),
-                            candidate_rewards,
+                    if self.three_stage_sparse_credit:
+                        three_stage = advance_three_stage_milestones(
+                            three_stage,
+                            reset=reset,
+                            low_dim=low_dim,
+                            result=result,
+                            physical_grasp=caught_target,
+                            gripper_command=actions[:, action_index, 4],
+                            previous_opening=previous_opening,
+                            active_mask=step_active,
+                            approach_distance_m=(
+                                self.three_stage_approach_distance_m
+                            ),
+                            approach_min_opening=(
+                                self.three_stage_approach_min_opening
+                            ),
+                            approach_max_object_displacement_m=(
+                                self.three_stage_approach_max_object_displacement_m
+                            ),
+                            lift_height_m=self.three_stage_lift_height_m,
                         )
-                    )
+                        candidate_rewards.copy_(
+                            three_stage.approached.to(dtype=torch.float32)
+                            + three_stage.picked_up.to(dtype=torch.float32)
+                            + three_stage.placed.to(dtype=torch.float32)
+                        )
+                        candidate_success.copy_(three_stage.placed)
+                    else:
+                        candidate_rewards.copy_(
+                            torch.where(
+                                step_active,
+                                result.rewards.to(dtype=torch.float32),
+                                candidate_rewards,
+                            )
+                        )
                     final_xy_distance.copy_(
                         torch.where(
                             step_active,
@@ -4418,7 +4989,11 @@ class RankLocalMJWarpGRPOCollector:
                             final_xy_distance,
                         )
                     )
-                    candidate_success.logical_or_(result.success)
+                    if not self.three_stage_sparse_credit:
+                        candidate_success.logical_or_(result.success)
+                    previous_opening = torch.where(
+                        step_active, low_dim.gripper_opening, previous_opening
+                    )
                     active.logical_and_(~result.terminated)
                     self._sync_for_profile()
                     timings["validation/reward_time_s"] += (
@@ -4455,6 +5030,46 @@ class RankLocalMJWarpGRPOCollector:
                 ),
                 "validation/episodes_per_rank": float(worlds),
                 "validation/controller_ceiling_z_m": float(ceiling_z),
+                **(
+                    {
+                        "validation/three_stage_approach_rate": float(
+                            three_stage.approached.float().mean().item()
+                        ),
+                        "validation/three_stage_pickup_rate": float(
+                            three_stage.picked_up.float().mean().item()
+                        ),
+                        "validation/three_stage_placement_rate": float(
+                            three_stage.placed.float().mean().item()
+                        ),
+                        "validation/three_stage_carry_slip_rate": float(
+                            three_stage.carry_slip.float().mean().item()
+                        ),
+                        "validation/three_stage_wrong_place_rate": float(
+                            three_stage.wrong_place.float().mean().item()
+                        ),
+                        **{
+                            f"validation/three_stage_{destination}_{name}_rate": float(
+                                (achieved & destination_mask).sum().item()
+                                / max(1, int(destination_mask.sum().item()))
+                            )
+                            for destination, instruction_name in (
+                                ("plate", "put_into_plate"),
+                                ("bowl", "put_into_bowl"),
+                            )
+                            for name, achieved in (
+                                ("approach", three_stage.approached),
+                                ("pickup", three_stage.picked_up),
+                                ("placement", three_stage.placed),
+                            )
+                            for destination_mask in (
+                                reset.task_state.instruction_ids
+                                == int(INSTRUCTION_TO_ID[instruction_name]),
+                            )
+                        },
+                    }
+                    if self.three_stage_sparse_credit
+                    else {}
+                ),
             },
         )
 
@@ -4474,6 +5089,13 @@ def concatenate_collector_rounds(
         for key in keys
     }
     mask = torch.cat([item.loss_mask for item in rounds], dim=0)
+    if "credit_stage" in records:
+        # Rebalance after DAPO refill concatenation. Per-round balancing is not
+        # sufficient when one round has placement contrast and another does
+        # not; the optimizer consumes the concatenated update.
+        records["loss_weight"] = stage_balanced_record_weights(
+            records["credit_stage"], mask
+        )
     rewards = torch.cat([item.candidate_rewards for item in rounds], dim=0)
     successes = torch.cat([item.candidate_success for item in rounds], dim=0)
     ever_grasped = (

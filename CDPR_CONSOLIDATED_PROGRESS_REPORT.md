@@ -2,8 +2,8 @@
 
 **Living report — current through 2026-09-12, Europe/Moscow**
 
-**Repository state reviewed:** `711aee1` plus the bounded-SFT runner correction
-and the 2026-09-12 attached-result review in the newest ledger entry
+**Repository state reviewed:** `ecd94cc` plus the 2026-09-12 expanded-bank SFT
+result review and staged-sparse GRPO design in the newest ledger entry
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
@@ -25,17 +25,22 @@ user-confirmed fixed calibrated pickup yaw, stage-balanced SFT sampling and
 full-task evaluation. It includes a provisional teacher shortlist and the
 repository change map.
 
-**Implementation status, 2026-09-12:** the specification's
-whole change map is now implemented and unit-tested locally — the scene/yaw
-contract, the continuous three-stage recorder, teacher screening, the dataset
-builder, the prior refresh and SFT changes, and the unassisted full-task
-evaluation. See §7.16. The complete remote bank now contains 3,968 chains,
-71 strict successes and 26,227 verified transition rows; all rows refreshed
-from frames under the final prompt. Residual Arm B produced the first two
-unassisted strict successes (2/128) but regressed approach/grasp/lift and is
-not promoted. The declared 1/2/4-epoch schedule did not run because
-`CHECK_EPOCHS` was unused; the runner is corrected locally. See the newest
-§14 entry for the measured ladder, protocol qualifications and next gates.
+**Implementation status, 2026-09-12:** the specification's whole change map is
+implemented and unit-tested locally — the scene/yaw contract, continuous
+three-stage recorder, teacher screening, dataset builder, prior refresh and
+SFT changes, downstream-only expansion, and unassisted full-task evaluation.
+See §7.16. The combined transition bank has **31,892 rows over 842 scenes**:
+20,648 move-to, 6,931 pickup and 4,313 placement. Expansion preserved the old
+20,648 move rows and appended 5,665 pickup/placement rows from 325 new scenes;
+all 31,892 rows refreshed from frames under the final prompt. On the matched
+128-chain validation, expanded Arm B reaches **2/128 strict** and expanded Arm
+C reaches **5/128 strict**, tying rather than beating the `step_2117145`
+initializer and falling below its 23-lift retention floor (20 lifts). Arm C
+shifts success toward plate (**5/54**) while bowl falls to **0/74**. The
+pre-declared pure-SFT continuation gate therefore fails. Do not run `final_test`
+or add SFT epochs; the next recommended training leg is exact-full-task GRPO
+with three predicate-defined sparse milestone returns. See the newest §14
+entry for checkpoint paths, full counts and the reward design.
 The yaw calibration is
 kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
 **0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
@@ -64,6 +69,20 @@ The central idea is now demonstrated end to end:
 > Start from a pretrained SmolVLA action prior, learn task-specific corrections with a compact residual policy and GRPO, harvest successful trajectories, preserve them in a retention bank, and alternate family-specific RL with balanced residual SFT so one adapter can recover old skills while adding or strengthening a new one.
 
 ### Current headline achievements
+
+**Latest completed experiment, 2026-09-12: downstream expansion improves the
+offline fit but does not improve the joint full-task policy.** The combined
+bank contains **31,892 rows / 842 scenes** with 100% frame coverage. Relative
+to the original bank it adds 3,552 pickup and 2,113 placement rows from 325
+new scenes and adds no move-to rows. Stage/destination-balanced residual SFT
+then action-expert LoRA reaches **5/128 = 3.91% strict**: plate **5/54 =
+9.26%**, bowl **0/74**. This ties the selected initializer's total strict count
+while moving it from 4 plate + 1 bowl to 5 plate + 0 bowl and reducing lifts
+from 23 to 20. LoRA validation MSE nevertheless falls monotonically to
+0.14686. This is direct evidence that lower imitation loss is not the model
+selection metric. The result fails the declared 7/128 strict and 23-lift gate;
+stop pure SFT here and preserve `final_test`. Exact checkpoint paths and the
+next staged-sparse GRPO design are in the newest §14 entry.
 
 **Latest completed experiment, 2026-09-10: demonstration-start GRPO shows no
 ordinary-evaluation improvement.** `demo_grpo_pilot_20260910_110040` completes
@@ -147,6 +166,7 @@ on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 | Latest and strongest reported single policy | Cycle 3: pick-up **0.1191**, move-to **0.4779**, plate **0.7383**, bowl **0.5353** | Report and 20 placement videos supplied; Cycle 3 adapter not supplied locally |
 | Data-scaling result | Raising the balanced slice from about 6k to 26k decisions per instruction moved move-to from **48.5% to 67.3%** of its reference and pick-up from **37.1% to 66.8%** of its source | Confirmed by Cycle 2 SFT artifact and Phase 5 evaluation |
 | Self-imitation data pipeline | Record → smooth → replay → pool → rebalance → refresh current priors/state → residual SFT → multi-family evaluation | Implemented, tested in-project, and used for Cycles 1–3 |
+| Three-stage full-task SIL, expanded bank | 31,892 rows / 842 scenes; expanded Arm C **5/128 strict**, plate **5/54**, bowl **0/74**, with 20 lifts | Valid negative result: ties the initializer's total, fails the 7/128 + 23-lift gate, no `final_test` |
 | **Composed `put_into` is measurable for the first time** | Phase 6 seed `sft_phase6`: uncaught plate **0.0935** (80/856), uncaught bowl **0.0265** (18/680), against 0.0046 and 0.0114 for Cycle 3 under the identical protocol | Four evaluations run by `scripts/run_cdpr_phase6_compose_seed.sh`; adapter retained locally |
 | Composed demonstrations come from a scripted oracle, not a policy | Oracle on the composed task: plate **1.000**, bowl **0.427** in smoke, plate **0.909** / bowl **0.455** pooled over 8192 worlds at cap 0.20 | 12 harvest rounds retained; replay survival 0.998–1.000 |
 | Composition RL now anneals the pre-grasped start | `phase6_compose_iter0`: caught fraction **1.0 → 0.9 → 0.8**; validation peak **0.6240** overall (plate 0.7571, bowl 0.4634) at step 4 257 133 | TensorBoard event file; caught-dominated validation protocol, see §8.4 |
@@ -179,6 +199,10 @@ grasp, carry, and release from the desk.
 | Phase 5 — Cycle 3 four-family policy | Three-round `sil_record` evaluation | **0.4779** (734/1536) | **0.1191** (183/1536) | **0.7383** caught (632/856); 0.0046 composed (10/2168) | **0.5353** caught (364/680); 0.0114 composed (22/1928) |
 | Phase 6 — composed SFT seed `sft_phase6` | Three-round `sil_record`; explicit caught and composed legs | **0.4798** (737/1536) | **0.1491** (229/1536) | 0.7150 caught (612/856); **0.0935 composed** (80/856) | 0.4794 caught (326/680); **0.0265 composed** (18/680) |
 | Phase 6 — composition RL peak `step_4257133` | In-run validation, 80–90% caught starts; 0.6240 overall | — | — | **0.7571** mixed/caught-dominated | **0.4634** mixed/caught-dominated |
+| Three-stage initializer `step_2117145` | Empty-start, one final prompt, 128-chain `student_validation`; strict | — | — | **0.0741** (4/54) | **0.0135** (1/74) |
+| Three-stage old-bank Arm C | Same empty-start strict protocol | — | — | 0.0185 (1/54) | **0.0405** (3/74) |
+| Three-stage expanded Arm B | Same empty-start strict protocol | — | — | 0.0185 (1/54) | 0.0135 (1/74) |
+| Three-stage expanded Arm C | Same empty-start strict protocol | — | — | **0.0926** (5/54) | **0.0000** (0/74) |
 
 These rows are a chronology, not a single leaderboard. Dedicated validation,
 bank-harvest evaluation, caught placement, composed placement, and mixed
@@ -1415,21 +1439,40 @@ release ramp and been struck from **the headline number of the project** — a
 zero that would have looked like a policy result. It is fixed and the two live
 callers now import one function.
 
-**Retained results:** at 0.06–0.10 m starts the reach predicate is met on
-21/64 scenes by `step_11009573` and 13/64 by `step_3416645` with the gripper
-hold on, and on 29–35/64 by `step_3416645` without it; alignment converts
-71–75% of reaches; **the grasp converts 0 of 48 across three screens** with the
-handoff XY error above the lateral slack on essentially every chain. **No
-teacher is ranked** — every screen so far has been floored by a protocol gate,
-and the pickup and placement roles have never been compared on a chain that
-arrives graspable.
+**Completed bank and SFT result.** The original bank contained 26,227
+transition rows over 517 scenes. The downstream-only expansion preserved all
+20,648 move-to rows and appended **5,665 rows from 325 disjoint scenes**:
+3,552 pickup and 2,113 placement. The combined bank therefore contains
+**31,892 rows / 842 scenes**: 20,648 move-to, 6,931 pickup and 4,313 placement.
+All rows resolve to frames and were refreshed under `step_2117145` with the
+final destination prompt. The refresh integrity ratio is 4.316, below its 5.0
+warning threshold, and the action-expert pre-gradient frame/state control ratio
+is 0.995. The pipeline is no longer blocked on teacher yield, frame joins or
+residual reachability.
 
-**What this pipeline still cannot tell you.** Whether any teacher triple
-produces usable chains at a usable rate; whether the relabelled prefix is
-inside the residual's bounded correction range under the final prompt; and
-whether the student learns the alignment rather than needing the servo. The
-first two are the first GPU steps; the third is the `--assisted-yaw` diagnostic
-arm reported beside the unassisted headline.
+The expanded residual Arm B draws 9,574 / 9,498 / 9,600 supervised actions
+from move-to / pickup / placement, confirming that stage balancing changes
+gradient exposure despite the raw row imbalance. It scores **2/128 strict**.
+Arm C adapts 112 action-expert modules (3,416,064 trainable parameters; vision
+tower unchanged) over 8 LoRA epochs. Its validation MSE falls monotonically to
+**0.14685766** at epoch 7, but its policy scores only **5/128 strict**: plate
+5/54, bowl 0/74, with 20 lifts. The selected initializer is also 5/128 strict
+but has plate 4/54, bowl 1/74 and 23 lifts. More diverse downstream data
+therefore improves the offline fit and late conditional ladder while trading
+away prefix coverage and destination balance. It does not clear the declared
+7/128 strict plus 23-lift continuation gate.
+
+**Retained decision:** stop pure SFT on this branch, preserve `final_test`, and
+use `step_2117145` as the exact-full-task GRPO seed. It ties Arm C on strict
+success while retaining the stronger prefix and nonzero success on both
+destinations. The proposed GRPO reward is staged sparse rather than geometric
+dense shaping: one irreversible milestone each for a valid approach, a held
+5 cm lift, and strict placement. These milestones must be three separate
+phase-local GRPO return streams, with stage losses normalized before they are
+averaged; a single cumulative 0/1/2/3 terminal scalar broadcast over every
+action would repeat the credit-assignment error already measured for grasp
+versus lift. The final checkpoint remains selected on binary strict full-chain
+success, reported separately for plate and bowl, not on the training score.
 
 ---
 
@@ -1890,6 +1933,116 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-12 — Expanded downstream bank does not clear SIL gate; staged-sparse exact-task GRPO is next
+
+- Git state used by the runner: `ecd94cc` (`Add downstream-only staged dataset
+  expansion`). Evidence: the supplied expanded-bank refresh, Arm-B/Arm-C SFT
+  reports, matched evaluations and durable SFT log. The remote NPZs and model
+  files were not supplied locally, so their report paths are recorded but model
+  bytes/checksums are not independently verified here.
+- Dataset: `runs/three_stage_downstream_expand_20260912/dataset/stage_transitions.npz`
+  feeds the refreshed derived dataset at
+  `runs/three_stage_expanded_bowl_init_bc_e1/dataset_refreshed/demonstrations.npz`.
+  It has **31,892 rows / 842 scenes** and 126,396 supervised action slots:
+  20,648 move-to, 6,931 pickup and 4,313 placement. Expansion adds 5,665 rows
+  from 325 new scenes — 3,552 pickup and 2,113 placement — with zero repeated
+  scenes and no added move-to rows. Refresh resolves 31,892/31,892 frames by
+  `episode_uid`; the integrity ratio is 4.316 and passes the declared 5.0 gate.
+- Training: both arms start from
+  `runs/release_recovery_continue_3m_20260908_102004/rl/step_2117145/smolvla_grpo_adapter.pt`.
+  Arm B is one balanced residual epoch: 56 updates / 113,005 sampled actions,
+  with realized stage draws 9,574 move-to, 9,498 pickup and 9,600 placement.
+  Arm C starts from that residual and adapts 112 action-expert LoRA modules
+  (3,416,064 parameters; no vision modules) for eight epochs over an 8,192-row
+  budget. Its LoRA validation MSE falls every epoch from 0.17401 to **0.14686**
+  at epoch 7; the pre-gradient frame/state integrity ratio is 0.995.
+
+| checkpoint | remote path | native | strict | plate strict | bowl strict | approach / grasp / lift / release | status |
+|---|---|---:|---:|---:|---:|---:|---|
+| selected initializer | `runs/release_recovery_continue_3m_20260908_102004/rl/step_2117145/smolvla_grpo_adapter.pt` | 6/128 | **5/128** | **4/54** | **1/74** | 44 / 73 / 23 / 8 | recommended exact-task GRPO seed |
+| old-bank Arm C | `runs/three_stage_full_bowl_init_armC_e1/sft_armC/sil_sft_adapter.pt` | 7/128 | 4/128 | 1/54 | **3/74** | 49 / 64 / 27 / 11 | diagnostic; strongest bowl/lift SFT arm |
+| expanded Arm B | `runs/three_stage_expanded_bowl_init_bc_e1/sft_armB/sil_sft_adapter.pt` | 4/128 | 2/128 | 1/54 | 1/74 | 46 / 59 / 25 / 9 | rejected residual-only arm |
+| expanded Arm C | `runs/three_stage_expanded_bowl_init_bc_e1/sft_armC/sil_sft_adapter.pt` | 7/128 | **5/128** | **5/54** | 0/74 | 38 / 44 / 20 / 9 | diagnostic plate-specialized arm; gate failed |
+
+- All four rows use the same empty-start, unassisted, one-final-prompt
+  `student_validation` contract: 128 chains over 64 scene clusters (54 plate,
+  74 bowl), no settle decisions. Expanded Arm C improves the late conditionals
+  and plate count but reduces approach, grasp and lift and eliminates bowl
+  strict success. It ties rather than beats the initializer on the primary
+  metric and fails both declared continuation constraints: at least 7/128
+  strict and at least 23 lifts. `RETENTION_FRACTION=0.0`, so this is also a
+  composition-only ablation rather than a retention-qualified candidate.
+- Decision: no more pure-SFT epochs and no `final_test`. Use the initializer as
+  the exact-full-task GRPO seed because it ties the best strict count, retains
+  the stronger prefix and is nonzero on both destinations. Keep the old-bank
+  Arm C as a diagnostic bowl/lift reference, not as the joint-task seed.
+- Existing unmodified sparse GRPO is insufficient for this seed. With
+  `sparse_binary_reward=true`, shaping weights are zero and a `put_into`
+  trajectory receives terminal success/failure from `container_ok`; the MJWarp
+  collector keeps the last active-step reward and normally broadcasts its one
+  group advantage to every action. The optional current split creates only
+  pre-/post-grasp streams. It does not represent the three full-task stages.
+- Implemented reward: three irreversible, ordered,
+  predicate-defined sparse milestones. **M1 approach (+1):** enter the 3 cm
+  grasp-point neighbourhood with the gripper open and object not displaced.
+  **M2 pickup (+1):** after M1, establish the production persistent physical
+  grasp and lift the object at least 5 cm while held. **M3 placement (+1):**
+  after M2, meet the existing strict destination contract — correct receptacle,
+  intentional release, settled geometry, no carry slip and no wrong placement.
+  The cumulative episode score is therefore 0/1/2/3 and each milestone is paid
+  once; no distance, force, velocity or per-step survival shaping is added.
+- Credit assignment is the load-bearing part: compute a separate binary GRPO
+  return and group-advantage stream for each segment. The action that triggers
+  M1 belongs to the approach segment; the action that triggers M2 belongs to
+  pickup; later actions belong to placement. Filter zero-variation groups per
+  stream, normalize each nonempty stage loss independently, then average the
+  three stage losses so the longer approach does not dominate by record count.
+  A single cumulative terminal scalar broadcast to the whole trajectory would
+  reward approach actions for later placement luck and repeat the measured
+  grasp/lift credit-conflict failure.
+- Training remains exact task: ordinary empty starts from the scene manifest,
+  one `put <object> into <plate/bowl>` prompt from step zero, no teacher, servo,
+  stage reset or prompt switch. Sample plate and bowl groups equally and report
+  per-stage pass rate, reward spread and usable-group fraction separately by
+  destination. Checkpoint selection remains **binary strict full-chain
+  success**, plate and bowl separately, with the initializer's 23 lifts as the
+  first retention floor. The 0/1/2/3 score is a learning signal, not the
+  headline metric.
+- Implementation landed in
+  `rl_vla_bootstrapping/policy/mjwarp_rank_local_collector.py` and
+  `smolvla_grpo_mjwarp_cdpr.py`. `GroupedFullTaskSceneResetter` assigns one
+  verified collection scene to each group and repeats it across the eight
+  candidates. `ThreeStageMilestones` latches the ordered predicates. The
+  collector emits `credit_stage`, computes three independent group-relative
+  advantages and per-stream usability masks, then emits `loss_weight` so each
+  represented stage has equal total loss mass. The trainer normalizes
+  advantages within `credit_stage` and applies that loss weight. Legacy
+  `split_credit_at_grasp` remains unchanged and is mutually exclusive with the
+  new mode. The selected checkpoint's action-expert LoRA is attached and loaded
+  but frozen for this bounded run: the existing LoRA capture contains only
+  decision-zero rows and therefore cannot balance pickup and placement credit
+  honestly; all three streams update the residual actor.
+- Validation uses the same milestone machine on the disjoint
+  `student_validation` split, so its `candidate_success` is strict M3 rather
+  than cumulative score. It logs approach, pickup, strict placement, carry
+  slip and wrong-place rates; training also logs per-stage successes, records
+  and usable groups. `final_test` is not selectable by the supplied runner.
+- Remote entry point:
+  `bash scripts/train_cdpr_three_stage_sparse_grpo_remote.sh`. Defaults are the
+  selected `step_2117145` initializer, `runs/three_stage/scenes_8192.json`, a
+  128-decision horizon, 512 worlds per rank on two GPUs and a bounded 3M-step
+  run. The runner preflights sparse mode, split names, horizon, LoRA compatibility
+  and manifest contents, then saves the durable transcript to `train.log`.
+- Supplied evidence SHA-256: SFT log
+  `da02d038cda9b0d94902c4c4e12241da558a430abfe8cc1da53aa8b16bf11128`;
+  refresh `c113c61a684ffe2bc5d20d8004efd950144d2da55a8e1e9458c882b160c00a85`;
+  Arm-B SFT `0deb129ad863ce7ad7e789bcdde5912b4bcd099074ef1f5a9b1cb74098a32f06`;
+  Arm-C SFT `c45af0b96b792391c154486ab29f30d2c5d7ed0d35ab9c3eec80a77eb4745306`;
+  Arm-B evaluation
+  `294b4beafac325a9ddfbcf5acf586311a77552e3b1f9391187b7d449e7042528`;
+  Arm-C evaluation
+  `7d15e93b9bc627d5fe143661a974db337a9bdbee1d77671504f974bce54acea0`.
 
 ### 2026-09-12 — Student-initializer screen selects `step_2117145` for bounded SIL
 

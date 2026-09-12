@@ -31,6 +31,7 @@ except Exception:  # pragma: no cover - the pinned MJLab env includes tqdm.
 from rl_vla_bootstrapping.core.config import load_project_config
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     BatchedReverseFrontierResetter,
+    GroupedFullTaskSceneResetter,
     RankLocalCurriculum,
     RankLocalMJWarpGRPOCollector,
     ValidationRound,
@@ -71,6 +72,10 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
     ACTIVE_CDPR_CATALOGS,
     OBJECT_VARIANTS,
+)
+from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import (
+    read_manifest,
+    select_split,
 )
 
 
@@ -1695,6 +1700,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             distributed=dist_ctx,
         )
         train_vla_lora = bool(getattr(args, "train_vla_lora", False))
+        update_vla_lora = train_vla_lora and bool(
+            getattr(args, "vla_lora_updates_enabled", True)
+        )
         lora_info: dict[str, float] = {}
         if train_vla_lora:
             lora_info = trainer.attach_vla_lora(runtime)
@@ -1716,6 +1724,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"{vision_state}; "
                 f"{lora_info['vla_lora/trainable_params']:.0f} trainable params",
             )
+            if not update_vla_lora:
+                _log(
+                    dist_ctx,
+                    "[smolvla-mjwarp] loaded LoRA is frozen for this GRPO run; "
+                    "only the residual actor receives milestone-balanced updates",
+                )
         simulator_metadata = _runtime_metadata(args, backend)
         global_step = 0
         # 1.0 when the starting policy came through sil_sft, 0.0 when it did
@@ -1891,7 +1905,56 @@ def main(argv: Sequence[str] | None = None) -> None:
             not reverse_frontier_active
             and tuple(args.instruction_types or ()) == ("move_to_object",)
         )
-        if random_workspace_move_to:
+        three_stage_sparse_credit = bool(
+            getattr(args, "three_stage_sparse_credit", False)
+        )
+        full_task_scenes = None
+        manifest_path = ""
+        if three_stage_sparse_credit:
+            if not _metadata_flag(task_metadata, "sparse_binary_reward", False):
+                raise RuntimeError(
+                    "Three-stage credit requires sparse_binary_reward=true; "
+                    "dense shaping must not leak across milestone streams."
+                )
+            manifest_path = os.environ.get(
+                "RLVLA_CDPR_THREE_STAGE_SCENE_MANIFEST",
+                str(getattr(args, "three_stage_scene_manifest", "")),
+            ).strip()
+            if not manifest_path:
+                manifest_path = str(
+                    task_metadata.get("three_stage_scene_manifest", "")
+                ).strip()
+            if not manifest_path:
+                raise RuntimeError(
+                    "Three-stage credit requires --three-stage-scene-manifest "
+                    "or RLVLA_CDPR_THREE_STAGE_SCENE_MANIFEST."
+                )
+            full_task_scenes, _manifest = read_manifest(
+                Path(manifest_path).expanduser().resolve()
+            )
+            train_scenes = select_split(
+                full_task_scenes, str(args.three_stage_train_split)
+            )
+            resetter = GroupedFullTaskSceneResetter(
+                backend=backend,
+                layout=layout,
+                scenes=train_scenes,
+                horizon_decisions=int(args.three_stage_horizon_decisions),
+                base_seed=int(args.seed),
+                rank=dist_ctx.rank,
+                support_surface_z=float(task_metadata.get("support_surface_z", 0.15)),
+                task_metadata=task_metadata,
+            )
+            reverse_frontier_active = False
+            random_workspace_move_to = False
+            _log(
+                dist_ctx,
+                "[smolvla-mjwarp] three-stage sparse credit: "
+                f"{len(train_scenes)} {args.three_stage_train_split} scenes, "
+                f"horizon={int(args.three_stage_horizon_decisions)}, manifest="
+                f"{Path(manifest_path).expanduser().resolve()}",
+            )
+        elif random_workspace_move_to:
             resetter = BatchedRandomWorkspaceMoveToResetter(
                 **resetter_kwargs,
                 task_metadata=task_metadata,
@@ -1919,7 +1982,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             catch_release_dense_reward=catch_release_dense_reward,
             include_relative_target=include_relative_target,
             vision_feature_dim=vision_feature_dim,
-            store_vla_records=train_vla_lora,
+            store_vla_records=update_vla_lora,
             vla_update_max_records=int(
                 getattr(args, "vla_update_max_records", 128)
             ),
@@ -1929,6 +1992,17 @@ def main(argv: Sequence[str] | None = None) -> None:
             split_credit_at_grasp=bool(
                 getattr(args, "split_credit_at_grasp", False)
             ),
+            three_stage_sparse_credit=three_stage_sparse_credit,
+            three_stage_approach_distance_m=float(
+                args.three_stage_approach_distance_m
+            ),
+            three_stage_approach_min_opening=float(
+                args.three_stage_approach_min_opening
+            ),
+            three_stage_approach_max_object_displacement_m=float(
+                args.three_stage_approach_max_object_displacement_m
+            ),
+            three_stage_lift_height_m=float(args.three_stage_lift_height_m),
             min_group_reward_std=float(
                 getattr(args, "grpo_min_group_reward_std", 0.0)
             ),
@@ -1936,6 +2010,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         demonstration_training = None
         demo_bank_path = os.environ.get("RLVLA_CDPR_DEMO_BANK", "").strip()
+        if three_stage_sparse_credit and demo_bank_path:
+            raise RuntimeError(
+                "Three-stage exact-task credit cannot be combined with "
+                "RLVLA_CDPR_DEMO_BANK; its phase-local records come only from "
+                "fresh manifest rollouts."
+            )
         if demo_bank_path:
             from rl_vla_bootstrapping.policy.cdpr_demonstration_training import DemonstrationTraining
             demonstration_training = DemonstrationTraining(
@@ -1951,7 +2031,23 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "rehearsal_probability": 0.0,
                 "balanced_target_catalogs": True,
             }
-            if random_workspace_move_to:
+            if three_stage_sparse_credit:
+                validation_scenes = select_split(
+                    full_task_scenes, str(args.three_stage_validation_split)
+                )
+                validation_resetter = GroupedFullTaskSceneResetter(
+                    backend=backend,
+                    layout=layout,
+                    scenes=validation_scenes,
+                    horizon_decisions=int(args.three_stage_horizon_decisions),
+                    base_seed=int(args.validation_seed),
+                    rank=dist_ctx.rank,
+                    support_surface_z=float(
+                        task_metadata.get("support_surface_z", 0.15)
+                    ),
+                    task_metadata=task_metadata,
+                )
+            elif random_workspace_move_to:
                 validation_resetter = (
                     BatchedRandomWorkspaceMoveToResetter(
                         **validation_resetter_kwargs,
@@ -1989,12 +2085,25 @@ def main(argv: Sequence[str] | None = None) -> None:
                 catch_release_dense_reward=catch_release_dense_reward,
                 include_relative_target=include_relative_target,
                 vision_feature_dim=vision_feature_dim,
+                three_stage_sparse_credit=three_stage_sparse_credit,
+                three_stage_approach_distance_m=float(
+                    args.three_stage_approach_distance_m
+                ),
+                three_stage_approach_min_opening=float(
+                    args.three_stage_approach_min_opening
+                ),
+                three_stage_approach_max_object_displacement_m=float(
+                    args.three_stage_approach_max_object_displacement_m
+                ),
+                three_stage_lift_height_m=float(args.three_stage_lift_height_m),
                 profile=bool(args.mjwarp_profile_timers),
             )
 
         scene_curriculum_steps = _scene_object_curriculum_steps(task_metadata)
-        configured_instruction_names = tuple(
-            args.instruction_types or (ACTIVE_INSTRUCTION_TYPES[0],)
+        configured_instruction_names = (
+            ("put_into_plate", "put_into_bowl")
+            if three_stage_sparse_credit
+            else tuple(args.instruction_types or (ACTIVE_INSTRUCTION_TYPES[0],))
         )
         approach_curriculum = PerInstructionApproachCurriculum(
             task_metadata, instruction_types=configured_instruction_names
@@ -2216,7 +2325,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             torch.cuda.synchronize(device)
             update_metrics["update_time_s"] = time.perf_counter() - update_timer
 
-            if train_vla_lora:
+            if update_vla_lora:
                 # Every rank must call update_vla_lora (it issues a collective to
                 # sync LoRA grads), even with an empty batch, to stay in lockstep.
                 vla_batches = [

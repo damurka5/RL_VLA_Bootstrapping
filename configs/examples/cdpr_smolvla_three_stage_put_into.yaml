@@ -17,8 +17,7 @@ remote:
     NCCL_DEBUG: WARN
   notes:
     - THREE-STAGE put_into COLLECTION AND SFT. Implements CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md. Derived from cdpr_smolvla_phase7_sparse_joint by changing the scene/reset route, adding the yaw contract and the stage budgets, and nothing else - so the reward objects, the success predicate geometry and the observation contract are the phase-7 ones and a difference against that file is attributable to those changes.
-    - THIS CONFIG DOES NOT TRAIN. It is consumed by tools/audit/record_cdpr_staged_put_into.py, select_cdpr_stage_teachers.py and evaluate_cdpr_full_put_into.py, which build the plant, the runtime and the predicates from it and run no optimizer. The SFT is a separate entry point over the recorded bank.
-    - THE RESET ROUTE IS NOT THIS FILE'S CURRICULUM. FullTaskSceneResetter places one manifest scene per world and reads only pick_grasp_height_offset, support_surface_z and the two put_*_xy_tolerance values from the metadata below. Every random_workspace_* and placement_caught_* key is retained verbatim from phase 7 so a GRPO run started from this file behaves exactly as that one did; the staged tools never consult them.
+    - This config serves both the staged collection/SFT tools and the explicit three-stage GRPO route. GRPO selects GroupedFullTaskSceneResetter, repeats one verified manifest scene across each candidate group, and keeps the final put_into prompt from step zero. The legacy curriculum fields remain for provenance but do not own this reset.
     - WHY THE CONTAINER RESET HAD TO BE BYPASSED. The uncaught container reset overwrites the end-effector XY with the object's, one centimetre above the grasp point, so a composed episode has no approach at all - and 92.6% of composed plate episodes measured under it began with the object already inside the 0.091 m success radius. The full-task scene manifest starts the gripper 0.06-0.10 m away and the object at least (success radius + 0.04) m from its receptacle.
     - SUCCESS GEOMETRY IS UNCHANGED AND MUST STAY THAT WAY. put_plate_xy_tolerance 0.091, put_bowl_xy_tolerance 0.057, put_container_z_tolerance 0.12, pick_lift_success_height 0.05. Scene generation reads these; it never widens them. A bank collected against a looser radius would be demonstrations of an easier task while every number reported about it said otherwise.
     - sparse_binary_reward stays TRUE. It zeroes the dense shaping weights and leaves all predicate geometry alone. The staged tools score with the predicates and never read a reward, so the flag is inert here - it is kept so a GRPO leg launched from this file is comparable with phase 7.
@@ -106,14 +105,14 @@ task:
     # recorded here so a bank's provenance is a config diff rather than a
     # shell history, and every tool that consumes them re-verifies the file
     # it is handed (hash, contract fields, calibration provenance).
-    three_stage_scene_manifest: runs/three_stage/scenes.json
+    three_stage_scene_manifest: runs/three_stage/scenes_8192.json
     three_stage_yaw_calibration: runs/three_stage/yaw_calibration.json
     three_stage_selected_teachers: runs/three_stage/teacher_selection/selected_teachers.json
     # The student initialization is a SEPARATE decision from the teacher
     # choice. step_3540208 is the provisional pick because it is a recent
     # complete shared adapter with an audited baseline -- confirm its
     # full-task baseline (arm A) before reading any SFT result against it.
-    three_stage_student_initializer: runs/release_recovery_continue_3m_20260908_102004/rl/step_3540208/smolvla_grpo_adapter.pt
+    three_stage_student_initializer: runs/release_recovery_continue_3m_20260908_102004/rl/step_2117145/smolvla_grpo_adapter.pt
 
     # Scene geometry. Generation rejects and resamples; it never clamps.
     three_stage_approach_xy_bounds: [0.06, 0.10]
@@ -895,6 +894,19 @@ training:
       # to the first rung and undo the iteration that earned it.
       max_train_steps: 15000000
       max_env_steps: 128
+      # End-to-end GRPO over the SAME manifest contract as collection and eval.
+      # Returns are three independent binary streams, not one cumulative score
+      # broadcast to every action. The scalar 0/1/2/3 is telemetry/selection;
+      # each record trains only on the milestone it was pursuing.
+      three_stage_sparse_credit: true
+      three_stage_scene_manifest: runs/three_stage/scenes_8192.json
+      three_stage_train_split: collection
+      three_stage_validation_split: student_validation
+      three_stage_horizon_decisions: 128
+      three_stage_approach_distance_m: 0.03
+      three_stage_approach_min_opening: 0.90
+      three_stage_approach_max_object_displacement_m: 0.01
+      three_stage_lift_height_m: 0.05
       # Grasp phases MUST lower this. It clamps every commanded target, so the
       # default 0.25 floor makes grasping geometrically impossible: the finger
       # pads sit 0.0075 m below ee_base, so at 0.25 they bottom out at 0.2425
@@ -932,6 +944,11 @@ training:
       residual_vision_features: true
       residual_vision_dim: 512
       train_vla_lora: true
+      # Attach/load the selected SFT checkpoint's LoRA, but keep it frozen.
+      # The bounded VLA capture path stores decision-zero records only, so it
+      # cannot yet balance pickup and placement streams honestly. The residual
+      # path below does carry all three stage-local losses.
+      vla_lora_updates_enabled: false
       lora_rank: 16
       lora_alpha: 32.0
       lora_dropout: 0.0
@@ -1056,6 +1073,8 @@ training:
       # advance while the pass-rate EMA sits above the promote gate is the
       # signal to cut it.
       episode_offset_std: [0.0, 0.0, 0.0, 0.0, 0.15]
+      # In three-stage mode this begins only after M2 (the 5 cm held lift), so
+      # release exploration cannot open the hand during approach or pickup.
       entropy_coef: 0.0002
       max_grad_norm: 1.0
       grpo_group_size: 8
@@ -1121,7 +1140,9 @@ training:
       # 128 rather than 256: the composed episode carries the 32-decision
       # horizon floor (placement_grasp_horizon_min_decisions), so it costs about
       # twice a caught episode, and this leg runs IN ADDITION to the one above.
-      composed_validation_episodes_per_instruction: 128
+      # The primary validation reset is already the explicit uncaught full task
+      # in three-stage mode; a second composed leg would duplicate it.
+      composed_validation_episodes_per_instruction: 0
       validation_seed: 2000000
       validation_video_count: 0
       save_every_steps: 250000

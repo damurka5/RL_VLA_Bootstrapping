@@ -372,6 +372,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "a grad-through-VLA GRPO pass (vision + VLM stay frozen)."
         ),
     )
+    _bool_arg(
+        parser,
+        "vla_lora_updates_enabled",
+        default=True,
+        help_text=(
+            "Optimize attached VLA LoRA modules during GRPO. Disable this to "
+            "load and preserve LoRA carried by a warm-start checkpoint while "
+            "training only the residual actor."
+        ),
+    )
     parser.add_argument("--lora-rank", type=int, default=16)
     parser.add_argument("--lora-alpha", type=float, default=32.0)
     parser.add_argument("--lora-dropout", type=float, default=0.0)
@@ -516,6 +526,42 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "latch (did it reach a good grasp?) and the lift keeps the terminal "
             "reward. Episodes that never grasp are unchanged."
         ),
+    )
+    _bool_arg(
+        parser,
+        "three_stage_sparse_credit",
+        default=False,
+        help_text=(
+            "Train end-to-end put_into with three ordered sparse milestones: "
+            "open-hand approach, persistent grasp plus 5 cm lift, and strict "
+            "released/settled placement. Each action record is routed to the "
+            "milestone it was pursuing; advantages and degeneracy filters are "
+            "computed independently per milestone, and represented stages get "
+            "equal total loss weight. Mutually exclusive with "
+            "--split-credit-at-grasp."
+        ),
+    )
+    parser.add_argument("--three-stage-scene-manifest", default="")
+    parser.add_argument("--three-stage-train-split", default="collection")
+    parser.add_argument(
+        "--three-stage-validation-split", default="student_validation"
+    )
+    parser.add_argument(
+        "--three-stage-horizon-decisions", type=int, default=128
+    )
+    parser.add_argument(
+        "--three-stage-approach-distance-m", type=float, default=0.03
+    )
+    parser.add_argument(
+        "--three-stage-approach-min-opening", type=float, default=0.90
+    )
+    parser.add_argument(
+        "--three-stage-approach-max-object-displacement-m",
+        type=float,
+        default=0.01,
+    )
+    parser.add_argument(
+        "--three-stage-lift-height-m", type=float, default=0.05
     )
     parser.add_argument(
         "--grpo-min-group-reward-std",
@@ -706,6 +752,23 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     args.grpo_dynamic_max_pass_rate = float(np.clip(args.grpo_dynamic_max_pass_rate, 0.0, 1.0))
     if args.grpo_dynamic_min_pass_rate >= args.grpo_dynamic_max_pass_rate:
         parser.error("--grpo-dynamic-min-pass-rate must be smaller than --grpo-dynamic-max-pass-rate")
+    if args.split_credit_at_grasp and args.three_stage_sparse_credit:
+        parser.error(
+            "--split-credit-at-grasp and --three-stage-sparse-credit are "
+            "mutually exclusive"
+        )
+    args.three_stage_horizon_decisions = max(
+        1, int(args.three_stage_horizon_decisions)
+    )
+    if not 0.0 <= float(args.three_stage_approach_min_opening) <= 1.0:
+        parser.error("--three-stage-approach-min-opening must be in [0, 1]")
+    for name in (
+        "three_stage_approach_distance_m",
+        "three_stage_approach_max_object_displacement_m",
+        "three_stage_lift_height_m",
+    ):
+        if float(getattr(args, name)) <= 0.0:
+            parser.error(f"--{name.replace('_', '-')} must be positive")
     args.grpo_trajectory_max_decisions = max(0, int(args.grpo_trajectory_max_decisions))
     args.grpo_trajectory_horizon_multiplier = max(
         1.0, float(args.grpo_trajectory_horizon_multiplier)
@@ -1179,6 +1242,16 @@ class SmolVLAGRPOTrainer:
         action_indices = padded["action_index"].to(dtype=torch.long)
         old_log_probs = padded["old_log_prob"].to(dtype=torch.float32)
         advantages = padded["advantage"].to(dtype=torch.float32)
+        loss_weights = (
+            padded["loss_weight"].to(dtype=torch.float32)
+            if "loss_weight" in padded
+            else torch.ones_like(advantages)
+        )
+        credit_stages = (
+            padded["credit_stage"].to(dtype=torch.int64)
+            if "credit_stage" in padded
+            else None
+        )
         # Behaviour-mean offset, present only when per-episode exploration is on.
         # Rollouts collected without it carry no such key, so an older buffer
         # replays on the original code path untouched.
@@ -1194,7 +1267,20 @@ class SmolVLAGRPOTrainer:
         valid = mask > 0.0
         valid_count = valid.sum().clamp_min(1)
         valid_advantages = advantages[valid]
-        if int(valid_advantages.numel()) > 1:
+        if credit_stages is not None:
+            # The collector has already formed three independent group-relative
+            # streams. Re-normalizing them together would couple their scales
+            # again, partially undoing the split.
+            for stage in range(3):
+                selected = valid & (credit_stages == stage)
+                stage_advantages = advantages[selected]
+                if int(stage_advantages.numel()) > 1:
+                    mean = stage_advantages.mean()
+                    std = stage_advantages.std(unbiased=False).clamp_min(1.0e-6)
+                    advantages = torch.where(
+                        selected, (advantages - mean) / std, advantages
+                    )
+        elif int(valid_advantages.numel()) > 1:
             adv_mean = valid_advantages.mean()
             adv_std = valid_advantages.std(unbiased=False).clamp_min(1.0e-6)
             advantages = torch.where(
@@ -1237,7 +1323,7 @@ class SmolVLAGRPOTrainer:
                     idx = mb_idx[micro_start : micro_start + microbatch]
                     synchronize_profile()
                     forward_started = time.perf_counter()
-                    weight = mask[idx]
+                    weight = mask[idx] * loss_weights[idx]
                     denominator = weight.sum().clamp_min(1.0)
                     policy_mean, log_std = self._mean_and_log_std(
                         states[idx], priors[idx], action_indices[idx]
