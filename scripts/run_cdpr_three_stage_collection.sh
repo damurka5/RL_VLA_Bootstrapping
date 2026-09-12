@@ -35,6 +35,7 @@ SCENE_COUNT="${SCENE_COUNT:-1024}"
 SCENE_SEED="${SCENE_SEED:-20260910}"
 WORLDS="${WORLDS:-64}"
 ROUNDS="${ROUNDS:-4}"
+SCENE_OFFSET="${SCENE_OFFSET:-0}"
 MICROBATCH="${MICROBATCH:-32}"
 GPUS="${GPUS:-0 1}"
 STEPS="${STEPS:-yaw scenes select record dataset}"
@@ -68,8 +69,29 @@ ALIGN_CONSECUTIVE_DECISIONS="${ALIGN_CONSECUTIVE_DECISIONS:-}"
 # orientations rather than dropping the stratum, so the census is unchanged and
 # the chains are not spent on impossible work.
 SCENE_CLEARANCE_FILTER="${SCENE_CLEARANCE_FILTER:-1}"
+# Optional downstream-only expansion. The collector still executes continuous
+# chains from empty starts; the builder preserves BASE_TRANSITION_DATASET and
+# appends only ADDITIONAL_STAGES from this run. BASE_FRAMES_GLOB is required so
+# the combined bank is proven 100% image-resolvable before it is written.
+BASE_TRANSITION_DATASET="${BASE_TRANSITION_DATASET:-}"
+BASE_FRAMES_GLOB="${BASE_FRAMES_GLOB:-}"
+ADDITIONAL_STAGES="${ADDITIONAL_STAGES:-}"
+FRAME_RETENTION_STAGE="${FRAME_RETENTION_STAGE:-}"
+if [[ -z "$FRAME_RETENTION_STAGE" ]]; then
+  if [[ " $ADDITIONAL_STAGES " == *" move_to "* || -z "$ADDITIONAL_STAGES" ]]; then
+    FRAME_RETENTION_STAGE="move_to"
+  elif [[ " $ADDITIONAL_STAGES " == *" pick_up "* ]]; then
+    FRAME_RETENTION_STAGE="pick_up"
+  else
+    FRAME_RETENTION_STAGE="placement"
+  fi
+fi
 
 mkdir -p "$RUN_DIR"
+COLLECTION_LOG="${COLLECTION_LOG:-$RUN_DIR/three_stage_collection_$(date +%Y%m%d_%H%M%S)_$$.log}"
+mkdir -p "$(dirname -- "$COLLECTION_LOG")"
+exec > >(tee -a "$COLLECTION_LOG") 2>&1
+echo "=== durable log: $COLLECTION_LOG ==="
 run() { conda run --no-capture-output -n "$ENV_NAME" python3 "$@"; }
 has_step() { [[ " $STEPS " == *" $1 "* ]]; }
 
@@ -166,12 +188,14 @@ if has_step record; then
       --yaw-calibration "$YAW" \
       "${STAGED_PROTOCOL_ARGS[@]}" \
       --worlds "$WORLDS" --rounds "$ROUNDS" \
+      --scene-offset "$SCENE_OFFSET" \
       --shard "$SHARD" --num-shards "$NUM_SHARDS" \
       --microbatch "$MICROBATCH" --device cuda:0 \
       --move-decisions "${MOVE_DECISIONS:-32}" \
       --pickup-decisions "${PICKUP_DECISIONS:-32}" \
       --placement-decisions "${PLACEMENT_DECISIONS:-64}" \
       --settle-decisions "${SETTLE_DECISIONS:-0}" \
+      --frame-retention-stage "$FRAME_RETENTION_STAGE" \
       --tag "$TAG" \
       --output "$OUT" 2>&1 | sed "s/^/[shard$SHARD] /" &
     PIDS+=($!)
@@ -185,9 +209,34 @@ if has_step dataset; then
   # Frame coverage must be complete. A bank whose resolvable rows are a subset
   # is selected by "whose episodes happened to keep pictures", which is a
   # selection nobody chose.
+  FRAME_PATHS=("$RUN_DIR"/bank_shard*/frames_*.npz)
+  DATASET_ARGS=()
+  if [[ -n "$BASE_TRANSITION_DATASET" ]]; then
+    if [[ -z "$ADDITIONAL_STAGES" || -z "$BASE_FRAMES_GLOB" ]]; then
+      echo "BASE_TRANSITION_DATASET requires ADDITIONAL_STAGES and BASE_FRAMES_GLOB." >&2
+      exit 1
+    fi
+    BASE_FRAME_PATHS=()
+    while IFS= read -r path; do BASE_FRAME_PATHS+=("$path"); done \
+      < <(compgen -G "$BASE_FRAMES_GLOB" || true)
+    if [[ "${#BASE_FRAME_PATHS[@]}" -eq 0 ]]; then
+      echo "BASE_FRAMES_GLOB matched no files: $BASE_FRAMES_GLOB" >&2
+      exit 1
+    fi
+    FRAME_PATHS+=("${BASE_FRAME_PATHS[@]}")
+    read -r -a STAGE_ARGS <<< "$ADDITIONAL_STAGES"
+    DATASET_ARGS+=(
+      --base-transition-dataset "$BASE_TRANSITION_DATASET"
+      --additional-stages "${STAGE_ARGS[@]}"
+    )
+  elif [[ -n "$ADDITIONAL_STAGES" || -n "$BASE_FRAMES_GLOB" ]]; then
+    echo "ADDITIONAL_STAGES/BASE_FRAMES_GLOB require BASE_TRANSITION_DATASET." >&2
+    exit 1
+  fi
   run tools/audit/build_cdpr_staged_sft_dataset.py \
     --records "$RUN_DIR"/bank_shard*/staged_*.npz \
-    --frames "$RUN_DIR"/bank_shard*/frames_*.npz \
+    --frames "${FRAME_PATHS[@]}" \
+    "${DATASET_ARGS[@]}" \
     --output "$RUN_DIR/dataset"
 fi
 
@@ -199,6 +248,11 @@ echo "  bank:       $RUN_DIR/bank_shard*/collection.json"
 echo "  dataset:    $RUN_DIR/dataset/dataset.json"
 echo "  strict:     $RUN_DIR/dataset/demonstrations.npz"
 echo "  transitions:$RUN_DIR/dataset/stage_transitions.npz"
+echo "  log:         $COLLECTION_LOG"
+if [[ -n "$BASE_TRANSITION_DATASET" ]]; then
+  echo "  expansion:   preserved $BASE_TRANSITION_DATASET"
+  echo "               appended only: $ADDITIONAL_STAGES"
+fi
 echo
 echo "The dataset's priors are STALE by construction: its rows were relabelled"
 echo "to the student prompt but state/prior were computed under the teachers'."

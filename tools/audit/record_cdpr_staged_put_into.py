@@ -83,6 +83,8 @@ from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import (  # noqa: E
     select_split,
 )
 
+FRAME_RETENTION_STAGES: tuple[str, ...] = ("move_to", "pick_up", "placement")
+
 
 def parse_teachers(specs: Sequence[str]) -> dict[str, Path]:
     roles: dict[str, Path] = {}
@@ -108,6 +110,7 @@ def plan_batches(
     repeats_per_scene: int,
     shard: int,
     num_shards: int,
+    scene_offset: int = 0,
 ) -> list[list[tuple[Any, int]]]:
     """Which scenes each round runs, and at which rollout index.
 
@@ -126,7 +129,18 @@ def plan_batches(
 
     if num_shards < 1 or not 0 <= shard < num_shards:
         raise SystemExit(f"Invalid shard {shard}/{num_shards}.")
-    mine = [scene for index, scene in enumerate(scenes) if index % num_shards == shard]
+    if int(scene_offset) < 0:
+        raise SystemExit("--scene-offset must be non-negative.")
+    # Offset BEFORE sharding. This makes the value independent of how many
+    # GPUs the expansion run uses: if an earlier two-GPU run consumed the
+    # first 3,968 collection scenes, --scene-offset 3968 also skips those
+    # scenes when the continuation uses one GPU.
+    remaining = list(scenes)[int(scene_offset) :]
+    mine = [
+        scene
+        for index, scene in enumerate(remaining)
+        if index % num_shards == shard
+    ]
     pool: list[tuple[Any, int]] = [
         (scene, repeat)
         for repeat in range(max(1, int(repeats_per_scene)))
@@ -135,7 +149,8 @@ def plan_batches(
     needed = int(worlds) * int(rounds)
     if len(pool) < needed:
         raise SystemExit(
-            f"Shard {shard} holds {len(mine)} scenes x {repeats_per_scene} "
+            f"After global scene offset {scene_offset}, shard {shard} holds "
+            f"{len(mine)} scenes x {repeats_per_scene} "
             f"repeats = {len(pool)} chains, but --worlds {worlds} x --rounds "
             f"{rounds} asks for {needed}. Generate more scenes, lower the "
             "budget, or raise --repeats-per-scene deliberately -- repeats are "
@@ -263,6 +278,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--worlds", type=int, default=64)
     parser.add_argument("--rounds", type=int, default=4)
     parser.add_argument("--repeats-per-scene", type=int, default=1)
+    parser.add_argument(
+        "--scene-offset",
+        type=int,
+        default=0,
+        help=(
+            "Skip this many scenes from the selected split before sharding. "
+            "Use it when extending a bank from the same manifest so the new "
+            "run starts after scenes already consumed. A fresh manifest uses 0."
+        ),
+    )
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--num-shards", type=int, default=1)
     parser.add_argument("--microbatch", type=int, default=32)
@@ -459,6 +484,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             "train the vision path."
         ),
     )
+    parser.add_argument(
+        "--frame-retention-stage",
+        choices=FRAME_RETENTION_STAGES,
+        default="move_to",
+        help=(
+            "Earliest successfully completed stage whose worlds need frames. "
+            "move_to preserves the full transition-bank default; pick_up "
+            "drops align-only failures for a downstream-only expansion; "
+            "placement keeps accepted full chains only."
+        ),
+    )
     parser.add_argument("--tag", default="staged")
     args = parser.parse_args(argv)
 
@@ -493,6 +529,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         repeats_per_scene=int(args.repeats_per_scene),
         shard=int(args.shard),
         num_shards=int(args.num_shards),
+        scene_offset=int(args.scene_offset),
     )
 
     output = args.output.expanduser().resolve()
@@ -650,15 +687,18 @@ def main(argv: Sequence[str] | None = None) -> int:
         result.to_npz(record_path)
         files = {"record": str(record_path)}
         if config.record_frames:
-            # Keep every world that completed the move/alignment transition.
-            # Its successful move slice is reusable even when pickup later
-            # fails; pickup-success worlds additionally contribute their pick
-            # slice, and accepted worlds contribute placement. This is the
-            # earliest verified transition, so it is the broadest frame mask
-            # needed by ``stage_transitions.npz`` without retaining arbitrary
-            # failures. Older accepted/pickup-only masks made those successful
-            # move slices impossible to refresh from images.
-            reusable = accepted | (np.asarray(result.align_event) >= 0)
+            # The ordinary transition bank keeps every world that completed
+            # move/alignment. A downstream-only expansion can deliberately
+            # start at pickup (or placement) and avoid storing pictures for
+            # earlier-success/later-failure worlds whose rows will be filtered
+            # out. Pictures within a retained episode stay temporally complete;
+            # physical handoffs and decision indices are never synthesized.
+            if args.frame_retention_stage == "move_to":
+                reusable = np.asarray(result.align_event) >= 0
+            elif args.frame_retention_stage == "pick_up":
+                reusable = np.asarray(result.pickup_event) >= 0
+            else:
+                reusable = accepted
             files["frames"] = write_staged_frames(
                 output / f"frames_{stem}.npz",
                 buffers=result.frames,
@@ -700,6 +740,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "worlds": int(args.worlds),
         "rounds": int(args.rounds),
         "repeats_per_scene": int(args.repeats_per_scene),
+        "scene_offset": int(args.scene_offset),
         "runtime_checkpoint": str(runtime_checkpoint),
         "teachers": bank.manifest(),
         "yaw_calibration": calibration.to_json(),
@@ -723,6 +764,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "yaw_hold_during_pickup": not bool(args.no_yaw_hold_during_pickup),
         "yaw_hold_during_placement": bool(args.yaw_hold_during_placement),
         "record_frames": bool(config.record_frames),
+        "frame_retention_stage": str(args.frame_retention_stage),
         "files": shard_files,
         "rounds_detail": round_reports,
         "pooled": pooled_summary(round_reports),

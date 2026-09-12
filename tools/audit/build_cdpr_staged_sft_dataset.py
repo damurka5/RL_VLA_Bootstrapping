@@ -54,6 +54,21 @@ Usage::
         --records runs/three_stage/bank_shard*/staged_*.npz \\
         --frames  runs/three_stage/bank_shard*/frames_*.npz \\
         --output  runs/three_stage/dataset
+
+To extend an existing transition bank without adding more move-to rows, build
+the new continuous recordings and merge only their downstream slices::
+
+    python tools/audit/build_cdpr_staged_sft_dataset.py \\
+        --records runs/downstream_expansion/bank_shard*/staged_*.npz \\
+        --frames runs/three_stage_full/bank_shard*/frames_*.npz \\
+                 runs/downstream_expansion/bank_shard*/frames_*.npz \\
+        --base-transition-dataset \\
+            runs/three_stage_full/dataset/stage_transitions.npz \\
+        --additional-stages pick_up placement \\
+        --output runs/downstream_expansion/dataset
+
+The robot still executes each chain from the ordinary empty start; only row
+admission is stage-selective. This preserves real physical handoffs.
 """
 
 from __future__ import annotations
@@ -486,6 +501,131 @@ def dataset_report(dataset: Mapping[str, np.ndarray]) -> dict[str, Any]:
     return report
 
 
+def select_transition_stages(
+    dataset: Mapping[str, np.ndarray], stages: Sequence[str]
+) -> dict[str, np.ndarray]:
+    """Select complete decision rows for named semantic stages."""
+
+    requested = tuple(dict.fromkeys(str(stage) for stage in stages))
+    invalid = sorted(set(requested) - set(SEMANTIC_STAGES))
+    if invalid:
+        raise SystemExit(
+            f"Unknown --additional-stages {invalid}; choose from "
+            f"{list(SEMANTIC_STAGES)}."
+        )
+    if not dataset or not requested:
+        return {}
+    mask = np.isin(dataset["stage_name"], np.asarray(requested))
+    selected = {
+        name: np.asarray(values)[mask]
+        for name, values in dataset.items()
+    }
+    missing = [
+        stage
+        for stage in requested
+        if not bool((selected["stage_name"] == stage).any())
+    ]
+    if missing:
+        raise SystemExit(
+            "The new recordings produced no verified rows for requested "
+            f"stages {missing}. Collect more chains; do not substitute failed "
+            "actions as demonstrations."
+        )
+    return selected
+
+
+def merge_transition_expansion(
+    base: Mapping[str, np.ndarray],
+    additional: Mapping[str, np.ndarray],
+    *,
+    allow_repeated_scenes: bool = False,
+) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+    """Append verified rows while guarding ids, shapes and scene diversity."""
+
+    if not base:
+        raise SystemExit("The base transition dataset is empty.")
+    if not additional:
+        raise SystemExit("The additional transition selection is empty.")
+    base_keys = set(base)
+    additional_keys = set(additional)
+    if base_keys != additional_keys:
+        raise SystemExit(
+            "Base and additional transition schemas differ. Missing from "
+            f"additional: {sorted(base_keys - additional_keys)}; missing from "
+            f"base: {sorted(additional_keys - base_keys)}."
+        )
+    for name in sorted(base_keys):
+        left = np.asarray(base[name])
+        right = np.asarray(additional[name])
+        if left.ndim != right.ndim or left.shape[1:] != right.shape[1:]:
+            raise SystemExit(
+                f"Column {name!r} has incompatible row shapes "
+                f"{left.shape[1:]} and {right.shape[1:]}."
+            )
+
+    base_frames = {str(value) for value in base["frame_uid"]}
+    additional_frames = {str(value) for value in additional["frame_uid"]}
+    duplicate_frames = sorted(base_frames & additional_frames)
+    if duplicate_frames:
+        raise SystemExit(
+            "Base and additional data share frame_uid values, for example "
+            f"{duplicate_frames[:5]}. Use a distinct collection TAG and do "
+            "not append the same episodes twice."
+        )
+
+    base_scenes = {str(value) for value in base["scene_uid"]}
+    additional_scenes = {str(value) for value in additional["scene_uid"]}
+    repeated_scenes = sorted(base_scenes & additional_scenes)
+    if repeated_scenes and not allow_repeated_scenes:
+        raise SystemExit(
+            "The expansion reuses scenes already present in the base bank, "
+            f"for example {repeated_scenes[:5]}. Use a fresh scene manifest "
+            "or advance --scene-offset. Pass --allow-repeated-scenes only for "
+            "an explicitly declared stochastic-repeat experiment."
+        )
+
+    merged = {
+        name: np.concatenate(
+            [np.asarray(base[name]), np.asarray(additional[name])], axis=0
+        )
+        for name in base
+    }
+    return merged, {
+        "base_rows": int(np.asarray(base["state"]).shape[0]),
+        "added_rows": int(np.asarray(additional["state"]).shape[0]),
+        "combined_rows": int(np.asarray(merged["state"]).shape[0]),
+        "base_scenes": len(base_scenes),
+        "added_scenes": len(additional_scenes),
+        "repeated_scenes": len(repeated_scenes),
+    }
+
+
+def load_stale_transition_dataset(path: Path) -> dict[str, np.ndarray]:
+    """Load a raw transition bank and refuse a stale/fresh mixture."""
+
+    resolved = path.expanduser().resolve()
+    report_path = resolved.parent / "dataset.json"
+    if not report_path.is_file():
+        raise SystemExit(
+            f"{resolved} has no sibling dataset.json, so its prior provenance "
+            "cannot be verified."
+        )
+    report = json.loads(report_path.read_text(encoding="utf-8"))
+    if report.get("schema") != DATASET_SCHEMA:
+        raise SystemExit(
+            f"{report_path} has schema {report.get('schema')!r}, expected "
+            f"{DATASET_SCHEMA!r}."
+        )
+    if report.get("priors_stale") is not True:
+        raise SystemExit(
+            "The base transition bank is already refreshed while the new "
+            "teacher recordings are stale. Merge the raw pre-refresh bank, "
+            "then refresh the combined result once."
+        )
+    with np.load(resolved, allow_pickle=False) as payload:
+        return {name: np.asarray(payload[name]) for name in payload.files}
+
+
 def verify_frame_coverage(
     dataset: Mapping[str, np.ndarray], frame_paths: Sequence[Path]
 ) -> dict[str, Any]:
@@ -559,6 +699,34 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--records", type=Path, nargs="+", required=True)
     parser.add_argument("--frames", type=Path, nargs="*", default=[])
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument(
+        "--base-transition-dataset",
+        type=Path,
+        default=None,
+        help=(
+            "Raw, priors-stale stage_transitions.npz to preserve while "
+            "appending selected stages from --records."
+        ),
+    )
+    parser.add_argument(
+        "--additional-stages",
+        nargs="+",
+        choices=SEMANTIC_STAGES,
+        default=None,
+        help=(
+            "Stages from the new recordings to append to the base. Requires "
+            "--base-transition-dataset. Example: pick_up placement."
+        ),
+    )
+    parser.add_argument(
+        "--allow-repeated-scenes",
+        action="store_true",
+        help=(
+            "Permit new rows from scene_uids already in the base. Off by "
+            "default because an expansion intended to add diversity must not "
+            "silently replay the same starts."
+        ),
+    )
     parser.add_argument("--min-approach-xy", type=float, default=0.06)
     parser.add_argument("--min-handoff-lift", type=float, default=0.05)
     parser.add_argument(
@@ -617,6 +785,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(
             "No chain was accepted, so there is nothing to train on. The "
             f"rejection census: {census['rejection_reasons']}"
+        )
+
+    expansion_report: dict[str, Any] | None = None
+    added_transitions: dict[str, np.ndarray] | None = None
+    if args.base_transition_dataset is not None:
+        if not args.additional_stages:
+            raise SystemExit(
+                "--base-transition-dataset requires --additional-stages so "
+                "row admission is explicit."
+            )
+        base_transitions = load_stale_transition_dataset(
+            args.base_transition_dataset
+        )
+        added_transitions = select_transition_stages(
+            transitions, args.additional_stages
+        )
+        transitions, expansion_report = merge_transition_expansion(
+            base_transitions,
+            added_transitions,
+            allow_repeated_scenes=bool(args.allow_repeated_scenes),
+        )
+        expansion_report.update(
+            {
+                "base_transition_dataset": str(
+                    args.base_transition_dataset.expanduser().resolve()
+                ),
+                "additional_stages": list(args.additional_stages),
+                "added_dataset": dataset_report(added_transitions),
+            }
+        )
+    elif args.additional_stages:
+        raise SystemExit(
+            "--additional-stages is only meaningful with "
+            "--base-transition-dataset."
         )
 
     output = args.output.expanduser().resolve()
@@ -709,6 +911,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "frames": frame_report,
         "stage_transitions": dataset_report(transitions),
         "stage_transition_frames": transition_frame_report,
+        "expansion": expansion_report,
         "acceptance": {
             "min_approach_xy": float(args.min_approach_xy),
             "min_handoff_lift": float(args.min_handoff_lift),
@@ -719,10 +922,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             output / "stage_transitions.npz", **transitions
         )
         transition_rows = report["stage_transitions"]
+        expansion_note = (
+            f"; appended {expansion_report['added_rows']} downstream rows"
+            if expansion_report is not None
+            else ""
+        )
         print(
             f"[dataset] wrote {output / 'stage_transitions.npz'}: "
             f"{transition_rows['rows']} rows from "
-            f"{transition_rows['episodes']} chains; verified stage chains "
+            f"{transition_rows['episodes']} chains{expansion_note}; "
+            f"new-run verified stage chains "
             f"{census['transition_success_chains']}",
             flush=True,
         )

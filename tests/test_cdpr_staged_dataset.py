@@ -44,7 +44,10 @@ from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
 from tools.audit.build_cdpr_staged_sft_dataset import (
     build_rows,
     dataset_report,
+    merge_transition_expansion,
+    select_transition_stages,
 )
+from tools.audit.record_cdpr_staged_put_into import plan_batches
 
 PER = 4
 DECISIONS = 10
@@ -1062,6 +1065,113 @@ class MergedBankIdentityTests(unittest.TestCase):
             report = verify_frame_coverage(dataset, [Path(only), Path(only)])
         self.assertEqual(report["resolved_fraction"], 1.0)
 
+
+class DownstreamExpansionTests(unittest.TestCase):
+    @staticmethod
+    def _rows(prefix, scenes, stages):
+        count = len(stages)
+        return {
+            "state": np.arange(count * 2, dtype=np.float32).reshape(count, 2),
+            "stage_name": np.asarray(stages, dtype="U16"),
+            "frame_uid": np.asarray(
+                [f"{prefix}/episode_{index}#0" for index in range(count)],
+                dtype="U160",
+            ),
+            "scene_uid": np.asarray(scenes, dtype="U64"),
+        }
+
+    def test_only_requested_new_stages_are_appended(self):
+        base = self._rows(
+            "base",
+            ["base_move", "base_pick", "base_place"],
+            ["move_to", "pick_up", "placement"],
+        )
+        candidates = self._rows(
+            "new",
+            ["new_move", "new_pick", "new_place"],
+            ["move_to", "pick_up", "placement"],
+        )
+        downstream = select_transition_stages(
+            candidates, ["pick_up", "placement"]
+        )
+        merged, report = merge_transition_expansion(base, downstream)
+
+        self.assertEqual(
+            list(downstream["stage_name"]), ["pick_up", "placement"]
+        )
+        self.assertEqual(
+            list(merged["stage_name"]),
+            ["move_to", "pick_up", "placement", "pick_up", "placement"],
+        )
+        self.assertEqual(report["base_rows"], 3)
+        self.assertEqual(report["added_rows"], 2)
+        self.assertEqual(report["repeated_scenes"], 0)
+
+    def test_scene_overlap_is_refused_by_default(self):
+        base = self._rows("base", ["same"], ["move_to"])
+        addition = self._rows("new", ["same"], ["pick_up"])
+        with self.assertRaises(SystemExit) as caught:
+            merge_transition_expansion(base, addition)
+        self.assertIn("reuses scenes", str(caught.exception))
+
+    def test_duplicate_frame_id_is_refused_even_on_new_scene(self):
+        base = self._rows("same", ["old_scene"], ["move_to"])
+        addition = self._rows("same", ["new_scene"], ["pick_up"])
+        with self.assertRaises(SystemExit) as caught:
+            merge_transition_expansion(base, addition)
+        self.assertIn("frame_uid", str(caught.exception))
+
+    def test_each_requested_stage_must_have_verified_rows(self):
+        candidates = self._rows("new", ["new_pick"], ["pick_up"])
+        with self.assertRaises(SystemExit) as caught:
+            select_transition_stages(candidates, ["pick_up", "placement"])
+        self.assertIn("placement", str(caught.exception))
+
+
+class StagedSceneContinuationTests(unittest.TestCase):
+    def test_global_offset_is_applied_before_sharding(self):
+        scenes = list(range(20))
+        shard_zero = plan_batches(
+            scenes,
+            worlds=2,
+            rounds=2,
+            repeats_per_scene=1,
+            shard=0,
+            num_shards=2,
+            scene_offset=8,
+        )
+        shard_one = plan_batches(
+            scenes,
+            worlds=2,
+            rounds=2,
+            repeats_per_scene=1,
+            shard=1,
+            num_shards=2,
+            scene_offset=8,
+        )
+        self.assertEqual(
+            [[scene for scene, _ in batch] for batch in shard_zero],
+            [[8, 10], [12, 14]],
+        )
+        self.assertEqual(
+            [[scene for scene, _ in batch] for batch in shard_one],
+            [[9, 11], [13, 15]],
+        )
+
+    def test_offset_remains_global_with_one_shard(self):
+        batches = plan_batches(
+            list(range(12)),
+            worlds=2,
+            rounds=2,
+            repeats_per_scene=1,
+            shard=0,
+            num_shards=1,
+            scene_offset=8,
+        )
+        self.assertEqual(
+            [[scene for scene, _ in batch] for batch in batches],
+            [[8, 9], [10, 11]],
+        )
 
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()
