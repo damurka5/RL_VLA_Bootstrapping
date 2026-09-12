@@ -382,9 +382,13 @@ class BalancedRowSampler:
                 "material or narrow --sampler-destinations / --sampler-stages."
             )
         self.rows = index
+        self.draw_counts = np.zeros((len(self.cells),), dtype=np.int64)
 
     def draw(self, count: int) -> np.ndarray:
         cell_choice = self.generator.integers(len(self.cells), size=int(count))
+        self.draw_counts += np.bincount(
+            cell_choice, minlength=len(self.cells)
+        ).astype(np.int64)
         picked = np.empty((int(count),), dtype=np.int64)
         for position, cell_index in enumerate(cell_choice.tolist()):
             _, _, objects = self.cells[cell_index]
@@ -395,10 +399,34 @@ class BalancedRowSampler:
         return picked
 
     def report(self) -> dict[str, Any]:
+        rows_by_stage: dict[str, int] = {}
+        rows_by_destination: dict[str, int] = {}
+        draws_by_stage: dict[str, int] = {}
+        draws_by_destination: dict[str, int] = {}
+        draws_by_cell: dict[str, int] = {}
+        for cell_index, (destination, stage, _objects) in enumerate(self.cells):
+            name = f"{destination}/{stage}"
+            rows = int(self.census[name])
+            draws = int(self.draw_counts[cell_index])
+            rows_by_stage[stage] = rows_by_stage.get(stage, 0) + rows
+            rows_by_destination[destination] = (
+                rows_by_destination.get(destination, 0) + rows
+            )
+            draws_by_stage[stage] = draws_by_stage.get(stage, 0) + draws
+            draws_by_destination[destination] = (
+                draws_by_destination.get(destination, 0) + draws
+            )
+            draws_by_cell[name] = draws
         return {
             "cells": len(self.cells),
             "rows_available": int(self.rows.size),
             "rows_by_cell": dict(sorted(self.census.items())),
+            "rows_by_stage": dict(sorted(rows_by_stage.items())),
+            "rows_by_destination": dict(sorted(rows_by_destination.items())),
+            "draws_total": int(self.draw_counts.sum()),
+            "draws_by_cell": dict(sorted(draws_by_cell.items())),
+            "draws_by_stage": dict(sorted(draws_by_stage.items())),
+            "draws_by_destination": dict(sorted(draws_by_destination.items())),
         }
 
 
@@ -1458,6 +1486,16 @@ def train_lora_stage(
             f"[sft][lora] best epoch {best_epoch} at val_mse {best}",
             flush=True,
         )
+    stage_sampler_report = (
+        None if stage_sampler is None else stage_sampler.report()
+    )
+    if stage_sampler_report is not None:
+        print(
+            "[sft][lora] realized balanced exposure: "
+            f"{stage_sampler_report['draws_by_stage']} by stage, "
+            f"{stage_sampler_report['draws_by_destination']} by destination",
+            flush=True,
+        )
     return {
         "best_epoch": best_epoch,
         "best_val_mse": best,
@@ -1467,6 +1505,7 @@ def train_lora_stage(
         "rows_train": int(train_rows.size),
         "baseline": baseline,
         "history": history,
+        "sampler_report": stage_sampler_report,
     }
 
 
@@ -2266,6 +2305,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         for column in ("stage_name", "destination")
     }
+    if sampler is not None:
+        sampler_report = sampler.report()
+        print(
+            "[sft] realized balanced exposure: "
+            f"{sampler_report['draws_by_stage']} by stage, "
+            f"{sampler_report['draws_by_destination']} by destination",
+            flush=True,
+        )
 
     report = {
         "dataset": str(args.dataset),

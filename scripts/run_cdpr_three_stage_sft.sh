@@ -55,6 +55,17 @@ CHECK_EPOCHS="${CHECK_EPOCHS:-1 2 4}"
 RETENTION_DATASET="${RETENTION_DATASET:-}"
 RETENTION_FRACTION="${RETENTION_FRACTION:-0.0}"
 ARMS="${ARMS:-A B C}"
+SFT_PROGRESS="${SFT_PROGRESS:-never}"
+
+# Keep a durable transcript in the run directory. Sending stdout through tee
+# also makes it a non-terminal for the Python children, and --progress=never is
+# passed explicitly below, so tqdm carriage-return bars cannot flood either the
+# console scrollback or the saved log. A timestamp + PID makes repeated arms
+# append to separate evidence files instead of overwriting an earlier run.
+RUN_LOG="${RUN_LOG:-$RUN_DIR/three_stage_sft_$(date +%Y%m%d_%H%M%S)_$$.log}"
+mkdir -p "$RUN_DIR" "$(dirname -- "$RUN_LOG")"
+exec > >(tee -a "$RUN_LOG") 2>&1
+echo "=== durable log: $RUN_LOG ==="
 
 run() { conda run --no-capture-output -n "$ENV_NAME" python3 "$@"; }
 has_arm() { [[ " $ARMS " == *" $1 "* ]]; }
@@ -136,6 +147,7 @@ if has_arm B; then
       --checkpoint "$STUDENT_INIT" \
       --output "$arm_output" \
       --device "$DEVICE" --epochs "$checkpoint_epochs" \
+      --progress "$SFT_PROGRESS" \
       --split-by scene --sampler balanced \
       --val-fraction "${VAL_FRACTION:-0.1}" \
       "${RETENTION_ARGS[@]}"
@@ -153,6 +165,7 @@ if has_arm C; then
     --checkpoint "$STUDENT_INIT" \
     --output "$RUN_DIR/sft_armC" \
     --device "$DEVICE" --epochs "$EPOCHS" \
+    --progress "$SFT_PROGRESS" \
     --split-by scene --sampler balanced \
     --val-fraction "${VAL_FRACTION:-0.1}" \
     --frames $FRAMES_GLOB \
@@ -182,3 +195,4 @@ echo
 echo "Choose a checkpoint on UNASSISTED strict full-chain success, with plate"
 echo "and bowl reported separately and retention as a declared constraint."
 echo "Lock that choice before running anything on the final_test split."
+echo "Durable console transcript: $RUN_LOG"

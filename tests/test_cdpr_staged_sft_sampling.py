@@ -127,6 +127,18 @@ class BalancedSamplerTests(unittest.TestCase):
         for destination in ("plate", "bowl"):
             share = float((bank["destination"][drawn] == destination).mean())
             self.assertAlmostEqual(share, 0.5, delta=0.02)
+        report = sampler.report()
+        self.assertEqual(report["draws_total"], 30_000)
+        self.assertGreater(
+            report["rows_by_stage"]["placement"],
+            report["rows_by_stage"]["move_to"],
+        )
+        for stage in ("move_to", "pick_up", "placement"):
+            self.assertAlmostEqual(
+                report["draws_by_stage"][stage] / 30_000,
+                1 / 3,
+                delta=0.02,
+            )
 
     def test_balancing_does_not_change_the_bank(self):
         bank = _bank(scenes=4)
@@ -301,6 +313,15 @@ class ThreeStageRunnerTests(unittest.TestCase):
         self.assertIn(
             'evaluate "$arm_name" "$arm_output/sil_sft_adapter.pt"', runner
         )
+
+    def test_runner_writes_a_durable_log_without_progress_bars(self):
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "run_cdpr_three_stage_sft.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn('exec > >(tee -a "$RUN_LOG") 2>&1', runner)
+        self.assertIn('--progress "$SFT_PROGRESS"', runner)
 
 
 if __name__ == "__main__":  # pragma: no cover
