@@ -285,5 +285,23 @@ class ReachabilityReportTests(unittest.TestCase):
         )
 
 
+class ThreeStageRunnerTests(unittest.TestCase):
+    """The declared rollout checkpoints must not become a dead variable."""
+
+    def test_check_epochs_drive_independent_training_and_evaluation(self):
+        runner = (
+            Path(__file__).resolve().parents[1]
+            / "scripts"
+            / "run_cdpr_three_stage_sft.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'for checkpoint_epochs in "${ARM_B_EPOCHS[@]}"', runner
+        )
+        self.assertIn('--epochs "$checkpoint_epochs"', runner)
+        self.assertIn(
+            'evaluate "$arm_name" "$arm_output/sil_sft_adapter.pt"', runner
+        )
+
+
 if __name__ == "__main__":  # pragma: no cover
     unittest.main()

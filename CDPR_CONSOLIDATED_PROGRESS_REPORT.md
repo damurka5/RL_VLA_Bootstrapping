@@ -1,9 +1,9 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — current through 2026-09-11, Europe/Moscow**
+**Living report — current through 2026-09-12, Europe/Moscow**
 
-**Repository state reviewed:** `1a738dc` plus the stage-transition changes in
-the newest ledger entry
+**Repository state reviewed:** `711aee1` plus the bounded-SFT runner correction
+and the 2026-09-12 attached-result review in the newest ledger entry
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
@@ -25,34 +25,24 @@ user-confirmed fixed calibrated pickup yaw, stage-balanced SFT sampling and
 full-task evaluation. It includes a provisional teacher shortlist and the
 repository change map.
 
-**Implementation status, 2026-09-11:** the specification's
+**Implementation status, 2026-09-12:** the specification's
 whole change map is now implemented and unit-tested locally — the scene/yaw
 contract, the continuous three-stage recorder, teacher screening, the dataset
 builder, the prior refresh and SFT changes, and the unassisted full-task
-evaluation. See §7.12. **Update from the supplied remote screen:** the
-destination-prompt triple produced three pickups from three aligned handoffs
-and one strict accepted placement from its one placement handoff. This is the
-first clean complete chain, but it occurred in the placement screening run;
-the old selector then ran the same triple again, obtained 0/64, and refused to
-write `selected_teachers.json`. That is a selection-harness defect for the
-one-candidate-per-role case, not evidence that the fixed-yaw handoff failed.
-The local selector now scores every stage and confirmation from one shared
-full-chain screen in that case, writes the canonical `checkpoint` manifest,
-and records the complete staged protocol. The collection launcher reuses the
-same centring, 48-decision alignment budget and destination pickup prompt.
-The selected triple subsequently produced a 512-chain debugging bank with five
-strict accepted chains over five scenes and 365 full-task decision rows, all
-with resolvable frames. Both destinations are present, but potato has no
-accepted full chain and the bank is far too small for a meaningful SFT claim.
-See the newest §14 entry. Prior refresh and SFT remain unverified.
+evaluation. See §7.16. The complete remote bank now contains 3,968 chains,
+71 strict successes and 26,227 verified transition rows; all rows refreshed
+from frames under the final prompt. Residual Arm B produced the first two
+unassisted strict successes (2/128) but regressed approach/grasp/lift and is
+not promoted. The declared 1/2/4-epoch schedule did not run because
+`CHECK_EPOCHS` was unused; the runner is corrected locally. See the newest
+§14 entry for the measured ladder, protocol qualifications and next gates.
 The yaw calibration is
 kinematics from the MJCF and needs no GPU: the fixed pickup yaw is
 **0.000 rad** at the desk centre, and that single angle leaves a **mean 10.7°,
 p90 19.8°, max 25.3°** camera-bearing residual across the ±0.19 m workspace,
 with 18.4% of a 7×7 grid inside a 5° band. That number is the measured cost of
 the user-confirmed fixed-yaw choice and is not a reason to change it; it is the
-quantity a later per-position facing mode would be compared against. Teacher
-screening on the new scene/handoff distribution remains the first GPU step.
+quantity a later per-position facing mode would be compared against.
 
 This is the campaign's canonical high-level progress record. It consolidates the results that are still technically relevant, backed by retained evidence, or used by the current training loop. Failed branches and measurements later shown to be invalid are not presented as achievements. They are named only in §10 so they are not accidentally revived.
 
@@ -1023,11 +1013,12 @@ aborts is the yield optimization; the lift is the blocker.
 
 ### 7.16 The three-stage `put_into` collection and SFT pipeline
 
-**Implemented 2026-09-10; no GPU run yet.** `CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`'s
-change map is complete in the repository and unit-tested on CPU (1336 tests
-pass; the three pre-existing local failures are unchanged). Nothing below is a
-result about the policy. It is a description of what will produce one, and the
-five design decisions inside it that are load-bearing.
+**Implemented 2026-09-10; collection, refresh and first A/B run completed by
+2026-09-12.** `CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`'s change map is complete
+in the repository and unit-tested on CPU (1336 tests passed at implementation;
+the three pre-existing local failures were unchanged). The load-bearing design
+decisions remain below; the full-bank and first SFT measurements are in the
+newest §14 entry and the specification's status block.
 
 | Artefact | What it does |
 |---|---|
@@ -1899,6 +1890,99 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-12 — Student-initializer screen selects `step_2117145` for bounded SIL
+
+- Evidence: three supplied unassisted `evaluation.json` files, each on the
+  identical 64-world x two-round `student_validation` split, 128 decisions,
+  zero settle decisions and the same scene-manifest hash. No candidate adapter
+  was supplied locally; checkpoint identities come from the reports.
+
+| initializer | native | strict | plate strict | bowl strict | approach / grasp / lift / release |
+|---|---:|---:|---:|---:|---:|
+| phase-7 `step_2017690` | 6/128 | 2/128 | 1/54 | 1/74 | 46 / 72 / 23 / 6 |
+| plate-peak `step_3416645` | 4/128 | 2/128 | 1/54 | 1/74 | 40 / 63 / 22 / 6 |
+| **bowl-peak `step_2117145`** | **6/128** | **5/128** | **4/54** | **1/74** | **44 / 73 / 23 / 8** |
+
+- Select `step_2117145`. Its **3.91% strict** rate is the highest declared
+  primary metric; five of its six native placements preserve the strict
+  approach/grasp/lift/carry/release history. It succeeds on apple 2/28,
+  orange 1/34 and tomato 2/34; potato is 0/32. Each alternative's two strict
+  successes occur on only one object.
+- This is a bounded selection decision, not a claim of statistical separation:
+  all three scene-clustered intervals overlap. Nor does its historical name
+  make it a bowl solution: four of five strict successes here are plate, and
+  bowl remains 1/74. The new full-task protocol, not the old checkpoint label,
+  is authoritative.
+- Next experiment: re-infer the existing transition bank's priors and visual
+  state from its durable frames under `step_2117145`; no recollection is
+  required. Train independent residual arms for 1, 2 and 4 effective epochs
+  with the corrected runner. Select the depth by strict rollouts, then run the
+  pre-declared action-expert Arm C from that depth unless Arm B already exceeds
+  20%; do not select by imitation loss alone. Continue iterative pure SFT only
+  if an arm reaches at least **7/128 strict (>5%) and preserves at least 23
+  lifts**. If Arm C also misses that gate, move to exact-full-task GRPO.
+- Supplied JSON SHA-256: bowl peak
+  `6ae41960766976ff7d3913d8173b808492b51e43602e4691ccc8275f45c7a44e`;
+  phase 7 `0c9a19aa27004d3037c233be033d44570ebd40bc6626e7815c4cadaf316022e0`;
+  plate peak `7b7dc42e9052dc6fb180a70eb3eee28570868095ee2010c7f98eb0286a329121`.
+
+### 2026-09-12 — Full three-stage bank refreshes; residual Arm B reaches 2/128, and the declared checkpoint schedule did not run
+
+- Evidence: the seven supplied JSON summaries for the two collection shards,
+  built bank, refreshed bank, Arm-A and Arm-B evaluations, and Arm-B SFT. The
+  remote NPZ/frame shards and adapter were not supplied, so their contents and
+  checkpoint SHA-256 cannot be independently re-read locally.
+- Collection and dataset agree with the design's full-bank record: 3,968
+  attempted chains, 830 reaches, 524 alignments, 307 pickups, 95 native
+  placements and **71 strict accepted chains**. The derived transition bank
+  has **26,227 rows over 517 scenes**: 20,648 move-to, 3,379 pickup and 2,200
+  placement rows. Destination/object strata are all present, and refresh
+  resolved **26,227/26,227 frames**, leaving `priors_stale=false`.
+- Arm A is the provisional `step_3540208` student, evaluated unassisted from
+  the ordinary empty start with one final prompt: **0/128** native and strict.
+  Arm B is residual-only on the final-prompt transition bank: **2/128 =
+  0.0156** native and strict, with one success among 54 plate chains and one
+  among 74 bowl chains. Both successes are tomato; apple, orange and potato
+  remain 0. The report's saved scene-clustered interval is [0, 0.0312]. Do not
+  promote or touch `final_test`.
+- The phase comparison localizes the change. Arm A -> B: approached 39 -> 28,
+  any grasp 63 -> 35, lifted 16 -> 10, released 1 -> 3, strict success 0 -> 2,
+  carry slips 13 -> 7 and wrong-place events 58 -> 30. Conditional Arm B is
+  20/28 grasped after approach, 10/35 lifted after grasp, 3/10 released after
+  lift and 2/3 native after release. The late chain improved, while approach,
+  grasp and lift regressed; achieving 26/128 cannot come from polishing the
+  final two releases.
+- SFT ran **20 epochs / 940 optimizer updates**, not the declared checkpoint
+  schedule. Validation MSE fell monotonically in the supplied history from
+  0.2181 after epoch 1 to 0.1377 after epoch 20, against 0.3301 untrained, so
+  imitation loss alone would select the most behaviorally regressed arm.
+  Reachability is 87.08% overall but only 84.34% for move-to; move Z is 74.68%
+  and yaw 76.92%, versus pickup 98.63% and placement 95.99%. This supports the
+  pre-declared Arm-C test of adapting the action-expert prior; it does not
+  support a longer residual-only fit.
+- Protocol deviations: `CHECK_EPOCHS="1 2 4"` was a dead shell variable, so
+  no 1/2/4-epoch policy was saved or rolled out. The local runner now performs
+  independent same-initialization fits and matched evaluations at those
+  depths plus canonical `EPOCHS`. The run also used no retention dataset and
+  realized a 0.0 retention fraction, so it is the composition-only ablation,
+  not the config's proposed 0.2 retention arm.
+- Decision and next gate: preserve this bank; do not spend on more collection.
+  First screen the already retained complete shared checkpoints as student
+  initializers on the same `student_validation` protocol. From the strongest
+  prefix, run corrected residual depths 1/2/4; then run Arm C with verified
+  nonzero action-expert modules, gradient coverage and best-epoch selection.
+  Pre-declare **5% strict validation success plus no approach/lift regression**
+  as the gate for continuing pure SFT. If no arm clears it, the evidence says
+  to use the best SIL result as an exact-full-task GRPO seed, not to assume
+  another 10x residual-imitation budget will yield >20%.
+- Supplied JSON SHA-256: shard 0 `5983ece07cd17a7db52b66f37efa750a73b0f449f3e0a95046ea882de04667b8`;
+  shard 1 `cc480861736547762cca214fa74b6cc691c92f0f5feab6d23d63ab179ee0f813`;
+  dataset `228ce37a291acf5e9988d45fcbefc9bf2ee38cd206d9aa4d6e563e74d75a2e61`;
+  refreshed dataset `f1d289533cbe6ae0d1b300f5f161a23b3851a788f11fcb7d6fe55766ea7130d1`;
+  Arm A `b103067be68ca39249cbdd81f4c451b4be1e94a85bfaf54889ba155220f4575d`;
+  Arm B `b8275bf0d88f35b67c29ca9d666c83774735008c614d32f74b6d97e1216efc5b`;
+  SFT report `3410338058a11380714d7f9fe066ead1bdbe3f3f7939aec45507d6d355ef913d`.
 
 ### 2026-09-11 — Descent gain 0.20 rejected; boundary-conjunction telemetry added
 

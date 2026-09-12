@@ -7,7 +7,8 @@
 #   refresh   re-derive state/prior from the stored frames under the STUDENT's
 #             initialization and the final prompt; clears the stale marker
 #   arm A     no training. The full-task baseline of the chosen initializer.
-#   arm B     residual only, on the refreshed inputs
+#   arm B     residual only, on the refreshed inputs, with independent fits
+#             and matched rollouts at CHECK_EPOCHS plus the canonical EPOCHS
 #   arm C     arm B's residual, then the action-expert LoRA from the pictures
 #   eval      each arm on student_validation, unassisted, one prompt from step 0
 #
@@ -58,6 +59,23 @@ ARMS="${ARMS:-A B C}"
 run() { conda run --no-capture-output -n "$ENV_NAME" python3 "$@"; }
 has_arm() { [[ " $ARMS " == *" $1 "* ]]; }
 
+# sil_sft.py keeps the best validation-loss checkpoint from one invocation; it
+# does not emit intermediate rollout checkpoints.  CHECK_EPOCHS used to be a
+# dead variable, so a request such as CHECK_EPOCHS="1 2 4" silently trained and
+# evaluated only the default 20-epoch arm.  Run each declared depth from the
+# SAME initialization instead.  Residual fitting is cheap compared with the
+# rollouts, and independent fits make every checkpoint's optimizer budget
+# explicit in its own report.
+read -r -a CHECK_EPOCH_LIST <<< "$CHECK_EPOCHS"
+for checkpoint_epochs in "${CHECK_EPOCH_LIST[@]}" "$EPOCHS"; do
+  if [[ ! "$checkpoint_epochs" =~ ^[1-9][0-9]*$ ]]; then
+    echo "CHECK_EPOCHS and EPOCHS must contain positive integers; got '$checkpoint_epochs'" >&2
+    exit 2
+  fi
+done
+
+EVALUATED_REPORTS=()
+
 echo "=== refresh: re-derive state/prior under the student initialization ==="
 echo "dataset view: $DATASET_VIEW ($DATASET)"
 # NOT a replay. Replaying the bank under a different checkpoint was tried and
@@ -85,6 +103,7 @@ evaluate() {  # evaluate <name> <checkpoint>
     --decisions "${EVAL_DECISIONS:-128}" \
     --settle-decisions "${SETTLE_DECISIONS:-0}" \
     --output "$RUN_DIR/eval_$name"
+  EVALUATED_REPORTS+=("$RUN_DIR/eval_$name/evaluation.json")
 }
 
 if has_arm A; then
@@ -96,15 +115,32 @@ fi
 
 if has_arm B; then
   echo "=== arm B: residual only ==="
-  run tools/audit/sil_sft.py \
-    --dataset "$REFRESHED/demonstrations.npz" \
-    --checkpoint "$STUDENT_INIT" \
-    --output "$RUN_DIR/sft_armB" \
-    --device "$DEVICE" --epochs "$EPOCHS" \
-    --split-by scene --sampler balanced \
-    --val-fraction "${VAL_FRACTION:-0.1}" \
-    "${RETENTION_ARGS[@]}"
-  evaluate armB "$RUN_DIR/sft_armB/sil_sft_adapter.pt"
+  # Include EPOCHS as the canonical/final arm even when it is absent from the
+  # requested checks.  De-duplicate values while preserving the user's order.
+  ARM_B_EPOCHS=()
+  for checkpoint_epochs in "${CHECK_EPOCH_LIST[@]}" "$EPOCHS"; do
+    [[ " ${ARM_B_EPOCHS[*]} " == *" $checkpoint_epochs "* ]] || \
+      ARM_B_EPOCHS+=("$checkpoint_epochs")
+  done
+  for checkpoint_epochs in "${ARM_B_EPOCHS[@]}"; do
+    if [[ "$checkpoint_epochs" == "$EPOCHS" ]]; then
+      arm_name="armB"
+      arm_output="$RUN_DIR/sft_armB"
+    else
+      arm_name="armB_e${checkpoint_epochs}"
+      arm_output="$RUN_DIR/sft_armB_e${checkpoint_epochs}"
+    fi
+    echo "--- arm B checkpoint: $checkpoint_epochs effective epochs ---"
+    run tools/audit/sil_sft.py \
+      --dataset "$REFRESHED/demonstrations.npz" \
+      --checkpoint "$STUDENT_INIT" \
+      --output "$arm_output" \
+      --device "$DEVICE" --epochs "$checkpoint_epochs" \
+      --split-by scene --sampler balanced \
+      --val-fraction "${VAL_FRACTION:-0.1}" \
+      "${RETENTION_ARGS[@]}"
+    evaluate "$arm_name" "$arm_output/sil_sft_adapter.pt"
+  done
 fi
 
 if has_arm C; then
@@ -128,9 +164,7 @@ fi
 
 echo
 echo "Arms compared on student_validation, unassisted, one prompt from step 0:"
-for arm in $ARMS; do
-  report="$RUN_DIR/eval_arm$arm/evaluation.json"
-  [[ -f "$report" ]] || continue
+for report in "${EVALUATED_REPORTS[@]}"; do
   python3 - "$report" <<'PY'
 import json, sys
 data = json.load(open(sys.argv[1]))

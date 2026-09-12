@@ -154,6 +154,63 @@ be unnecessary for the GRASP — but the calibration was chosen for wrist-camera
 framing, where pi is not equivalent, so this is a design question about what
 the fixed yaw is for, not a bug to patch.
 
+**First refreshed SFT comparison, 2026-09-12.** The transition bank refreshed
+cleanly under the final prompt: all 26,227 rows resolved to frames and
+`priors_stale` is false. Arm A, the provisional `step_3540208` initializer,
+scored 0/128 native and strict. Arm B scored **2/128 = 1.56%** native and
+strict, one plate and one bowl success, both on tomato. This is a real nonzero
+end-to-end result but not a promotion: its saved interval is [0, 3.12%], and
+it is 13 times below the requested >20% point target.
+
+Arm B's late-task behavior improved while its prefix regressed. Against Arm A,
+approach fell 39 -> 28 chains, any grasp 63 -> 35 and lift 16 -> 10; release
+rose 1 -> 3 and two of those three releases completed. Wrong-place events fell
+58 -> 30 and carry slips 13 -> 7. The actionable ceiling is therefore not the
+final placement predicate: the policy first needs to preserve approach/grasp
+and more than double the number of lifts.
+
+The residual fit used 20 epochs / 940 optimizer updates, with validation MSE
+still falling through epoch index 19 (0.3301 untrained -> 0.1377). Its target
+reachability is only 87.08% overall and 84.34% for move-to; the weakest
+move-to axes are Z (74.68%) and yaw (76.92%). Pickup and placement are 98.63%
+and 95.99% reachable. This is exactly the pre-declared reason to run Arm C,
+but the bounded Arm-B schedule was not actually executed: the runner parsed
+`CHECK_EPOCHS="1 2 4"` and ignored it, evaluating only the default 20-epoch
+fit. The runner now trains independent same-initialization Arm-B fits and
+rolls them out at every declared checkpoint as well as at `EPOCHS`.
+
+The run also supplied no retention dataset, so its report correctly records
+0.0 rather than the design's proposed 0.2 original-label share. That makes
+Arm B a useful composition-only ablation, not the retention arm described by
+the config. Do not use the final-test split or collect more teacher data yet.
+First screen alternative complete shared initializers on `student_validation`,
+then rerun 1/2/4-epoch Arm B from the best prefix. Unless an Arm B already
+exceeds the final >20% target, run Arm C from the best residual depth and
+require sound realized LoRA modules, gradient coverage and validation loss. If
+no SFT arm clears a pre-declared 5% validation gate while preserving approach
+and lift, use the best SFT checkpoint as the seed for exact full-task on-policy
+training rather than scaling residual imitation by another order of magnitude.
+
+**Student-initializer screen, 2026-09-12.** The three retained complete shared
+adapters were then evaluated on exactly the same 128-chain
+`student_validation` protocol. `step_2117145` (the historical bowl-peak
+checkpoint) wins the screen with **5/128 = 3.91% strict** and 6/128 native,
+versus 2/128 strict for both `step_3416645` and phase-7 `step_2017690`.
+It produced four strict plate and one strict bowl success across apple, orange
+and tomato; potato remains zero. Its prefix is also the strongest usable one:
+44 approached, 73 grasped, 23 lifted and eight released, with five of six
+native placements satisfying the full-chain contract.
+
+The candidates' intervals overlap, so this is selection under a fixed bounded
+screen, not evidence that `step_2117145` is globally superior. It is selected
+because the declared primary metric is highest, its native-to-strict gap is
+only one chain, and it covers three objects instead of the single-object strict
+successes of either alternative. The durable bank does not need recollection:
+refresh its frames under `step_2117145`, then run the corrected independent
+1/2/4-epoch residual arms. The continuation gate is at least 7/128 strict
+(>5%) while preserving at least the initializer's 23 lifts. Arm C then starts
+from the best residual depth unless that residual arm already exceeds 20%.
+
 Collection adopts `consecutive_decisions = 1` at unity descent gain. Two
 cautions on reading its align diagnostics: they are now a different population,
 because a world that touches readiness leaves immediately and the residue that
@@ -188,7 +245,12 @@ collection from the first shard's measured acceptance, not from 4/128.
 | carry ceiling at scale | unmoved | 121/307 pickups lost = 39.4% |
 | shard agreement | **retracted; replication refutes it** | swap gives 8/25 and 7/19; pooled 28/87 = 0.322 over 1,024 chains |
 | merged banks | guarded | episode_uid was tag/shard/round/world only, so two runs collided; TAG now defaults per run and the builder refuses a collision |
-| refresh / SFT / evaluation | implemented, not run | bank is intentionally still marked `priors_stale` |
+| refresh | done | 26,227/26,227 frames resolved; final-prompt priors fresh |
+| Arm A | rejected baseline | 0/128 native and strict on `student_validation` |
+| Arm B, 20 epochs | nonzero, not promoted | 2/128 = 1.56%; prefix regressed, release improved |
+| bounded 1/2/4 Arm B | invalidated by runner defect; rerun required | `CHECK_EPOCHS` was ignored; fixed locally 2026-09-12 |
+| student initializer screen | `step_2117145` selected | 5/128 strict vs 2/128 for `step_3416645` and phase-7 `step_2017690`; intervals overlap |
+| Arm C | not run | next after corrected Arm-B selection unless Arm B already exceeds 20% |
 
 **Two corrections to this document's own assumptions**, both measured:
 
