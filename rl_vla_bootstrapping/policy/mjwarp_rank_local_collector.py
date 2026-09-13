@@ -4,12 +4,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
 
+from rl_vla_bootstrapping.simulation.cdpr_full_task_outcome import FullTaskOutcome
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     RankLocalGroupLayout,
     torch_group_advantages,
 )
 from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (
-    contact_ended_without_release,
     destination_instruction_id,
     object_label,
     release_opening_over_goal,
@@ -163,6 +163,8 @@ class ThreeStageMilestones:
     released: Any
     carry_slip: Any
     wrong_place: Any
+    outcome: Any = None
+    diagnostics: Any = None
 
     @classmethod
     def zeros(cls, torch: Any, worlds: int, device: Any) -> "ThreeStageMilestones":
@@ -198,21 +200,15 @@ def advance_three_stage_milestones(
     displacement = torch.linalg.vector_norm(
         target - reset.task_state.initial_target_positions, dim=-1
     )
-    approached = state.approached | (
-        active_mask
-        & (result.diagnostics["pick_grasp_distance"] <= float(approach_distance_m))
-        & (low_dim.gripper_opening >= float(approach_min_opening))
-        & (displacement <= float(approach_max_object_displacement_m))
-    )
-    picked_up = state.picked_up | (
-        active_mask
-        & approached
-        & result.diagnostics["ever_grasped"].to(dtype=torch.bool)
-        & (result.diagnostics["credited_lift"] >= float(lift_height_m))
-    )
-    released = state.released | (
-        active_mask & result.diagnostics["released"].to(dtype=torch.bool)
-    )
+    near = result.diagnostics["pick_grasp_distance"] <= float(approach_distance_m)
+    open_hand = low_dim.gripper_opening >= float(approach_min_opening)
+    unmoved = displacement <= float(approach_max_object_displacement_m)
+    grasped_now = physical_grasp & result.diagnostics["grasped"].to(dtype=torch.bool)
+    # Reward observable progress, even when the student closes before reaching
+    # the old open-hand gate. A real persistent grasp proves approach occurred.
+    approached = state.approached | (active_mask & (near | grasped_now))
+    held_lift = grasped_now & (result.diagnostics["target_lift"] >= float(lift_height_m))
+    picked_up = state.picked_up | (active_mask & held_lift)
     release_in_progress = release_opening_over_goal(
         command=gripper_command,
         opening=low_dim.gripper_opening,
@@ -221,35 +217,87 @@ def advance_three_stage_milestones(
         receptacle_xy=receptacle[:, :2],
         radius=result.diagnostics["container_xy_radius"],
     )
-    carry_slip = state.carry_slip | (
-        active_mask
-        & picked_up
-        & contact_ended_without_release(
-            physical_grasp=physical_grasp,
-            released=released,
-            release_in_progress=release_in_progress,
-        )
+    outcome = state.outcome
+    if outcome is None:
+        outcome = FullTaskOutcome.zeros(torch, int(active_mask.numel()), active_mask.device)
+    outcome = outcome.advance(
+        active=active_mask, native_success=result.success.to(dtype=torch.bool),
+        physical_grasp=physical_grasp, held_lift=result.diagnostics["pick_success"],
+        released=result.diagnostics["released"].to(dtype=torch.bool),
+        release_in_progress=release_in_progress,
+        wrong_place=result.diagnostics["wrong_place_drop"].to(dtype=torch.bool),
     )
-    wrong_place = state.wrong_place | (
-        active_mask & result.diagnostics["wrong_place_drop"].to(dtype=torch.bool)
+    diagnostics = dict(state.diagnostics or {})
+    events = {
+        "raw_reach": near, "open_hand": open_hand, "unmoved": unmoved,
+        "open_hand_reach": near & open_hand,
+        "legacy_approach": near & open_hand & unmoved,
+        "reach_closed_hand": near & ~open_hand,
+        "reach_displaced_object": near & ~unmoved,
+        "approach_recovered_by_grasp": grasped_now & ~state.approached & ~near,
+        "physical_grasp": physical_grasp,
+        "physical_held_lift": held_lift,
+        "non_finite_ee": ~torch.isfinite(low_dim.ee_position).all(dim=-1),
+    }
+    for name, event in events.items():
+        diagnostics[name] = diagnostics.get(name, torch.zeros_like(active_mask)) | (active_mask & event)
+    # Diagnostic counterfactual only. It never gates the actual task outcome.
+    legacy = diagnostics["legacy_approach"]
+    diagnostics["lift_without_legacy_approach"] = (
+        diagnostics.get("lift_without_legacy_approach", torch.zeros_like(active_mask))
+        | (active_mask & held_lift & ~legacy)
     )
-    placed = state.placed | (
-        active_mask
-        & approached
-        & picked_up
-        & released
-        & result.success.to(dtype=torch.bool)
-        & ~carry_slip
-        & ~wrong_place
+    diagnostics["native"] = outcome.native
+    diagnostics["strict"] = outcome.strict
+    diagnostics["strict_without_legacy_approach"] = outcome.strict & ~legacy
+    # The strict outcome lifts on the task grasp at the configured pick height;
+    # M2 needs the physical grasp at lift_height_m. When those disagree, a
+    # strict success would carry pickup return 0 (negative advantage on a
+    # winning trajectory). Keep returns ordered: success implies its prefix.
+    diagnostics["strict_without_pickup_milestone"] = (
+        diagnostics.get("strict_without_pickup_milestone", torch.zeros_like(active_mask))
+        | (outcome.strict & ~picked_up)
     )
+    picked_up = picked_up | outcome.strict
+    approached = approached | picked_up
     return ThreeStageMilestones(
-        approached=approached,
-        picked_up=picked_up,
-        placed=placed,
-        released=released,
-        carry_slip=carry_slip,
-        wrong_place=wrong_place,
+        approached=approached, picked_up=picked_up, placed=outcome.strict,
+        released=outcome.released, carry_slip=outcome.carry_slip,
+        wrong_place=outcome.wrong_place, outcome=outcome, diagnostics=diagnostics,
     )
+
+
+def three_stage_count_metrics(state: ThreeStageMilestones, instruction_ids: Any,
+                              *, prefix: str = "three_stage/") -> dict[str, float]:
+    """Counters with explicit denominators, safe to sum over rounds and ranks."""
+    import torch
+    events = dict(state.diagnostics or {})
+    events.update(approach=state.approached, pickup=state.picked_up,
+                  placement=state.placed, carry_slip=state.carry_slip,
+                  wrong_place=state.wrong_place)
+    metrics = {}
+    for destination, selected in (
+        ("", torch.ones_like(instruction_ids, dtype=torch.bool)),
+        ("plate_", instruction_ids == INSTRUCTION_TO_ID["put_into_plate"]),
+        ("bowl_", instruction_ids == INSTRUCTION_TO_ID["put_into_bowl"]),
+    ):
+        metrics[f"{prefix}{destination}episodes"] = float(selected.sum().item())
+        for name, event in events.items():
+            metrics[f"{prefix}{destination}{name}_count"] = float((event & selected).sum().item())
+    return metrics
+
+
+def add_three_stage_rates(metrics: dict[str, float], *, prefix: str = "three_stage/") -> None:
+    for destination in ("", "plate_", "bowl_"):
+        denominator = max(1.0, metrics.get(f"{prefix}{destination}episodes", 0.0))
+        start = f"{prefix}{destination}"
+        for key, value in list(metrics.items()):
+            if not key.startswith(start) or not key.endswith("_count"):
+                continue
+            name = key[len(start):-len("_count")]
+            if not destination and name.startswith(("plate_", "bowl_")):
+                continue
+            metrics[f"{start}{name}_rate"] = value / denominator
 
 
 def sample_active_priors(runtime, cameras, states, instructions, indices, vision_dim, microbatch):
@@ -3061,10 +3109,19 @@ class GroupedFullTaskSceneResetter:
             + int(update_index) * groups * 1_000_003
             + self.base_seed
         ) % len(self.scenes)
-        return [
-            self.scenes[(start + group) % len(self.scenes)]
-            for group in range(groups)
-        ]
+        by_destination = {
+            name: tuple(scene for scene in self.scenes if scene.destination == name)
+            for name in ("plate", "bowl")
+        }
+        available = [scenes for scenes in by_destination.values() if scenes]
+        if not available:
+            raise ValueError("Full-task scenes must have plate or bowl destinations.")
+        # Alternate destinations, including across ranks for one-group ranks.
+        # Within each destination keep deterministic advancing scene windows.
+        return [available[(self.rank * groups + group) % len(available)][
+            (start + group // len(available)) % len(available[(self.rank * groups + group) % len(available)])
+        ] for group in range(groups)]
+
 
     def reset(
         self,
@@ -4402,6 +4459,8 @@ class RankLocalMJWarpGRPOCollector:
                     ] = float(
                         (stage_usable[stage] & group_destination).sum().item()
                     )
+            three_stage_metrics.update(three_stage_count_metrics(three_stage, reset.task_state.instruction_ids))
+            add_three_stage_rates(three_stage_metrics)
             three_stage_metrics["three_stage/cumulative_score_mean"] = float(
                 candidate_rewards.mean().item()
             )
@@ -4697,6 +4756,7 @@ class RankLocalMJWarpGRPOCollector:
             "filtered_records": float(
                 (record_valid & ~record_usable).sum().item()
             ),
+            "valid_records": float(record_valid.sum().item()),
             "filtered_record_fraction": float(
                 (record_valid & ~record_usable).sum().item()
             ) / max(1.0, float(record_valid.sum().item())),
@@ -5032,6 +5092,7 @@ class RankLocalMJWarpGRPOCollector:
                 "validation/controller_ceiling_z_m": float(ceiling_z),
                 **(
                     {
+                        **three_stage_count_metrics(three_stage, reset.task_state.instruction_ids, prefix="validation/three_stage_"),
                         "validation/three_stage_approach_rate": float(
                             three_stage.approached.float().mean().item()
                         ),
@@ -5123,10 +5184,19 @@ def concatenate_collector_rounds(
     metrics: dict[str, float] = {}
     for key in rounds[0].metrics:
         values = [float(item.metrics.get(key, 0.0)) for item in rounds]
-        if key.endswith("_time_s") or "actions" in key or "records" in key or key == "informative_groups":
+        is_count_or_work = (
+            key.endswith("_time_s") or "actions" in key or "records" in key
+            or key.endswith(("_count", "_successes", "_usable_groups", "_episodes", "/episodes"))
+            or key.startswith(("successes_", "worlds_"))
+            or key in {"informative_groups", "non_finite_ee_worlds", "drift_terminations",
+                       "usable_groups", "degenerate_reward_groups", "post_grasp_worlds",
+                       "grasp_diagnostic_observations"}
+        )
+        if is_count_or_work:
             metrics[key] = float(sum(values))
         else:
             metrics[key] = float(sum(values) / len(values))
+    add_three_stage_rates(metrics)
     rollout_time = max(metrics.get("rollout_time_s", 0.0), 1.0e-9)
     metrics["sampled_actions_per_second"] = (
         metrics.get("sampled_environment_actions", 0.0) / rollout_time

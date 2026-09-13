@@ -125,6 +125,9 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     max_train_steps = os.environ.get("RLVLA_SMOLVLA_MAX_TRAIN_STEPS", "").strip()
     if max_train_steps:
         injected["max_train_steps"] = int(max_train_steps)
+    max_updates = os.environ.get("RLVLA_SMOLVLA_MJWARP_MAX_UPDATES", "").strip()
+    if max_updates:
+        injected["mjwarp_max_updates"] = int(max_updates)
     mjwarp_worlds = os.environ.get("RLVLA_MJWARP_WORLDS_PER_RANK", "").strip()
     if mjwarp_worlds:
         worlds = int(mjwarp_worlds)

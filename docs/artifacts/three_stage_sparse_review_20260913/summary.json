@@ -1,0 +1,19 @@
+{
+  "source_event": "/Users/damirnurtdinov/Downloads/events.out.tfevents.1789243988.VLAPU.29508.0",
+  "source_sha256": "9a3a19585d12d6342150da7cfc07bda61a449e26cfd99622809b4578e1c9206d",
+  "local_commit": "dae8cae",
+  "remote_commit_verified": false,
+  "tfrecord_crc32c_verified_records": 7876,
+  "source_bytes": 534452,
+  "scalar_tags": 237,
+  "last_global_step": 3719818.0,
+  "cycles": 39,
+  "cycles_with_informative_records": 1,
+  "candidate_episodes": 78848.0,
+  "sampled_actions": 29939590.0,
+  "informative_records": 1644.0,
+  "placement_successes": 0.0,
+  "validation_evaluations": 14,
+  "training_elapsed_seconds": 42485.3671875,
+  "torch_gpu_tests_run": false
+}

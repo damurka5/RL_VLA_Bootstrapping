@@ -36,6 +36,7 @@ from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     RankLocalMJWarpGRPOCollector,
     ValidationRound,
     concatenate_collector_rounds,
+    add_three_stage_rates,
     instruction_outcome_counts,
 )
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
@@ -505,10 +506,20 @@ def _synchronize_validation_rounds(
         if timing_values.numel() > 0:
             dist.all_reduce(timing_values, op=dist.ReduceOp.MAX)
 
+    stage_keys = sorted({key for item in rounds for key in item.metrics
+                         if key.startswith("validation/three_stage_")
+                         and key.endswith(("_count", "_episodes"))})
+    stage_values = torch.tensor([sum(item.metrics.get(key, 0.0) for item in rounds)
+                                 for key in stage_keys], dtype=torch.float64, device=device)
+    if stage_values.numel() and dist.is_available() and dist.is_initialized():
+        dist.all_reduce(stage_values, op=dist.ReduceOp.SUM)
+    stage_metrics = dict(zip(stage_keys, stage_values.cpu().tolist()))
+    add_three_stage_rates(stage_metrics, prefix="validation/three_stage_")
     total_count = counts.sum().clamp_min(1.0)
     finite_reward_total = reward_counts.sum()
     finite_distance_total = distance_counts.sum()
     metrics = {
+        **stage_metrics,
         "validation/episodes": float(counts.sum().item()),
         "validation/success_rate": float(
             (successes.sum() / total_count).item()
@@ -600,6 +611,13 @@ def _composed_validation_enabled(args: Any) -> bool:
         _validation_enabled(args)
         and int(getattr(args, "composed_validation_episodes_per_instruction", 0)) > 0
     )
+
+
+def _three_stage_refill_ready(rounds: Sequence[Any], minimum: int) -> bool:
+    """An approach-only batch must not satisfy downstream refill targets."""
+    return all(sum(item.metrics.get(f"three_stage/{stage}_usable_groups", 0.0)
+                   for item in rounds) >= max(0, minimum)
+               for stage in ("approach", "pickup", "placement"))
 
 
 def _run_gpu_validation(
@@ -1483,11 +1501,21 @@ def _synchronize_update_metrics_once(
             or key.endswith("_max")
             or key.endswith("_std")
             or key.endswith("_rate")
+            or key.endswith("_fraction")
+            or key.endswith("_loss_mass")
             or "_mean_" in key
             or key.startswith("loss_")
             or key in _RANK_MEAN_UPDATE_METRICS
         ):
             summed[key] /= float(world_size)
+    add_three_stage_rates(summed)
+    if "valid_records" in summed:
+        summed["filtered_record_fraction"] = summed.get("filtered_records", 0.0) / max(1.0, summed["valid_records"])
+    for destination in ("", "plate_", "bowl_"):
+        for stage in ("approach", "pickup", "placement"):
+            key = f"three_stage/{destination}{stage}_rate"
+            if key in summed:
+                summed[f"three_stage/{destination}{stage}_success_rate"] = summed[key]
     for key, value in zip(
         wall_keys, wall_values.detach().cpu().tolist()
     ):
@@ -2150,6 +2178,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         else:
             last_validation_step = int(global_step)
         run_start_step = int(global_step)
+        zero_signal_streak = 0
+        if three_stage_sparse_credit and validation_collector is not None:
+            initial_validation = _run_gpu_validation(
+                args=args, collector=validation_collector, trainer=trainer,
+                device=device, rank=dist_ctx.rank, world_size=dist_ctx.world_size,
+            )
+            initial_validation.update(global_step=float(global_step), update_index=float(update_index))
+            if dist_ctx.is_main:
+                _append_jsonl(validation_path, initial_validation)
+                _log_tensorboard_metrics(writer, initial_validation, global_step)
+                _log(dist_ctx, f"[three-stage] initial strict validation={initial_validation['validation/success_rate']:.4f}")
         training_started = time.perf_counter()
         progress = _make_mjwarp_progress_bar(
             args=args,
@@ -2275,7 +2314,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                 if target_groups > 0:
                     # Group-targeted: the records target is ignored, because a
                     # record count cannot express "enough groups separated".
-                    if local_usable_groups >= target_groups:
+                    if local_usable_groups >= target_groups and (
+                        not three_stage_sparse_credit or _three_stage_refill_ready(
+                            rounds, int(args.three_stage_min_informative_groups_per_stage)
+                        )
+                    ):
                         break
                 elif (
                     int(args.grpo_target_records_per_update) <= 0
@@ -2315,6 +2358,12 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             synchronization_time += (
                 time.perf_counter() - synchronization_started
+            )
+            zero_signal_streak = zero_signal_streak + 1 if schedule.global_max_records == 0 else 0
+            stop_for_zero_signal = (
+                three_stage_sparse_credit
+                and int(args.three_stage_zero_signal_patience) > 0
+                and zero_signal_streak >= int(args.three_stage_zero_signal_patience)
             )
             update_timer = time.perf_counter()
             update_metrics = trainer.update_tensor_records(
@@ -2673,6 +2722,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "profiled_update": float(profile_this_update),
                 }
             )
+            synchronized_metrics["vla_lora/updates_enabled"] = float(update_vla_lora)
+            if three_stage_sparse_credit:
+                # The manifest owns resets. Do not display inactive legacy
+                # caps/caught fractions as if they described sampled episodes.
+                for key in list(synchronized_metrics):
+                    if key.startswith("curriculum/") and key not in {
+                        "curriculum/horizon_decisions", "curriculum/scene_objects_min",
+                        "curriculum/scene_objects_max", "curriculum/enabled",
+                    }:
+                        del synchronized_metrics[key]
+                synchronized_metrics["curriculum/manifest_reset"] = 1.0
             if profile_this_update:
                 profiled_components = {
                     "smolvla_inference": float(
@@ -2714,7 +2774,15 @@ def main(argv: Sequence[str] | None = None) -> None:
                 global_step=global_step,
             )
 
-            validation_due = _validation_due(
+            final_update = (
+                global_step >= int(args.max_train_steps)
+                or (int(args.mjwarp_max_updates) > 0 and
+                    update_index - start_update_index >= int(args.mjwarp_max_updates))
+                or stop_for_zero_signal
+            )
+            synchronized_metrics["three_stage/zero_signal_streak"] = float(zero_signal_streak)
+            synchronized_metrics["three_stage/stopped_for_zero_signal"] = float(stop_for_zero_signal)
+            validation_due = (three_stage_sparse_credit and final_update and validation_collector is not None) or _validation_due(
                 args,
                 global_step=global_step,
                 last_validation_step=last_validation_step,
@@ -2813,7 +2881,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 int(args.save_every_steps) > 0
                 and global_step - last_saved_step >= int(args.save_every_steps)
             )
-            final_update = global_step >= int(args.max_train_steps)
+            final_update = final_update or global_step >= int(args.max_train_steps)
             final_update = final_update or (
                 int(args.mjwarp_max_updates) > 0
                 and update_index - start_update_index
@@ -2917,6 +2985,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             # "Warp CUDA error 2: out of memory". Once per update is
             # negligible next to a ~100 s update.
             torch.cuda.empty_cache()
+            if stop_for_zero_signal:
+                _log(dist_ctx, f"[three-stage] stopped after {zero_signal_streak} globally empty updates; inspect stage diagnostics before extending")
+                break
     finally:
         if progress is not None:
             progress.close()

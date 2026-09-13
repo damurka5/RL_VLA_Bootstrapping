@@ -52,6 +52,7 @@ from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
 from rl_vla_bootstrapping.policy.smolvla_cdpr import DEFAULT_SMOLVLA_CHECKPOINT, load_smolvla_runtime
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     EqualDDPSchedule,
+    global_stage_loss_weights,
     pad_tensor_records,
 )
 from rl_vla_bootstrapping.policy.smolvla_finetune_cdpr import (
@@ -533,7 +534,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         default=False,
         help_text=(
             "Train end-to-end put_into with three ordered sparse milestones: "
-            "open-hand approach, persistent grasp plus 5 cm lift, and strict "
+            "approach or persistent grasp, current held 5 cm lift, and strict "
             "released/settled placement. Each action record is routed to the "
             "milestone it was pursuing; advantages and degeneracy filters are "
             "computed independently per milestone, and represented stages get "
@@ -541,6 +542,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             "--split-credit-at-grasp."
         ),
     )
+    parser.add_argument("--three-stage-zero-signal-patience", type=int, default=3)
+    parser.add_argument("--three-stage-min-informative-groups-per-stage", type=int, default=4)
     parser.add_argument("--three-stage-scene-manifest", default="")
     parser.add_argument("--three-stage-train-split", default="collection")
     parser.add_argument(
@@ -1268,18 +1271,9 @@ class SmolVLAGRPOTrainer:
         valid_count = valid.sum().clamp_min(1)
         valid_advantages = advantages[valid]
         if credit_stages is not None:
-            # The collector has already formed three independent group-relative
-            # streams. Re-normalizing them together would couple their scales
-            # again, partially undoing the split.
-            for stage in range(3):
-                selected = valid & (credit_stages == stage)
-                stage_advantages = advantages[selected]
-                if int(stage_advantages.numel()) > 1:
-                    mean = stage_advantages.mean()
-                    std = stage_advantages.std(unbiased=False).clamp_min(1.0e-6)
-                    advantages = torch.where(
-                        selected, (advantages - mean) / std, advantages
-                    )
+            # Preserve candidate-group advantages. Centering surviving stage
+            # rows erases a singleton successful downstream entrant's signal.
+            loss_weights = global_stage_loss_weights(credit_stages, valid)
         elif int(valid_advantages.numel()) > 1:
             adv_mean = valid_advantages.mean()
             adv_std = valid_advantages.std(unbiased=False).clamp_min(1.0e-6)
@@ -1314,17 +1308,21 @@ class SmolVLAGRPOTrainer:
             if self.profile_update and self.device.type == "cuda":
                 torch.cuda.synchronize(self.device)
 
-        for _epoch in range(int(schedule.ppo_epochs)):
+        # A globally empty update must not advance Adam moments or parameters.
+        active_epochs = int(schedule.ppo_epochs) if schedule.global_max_records > 0 else 0
+        for _epoch in range(active_epochs):
             order = torch.randperm(target, device=self.device)
             for start in range(0, target, minibatch):
                 mb_idx = order[start : start + minibatch]
-                self.optimizer.zero_grad(set_to_none=True)
+                if credit_stages is None or start == 0:
+                    self.optimizer.zero_grad(set_to_none=True)
                 for micro_start in range(0, minibatch, microbatch):
                     idx = mb_idx[micro_start : micro_start + microbatch]
                     synchronize_profile()
                     forward_started = time.perf_counter()
                     weight = mask[idx] * loss_weights[idx]
-                    denominator = weight.sum().clamp_min(1.0)
+                    denominator = (weight.new_tensor(1.0) if credit_stages is not None
+                                   else weight.sum().clamp_min(1.0))
                     policy_mean, log_std = self._mean_and_log_std(
                         states[idx], priors[idx], action_indices[idx]
                     )
@@ -1360,7 +1358,7 @@ class SmolVLAGRPOTrainer:
                         policy_loss
                         - float(self.args.entropy_coef) * entropy_mean
                         + float(self.args.action_l2) * l2_mean
-                    ) / (minibatch // microbatch)
+                    ) / (1 if credit_stages is not None else (minibatch // microbatch))
                     synchronize_profile()
                     if self.profile_update:
                         update_forward_time_s += (
@@ -1387,6 +1385,8 @@ class SmolVLAGRPOTrainer:
                             | (ratio > 1.0 + float(self.args.clip_range_high))
                         )
                         clip_total += (outside.to(torch.float32) * weight).sum()
+                if credit_stages is not None and start + minibatch < target:
+                    continue  # Accumulate the exact stage mean over the full update.
                 optimizer_started = time.perf_counter()
                 grad_limit = (
                     float(self.args.max_grad_norm)
@@ -1407,9 +1407,19 @@ class SmolVLAGRPOTrainer:
                 self.gradient_step += 1
                 optimizer_steps += 1
 
+        stage_metrics = {}
+        if credit_stages is not None:
+            for stage, name in enumerate(("approach", "pickup", "placement")):
+                selected = valid & (credit_stages == stage)
+                stage_metrics[f"three_stage/{name}_used_records"] = float(selected.sum().item())
+                stage_metrics[f"three_stage/{name}_positive_records"] = float((selected & (advantages > 0)).sum().item())
+                stage_metrics[f"three_stage/{name}_negative_records"] = float((selected & (advantages < 0)).sum().item())
+                stage_metrics[f"three_stage/{name}_advantage_abs_sum"] = float(advantages[selected].abs().sum().item())
+                stage_metrics[f"three_stage/{name}_loss_mass"] = float(loss_weights[selected].sum().item())
         metric_denominator = metric_weight.clamp_min(1.0)
         valid_advantages = advantages[valid]
         return {
+            **stage_metrics,
             "loss_policy_mean": float(
                 (policy_loss_total / metric_denominator).detach().item()
             ),
@@ -1422,14 +1432,14 @@ class SmolVLAGRPOTrainer:
             "clip_fraction_mean": float(
                 (clip_total / metric_denominator).detach().item()
             ),
-            "gradient_norm_mean": float(np.mean(gradient_norms)),
-            "gradient_norm_max": float(np.max(gradient_norms)),
+            "gradient_norm_mean": float(np.mean(gradient_norms)) if gradient_norms else 0.0,
+            "gradient_norm_max": float(np.max(gradient_norms)) if gradient_norms else 0.0,
             "optimizer_steps": float(optimizer_steps),
             "update_forward_time_s": float(update_forward_time_s),
             "backpropagation_time_s": float(backpropagation_time_s),
             "optimizer_time_s": float(optimizer_time_s),
             "backward_collectives": float(
-                schedule.backward_collectives * (minibatch // microbatch)
+                active_epochs * schedule.minibatches_per_epoch * (minibatch // microbatch)
             ),
             "informative_records": float(valid.sum().detach().item()),
             "padded_records": float(target),

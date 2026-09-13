@@ -1306,6 +1306,8 @@ def evaluate_active_sparse_tasks(
             "projection_between": projection,
             "released": released,
             "ever_grasped": state.ever_grasped,
+            "grasped": state.grasped,
+            "pick_success": pick_success,
             "wrong_place_drop": wrong_place_settled,
         },
     )

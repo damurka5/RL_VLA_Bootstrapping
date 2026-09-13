@@ -115,7 +115,7 @@ class CollectorExposesUsableGroupsTests(unittest.TestCase):
 
         source = inspect.getsource(RankLocalMJWarpGRPOCollector.collect_round)
         start = source.index("usable_groups = informative_group")
-        block = source[start : start + 400]
+        block = source[start : source.index("vla_records = None", start)]
         self.assertIn("self.split_credit_at_grasp", block)
         self.assertIn("degenerate_pre", block)
 
@@ -149,7 +149,10 @@ class TheLoopUsesTheGroupTargetTests(unittest.TestCase):
 
         source = inspect.getsource(module.main)
         self.assertIn("if target_groups > 0:", source)
-        self.assertIn("if local_usable_groups >= target_groups:", source)
+        self.assertIn("if local_usable_groups >= target_groups", source)
+        # Three-stage runs additionally need every stage represented, so an
+        # approach-only batch cannot end the refill.
+        self.assertIn("_three_stage_refill_ready(", source)
         # The records path stays reachable, as the `elif`, so a run without the
         # new flag keeps its exact previous break condition.
         self.assertIn("elif (\n", source)

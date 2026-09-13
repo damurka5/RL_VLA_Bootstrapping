@@ -70,7 +70,7 @@ class ThreeStageSparseCreditTests(unittest.TestCase):
         resetter = object.__new__(GroupedFullTaskSceneResetter)
         resetter.layout = SimpleNamespace(groups_per_rank=4)
         resetter.scenes = tuple(
-            SimpleNamespace(scene_index=index) for index in range(20)
+            SimpleNamespace(scene_index=index, destination="plate" if index % 2 else "bowl") for index in range(20)
         )
         resetter.rank = 1
         resetter.base_seed = 7
@@ -78,7 +78,7 @@ class ThreeStageSparseCreditTests(unittest.TestCase):
         self.assertEqual(len(selected), 4)
         self.assertEqual(len({scene.scene_index for scene in selected}), 4)
 
-    def test_pickup_cannot_be_credited_before_open_hand_approach(self):
+    def test_current_held_lift_recovers_missed_open_hand_approach(self):
         worlds = 1
         reset = SimpleNamespace(
             task_state=SimpleNamespace(
@@ -90,12 +90,16 @@ class ThreeStageSparseCreditTests(unittest.TestCase):
         low_dim = SimpleNamespace(
             object_positions=torch.tensor([[[0.0, 0.0, 0.20], [0.1, 0.0, 0.15]]]),
             gripper_opening=torch.tensor([0.5]),
+            ee_position=torch.tensor([[0.0, 0.0, 0.22]]),
         )
         result = SimpleNamespace(
             success=torch.tensor([False]),
             diagnostics={
                 "pick_grasp_distance": torch.tensor([0.01]),
                 "ever_grasped": torch.tensor([True]),
+                "grasped": torch.tensor([True]),
+                "pick_success": torch.tensor([True]),
+                "target_lift": torch.tensor([0.05]),
                 "credited_lift": torch.tensor([0.05]),
                 "released": torch.tensor([False]),
                 "container_xy_radius": torch.tensor([0.091]),
@@ -112,14 +116,18 @@ class ThreeStageSparseCreditTests(unittest.TestCase):
             previous_opening=torch.tensor([0.9]),
             active_mask=torch.tensor([True]),
         )
-        self.assertFalse(bool(state.approached[0]))
-        self.assertFalse(bool(state.picked_up[0]))
+        self.assertTrue(bool(state.approached[0]))
+        self.assertTrue(bool(state.picked_up[0]))
+        self.assertFalse(bool(state.diagnostics["legacy_approach"][0]))
 
         # The same geometry with an open hand and an unmoved object earns M1;
         # M2 remains ordered after it.
         low_dim.gripper_opening = torch.tensor([0.95])
         low_dim.object_positions[0, 0, 2] = 0.15
         result.diagnostics["credited_lift"] = torch.tensor([0.0])
+        result.diagnostics["target_lift"] = torch.tensor([0.0])
+        result.diagnostics["pick_success"] = torch.tensor([False])
+        state = ThreeStageMilestones.zeros(torch, worlds, torch.device("cpu"))
         state = advance_three_stage_milestones(
             state,
             reset=reset,
@@ -144,15 +152,23 @@ class ThreeStageSparseCreditTests(unittest.TestCase):
         low_dim = SimpleNamespace(
             object_positions=torch.tensor([[[0.1, 0.0, 0.20], [0.1, 0.0, 0.15]]]),
             gripper_opening=torch.tensor([0.50]),
+            ee_position=torch.tensor([[0.1, 0.0, 0.22]]),
         )
         diagnostics = {
             "pick_grasp_distance": torch.tensor([0.20]),
             "ever_grasped": torch.tensor([True]),
+                "grasped": torch.tensor([True]),
+                "pick_success": torch.tensor([True]),
+                "target_lift": torch.tensor([0.05]),
             "credited_lift": torch.tensor([0.05]),
             "released": torch.tensor([False]),
             "container_xy_radius": torch.tensor([0.091]),
             "wrong_place_drop": torch.tensor([False]),
         }
+        from rl_vla_bootstrapping.simulation.cdpr_full_task_outcome import FullTaskOutcome
+        outcome = FullTaskOutcome.zeros(torch, 1, torch.device("cpu"))
+        outcome = FullTaskOutcome(outcome.native, torch.tensor([True]), torch.tensor([True]),
+                                  outcome.released, outcome.carry_slip, outcome.wrong_place)
         state = ThreeStageMilestones(
             approached=torch.tensor([True]),
             picked_up=torch.tensor([True]),
@@ -160,6 +176,7 @@ class ThreeStageSparseCreditTests(unittest.TestCase):
             released=torch.tensor([False]),
             carry_slip=torch.tensor([False]),
             wrong_place=torch.tensor([False]),
+            outcome=outcome,
         )
         state = advance_three_stage_milestones(
             state,

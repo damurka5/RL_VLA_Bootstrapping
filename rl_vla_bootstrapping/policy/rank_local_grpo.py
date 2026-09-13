@@ -131,6 +131,25 @@ def torch_group_advantages(
     return centered
 
 
+def global_stage_loss_weights(credit_stage: Any, valid: Any, stage_count: int = 3) -> Any:
+    """Per-row coefficients for a global mean of stage losses under DDP.
+
+    Sum row losses across the entire update before stepping. DDP averages rank
+    gradients, hence the world-size factor. Counts include only usable rows.
+    """
+    import torch
+    import torch.distributed as dist
+    counts = torch.stack([(valid & (credit_stage == stage)).sum()
+                          for stage in range(stage_count)]).to(dtype=torch.float64)
+    world_size = 1
+    if dist.is_available() and dist.is_initialized():
+        dist.all_reduce(counts, op=dist.ReduceOp.SUM)
+        world_size = dist.get_world_size()
+    represented = (counts > 0).sum().clamp_min(1)
+    coefficients = float(world_size) / (represented * counts.clamp_min(1))
+    return valid.to(dtype=torch.float32) * coefficients[credit_stage.long()].to(dtype=torch.float32)
+
+
 @dataclass(frozen=True)
 class EqualDDPSchedule:
     """Fixed optimizer schedule derived once per update across ranks."""

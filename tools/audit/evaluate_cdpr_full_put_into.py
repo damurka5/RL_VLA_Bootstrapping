@@ -64,13 +64,18 @@ import json  # noqa: E402
 import time  # noqa: E402
 from typing import Any, Mapping, Sequence  # noqa: E402
 
+from rl_vla_bootstrapping.simulation.cdpr_full_task_outcome import FullTaskOutcome  # noqa: E402
+from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (  # noqa: E402
+    ThreeStageMilestones,
+    advance_three_stage_milestones,
+)
+
 import numpy as np  # noqa: E402
 
 from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (  # noqa: E402
     PickupYawCalibration,
     YawTailController,
     clone_task_state,
-    contact_ended_without_release,
     destination_instruction_id,
     object_label,
     release_opening_over_goal,
@@ -99,6 +104,7 @@ def run_unassisted(
     decisions: int,
     settle_decisions: int,
     assisted_yaw: PickupYawCalibration | None,
+    stochastic_generator: Any = None,
     vision_dim: int,
 ) -> dict[str, Any]:
     """One rollout of the student over a batch of full-task scenes."""
@@ -144,6 +150,10 @@ def run_unassisted(
     )
 
     active = torch.ones((worlds,), dtype=torch.bool, device=torch_device)
+    outcome = FullTaskOutcome.zeros(torch, worlds, torch_device)
+    # The training milestone machine observes the SAME trajectories. It never
+    # gates `strict`; it records whether training credit would have been paid.
+    milestones = ThreeStageMilestones.zeros(torch, worlds, torch_device)
     native = torch.zeros_like(active)
     ever_grasped = torch.zeros_like(active)
     ever_lifted = torch.zeros_like(active)
@@ -213,9 +223,17 @@ def run_unassisted(
                     ),
                 )
                 state_tensor = proprio
-            chunk = world.trainer.deterministic_action_chunks_tensor(
-                states=state_tensor, priors=prior, action_count=per
-            )
+            if stochastic_generator is None:
+                chunk = world.trainer.deterministic_action_chunks_tensor(
+                    states=state_tensor, priors=prior, action_count=per
+                )
+            else:
+                # The GRPO behaviour policy: deterministic evaluation does not
+                # measure what exploration can find.
+                chunk, _, _ = world.trainer.sample_action_chunks_tensor(
+                    states=state_tensor, priors=prior, action_count=per,
+                    generator=stochastic_generator,
+                )
             for action_index in range(per):
                 step_active = active.clone()
                 action = chunk[:, action_index].clone()
@@ -273,29 +291,24 @@ def run_unassisted(
                 released = place_result.diagnostics["released"]
                 lift = pick_result.diagnostics["target_lift"]
 
-                native |= place_result.success
-                ever_grasped |= caught & step_active
-                ever_lifted |= pick_result.success
-                ever_released |= released & step_active & ever_grasped
-                wrong_place |= place_result.diagnostics["wrong_place_drop"]
-                # The SAME slip test the collector uses, imported rather than
-                # restated. This call site carried its own copy of the naive
-                # rule -- "not holding it any more" -- and `strict` requires
-                # `~carry_slip`, so every successful placement would have
-                # latched a slip during its release ramp and been struck from
-                # the headline verdict. Contact ends several steps before the
-                # opening crosses its threshold; measured on the remote screen,
-                # three steps with the object 7 mm from the bowl centre.
-                carry_slip |= (
-                    ever_lifted
-                    & contact_ended_without_release(
-                        physical_grasp=caught,
-                        released=released,
-                        release_in_progress=release_in_progress,
-                    )
-                    & step_active
-                    & ~native
+                outcome = outcome.advance(
+                    active=step_active, native_success=place_result.success,
+                    physical_grasp=caught, held_lift=pick_result.success,
+                    released=released, release_in_progress=release_in_progress,
+                    wrong_place=place_result.diagnostics["wrong_place_drop"],
                 )
+                milestones = advance_three_stage_milestones(
+                    milestones, reset=reset, low_dim=low_dim, result=place_result,
+                    physical_grasp=caught, gripper_command=action[:, 4],
+                    previous_opening=previous_opening, active_mask=step_active,
+                    approach_distance_m=float(getattr(collector, "three_stage_approach_distance_m", 0.03)),
+                    approach_min_opening=float(getattr(collector, "three_stage_approach_min_opening", 0.90)),
+                    approach_max_object_displacement_m=float(
+                        getattr(collector, "three_stage_approach_max_object_displacement_m", 0.01)),
+                    lift_height_m=float(getattr(collector, "three_stage_lift_height_m", 0.05)),
+                )
+                native, ever_grasped, ever_lifted = outcome.native, outcome.grasped, outcome.lifted
+                ever_released, carry_slip, wrong_place = outcome.released, outcome.carry_slip, outcome.wrong_place
                 approached |= (
                     pick_result.diagnostics["pick_grasp_distance"] <= 0.03
                 ) & step_active
@@ -321,14 +334,7 @@ def run_unassisted(
         place_result.diagnostics["container_xy_error"]
         <= place_result.diagnostics["container_xy_radius"]
     )
-    strict = (
-        native
-        & ever_grasped
-        & ever_lifted
-        & ever_released
-        & ~carry_slip
-        & ~wrong_place
-    )
+    strict = outcome.strict
     host = lambda tensor: tensor.detach().cpu().numpy()  # noqa: E731
     return {
         "native": host(native),
@@ -343,6 +349,12 @@ def run_unassisted(
         "completion_steps": host(completion_steps),
         "min_grasp_distance": host(min_target_distance),
         "peak_lift": host(peak_lift),
+        "milestone_approach": host(milestones.approached),
+        "milestone_pickup": host(milestones.picked_up),
+        "milestone_placement": host(milestones.placed),
+        **{f"milestone_{name}": host(value)
+           for name, value in (milestones.diagnostics or {}).items()
+           if name not in ("native", "strict")},
         "scene_uid": np.asarray([scene.scene_uid for scene in scenes]),
         "destination": np.asarray([scene.destination for scene in scenes]),
         "target_catalog": np.asarray(
@@ -398,6 +410,17 @@ def summarize(rollouts: Sequence[Mapping[str, np.ndarray]]) -> dict[str, Any]:
             else None
         )
     report["conditional_ladder"] = ladder
+    # Every milestone condition beside the independent strict outcome, so the
+    # training observer can be audited against the model-selection verdict.
+    report["milestones"] = {}
+    for key in sorted(k for k in pooled if k.startswith("milestone_")):
+        name = key[len("milestone_"):]
+        report["milestones"][name] = round(float(pooled[key].mean()), 4)
+        for destination in np.unique(pooled["destination"]):
+            mask = pooled["destination"] == destination
+            report["milestones"][f"{destination}_{name}"] = round(
+                float(pooled[key][mask].mean()), 4
+            )
     report["by_object"] = {
         str(name): bootstrap_interval(
             pooled["strict"][pooled["target_catalog"] == name],
@@ -461,6 +484,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             "reported under its own key, never as the headline."
         ),
     )
+    parser.add_argument(
+        "--stochastic-seed",
+        type=int,
+        default=None,
+        help=(
+            "Sample from the GRPO behaviour policy with this seed instead of "
+            "the deterministic mean. Reported as its own arm."
+        ),
+    )
     args = parser.parse_args(argv)
 
     scenes, manifest = read_manifest(args.scene_manifest.expanduser().resolve())
@@ -511,6 +543,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         else 0
     )
 
+    stochastic_generator = None
+    if args.stochastic_seed is not None:
+        import torch
+
+        stochastic_generator = torch.Generator(device=world.device).manual_seed(
+            int(args.stochastic_seed)
+        )
     started = time.perf_counter()
     rollouts = [
         run_unassisted(
@@ -521,6 +560,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             settle_decisions=int(args.settle_decisions),
             assisted_yaw=calibration,
             vision_dim=vision_dim,
+            stochastic_generator=stochastic_generator,
         )
         for _ in range(int(args.rounds))
     ]
@@ -528,7 +568,9 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     report = {
         "tool": "evaluate_cdpr_full_put_into.py",
-        "arm": "assisted_yaw_diagnostic" if calibration else "unassisted",
+        "arm": ("assisted_yaw_diagnostic" if calibration else "unassisted")
+        + ("" if args.stochastic_seed is None else "_stochastic"),
+        "stochastic_seed": args.stochastic_seed,
         "checkpoint": str(args.checkpoint),
         "config": str(args.config),
         "scene_manifest": str(args.scene_manifest),
@@ -564,6 +606,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[eval]   {key}: {summary[key]}", flush=True)
     print(f"[eval] phases {summary['phases']}", flush=True)
     print(f"[eval] ladder {summary['conditional_ladder']}", flush=True)
+    print(f"[eval] milestones {summary['milestones']}", flush=True)
     print(f"[eval] wrote {output / 'evaluation.json'}", flush=True)
     return 0
 

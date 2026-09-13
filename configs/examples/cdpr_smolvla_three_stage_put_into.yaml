@@ -886,17 +886,15 @@ training:
       standalone: true
       nproc_per_node: 2
     args:
-      # No resume_checkpoint and no warm start: phase 4 starts from a fresh
-      # SmolVLA. From iteration 1 onward the loop driver passes the previous
-      # iteration's SFT checkpoint as --resume-checkpoint, NOT as a warm start
-      # -- load_weights_only discards extra_state, and extra_state is where the
-      # approach-curriculum caps live, so a warm start would drop the cap back
-      # to the first rung and undo the iteration that earned it.
-      max_train_steps: 15000000
+      # Weights-only initializer from the launcher; manifest resets have no
+      # inherited curriculum. Ten-update diagnostic before any long run.
+      max_train_steps: 1000000
+      mjwarp_max_updates: 10
+      three_stage_zero_signal_patience: 3
       max_env_steps: 128
       # End-to-end GRPO over the SAME manifest contract as collection and eval.
       # Returns are three independent binary streams, not one cumulative score
-      # broadcast to every action. The scalar 0/1/2/3 is telemetry/selection;
+      # broadcast to every action. The scalar 0/1/2/3 is training telemetry;
       # each record trains only on the milestone it was pursuing.
       three_stage_sparse_credit: true
       three_stage_scene_manifest: runs/three_stage/scenes_8192.json
@@ -904,6 +902,9 @@ training:
       three_stage_validation_split: student_validation
       three_stage_horizon_decisions: 128
       three_stage_approach_distance_m: 0.03
+      # These two thresholds now describe the LEGACY readiness diagnostic.
+      # M1 rewards distance-only reach or a persistent grasp; M2 requires a
+      # current held lift. Neither diagnostic gates independent strict success.
       three_stage_approach_min_opening: 0.90
       three_stage_approach_max_object_displacement_m: 0.01
       three_stage_lift_height_m: 0.05
