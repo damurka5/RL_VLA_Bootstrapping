@@ -131,23 +131,47 @@ def torch_group_advantages(
     return centered
 
 
-def global_stage_loss_weights(credit_stage: Any, valid: Any, stage_count: int = 3) -> Any:
+def global_stage_loss_weights(
+    credit_stage: Any, valid: Any, stage_count: int = 3, candidate_id: Any = None
+) -> Any:
     """Per-row coefficients for a global mean of stage losses under DDP.
 
-    Sum row losses across the entire update before stepping. DDP averages rank
-    gradients, hence the world-size factor. Counts include only usable rows.
+    Summed over every row of the update (all ranks) the coefficients of each
+    represented stage total ``1 / represented``. DDP averages rank gradients,
+    hence the world-size factor. Counts include only usable rows.
+
+    With ``candidate_id`` each stage loss is a mean over candidates of that
+    candidate's mean row loss. Otherwise a failed candidate that spends 128
+    decisions in approach outweighs a successful one that left after 20, and
+    the stage baseline follows trajectory duration rather than the group.
     """
     import torch
     import torch.distributed as dist
-    counts = torch.stack([(valid & (credit_stage == stage)).sum()
-                          for stage in range(stage_count)]).to(dtype=torch.float64)
+    stage = credit_stage.long()
+    valid = valid.to(dtype=torch.bool)
+    if candidate_id is None:
+        units = torch.stack([(valid & (stage == s)).sum()
+                             for s in range(stage_count)]).to(dtype=torch.float64)
+        per_row = torch.ones_like(stage, dtype=torch.float64)
+    else:
+        key = candidate_id.long() * int(stage_count) + stage
+        per_row = torch.ones_like(stage, dtype=torch.float64)
+        units = torch.zeros(stage_count, dtype=torch.float64, device=stage.device)
+        if bool(valid.any()):
+            unique, inverse, rows = torch.unique(
+                key[valid], return_inverse=True, return_counts=True
+            )
+            per_row[valid] = rows.to(dtype=torch.float64)[inverse]
+            units = torch.bincount(unique % int(stage_count),
+                                   minlength=stage_count).to(dtype=torch.float64)
     world_size = 1
     if dist.is_available() and dist.is_initialized():
-        dist.all_reduce(counts, op=dist.ReduceOp.SUM)
+        dist.all_reduce(units, op=dist.ReduceOp.SUM)
         world_size = dist.get_world_size()
-    represented = (counts > 0).sum().clamp_min(1)
-    coefficients = float(world_size) / (represented * counts.clamp_min(1))
-    return valid.to(dtype=torch.float32) * coefficients[credit_stage.long()].to(dtype=torch.float32)
+    represented = (units > 0).sum().clamp_min(1)
+    coefficients = float(world_size) / (represented * units.clamp_min(1))
+    weights = coefficients[stage] / per_row
+    return valid.to(dtype=torch.float32) * weights.to(dtype=torch.float32)
 
 
 @dataclass(frozen=True)

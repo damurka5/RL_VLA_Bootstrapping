@@ -247,6 +247,23 @@ def advance_three_stage_milestones(
         diagnostics.get("lift_without_legacy_approach", torch.zeros_like(active_mask))
         | (active_mask & held_lift & ~legacy)
     )
+    # The unconditional wrong-place rule, latched whether or not it terminates
+    # this run. Under it the episode would have ended at the first firing, so
+    # `strict_under_legacy_termination` is the verdict the old protocol gives.
+    legacy_wrong = active_mask & result.diagnostics.get(
+        "wrong_place_drop_legacy", result.diagnostics["wrong_place_drop"]
+    ).to(dtype=torch.bool)
+    zeros = torch.zeros_like(active_mask)
+    diagnostics["wrong_place_legacy"] = diagnostics.get("wrong_place_legacy", zeros) | legacy_wrong
+    diagnostics["wrong_place_legacy_without_lift"] = (
+        diagnostics.get("wrong_place_legacy_without_lift", zeros) | (legacy_wrong & ~outcome.lifted)
+    )
+    diagnostics["wrong_place_legacy_after_lift"] = (
+        diagnostics.get("wrong_place_legacy_after_lift", zeros) | (legacy_wrong & outcome.lifted)
+    )
+    diagnostics["strict_under_legacy_termination"] = (
+        outcome.strict & ~diagnostics["wrong_place_legacy"]
+    )
     diagnostics["native"] = outcome.native
     diagnostics["strict"] = outcome.strict
     diagnostics["strict_without_legacy_approach"] = outcome.strict & ~legacy
@@ -4323,6 +4340,9 @@ class RankLocalMJWarpGRPOCollector:
             record_usable = stage_usable_world[
                 record_stage, record_world
             ]
+            # Candidate identity for per-candidate stage means. Offset per
+            # refill round by concatenate_collector_rounds.
+            records["candidate_id"] = record_world.to(dtype=torch.int64)
         elif self.split_credit_at_grasp:
             # Two returns per world instead of one.
             #
@@ -5150,6 +5170,12 @@ def concatenate_collector_rounds(
         for key in keys
     }
     mask = torch.cat([item.loss_mask for item in rounds], dim=0)
+    if "candidate_id" in records:
+        offsets, total = [], 0
+        for item in rounds:
+            offsets.append(item.records["candidate_id"] + total)
+            total += int(item.candidate_rewards.numel())
+        records["candidate_id"] = torch.cat(offsets, dim=0)
     if "credit_stage" in records:
         # Rebalance after DAPO refill concatenation. Per-round balancing is not
         # sufficient when one round has placement contrast and another does

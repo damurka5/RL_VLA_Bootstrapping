@@ -27,13 +27,16 @@ def main():
         records = dict(state=states, prior=priors, action=actions[:, 0],
                        action_index=torch.zeros(6, dtype=torch.long), old_log_prob=probs[:, 0],
                        advantage=torch.tensor([1., -1., 1., -1., 2.646, 2.646]),
-                       credit_stage=torch.tensor([0, 0, 0, 0, 1, 2]))
+                       credit_stage=torch.tensor([0, 0, 0, 0, 1, 2]),
+                       # Candidate 1 runs long in approach; candidates 2 and 3
+                       # live on the other rank. Per-candidate means must match.
+                       candidate_id=torch.tensor([1, 1, 1, 0, 2, 3]))
         # Both disjoint-stage ranks and an entirely empty rank must match.
         references = []
         for mask in (torch.ones(6), torch.tensor([0., 0., 0., 0., 1., 1.])):
             ref = _trainer(args, Path(directory))
             ref.actor.load_state_dict(initial)
-            ref.update_tensor_records(records, loss_mask=mask, schedule=EqualDDPSchedule(4, 1, int(mask.sum())))
+            ref.update_tensor_records(records, loss_mask=mask, schedule=EqualDDPSchedule(8, 1, int(mask.sum())))
             references.append(torch.cat([p.detach().flatten() for p in ref.actor.parameters()]))
         dist.init_process_group('gloo')
         errors = []
@@ -48,14 +51,14 @@ def main():
                 n = len(local['advantage'])
                 mask = torch.zeros(n) if case == 1 and rank == 0 else torch.ones(n)
                 schedule = synchronize_equal_ddp_schedule(local_informative_records=int(mask.sum()),
-                    records_per_minibatch=4, ppo_epochs=1, device=torch.device('cpu'))
+                    records_per_minibatch=8, ppo_epochs=1, device=torch.device('cpu'))
                 result = trainer.update_tensor_records(local, loss_mask=mask, schedule=schedule)
                 flat = torch.cat([p.detach().flatten() for p in trainer.actor.parameters()])
                 error = float((flat - references[case]).abs().max())
                 assert error < 2e-6, (case, rank, error)
                 assert result['optimizer_steps'] == 1
                 errors.append(error)
-                empty = trainer.update_tensor_records(local, loss_mask=torch.zeros(n), schedule=EqualDDPSchedule(4, 1, 0))
+                empty = trainer.update_tensor_records(local, loss_mask=torch.zeros(n), schedule=EqualDDPSchedule(8, 1, 0))
                 after = torch.cat([p.detach().flatten() for p in trainer.actor.parameters()])
                 assert torch.equal(flat, after)
                 assert empty['optimizer_steps'] == 0

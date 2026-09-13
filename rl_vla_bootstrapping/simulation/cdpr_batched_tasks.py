@@ -213,6 +213,12 @@ class BatchedCatchReleaseDenseReward:
     bowl_radius: float = 0.057
     container_z_tolerance: float = 0.12
     wrong_place_settle_margin: float = 0.025
+    # Terminate a wrong place only after a HELD lift reached
+    # pick_lift_success_height. Off by default. From a full-task start the
+    # unconditional form ends every failed tabletop grasp on the spot (a
+    # set-down outside the receptacle of an object that was never carried),
+    # so the policy gets no retry within its horizon. Success is unchanged.
+    wrong_place_requires_lift: bool = False
     # Maximum object clearance above the receptacle AT THE MOMENT THE GRIPPER
     # OPENED, for the placement to count. 0.0 disables it, which is what every
     # run before this had.
@@ -353,6 +359,9 @@ class BatchedCatchReleaseDenseReward:
             ),
             wrong_place_settle_margin=max(
                 number("placement_wrong_drop_settle_margin", 0.025), 0.0
+            ),
+            wrong_place_requires_lift=flag(
+                "placement_wrong_drop_requires_lift", False
             ),
             distance_include_z=flag(
                 "catch_release_distance_include_z", False
@@ -1026,6 +1035,7 @@ def evaluate_active_sparse_tasks(
     state.step_count.add_(active.to(dtype=state.step_count.dtype))
     timeout = state.step_count >= max(1, int(max_steps))
     wrong_place_settled = torch.zeros_like(success)
+    wrong_place_legacy = torch.zeros_like(success)
     if catch_release_dense_reward is not None:
         # `~placement_geometry_ok`, NOT `~container_ok`, and the difference was
         # worth 63 of composed plate's 228 failures.
@@ -1058,13 +1068,19 @@ def evaluate_active_sparse_tasks(
         # it should never have. Nothing becomes easier to succeed at -- the
         # success test above is untouched -- but an episode that lands correctly
         # now gets the steps it needs to open the gripper.
-        wrong_place_settled = (
+        wrong_place_legacy = (
             is_container
             & state.ever_grasped
             & ~state.grasped
             & target_has_settled
             & ~placement_geometry_ok
         )
+        wrong_place_settled = wrong_place_legacy
+        if bool(getattr(catch_release_dense_reward, "wrong_place_requires_lift", False)):
+            wrong_place_settled = wrong_place_legacy & (
+                credited_lift
+                >= float(catch_release_dense_reward.pick_lift_success_height)
+            )
     terminated = success | wrong_place_settled | timeout
     rewards = torch.where(
         success,
@@ -1309,5 +1325,7 @@ def evaluate_active_sparse_tasks(
             "grasped": state.grasped,
             "pick_success": pick_success,
             "wrong_place_drop": wrong_place_settled,
+            # The unconditional form, whether or not it terminates this run.
+            "wrong_place_drop_legacy": wrong_place_legacy & active,
         },
     )

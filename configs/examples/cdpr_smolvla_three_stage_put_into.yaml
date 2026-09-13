@@ -378,6 +378,12 @@ task:
     # slack, and falling outside it blocks BOTH success and the wrong-drop
     # termination, so the episode just times out silently. 0.045 gives ~25 mm.
     placement_wrong_drop_settle_margin: 0.045
+    # Terminate a wrong place only after a HELD lift of pick_lift_success_height.
+    # The 2026-09-13 pilot ended 27-30% of episodes this way, and at least 16%
+    # of ALL episodes never lifted: a failed tabletop grasp ended the episode
+    # with no retry. Success geometry is untouched. The old verdict is still
+    # logged as strict_under_legacy_termination.
+    placement_wrong_drop_requires_lift: true
     # --- COMPOSITION: anneal the pre-grasped start away ----------------
     # ON. Every earlier phase ran this at false, so placement episodes began
     # with the object already held and the task was carry-and-release.

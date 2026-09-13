@@ -94,6 +94,8 @@ if not bool(getattr(args, "train_vla_lora", False)):
     failures.append("train_vla_lora is off; attach/load the initializer LoRA")
 if bool(getattr(args, "vla_lora_updates_enabled", True)):
     failures.append("VLA LoRA updates are on; decision-zero capture cannot balance all three stages")
+if not bool(metadata.get("placement_wrong_drop_requires_lift", False)):
+    failures.append("placement_wrong_drop_requires_lift is off; failed tabletop grasps would end episodes")
 if not collection or not validation:
     failures.append("collection or student_validation split is empty")
 print(f"[three-stage] scenes: collection={len(collection)} "
@@ -152,7 +154,7 @@ record = {"checkpoint": str(pathlib.Path(checkpoint).resolve()),
           "scene_manifest_sha256": digest(scenes),
           "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
           "max_updates": int(updates), "max_train_steps": int(steps),
-          "reward_protocol": "three_stage_accessible_v2", "outcome_protocol": "independent_strict_full_task_v1",
+          "reward_protocol": "three_stage_accessible_v3_candidate_mean_minibatch_step", "termination_protocol": "wrong_place_requires_held_lift", "outcome_protocol": "independent_strict_full_task_v1",
           "lora_updates_enabled": False}
 try:
     sys.path.insert(0, ".")

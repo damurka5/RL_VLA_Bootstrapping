@@ -1273,7 +1273,13 @@ class SmolVLAGRPOTrainer:
         if credit_stages is not None:
             # Preserve candidate-group advantages. Centering surviving stage
             # rows erases a singleton successful downstream entrant's signal.
-            loss_weights = global_stage_loss_weights(credit_stages, valid)
+            # Each minibatch is an unbiased 1/M sample of the update, so scale
+            # by M and step per minibatch: stage-exact in expectation, and the
+            # optimizer keeps its per-minibatch step count.
+            loss_weights = global_stage_loss_weights(
+                credit_stages, valid,
+                candidate_id=(padded["candidate_id"] if "candidate_id" in padded else None),
+            ) * float(schedule.minibatches_per_epoch)
         elif int(valid_advantages.numel()) > 1:
             adv_mean = valid_advantages.mean()
             adv_std = valid_advantages.std(unbiased=False).clamp_min(1.0e-6)
@@ -1314,8 +1320,7 @@ class SmolVLAGRPOTrainer:
             order = torch.randperm(target, device=self.device)
             for start in range(0, target, minibatch):
                 mb_idx = order[start : start + minibatch]
-                if credit_stages is None or start == 0:
-                    self.optimizer.zero_grad(set_to_none=True)
+                self.optimizer.zero_grad(set_to_none=True)
                 for micro_start in range(0, minibatch, microbatch):
                     idx = mb_idx[micro_start : micro_start + microbatch]
                     synchronize_profile()
@@ -1385,8 +1390,6 @@ class SmolVLAGRPOTrainer:
                             | (ratio > 1.0 + float(self.args.clip_range_high))
                         )
                         clip_total += (outside.to(torch.float32) * weight).sum()
-                if credit_stages is not None and start + minibatch < target:
-                    continue  # Accumulate the exact stage mean over the full update.
                 optimizer_started = time.perf_counter()
                 grad_limit = (
                     float(self.args.max_grad_norm)
@@ -1415,7 +1418,8 @@ class SmolVLAGRPOTrainer:
                 stage_metrics[f"three_stage/{name}_positive_records"] = float((selected & (advantages > 0)).sum().item())
                 stage_metrics[f"three_stage/{name}_negative_records"] = float((selected & (advantages < 0)).sum().item())
                 stage_metrics[f"three_stage/{name}_advantage_abs_sum"] = float(advantages[selected].abs().sum().item())
-                stage_metrics[f"three_stage/{name}_loss_mass"] = float(loss_weights[selected].sum().item())
+                stage_metrics[f"three_stage/{name}_loss_mass"] = float(
+                    loss_weights[selected].sum().item() / float(schedule.minibatches_per_epoch))
         metric_denominator = metric_weight.clamp_min(1.0)
         valid_advantages = advantages[valid]
         return {

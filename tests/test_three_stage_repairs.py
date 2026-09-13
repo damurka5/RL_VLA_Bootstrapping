@@ -119,6 +119,75 @@ class MilestoneRepairTests(unittest.TestCase):
         self.assertEqual(metrics['three_stage/bowl_pickup_count'], 1)
 
 
+class WrongPlaceTerminationTests(unittest.TestCase):
+    def evaluate(self, *, requires_lift, peak_lift):
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            BatchedCatchReleaseDenseReward, BatchedTaskState, evaluate_active_sparse_tasks)
+        objects = torch.zeros((1, 2, 3))
+        # Set down outside the bowl, at rest, no longer held.
+        objects[0, 0] = torch.tensor([0.10, 0.00, 0.18])
+        objects[0, 1] = torch.tensor([0.00, 0.00, 0.176])
+        state = BatchedTaskState(
+            instruction_ids=torch.tensor([INSTRUCTION_TO_ID['put_into_bowl']]),
+            target_slots=torch.tensor([0]), reference_slots=torch.tensor([1]),
+            second_reference_slots=torch.tensor([-1]),
+            initial_target_positions=torch.tensor([[0.10, 0.00, 0.18]]),
+            ever_grasped=torch.tensor([True]), grasped=torch.tensor([False]),
+            step_count=torch.zeros(1, dtype=torch.int64), release_threshold=torch.tensor([0.55]),
+            support_surface_z=torch.tensor([0.15]), target_rest_height=torch.tensor([0.03]),
+            peak_lift=torch.tensor([peak_lift]))
+        return evaluate_active_sparse_tasks(
+            state=state, ee_position=torch.tensor([[0.10, 0.00, 0.26]]), object_positions=objects,
+            gripper_opening=torch.tensor([0.90]), caught_target=torch.tensor([False]),
+            active_mask=torch.tensor([True]), max_steps=128,
+            catch_release_dense_reward=BatchedCatchReleaseDenseReward(wrong_place_requires_lift=requires_lift))
+
+    def test_default_keeps_the_unconditional_termination(self):
+        result = self.evaluate(requires_lift=False, peak_lift=0.0)
+        self.assertTrue(result.terminated.item())
+        self.assertTrue(result.diagnostics['wrong_place_drop'].item())
+
+    def test_failed_tabletop_grasp_is_not_terminated_when_gated(self):
+        result = self.evaluate(requires_lift=True, peak_lift=0.0)
+        self.assertFalse(result.terminated.item())
+        self.assertFalse(result.diagnostics['wrong_place_drop'].item())
+        self.assertTrue(result.diagnostics['wrong_place_drop_legacy'].item())
+
+    def test_dropped_carry_still_terminates_when_gated(self):
+        result = self.evaluate(requires_lift=True, peak_lift=0.06)
+        self.assertTrue(result.terminated.item())
+        self.assertTrue(result.diagnostics['wrong_place_drop'].item())
+
+    def test_config_key_arms_the_gate(self):
+        from rl_vla_bootstrapping.core.config import load_project_config
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import BatchedCatchReleaseDenseReward
+        metadata = dict(load_project_config(
+            'configs/examples/cdpr_smolvla_three_stage_put_into.yaml').task.metadata or {})
+        reward = BatchedCatchReleaseDenseReward.from_metadata(metadata)
+        self.assertTrue(reward.wrong_place_requires_lift)
+
+    def test_legacy_termination_verdict_is_logged(self):
+        base = MilestoneRepairTests('test_inactive_world_cannot_earn_events')
+        base.setUp()
+        base.result.diagnostics['target_lift'].zero_()
+        base.result.diagnostics['pick_success'].fill_(False)
+        base.result.diagnostics['wrong_place_drop_legacy'] = torch.tensor([True])
+        s = base.advance(physical=False)
+        self.assertTrue(s.diagnostics['wrong_place_legacy_without_lift'].item())
+        self.assertFalse(s.diagnostics['wrong_place_legacy_after_lift'].item())
+        self.assertFalse(s.wrong_place.item())
+        # A later strict success is a failure under the old protocol.
+        base.result.diagnostics['wrong_place_drop_legacy'] = torch.tensor([False])
+        base.result.diagnostics['target_lift'].fill_(.05)
+        base.result.diagnostics['pick_success'].fill_(True)
+        s = base.advance(s, physical=True)
+        base.result.success.fill_(True)
+        base.result.diagnostics['released'].fill_(True)
+        s = base.advance(s, physical=False)
+        self.assertTrue(s.placed.item())
+        self.assertFalse(s.diagnostics['strict_under_legacy_termination'].item())
+
+
 class EvaluatorMilestoneTests(unittest.TestCase):
     def test_summary_reports_milestones_beside_strict(self):
         import numpy as np
@@ -161,7 +230,8 @@ class CreditRepairTests(unittest.TestCase):
             self.assertGreater(metrics['gradient_norm_max'], 0)
             self.assertAlmostEqual(metrics['advantage_mean'], 7 ** .5, places=5)
             self.assertEqual(metrics['three_stage/pickup_positive_records'], 5)
-            self.assertEqual(metrics['optimizer_steps'], 1)
+            # Five records, minibatch 4: two minibatches, one step each.
+            self.assertEqual(metrics['optimizer_steps'], 2)
 
     def test_microbatch_partition_does_not_change_update(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -193,6 +263,39 @@ class CreditRepairTests(unittest.TestCase):
                 self.assertTrue(torch.equal(x, y))
             for x, state in zip(steps, trainer.optimizer.state.values()):
                 self.assertTrue(torch.equal(x, state['step']))
+
+    def test_minibatch_steps_and_single_minibatch_matches_exact_mean(self):
+        # M minibatches each carry a 1/M sample scaled by M; with one minibatch
+        # the step is the exact global stage mean, whatever the microbatching.
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = _trainer(_args('--entropy-coef', '0', '--action-l2', '0', '--microbatch-size', '2'), Path(directory))
+            records = self.make_records(trainer, n=8, stage=torch.tensor([0, 0, 0, 0, 1, 1, 2, 2]))
+            metrics = trainer.update_tensor_records(records, loss_mask=torch.ones(8),
+                schedule=EqualDDPSchedule(records_per_minibatch=2, ppo_epochs=3, global_max_records=8))
+            self.assertEqual(metrics['optimizer_steps'], 12)
+            for name in ('approach', 'pickup', 'placement'):
+                self.assertAlmostEqual(metrics[f'three_stage/{name}_loss_mass'], 1/3, places=5)
+
+    def test_candidate_mean_ignores_how_long_a_candidate_stayed(self):
+        stages = torch.tensor([0, 0, 0, 0, 1])
+        candidates = torch.tensor([7, 7, 7, 9, 7])
+        weights = global_stage_loss_weights(stages, torch.ones(5, dtype=torch.bool),
+                                            candidate_id=candidates)
+        # Candidate 7 spent 3 rows in approach, candidate 9 one; equal mass.
+        self.assertAlmostEqual(float(weights[:3].sum()), 1/4, places=6)
+        self.assertAlmostEqual(float(weights[3]), 1/4, places=6)
+        self.assertAlmostEqual(float(weights[4]), 1/2, places=6)
+
+    def test_refill_rounds_get_disjoint_candidate_ids(self):
+        def round(ids):
+            return SimpleNamespace(records={'credit_stage': torch.zeros(2, dtype=torch.long),
+                                            'candidate_id': torch.tensor(ids)},
+                loss_mask=torch.tensor([True, True]), candidate_rewards=torch.zeros(1, 4),
+                candidate_success=torch.zeros(1, 4, dtype=torch.bool), candidate_ever_grasped=None,
+                group_instruction_ids=torch.tensor([0]), group_shell_ids=torch.tensor([0]),
+                group_prelifted=None, group_caught_start=None, group_skips_approach=None, metrics={})
+        records = concatenate_collector_rounds([round([0, 3]), round([0, 3])])[0]
+        self.assertEqual(records['candidate_id'].tolist(), [0, 3, 4, 7])
 
     def test_stage_mean_ignores_duration_and_padding(self):
         stages = torch.tensor([0, 0, 0, 1, 2, 2])
