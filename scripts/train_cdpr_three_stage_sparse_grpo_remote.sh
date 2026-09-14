@@ -10,6 +10,11 @@ SCENES="${SCENES:-$REPO_ROOT/runs/three_stage/scenes_8192.json}"
 # step_2117145 adapter instead of the SFT result it was meant to continue
 # (provenance/started_from_sft=0). Choose one after the matched evaluation.
 WARMSTART_CHECKPOINT="${WARMSTART_CHECKPOINT:-}"
+# Continue a three-stage run: restores weights, Adam moments, global step,
+# update index and validation state. MAX_TRAIN_STEPS is then the TOTAL step
+# budget, including the steps already in the checkpoint. Manifest resets carry
+# no curriculum, so the weights-only rule for phase handoffs does not apply.
+RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-1000000}"
 MAX_UPDATES="${MAX_UPDATES:-10}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
@@ -30,17 +35,32 @@ cdpr_guard_run_dir "$RUN_DIR"
 
 [[ -f "$CONFIG" ]] || { echo "Config not found: $CONFIG" >&2; exit 2; }
 [[ -f "$SCENES" ]] || { echo "Scene manifest not found: $SCENES" >&2; exit 2; }
-if [[ -z "$WARMSTART_CHECKPOINT" ]]; then
+if [[ -n "$WARMSTART_CHECKPOINT" && -n "$RESUME_CHECKPOINT" ]]; then
+  echo "Set WARMSTART_CHECKPOINT or RESUME_CHECKPOINT, not both." >&2; exit 2
+fi
+if [[ -z "$WARMSTART_CHECKPOINT" && -z "$RESUME_CHECKPOINT" ]]; then
   cat >&2 <<'MSG'
-WARMSTART_CHECKPOINT is required. Pick the initializer explicitly, e.g.
-  SFT:  runs/<three_stage_sft_run>/sft_armC/sil_sft_adapter.pt
-  RL:   runs/release_recovery_continue_3m_20260908_102004/rl/step_2117145/smolvla_grpo_adapter.pt
+An initializer is required. Pick one explicitly, e.g.
+  WARMSTART_CHECKPOINT=runs/<three_stage_sft_run>/sft_armC/sil_sft_adapter.pt   (fresh run)
+  RESUME_CHECKPOINT=runs/<three_stage_sparse_grpo_run>/rl/latest.pt             (continue)
 MSG
   exit 2
 fi
-[[ -f "$WARMSTART_CHECKPOINT" ]] || {
-  echo "Warm-start checkpoint not found: $WARMSTART_CHECKPOINT" >&2; exit 2;
+INIT_CHECKPOINT="${RESUME_CHECKPOINT:-$WARMSTART_CHECKPOINT}"
+INIT_MODE="$([[ -n "$RESUME_CHECKPOINT" ]] && echo resume || echo warm_start)"
+[[ -f "$INIT_CHECKPOINT" ]] || {
+  echo "Initializer checkpoint not found: $INIT_CHECKPOINT" >&2; exit 2;
 }
+if [[ "$INIT_MODE" == "resume" ]]; then
+  resumed_step="$(conda run --no-capture-output -n "$ENV_NAME" python3 -c \
+    'import sys, torch; print(int(torch.load(sys.argv[1], map_location="cpu", weights_only=False).get("global_step", 0)))' \
+    "$INIT_CHECKPOINT" | tail -1)"
+  if [[ ! "$resumed_step" =~ ^[0-9]+$ || "$MAX_TRAIN_STEPS" -le "$resumed_step" ]]; then
+    echo "MAX_TRAIN_STEPS=$MAX_TRAIN_STEPS is the TOTAL budget and must exceed the checkpoint's global_step=$resumed_step." >&2
+    exit 2
+  fi
+  echo "resume: checkpoint global_step=$resumed_step, training $((MAX_TRAIN_STEPS - resumed_step)) more steps"
+fi
 if [[ ! "$MAX_UPDATES" =~ ^[0-9]+$ ]]; then
   echo "MAX_UPDATES must be a nonnegative integer (0 removes the diagnostic update cap)." >&2; exit 2
 fi
@@ -110,7 +130,7 @@ print("[three-stage] preflight clean; final_test is not selected by this runner"
 PYEOF
 
 mkdir -p "$RUN_DIR"
-unset RLVLA_SMOLVLA_RESUME_CHECKPOINT RLVLA_CDPR_DEMO_BANK
+unset RLVLA_SMOLVLA_RESUME_CHECKPOINT RLVLA_SMOLVLA_WARMSTART_CHECKPOINT RLVLA_CDPR_DEMO_BANK
 export CUDA_VISIBLE_DEVICES PYTHONUNBUFFERED=1
 export TOKENIZERS_PARALLELISM="${TOKENIZERS_PARALLELISM:-false}"
 export TRANSFORMERS_VERBOSITY="${TRANSFORMERS_VERBOSITY:-error}"
@@ -123,15 +143,19 @@ export RLVLA_SMOLVLA_MAX_TRAIN_STEPS="$MAX_TRAIN_STEPS"
 export RLVLA_SMOLVLA_MJWARP_MAX_UPDATES="$MAX_UPDATES"
 export RLVLA_MJWARP_WORLDS_PER_RANK="$WORLDS_PER_RANK"
 export RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE="$SMOLVLA_MICROBATCH_SIZE"
-export RLVLA_SMOLVLA_WARMSTART_CHECKPOINT="$WARMSTART_CHECKPOINT"
+if [[ "$INIT_MODE" == "resume" ]]; then
+  export RLVLA_SMOLVLA_RESUME_CHECKPOINT="$RESUME_CHECKPOINT"
+else
+  export RLVLA_SMOLVLA_WARMSTART_CHECKPOINT="$WARMSTART_CHECKPOINT"
+fi
 export RLVLA_CDPR_THREE_STAGE_SCENE_MANIFEST="$SCENES"
 
 python_cmd=(conda run --no-capture-output -n "$ENV_NAME" python3)
 train_cmd=("${python_cmd[@]}" -m rl_vla_bootstrapping.cli.train
   --config "$CONFIG" --stage rl --run-name "$RUN_NAME" --execute)
 
-printf 'run_dir=%s\nmanifest=%s\nwarm_start=%s\n' \
-  "$RUN_DIR" "$SCENES" "$WARMSTART_CHECKPOINT"
+printf 'run_dir=%s\nmanifest=%s\n%s=%s\n' \
+  "$RUN_DIR" "$SCENES" "$INIT_MODE" "$INIT_CHECKPOINT"
 printf 'max_train_steps=%s worlds_per_rank=%s groups_per_rank=%s\n' \
   "$MAX_TRAIN_STEPS" "$WORLDS_PER_RANK" "$((WORLDS_PER_RANK / 8))"
 printf 'max_updates=%s; globally empty update stop: 3 consecutive cycles\n' "$MAX_UPDATES"
@@ -140,16 +164,16 @@ printf 'trainable component: residual actor; initializer LoRA is loaded and froz
 printf 'command:'; printf ' %q' "${train_cmd[@]}"; printf '\n'
 [[ "$DRY_RUN" == "1" ]] && exit 0
 
-"${python_cmd[@]}" - "$WARMSTART_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" <<'PYPROVENANCE'
+"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" <<'PYPROVENANCE'
 import hashlib, json, pathlib, subprocess, sys
-checkpoint, scenes, output, updates, steps = sys.argv[1:]
+checkpoint, scenes, output, updates, steps, mode = sys.argv[1:]
 def digest(path):
     h = hashlib.sha256()
     with open(path, "rb") as source:
         for block in iter(lambda: source.read(1024 * 1024), b""):
             h.update(block)
     return h.hexdigest()
-record = {"checkpoint": str(pathlib.Path(checkpoint).resolve()),
+record = {"init_mode": mode, "checkpoint": str(pathlib.Path(checkpoint).resolve()),
           "checkpoint_sha256": digest(checkpoint), "scene_manifest": str(pathlib.Path(scenes).resolve()),
           "scene_manifest_sha256": digest(scenes),
           "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
