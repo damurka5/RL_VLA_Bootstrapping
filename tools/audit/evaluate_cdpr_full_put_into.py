@@ -94,6 +94,10 @@ from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import (  # noqa: E
     select_split,
 )
 from tools.audit.select_cdpr_stage_teachers import bootstrap_interval  # noqa: E402
+from tools.audit.full_task_episode_videos import (  # noqa: E402
+    OUTCOME_FILTERS,
+    EpisodeVideoRecorder,
+)
 
 
 def run_unassisted(
@@ -106,6 +110,8 @@ def run_unassisted(
     assisted_yaw: PickupYawCalibration | None,
     stochastic_generator: Any = None,
     vision_dim: int,
+    video: EpisodeVideoRecorder | None = None,
+    round_index: int = 0,
 ) -> dict[str, Any]:
     """One rollout of the student over a batch of full-task scenes."""
 
@@ -178,11 +184,26 @@ def run_unassisted(
         device=torch_device,
     )
 
+    # With video on, the frame rendered after an action is the observation of
+    # the next decision; reuse it rather than rendering the same state twice.
+    pending_cameras = None
     with torch.inference_mode():
+        if video is not None:
+            pending_cameras = world.backend.render_policy_cameras()
+            video.start_round(
+                round_index,
+                worlds,
+                height=int(pending_cameras.overview.shape[-2]),
+                width=int(pending_cameras.overview.shape[-1]),
+            )
+            video.write(pending_cameras, active)
         for _ in range(int(decisions) + int(settle_decisions)):
             if not bool(active.any().item()):
                 break
-            cameras = world.backend.render_policy_cameras()
+            if pending_cameras is not None:
+                cameras, pending_cameras = pending_cameras, None
+            else:
+                cameras = world.backend.render_policy_cameras()
             low_dim = world.backend.low_dim_observations()
             proprio = build_smolvla_state_tensor(
                 ee_position=low_dim.ee_position,
@@ -325,6 +346,19 @@ def run_unassisted(
                     torch.where(step_active, lift, torch.zeros_like(lift)),
                 )
                 completion_steps += step_active.to(dtype=completion_steps.dtype)
+                if video is not None:
+                    pending_cameras = world.backend.render_policy_cameras()
+                    video.write(pending_cameras, step_active)
+                    for name, fired in (
+                        ("approach", milestones.approached),
+                        ("grasp", outcome.grasped),
+                        ("lift", outcome.lifted),
+                        ("release", outcome.released),
+                        ("native_success", outcome.native),
+                        ("carry_slip", outcome.carry_slip),
+                        ("wrong_place", outcome.wrong_place),
+                    ):
+                        video.mark(name, fired & step_active)
                 # A world stops when the production predicate ends it, exactly
                 # as it does in training. `terminated` is success, a settled
                 # wrong place, or a timeout that cannot fire at this max_steps.
@@ -336,6 +370,21 @@ def run_unassisted(
     )
     strict = outcome.strict
     host = lambda tensor: tensor.detach().cpu().numpy()  # noqa: E731
+    if video is not None:
+        video.finish_round(
+            native=host(native),
+            strict=host(strict),
+            metadata=[
+                {
+                    "scene_uid": str(scene.scene_uid),
+                    "destination": str(scene.destination),
+                    "target_catalog": str(scene.target_catalog),
+                    "instruction": text,
+                    "completion_env_steps": int(steps),
+                }
+                for scene, text, steps in zip(scenes, texts, host(completion_steps))
+            ],
+        )
     return {
         "native": host(native),
         "strict": host(strict),
@@ -493,16 +542,46 @@ def main(argv: Sequence[str] | None = None) -> int:
             "the deterministic mean. Reported as its own arm."
         ),
     )
+    parser.add_argument(
+        "--video-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Record episodes as MP4 (overview | wrist, one frame per executed "
+            "action) with a JSON sidecar of outcome and event times."
+        ),
+    )
+    parser.add_argument("--video-outcome", choices=OUTCOME_FILTERS, default="strict")
+    parser.add_argument("--video-fps", type=float, default=20.0)
+    parser.add_argument("--video-hold-seconds", type=float, default=1.0)
+    parser.add_argument(
+        "--max-videos", type=int, default=0, help="Stop keeping videos after this many (0 = no cap)."
+    )
+    parser.add_argument(
+        "--distinct-scene-rounds",
+        action="store_true",
+        help=(
+            "Give every round its own scenes from the split instead of repeating "
+            "the first --worlds scenes. Not the protocol of earlier reports."
+        ),
+    )
     args = parser.parse_args(argv)
 
     scenes, manifest = read_manifest(args.scene_manifest.expanduser().resolve())
     selected = select_split(scenes, str(args.split))
-    if len(selected) < int(args.worlds):
+    needed = int(args.worlds) * (int(args.rounds) if args.distinct_scene_rounds else 1)
+    if len(selected) < needed:
         raise SystemExit(
-            f"The {args.split} split holds {len(selected)} scenes against "
-            f"--worlds {args.worlds}."
+            f"The {args.split} split holds {len(selected)} scenes; this run needs "
+            f"{needed}."
         )
     batch = selected[: int(args.worlds)]
+
+    def round_scenes(round_index: int) -> list[Any]:
+        if not args.distinct_scene_rounds:
+            return batch
+        start = round_index * int(args.worlds)
+        return selected[start : start + int(args.worlds)]
     if int(args.worlds) % 2:
         raise SystemExit("--worlds must be even (the shared layout needs pairs).")
 
@@ -551,19 +630,39 @@ def main(argv: Sequence[str] | None = None) -> int:
             int(args.stochastic_seed)
         )
     started = time.perf_counter()
-    rollouts = [
-        run_unassisted(
-            world=world,
-            resetter=resetter,
-            scenes=batch,
-            decisions=int(args.decisions),
-            settle_decisions=int(args.settle_decisions),
-            assisted_yaw=calibration,
-            vision_dim=vision_dim,
-            stochastic_generator=stochastic_generator,
+    video = None
+    if args.video_dir is not None:
+        video = EpisodeVideoRecorder(
+            args.video_dir.expanduser().resolve(),
+            fps=float(args.video_fps),
+            hold_seconds=float(args.video_hold_seconds),
+            outcome_filter=str(args.video_outcome),
+            max_videos=int(args.max_videos),
         )
-        for _ in range(int(args.rounds))
-    ]
+    rollouts = []
+    for round_index in range(int(args.rounds)):
+        rollouts.append(
+            run_unassisted(
+                world=world,
+                resetter=resetter,
+                scenes=round_scenes(round_index),
+                decisions=int(args.decisions),
+                settle_decisions=int(args.settle_decisions),
+                assisted_yaw=calibration,
+                vision_dim=vision_dim,
+                stochastic_generator=stochastic_generator,
+                video=video,
+                round_index=round_index,
+            )
+        )
+        row = rollouts[-1]
+        print(
+            f"[eval] round {round_index + 1}/{args.rounds}: strict "
+            f"{int(row['strict'].sum())}/{row['strict'].size}, native "
+            f"{int(row['native'].sum())}/{row['native'].size}"
+            + ("" if video is None else f", videos kept {len(video.kept)}"),
+            flush=True,
+        )
     summary = summarize(rollouts)
 
     report = {
@@ -578,6 +677,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         "split": str(args.split),
         "worlds": int(args.worlds),
         "rounds": int(args.rounds),
+        "distinct_scene_rounds": bool(args.distinct_scene_rounds),
+        "videos": (
+            None
+            if video is None
+            else {
+                "dir": str(args.video_dir),
+                "outcome_filter": str(args.video_outcome),
+                "kept": len(video.kept),
+                "index": str(video.write_index()),
+            }
+        ),
         "decisions": int(args.decisions),
         "settle_decisions": int(args.settle_decisions),
         "results": summary,
