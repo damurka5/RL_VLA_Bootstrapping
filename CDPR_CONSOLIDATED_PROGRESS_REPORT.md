@@ -3,9 +3,9 @@
 **Living report — current through 2026-09-17, Europe/Moscow**
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
-pilot, the 2026-09-14 10M-step run, and its full resume to 28,309,431 steps
-(three newest §14 entries). The standalone evaluation with success videos of
-`step_28309431` is prepared, not yet run.
+pilot, the 2026-09-14 10M-step run, its full resume to 28,309,431 steps, and
+the standalone evaluation of `step_28309431` with episode videos (four newest
+§14 entries). The training run itself is still in progress past 28.3M steps.
 
 **Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
 
@@ -71,6 +71,20 @@ The central idea is now demonstrated end to end:
 > Start from a pretrained SmolVLA action prior, learn task-specific corrections with a compact residual policy and GRPO, harvest successful trajectories, preserve them in a retention bank, and alternate family-specific RL with balanced residual SFT so one adapter can recover old skills while adding or strengthening a new one.
 
 ### Current headline achievements
+
+**Latest completed evaluation, 2026-09-17: standalone strict full-task
+success of `step_28309431` is 57/256 = 22.3% (95% CI 18.0–26.6%).** Empty
+start, one final `put <object> into <plate/bowl>` prompt, no teacher or servo,
+128 decisions, 256 distinct `student_validation` scenes. Plate is 28/123 =
+22.8% and bowl 29/133 = 21.8%. Native placement is 73/256 = 28.5%. The
+evaluator agrees with the in-run validation at the same step (23.9%). The
+matched baseline on the same evaluator was 5/128 = 3.9% for both the
+initializer and the best SFT arm. Under the old termination rule, the
+condition those runs were scored with, the new policy scores 47/256 = 18.4%,
+about 4.7× the baseline. Videos of all 256 episodes show where it fails. Of
+the 183 non-native episodes, 118 lifted the object and then lost it (107
+carry slips, typically ~2 s after the lift), 45 never grasped, and 20 grasped
+without lifting. See the 2026-09-17 standalone-evaluation §14 entry.
 
 **Latest completed experiment, 2026-09-17: the resumed staged-sparse GRPO run
 reaches about 24% strict empty-start `put_into`, then plateaus.** Resuming the
@@ -201,7 +215,8 @@ on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 | Self-imitation data pipeline | Record → smooth → replay → pool → rebalance → refresh current priors/state → residual SFT → multi-family evaluation | Implemented, tested in-project, and used for Cycles 1–3 |
 | Three-stage full-task SIL, expanded bank | 31,892 rows / 842 scenes; expanded Arm C **5/128 strict**, plate **5/54**, bowl **0/74**, with 20 lifts | Valid negative result: ties the initializer's total, fails the 7/128 + 23-lift gate, no `final_test` |
 | **Exact full-task `put_into` learned by staged-sparse GRPO** | 10.07M steps from expanded Arm C: in-run strict **2.6% → 12.1%** (27 → 124 of 1024; last-five mean 9.6%), plate 7 → 39 / 512, bowl 20 → 85 / 512, pickup 18% → 46% | TensorBoard event file, in-run `student_validation`; not yet confirmed by the standalone evaluator or `final_test` |
-| **Staged-sparse GRPO continued to 28.3M steps** | Strict peak **26.0%** (266/1024) at 26.54M; last-ten mean **24.0%**, plate 21.6%, bowl 26.4%; held pickup 75.7%, grasp 84.5% | TensorBoard event file, in-run `student_validation`; plateau since ~23M; standalone video evaluation of `step_28309431` prepared, not yet run |
+| **Staged-sparse GRPO continued to 28.3M steps** | Strict peak **26.0%** (266/1024) at 26.54M; last-ten mean **24.0%**, plate 21.6%, bowl 26.4%; held pickup 75.7%, grasp 84.5% | TensorBoard event file, in-run `student_validation`; plateau since ~23M |
+| **Best measured full `put_into` policy (standalone)** | `step_28309431`: strict **57/256 = 22.3%** (CI 18.0–26.6%), plate **28/123**, bowl **29/133**; native 73/256 = 28.5%; 18.4% under the old termination rule, against 5/128 = 3.9% for the SFT seed | `evaluation.json` and 256 episode videos, 256 distinct `student_validation` scenes; no `final_test` yet |
 | **Composed `put_into` is measurable for the first time** | Phase 6 seed `sft_phase6`: uncaught plate **0.0935** (80/856), uncaught bowl **0.0265** (18/680), against 0.0046 and 0.0114 for Cycle 3 under the identical protocol | Four evaluations run by `scripts/run_cdpr_phase6_compose_seed.sh`; adapter retained locally |
 | Composed demonstrations come from a scripted oracle, not a policy | Oracle on the composed task: plate **1.000**, bowl **0.427** in smoke, plate **0.909** / bowl **0.455** pooled over 8192 worlds at cap 0.20 | 12 harvest rounds retained; replay survival 0.998–1.000 |
 | Composition RL now anneals the pre-grasped start | `phase6_compose_iter0`: caught fraction **1.0 → 0.9 → 0.8**; validation peak **0.6240** overall (plate 0.7571, bowl 0.4634) at step 4 257 133 | TensorBoard event file; caught-dominated validation protocol, see §8.4 |
@@ -241,6 +256,7 @@ grasp, carry, and release from the desk.
 | Three-stage staged-sparse GRPO, start (expanded Arm C) | In-run `student_validation`, empty start, one final prompt, strict; 512 episodes per destination | — | — | 0.0137 (7/512) | 0.0391 (20/512) |
 | Three-stage staged-sparse GRPO, 10.07M steps | Same in-run protocol | — | — | **0.0762** (39/512); last-five mean 0.0602 | **0.1660** (85/512); last-five mean 0.1320 |
 | Three-stage staged-sparse GRPO, 28.31M steps | Same in-run protocol | — | — | **0.2285** (117/512); last-ten mean 0.2156 | **0.2500** (128/512); last-ten mean 0.2643 |
+| Three-stage staged-sparse GRPO `step_28309431`, standalone | Standalone full-task evaluator, empty start, strict; 256 distinct `student_validation` scenes, wrong-place lift gate on | — | — | **0.2276** (28/123) | **0.2180** (29/133) |
 
 These rows are a chronology, not a single leaderboard. Dedicated validation,
 bank-harvest evaluation, caught placement, composed placement, and mixed
@@ -1985,6 +2001,101 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-17 — Standalone evaluation of `step_28309431`: strict 22.3% full-task `put_into`, with episode videos
+
+- Git commit: `d0e802d` (evaluator with `--video-dir` and
+  `--distinct-scene-rounds`).
+- Run/config: `scripts/evaluate_cdpr_three_stage_put_into_videos_remote.sh`,
+  `CUDA_VISIBLE_DEVICES=1 WORLDS=32 ROUNDS=8 MICROBATCH=8 VIDEO_OUTCOME=all`.
+  It ran on the training server's second GPU while training continued (the
+  evaluator used about 1.6 GB at 4 worlds). 2,239 s.
+- Source checkpoint and lineage: expanded Arm C → 10M staged-sparse GRPO →
+  resumed to 28,309,431 steps (the two previous entries).
+- Candidate checkpoint:
+  `runs/three_stage_sparse_grpo_20260914_195542/rl/step_28309431/smolvla_grpo_adapter.pt`,
+  SHA-256 `e3cf0f0dea5cb49f1aa221bc6001afa000c80cfad3343dbe31a65ac86b1bc67f`.
+- Evaluation protocol:
+  - `tools/audit/evaluate_cdpr_full_put_into.py`, arm `unassisted`, with a
+    deterministic residual.
+  - One final prompt from the first action; no teacher, servo, stage machine
+    or prompt switch.
+  - 128 decisions, no settle window.
+  - Strict success is the shared `FullTaskOutcome`, as in training.
+  - The config's `placement_wrong_drop_requires_lift: true` is active.
+  - Scene manifest SHA-256
+    `30dc9d53027c7e7ba871379e1ec17f0f148a08517f03fc4fa531549a15ef9208`.
+- Caps, seeds, rounds, worlds, and independent reset groups: 8 rounds × 32
+  worlds on **256 distinct** `student_validation` scenes. Chains equal
+  clusters, so the bootstrap intervals are over independent scenes. This
+  differs from the 2026-09-12 table, which used 128 chains repeating 64
+  scenes.
+
+| result (256 scenes) | rate | successes | 95% CI |
+|---|---:|---:|---:|
+| **strict** | **22.27%** | **57/256** | 17.97–26.56% |
+| strict, plate | 22.76% | 28/123 | 17.07–29.27% |
+| strict, bowl | 21.80% | 29/133 | 15.79–27.82% |
+| native placement | 28.52% | 73/256 | 23.83–33.20% |
+| native, plate / bowl | 32.52% / 24.81% | 40/123 / 33/133 | — |
+| strict under the old termination rule | 18.36% | 47/256 | — |
+
+| phase (all 256) | rate | conditional |
+|---|---:|---|
+| reached within 3 cm | 75.4% | — |
+| physical grasp | 82.4% | grasp given reach 97.9% |
+| held 5 cm lift | 71.9% | lift given grasp 87.2% |
+| intentional release | 48.4% | release given lift 59.8% |
+| native placement | 28.5% | native given release 58.9% |
+| carry slip latched | 45.3% | — |
+| wrong place after a lift (terminal) | 42.2% | — |
+| open-hand reach (old approach gate) | 4.7% | — |
+
+- By object, strict: apple 10/62 (16.1%), orange 18/66 (27.3%), potato 11/59
+  (18.6%), tomato 18/69 (26.1%).
+- Timing: mean completion is 247.8 env steps for successes and 327.8 overall.
+  The minimum grasp-point distance has median 1.41 cm and p10 0.47 cm.
+- Video audit (all 256 kept, first-event times from the JSON sidecars):
+  - **57 strict successes:** grasp at a median of 6.1 s, lift 9.3 s, release
+    11.2 s, native placement 11.3 s. None latched a carry slip.
+  - **16 native but not strict:** 9 latched a carry slip before placement.
+    The other 7 never registered a held 5 cm lift, so the object reached the
+    receptacle without a qualifying carry.
+  - **183 non-native:**
+    - 45 never grasped;
+    - 20 grasped but never lifted;
+    - 118 lifted, of which 107 latched a carry slip (median 11.5 s, ~2 s after
+      the 9.4 s lift) and 108 ended as a wrong place after the lift.
+  - The dominant failure is losing the object during the carry.
+- Comparison baseline under the same evaluator: on 2026-09-12 the initializer
+  `step_2117145` and expanded Arm C (this lineage's seed) each scored **5/128
+  = 3.9%** strict. Those runs used the unconditional wrong-place termination,
+  so the matched number here is 18.4% under that rule, about 4.7×. The scene
+  sets differ (64 repeated scenes against 256 distinct), so this is not a
+  paired comparison.
+- In-run agreement: in-run validation at the same step read 245/1024 = 23.9%,
+  inside this evaluation's CI.
+- What this result supports:
+  - One SmolVLA-residual policy performs the complete empty-start pick, carry
+    and place on about 22% of unseen validation scenes, for both destinations.
+  - Staged-sparse GRPO from an SFT seed is the working training route.
+  - The gain holds under the old termination rule.
+- What it does not support:
+  - A `final_test` number.
+  - Retention of `move_to_object` or `pick_up`.
+  - The earlier composed-placement protocols (Phase 7's 0.627 plate used
+    different starts and termination), so do not rank the two.
+- Status: best measured full-task `put_into` checkpoint; candidate for
+  `final_test` once checkpoint selection among the post-23M plateau is done.
+- Local artifact path:
+  `~/Downloads/three_stage_sparse_grpo_20260914_195542_step_28309431_student_validation_20260917_131013/`
+  (`evaluation.json`, `eval.log`, `videos/` with 256 MP4s and sidecars).
+  Remote:
+  `runs/three_stage_put_into_eval/three_stage_sparse_grpo_20260914_195542_step_28309431_student_validation_20260917_131013/`.
+- SHA-256: `evaluation.json`
+  `e0c78ca36a7ca6813633f96df1c3ca7092f03766226e0d5efa138c857002eaf8`.
+- Missing provenance: none for this evaluation. The checkpoint hash and git
+  commit were recorded by the runner.
+
 ### 2026-09-17 — Resumed staged-sparse GRPO to 28.3M steps: strict about 24%, plateau, carry is the loss
 
 - Git commit: `c2f0b1f` launcher resume; training code as `3409d4c`.
@@ -2081,8 +2192,9 @@ Newest first. Entries follow the §13 template.
   `~/Downloads/events.out.tfevents.1789404985.VLAPU.81353.0_28M`.
 - SHA-256: `950df7ed134cac9ede2045046d4ca6130c3b3763dddd4e30080405cb60b801d0`.
 - Missing provenance: `launch_provenance.json`, `train.log` and checkpoint
-  bytes were not supplied locally. The reason the log ends at 28.31M rather
-  than 30M is not recorded.
+  bytes were not supplied locally. The log ends at 28.31M only because it was
+  copied mid-run: the training process (PID 81353) was still running on
+  2026-09-17.
 
 ### 2026-09-14 — Staged-sparse exact-task GRPO: strict full-task success 2.6% → 12.1% in 10M steps
 
