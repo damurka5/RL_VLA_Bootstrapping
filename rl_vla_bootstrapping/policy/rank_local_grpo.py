@@ -131,14 +131,41 @@ def torch_group_advantages(
     return centered
 
 
-def global_stage_loss_weights(
-    credit_stage: Any, valid: Any, stage_count: int = 3, candidate_id: Any = None
-) -> Any:
-    """Per-row coefficients for a global mean of stage losses under DDP.
+def normalized_stage_loss_mass(values: Any, stage_count: int = 3) -> tuple[float, ...]:
+    """Validate per-stage loss mass and scale it to sum to one."""
 
-    Summed over every row of the update (all ranks) the coefficients of each
-    represented stage total ``1 / represented``. DDP averages rank gradients,
-    hence the world-size factor. Counts include only usable rows.
+    if values is None:
+        return tuple(1.0 / stage_count for _ in range(stage_count))
+    mass = tuple(float(value) for value in values)
+    if len(mass) != stage_count:
+        raise ValueError(f"Expected {stage_count} stage loss weights, got {len(mass)}.")
+    if any(not math.isfinite(value) or value < 0.0 for value in mass):
+        raise ValueError(f"Stage loss weights must be finite and nonnegative: {mass}.")
+    total = sum(mass)
+    if total <= 0.0:
+        raise ValueError("At least one stage loss weight must be positive.")
+    return tuple(value / total for value in mass)
+
+
+def global_stage_loss_weights(
+    credit_stage: Any,
+    valid: Any,
+    stage_count: int = 3,
+    candidate_id: Any = None,
+    stage_mass: Any = None,
+) -> Any:
+    """Per-row coefficients for a global weighted mean of stage losses under DDP.
+
+    Summed over every row of the update (all ranks) the coefficients of stage
+    ``s`` total ``m_s / sum(m over represented stages)``, where ``m`` is
+    ``stage_mass`` (equal thirds by default). Representation is decided from
+    the all-reduced counts, so every rank renormalizes identically when a stage
+    has no usable rows anywhere. DDP averages rank gradients, hence the
+    world-size factor. Counts include only usable rows.
+
+    Mass is the lever, not reward scale: advantages are group-normalized per
+    stage, so multiplying one stage's reward by k leaves its advantages, and
+    therefore its share of the gradient, unchanged.
 
     With ``candidate_id`` each stage loss is a mean over candidates of that
     candidate's mean row loss. Otherwise a failed candidate that spends 128
@@ -168,8 +195,18 @@ def global_stage_loss_weights(
     if dist.is_available() and dist.is_initialized():
         dist.all_reduce(units, op=dist.ReduceOp.SUM)
         world_size = dist.get_world_size()
-    represented = (units > 0).sum().clamp_min(1)
-    coefficients = float(world_size) / (represented * units.clamp_min(1))
+    mass = torch.tensor(
+        normalized_stage_loss_mass(stage_mass, stage_count),
+        dtype=torch.float64,
+        device=units.device,
+    )
+    represented_mass = torch.where(units > 0, mass, torch.zeros_like(mass))
+    total_mass = represented_mass.sum()
+    if float(total_mass.item()) <= 0.0:
+        # Only zero-mass stages have rows: contribute nothing rather than
+        # silently promoting a stage the run asked to ignore.
+        return torch.zeros_like(valid, dtype=torch.float32)
+    coefficients = float(world_size) * represented_mass / (total_mass * units.clamp_min(1))
     weights = coefficients[stage] / per_row
     return valid.to(dtype=torch.float32) * weights.to(dtype=torch.float32)
 

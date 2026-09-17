@@ -120,8 +120,10 @@ if not collection or not validation:
     failures.append("collection or student_validation split is empty")
 print(f"[three-stage] scenes: collection={len(collection)} "
       f"student_validation={len(validation)} final_test_locked={len(final_test)}")
-print("[three-stage] rewards: approach=1 pickup=1 placement=1; "
-      "independent group advantages; equal stage loss mass")
+mass = args.three_stage_stage_loss_weights or [1 / 3, 1 / 3, 1 / 3]
+print("[three-stage] rewards: approach=1 pickup=1 placement=1; independent group "
+      "advantages; stage loss mass approach/pickup/placement = "
+      + "/".join(f"{value:.3f}" for value in mass))
 if failures:
     for failure in failures:
         print(f"[three-stage] REFUSING: {failure}", file=sys.stderr)
@@ -164,9 +166,9 @@ printf 'trainable component: residual actor; initializer LoRA is loaded and froz
 printf 'command:'; printf ' %q' "${train_cmd[@]}"; printf '\n'
 [[ "$DRY_RUN" == "1" ]] && exit 0
 
-"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" <<'PYPROVENANCE'
+"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" "$CONFIG" <<'PYPROVENANCE'
 import hashlib, json, pathlib, subprocess, sys
-checkpoint, scenes, output, updates, steps, mode = sys.argv[1:]
+checkpoint, scenes, output, updates, steps, mode, config = sys.argv[1:]
 def digest(path):
     h = hashlib.sha256()
     with open(path, "rb") as source:
@@ -178,8 +180,14 @@ record = {"init_mode": mode, "checkpoint": str(pathlib.Path(checkpoint).resolve(
           "scene_manifest_sha256": digest(scenes),
           "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
           "max_updates": int(updates), "max_train_steps": int(steps),
-          "reward_protocol": "three_stage_accessible_v3_candidate_mean_minibatch_step", "termination_protocol": "wrong_place_requires_held_lift", "outcome_protocol": "independent_strict_full_task_v1",
+          "reward_protocol": "three_stage_accessible_v4_weighted_stage_mass", "termination_protocol": "wrong_place_requires_held_lift", "outcome_protocol": "independent_strict_full_task_v1",
           "lora_updates_enabled": False}
+try:
+    import yaml
+    record["stage_loss_weights"] = yaml.safe_load(open(config, encoding="utf-8"))[
+        "training"]["rl"]["args"].get("three_stage_stage_loss_weights")
+except Exception as error:  # never block a launch on provenance
+    record["stage_loss_weights"] = f"unavailable: {error}"
 try:
     sys.path.insert(0, ".")
     from tools.audit.checkpoint_provenance import read_provenance

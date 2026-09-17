@@ -297,6 +297,70 @@ class CreditRepairTests(unittest.TestCase):
         records = concatenate_collector_rounds([round([0, 3]), round([0, 3])])[0]
         self.assertEqual(records['candidate_id'].tolist(), [0, 3, 4, 7])
 
+    def test_weighted_stage_mass_is_exact_and_duration_free(self):
+        stages = torch.tensor([0, 0, 0, 1, 1, 2])
+        candidates = torch.tensor([1, 1, 2, 1, 3, 3])
+        weights = global_stage_loss_weights(stages, torch.ones(6, dtype=torch.bool),
+                                            candidate_id=candidates, stage_mass=[0.2, 0.2, 0.6])
+        for stage, mass in enumerate((0.2, 0.2, 0.6)):
+            self.assertAlmostEqual(float(weights[stages == stage].sum()), mass, places=6)
+        # Within approach, candidate 1 (two rows) and candidate 2 (one row) get equal mass.
+        self.assertAlmostEqual(float(weights[:2].sum()), float(weights[2]), places=6)
+
+    def test_weighted_mass_renormalizes_over_represented_stages(self):
+        stages = torch.tensor([0, 0, 1])
+        weights = global_stage_loss_weights(stages, torch.ones(3, dtype=torch.bool),
+                                            stage_mass=[0.2, 0.2, 0.6])
+        self.assertAlmostEqual(float(weights[:2].sum()), 0.5, places=6)
+        self.assertAlmostEqual(float(weights[2]), 0.5, places=6)
+        only_placement = global_stage_loss_weights(torch.tensor([2, 2]), torch.ones(2, dtype=torch.bool),
+                                                   stage_mass=[0.2, 0.2, 0.6])
+        self.assertAlmostEqual(float(only_placement.sum()), 1.0, places=6)
+
+    def test_zero_mass_stage_receives_no_gradient_weight(self):
+        weights = global_stage_loss_weights(torch.tensor([0, 1, 2]), torch.ones(3, dtype=torch.bool),
+                                            stage_mass=[0.0, 1.0, 1.0])
+        self.assertEqual(float(weights[0]), 0.0)
+        empty = global_stage_loss_weights(torch.tensor([0, 0]), torch.ones(2, dtype=torch.bool),
+                                          stage_mass=[0.0, 1.0, 1.0])
+        self.assertEqual(float(empty.sum()), 0.0)
+
+    def test_stage_mass_arguments_are_validated_and_normalized(self):
+        from rl_vla_bootstrapping.policy.rank_local_grpo import normalized_stage_loss_mass
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import parse_args
+        self.assertIsNone(parse_args([]).three_stage_stage_loss_weights)
+        args = parse_args(['--three-stage-stage-loss-weights', '1', '1', '3'])
+        for got, want in zip(args.three_stage_stage_loss_weights, (0.2, 0.2, 0.6)):
+            self.assertAlmostEqual(got, want)
+        for bad in ([1, -1, 1], [0, 0, 0], [1, float('nan'), 1], [1, 1]):
+            with self.assertRaises(ValueError):
+                normalized_stage_loss_mass(bad)
+        with self.assertRaises(SystemExit):
+            parse_args(['--three-stage-stage-loss-weights', '0', '0', '0'])
+
+    def test_config_sets_placement_weighted_mass(self):
+        import yaml
+        from rl_vla_bootstrapping.core.commands import append_cli_arg
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import parse_args
+        raw = yaml.safe_load(open('configs/examples/cdpr_smolvla_three_stage_put_into.yaml', encoding='utf-8'))
+        argv = []
+        for key, value in raw['training']['rl']['args'].items():
+            append_cli_arg(argv, key, value)
+        weights = parse_args(argv).three_stage_stage_loss_weights
+        for got, want in zip(weights, (0.2, 0.2, 0.6)):
+            self.assertAlmostEqual(got, want)
+
+    def test_trainer_applies_weighted_stage_mass(self):
+        with tempfile.TemporaryDirectory() as directory:
+            trainer = _trainer(_args('--entropy-coef', '0', '--action-l2', '0', '--microbatch-size', '2',
+                                     '--three-stage-stage-loss-weights', '0.2', '0.2', '0.6'), Path(directory))
+            records = self.make_records(trainer, n=8, stage=torch.tensor([0, 0, 0, 0, 1, 1, 2, 2]))
+            metrics = trainer.update_tensor_records(records, loss_mask=torch.ones(8),
+                schedule=EqualDDPSchedule(records_per_minibatch=4, ppo_epochs=1, global_max_records=8))
+            for name, mass in (('approach', 0.2), ('pickup', 0.2), ('placement', 0.6)):
+                self.assertAlmostEqual(metrics[f'three_stage/{name}_loss_mass'], mass, places=5)
+            self.assertGreater(metrics['gradient_norm_max'], 0)
+
     def test_stage_mean_ignores_duration_and_padding(self):
         stages = torch.tensor([0, 0, 0, 1, 2, 2])
         valid = torch.tensor([True, True, True, True, True, False])

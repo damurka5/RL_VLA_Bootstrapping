@@ -53,6 +53,7 @@ from rl_vla_bootstrapping.policy.smolvla_cdpr import DEFAULT_SMOLVLA_CHECKPOINT,
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     EqualDDPSchedule,
     global_stage_loss_weights,
+    normalized_stage_loss_mass,
     pad_tensor_records,
 )
 from rl_vla_bootstrapping.policy.smolvla_finetune_cdpr import (
@@ -543,6 +544,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--three-stage-zero-signal-patience", type=int, default=3)
+    parser.add_argument(
+        "--three-stage-stage-loss-weights",
+        type=float,
+        nargs=3,
+        default=None,
+        metavar=("APPROACH", "PICKUP", "PLACEMENT"),
+        help=(
+            "Relative loss mass for the approach, pickup and placement streams; "
+            "normalized to sum to one over the stages represented in an update. "
+            "Default: equal thirds. Use this, not reward scale, to emphasize a "
+            "stage: per-stage group normalization cancels reward scale."
+        ),
+    )
     parser.add_argument("--three-stage-min-informative-groups-per-stage", type=int, default=4)
     parser.add_argument("--three-stage-scene-manifest", default="")
     parser.add_argument("--three-stage-train-split", default="collection")
@@ -731,6 +745,13 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--comparison-validation-episodes-per-instruction", type=int, default=10)
 
     args = parser.parse_args(argv)
+    if args.three_stage_stage_loss_weights is not None:
+        try:
+            args.three_stage_stage_loss_weights = list(
+                normalized_stage_loss_mass(args.three_stage_stage_loss_weights)
+            )
+        except ValueError as error:
+            parser.error(str(error))
     if args.batch_size is not None and args.minibatch_size is None:
         args.minibatch_size = int(args.batch_size)
     if args.minibatch_size is None:
@@ -1279,6 +1300,7 @@ class SmolVLAGRPOTrainer:
             loss_weights = global_stage_loss_weights(
                 credit_stages, valid,
                 candidate_id=(padded["candidate_id"] if "candidate_id" in padded else None),
+                stage_mass=getattr(self.args, "three_stage_stage_loss_weights", None),
             ) * float(schedule.minibatches_per_epoch)
         elif int(valid_advantages.numel()) > 1:
             adv_mean = valid_advantages.mean()

@@ -17,7 +17,10 @@ def main():
     rank = int(os.environ['RANK'])
     torch.set_num_threads(1)
     with tempfile.TemporaryDirectory() as directory:
-        args = _args('--microbatch-size', '2', '--entropy-coef', '0', '--action-l2', '0')
+        # Unequal stage mass is the hard case for DDP: rank 0 holds only
+        # approach rows, so renormalization must use the all-reduced counts.
+        args = _args('--microbatch-size', '2', '--entropy-coef', '0', '--action-l2', '0',
+                     *os.environ.get('SMOKE_STAGE_MASS', '').split())
         torch.manual_seed(31)
         reference = _trainer(args, Path(directory))
         initial = {k: v.clone() for k, v in reference.actor.state_dict().items()}
