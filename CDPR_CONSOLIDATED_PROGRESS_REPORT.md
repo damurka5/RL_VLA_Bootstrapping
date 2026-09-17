@@ -2052,7 +2052,7 @@ Newest first. Entries follow the §13 template.
 
 - By object, strict: apple 10/62 (16.1%), orange 18/66 (27.3%), potato 11/59
   (18.6%), tomato 18/69 (26.1%).
-- Timing: mean completion is 247.8 env steps for successes and 327.8 overall.
+- Timing: mean completion is 246.8 env steps for native successes and 327.8 overall.
   The minimum grasp-point distance has median 1.41 cm and p10 0.47 cm.
 - Video audit (all 256 kept, first-event times from the JSON sidecars):
   - **57 strict successes:** grasp at a median of 6.1 s, lift 9.3 s, release
