@@ -284,6 +284,50 @@ def advance_three_stage_milestones(
     )
 
 
+def add_full_task_bonus(
+    *,
+    advantage: Any,
+    usable: Any,
+    record_stage: Any,
+    record_world: Any,
+    full_task_advantage: Any,
+    full_task_usable: Any,
+    bonus: float,
+) -> tuple[Any, Any, Any]:
+    """Credit approach and pickup actions with the full-instruction outcome.
+
+    The +1 for completing the whole instruction is a fourth binary return,
+    strict success, group-normalized like the stage streams. Adding it to the
+    placement reward would change nothing: the placement stream already IS
+    strict success, and per-group normalization cancels its scale. What the
+    staged credit lacks is the reverse link. An approach or pickup action is
+    judged only by its own milestone, so a lift that is later dropped earns
+    the same credit as one that is carried home. This adds
+    ``bonus * A_full(candidate)`` to every approach and pickup row. Placement
+    rows are left alone: they already carry exactly that advantage, and
+    doubling it would re-weight the stages toward placement.
+
+    A row whose own stage group has no contrast (e.g. every candidate
+    approached) becomes usable when the full-task group has contrast, carrying
+    only the bonus term. Returns the new advantages, usability and the mask of
+    rows that received a bonus.
+    """
+
+    import torch
+
+    stage_part = torch.where(usable, advantage, torch.zeros_like(advantage))
+    bonus_rows = (
+        (record_stage != THREE_STAGE_PLACEMENT)
+        & full_task_usable.index_select(0, record_world)
+    )
+    bonus_part = torch.where(
+        bonus_rows,
+        float(bonus) * full_task_advantage.index_select(0, record_world).to(advantage.dtype),
+        torch.zeros_like(advantage),
+    )
+    return stage_part + bonus_part, usable | bonus_rows, bonus_rows
+
+
 def three_stage_count_metrics(state: ThreeStageMilestones, instruction_ids: Any,
                               *, prefix: str = "three_stage/") -> dict[str, float]:
     """Counters with explicit denominators, safe to sum over rounds and ranks."""
@@ -3347,6 +3391,7 @@ class RankLocalMJWarpGRPOCollector:
         three_stage_approach_min_opening: float = 0.90,
         three_stage_approach_max_object_displacement_m: float = 0.01,
         three_stage_lift_height_m: float = 0.05,
+        three_stage_full_task_bonus: float = 0.0,
         min_group_reward_std: float = 0.0,
         profile: bool = False,
     ) -> None:
@@ -3382,6 +3427,9 @@ class RankLocalMJWarpGRPOCollector:
             three_stage_approach_max_object_displacement_m
         )
         self.three_stage_lift_height_m = float(three_stage_lift_height_m)
+        self.three_stage_full_task_bonus = float(three_stage_full_task_bonus)
+        if self.three_stage_full_task_bonus < 0.0:
+            raise ValueError("three_stage_full_task_bonus must be nonnegative.")
         # Drop groups whose eight candidates scored within this of each other.
         #
         # The advantage is the centred reward divided by the group std floored
@@ -4340,6 +4388,19 @@ class RankLocalMJWarpGRPOCollector:
             record_usable = stage_usable_world[
                 record_stage, record_world
             ]
+            full_task_bonus_rows = None
+            if self.three_stage_full_task_bonus > 0.0:
+                records["advantage"], record_usable, full_task_bonus_rows = (
+                    add_full_task_bonus(
+                        advantage=records["advantage"],
+                        usable=record_usable,
+                        record_stage=record_stage,
+                        record_world=record_world,
+                        full_task_advantage=stage_advantage_world[THREE_STAGE_PLACEMENT],
+                        full_task_usable=stage_usable_world[THREE_STAGE_PLACEMENT],
+                        bonus=self.three_stage_full_task_bonus,
+                    )
+                )
             # Candidate identity for per-candidate stage means. Offset per
             # refill round by concatenate_collector_rounds.
             records["candidate_id"] = record_world.to(dtype=torch.int64)
@@ -4484,6 +4545,25 @@ class RankLocalMJWarpGRPOCollector:
             three_stage_metrics["three_stage/cumulative_score_mean"] = float(
                 candidate_rewards.mean().item()
             )
+            three_stage_metrics["three_stage/full_task_bonus"] = float(
+                self.three_stage_full_task_bonus
+            )
+            if full_task_bonus_rows is not None:
+                bonus_valid = full_task_bonus_rows & record_valid
+                bonus_sign = stage_advantage_world[THREE_STAGE_PLACEMENT].index_select(
+                    0, record_world
+                )
+                for stage, name in (
+                    (THREE_STAGE_APPROACH, "approach"),
+                    (THREE_STAGE_PICKUP, "pickup"),
+                ):
+                    selected = bonus_valid & (records["credit_stage"] == stage)
+                    three_stage_metrics[f"three_stage/{name}_full_task_bonus_records"] = float(
+                        selected.sum().item()
+                    )
+                    three_stage_metrics[
+                        f"three_stage/{name}_full_task_bonus_positive_records"
+                    ] = float((selected & (bonus_sign > 0)).sum().item())
             three_stage_metrics["three_stage/carry_slip_rate"] = float(
                 three_stage.carry_slip.to(dtype=torch.float32).mean().item()
             )

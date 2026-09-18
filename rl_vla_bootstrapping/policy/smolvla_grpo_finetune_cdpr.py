@@ -545,6 +545,16 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     parser.add_argument("--three-stage-zero-signal-patience", type=int, default=3)
     parser.add_argument(
+        "--three-stage-full-task-bonus",
+        type=float,
+        default=0.0,
+        help=(
+            "Weight of a fourth binary return, strict full-instruction success, "
+            "added as bonus * A_full(candidate) to every approach and pickup "
+            "action. Placement actions already carry that advantage. 0 disables."
+        ),
+    )
+    parser.add_argument(
         "--three-stage-stage-loss-weights",
         type=float,
         nargs=3,
@@ -786,6 +796,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     )
     if not 0.0 <= float(args.three_stage_approach_min_opening) <= 1.0:
         parser.error("--three-stage-approach-min-opening must be in [0, 1]")
+    if not math.isfinite(float(args.three_stage_full_task_bonus)) or float(
+        args.three_stage_full_task_bonus
+    ) < 0.0:
+        parser.error("--three-stage-full-task-bonus must be finite and nonnegative")
     for name in (
         "three_stage_approach_distance_m",
         "three_stage_approach_max_object_displacement_m",

@@ -2031,6 +2031,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                 args.three_stage_approach_max_object_displacement_m
             ),
             three_stage_lift_height_m=float(args.three_stage_lift_height_m),
+            three_stage_full_task_bonus=float(
+                getattr(args, "three_stage_full_task_bonus", 0.0)
+            ),
             min_group_reward_std=float(
                 getattr(args, "grpo_min_group_reward_std", 0.0)
             ),
@@ -2124,6 +2127,9 @@ def main(argv: Sequence[str] | None = None) -> None:
                     args.three_stage_approach_max_object_displacement_m
                 ),
                 three_stage_lift_height_m=float(args.three_stage_lift_height_m),
+                three_stage_full_task_bonus=float(
+                    getattr(args, "three_stage_full_task_bonus", 0.0)
+                ),
                 profile=bool(args.mjwarp_profile_timers),
             )
 

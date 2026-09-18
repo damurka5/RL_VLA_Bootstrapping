@@ -898,12 +898,14 @@ training:
       mjwarp_max_updates: 10
       three_stage_zero_signal_patience: 3
       # Loss mass for approach / pickup / placement (normalized over the stages
-      # represented in an update). Was equal thirds through 30M steps; by then
-      # grasp and lift had plateaued near 84% / 75% while strict placement sat
-      # at ~24%, with most lifted starts lost after the lift. Emphasize
-      # placement while keeping approach and pickup in the loss for retention.
-      # Mass, not reward scale: per-stage group normalization cancels scale.
-      three_stage_stage_loss_weights: [0.2, 0.2, 0.6]
+      # represented in an update). Equal thirds through 30M steps. A 2026-09-17
+      # resume with [0.2, 0.2, 0.6] failed and was stopped; back to equal.
+      three_stage_stage_loss_weights: [1.0, 1.0, 1.0]
+      # +1 for completing the full instruction, as a fourth return: strict
+      # success, group-normalized, added to every approach and pickup action.
+      # A dropped carry then costs the lift that preceded it, not only the
+      # placement. Placement actions already carry this advantage.
+      three_stage_full_task_bonus: 1.0
       max_env_steps: 128
       # End-to-end GRPO over the SAME manifest contract as collection and eval.
       # Returns are three independent binary streams, not one cumulative score

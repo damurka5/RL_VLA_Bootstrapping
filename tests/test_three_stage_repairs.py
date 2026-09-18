@@ -188,6 +188,70 @@ class WrongPlaceTerminationTests(unittest.TestCase):
         self.assertFalse(s.diagnostics['strict_under_legacy_termination'].item())
 
 
+class FullTaskBonusTests(unittest.TestCase):
+    def setUp(self):
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import three_stage_group_credit
+        # One group of four candidates. All approach, three pick up, one completes.
+        returns = torch.tensor([[[1., 1., 1., 1.]], [[1., 1., 1., 0.]], [[1., 0., 0., 0.]]])
+        advantage, usable = three_stage_group_credit(
+            returns, normalize=True, clip_abs=0.0, dynamic_sampling=True,
+            dynamic_min_pass_rate=0.0, dynamic_max_pass_rate=1.0, min_group_reward_std=0.0)
+        self.stage_advantage = advantage.reshape(3, 4)
+        self.stage_usable = usable.repeat_interleave(4, dim=1)
+        # Rows: an approach and a pickup row per candidate, plus candidate 0's placement row.
+        self.stage = torch.tensor([0, 0, 0, 0, 1, 1, 1, 2])
+        self.world = torch.tensor([0, 1, 2, 3, 0, 1, 2, 0])
+        self.advantage = self.stage_advantage[self.stage, self.world]
+        self.usable = self.stage_usable[self.stage, self.world]
+
+    def apply(self, bonus):
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
+            THREE_STAGE_PLACEMENT, add_full_task_bonus)
+        return add_full_task_bonus(
+            advantage=self.advantage, usable=self.usable, record_stage=self.stage,
+            record_world=self.world, full_task_advantage=self.stage_advantage[THREE_STAGE_PLACEMENT],
+            full_task_usable=self.stage_usable[THREE_STAGE_PLACEMENT], bonus=bonus)
+
+    def test_degenerate_approach_group_gains_contrast_from_the_outcome(self):
+        self.assertFalse(bool(self.usable[:4].any()))
+        advantage, usable, bonus_rows = self.apply(1.0)
+        self.assertTrue(bool(usable[:4].all()))
+        self.assertGreater(float(advantage[0]), 0.0)
+        self.assertTrue(bool((advantage[1:4] < 0).all()))
+        self.assertAlmostEqual(float(advantage[:4].sum()), 0.0, places=5)
+
+    def test_pickup_that_is_not_carried_home_loses_credit(self):
+        advantage, _, _ = self.apply(1.0)
+        full = self.stage_advantage[2]
+        # Candidates 0-2 all picked up; only candidate 0 completed.
+        for row, world in ((4, 0), (5, 1), (6, 2)):
+            self.assertAlmostEqual(float(advantage[row]),
+                                   float(self.advantage[row] + full[world]), places=5)
+        self.assertGreater(float(advantage[4]), float(advantage[5]))
+
+    def test_placement_rows_are_not_double_counted(self):
+        advantage, _, bonus_rows = self.apply(1.0)
+        self.assertFalse(bool(bonus_rows[7]))
+        self.assertAlmostEqual(float(advantage[7]), float(self.advantage[7]), places=6)
+
+    def test_bonus_scales_linearly_and_zero_is_identity(self):
+        a1, _, _ = self.apply(1.0)
+        a2, _, _ = self.apply(2.0)
+        a0, u0, rows0 = self.apply(0.0)
+        base = torch.where(self.usable, self.advantage, torch.zeros_like(self.advantage))
+        self.assertTrue(torch.allclose(a2 - base, 2 * (a1 - base), atol=1e-6))
+        self.assertTrue(torch.allclose(a0, base))
+
+    def test_no_bonus_when_every_candidate_shares_the_outcome(self):
+        from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import add_full_task_bonus
+        advantage, usable, rows = add_full_task_bonus(
+            advantage=self.advantage, usable=self.usable, record_stage=self.stage,
+            record_world=self.world, full_task_advantage=torch.zeros(4),
+            full_task_usable=torch.zeros(4, dtype=torch.bool), bonus=1.0)
+        self.assertFalse(bool(rows.any()))
+        self.assertTrue(torch.equal(usable, self.usable))
+
+
 class EvaluatorMilestoneTests(unittest.TestCase):
     def test_summary_reports_milestones_beside_strict(self):
         import numpy as np
@@ -338,17 +402,25 @@ class CreditRepairTests(unittest.TestCase):
         with self.assertRaises(SystemExit):
             parse_args(['--three-stage-stage-loss-weights', '0', '0', '0'])
 
-    def test_config_sets_placement_weighted_mass(self):
+    def test_config_uses_equal_mass_and_full_task_bonus(self):
         import yaml
         from rl_vla_bootstrapping.core.commands import append_cli_arg
         from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import parse_args
-        raw = yaml.safe_load(open('configs/examples/cdpr_smolvla_three_stage_put_into.yaml', encoding='utf-8'))
+        with open('configs/examples/cdpr_smolvla_three_stage_put_into.yaml', encoding='utf-8') as source:
+            raw = yaml.safe_load(source)
         argv = []
         for key, value in raw['training']['rl']['args'].items():
             append_cli_arg(argv, key, value)
-        weights = parse_args(argv).three_stage_stage_loss_weights
-        for got, want in zip(weights, (0.2, 0.2, 0.6)):
-            self.assertAlmostEqual(got, want)
+        args = parse_args(argv)
+        for got in args.three_stage_stage_loss_weights:
+            self.assertAlmostEqual(got, 1 / 3)
+        self.assertEqual(args.three_stage_full_task_bonus, 1.0)
+
+    def test_full_task_bonus_argument_is_validated(self):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import parse_args
+        self.assertEqual(parse_args([]).three_stage_full_task_bonus, 0.0)
+        with self.assertRaises(SystemExit):
+            parse_args(['--three-stage-full-task-bonus', '-1'])
 
     def test_trainer_applies_weighted_stage_mass(self):
         with tempfile.TemporaryDirectory() as directory:

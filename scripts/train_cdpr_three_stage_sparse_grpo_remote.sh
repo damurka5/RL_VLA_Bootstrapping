@@ -123,7 +123,8 @@ print(f"[three-stage] scenes: collection={len(collection)} "
 mass = args.three_stage_stage_loss_weights or [1 / 3, 1 / 3, 1 / 3]
 print("[three-stage] rewards: approach=1 pickup=1 placement=1; independent group "
       "advantages; stage loss mass approach/pickup/placement = "
-      + "/".join(f"{value:.3f}" for value in mass))
+      + "/".join(f"{value:.3f}" for value in mass)
+      + f"; full-task bonus on approach/pickup = {args.three_stage_full_task_bonus:g}")
 if failures:
     for failure in failures:
         print(f"[three-stage] REFUSING: {failure}", file=sys.stderr)
@@ -180,12 +181,13 @@ record = {"init_mode": mode, "checkpoint": str(pathlib.Path(checkpoint).resolve(
           "scene_manifest_sha256": digest(scenes),
           "git_commit": subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip(),
           "max_updates": int(updates), "max_train_steps": int(steps),
-          "reward_protocol": "three_stage_accessible_v4_weighted_stage_mass", "termination_protocol": "wrong_place_requires_held_lift", "outcome_protocol": "independent_strict_full_task_v1",
+          "reward_protocol": "three_stage_accessible_v5_full_task_bonus", "termination_protocol": "wrong_place_requires_held_lift", "outcome_protocol": "independent_strict_full_task_v1",
           "lora_updates_enabled": False}
 try:
     import yaml
-    record["stage_loss_weights"] = yaml.safe_load(open(config, encoding="utf-8"))[
-        "training"]["rl"]["args"].get("three_stage_stage_loss_weights")
+    rl_args = yaml.safe_load(open(config, encoding="utf-8"))["training"]["rl"]["args"]
+    record["stage_loss_weights"] = rl_args.get("three_stage_stage_loss_weights")
+    record["full_task_bonus"] = rl_args.get("three_stage_full_task_bonus", 0.0)
 except Exception as error:  # never block a launch on provenance
     record["stage_loss_weights"] = f"unavailable: {error}"
 try:
