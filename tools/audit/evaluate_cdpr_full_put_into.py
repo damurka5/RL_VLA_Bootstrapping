@@ -112,6 +112,7 @@ def run_unassisted(
     vision_dim: int,
     video: EpisodeVideoRecorder | None = None,
     round_index: int = 0,
+    trace: Any = None,
 ) -> dict[str, Any]:
     """One rollout of the student over a batch of full-task scenes."""
 
@@ -197,7 +198,7 @@ def run_unassisted(
                 width=int(pending_cameras.overview.shape[-1]),
             )
             video.write(pending_cameras, active)
-        for _ in range(int(decisions) + int(settle_decisions)):
+        for decision_index in range(int(decisions) + int(settle_decisions)):
             if not bool(active.any().item()):
                 break
             if pending_cameras is not None:
@@ -254,6 +255,14 @@ def run_unassisted(
                 chunk, _, _ = world.trainer.sample_action_chunks_tensor(
                     states=state_tensor, priors=prior, action_count=per,
                     generator=stochastic_generator,
+                )
+            if trace is not None:
+                trace.record_decision(
+                    decision_index=decision_index,
+                    cameras=cameras,
+                    state=state_tensor,
+                    prior=prior,
+                    active=active,
                 )
             for action_index in range(per):
                 step_active = active.clone()
@@ -328,6 +337,18 @@ def run_unassisted(
                         getattr(collector, "three_stage_approach_max_object_displacement_m", 0.01)),
                     lift_height_m=float(getattr(collector, "three_stage_lift_height_m", 0.05)),
                 )
+                if trace is not None:
+                    trace.record_step(
+                        decision_index=decision_index,
+                        action_index=action_index,
+                        action=action,
+                        active=step_active,
+                        physical_grasp=caught,
+                        held_lift=pick_result.success,
+                        released=released,
+                        native=outcome.native,
+                        strict=outcome.strict,
+                    )
                 native, ever_grasped, ever_lifted = outcome.native, outcome.grasped, outcome.lifted
                 ever_released, carry_slip, wrong_place = outcome.released, outcome.carry_slip, outcome.wrong_place
                 approached |= (
