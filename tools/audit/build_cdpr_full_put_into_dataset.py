@@ -262,12 +262,23 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
                 per = int(action.shape[1])
                 grasp = int(data["first_grasp_step"][world])
                 lift = int(data["first_lift_step"][world])
-                release = int(data["first_release_step"][world])
+                recorded_release = int(data["first_release_step"][world])
                 success = int(data["first_strict_step"][world])
+                # Collector builds through d679edd timestamped the raw
+                # placement predicate's `released` diagnostic. An empty open
+                # hand can satisfy that diagnostic at step zero, even though
+                # FullTaskOutcome correctly refuses to latch a release until
+                # after a grasp. The trajectory verdict is still strict and
+                # the executed data are intact; only this event timestamp is
+                # early. A strict success proves the latched release no later
+                # than its success step, so use that conservative boundary.
+                release_repaired = recorded_release < lift
+                release = success if release_repaired else recorded_release
                 if not (0 <= grasp <= lift <= release <= success):
                     raise ValueError(
                         f"{episode['episode_uid']} has non-monotone events: "
-                        f"grasp={grasp}, lift={lift}, release={release}, "
+                        f"grasp={grasp}, lift={lift}, "
+                        f"release={recorded_release}, "
                         f"strict={success}."
                     )
                 event_decisions = [grasp // per, lift // per, success // per]
@@ -327,6 +338,7 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
                         min(abs(int(decision) - value) for value in event_decisions),
                     )
                     add("full_chain_success", True)
+                    add("release_event_repaired", release_repaired)
                     add("source_group", "strict_policy")
                     add("starts_grasped", False)
 
@@ -361,6 +373,7 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
         "frame_uid": "U224",
         "stage_boundary_distance": np.int32,
         "full_chain_success": bool,
+        "release_event_repaired": bool,
         "source_group": "U32",
         "starts_grasped": bool,
     }
@@ -467,6 +480,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         "selection": selection,
         "selected_episode_uid_sha256": selection_sha256,
         "dataset": dataset_report(dataset),
+        "legacy_trace_repairs": {
+            "release_before_lift_episodes": int(
+                np.unique(
+                    dataset["episode_uid"][dataset["release_event_repaired"]]
+                ).size
+            ),
+            "rule": (
+                "For d679edd-era shards whose raw release timestamp precedes "
+                "lift, use the strict-success step as the conservative release "
+                "boundary. Actions, masks, frames, and strict verdicts are "
+                "unchanged."
+            ),
+        },
         "frames": frame_report,
         "contract": {
             "empty_start": True,

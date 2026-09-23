@@ -156,7 +156,7 @@ class BalancedSelectionTests(unittest.TestCase):
 
 
 class DatasetRowsTests(unittest.TestCase):
-    def _record(self, path: Path) -> None:
+    def _record(self, path: Path, *, release_step: int = 12) -> None:
         decisions, worlds, per = 4, 1, 4
         np.savez_compressed(
             path,
@@ -170,7 +170,7 @@ class DatasetRowsTests(unittest.TestCase):
             decision_active=np.ones((decisions, worlds), dtype=bool),
             first_grasp_step=np.asarray([5]),
             first_lift_step=np.asarray([7]),
-            first_release_step=np.asarray([12]),
+            first_release_step=np.asarray([release_step]),
             first_strict_step=np.asarray([13]),
             instruction_id=np.asarray([2]),
             instruction_text=np.asarray(["put apple into plate"]),
@@ -215,7 +215,30 @@ class DatasetRowsTests(unittest.TestCase):
         )
         self.assertTrue(dataset["full_chain_success"].all())
         self.assertFalse(dataset["starts_grasped"].any())
+        self.assertFalse(dataset["release_event_repaired"].any())
         self.assertEqual(len(np.unique(dataset["scene_uid"])), 1)
+
+    def test_repairs_only_the_legacy_pre_grasp_release_timestamp(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "record.npz")
+            self._record(path, release_step=0)
+            dataset = build_rows(
+                [
+                    {
+                        "path": path,
+                        "column": 0,
+                        "episode_uid": "strict_s0_r0000/r0w0",
+                        "scene_uid": "scene_a",
+                        "target_catalog": "robocasa_apple",
+                        "destination": "plate",
+                    }
+                ]
+            )
+        self.assertTrue(dataset["release_event_repaired"].all())
+        self.assertEqual(
+            dataset["stage_name"].tolist(),
+            ["move_to", "pick_up", "placement", "placement"],
+        )
 
     def test_action_only_cli_writes_auditable_dataset(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -345,7 +345,11 @@ def run_unassisted(
                         active=step_active,
                         physical_grasp=caught,
                         held_lift=pick_result.success,
-                        released=released,
+                        # The raw placement diagnostic can read released at
+                        # step zero because the empty hand is open. The strict
+                        # observer only latches release after a grasp, which is
+                        # the event a full-task trajectory needs to timestamp.
+                        released=outcome.released,
                         native=outcome.native,
                         strict=outcome.strict,
                     )
