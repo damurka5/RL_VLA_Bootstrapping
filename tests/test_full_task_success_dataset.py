@@ -7,6 +7,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 
@@ -239,6 +240,49 @@ class DatasetRowsTests(unittest.TestCase):
             dataset["stage_name"].tolist(),
             ["move_to", "pick_up", "placement", "placement"],
         )
+
+    def test_large_npz_members_are_decompressed_once_per_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory, "record.npz")
+            self._record(path)
+            selected = [
+                {
+                    "path": path,
+                    "column": 0,
+                    "episode_uid": "strict_s0_r0000/r0w0",
+                    "scene_uid": "scene_a",
+                    "target_catalog": "robocasa_apple",
+                    "destination": "plate",
+                }
+            ]
+            real_load = np.load
+            accesses: dict[str, int] = {}
+
+            class CountingArchive:
+                def __init__(self, source: Path, **kwargs: object) -> None:
+                    self.inner = real_load(source, **kwargs)
+                    self.files = self.inner.files
+
+                def __enter__(self) -> "CountingArchive":
+                    return self
+
+                def __exit__(self, *_args: object) -> None:
+                    self.inner.close()
+
+                def __getitem__(self, name: str) -> np.ndarray:
+                    accesses[name] = accesses.get(name, 0) + 1
+                    return self.inner[name]
+
+            with mock.patch(
+                "tools.audit.build_cdpr_full_put_into_dataset.np.load",
+                side_effect=lambda source, **kwargs: CountingArchive(
+                    source, **kwargs
+                ),
+            ):
+                build_rows(selected)
+
+        for member in ("state", "prior", "action", "action_mask"):
+            self.assertEqual(accesses[member], 1, member)
 
     def test_action_only_cli_writes_auditable_dataset(self):
         with tempfile.TemporaryDirectory() as directory:

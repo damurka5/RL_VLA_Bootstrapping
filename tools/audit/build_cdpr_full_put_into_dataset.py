@@ -244,11 +244,53 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
         by_path.setdefault(Path(row["path"]), []).append(row)
 
     expected_shapes: dict[str, tuple[int, ...]] = {}
-    for path, episodes in sorted(by_path.items(), key=lambda item: str(item[0])):
+    grouped_paths = sorted(by_path.items(), key=lambda item: str(item[0]))
+    for file_index, (path, episodes) in enumerate(grouped_paths, start=1):
+        if file_index == 1 or file_index % 16 == 0 or file_index == len(grouped_paths):
+            print(
+                f"[dataset] materializing record shard {file_index}/"
+                f"{len(grouped_paths)}",
+                flush=True,
+            )
         with np.load(path, allow_pickle=False) as data:
+            # An NPZ member is decompressed on every ``data[name]`` access.
+            # Load each member ONCE per file. Indexing the archive in the inner
+            # decision loop used to decompress state/prior thousands of times
+            # and every appended view retained its full backing array, growing
+            # a 512-episode build to tens of gigabytes.
+            states = np.asarray(data["state"], dtype=np.float32)
+            priors = np.asarray(data["prior"], dtype=np.float32)
+            actions = np.asarray(data["action"], dtype=np.float32)
+            action_masks = np.asarray(data["action_mask"], dtype=bool)
+            decision_active = np.asarray(data["decision_active"], dtype=bool)
+            first_grasp = np.asarray(data["first_grasp_step"], dtype=np.int64)
+            first_lift = np.asarray(data["first_lift_step"], dtype=np.int64)
+            first_release = np.asarray(data["first_release_step"], dtype=np.int64)
+            first_strict = np.asarray(data["first_strict_step"], dtype=np.int64)
+            instruction_ids = np.asarray(data["instruction_id"], dtype=np.int64)
+            instruction_texts = np.asarray(data["instruction_text"])
+            episode_uids = np.asarray(data["episode_uid"])
+            scene_uids = np.asarray(data["scene_uid"])
+            destinations = np.asarray(data["destination"])
+            target_catalogs = np.asarray(data["target_catalog"])
+            split = _scalar(data, "split")
+            checkpoint_sha256 = _scalar(data, "checkpoint_sha256")
+
+            for key, value in (
+                ("state", states),
+                ("prior", priors),
+                ("action", actions),
+            ):
+                shape = tuple(value.shape[2:])
+                previous = expected_shapes.setdefault(key, shape)
+                if previous != shape:
+                    raise ValueError(
+                        f"Mixed {key} shapes: {previous} and {shape} ({path})."
+                    )
+
             for episode in episodes:
                 world = int(episode["column"])
-                active = np.asarray(data["decision_active"][:, world], dtype=bool)
+                active = decision_active[:, world]
                 decisions = np.flatnonzero(active)
                 if decisions.size == 0 or not np.array_equal(
                     decisions, np.arange(decisions.size)
@@ -257,13 +299,13 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
                         f"{episode['episode_uid']} has non-contiguous active "
                         "policy decisions."
                     )
-                action = np.asarray(data["action"][:, world], dtype=np.float32)
-                mask = np.asarray(data["action_mask"][:, world], dtype=bool)
+                action = actions[:, world]
+                mask = action_masks[:, world]
                 per = int(action.shape[1])
-                grasp = int(data["first_grasp_step"][world])
-                lift = int(data["first_lift_step"][world])
-                recorded_release = int(data["first_release_step"][world])
-                success = int(data["first_strict_step"][world])
+                grasp = int(first_grasp[world])
+                lift = int(first_lift[world])
+                recorded_release = int(first_release[world])
+                success = int(first_strict[world])
                 # Collector builds through d679edd timestamped the raw
                 # placement predicate's `released` diagnostic. An empty open
                 # hand can satisfy that diagnostic at step zero, even though
@@ -293,46 +335,39 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
                     )
                     add(
                         "state",
-                        np.asarray(
-                            data["state"][decision, world], dtype=np.float32
-                        ),
+                        np.array(states[decision, world], copy=True),
                     )
                     add(
                         "prior",
-                        np.asarray(
-                            data["prior"][decision, world], dtype=np.float32
-                        ),
+                        np.array(priors[decision, world], copy=True),
                     )
-                    add("action", action[decision])
-                    add("action_mask", mask[decision])
-                    add("instruction_id", int(data["instruction_id"][world]))
+                    add("action", np.array(action[decision], copy=True))
+                    add("action_mask", np.array(mask[decision], copy=True))
+                    add("instruction_id", int(instruction_ids[world]))
                     add(
                         "instruction_text",
-                        str(data["instruction_text"][world]),
+                        str(instruction_texts[world]),
                     )
                     add(
                         "teacher_instruction_text",
-                        str(data["instruction_text"][world]),
+                        str(instruction_texts[world]),
                     )
-                    add("episode_uid", str(data["episode_uid"][world]))
-                    add("parent_episode_uid", str(data["episode_uid"][world]))
+                    add("episode_uid", str(episode_uids[world]))
+                    add("parent_episode_uid", str(episode_uids[world]))
                     add("decision_index", int(decision))
-                    add("scene_uid", str(data["scene_uid"][world]))
-                    add(
-                        "split",
-                        str(np.asarray(data["split"]).reshape(()).item()),
-                    )
+                    add("scene_uid", str(scene_uids[world]))
+                    add("split", split)
                     add("rollout_index", 0)
-                    add("destination", str(data["destination"][world]))
-                    add("target_catalog", str(data["target_catalog"][world]))
+                    add("destination", str(destinations[world]))
+                    add("target_catalog", str(target_catalogs[world]))
                     add("substage_id", int(stage_raw))
                     add("stage_id", int(stage_id))
                     add("stage_name", stage_name)
                     add(
                         "source_checkpoint_sha256",
-                        _scalar(data, "checkpoint_sha256"),
+                        checkpoint_sha256,
                     )
-                    add("frame_uid", f"{data['episode_uid'][world]}#{decision}")
+                    add("frame_uid", f"{episode_uids[world]}#{decision}")
                     add(
                         "stage_boundary_distance",
                         min(abs(int(decision) - value) for value in event_decisions),
@@ -341,14 +376,6 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
                     add("release_event_repaired", release_repaired)
                     add("source_group", "strict_policy")
                     add("starts_grasped", False)
-
-            for key in ("state", "prior", "action"):
-                shape = tuple(np.asarray(data[key]).shape[2:])
-                previous = expected_shapes.setdefault(key, shape)
-                if previous != shape:
-                    raise ValueError(
-                        f"Mixed {key} shapes: {previous} and {shape} ({path})."
-                    )
 
     dtypes: dict[str, Any] = {
         "state": np.float32,
