@@ -321,6 +321,21 @@ class LauncherTests(unittest.TestCase):
         self.assertIn("--split collection", text)
         self.assertNotIn("--settle-decisions", text)
 
+    def test_sft_launcher_refreshes_and_holds_out_whole_scenes(self):
+        script = (
+            Path(__file__).resolve().parents[1]
+            / "scripts/train_cdpr_strict_success_sft_remote.sh"
+        )
+        text = script.read_text("utf-8")
+        self.assertIn("sil_refresh_priors.py", text)
+        self.assertIn("sil_sft.py", text)
+        self.assertIn("--split-by scene", text)
+        self.assertIn("--sampler balanced", text)
+        self.assertIn('LORA_ROWS="${LORA_ROWS:-8192}"', text)
+        self.assertIn("--distinct-scene-rounds", text)
+        self.assertIn("--settle-decisions 0", text)
+        self.assertIn("step_52791642/smolvla_grpo_adapter.pt", text)
+
 
 if __name__ == "__main__":
     unittest.main()
