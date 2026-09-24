@@ -17,6 +17,38 @@
 #     bash scripts/train_cdpr_strict_success_sft_remote.sh
 #   RUN_DIR=runs/strict_success_dataset_step_52791642 STEPS=eval \
 #     bash scripts/train_cdpr_strict_success_sft_remote.sh
+#
+# The bare form above ran with `retention: none` (a put_into-only
+# specialization) and regressed step_52791642: standalone strict 35.55% ->
+# 33.20%, overfit from epoch 0 (best-epoch val MSE already above the
+# untrained baseline). RETENTION_DATASET/RETENTION_FRACTION exist precisely
+# for this failure mode but the strict put_into bank cannot supply its own
+# retention rows -- every one of them carries the final put_into prompt.
+# Refresh an original-label bank (move_to/pick_up/placement, e.g. the
+# runs/phase4_bank pool) under the SAME checkpoint first, then mix it in:
+#
+#   CUDA_VISIBLE_DEVICES=0 conda run --no-capture-output -n cdpr-mjlab python3 \
+#     tools/audit/sil_refresh_priors.py \
+#     --dataset runs/phase4_bank/dataset/demonstrations.npz \
+#     --frames runs/phase4_bank/*_demos/frames_*.npz \
+#     --checkpoint runs/three_stage_sparse_grpo_20260918_210212/rl/step_52791642/smolvla_grpo_adapter.pt \
+#     --output runs/strict_success_dataset_step_52791642/retention_refreshed \
+#     --device cuda:0 --batch-size 32
+#
+#   RUN_DIR=runs/strict_success_dataset_step_52791642 \
+#   WORK_DIR=runs/strict_success_dataset_step_52791642/sft_from_step_52791642_retention \
+#   RETENTION_DATASET=runs/strict_success_dataset_step_52791642/retention_refreshed/demonstrations.npz \
+#   RETENTION_FRACTION=0.2 \
+#   EVAL_BASELINE=0 \
+#     bash scripts/train_cdpr_strict_success_sft_remote.sh
+#
+# WORK_DIR is set explicitly so this does not overwrite the no-retention
+# run's evidence (eval_baseline/eval_sft/model under sft_from_step_52791642).
+# EVAL_BASELINE=0 skips re-evaluating step_52791642, whose baseline
+# evaluation.json already exists from that run. sil_sft.py refuses a
+# retention bank whose state width or action-slot count does not match this
+# checkpoint's -- if it does, the bank predates a state/action contract
+# change and needs a different source, not a forced retry.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
