@@ -33,7 +33,15 @@
 #     --frames runs/phase4_bank/*_demos/frames_*.npz \
 #     --checkpoint runs/three_stage_sparse_grpo_20260918_210212/rl/step_52791642/smolvla_grpo_adapter.pt \
 #     --output runs/strict_success_dataset_step_52791642/retention_refreshed \
-#     --device cuda:0 --batch-size 32
+#     --device cuda:0 --batch-size 32 \
+#     --final-prompt-prefix ''
+#
+# --final-prompt-prefix '' is required: the default 'put ' expects every row
+# to carry one put_into chain's final prompt, and phase4_bank's rows legitimately
+# carry the original move_to/pick_up/placement labels (e.g. "move to banana"),
+# not that prompt. Without the flag sil_refresh_priors.py refuses with exactly
+# this error -- it is the tool correctly identifying an original-label
+# retention bank, not a broken bank.
 #
 #   RUN_DIR=runs/strict_success_dataset_step_52791642 \
 #   WORK_DIR=runs/strict_success_dataset_step_52791642/sft_from_step_52791642_retention \
