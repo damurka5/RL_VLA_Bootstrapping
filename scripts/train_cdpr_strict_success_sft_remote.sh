@@ -34,7 +34,8 @@
 #     --checkpoint runs/three_stage_sparse_grpo_20260918_210212/rl/step_52791642/smolvla_grpo_adapter.pt \
 #     --output runs/strict_success_dataset_step_52791642/retention_refreshed \
 #     --device cuda:0 --batch-size 32 \
-#     --final-prompt-prefix ''
+#     --final-prompt-prefix '' \
+#     --min-resolved-fraction 0.98
 #
 # --final-prompt-prefix '' is required: the default 'put ' expects every row
 # to carry one put_into chain's final prompt, and phase4_bank's rows legitimately
@@ -42,6 +43,17 @@
 # not that prompt. Without the flag sil_refresh_priors.py refuses with exactly
 # this error -- it is the tool correctly identifying an original-label
 # retention bank, not a broken bank.
+#
+# --min-resolved-fraction 0.98 is needed too: confirmed on the remote,
+# phase4_bank joins by position (no frame_uid, an older recorder), resolves
+# 23422/23709 = 0.9879 of rows to a frame, and the default floor is 0.99.
+# That is normal wear on an old, many-times-reharvested bank, not corruption
+# -- dropping ~1.2% of a share that is itself only 20% of the SFT mix is not
+# worth a physics re-replay (which the tool's own docstring warns destroyed
+# most of a bank when tried under a different checkpoint). Note: this
+# override only works because the join is positional; had the bank carried
+# frame_uid (uid join), the tool forces the floor to 1.0 regardless of this
+# flag, on the theory that a uid join should never legitimately miss a row.
 #
 #   RUN_DIR=runs/strict_success_dataset_step_52791642 \
 #   WORK_DIR=runs/strict_success_dataset_step_52791642/sft_from_step_52791642_retention \
