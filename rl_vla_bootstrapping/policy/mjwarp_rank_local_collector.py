@@ -293,6 +293,8 @@ def add_full_task_bonus(
     full_task_advantage: Any,
     full_task_usable: Any,
     bonus: float,
+    achieved: Any | None = None,
+    achieved_negative_scale: float = 1.0,
 ) -> tuple[Any, Any, Any]:
     """Credit approach and pickup actions with the full-instruction outcome.
 
@@ -311,6 +313,16 @@ def add_full_task_bonus(
     approached) becomes usable when the full-task group has contrast, carrying
     only the bonus term. Returns the new advantages, usability and the mask of
     rows that received a bonus.
+
+    ``achieved`` marks rows whose candidate reached that row's OWN milestone.
+    On those rows a negative full-task advantage is multiplied by
+    ``achieved_negative_scale``; 1.0 leaves the bonus symmetric. Below 1, a
+    grasp that was later dropped is no longer pushed down for the drop. The
+    placement rows, where the carry and release actions live, still carry the
+    full signed outcome. The trade was measured in the 30M-57M run: grasp
+    fell from 82.8% to 69.6%, and approach recovered by a late grasp fell
+    from 36.9% to 14.3%. A completed chain's approach and pickup still
+    out-credit a dropped one, so the preference for good grasps survives.
     """
 
     import torch
@@ -320,10 +332,13 @@ def add_full_task_bonus(
         (record_stage != THREE_STAGE_PLACEMENT)
         & full_task_usable.index_select(0, record_world)
     )
+    full = full_task_advantage.index_select(0, record_world).to(advantage.dtype)
+    if achieved is not None and float(achieved_negative_scale) != 1.0:
+        full = torch.where(
+            achieved & (full < 0), full * float(achieved_negative_scale), full
+        )
     bonus_part = torch.where(
-        bonus_rows,
-        float(bonus) * full_task_advantage.index_select(0, record_world).to(advantage.dtype),
-        torch.zeros_like(advantage),
+        bonus_rows, float(bonus) * full, torch.zeros_like(advantage)
     )
     return stage_part + bonus_part, usable | bonus_rows, bonus_rows
 
@@ -3392,6 +3407,7 @@ class RankLocalMJWarpGRPOCollector:
         three_stage_approach_max_object_displacement_m: float = 0.01,
         three_stage_lift_height_m: float = 0.05,
         three_stage_full_task_bonus: float = 0.0,
+        three_stage_full_task_bonus_achieved_negative_scale: float = 1.0,
         min_group_reward_std: float = 0.0,
         profile: bool = False,
     ) -> None:
@@ -3430,6 +3446,13 @@ class RankLocalMJWarpGRPOCollector:
         self.three_stage_full_task_bonus = float(three_stage_full_task_bonus)
         if self.three_stage_full_task_bonus < 0.0:
             raise ValueError("three_stage_full_task_bonus must be nonnegative.")
+        self.three_stage_full_task_bonus_achieved_negative_scale = float(
+            three_stage_full_task_bonus_achieved_negative_scale
+        )
+        if not 0.0 <= self.three_stage_full_task_bonus_achieved_negative_scale <= 1.0:
+            raise ValueError(
+                "three_stage_full_task_bonus_achieved_negative_scale must be in [0, 1]."
+            )
         # Drop groups whose eight candidates scored within this of each other.
         #
         # The advantage is the centred reward divided by the group std floored
@@ -4389,6 +4412,9 @@ class RankLocalMJWarpGRPOCollector:
                 record_stage, record_world
             ]
             full_task_bonus_rows = None
+            record_achieved = (
+                milestone_returns.reshape(THREE_STAGE_COUNT, worlds) > 0.5
+            )[record_stage, record_world]
             if self.three_stage_full_task_bonus > 0.0:
                 records["advantage"], record_usable, full_task_bonus_rows = (
                     add_full_task_bonus(
@@ -4399,6 +4425,10 @@ class RankLocalMJWarpGRPOCollector:
                         full_task_advantage=stage_advantage_world[THREE_STAGE_PLACEMENT],
                         full_task_usable=stage_usable_world[THREE_STAGE_PLACEMENT],
                         bonus=self.three_stage_full_task_bonus,
+                        achieved=record_achieved,
+                        achieved_negative_scale=(
+                            self.three_stage_full_task_bonus_achieved_negative_scale
+                        ),
                     )
                 )
             # Candidate identity for per-candidate stage means. Offset per
@@ -4564,6 +4594,18 @@ class RankLocalMJWarpGRPOCollector:
                     three_stage_metrics[
                         f"three_stage/{name}_full_task_bonus_positive_records"
                     ] = float((selected & (bonus_sign > 0)).sum().item())
+                    # Rows whose negative bonus was scaled because their own
+                    # milestone was reached; 0 whenever the scale is 1.
+                    three_stage_metrics[
+                        f"three_stage/{name}_full_task_bonus_protected_records"
+                    ] = (
+                        float((selected & record_achieved & (bonus_sign < 0)).sum().item())
+                        if self.three_stage_full_task_bonus_achieved_negative_scale != 1.0
+                        else 0.0
+                    )
+            three_stage_metrics["three_stage/full_task_bonus_achieved_negative_scale"] = float(
+                self.three_stage_full_task_bonus_achieved_negative_scale
+            )
             three_stage_metrics["three_stage/carry_slip_rate"] = float(
                 three_stage.carry_slip.to(dtype=torch.float32).mean().item()
             )

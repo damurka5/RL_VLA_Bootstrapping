@@ -906,6 +906,18 @@ training:
       # A dropped carry then costs the lift that preceded it, not only the
       # placement. Placement actions already carry this advantage.
       three_stage_full_task_bonus: 1.0
+      # Grasp preservation, from the step_52791642 continuation onward. The
+      # 30M-57M run under a symmetric bonus raised strict from 27.0% to 38.4%.
+      # Over the same run, validation grasp fell from 82.8% to 74.7% at the
+      # chosen step and 69.6% at the end, and approach recovered by a late
+      # grasp fell from 36.9% to 14.3%. Once every candidate in a group
+      # approaches or grasps, the bonus is those rows' ONLY contrast, so each
+      # candidate that fails downstream has its approach and grasp pushed
+      # down. 0 removes that push only on rows whose own milestone was
+      # reached; a completed chain still adds credit. Placement rows still
+      # carry the full signed outcome. 1.0 restores the symmetric bonus used
+      # through step_56973933.
+      three_stage_full_task_bonus_achieved_negative_scale: 0.0
       max_env_steps: 128
       # End-to-end GRPO over the SAME manifest contract as collection and eval.
       # Returns are three independent binary streams, not one cumulative score

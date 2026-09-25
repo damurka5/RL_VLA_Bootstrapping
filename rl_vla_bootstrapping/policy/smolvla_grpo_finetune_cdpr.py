@@ -555,6 +555,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--three-stage-full-task-bonus-achieved-negative-scale",
+        type=float,
+        default=1.0,
+        help=(
+            "Multiplier in [0, 1] on a NEGATIVE full-task bonus for approach "
+            "and pickup rows whose candidate reached that row's own "
+            "milestone. 1 keeps the bonus symmetric. 0 stops a later drop "
+            "from pushing down the grasp or approach that preceded it, while "
+            "a completed chain still adds credit. Placement rows are "
+            "unaffected."
+        ),
+    )
+    parser.add_argument(
         "--three-stage-stage-loss-weights",
         type=float,
         nargs=3,
@@ -800,6 +813,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         args.three_stage_full_task_bonus
     ) < 0.0:
         parser.error("--three-stage-full-task-bonus must be finite and nonnegative")
+    if not 0.0 <= float(args.three_stage_full_task_bonus_achieved_negative_scale) <= 1.0:
+        parser.error(
+            "--three-stage-full-task-bonus-achieved-negative-scale must be in [0, 1]"
+        )
     for name in (
         "three_stage_approach_distance_m",
         "three_stage_approach_max_object_displacement_m",

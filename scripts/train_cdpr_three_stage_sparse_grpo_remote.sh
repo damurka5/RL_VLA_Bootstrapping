@@ -124,7 +124,9 @@ mass = args.three_stage_stage_loss_weights or [1 / 3, 1 / 3, 1 / 3]
 print("[three-stage] rewards: approach=1 pickup=1 placement=1; independent group "
       "advantages; stage loss mass approach/pickup/placement = "
       + "/".join(f"{value:.3f}" for value in mass)
-      + f"; full-task bonus on approach/pickup = {args.three_stage_full_task_bonus:g}")
+      + f"; full-task bonus on approach/pickup = {args.three_stage_full_task_bonus:g}"
+      + "; negative bonus on an achieved milestone x"
+      + f"{args.three_stage_full_task_bonus_achieved_negative_scale:g}")
 if failures:
     for failure in failures:
         print(f"[three-stage] REFUSING: {failure}", file=sys.stderr)
@@ -188,6 +190,8 @@ try:
     rl_args = yaml.safe_load(open(config, encoding="utf-8"))["training"]["rl"]["args"]
     record["stage_loss_weights"] = rl_args.get("three_stage_stage_loss_weights")
     record["full_task_bonus"] = rl_args.get("three_stage_full_task_bonus", 0.0)
+    record["full_task_bonus_achieved_negative_scale"] = rl_args.get(
+        "three_stage_full_task_bonus_achieved_negative_scale", 1.0)
 except Exception as error:  # never block a launch on provenance
     record["stage_loss_weights"] = f"unavailable: {error}"
 try:

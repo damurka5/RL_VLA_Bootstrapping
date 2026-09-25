@@ -203,14 +203,60 @@ class FullTaskBonusTests(unittest.TestCase):
         self.world = torch.tensor([0, 1, 2, 3, 0, 1, 2, 0])
         self.advantage = self.stage_advantage[self.stage, self.world]
         self.usable = self.stage_usable[self.stage, self.world]
+        self.achieved = (returns.reshape(3, 4) > 0.5)[self.stage, self.world]
 
-    def apply(self, bonus):
+    def apply(self, bonus, achieved=None, scale=1.0):
         from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
             THREE_STAGE_PLACEMENT, add_full_task_bonus)
         return add_full_task_bonus(
             advantage=self.advantage, usable=self.usable, record_stage=self.stage,
             record_world=self.world, full_task_advantage=self.stage_advantage[THREE_STAGE_PLACEMENT],
-            full_task_usable=self.stage_usable[THREE_STAGE_PLACEMENT], bonus=bonus)
+            full_task_usable=self.stage_usable[THREE_STAGE_PLACEMENT], bonus=bonus,
+            achieved=achieved, achieved_negative_scale=scale)
+
+    def test_scale_one_is_the_symmetric_bonus(self):
+        a_default, u_default, r_default = self.apply(1.0)
+        a_scaled, u_scaled, r_scaled = self.apply(1.0, achieved=self.achieved, scale=1.0)
+        self.assertTrue(torch.equal(a_default, a_scaled))
+        self.assertTrue(torch.equal(u_default, u_scaled))
+        self.assertTrue(torch.equal(r_default, r_scaled))
+
+    def test_achieved_approach_is_not_pushed_down_by_a_later_failure(self):
+        # Every candidate approached, so the approach rows' only contrast is
+        # the outcome. Unprotected, the three that did not complete go
+        # negative; protected, they go to zero and the completer stays positive.
+        symmetric, _, _ = self.apply(1.0)
+        self.assertTrue(bool((symmetric[1:4] < 0).all()))
+        protected, usable, _ = self.apply(1.0, achieved=self.achieved, scale=0.0)
+        self.assertGreater(float(protected[0]), 0.0)
+        self.assertTrue(torch.allclose(protected[1:4], torch.zeros(3)))
+        self.assertTrue(bool(usable[:4].all()))
+
+    def test_dropped_grasp_keeps_its_own_credit_and_completion_still_ranks_first(self):
+        protected, _, _ = self.apply(1.0, achieved=self.achieved, scale=0.0)
+        full = self.stage_advantage[2]
+        # Candidate 0 picked up and completed: stage + positive outcome.
+        self.assertAlmostEqual(float(protected[4]), float(self.advantage[4] + full[0]), places=5)
+        # Candidates 1-2 picked up and failed later: only their own pickup credit.
+        for row in (5, 6):
+            self.assertAlmostEqual(float(protected[row]), float(self.advantage[row]), places=5)
+            self.assertGreater(float(protected[row]), 0.0)
+        self.assertGreater(float(protected[4]), float(protected[5]))
+
+    def test_unachieved_milestone_keeps_the_full_negative_bonus(self):
+        achieved = self.achieved.clone()
+        achieved[5] = False
+        symmetric, _, _ = self.apply(1.0)
+        protected, _, _ = self.apply(1.0, achieved=achieved, scale=0.0)
+        self.assertAlmostEqual(float(protected[5]), float(symmetric[5]), places=6)
+
+    def test_partial_scale_is_linear_on_the_negative_part(self):
+        symmetric, _, _ = self.apply(1.0)
+        half, _, _ = self.apply(1.0, achieved=self.achieved, scale=0.5)
+        zero, _, _ = self.apply(1.0, achieved=self.achieved, scale=0.0)
+        self.assertTrue(torch.allclose(half, (symmetric + zero) / 2, atol=1e-6))
+        # Placement rows are never touched.
+        self.assertAlmostEqual(float(zero[7]), float(self.advantage[7]), places=6)
 
     def test_degenerate_approach_group_gains_contrast_from_the_outcome(self):
         self.assertFalse(bool(self.usable[:4].any()))
@@ -415,12 +461,23 @@ class CreditRepairTests(unittest.TestCase):
         for got in args.three_stage_stage_loss_weights:
             self.assertAlmostEqual(got, 1 / 3)
         self.assertEqual(args.three_stage_full_task_bonus, 1.0)
+        self.assertEqual(args.three_stage_full_task_bonus_achieved_negative_scale, 0.0)
 
     def test_full_task_bonus_argument_is_validated(self):
         from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import parse_args
         self.assertEqual(parse_args([]).three_stage_full_task_bonus, 0.0)
         with self.assertRaises(SystemExit):
             parse_args(['--three-stage-full-task-bonus', '-1'])
+
+    def test_achieved_negative_scale_is_validated(self):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import parse_args
+        self.assertEqual(parse_args([]).three_stage_full_task_bonus_achieved_negative_scale, 1.0)
+        self.assertEqual(parse_args(
+            ['--three-stage-full-task-bonus-achieved-negative-scale', '0.5']
+        ).three_stage_full_task_bonus_achieved_negative_scale, 0.5)
+        for bad in ('-0.1', '1.5', 'nan'):
+            with self.assertRaises(SystemExit):
+                parse_args(['--three-stage-full-task-bonus-achieved-negative-scale', bad])
 
     def test_trainer_applies_weighted_stage_mass(self):
         with tempfile.TemporaryDirectory() as directory:
