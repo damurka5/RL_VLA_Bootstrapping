@@ -2070,7 +2070,17 @@ Newest first. Entries follow the §13 template.
 - Status: **diagnostic — not promoted; `step_52791642` remains the best `put_into` checkpoint**
 - Local artifact path: `sft_from_step_52791642_retention/` (model, eval_sft, refreshed, log)
 - SHA-256: not yet recorded
-- Missing provenance: per-axis error of the retention rows (a CPU check on the two refreshed banks is enough to locate it)
+- Per-axis check, 2026-09-25, CPU on the two refreshed banks, masked supervised slots. **Yaw carries the conflict.**
+
+| rows | \|yaw action\| | yaw MSE(action, prior) | \|z action\| | grip MSE(action, prior) |
+|---|---:|---:|---:|---:|
+| strict put→bowl / put→plate | 0.278 / 0.300 | 0.494 / 0.466 | 0.133 / 0.130 | 0.381 / 0.375 |
+| retention move_to | 0.581 | 0.185 | 0.120 | 0.156 |
+| retention pick_up | 0.303 | 0.569 | 0.329 | 0.139 |
+| retention put→bowl / put→plate | 0.593 / 0.581 | 0.149 / 0.157 | 0.230 / 0.274 | 0.499 / 0.472 |
+
+  Under the fixed-world-yaw contract, the three-stage residual overrides the prior's yaw: executed yaw is small and far from the prior. The phase4-era move_to and placement rows follow the prior's yaw at about twice the magnitude. The residual is therefore asked for opposite yaw corrections from similar inputs. Gripper and z differ too, but less. `phase4_bank` predates the yaw contract and cannot be retention for this lineage. Retention for it has to be harvested under `cdpr_smolvla_three_stage_put_into.yaml`
+- Missing provenance: none for this entry
 
 ### 2026-09-23 — Strict-success self-imitation SFT regresses the new best checkpoint; retention was off by design
 
