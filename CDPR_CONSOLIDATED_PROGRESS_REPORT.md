@@ -72,6 +72,42 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
+**Latest completed evaluation, 2026-09-25: strict-success SFT with a 20%
+retention mix ties `step_52791642`, 93/256 = 36.33% strict against 91/256
+= 35.55%.** Native is 116/256 = 45.31% against 111/256. Both deltas (+2 and
++5 episodes) are inside this evaluator's round-to-round swing, which was
+20–28 of 64 within this one run. The tie hides a failure. The `phase4_bank`
+retention rows were about 250–600× harder to fit than the put_into rows. The
+residual stage gave up the put_into fit to chase them: held-out put_into MSE
+went from 0.000351 untrained to 0.0065 at its best epoch, 18×, and rose every
+epoch after. The action-expert LoRA stage then refit on put_into frames only,
+with the residual training at lr/10, and brought it back to 0.000405. The
+evaluated adapter is a damaged residual plus a put_into-only repair, so this
+run does not test whether retention protects anything. Across both SFT runs,
+no stage has fit held-out successes better than the untrained policy.
+`step_52791642` remains the best checkpoint. See the 2026-09-25 §14 entry.
+
+**Latest completed evaluation, 2026-09-23: standalone strict full-task
+success of `step_52791642` is 91/256 = 35.55%, the campaign's new best, and
+self-imitation SFT on top of it regresses to 85/256 = 33.20%.** Same
+evaluator and the same 256 distinct `student_validation` scenes as the
+2026-09-17 baseline below. `step_52791642` comes from resuming staged-sparse
+GRPO through the 30M-step plateau with `bb37ca3`'s equal stage-loss mass and
+full-task completion bonus, to ~57M cumulative steps; it is also that run's
+own best-validation step (in-run peak strict 38.4%, native 44.1%). Native
+placement is 111/256 = 43.36%; plate 46/123 = 37.4% strict, bowl 45/133 =
+33.8% strict — **1.6× the previous standalone best** (`step_28309431`,
+22.3%). A subsequent strict-success SFT pass, self-harvested from this
+checkpoint's own successes with **no retention bank mixed in** ("put_into-only
+specialization" in the launcher), overfit from the first saved epoch — its
+best epoch already has worse held-out action-prediction MSE than doing
+nothing — and the resulting adapter drops native placement to 100/256 =
+39.06% and strict to 85/256 = 33.20%, worse on 3 of the 4 objects and on
+every release/placement-precision metric (carry slip, released-given-lifted,
+final geometry, wrong-place). Do not promote the SFT adapter; `step_52791642`
+stands as the current best checkpoint. See the 2026-09-22 and 2026-09-23 §14
+entries.
+
 **Latest completed evaluation, 2026-09-17: standalone strict full-task
 success of `step_28309431` is 57/256 = 22.3% (95% CI 18.0–26.6%).** Empty
 start, one final `put <object> into <plate/bowl>` prompt, no teacher or servo,
@@ -217,6 +253,9 @@ on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 | **Exact full-task `put_into` learned by staged-sparse GRPO** | 10.07M steps from expanded Arm C: in-run strict **2.6% → 12.1%** (27 → 124 of 1024; last-five mean 9.6%), plate 7 → 39 / 512, bowl 20 → 85 / 512, pickup 18% → 46% | TensorBoard event file, in-run `student_validation`; not yet confirmed by the standalone evaluator or `final_test` |
 | **Staged-sparse GRPO continued to 28.3M steps** | Strict peak **26.0%** (266/1024) at 26.54M; last-ten mean **24.0%**, plate 21.6%, bowl 26.4%; held pickup 75.7%, grasp 84.5% | TensorBoard event file, in-run `student_validation`; plateau since ~23M |
 | **Best measured full `put_into` policy (standalone)** | `step_28309431`: strict **57/256 = 22.3%** (CI 18.0–26.6%), plate **28/123**, bowl **29/133**; native 73/256 = 28.5%; 18.4% under the old termination rule, against 5/128 = 3.9% for the SFT seed | `evaluation.json` and 256 episode videos, 256 distinct `student_validation` scenes; no `final_test` yet |
+| **Best measured full `put_into` policy (standalone), updated 2026-09-22** | `step_52791642`: strict **91/256 = 35.55%** (plate 46/123 = 37.40%, bowl 45/133 = 33.83%); native 111/256 = 43.36% (plate 57/123 = 46.34%, bowl 54/133 = 40.60%) — **1.6x** `step_28309431` on the identical evaluator and scene set; also the run's own best-validation step | `evaluation.json` (`eval_baseline`) and TensorBoard event file supplied locally, matched 256-scene protocol; no episode-video audit yet |
+| Self-imitation SFT with a 20% `phase4_bank` retention mix ties the new best | Strict **93/256 = 36.33%** (CI 31.3–41.4%), native **116/256 = 45.31%**, both within noise of `step_52791642`. The residual stage was damaged (put_into val MSE 18× the untrained baseline) and repaired by the put_into-only LoRA stage, so this is not evidence that retention helps | `sft_report.json`, `eval_sft/evaluation.json`, full log supplied locally |
+| Self-imitation SFT without a retention mix regresses the new best | Strict-success SFT on `step_52791642`'s own harvested successes (512 episodes, 28,903 rows, `retention: none`) drops strict to **85/256 = 33.20%** and native to **100/256 = 39.06%**; the best saved epoch's val MSE (0.000429) already exceeds the untrained-on-these-rows baseline (0.000379) | `sft_report.json`, `eval_sft/evaluation.json`, full training log supplied locally |
 | **Composed `put_into` is measurable for the first time** | Phase 6 seed `sft_phase6`: uncaught plate **0.0935** (80/856), uncaught bowl **0.0265** (18/680), against 0.0046 and 0.0114 for Cycle 3 under the identical protocol | Four evaluations run by `scripts/run_cdpr_phase6_compose_seed.sh`; adapter retained locally |
 | Composed demonstrations come from a scripted oracle, not a policy | Oracle on the composed task: plate **1.000**, bowl **0.427** in smoke, plate **0.909** / bowl **0.455** pooled over 8192 worlds at cap 0.20 | 12 harvest rounds retained; replay survival 0.998–1.000 |
 | Composition RL now anneals the pre-grasped start | `phase6_compose_iter0`: caught fraction **1.0 → 0.9 → 0.8**; validation peak **0.6240** overall (plate 0.7571, bowl 0.4634) at step 4 257 133 | TensorBoard event file; caught-dominated validation protocol, see §8.4 |
@@ -2000,6 +2039,114 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 ## 14. Result ledger
 
 Newest first. Entries follow the §13 template.
+
+### 2026-09-25 — Retention-mix strict-success SFT ties `step_52791642`; the retention bank broke the residual and LoRA repaired it
+
+- Git commit: `56a6e03` (launcher header documents the retention invocation)
+- Run/config: `scripts/train_cdpr_strict_success_sft_remote.sh` with `RETENTION_DATASET=runs/strict_success_dataset_step_52791642/retention_refreshed/demonstrations.npz`, `RETENTION_FRACTION=0.2`, `EVAL_BASELINE=0`, `WORK_DIR=.../sft_from_step_52791642_retention`. Log `sft_20260924_123929_221166.log`
+- Retention bank: `runs/phase4_bank/dataset/demonstrations.npz`, refreshed under `step_52791642` with `sil_refresh_priors.py --final-prompt-prefix '' --min-resolved-fraction 0.98`. It resolved 23,422 of 23,709 rows (0.9879) by positional join, giving 1,757 episodes: placement at caps 0.10/0.15/0.20 (~11.5k rows), move_to (~6.0k) and pick_up (~5.9k). Vision drift was "consistent with the uint8 round trip"
+- Source checkpoint and lineage: `step_52791642`, with the same 512-episode / 28,903-row strict put_into bank as the 2026-09-23 run. The only intended change was the retention mix
+- Candidate checkpoint: `.../sft_from_step_52791642_retention/model/sil_sft_adapter.pt`. It holds the residual from epoch 0 plus the action-expert LoRA from epoch 7; `lora.applied: true`. The report's `trained_parameters` string still says "residual actor only; vla_lora copied verbatim". That string is hard-coded and wrong whenever LoRA is applied
+- Training: 20 residual epochs, 1,040 updates. Retention realized 0.1992 of each batch, 106,080 rows drawn. After that, 8 LoRA epochs on 8,192 put_into frame rows, with the residual at lr/10 (`--lora-actor-lr 0`) and no retention in that stage
+- Evaluation protocol: identical to the 2026-09-22/23 entries, 256 distinct `student_validation` scenes. The baseline column is the 2026-09-23 run's `eval_baseline`
+
+| metric (256 scenes) | `step_52791642` | SFT, no retention | **SFT, 20% retention** |
+|---|---:|---:|---:|
+| strict | 91/256 = 35.55% | 85/256 = 33.20% | **93/256 = 36.33%** (CI 31.3–41.4%) |
+| strict, plate / bowl | 46/123 / 45/133 | 45/123 / 40/133 | 47/123 / 46/133 |
+| native | 111/256 = 43.36% | 100/256 = 39.06% | **116/256 = 45.31%** |
+| native, plate / bowl | 57/123 / 54/133 | 57/123 / 43/133 | 61/123 / 55/133 |
+| strict by object (apple / orange / potato / tomato) | 23 / 27 / 18 / 23 | 29 / 21 / 14 / 21 | 29 / 29 / 13 / 22 |
+| approached / grasped / lifted | 71.9 / 73.0 / 64.8% | 71.5 / 73.0 / 66.0% | 75.4 / 76.6 / 68.0% |
+| released given lifted | 94.0% | 85.2% | 90.8% |
+| native given released | 63.1% | 62.5% | 65.2% |
+| carry slip / wrong place | 28.9 / 23.4% | 31.6 / 28.5% | 30.1 / 24.2% |
+
+- Per-round strict in this evaluation was 20, 24, 28 and 21 of 64. A swing that size between rounds of one run puts +2 strict and +5 native episodes inside the noise
+- Residual-stage fit: the untrained baseline is put_into val MSE 0.000351. The best epoch is epoch 0 at **0.006507, 18.5×** the baseline, and it rises every epoch to 0.0104 at epoch 19. Put_into train MSE *rose* from 0.0067 to 0.0080 while the mixed loss fell from 0.050 to 0.026. The loss is a mask-weighted MSE over an 80/20 concatenated batch. That puts the retention rows' own MSE at ≈0.22 at epoch 0 and ≈0.10 at epoch 19, against ≈0.0004 for put_into rows. The residual cannot fit both, and the optimizer chose the retention rows
+- LoRA-stage repair: its baseline, measured on top of the damaged residual, was 0.00619. It fell to 0.000405 by epoch 7. The no-retention run's LoRA never beat its own baseline of 0.00036 and was not applied. This run's LoRA was applied because the residual it started from was broken
+- What this result supports: (1) retention-mix SFT does not regress the checkpoint the way the no-retention run did. (2) The `phase4_bank` rows are not action-compatible with the three-stage residual. `sil_sft.py` checks state width and slot count only, and both passed. The cause is not yet located. Candidates are an axis convention (the three-stage config adds the fixed-world-yaw contract) or the older harvests' action scaling. (3) Across three fits in two runs, nothing has predicted held-out successful put_into actions better than the untrained policy. The policy already reproduces its own successes, so a success-only self-imitation bank has little left to teach at this resolution
+- What it does not support: that retention protects put_into. The last stage had no retention and repaired the residual, so what was evaluated is roughly a put_into-only refit. It also gives no reason to switch checkpoints
+- Status: **diagnostic — not promoted; `step_52791642` remains the best `put_into` checkpoint**
+- Local artifact path: `sft_from_step_52791642_retention/` (model, eval_sft, refreshed, log)
+- SHA-256: not yet recorded
+- Missing provenance: per-axis error of the retention rows (a CPU check on the two refreshed banks is enough to locate it)
+
+### 2026-09-23 — Strict-success self-imitation SFT regresses the new best checkpoint; retention was off by design
+
+- Git commit: `65e2784` (strict-success SFT launcher), harvest tooling from `d679edd` / `a8a52d0` / `839a9c4`
+- Run/config: `RUN_DIR=runs/strict_success_dataset_step_52791642 bash scripts/train_cdpr_strict_success_sft_remote.sh` — refresh priors → residual SFT (20 epochs) → action-expert LoRA attempt (8 epochs) → eval, logged in `sft_20260923_084310_204875.log`
+- Source checkpoint and lineage: `step_52791642` (2026-09-22 entry below) rolled out to record its own strict full-chain successes — self-imitation on the policy's own rollouts, not oracle or teacher data. 1,381 episodes recorded; 512 survive the exact-final-prompt / reachability filter → 28,903 decision rows (26,194 train / 2,709 val, split by scene, 0 scene leakage)
+- Candidate checkpoint: `runs/strict_success_dataset_step_52791642/sft_from_step_52791642/model/sil_sft_adapter.pt` — **residual-only**. The action-expert LoRA arm never beat its own untrained baseline (val MSE 0.00035966, flat-to-rising over 8 epochs) and the script itself left it unapplied
+- Training steps / updates: 20 epochs, 52 batches/epoch, 1,040 optimizer updates over 2,100,793 sampled supervised actions, 10,437.8 s wall time. `retention: none (put_into-only specialization)` is printed by the launcher itself — this run does not mix the harvested rows with the retention bank described in §3.3/§5
+- Evaluation protocol: identical to the 2026-09-22 entry — `evaluate_cdpr_full_put_into.py`, arm `unassisted`, 128 decisions, 4 rounds × 64 worlds = 256 distinct `student_validation` scenes, manifest SHA-256 `30dc9d53027c7e7ba871379e1ec17f0f148a08517f03fc4fa531549a15ef9208`
+- Caps, seeds, rounds, worlds, and independent reset groups: same as 2026-09-22; 256 independent scenes, `stochastic_seed: null`
+- Instruction results:
+
+| metric (standalone, 256 scenes) | baseline `step_52791642` | after SFT | Δ |
+|---|---:|---:|---:|
+| strict | 91/256 = 35.55% | 85/256 = 33.20% | **−2.35pp** |
+| strict, plate | 46/123 = 37.40% | 45/123 = 36.59% | −0.81pp |
+| strict, bowl | 45/133 = 33.83% | 40/133 = 30.08% | −3.75pp |
+| native placement | 111/256 = 43.36% | 100/256 = 39.06% | **−4.30pp** |
+| native, plate | 57/123 = 46.34% | 57/123 = 46.34% | 0.00pp (exact) |
+| native, bowl | 54/133 = 40.60% | 43/133 = 32.33% | **−8.27pp** |
+| strict by object — apple | 23/62 = 37.10% | 29/62 = 46.77% | **+9.67pp** |
+| strict by object — orange | 27/66 = 40.91% | 21/66 = 31.82% | −9.09pp |
+| strict by object — potato | 18/59 = 30.51% | 14/59 = 23.73% | −6.78pp |
+| strict by object — tomato | 23/69 = 33.33% | 21/69 = 30.43% | −2.90pp |
+| carry_slip | 28.91% | 31.64% | worse |
+| released given lifted | 93.98% | 85.21% | **worse** |
+| final_geometry_ok | 42.19% | 35.16% | **worse** |
+| wrong_place after a lift | 23.44% | 28.52% | worse |
+
+- SFT dataset rows/episodes by instruction: 512 episodes across the 8 `put <object> into <bowl/plate>` instructions, 3,283–4,241 decision rows per instruction (`refreshed/refresh.json`). Sampler `balanced` over `{bowl, plate} × {move_to, pick_up, placement}` — this balances rows *within* the 512 episodes, not object or instruction coverage *across* them, and the by-object table above shows the result: apple over-represented in the gain, the other three objects absorbing the loss
+- Best validation epoch and overfit behavior: **best epoch is epoch 0** — `val_mse` 0.0004287, already worse than the untrained-on-these-rows baseline (0.00037869). `train_mse` falls monotonically for all 20 epochs (0.000364 → 0.000191) while `val_mse` rises monotonically after epoch 2 (→ 0.000509 at epoch 19). This is a clean overfitting signature: the checkpoint that was saved as "best" already cannot match doing nothing on held-out actions, and every further epoch makes it worse
+- What this result supports: **self-imitation SFT with no retention mix regresses a checkpoint that is already the campaign's best**, on every axis except one object (apple, which gained at the direct expense of orange/potato/tomato) and one exactly-flat slice (native plate). The damage is concentrated in release precision and final placement geometry, not in reaching or grasping — consistent with the model overfitting to the narrow timing/geometry of 512 harvested episodes rather than learning a general release policy. This is not an artifact of training too long: even the least-trained saved checkpoint (epoch 0) already exceeds the untrained baseline's val MSE
+- What it does not support: any claim that self-imitation SFT is unhelpful in general. This run deliberately used `retention: none` — it is **not** the SIL cycle in §5 that alternates RL with balanced SFT against a retention bank, which is the only configuration that has preserved or grown capability elsewhere in this campaign. It also mirrors, from the opposite direction, the 2026-09-07 "Phase 7 SFT collapses the RL gain" entry: that run's retention bank under-represented the new skill and collapsed it; this run had no retention at all and collapsed generalization instead. Nor does it indict the vision tower — `train_vla_vision_lora` was off for this checkpoint's lineage, per the log's own note that "Phase 4 turns it on at the first SFT"; that lever was never exercised here
+- Status: **negative result — do not promote `sil_sft_adapter.pt`. `step_52791642` (unmodified RL adapter, 2026-09-22 entry) remains the campaign's best `put_into` checkpoint**
+- Local artifact path: supplied locally at `sft_from_step_52791642/` (`model/`, `eval_baseline/`, `eval_sft/`, `refreshed/`, full log)
+- SHA-256: not yet recorded
+- Missing provenance: none beyond the usual adapter checksum; the supplied folder is complete for this entry
+
+### 2026-09-22 — Equal stage mass + full-task completion bonus: new best `put_into` policy, strict 35.5% standalone
+
+- Git commit: `bb37ca3` (revert to equal stage loss mass, add a full-task completion bonus), continuing through `d679edd` / `a8a52d0` / `839a9c4` / `65e2784`
+- Run/config: resumed staged-sparse GRPO on `configs/examples/cdpr_smolvla_three_stage_put_into.yaml`; TensorBoard `events.out.tfevents.1789754575.VLAPU.136408.0` (supplied)
+- Source checkpoint and lineage: resumed from the 30M-step plateau reported 2026-09-17 (strict flat ~24%, stage loss mass pinned at 0.2/0.2/0.6). `bb37ca3` reverted the stage mass to equal thirds and added a reward bonus for completing the full grasp→lift→carry→release→place chain in one episode
+- Candidate checkpoint: `runs/three_stage_sparse_grpo_20260918_210212/rl/step_52791642/smolvla_grpo_adapter.pt` — the segment's own best-validation step, not the final step
+- Training steps / updates: logged global step 30,065,940 → 56,973,932 (~27M steps this segment, ~57M cumulative — the "60M run"); 305 logged optimizer-update rows, 108 logged validation rounds
+- Evaluation protocol:
+  - In-run: `validation/three_stage_*`, `student_validation` split, stochastic prior, 256 worlds per validation point
+  - Standalone, matched to the 2026-09-17 baseline: `tools/audit/evaluate_cdpr_full_put_into.py`, arm `unassisted`, one final prompt from the first action, 128 decisions, 4 rounds × 64 worlds = 256 **distinct** `student_validation` scenes, manifest SHA-256 `30dc9d53027c7e7ba871379e1ec17f0f148a08517f03fc4fa531549a15ef9208`, `placement_wrong_drop_requires_lift: true`
+- Caps, seeds, rounds, worlds, and independent reset groups: same protocol as 2026-09-17; 256 independent scenes for the standalone eval, `stochastic_seed: null`
+- Instruction results:
+
+| metric (standalone, 256 scenes) | `step_52791642` | 2026-09-17 best (`step_28309431`) |
+|---|---:|---:|
+| strict | **91/256 = 35.55%** | 57/256 = 22.27% |
+| strict, plate | 46/123 = 37.40% | 28/123 = 22.76% |
+| strict, bowl | 45/133 = 33.83% | 29/133 = 21.80% |
+| native placement | 111/256 = 43.36% | 73/256 = 28.52% |
+| native, plate / bowl | 57/123 = 46.34% / 54/133 = 40.60% | 40/123 / 33/133 |
+| grasped→lifted→released→native ladder | 98.4%→88.8%→94.0%→63.1% | 97.9%→87.2%→59.8%→58.9% |
+
+- In-run validation curve, same checkpoint lineage:
+
+| step | strict | native | plate strict | bowl strict | entropy_mean |
+|---|---:|---:|---:|---:|---:|
+| 30,065,941 (segment start) | 26.95% | 33.11% | 28.52% | 25.39% | 0.358 |
+| **52,791,642 (chosen — peak)** | **38.38%** | **44.14%** | 37.89% | 38.87% | 0.979 |
+| 56,787,526 (segment end) | 35.25% | 41.60% | 30.08% | 40.43% | 1.026 |
+
+- Comparison baseline under the same protocol: 2026-09-17 standalone entry (`step_28309431`, 22.3% strict) — this checkpoint is **1.6×** that result on an identical held-out scene set and evaluator
+- Best validation epoch and overfit behavior: `step_52791642` is simultaneously the peak of `validation/three_stage_strict_rate` and `validation/three_stage_native_rate` across the whole logged segment — the best-validation checkpointing rule (§7.6) selected the correct step. Past that point, plate strict drops 37.9%→30.1% while bowl keeps climbing 38.9%→40.4%; net strict is flat-to-down for the remaining ~4M steps while entropy keeps rising (0.98→1.03), so continuing this run without intervention buys a plate/bowl trade, not a net gain
+- What this result supports: the equal-mass + full-task completion bonus reward (`bb37ca3`) breaks the 30M-step ~24% plateau reported 2026-09-17 and produces, by a wide margin, the best full `put_into` policy measured on the standalone evaluator to date. Native and strict move together, and the grasp/lift/release ladder is uniformly higher than the previous best, including a large jump in `released_given_lifted` (59.8%→94.0%)
+- What it does not support: further net gain from training this same run longer without intervention — the last ~4M logged steps traded plate for bowl at flat net strict. It does not by itself close the remaining gap to the scripted oracle's placement precision (§8, composed-ceiling entries) or say anything about the composed/caught-start task, which this evaluator does not exercise
+- Status: **promoted — current best full `put_into` checkpoint, supersedes `step_28309431`**
+- Local artifact path: `events.out.tfevents.1789754575.VLAPU.136408.0` (supplied); `evaluation.json` (`eval_baseline`, supplied); checkpoint on the training host at the path above
+- SHA-256: not yet recorded for `step_52791642`
+- Missing provenance: adapter and evaluation.json not yet checksummed into the local evidence set; no episode-video audit run on this checkpoint (unlike `step_28309431`)
 
 ### 2026-09-17 — Standalone evaluation of `step_28309431`: strict 22.3% full-task `put_into`, with episode videos
 
