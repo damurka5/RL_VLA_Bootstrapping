@@ -158,6 +158,13 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
                 "RLVLA_SMOLVLA_ALLOW_LEGACY_SIMULATOR_CHECKPOINT must be "
                 "one of 0/1, false/true, no/yes, or off/on."
             )
+    # Pilot knobs that must not require editing the shared config.
+    ppo_epochs = os.environ.get("RLVLA_SMOLVLA_PPO_EPOCHS", "").strip()
+    if ppo_epochs:
+        injected["ppo_epochs"] = int(ppo_epochs)
+    lr_override = os.environ.get("RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE", "").strip()
+    if lr_override:
+        injected["optimizer_lr_override"] = float(lr_override)
     noise_schedule_start_step = os.environ.get(
         "RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP", ""
     ).strip()

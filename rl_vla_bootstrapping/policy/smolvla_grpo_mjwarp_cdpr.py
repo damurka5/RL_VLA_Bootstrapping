@@ -1819,6 +1819,16 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"[smolvla-mjwarp] resumed {checkpoint} at global step "
                 f"{global_step}",
             )
+        # Resume restores the saved rate, so the YAML learning_rate is NOT what
+        # runs unless optimizer_lr_override is set. Say which one is active.
+        _log(
+            dist_ctx,
+            "[smolvla-mjwarp] optimizer lr: active="
+            f"{trainer.optimizer_lr():.3g} checkpoint="
+            f"{trainer.checkpoint_optimizer_lr} yaml={float(args.learning_rate):.3g} "
+            f"override={getattr(args, 'optimizer_lr_override', None)} "
+            f"ppo_epochs={int(args.ppo_epochs)}",
+        )
 
         # Changing residual_vision_pooling under a trained residual. Set
         # RLVLA_SMOLVLA_RESET_VISION_COLUMNS=1 alongside the new pooling: the

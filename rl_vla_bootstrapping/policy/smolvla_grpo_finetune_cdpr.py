@@ -458,6 +458,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--hidden-dim", type=int, default=512)
     parser.add_argument("--residual-scale", type=float, default=0.30)
     parser.add_argument("--learning-rate", type=float, default=2.0e-4)
+    # Resume restores the optimizer state dict, and with it the SAVED learning
+    # rate: --learning-rate is silently ignored on a resume. This sets every
+    # residual optimizer group after any checkpoint load, so a changed rate
+    # actually takes effect. The active rate is logged as optimizer_lr_mean.
+    parser.add_argument("--optimizer-lr-override", type=float, default=None)
     parser.add_argument("--adam-eps", type=float, default=1.0e-5)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--init-log-std", type=float, default=-1.2)
@@ -925,6 +930,9 @@ class SmolVLAGRPOTrainer:
             eps=float(args.adam_eps),
             weight_decay=float(args.weight_decay),
         )
+        # The rate the last loaded checkpoint carried, before any override.
+        self.checkpoint_optimizer_lr: float | None = None
+        self.apply_optimizer_lr_override()
         self.gradient_step = 0
         self._warned_zero_vla_grad = False
         self.loaded_extra_state: dict[str, Any] = {}
@@ -1492,6 +1500,7 @@ class SmolVLAGRPOTrainer:
             "gradient_norm_mean": float(np.mean(gradient_norms)) if gradient_norms else 0.0,
             "gradient_norm_max": float(np.max(gradient_norms)) if gradient_norms else 0.0,
             "optimizer_steps": float(optimizer_steps),
+            "optimizer_lr_mean": self.optimizer_lr(),
             "update_forward_time_s": float(update_forward_time_s),
             "backpropagation_time_s": float(backpropagation_time_s),
             "optimizer_time_s": float(optimizer_time_s),
@@ -1622,6 +1631,7 @@ class SmolVLAGRPOTrainer:
             "gradient_norm_mean": float(np.mean(gradient_norms)) if gradient_norms else 0.0,
             "gradient_norm_max": float(np.max(gradient_norms)) if gradient_norms else 0.0,
             "optimizer_steps": float(optimizer_steps),
+            "optimizer_lr_mean": self.optimizer_lr(),
             "advantage_mean": float(advantages.mean().detach().item()),
             "advantage_std": float(advantages.std(unbiased=False).detach().item()) if advantages.numel() > 1 else 0.0,
             "log_std_mean": float(base.clamped_log_std().detach().mean().item()),
@@ -2015,6 +2025,8 @@ class SmolVLAGRPOTrainer:
             base.load_state_dict(payload["policy"])
             if "optimizer" in payload:
                 self.optimizer.load_state_dict(payload["optimizer"])
+                self.checkpoint_optimizer_lr = self.optimizer_lr()
+                self.apply_optimizer_lr_override()
             self._load_vla_lora_state(payload)
             self.gradient_step = int(payload.get("gradient_step", 0))
             self.loaded_extra_state = dict(payload.get("extra_state") or {})
@@ -2029,6 +2041,21 @@ class SmolVLAGRPOTrainer:
                 f"Unsupported SmolVLA checkpoint {checkpoint_path}: expected 'policy' or 'actor'."
             )
         return int(payload.get("global_step", 0))
+
+    def optimizer_lr(self) -> float:
+        """Mean learning rate over the residual optimizer's groups."""
+
+        groups = self.optimizer.param_groups
+        return float(sum(float(group["lr"]) for group in groups) / max(1, len(groups)))
+
+    def apply_optimizer_lr_override(self) -> None:
+        override = getattr(self.args, "optimizer_lr_override", None)
+        if override is None:
+            return
+        if not math.isfinite(float(override)) or float(override) <= 0.0:
+            raise ValueError(f"optimizer_lr_override must be positive, got {override!r}.")
+        for group in self.optimizer.param_groups:
+            group["lr"] = float(override)
 
     def reset_residual_vision_columns(self, vision_dim: int) -> dict[str, float]:
         """Zero the residual's first-layer weights on the vision block only.

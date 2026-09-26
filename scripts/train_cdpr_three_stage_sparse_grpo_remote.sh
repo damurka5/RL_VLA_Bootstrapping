@@ -17,6 +17,12 @@ WARMSTART_CHECKPOINT="${WARMSTART_CHECKPOINT:-}"
 RESUME_CHECKPOINT="${RESUME_CHECKPOINT:-}"
 MAX_TRAIN_STEPS="${MAX_TRAIN_STEPS:-1000000}"
 MAX_UPDATES="${MAX_UPDATES:-10}"
+# Optional single-knob overrides; empty keeps the config's value.
+# PPO_EPOCHS replaces ppo_epochs. LR_OVERRIDE sets the residual optimizer's rate
+# AFTER the checkpoint loads -- a resume otherwise keeps the saved rate and
+# ignores learning_rate in the YAML. The active rate is logged per update.
+PPO_EPOCHS="${PPO_EPOCHS:-}"
+LR_OVERRIDE="${LR_OVERRIDE:-}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
 SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-256}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
@@ -61,6 +67,9 @@ if [[ "$INIT_MODE" == "resume" ]]; then
   fi
   echo "resume: checkpoint global_step=$resumed_step, training $((MAX_TRAIN_STEPS - resumed_step)) more steps"
 fi
+if [[ -n "$PPO_EPOCHS" && ! "$PPO_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
+  echo "PPO_EPOCHS must be a positive integer." >&2; exit 2
+fi
 if [[ ! "$MAX_UPDATES" =~ ^[0-9]+$ ]]; then
   echo "MAX_UPDATES must be a nonnegative integer (0 removes the diagnostic update cap)." >&2; exit 2
 fi
@@ -74,7 +83,7 @@ fi
 
 # Refuse the common silent protocol changes before allocating either GPU.
 conda run --no-capture-output -n "$ENV_NAME" python3 - \
-  "$CONFIG" "$SCENES" <<'PYEOF'
+  "$CONFIG" "$SCENES" "$PPO_EPOCHS" "$LR_OVERRIDE" <<'PYEOF'
 import sys
 import yaml
 sys.path.insert(0, ".")
@@ -84,7 +93,7 @@ from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import parse_args
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import sparse_binary_reward_requested
 from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import read_manifest, select_split
 
-config_path, manifest_path = sys.argv[1:]
+config_path, manifest_path, ppo_epochs, lr_override = sys.argv[1:]
 project = load_project_config(config_path)
 metadata = dict(project.task.metadata or {})
 raw = yaml.safe_load(open(config_path, encoding="utf-8"))
@@ -92,7 +101,14 @@ section = raw["training"]["rl"]["args"]
 argv = []
 for key, value in section.items():
     append_cli_arg(argv, key, value)
+if ppo_epochs:
+    append_cli_arg(argv, "ppo_epochs", int(ppo_epochs))
+if lr_override:
+    append_cli_arg(argv, "optimizer_lr_override", float(lr_override))
 args = parse_args(argv)
+print(f"[three-stage] optimization: ppo_epochs={args.ppo_epochs} "
+      f"(config {section.get('ppo_epochs')}), learning_rate={args.learning_rate:g}, "
+      f"optimizer_lr_override={args.optimizer_lr_override}")
 scenes, _ = read_manifest(manifest_path)
 collection = select_split(scenes, "collection")
 validation = select_split(scenes, "student_validation")
@@ -148,6 +164,9 @@ export RLVLA_SMOLVLA_MAX_TRAIN_STEPS="$MAX_TRAIN_STEPS"
 export RLVLA_SMOLVLA_MJWARP_MAX_UPDATES="$MAX_UPDATES"
 export RLVLA_MJWARP_WORLDS_PER_RANK="$WORLDS_PER_RANK"
 export RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE="$SMOLVLA_MICROBATCH_SIZE"
+unset RLVLA_SMOLVLA_PPO_EPOCHS RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE
+[[ -n "$PPO_EPOCHS" ]] && export RLVLA_SMOLVLA_PPO_EPOCHS="$PPO_EPOCHS"
+[[ -n "$LR_OVERRIDE" ]] && export RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE="$LR_OVERRIDE"
 if [[ "$INIT_MODE" == "resume" ]]; then
   export RLVLA_SMOLVLA_RESUME_CHECKPOINT="$RESUME_CHECKPOINT"
 else
@@ -169,9 +188,9 @@ printf 'trainable component: residual actor; initializer LoRA is loaded and froz
 printf 'command:'; printf ' %q' "${train_cmd[@]}"; printf '\n'
 [[ "$DRY_RUN" == "1" ]] && exit 0
 
-"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" "$CONFIG" <<'PYPROVENANCE'
+"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" "$CONFIG" "$PPO_EPOCHS" "$LR_OVERRIDE" <<'PYPROVENANCE'
 import hashlib, json, pathlib, subprocess, sys
-checkpoint, scenes, output, updates, steps, mode, config = sys.argv[1:]
+checkpoint, scenes, output, updates, steps, mode, config, ppo_epochs, lr_override = sys.argv[1:]
 def digest(path):
     h = hashlib.sha256()
     with open(path, "rb") as source:
@@ -192,6 +211,10 @@ try:
     record["full_task_bonus"] = rl_args.get("three_stage_full_task_bonus", 0.0)
     record["full_task_bonus_achieved_negative_scale"] = rl_args.get(
         "three_stage_full_task_bonus_achieved_negative_scale", 1.0)
+    record["ppo_epochs"] = int(ppo_epochs) if ppo_epochs else rl_args.get("ppo_epochs")
+    record["ppo_epochs_overridden"] = bool(ppo_epochs)
+    record["learning_rate_yaml"] = rl_args.get("learning_rate")
+    record["optimizer_lr_override"] = float(lr_override) if lr_override else None
 except Exception as error:  # never block a launch on provenance
     record["stage_loss_weights"] = f"unavailable: {error}"
 try:

@@ -2040,6 +2040,38 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-26 — Matched standalone evaluation: `step_56072006` 107/256 strict against `step_52791642` 85/256 on the same scenes
+
+- Git commit: `e3a2740` on the remote (divergence guard); both evaluations ran on that code, on GPU0/GPU1 in parallel
+- Protocol: `evaluate_cdpr_three_stage_put_into_videos_remote.sh`, `student_validation`, 64 worlds × 4 distinct rounds = 256 distinct scenes, 128 decisions, deterministic residual, manifest `30dc9d53…`. Identical for both
+- Candidate: `runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006` (grasp-preservation continuation, `963fb47`, negative-bonus scale 0.0, ppo_epochs 4). In-run validation peak 38.96%
+
+| metric (256 scenes) | `step_52791642` | **`step_56072006`** |
+|---|---:|---:|
+| strict | 85/256 = 33.20% (CI 28.1–38.3) | **107/256 = 41.80%** (CI 36.3–46.9) |
+| strict, plate / bowl | 40/123 / 45/133 | 54/123 / 53/133 |
+| native | 97/256 = 37.89% | **127/256 = 49.61%** |
+| native, plate / bowl | 47/123 / 50/133 | 67/123 / 60/133 |
+| strict by object (apple / orange / potato / tomato) | 41.9 / 39.4 / 22.0 / 29.0% | 50.0 / 43.9 / 30.5 / 42.0% |
+| approached / grasped / lifted / released | 70.7 / 70.7 / 65.6 / 59.8% | 74.2 / 75.8 / 66.4 / 69.1% |
+| lifted \| grasped | 92.8% | 87.6% |
+| released \| lifted | 85.1% | 92.4% |
+| native \| released | 63.4% | 71.8% |
+| carry slip / wrong place / final geometry ok | 32.0 / 28.5 / 34.8% | 24.2 / 21.1 / 47.3% |
+| non-finite: live episodes (after grasp) / idle worlds | 2 (0) / 5 | 1 (0) / 5 |
+
+- Unpaired, the +22 strict is z ≈ 2.0 (p ≈ 0.04). That test ignores that the scenes are shared. The paired exact McNemar test (`tools/audit/compare_put_into_evaluations.py`, reads the strict video index for these two runs) is the one to quote; not yet run
+- Same-checkpoint drift: `step_52791642` scored 91 strict / 111 native on 2026-09-22 and 85 / 97 today on the same scenes. No evaluation-path code changed in between except the divergence guard, which touched 2 pre-grasp episodes. So −6 strict / −14 native is the between-run spread of one checkpoint. The native part is large for pure prior noise. A paired run of the same tool on the two `step_52791642` evaluations measures it directly
+- Grasp recovered: physical grasp 70.7% → 75.8%, and `approach_recovered_by_grasp` 16.0% → 17.6%. This is what `963fb47` targeted. The only rung that got worse is lifted-given-grasped (92.8% → 87.6%)
+- Divergence in evaluation is rare and pre-grasp: 1–2 of 256 episodes, none after grasp. It cannot have produced strict successes, so earlier standalone numbers were not inflated by the reset bug
+- Status: **candidate stronger on every placement rung and every object; promotion waits on the paired test.** `step_52791642` is kept as the reference
+
+### 2026-09-26 — Pilot knobs: `PPO_EPOCHS` and `LR_OVERRIDE` in the three-stage launcher; the active learning rate is logged
+
+- Resume calls `optimizer.load_state_dict`, which restores the SAVED learning rate: a changed `learning_rate` in the YAML never took effect on a resume. `--optimizer-lr-override` (launcher `LR_OVERRIDE`) now sets every residual optimizer group after the load, and the Adam moments are kept. Startup logs `optimizer lr: active=… checkpoint=… yaml=… override=… ppo_epochs=…`, and every update logs `optimizer_lr_mean`
+- `PPO_EPOCHS` replaces `ppo_epochs` for one launch without editing the shared config. Resume does not restore saved args, so it takes effect. Preflight prints the effective values, and `launch_provenance.json` records them
+- The evaluator now writes per-scene outcomes (`results.episodes`) so future comparisons are paired on native and the phase flags too, not only strict
+
 ### 2026-09-26 — Divergence-reset episodes now end and leave learning; runs before this commit may have trained on reset-crossing trajectories
 
 - Git commit: the commit that adds this entry (`NonFiniteEpisodeGuard`)

@@ -546,6 +546,25 @@ def summarize(rollouts: Sequence[Mapping[str, np.ndarray]]) -> dict[str, Any]:
             else None
         ),
     }
+    # Per-scene outcomes, so two checkpoints evaluated on the same scenes can
+    # be compared PAIRED (compare_put_into_evaluations.py) rather than as two
+    # independent rates -- the paired test is the far stronger one here.
+    report["episodes"] = [
+        {
+            "scene_uid": str(pooled["scene_uid"][index]),
+            "destination": str(pooled["destination"][index]),
+            "target_catalog": str(pooled["target_catalog"][index]),
+            **{
+                name: bool(pooled[name][index])
+                for name in (
+                    "native", "strict", "grasped", "lifted", "released",
+                    "carry_slip", "wrong_place", "non_finite",
+                )
+                if name in pooled
+            },
+        }
+        for index in range(int(scenes.size))
+    ]
     report["min_grasp_distance_m"] = {
         "median": round(float(np.median(pooled["min_grasp_distance"])), 4),
         "p10": round(float(np.percentile(pooled["min_grasp_distance"], 10)), 4),
