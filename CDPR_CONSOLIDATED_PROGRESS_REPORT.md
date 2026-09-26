@@ -2040,7 +2040,7 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
-### 2026-09-26 — Matched standalone evaluation: `step_56072006` 107/256 strict against `step_52791642` 85/256 on the same scenes
+### 2026-09-26 — Matched standalone evaluation: `step_56072006` 107/256 strict against `step_52791642` 85/256 on the same scenes (paired p = 0.012); promoted
 
 - Git commit: `e3a2740` on the remote (divergence guard); both evaluations ran on that code, on GPU0/GPU1 in parallel
 - Protocol: `evaluate_cdpr_three_stage_put_into_videos_remote.sh`, `student_validation`, 64 worlds × 4 distinct rounds = 256 distinct scenes, 128 decisions, deterministic residual, manifest `30dc9d53…`. Identical for both
@@ -2060,11 +2060,23 @@ Newest first. Entries follow the §13 template.
 | carry slip / wrong place / final geometry ok | 32.0 / 28.5 / 34.8% | 24.2 / 21.1 / 47.3% |
 | non-finite: live episodes (after grasp) / idle worlds | 2 (0) / 5 | 1 (0) / 5 |
 
-- Unpaired, the +22 strict is z ≈ 2.0 (p ≈ 0.04). That test ignores that the scenes are shared. The paired exact McNemar test (`tools/audit/compare_put_into_evaluations.py`, reads the strict video index for these two runs) is the one to quote; not yet run
+- Paired exact McNemar on strict (`tools/audit/compare_put_into_evaluations.py`, run on the remote from the two strict video indexes):
+
+| strict on the same 256 scenes | count |
+|---|---:|
+| both succeed | 61 |
+| neither succeeds | 125 |
+| only `step_52791642` | 24 |
+| only `step_56072006` | **46** |
+| difference | +22 = +8.6 pp |
+| exact McNemar p (two-sided) | **0.0115** |
+
+  Unpaired, the same gap is only z ≈ 2.0 (p ≈ 0.04). The pairing is what makes it decisive. Both checkpoints still disagree on 70 of 256 scenes (27%). Part of that is per-rollout prior noise, which McNemar absorbs because it inflates both discordant cells alike
 - Same-checkpoint drift: `step_52791642` scored 91 strict / 111 native on 2026-09-22 and 85 / 97 today on the same scenes. No evaluation-path code changed in between except the divergence guard, which touched 2 pre-grasp episodes. So −6 strict / −14 native is the between-run spread of one checkpoint. The native part is large for pure prior noise. A paired run of the same tool on the two `step_52791642` evaluations measures it directly
 - Grasp recovered: physical grasp 70.7% → 75.8%, and `approach_recovered_by_grasp` 16.0% → 17.6%. This is what `963fb47` targeted. The only rung that got worse is lifted-given-grasped (92.8% → 87.6%)
 - Divergence in evaluation is rare and pre-grasp: 1–2 of 256 episodes, none after grasp. It cannot have produced strict successes, so earlier standalone numbers were not inflated by the reset bug
-- Status: **candidate stronger on every placement rung and every object; promotion waits on the paired test.** `step_52791642` is kept as the reference
+- Status: **promoted. `step_56072006` is the new best `put_into` checkpoint and the reference for later comparisons.** `step_52791642` stays archived as the previous reference. The only rung that regressed, lifted | grasped, is the one to watch
+- Pilot launched from it: `RESUME_CHECKPOINT=…/step_56072006/smolvla_grpo_adapter.pt MAX_TRAIN_STEPS=58072006 MAX_UPDATES=0 PPO_EPOCHS=1`, commit `770350d`. The single change against the `20260925_105132` run is ppo_epochs 4 → 1; stage weights, bonus 1.0, negative scale 0.0 and exploration are from the config, unchanged. The divergence guard is also active for the first time in training. Results pending
 
 ### 2026-09-26 — Pilot knobs: `PPO_EPOCHS` and `LR_OVERRIDE` in the three-stage launcher; the active learning rate is logged
 
