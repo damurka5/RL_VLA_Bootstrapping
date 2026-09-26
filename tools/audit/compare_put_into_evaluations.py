@@ -101,11 +101,28 @@ def compare(
     }
 
 
+def verdict(result: Mapping[str, Any], *, alpha: float) -> str:
+    """``candidate_better`` only on a significant paired win; never on a tie."""
+
+    if float(result["mcnemar_exact_p"]) >= float(alpha):
+        return "no_significant_difference"
+    if int(result["candidate_only"]) > int(result["baseline_only"]):
+        return "candidate_better"
+    return "baseline_better"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("baseline", type=Path)
     parser.add_argument("candidate", type=Path)
     parser.add_argument("--metric", default="strict")
+    parser.add_argument(
+        "--alpha",
+        type=float,
+        default=0.05,
+        help="Two-sided McNemar level at which a difference is called.",
+    )
+    parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
     baseline_dir = args.baseline.expanduser().resolve()
     candidate_dir = args.candidate.expanduser().resolve()
@@ -127,7 +144,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     result["metric"] = args.metric
     result["baseline"] = reports[0]["checkpoint"]
     result["candidate"] = reports[1]["checkpoint"]
+    result["alpha"] = float(args.alpha)
+    result["verdict"] = verdict(result, alpha=float(args.alpha))
     print(json.dumps(result, indent=2))
+    if args.output is not None:
+        args.output.expanduser().resolve().write_text(
+            json.dumps(result, indent=2) + "\n", encoding="utf-8"
+        )
     return 0
 
 

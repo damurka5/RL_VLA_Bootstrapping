@@ -17,6 +17,18 @@
 #     bash scripts/collect_cdpr_strict_success_dataset_remote.sh
 #   STEPS=build RUN_DIR=runs/<existing-run> \
 #     bash scripts/collect_cdpr_strict_success_dataset_remote.sh
+#
+# Strict bank AND a compatible retention bank from the same rollouts:
+#   CHECKPOINT=runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006 \
+#   RETENTION_ROWS_PER_STAGE=8 STEPS="record build retention" \
+#     bash scripts/collect_cdpr_strict_success_dataset_remote.sh
+# RETENTION_ROWS_PER_STAGE makes the collector also keep up to that many
+# decisions of each COMPLETED stage of every non-strict episode that grasped.
+# The `retention` step then pools those with the strict episodes the SFT bank
+# did not take, excludes every SFT-bank scene, and takes exactly
+# RETENTION_ROWS_PER_CELL_STAGE rows per object x destination x stage into
+# $RUN_DIR/retention_dataset. Same checkpoint, config, prompt and controller as
+# the strict bank -- the contract phase4_bank broke on yaw.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -36,7 +48,11 @@ export HF_HUB_DISABLE_PROGRESS_BARS="${HF_HUB_DISABLE_PROGRESS_BARS:-1}"
 CHECKPOINT="${CHECKPOINT:-/root/repo/RL_VLA_Bootstrapping/runs/three_stage_sparse_grpo_20260918_210212/rl/step_52791642/smolvla_grpo_adapter.pt}"
 CONFIG="${CONFIG:-configs/examples/cdpr_smolvla_three_stage_put_into.yaml}"
 SCENES="${SCENES:-runs/three_stage/scenes_8192.json}"
-RUN_DIR="${RUN_DIR:-runs/strict_success_dataset_step_52791642_$(date +%Y%m%d_%H%M%S)}"
+if [[ -d "$CHECKPOINT" ]]; then
+  CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
+fi
+STEP_NAME="$(basename "$(dirname "$CHECKPOINT")")"
+RUN_DIR="${RUN_DIR:-runs/strict_success_dataset_${STEP_NAME}_$(date +%Y%m%d_%H%M%S)}"
 GPUS="${GPUS:-0 1}"
 WORLDS="${WORLDS:-32}"
 ROUNDS="${ROUNDS:-64}"
@@ -48,7 +64,10 @@ SELECTION_SEED="${SELECTION_SEED:-20260922}"
 SEED_TORCH="${SEED_TORCH:-20260922}"
 RECORD_FRAMES="${RECORD_FRAMES:-1}"
 STEPS="${STEPS:-record build}"
-TAG="${TAG:-strict_step52791642}"
+TAG="${TAG:-strict_${STEP_NAME//_/}}"
+RETENTION_ROWS_PER_STAGE="${RETENTION_ROWS_PER_STAGE:-0}"
+RETENTION_ROWS_PER_CELL_STAGE="${RETENTION_ROWS_PER_CELL_STAGE:-384}"
+RETENTION_SURPLUS_ROWS_PER_STAGE="${RETENTION_SURPLUS_ROWS_PER_STAGE:-8}"
 
 if [[ -d "$CHECKPOINT" ]]; then
   CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
@@ -60,6 +79,14 @@ if [[ ! "$WORLDS" =~ ^[0-9]+$ || "$WORLDS" -lt 2 || $((WORLDS % 2)) -ne 0 ]]; th
   echo "WORLDS must be an even integer >= 2." >&2
   exit 2
 fi
+for pair in "RETENTION_ROWS_PER_STAGE:$RETENTION_ROWS_PER_STAGE" \
+  "RETENTION_ROWS_PER_CELL_STAGE:$RETENTION_ROWS_PER_CELL_STAGE" \
+  "RETENTION_SURPLUS_ROWS_PER_STAGE:$RETENTION_SURPLUS_ROWS_PER_STAGE"; do
+  if [[ ! "${pair#*:}" =~ ^[0-9]+$ ]]; then
+    echo "${pair%%:*} must be a non-negative integer." >&2
+    exit 2
+  fi
+done
 if [[ ! "$SUCCESSES_PER_CELL" =~ ^[1-9][0-9]*$ ]]; then
   echo "SUCCESSES_PER_CELL must be positive." >&2
   exit 2
@@ -82,6 +109,7 @@ echo "scenes=$SCENES split=collection"
 echo "attempts=$NUM_SHARDS x $ROUNDS x $WORLDS = $((NUM_SHARDS * ROUNDS * WORLDS)) distinct scenes"
 echo "target=$SUCCESSES_PER_CELL x 4 objects x 2 destinations = $((SUCCESSES_PER_CELL * 8)) strict successes"
 echo "frames=$RECORD_FRAMES run_dir=$RUN_DIR"
+echo "retention rows per completed stage per non-strict episode=$RETENTION_ROWS_PER_STAGE"
 echo "assistance=none settle_decisions=0"
 
 if has_step record; then
@@ -93,6 +121,7 @@ if has_step record; then
     mkdir -p "$OUT"
     FRAME_ARGS=()
     [[ "$RECORD_FRAMES" == "1" ]] || FRAME_ARGS+=(--no-frames)
+    [[ "$RETENTION_ROWS_PER_STAGE" -gt 0 ]] && FRAME_ARGS+=(--retention-rows-per-stage "$RETENTION_ROWS_PER_STAGE")
     (
       CUDA_VISIBLE_DEVICES="$gpu" run \
         tools/audit/collect_cdpr_full_put_into.py \
@@ -155,6 +184,33 @@ if has_step build; then
   run "${BUILD_ARGS[@]}"
 fi
 
+if has_step retention; then
+  echo "=== build the retention bank: exact object x destination x stage quota ==="
+  shopt -s nullglob
+  RECORD_PATHS=("$RUN_DIR"/bank_shard*/record_*.npz)
+  RETENTION_PATHS=("$RUN_DIR"/bank_shard*/retention_"$TAG"*.npz)
+  FRAME_PATHS=("$RUN_DIR"/bank_shard*/frames_*.npz "$RUN_DIR"/bank_shard*/retention_frames_*.npz)
+  shopt -u nullglob
+  if [[ "${#RETENTION_PATHS[@]}" -eq 0 ]]; then
+    echo "No retention shards under $RUN_DIR/bank_shard*; record with RETENTION_ROWS_PER_STAGE>0." >&2
+    exit 1
+  fi
+  [[ -f "$RUN_DIR/dataset/demonstrations.npz" ]] || {
+    echo "Build the strict bank first (STEPS=build): retention must exclude its scenes." >&2
+    exit 1
+  }
+  run tools/audit/build_cdpr_full_put_into_dataset.py \
+    --mode retention \
+    --records "${RECORD_PATHS[@]}" \
+    --retention-records "${RETENTION_PATHS[@]}" \
+    --exclude-dataset "$RUN_DIR/dataset/demonstrations.npz" \
+    --frames "${FRAME_PATHS[@]}" \
+    --output "$RUN_DIR/retention_dataset" \
+    --rows-per-cell-stage "$RETENTION_ROWS_PER_CELL_STAGE" \
+    --retention-rows-per-stage "$RETENTION_SURPLUS_ROWS_PER_STAGE" \
+    --selection-seed "$SELECTION_SEED"
+fi
+
 echo
 echo "=== complete ==="
 echo "run:       $RUN_DIR"
@@ -163,4 +219,5 @@ echo "frames:    $RUN_DIR/bank_shard*/frames_*.npz"
 echo "dataset:   $RUN_DIR/dataset/demonstrations.npz"
 echo "audit:     $RUN_DIR/dataset/dataset.json"
 echo "selection: $RUN_DIR/dataset/selected_episodes.json"
+has_step retention && echo "retention: $RUN_DIR/retention_dataset/demonstrations.npz"
 echo "log:       $RUN_LOG"

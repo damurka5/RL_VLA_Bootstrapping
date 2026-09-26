@@ -35,7 +35,12 @@ from tools.audit.build_cdpr_staged_sft_dataset import (  # noqa: E402
     dataset_report,
     verify_frame_coverage,
 )
-from tools.audit.collect_cdpr_full_put_into import SCHEMA as RECORD_SCHEMA  # noqa: E402
+from tools.audit.collect_cdpr_full_put_into import (  # noqa: E402
+    RETENTION_SCHEMA,
+    SCHEMA as RECORD_SCHEMA,
+    spread_evenly,
+    stage_decisions,
+)
 
 
 DEFAULT_TARGETS = tuple(SceneGeometryConfig().target_catalogs)
@@ -377,35 +382,303 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
                     add("source_group", "strict_policy")
                     add("starts_grasped", False)
 
-    dtypes: dict[str, Any] = {
-        "state": np.float32,
-        "prior": np.float32,
-        "action": np.float32,
-        "action_mask": bool,
-        "instruction_id": np.int64,
-        "instruction_text": "U256",
-        "teacher_instruction_text": "U256",
-        "episode_uid": "U160",
-        "parent_episode_uid": "U160",
-        "decision_index": np.int64,
-        "scene_uid": "U96",
-        "split": "U32",
-        "rollout_index": np.int64,
-        "destination": "U16",
-        "target_catalog": "U64",
-        "substage_id": np.int8,
-        "stage_id": np.int8,
-        "stage_name": "U16",
-        "source_checkpoint_sha256": "U128",
-        "frame_uid": "U224",
-        "stage_boundary_distance": np.int32,
-        "full_chain_success": bool,
-        "release_event_repaired": bool,
-        "source_group": "U32",
-        "starts_grasped": bool,
-    }
     return {
-        name: np.asarray(values, dtype=dtypes[name])
+        name: np.asarray(values, dtype=ROW_DTYPES[name])
+        for name, values in columns.items()
+    }
+
+
+ROW_DTYPES: dict[str, Any] = {
+    "state": np.float32,
+    "prior": np.float32,
+    "action": np.float32,
+    "action_mask": bool,
+    "instruction_id": np.int64,
+    "instruction_text": "U256",
+    "teacher_instruction_text": "U256",
+    "episode_uid": "U160",
+    "parent_episode_uid": "U160",
+    "decision_index": np.int64,
+    "scene_uid": "U96",
+    "split": "U32",
+    "rollout_index": np.int64,
+    "destination": "U16",
+    "target_catalog": "U64",
+    "substage_id": np.int8,
+    "stage_id": np.int8,
+    "stage_name": "U16",
+    "source_checkpoint_sha256": "U128",
+    "frame_uid": "U224",
+    "stage_boundary_distance": np.int32,
+    "full_chain_success": bool,
+    "release_event_repaired": bool,
+    "source_group": "U32",
+    "starts_grasped": bool,
+}
+
+STAGE_BY_ID = {
+    0: (STAGE_MOVE_TO, "move_to"),
+    1: (STAGE_PICK_UP, "pick_up"),
+    2: (STAGE_PLACEMENT, "placement"),
+}
+
+
+def scan_retention_candidates(
+    *,
+    retention_paths: Sequence[Path],
+    strict_paths: Sequence[Path],
+    exclude_episodes: set[str],
+    exclude_scenes: set[str],
+    rows_per_stage: int,
+    target_catalogs: Sequence[str],
+    destinations: Sequence[str],
+) -> tuple[list[dict[str, Any]], dict[str, str], dict[str, int]]:
+    """Every row a retention bank may use, one entry per policy decision.
+
+    Two sources, both recorded by the same checkpoint under the same config:
+
+    ``retention_nonstrict``  the approach (and, if it lifted, the pickup) of
+        an episode that grasped but was not a strict success -- exactly the
+        decisions the collector marked.
+    ``retention_strict_surplus``  up to ``rows_per_stage`` decisions of every
+        stage of a strict success the SFT bank did NOT select. This is the only
+        source of placement rows.
+
+    Episodes and scenes in the SFT bank are excluded, so the two banks never
+    share a scene.
+    """
+
+    expected = {(str(c), str(d)) for c in target_catalogs for d in destinations}
+    provenance: dict[str, str] = {}
+    candidates: list[dict[str, Any]] = []
+    seen: dict[str, Path] = {}
+    excluded = {"episodes": 0, "scenes": 0}
+
+    def check_provenance(data: Any, path: Path) -> None:
+        current = {
+            "checkpoint_sha256": _scalar(data, "checkpoint_sha256"),
+            "scene_manifest_sha256": _scalar(data, "scene_manifest_sha256"),
+            "config": _scalar(data, "config"),
+            "split": _scalar(data, "split"),
+        }
+        for key, value in current.items():
+            previous = provenance.setdefault(key, value)
+            if previous != value:
+                raise ValueError(f"Mixed {key}: {previous!r} and {value!r} ({path}).")
+        if current["split"] != "collection":
+            raise ValueError(f"{path} comes from split {current['split']!r}, not collection.")
+
+    def add_rows(path, data, column, decisions, stage_of, group, strict) -> None:
+        uid = str(data["episode_uid"][column])
+        scene = str(data["scene_uid"][column])
+        cell = (str(data["target_catalog"][column]), str(data["destination"][column]))
+        if cell not in expected:
+            raise ValueError(f"{path} episode {uid} is in unexpected cell {cell}.")
+        if uid in seen:
+            raise ValueError(f"episode_uid {uid!r} appears in {seen[uid]} and {path}.")
+        seen[uid] = path
+        for decision in decisions:
+            candidates.append(
+                {
+                    "path": path,
+                    "column": int(column),
+                    "decision": int(decision),
+                    "stage_id": int(stage_of[int(decision)]),
+                    "episode_uid": uid,
+                    "scene_uid": scene,
+                    "target_catalog": cell[0],
+                    "destination": cell[1],
+                    "source_group": group,
+                    "full_chain_success": bool(strict),
+                }
+            )
+
+    def skip(data, column) -> bool:
+        uid = str(data["episode_uid"][column])
+        scene = str(data["scene_uid"][column])
+        if uid in exclude_episodes:
+            excluded["episodes"] += 1
+            return True
+        if scene in exclude_scenes:
+            excluded["scenes"] += 1
+            return True
+        return False
+
+    for path in retention_paths:
+        with np.load(path, allow_pickle=False) as data:
+            if _scalar(data, "schema") != RETENTION_SCHEMA:
+                raise ValueError(f"{path} is not a {RETENTION_SCHEMA!r} shard.")
+            check_provenance(data, path)
+            if bool(np.asarray(data["strict"], dtype=bool).any()):
+                raise ValueError(f"{path} holds a strict episode; those belong to record shards.")
+            mask = np.asarray(data["retention_decision_mask"], dtype=bool)
+            active = np.asarray(data["decision_active"], dtype=bool)
+            per = int(np.asarray(data["action"]).shape[2])
+            for column in range(mask.shape[1]):
+                if skip(data, column):
+                    continue
+                stages = stage_decisions(
+                    active_decisions=int(active[:, column].sum()),
+                    grasp_step=int(data["first_grasp_step"][column]),
+                    lift_step=int(data["first_lift_step"][column]),
+                    per=per,
+                    include_placement=False,
+                )
+                stage_of = {int(d): stage for stage, rows in stages.items() for d in rows}
+                decisions = np.flatnonzero(mask[:, column])
+                missing = [int(d) for d in decisions if int(d) not in stage_of]
+                if missing:
+                    raise ValueError(
+                        f"{path} column {column} marks decisions {missing[:4]} "
+                        "outside every completed stage."
+                    )
+                add_rows(path, data, column, decisions, stage_of, "retention_nonstrict", False)
+
+    for path in strict_paths:
+        with np.load(path, allow_pickle=False) as data:
+            if _scalar(data, "schema") != RECORD_SCHEMA:
+                raise ValueError(f"{path} is not a {RECORD_SCHEMA!r} record shard.")
+            check_provenance(data, path)
+            active = np.asarray(data["decision_active"], dtype=bool)
+            per = int(np.asarray(data["action"]).shape[2])
+            for column in range(active.shape[1]):
+                if not bool(data["strict"][column]) or skip(data, column):
+                    continue
+                stages = stage_decisions(
+                    active_decisions=int(active[:, column].sum()),
+                    grasp_step=int(data["first_grasp_step"][column]),
+                    lift_step=int(data["first_lift_step"][column]),
+                    per=per,
+                    include_placement=True,
+                )
+                stage_of = {int(d): stage for stage, rows in stages.items() for d in rows}
+                decisions = np.concatenate(
+                    [spread_evenly(rows, int(rows_per_stage)) for rows in stages.values()]
+                    or [np.empty(0, dtype=np.int64)]
+                )
+                add_rows(path, data, column, np.sort(decisions), stage_of,
+                         "retention_strict_surplus", True)
+    if not candidates:
+        raise ValueError("No retention rows were found.")
+    return candidates, provenance, excluded
+
+
+def select_rows_balanced(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    target_catalogs: Sequence[str],
+    destinations: Sequence[str],
+    rows_per_cell_stage: int,
+    seed: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Exactly ``rows_per_cell_stage`` rows in every object x destination x stage.
+
+    Equal ROWS, so that equal rows can be checked against equal LOSS in the
+    SFT report rather than assumed. A short cell fails the build; it is never
+    filled from another cell.
+    """
+
+    if int(rows_per_cell_stage) < 1:
+        raise ValueError("--rows-per-cell-stage must be positive.")
+    selected: list[dict[str, Any]] = []
+    cells: dict[str, Any] = {}
+    shortages: dict[str, int] = {}
+    for catalog in target_catalogs:
+        for destination in destinations:
+            for stage_id, (_, stage_name) in STAGE_BY_ID.items():
+                key = f"{catalog}/{destination}/{stage_name}"
+                available = [
+                    dict(row)
+                    for row in candidates
+                    if row["target_catalog"] == catalog
+                    and row["destination"] == destination
+                    and int(row["stage_id"]) == stage_id
+                ]
+                available.sort(
+                    key=lambda row: _selection_rank(
+                        f"{row['episode_uid']}#{row['decision']}", int(seed)
+                    )
+                )
+                take = available[: int(rows_per_cell_stage)]
+                selected.extend(take)
+                groups: dict[str, int] = {}
+                for row in take:
+                    groups[row["source_group"]] = groups.get(row["source_group"], 0) + 1
+                cells[key] = {
+                    "available": len(available),
+                    "selected": len(take),
+                    "episodes": len({row["episode_uid"] for row in take}),
+                    "by_source_group": groups,
+                }
+                if len(take) < int(rows_per_cell_stage):
+                    shortages[key] = int(rows_per_cell_stage) - len(take)
+    selected.sort(key=lambda row: (str(row["episode_uid"]), int(row["decision"])))
+    return selected, {
+        "rows_per_cell_stage": int(rows_per_cell_stage),
+        "selection_seed": int(seed),
+        "cells": cells,
+        "shortages": shortages,
+        "available_total": len(candidates),
+        "selected_total": len(selected),
+    }
+
+
+def build_retention_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
+    """One row per selected decision, in the strict bank's exact column set."""
+
+    columns: dict[str, list[Any]] = {}
+
+    def add(name: str, value: Any) -> None:
+        columns.setdefault(name, []).append(value)
+
+    by_path: dict[Path, list[Mapping[str, Any]]] = {}
+    for row in selected:
+        by_path.setdefault(Path(row["path"]), []).append(row)
+    for path, rows in sorted(by_path.items(), key=lambda item: str(item[0])):
+        with np.load(path, allow_pickle=False) as data:
+            states = np.asarray(data["state"], dtype=np.float32)
+            priors = np.asarray(data["prior"], dtype=np.float32)
+            actions = np.asarray(data["action"], dtype=np.float32)
+            action_masks = np.asarray(data["action_mask"], dtype=bool)
+            instruction_ids = np.asarray(data["instruction_id"], dtype=np.int64)
+            instruction_texts = np.asarray(data["instruction_text"])
+            split = _scalar(data, "split")
+            checkpoint_sha256 = _scalar(data, "checkpoint_sha256")
+            for row in rows:
+                world, decision = int(row["column"]), int(row["decision"])
+                if not bool(action_masks[decision, world].any()):
+                    raise ValueError(
+                        f"{row['episode_uid']} decision {decision} supervises no "
+                        "executed action."
+                    )
+                stage_raw, stage_name = STAGE_BY_ID[int(row["stage_id"])]
+                add("state", np.array(states[decision, world], copy=True))
+                add("prior", np.array(priors[decision, world], copy=True))
+                add("action", np.array(actions[decision, world], copy=True))
+                add("action_mask", np.array(action_masks[decision, world], copy=True))
+                add("instruction_id", int(instruction_ids[world]))
+                add("instruction_text", str(instruction_texts[world]))
+                add("teacher_instruction_text", str(instruction_texts[world]))
+                add("episode_uid", str(row["episode_uid"]))
+                add("parent_episode_uid", str(row["episode_uid"]))
+                add("decision_index", decision)
+                add("scene_uid", str(row["scene_uid"]))
+                add("split", split)
+                add("rollout_index", 0)
+                add("destination", str(row["destination"]))
+                add("target_catalog", str(row["target_catalog"]))
+                add("substage_id", int(stage_raw))
+                add("stage_id", int(row["stage_id"]))
+                add("stage_name", stage_name)
+                add("source_checkpoint_sha256", checkpoint_sha256)
+                add("frame_uid", f"{row['episode_uid']}#{decision}")
+                add("stage_boundary_distance", 0)
+                add("full_chain_success", bool(row["full_chain_success"]))
+                add("release_event_repaired", False)
+                add("source_group", str(row["source_group"]))
+                add("starts_grasped", False)
+    return {
+        name: np.asarray(values, dtype=ROW_DTYPES[name])
         for name, values in columns.items()
     }
 
@@ -428,7 +701,33 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Build an action-only dataset deliberately.",
     )
+    parser.add_argument(
+        "--mode",
+        choices=("strict", "retention"),
+        default="strict",
+        help=(
+            "strict: the balanced strict-success SFT bank (default). "
+            "retention: a retention bank from --retention-records plus the "
+            "strict episodes in --records that --exclude-dataset did not use."
+        ),
+    )
+    parser.add_argument("--retention-records", type=Path, nargs="*", default=[])
+    parser.add_argument(
+        "--exclude-dataset",
+        type=Path,
+        default=None,
+        help="The SFT bank; its episodes and scenes never enter retention.",
+    )
+    parser.add_argument("--rows-per-cell-stage", type=int, default=128)
+    parser.add_argument(
+        "--retention-rows-per-stage",
+        type=int,
+        default=8,
+        help="Cap on decisions per stage taken from one surplus strict episode.",
+    )
     args = parser.parse_args(argv)
+    if args.mode == "retention":
+        return build_retention_main(args)
 
     paths = sorted({path.expanduser().resolve() for path in args.records})
     if not paths:
@@ -559,6 +858,108 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{frame_report['rows']} rows",
             flush=True,
         )
+    return 0
+
+
+def build_retention_main(args: argparse.Namespace) -> int:
+    """``--mode retention``: see scan_retention_candidates."""
+
+    retention_paths = sorted({path.expanduser().resolve() for path in args.retention_records})
+    strict_paths = sorted({path.expanduser().resolve() for path in args.records})
+    if not retention_paths:
+        raise SystemExit("--mode retention needs --retention-records.")
+    if args.exclude_dataset is None:
+        raise SystemExit(
+            "--mode retention needs --exclude-dataset (the SFT bank), or the "
+            "retention bank could share scenes with it."
+        )
+    with np.load(args.exclude_dataset.expanduser().resolve(), allow_pickle=False) as bank:
+        exclude_episodes = {str(value) for value in np.unique(bank["episode_uid"])}
+        exclude_scenes = {str(value) for value in np.unique(bank["scene_uid"])}
+    output = args.output.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    try:
+        candidates, provenance, excluded = scan_retention_candidates(
+            retention_paths=retention_paths,
+            strict_paths=strict_paths,
+            exclude_episodes=exclude_episodes,
+            exclude_scenes=exclude_scenes,
+            rows_per_stage=int(args.retention_rows_per_stage),
+            target_catalogs=args.target_catalogs,
+            destinations=args.destinations,
+        )
+        selected, selection = select_rows_balanced(
+            candidates,
+            target_catalogs=args.target_catalogs,
+            destinations=args.destinations,
+            rows_per_cell_stage=int(args.rows_per_cell_stage),
+            seed=int(args.selection_seed),
+        )
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    selection["excluded_by_sft_bank"] = excluded
+    availability_path = output / "availability.json"
+    availability_path.write_text(json.dumps(selection, indent=2, sort_keys=True), encoding="utf-8")
+    if selection["shortages"]:
+        raise SystemExit(
+            f"Retention cells are short: {selection['shortages']}. See "
+            f"{availability_path}; lower --rows-per-cell-stage or collect more."
+        )
+    dataset = build_retention_rows(selected)
+    frame_paths = sorted({path.expanduser().resolve() for path in args.frames if path.is_file()})
+    frame_report = None
+    if frame_paths:
+        frame_report = verify_frame_coverage(dataset, frame_paths)
+        if frame_report["resolved_fraction"] < 1.0 and not bool(args.allow_missing_frames):
+            raise SystemExit(
+                "Not every retention row has its exact policy frame: "
+                f"{frame_report['unresolved_examples']}."
+            )
+    elif not bool(args.allow_missing_frames):
+        raise SystemExit("No --frames were supplied for the retention bank.")
+    np.savez_compressed(output / "demonstrations.npz", **dataset)
+    shared = set(dataset["scene_uid"].tolist()) & exclude_scenes
+    if shared:
+        raise SystemExit(f"{len(shared)} retention scenes are also in the SFT bank.")
+    source_groups = {
+        str(name): int((dataset["source_group"] == name).sum())
+        for name in np.unique(dataset["source_group"])
+    }
+    report = {
+        "schema": DATASET_SCHEMA,
+        "source_schema": [RETENTION_SCHEMA, RECORD_SCHEMA],
+        "priors_stale": False,
+        "priors_stale_reason": None,
+        "retention_records": [str(path) for path in retention_paths],
+        "records": [str(path) for path in strict_paths],
+        "exclude_dataset": str(args.exclude_dataset),
+        "frames_files": [str(path) for path in frame_paths],
+        "provenance": provenance,
+        "selection": selection,
+        "rows_by_source_group": source_groups,
+        "dataset": dataset_report(dataset),
+        "frames": frame_report,
+        "contract": {
+            "retention": True,
+            "empty_start": True,
+            "one_final_instruction": True,
+            "continuous_single_policy": True,
+            "simulator_recovery": False,
+            "same_checkpoint_and_config_as_sft_bank": True,
+            "scene_disjoint_from": str(args.exclude_dataset),
+            "rows_from_completed_stages_only": True,
+            "placement_rows_from_strict_episodes_only": True,
+            "balanced_by": ["target_catalog", "destination", "stage_name"],
+        },
+    }
+    (output / "dataset.json").write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    print(
+        f"[retention] wrote {output / 'demonstrations.npz'}: "
+        f"{dataset['state'].shape[0]} rows, "
+        f"{np.unique(dataset['episode_uid']).size} episodes, "
+        f"{np.unique(dataset['scene_uid']).size} scenes; by source {source_groups}",
+        flush=True,
+    )
     return 0
 
 

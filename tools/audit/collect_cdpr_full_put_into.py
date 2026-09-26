@@ -17,6 +17,15 @@ Every round writes three independently auditable artifacts:
 ``frames_<stem>.npz``
     The exact pre-decision overview and wrist images for those successes,
     keyed by episode id. Omit only with ``--no-frames``.
+``retention_<stem>.npz`` / ``retention_frames_<stem>.npz``
+    Only with ``--retention-rows-per-stage K``. For every episode that is NOT
+    a strict success but did grasp: up to K evenly spaced decisions of each
+    stage it completed -- the approach if it grasped, the pickup if it also
+    lifted -- with the pictures for exactly those decisions. This is retention
+    material recorded under the same controller, prompt and action contract as
+    the strict bank. Placement rows come only from strict episodes (surplus
+    ones, at build time): a placement that was not strict is a slip or a drop,
+    not behaviour worth preserving.
 
 The collector does not choose the training subset. Pool shards and enforce an
 exact object x destination quota with
@@ -58,6 +67,50 @@ from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import (  # noqa: E
 
 
 SCHEMA = "cdpr_full_put_into_policy_round/v1"
+RETENTION_SCHEMA = "cdpr_full_put_into_retention_round/v1"
+
+
+def spread_evenly(values: np.ndarray, count: int) -> np.ndarray:
+    """At most ``count`` entries of ``values``, evenly spaced, ends included."""
+
+    values = np.asarray(values, dtype=np.int64)
+    if int(count) <= 0 or values.size == 0:
+        return values[:0]
+    if values.size <= int(count):
+        return values
+    index = np.linspace(0, values.size - 1, int(count)).round().astype(np.int64)
+    return np.unique(values[index])
+
+
+def stage_decisions(
+    *,
+    active_decisions: int,
+    grasp_step: int,
+    lift_step: int,
+    per: int,
+    include_placement: bool,
+) -> dict[int, np.ndarray]:
+    """Decisions of each COMPLETED stage, by the dataset builder's boundaries.
+
+    move_to (0) is every decision before the grasp decision; pick_up (1) runs
+    from the grasp decision through the lift decision; placement (2) is the
+    rest. A stage is returned only when it was completed: no grasp, no stages
+    at all; no lift, the approach only. Placement is returned only on request,
+    because only a strict episode's placement is worth preserving.
+    """
+
+    out: dict[int, np.ndarray] = {}
+    active = int(active_decisions)
+    if int(grasp_step) < 0 or active <= 0:
+        return out
+    grasp_decision = int(grasp_step) // int(per)
+    out[0] = np.arange(0, min(grasp_decision, active), dtype=np.int64)
+    if int(lift_step) >= 0:
+        lift_decision = int(lift_step) // int(per)
+        out[1] = np.arange(grasp_decision, min(lift_decision + 1, active), dtype=np.int64)
+        if include_placement:
+            out[2] = np.arange(lift_decision + 1, active, dtype=np.int64)
+    return {stage: rows for stage, rows in out.items() if rows.size}
 
 
 def sha256_file(path: Path) -> str:
@@ -307,6 +360,7 @@ def _write_round(
     shard: int,
     round_index: int,
     record_frames: bool,
+    retention_rows_per_stage: int = 0,
 ) -> dict[str, Any]:
     strict = np.asarray(result["strict"], dtype=bool)
     selected = np.flatnonzero(strict)
@@ -393,9 +447,88 @@ def _write_round(
             files["frames"] = str(frames_path)
             files["frames_bytes"] = int(frames_path.stat().st_size)
 
+    retention_rows = 0
+    retention_episodes = 0
+    if int(retention_rows_per_stage) > 0:
+        end = int(trace.used_decisions)
+        per = int(trace.actions_per_decision)
+        candidates = np.flatnonzero(
+            ~strict & common["grasped"] & ~common["non_finite"]
+        )
+        kept: list[int] = []
+        masks: list[np.ndarray] = []
+        for world in candidates.tolist():
+            chosen = stage_decisions(
+                active_decisions=int(trace.decision_active[:end, world].sum()),
+                grasp_step=int(trace.first_grasp_step[world]),
+                lift_step=int(trace.first_lift_step[world]),
+                per=per,
+                include_placement=False,
+            )
+            mask = np.zeros(end, dtype=bool)
+            for rows in chosen.values():
+                mask[spread_evenly(rows, int(retention_rows_per_stage))] = True
+            if mask.any():
+                kept.append(int(world))
+                masks.append(mask)
+        if kept:
+            worlds = np.asarray(kept, dtype=np.int64)
+            decision_mask = np.stack(masks, axis=1)
+            payload = trace.selected_payload(worlds)
+            payload.update({key: value[worlds] for key, value in common.items()})
+            payload.update(
+                {
+                    "schema": np.asarray(RETENTION_SCHEMA),
+                    "retention_decision_mask": decision_mask,
+                    "retention_rows_per_stage": np.asarray(
+                        int(retention_rows_per_stage), dtype=np.int64
+                    ),
+                    "world_index": worlds,
+                    "round_index": np.asarray(round_index, dtype=np.int64),
+                    "shard": np.asarray(shard, dtype=np.int64),
+                    "split": np.asarray(split),
+                    "checkpoint": np.asarray(str(checkpoint)),
+                    "checkpoint_sha256": np.asarray(checkpoint_sha256),
+                    "config": np.asarray(str(config)),
+                    "scene_manifest_sha256": np.asarray(
+                        "" if manifest_sha256 is None else manifest_sha256
+                    ),
+                    "starts_grasped": np.zeros(worlds.size, dtype=bool),
+                }
+            )
+            retention_path = output / f"retention_{stem}.npz"
+            np.savez_compressed(retention_path, **payload)
+            files["retention"] = str(retention_path)
+            if record_frames:
+                assert trace.overview is not None and trace.wrist is not None
+                # Zero pictures everywhere but the kept decisions: np.zeros is
+                # lazily backed and compresses to nothing, so only the rows
+                # that will be trained on cost memory or disk.
+                shape = (end, worlds.size, *trace.overview.shape[2:])
+                overview = np.zeros(shape, dtype=np.uint8)
+                wrist = np.zeros(shape, dtype=np.uint8)
+                for column, world in enumerate(worlds.tolist()):
+                    rows = np.flatnonzero(decision_mask[:, column])
+                    overview[rows, column] = trace.overview[rows, world]
+                    wrist[rows, column] = trace.wrist[rows, world]
+                retention_frames = output / f"retention_frames_{stem}.npz"
+                np.savez_compressed(
+                    retention_frames,
+                    overview=overview,
+                    wrist=wrist,
+                    world_index=worlds,
+                    episode_uid=episode_all[worlds],
+                    decisions=np.asarray(end, dtype=np.int64),
+                )
+                files["retention_frames"] = str(retention_frames)
+            retention_rows = int(decision_mask.sum())
+            retention_episodes = int(worlds.size)
+
     return {
         "round": int(round_index),
         "attempts": len(scenes),
+        "retention_episodes": retention_episodes,
+        "retention_rows": retention_rows,
         "strict_successes": int(selected.size),
         "strict_rate": round(float(strict.mean()), 5),
         # Ended by a divergence reset; never strict, never harvested.
@@ -438,7 +571,19 @@ def main(argv: Sequence[str] | None = None) -> int:
         action="store_true",
         help="Action-only audit arm; the resulting bank cannot train vision.",
     )
+    parser.add_argument(
+        "--retention-rows-per-stage",
+        type=int,
+        default=0,
+        help=(
+            "Also keep up to this many evenly spaced decisions per completed "
+            "stage of every non-strict episode that grasped, as retention "
+            "material (retention_<stem>.npz). 0 keeps the strict-only harvest."
+        ),
+    )
     args = parser.parse_args(argv)
+    if int(args.retention_rows_per_stage) < 0:
+        parser.error("--retention-rows-per-stage must be non-negative.")
 
     checkpoint = args.checkpoint.expanduser().resolve()
     config = args.config.expanduser().resolve()
@@ -560,6 +705,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             shard=int(args.shard),
             round_index=global_round,
             record_frames=record_frames,
+            retention_rows_per_stage=int(args.retention_rows_per_stage),
         )
         report["wall_seconds"] = round(time.perf_counter() - round_started, 1)
         reports.append(report)
@@ -568,6 +714,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{args.rounds}: strict {report['strict_successes']}/"
             f"{report['attempts']} ({report['strict_rate']:.3f}), "
             f"non-finite {report['non_finite_episodes']}, "
+            f"retention rows {report['retention_rows']}, "
             f"by cell {report['strict_by_cell']}",
             flush=True,
         )
@@ -599,6 +746,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "non_finite_episodes": sum(
             int(row["non_finite_episodes"]) for row in reports
         ),
+        "retention_rows_per_stage": int(args.retention_rows_per_stage),
+        "retention_episodes": sum(int(row["retention_episodes"]) for row in reports),
+        "retention_rows": sum(int(row["retention_rows"]) for row in reports),
         "attempts_by_cell": _sum_tables(reports, "attempts_by_cell"),
         "strict_by_cell": _sum_tables(reports, "strict_by_cell"),
         "rounds_detail": reports,

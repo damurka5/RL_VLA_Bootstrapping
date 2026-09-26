@@ -430,8 +430,10 @@ class LoraStageWiringTests(unittest.TestCase):
 
         source = self._source()
         self.assertIn(
-            "base.load_state_dict(best_policy_state, strict=True)", source
+            "base.load_state_dict(lora_start_state, strict=True)", source
         )
+        # With no residual epoch selected, the start is the untouched policy.
+        self.assertIn('else {key: value for key, value in dict(payload["policy"]).items()}', source)
         # Scoped to the RESIDUAL load. strict=False is correct on the LoRA
         # state -- it deliberately holds only lora_* keys, which is the same
         # contract _load_vla_lora_state uses -- so a blanket ban would forbid
@@ -669,7 +671,8 @@ class LoraSelectionTests(unittest.TestCase):
     def test_no_improvement_means_no_write(self):
         source = self._source()
         self.assertIn('if lora_report["applied"]:', source)
-        self.assertIn("as the \"\n                \"residual-only checkpoint", source)
+        self.assertIn("as the residual-only checkpoint.", source)
+        self.assertIn("no adapter was written.", source)
 
     def test_the_two_rates_are_separate(self):
         """The adapter takes 512x the steps of an RL update; one rate is wrong."""

@@ -69,6 +69,28 @@
 # retention bank whose state width or action-slot count does not match this
 # checkpoint's -- if it does, the bank predates a state/action contract
 # change and needs a different source, not a forced retry.
+#
+# REPAIRED retention (2026-09-26). phase4_bank is not compatible with the
+# three-stage residual (yaw), so the arm above does not measure retention. The
+# harvest launcher now records a retention bank under the SAME checkpoint and
+# config, in the same rollouts as the strict bank (see its header). Then:
+#
+#   RUN_DIR=runs/strict_success_dataset_step_56072006_<stamp> \
+#   CHECKPOINT=runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006 \
+#   RETENTION_SOURCE=runs/strict_success_dataset_step_56072006_<stamp>/retention_dataset/demonstrations.npz \
+#   RETENTION_FRACTION=0.2 \
+#   EVAL_BASELINE=0 BASELINE_EVAL_DIR=runs/three_stage_put_into_eval/<step_56072006 eval> \
+#     bash scripts/train_cdpr_strict_success_sft_remote.sh
+#
+# RETENTION_SOURCE is refreshed under CHECKPOINT like the strict bank, and the
+# refreshed copy becomes RETENTION_DATASET. Run the same command without
+# RETENTION_SOURCE (and a different WORK_DIR) for the no-retention control.
+#
+# Selection and promotion. sil_sft.py treats the untouched checkpoint as a
+# candidate: if no epoch beats it on the held-out put_into (and retention)
+# rows, no adapter is written and eval is skipped. Otherwise the SFT adapter is
+# evaluated on the baseline's exact scenes and promotion.json says PROMOTE only
+# for a significant paired strict win (exact McNemar, PROMOTION_ALPHA).
 set -euo pipefail
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
@@ -90,7 +112,11 @@ CHECKPOINT="${CHECKPOINT:-/root/repo/RL_VLA_Bootstrapping/runs/three_stage_spars
 CONFIG="${CONFIG:-configs/examples/cdpr_smolvla_three_stage_put_into.yaml}"
 SCENES="${SCENES:-runs/three_stage/scenes_8192.json}"
 DATASET="${DATASET:-$RUN_DIR/dataset/demonstrations.npz}"
-WORK_DIR="${WORK_DIR:-$RUN_DIR/sft_from_step_52791642}"
+if [[ -d "$CHECKPOINT" ]]; then
+  CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
+fi
+SOURCE_STEP="$(basename "$(dirname "$CHECKPOINT")")"
+WORK_DIR="${WORK_DIR:-$RUN_DIR/sft_from_${SOURCE_STEP}}"
 REFRESHED_DIR="${REFRESHED_DIR:-$WORK_DIR/refreshed}"
 MODEL_DIR="${MODEL_DIR:-$WORK_DIR/model}"
 SFT_CHECKPOINT="${SFT_CHECKPOINT:-$MODEL_DIR/sil_sft_adapter.pt}"
@@ -121,8 +147,15 @@ LORA_KL_COEF="${LORA_KL_COEF:-0.1}"
 # Optional original-label retention bank.  If supplied, it must already have
 # been refreshed under CHECKPOINT; the strict put_into bank cannot serve as its
 # own retention data because all of its rows carry the final put_into prompt.
+RETENTION_SOURCE="${RETENTION_SOURCE:-}"
+RETENTION_REFRESHED_DIR="${RETENTION_REFRESHED_DIR:-$WORK_DIR/retention_refreshed}"
+if [[ -n "$RETENTION_SOURCE" ]]; then
+  RETENTION_DATASET="${RETENTION_DATASET:-$RETENTION_REFRESHED_DIR/demonstrations.npz}"
+fi
 RETENTION_DATASET="${RETENTION_DATASET:-}"
 RETENTION_FRACTION="${RETENTION_FRACTION:-0.2}"
+BASELINE_EVAL_DIR="${BASELINE_EVAL_DIR:-$WORK_DIR/eval_baseline}"
+PROMOTION_ALPHA="${PROMOTION_ALPHA:-0.05}"
 
 # The verdict is an unassisted rollout, not the held-out imitation loss.
 EVAL_BASELINE="${EVAL_BASELINE:-1}"
@@ -216,6 +249,20 @@ if has_step refresh; then
     --output "$REFRESHED_DIR" \
     --device "$DEVICE" \
     --batch-size "$REFRESH_BATCH_SIZE"
+  if [[ -n "$RETENTION_SOURCE" ]]; then
+    [[ -f "$RETENTION_SOURCE" ]] || { echo "Retention source not found: $RETENTION_SOURCE" >&2; exit 2; }
+    shopt -s nullglob
+    RETENTION_FRAME_PATHS=("$RUN_DIR"/bank_shard*/frames_*.npz "$RUN_DIR"/bank_shard*/retention_frames_*.npz)
+    shopt -u nullglob
+    echo "=== refresh retention priors from exact policy frames ==="
+    run tools/audit/sil_refresh_priors.py \
+      --dataset "$RETENTION_SOURCE" \
+      --frames "${RETENTION_FRAME_PATHS[@]}" \
+      --checkpoint "$CHECKPOINT" \
+      --output "$RETENTION_REFRESHED_DIR" \
+      --device "$DEVICE" \
+      --batch-size "$REFRESH_BATCH_SIZE"
+  fi
 fi
 
 if has_step train; then
@@ -270,10 +317,15 @@ if has_step train; then
   [[ "$TRAIN_LORA" == "1" ]] && TRAIN_LABEL="residual and bounded action-expert LoRA"
   echo "=== train $TRAIN_LABEL ==="
   run "${SFT_ARGS[@]}"
-  [[ -f "$SFT_CHECKPOINT" ]] || {
-    echo "SFT finished without writing $SFT_CHECKPOINT" >&2
-    exit 1
-  }
+  if [[ ! -f "$SFT_CHECKPOINT" ]]; then
+    selected="$(python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("selected", "unknown"))' "$MODEL_DIR/sft_report.json" 2>/dev/null || echo unknown)"
+    if [[ "$selected" == "initializer" ]]; then
+      echo "SFT selected the untouched checkpoint: no epoch beat it on held-out rows. Nothing to evaluate or promote."
+    else
+      echo "SFT finished without writing $SFT_CHECKPOINT (selected=$selected)" >&2
+      exit 1
+    fi
+  fi
 fi
 
 evaluate() {
@@ -295,16 +347,43 @@ evaluate() {
 }
 
 if has_step eval; then
-  [[ -f "$SFT_CHECKPOINT" ]] || {
-    echo "SFT checkpoint not found: $SFT_CHECKPOINT" >&2
-    echo "Run with STEPS=train first (or include train in STEPS)." >&2
-    exit 2
-  }
-  echo "=== unassisted matched validation: $((EVAL_WORLDS * EVAL_ROUNDS)) distinct scenes ==="
-  if [[ "$EVAL_BASELINE" == "1" ]]; then
-    evaluate baseline "$CHECKPOINT"
+  if [[ ! -f "$SFT_CHECKPOINT" ]]; then
+    if [[ -f "$MODEL_DIR/sft_report.json" ]] && grep -q '"selected": "initializer"' "$MODEL_DIR/sft_report.json"; then
+      echo "=== no SFT adapter: the untouched checkpoint was selected; skipping eval ==="
+      printf '{"verdict": "keep_source", "reason": "sil_sft selected the initializer"}\n' > "$WORK_DIR/promotion.json"
+    else
+      echo "SFT checkpoint not found: $SFT_CHECKPOINT" >&2
+      echo "Run with STEPS=train first (or include train in STEPS)." >&2
+      exit 2
+    fi
+  else
+    echo "=== unassisted matched validation: $((EVAL_WORLDS * EVAL_ROUNDS)) distinct scenes ==="
+    if [[ "$EVAL_BASELINE" == "1" ]]; then
+      evaluate baseline "$CHECKPOINT"
+      BASELINE_EVAL_DIR="$WORK_DIR/eval_baseline"
+    fi
+    evaluate sft "$SFT_CHECKPOINT"
+    [[ -f "$BASELINE_EVAL_DIR/evaluation.json" ]] || {
+      echo "No baseline evaluation at $BASELINE_EVAL_DIR; set BASELINE_EVAL_DIR or EVAL_BASELINE=1." >&2
+      exit 2
+    }
+    echo "=== closed-loop promotion gate: paired strict comparison on the same scenes ==="
+    run tools/audit/compare_put_into_evaluations.py \
+      "$BASELINE_EVAL_DIR" "$WORK_DIR/eval_sft" \
+      --alpha "$PROMOTION_ALPHA" --output "$WORK_DIR/promotion_strict.json"
+    if [[ -f "$BASELINE_EVAL_DIR/evaluation.json" ]] && grep -q '"episodes"' "$BASELINE_EVAL_DIR/evaluation.json"; then
+      run tools/audit/compare_put_into_evaluations.py \
+        "$BASELINE_EVAL_DIR" "$WORK_DIR/eval_sft" --metric native \
+        --alpha "$PROMOTION_ALPHA" --output "$WORK_DIR/promotion_native.json"
+    fi
+    if grep -q '"verdict": "candidate_better"' "$WORK_DIR/promotion_strict.json"; then
+      echo "PROMOTE: the SFT adapter wins the paired strict comparison."
+      printf '{"verdict": "promote", "evidence": "promotion_strict.json"}\n' > "$WORK_DIR/promotion.json"
+    else
+      echo "KEEP SOURCE: no significant paired strict win; do not promote the SFT adapter."
+      printf '{"verdict": "keep_source", "evidence": "promotion_strict.json"}\n' > "$WORK_DIR/promotion.json"
+    fi
   fi
-  evaluate sft "$SFT_CHECKPOINT"
 fi
 
 echo
@@ -315,5 +394,6 @@ echo "SFT report:        $MODEL_DIR/sft_report.json"
 if has_step eval; then
   [[ "$EVAL_BASELINE" == "1" ]] && echo "baseline eval:     $WORK_DIR/eval_baseline/evaluation.json"
   echo "SFT eval:          $WORK_DIR/eval_sft/evaluation.json"
+  echo "promotion:         $WORK_DIR/promotion.json"
 fi
 echo "log:               $RUN_LOG"

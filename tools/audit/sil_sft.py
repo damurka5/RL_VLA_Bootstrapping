@@ -685,6 +685,123 @@ def _evaluate(
     }
 
 
+STAGE_NAMES = ("move_to", "pick_up", "placement")
+
+
+def selection_score(
+    main_val: float,
+    main_base: float,
+    *,
+    retention_val: float | None = None,
+    retention_base: float | None = None,
+    retention_fraction: float = 0.0,
+) -> float:
+    """Validation score relative to the UNTOUCHED checkpoint, which scores 1.0.
+
+    Each source is divided by its own untrained error, so the two banks are
+    weighted by the mix and not by whichever has the larger raw MSE. Without a
+    retention bank this is just the put_into ratio. Any epoch has to score
+    below 1.0 to be selected at all: the initializer is always a candidate.
+    """
+
+    main = float(main_val) / max(float(main_base), 1.0e-12)
+    if retention_val is None or retention_base is None or retention_fraction <= 0.0:
+        return main
+    retention = float(retention_val) / max(float(retention_base), 1.0e-12)
+    share = min(1.0, max(0.0, float(retention_fraction)))
+    return (1.0 - share) * main + share * retention
+
+
+def source_stage_loss_sums(
+    torch: Any, row_error: Any, stage: Any, retention_rows: int
+) -> Any:
+    """Summed squared error of one batch as [source (main, retention), stage].
+
+    The mixed loss is one sum over a concatenated batch, so each source's
+    share of the objective is its rows TIMES its error. A fifth of the rows at
+    three hundred times the error is almost all of the loss, which is what the
+    2026-09-25 retention run did and nothing reported.
+    """
+
+    rows = int(row_error.shape[0])
+    source = torch.zeros((rows,), dtype=torch.int64, device=row_error.device)
+    if int(retention_rows) > 0:
+        source[rows - int(retention_rows):] = 1
+    stage = stage.to(dtype=torch.int64).clamp(0, len(STAGE_NAMES) - 1)
+    sums = torch.zeros(
+        (2 * len(STAGE_NAMES),), dtype=torch.float64, device=row_error.device
+    )
+    sums.index_add_(0, source * len(STAGE_NAMES) + stage, row_error.detach().double())
+    return sums.reshape(2, len(STAGE_NAMES))
+
+
+def describe_loss_sums(sums: np.ndarray) -> dict[str, Any]:
+    total = float(sums.sum())
+    report: dict[str, Any] = {
+        "retention_loss_share": round(float(sums[1].sum()) / total, 6) if total > 0 else 0.0,
+    }
+    for source_index, source in enumerate(("main", "retention")):
+        for stage_index, stage in enumerate(STAGE_NAMES):
+            report[f"{source}_{stage}_loss_share"] = (
+                round(float(sums[source_index, stage_index]) / total, 6)
+                if total > 0
+                else 0.0
+            )
+    return report
+
+
+def gradient_contributions(
+    actor: Any,
+    torch: Any,
+    *,
+    main: tuple[Any, Any, Any, Any],
+    retention: tuple[Any, Any, Any, Any] | None,
+    slots: int,
+) -> dict[str, float]:
+    """How hard each source pushes the residual, on one fixed mixed batch.
+
+    Both halves are divided by the COMBINED denominator the training loss
+    uses, so the two gradients add up to the real training gradient. The
+    cosine between them is the conflict test: near -1 means the two banks ask
+    the same weights for opposite corrections, which is what the phase4_bank
+    yaw rows did. ``retention_gradient_share`` is the retention gradient's
+    projection on the total, the actual share of the optimization pressure.
+    """
+
+    parameters = [param for param in actor.parameters() if param.requires_grad]
+
+    def squared_sum(batch: tuple[Any, Any, Any, Any]) -> tuple[Any, Any]:
+        state, prior, action, mask = batch
+        out = actor(state, prior)[:, :slots]
+        weight = mask.unsqueeze(-1).float()
+        return (((out - action) * weight) ** 2).sum(), weight.sum() * float(action.shape[-1])
+
+    main_sum, main_count = squared_sum(main)
+    if retention is None:
+        denominator = main_count.clamp_min(1.0)
+        grads = torch.autograd.grad(main_sum / denominator, parameters)
+        norm = float(torch.sqrt(sum((g.double() ** 2).sum() for g in grads)).item())
+        return {"main_gradient_norm": round(norm, 8)}
+    retention_sum, retention_count = squared_sum(retention)
+    denominator = (main_count + retention_count).clamp_min(1.0)
+    main_grads = torch.autograd.grad(main_sum / denominator, parameters)
+    retention_grads = torch.autograd.grad(retention_sum / denominator, parameters)
+    dot = sum((a.double() * b.double()).sum() for a, b in zip(main_grads, retention_grads))
+    main_sq = sum((a.double() ** 2).sum() for a in main_grads)
+    retention_sq = sum((b.double() ** 2).sum() for b in retention_grads)
+    total_sq = main_sq + retention_sq + 2.0 * dot
+    return {
+        "main_gradient_norm": round(float(main_sq.sqrt().item()), 8),
+        "retention_gradient_norm": round(float(retention_sq.sqrt().item()), 8),
+        "gradient_cosine": round(
+            float((dot / (main_sq.sqrt() * retention_sq.sqrt()).clamp_min(1.0e-30)).item()), 6
+        ),
+        "retention_gradient_share": round(
+            float(((retention_sq + dot) / total_sq.clamp_min(1.0e-30)).item()), 6
+        ),
+    }
+
+
 # --------------------------------------------------------------------------
 # Frames: joining pictures back to demonstration rows
 # --------------------------------------------------------------------------
@@ -1808,6 +1925,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     va_state, va_prior, va_action, va_mask = tensors(val_rows)
     slots = int(tr_action.shape[1])
 
+    def stage_tensor(bank: Mapping[str, np.ndarray], mask: Any = None) -> Any:
+        rows = int(bank["state"].shape[0]) if mask is None else int(np.sum(mask))
+        if "stage_id" not in bank:
+            return torch.zeros((rows,), dtype=torch.int64, device=device)
+        values = bank["stage_id"] if mask is None else bank["stage_id"][mask]
+        return torch.as_tensor(np.asarray(values, dtype=np.int64), device=device)
+
+    tr_stage = stage_tensor(dataset, train_rows)
+
     retention = None
     if args.retention_dataset is not None:
         retention = _load_dataset(args.retention_dataset.expanduser().resolve())
@@ -1834,6 +1960,40 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "and the retention bank. A shared scene must stay on one "
                     "side of the split across both views."
                 )
+        # Retention gets its own held-out scenes. Without them selection sees
+        # only put_into rows, and a residual the retention rows had wrecked
+        # could still be chosen -- the 2026-09-25 run's best epoch sat at 18x
+        # its put_into baseline with nothing on the retention side to say so.
+        size = int(retention["state"].shape[0])
+        if "scene_uid" in retention:
+            ret_train_rows, ret_val_rows = _scene_split(
+                retention["scene_uid"],
+                val_fraction=float(args.val_fraction),
+                seed=int(args.seed) + 1,
+            )
+        else:
+            ret_train_rows, ret_val_rows = _episode_split(
+                retention["episode_uid"],
+                val_fraction=float(args.val_fraction),
+                seed=int(args.seed) + 1,
+            )
+
+        def subset(mask: np.ndarray) -> dict[str, np.ndarray]:
+            return {
+                key: value[mask]
+                for key, value in retention.items()
+                if getattr(value, "shape", ()) and int(value.shape[0]) == size
+            }
+
+        retention_val = subset(ret_val_rows) if bool(ret_val_rows.any()) else None
+        retention = subset(ret_train_rows)
+        print(
+            f"[sft] retention rows train={int(ret_train_rows.sum())} "
+            f"val={int(ret_val_rows.sum())}",
+            flush=True,
+        )
+    else:
+        retention_val = None
     mixer = RetentionMixer(
         retention, fraction=float(args.retention_fraction), seed=int(args.seed)
     )
@@ -1848,6 +2008,18 @@ def main(argv: Sequence[str] | None = None) -> int:
             retention["action"], dtype=torch.float32, device=device
         )
         ret_mask = torch.as_tensor(retention["action_mask"], device=device)
+        ret_stage = stage_tensor(retention)
+    ret_val_tensors = None
+    if mixer.active and retention_val is not None:
+        ret_val_tensors = tuple(
+            torch.as_tensor(retention_val[key], dtype=dtype, device=device)
+            for key, dtype in (
+                ("state", torch.float32),
+                ("prior", torch.float32),
+                ("action", torch.float32),
+                ("action_mask", None),
+            )
+        )
 
     # Dataset row -> position in the training tensors, so a sampler that thinks
     # in dataset rows can index the tensors that were gathered from them.
@@ -1896,10 +2068,85 @@ def main(argv: Sequence[str] | None = None) -> int:
         flush=True,
     )
 
+    baseline_retention_val = (
+        None
+        if ret_val_tensors is None
+        else _evaluate(
+            actor, torch, state=ret_val_tensors[0], prior=ret_val_tensors[1],
+            action=ret_val_tensors[2], mask=ret_val_tensors[3],
+            batch_size=int(args.batch_size),
+        )
+    )
+    if baseline_retention_val is not None:
+        print(
+            f"[sft] untrained baseline: retention val mse="
+            f"{baseline_retention_val['mse']}",
+            flush=True,
+        )
+
+    def score_of(main_val: Mapping[str, float], retention_val: Mapping[str, float] | None) -> float:
+        return selection_score(
+            main_val["mse"],
+            baseline_val["mse"],
+            retention_val=None if retention_val is None else retention_val["mse"],
+            retention_base=(
+                None if baseline_retention_val is None else baseline_retention_val["mse"]
+            ),
+            retention_fraction=mixer.fraction if mixer.active else 0.0,
+        )
+
+    # One fixed mixed batch for the gradient probe, drawn in the training
+    # proportions, so the per-epoch numbers are comparable with each other.
+    probe_main_count, probe_retained_count = mixer.split_counts(int(args.batch_size))
+    probe_main_count = min(probe_main_count, int(tr_state.shape[0]))
+    probe_generator = np.random.default_rng(int(args.seed) + 4049)
+    probe_main_index = torch.as_tensor(
+        probe_generator.choice(int(tr_state.shape[0]), size=probe_main_count, replace=False),
+        dtype=torch.int64, device=device,
+    )
+    probe_main = (
+        tr_state.index_select(0, probe_main_index),
+        tr_prior.index_select(0, probe_main_index),
+        tr_action.index_select(0, probe_main_index),
+        tr_mask.index_select(0, probe_main_index),
+    )
+    probe_retention = None
+    if mixer.active and probe_retained_count > 0:
+        probe_retention_index = torch.as_tensor(
+            probe_generator.integers(int(ret_state.shape[0]), size=probe_retained_count),
+            dtype=torch.int64, device=device,
+        )
+        probe_retention = (
+            ret_state.index_select(0, probe_retention_index),
+            ret_prior.index_select(0, probe_retention_index),
+            ret_action.index_select(0, probe_retention_index),
+            ret_mask.index_select(0, probe_retention_index),
+        )
+
+    def probe_gradients() -> dict[str, float]:
+        return gradient_contributions(
+            actor, torch, main=probe_main, retention=probe_retention, slots=slots
+        )
+
+    baseline_gradients = probe_gradients()
+    print(f"[sft] gradient probe at the initializer: {baseline_gradients}", flush=True)
+
     history: list[dict[str, Any]] = []
-    best = float("inf")
+    # The untouched checkpoint is a candidate like any epoch: it scores exactly
+    # 1.0, and an epoch has to beat it to be selected. The old `inf` start made
+    # epoch 0 a guaranteed winner, which is how a residual already worse than
+    # its initializer (val 0.000429 against 0.000379) was saved and evaluated.
+    best = score_of(baseline_val, baseline_retention_val)
+    initializer_score = best
     best_epoch = -1
     best_policy_state: dict[str, Any] | None = None
+    previous_adapter = output / "sil_sft_adapter.pt"
+    if previous_adapter.exists():
+        # A rerun that selects the initializer must not leave an older run's
+        # adapter behind for the evaluation step to pick up.
+        moved = previous_adapter.with_name("sil_sft_adapter.previous.pt")
+        previous_adapter.replace(moved)
+        print(f"[sft] moved an earlier adapter aside to {moved}", flush=True)
     generator = torch.Generator(device="cpu")
     generator.manual_seed(int(args.seed))
     started = time.perf_counter()
@@ -1934,6 +2181,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         ).to(device)
         running = 0.0
         batches = 0
+        epoch_loss_sums = torch.zeros(
+            (2, len(STAGE_NAMES)), dtype=torch.float64, device=device
+        )
         starts = list(range(0, int(order.numel()), int(args.batch_size)))
         if sampler is not None:
             starts = list(range(batches_per_epoch))
@@ -1959,6 +2209,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             batch_prior = tr_prior.index_select(0, index)
             target = tr_action.index_select(0, index)
             weight_mask = tr_mask.index_select(0, index)
+            batch_stage = tr_stage.index_select(0, index)
             if retained_count > 0:
                 # Concatenated rather than alternated, so every optimizer step
                 # sees both distributions. Alternating batches would let the
@@ -1980,9 +2231,18 @@ def main(argv: Sequence[str] | None = None) -> int:
                 weight_mask = torch.cat(
                     [weight_mask, ret_mask.index_select(0, keep)], dim=0
                 )
+                batch_stage = torch.cat(
+                    [batch_stage, ret_stage.index_select(0, keep)], dim=0
+                )
             out = actor(batch_state, batch_prior)[:, :slots]
             weight = weight_mask.unsqueeze(-1).float()
             residual = (out - target) * weight
+            epoch_loss_sums += source_stage_loss_sums(
+                torch,
+                (residual**2).sum(dim=(1, 2)),
+                batch_stage,
+                int(batch_state.shape[0]) - int(index.numel()),
+            )
             denominator = weight.sum().clamp_min(1.0) * float(target.shape[-1])
             if str(args.loss) == "l1":
                 loss = residual.abs().sum() / denominator
@@ -2004,6 +2264,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             actor, torch, state=va_state, prior=va_prior, action=va_action,
             mask=va_mask, batch_size=int(args.batch_size),
         )
+        retention_val_metrics = (
+            None
+            if ret_val_tensors is None
+            else _evaluate(
+                actor, torch, state=ret_val_tensors[0], prior=ret_val_tensors[1],
+                action=ret_val_tensors[2], mask=ret_val_tensors[3],
+                batch_size=int(args.batch_size),
+            )
+        )
+        epoch_score = score_of(val_metrics, retention_val_metrics)
         history.append(
             {
                 "epoch": epoch,
@@ -2011,12 +2281,26 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "train_mse": train_metrics["mse"],
                 "val_mse": val_metrics["mse"],
                 "val_mae": val_metrics["mae"],
+                "retention_val_mse": (
+                    None if retention_val_metrics is None else retention_val_metrics["mse"]
+                ),
+                "selection_score": round(epoch_score, 6),
+                **describe_loss_sums(epoch_loss_sums.cpu().numpy()),
+                **probe_gradients(),
             }
         )
         progress_write(
             f"[sft] epoch {epoch:3d} loss={running / max(batches, 1):.6f} "
             f"train_mse={train_metrics['mse']:.6f} "
-            f"val_mse={val_metrics['mse']:.6f}",
+            f"val_mse={val_metrics['mse']:.6f} "
+            + (
+                ""
+                if retention_val_metrics is None
+                else f"retention_val_mse={retention_val_metrics['mse']:.6f} "
+                f"retention_loss_share={history[-1]['retention_loss_share']:.3f} "
+                f"gradient_cosine={history[-1].get('gradient_cosine')} "
+            )
+            + f"score={epoch_score:.4f} (initializer 1.0)",
             enabled=show_progress,
         )
         if show_progress and hasattr(epoch_bar, "set_postfix"):
@@ -2024,11 +2308,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             # now, and whether it is still falling.
             epoch_bar.set_postfix(
                 val_mse=f"{val_metrics['mse']:.6f}",
-                best=f"{min(best, val_metrics['mse']):.6f}",
+                score=f"{epoch_score:.4f}",
                 refresh=False,
             )
-        if val_metrics["mse"] < best:
-            best = val_metrics["mse"]
+        if epoch_score < best:
+            best = epoch_score
             best_epoch = epoch
             # Same payload shape the RL trainer writes, so the result loads in
             # xy_approach_probe and sil_record without a special case. vla_lora
@@ -2059,6 +2343,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "source_checkpoint": str(args.checkpoint),
                         "epoch": epoch,
                         "val_mse": val_metrics["mse"],
+                        "selection_score": epoch_score,
                         "trained": "residual_only",
                     },
                 ),
@@ -2072,11 +2357,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         # loop, so the two stages are not independent and this one runs second
         # on purpose: it starts from a residual that already reproduces the
         # demonstrations, and only has to keep doing so while the prior moves.
-        if best_policy_state is None:
-            raise SystemExit(
-                "The residual stage never improved on its baseline, so there "
-                "is no residual to hand to the LoRA stage."
-            )
+        # When no residual epoch beat the initializer, the LoRA stage starts
+        # from the untouched residual -- the checkpoint's own policy state,
+        # which is already in this key space.
+        lora_start_state = (
+            best_policy_state
+            if best_policy_state is not None
+            else {key: value for key, value in dict(payload["policy"]).items()}
+        )
         vision_dim = int(
             dict(payload["args"]).get("residual_vision_dim", 0)
             if bool(dict(payload["args"]).get("residual_vision_features", False))
@@ -2117,7 +2405,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # "actor." prefix before loading, so nothing matched at all, and
         # strict=False turned that into silence: the LoRA stage was starting
         # from an UNTRAINED residual and there was no way to tell from the loss.
-        base.load_state_dict(best_policy_state, strict=True)
+        base.load_state_dict(lora_start_state, strict=True)
         # The bounded set of rows this stage will see, and the only pictures
         # that are ever held. Chosen before anything is read.
         budget_rows = select_frame_budget(
@@ -2260,8 +2548,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             # what the first run did, and the file left on disk was that
             # stage's WORST epoch.
             print(
-                f"[sft][lora] left {output / 'sil_sft_adapter.pt'} as the "
-                "residual-only checkpoint; no adapter was applied.",
+                "[sft][lora] no LoRA epoch beat its baseline; "
+                + (
+                    f"left {output / 'sil_sft_adapter.pt'} as the residual-only checkpoint."
+                    if best_policy_state is not None
+                    else "no residual epoch did either, so no adapter was written."
+                ),
                 flush=True,
             )
 
@@ -2314,9 +2606,51 @@ def main(argv: Sequence[str] | None = None) -> int:
             flush=True,
         )
 
+    adapter_written = (output / "sil_sft_adapter.pt").exists()
+    lora_applied = bool(lora_report and lora_report.get("applied"))
+    if best_policy_state is None and not lora_applied:
+        selected = "initializer"
+    elif lora_applied:
+        selected = (
+            "initializer_residual+lora" if best_policy_state is None else "residual+lora"
+        )
+    else:
+        selected = f"residual_epoch_{best_epoch}"
+    retention_by_stage: dict[str, Any] = {}
+    if best_policy_state is not None and ret_val_tensors is not None and retention_val is not None:
+        restored_for_retention = _build_actor(payload, device)
+        restored_for_retention.load_state_dict(
+            {
+                key[len("actor.") :]: value
+                for key, value in best_policy_state.items()
+                if key.startswith("actor.")
+            },
+            strict=True,
+        )
+        for column in ("stage_name", "destination", "target_catalog"):
+            if column in retention_val:
+                retention_by_stage[f"retention_val_by_{column}"] = per_group_metrics(
+                    restored_for_retention,
+                    torch,
+                    dataset=retention_val,
+                    rows=np.arange(int(retention_val["state"].shape[0])),
+                    state=ret_val_tensors[0],
+                    prior=ret_val_tensors[1],
+                    action=ret_val_tensors[2],
+                    mask=ret_val_tensors[3],
+                    batch_size=int(args.batch_size),
+                    column=column,
+                )
     report = {
         "dataset": str(args.dataset),
         "source_checkpoint": str(args.checkpoint),
+        # What the output directory now holds. "initializer" means no epoch of
+        # either stage beat the untouched checkpoint and NO adapter was
+        # written; there is nothing to evaluate and nothing to promote.
+        "selected": selected,
+        "adapter_written": adapter_written,
+        "initializer_selection_score": round(float(initializer_score), 6),
+        "best_selection_score": round(float(best), 6),
         "lora": lora_report,
         "bank_report": bank_report or None,
         "split_by": str(args.split_by),
@@ -2333,6 +2667,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 else str(args.retention_dataset)
             ),
             "requested_fraction": float(args.retention_fraction),
+            "rows_train": 0 if retention is None else int(retention["state"].shape[0]),
+            "rows_val": 0 if retention_val is None else int(retention_val["state"].shape[0]),
+            "baseline_val": baseline_retention_val,
+            "baseline_gradients": baseline_gradients,
+            **retention_by_stage,
             "rows_drawn": int(retention_rows_drawn),
             "realized_fraction": (
                 round(
@@ -2365,17 +2704,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             "val": baseline_val,
         },
         "best_epoch": best_epoch,
-        "best_val_mse": None if best == float("inf") else best,
+        "best_val_mse": (
+            None
+            if best_epoch < 0
+            else next(row["val_mse"] for row in history if row["epoch"] == best_epoch)
+        ),
         "history": history,
         "wall_seconds": round(time.perf_counter() - started, 1),
-        "trained_parameters": "residual actor only; vla_lora copied verbatim",
+        "trained_parameters": (
+            "none; the untouched checkpoint was selected"
+            if selected == "initializer"
+            else "residual actor and action-expert LoRA"
+            if lora_applied
+            else "residual actor only; vla_lora copied verbatim"
+        ),
     }
     (output / "sft_report.json").write_text(
         json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
     )
     print(
-        f"[sft] best val mse {best:.6f} at epoch {best_epoch}; wrote "
-        f"{output / 'sil_sft_adapter.pt'}",
+        f"[sft] selected {selected} (score {best:.4f}, initializer 1.0); "
+        + (
+            f"wrote {output / 'sil_sft_adapter.pt'}"
+            if adapter_written
+            else "no adapter written -- nothing beat the untouched checkpoint"
+        ),
         flush=True,
     )
     print(

@@ -2040,6 +2040,22 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-26 — Retention repair implemented: a compatible bank, measured loss/gradient shares, the initializer as a selection candidate, and a paired promotion gate
+
+- Why: the 2026-09-25 retention arm does not test retention. `phase4_bank` predates the fixed-world-yaw contract and asks the three-stage residual for the opposite yaw correction. The 20% retention fit took put_into val MSE to 18.5× its baseline, and a put_into-only LoRA stage then repaired it. The evaluated adapter was therefore a damaged residual plus a refit, not "strict SFT + compatible retention"
+- Compatible bank (`collect_cdpr_full_put_into.py --retention-rows-per-stage K`, `build_cdpr_full_put_into_dataset.py --mode retention`): harvested in the SAME rollouts as the strict bank, by the same checkpoint, config, prompt and controller. Rows come only from stages the episode completed:
+  - `retention_nonstrict`: the approach of every non-strict episode that grasped, and its pickup if it also lifted. Up to K evenly spaced decisions per stage; frames stored for exactly those decisions
+  - `retention_strict_surplus`: up to K decisions per stage from strict successes the SFT bank did not select. This is the only source of placement rows, because a non-strict placement is a slip or a drop
+  - SFT-bank episodes and scenes are excluded, and the build asserts disjointness. The builder takes exactly N rows per object × destination × stage (default 384 → 9,216 rows) and fails on a short cell rather than spilling. Every row must resolve to its exact frame
+- Loss and gradient accounting (`sil_sft.py`), per epoch:
+  - `retention_loss_share` and the six `{main,retention}_{stage}_loss_share` values; a fifth of the rows is not a fifth of the objective
+  - on one fixed mixed batch: `main_gradient_norm`, `retention_gradient_norm`, `gradient_cosine`, and `retention_gradient_share`, the retention gradient's projection on the total. A negative cosine is the conflict signature `phase4_bank`'s yaw rows would have shown on epoch 0; the unit test with an opposite-offset bank reads < 0 at the initializer
+  - retention gets its own held-out scenes (`retention_val_mse`, per stage/destination/object at the end)
+- Selection fix: `best` started at `inf`, so epoch 0 always won. That is how the 2026-09-23 residual (val 0.000429, against 0.000379 untrained) was saved and evaluated. Now the untouched checkpoint is epoch −1 with score 1.0. The score is `(1−f)·main_val/main_base + f·retention_val/retention_base`, each source against its own untrained error. An epoch must score below 1.0 to be selected. If nothing does, no adapter is written (`selected: initializer`), and the LoRA stage starts from the untouched residual. The hard-coded "residual actor only" string is gone
+- Closed-loop gate (`train_cdpr_strict_success_sft_remote.sh`): after eval, `compare_put_into_evaluations.py` pairs the SFT adapter against the baseline evaluation on the same scenes (`BASELINE_EVAL_DIR` may reuse the existing `step_56072006` evaluation). `promotion.json` says `promote` only for a significant paired strict win (exact McNemar, `PROMOTION_ALPHA` 0.05). If the initializer was selected, eval is skipped and the verdict is `keep_source`
+- The experiment this enables: one harvest from `step_56072006`, then two SFT arms that differ only in `RETENTION_SOURCE` (none vs the compatible bank at 0.2), each gated against the same baseline evaluation
+- Status: **implemented, local tests only** (`tests/test_sil_sft_selection.py`, `tests/test_retention_bank.py`); no GPU run yet
+
 ### 2026-09-26 — ppo_epochs 4 → 1 pilot: stable, 4× fewer optimizer steps, no strict gain; the grasp keeps eroding
 
 - Git commit: `770350d` (remote); tfevents `events.out.tfevents.1790415779.VLAPU.279240.0`
