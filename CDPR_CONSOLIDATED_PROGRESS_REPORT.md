@@ -2040,6 +2040,28 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-26 — ppo_epochs 4 → 1 pilot: stable, 4× fewer optimizer steps, no strict gain; the grasp keeps eroding
+
+- Git commit: `770350d` (remote); tfevents `events.out.tfevents.1790415779.VLAPU.279240.0`
+- Run/config: `RESUME_CHECKPOINT=runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006/smolvla_grpo_adapter.pt MAX_TRAIN_STEPS=58072006 MAX_UPDATES=0 PPO_EPOCHS=1`, three-stage config unchanged otherwise: equal stage mass, bonus 1.0, achieved-negative scale 0.0, exploration unchanged. 23 updates, 56.07M → 58.14M (2.07M steps), 2,048 episodes per update
+- Mechanics confirmed: `optimizer_lr_mean` = 1.0e-4 on every update, the checkpoint's rate as expected. `optimizer_steps` = 589 mean (524–633), against ~2,334 in the 4-epoch run
+- Optimization: `approx_kl_mean` averaged 0.40. It stayed high for the first nine updates (0.47–1.00, i.e. the same as the 4-epoch run's 0.699 average) and only then fell to 0.03–0.34. So the sampled KL is not mainly produced by epoch count; most of it comes from the drift across ~590 minibatch steps inside one epoch. `clip_fraction_mean` 0.21 → 0.16; entropy 0.91 → 1.00 while `log_std_mean` stayed at −1.22 → −1.21
+- In-run validation, 1,024 episodes every ~0.25M steps (the first point is the resumed checkpoint):
+
+| validation | 56.07M (start) | range over 9 later points | 58.14M (end) |
+|---|---:|---:|---:|
+| strict | 35.7% | 35.3–37.9% (mean 36.5%) | 36.7% |
+| strict plate / bowl | 36.7 / 34.8% | plate 36.3–41.4, bowl 30.7–37.5% | 39.3 / 34.2% |
+| native | 44.1% | 42.4–46.2% | 43.7% |
+| native plate / bowl | 47.7 / 40.6% | | 49.6 / 37.7% |
+| physical grasp | 74.7% | falls almost monotonically | **68.6%** (plate 69 → 64, bowl 80 → 73) |
+| pickup / approach | 64.5 / 75.6% | | 61.1 / 69.7% |
+| carry slip / wrong place | 27.3 / 24.3% | | 22.9 / 19.1% |
+
+- Reading: no strict gain in 2M steps, and no collapse. The same trade as the 52.8M→56.8M segment and the 4-epoch continuation recurs: fewer grasps (−6 pp), better carrying and placing, strict flat, plate up and bowl down. The negative-bonus protection (scale 0.0) did not stop the grasp erosion. What less optimization per batch buys is stability at a quarter of the optimizer cost, not a better policy. The run was too short to separate a slower-but-better trajectory from a plateau
+- Divergence in training, first measurement (the guard's first run): 89.7 backend events per update (65–111), matching the ~86 before the fix. Of those, **36.2 were live episodes (1.77% of episodes)** and 53.5 idle worlds. The live ones had reached approach in 19.6 cases and pickup in 5.6 per update. They removed 8,034 records per update, **1.11% of valid records**. That is the contamination every run before `e3a2740` trained on. Validation: 6–16 live of 1,024 (0.6–1.6%) and 4–22 idle
+- Status: **diagnostic — not promoted. `step_56072006` remains the reference.** `PPO_EPOCHS=1` is a safe default for cheaper updates but not a lever on strict. The standing problem is grasp erosion under the chain-shaped reward, which step 4 (oversampling failed lifts) targets directly
+
 ### 2026-09-26 — Matched standalone evaluation: `step_56072006` 107/256 strict against `step_52791642` 85/256 on the same scenes (paired p = 0.012); promoted
 
 - Git commit: `e3a2740` on the remote (divergence guard); both evaluations ran on that code, on GPU0/GPU1 in parallel
