@@ -116,16 +116,34 @@ def torch_group_advantages(
     normalize: bool = True,
     eps: float = 1.0e-6,
     clip_abs: float | None = None,
+    valid: Any | None = None,
 ) -> Any:
+    """Group-relative advantages.
+
+    ``valid`` ([groups, candidates] bool) drops candidates from their group's
+    mean and std and gives them a zero advantage. A candidate whose episode was
+    cut short by a simulator reset is not a sample of the policy's return, so
+    it must not set the baseline its siblings are compared against.
+    """
+
     import torch
 
     if not isinstance(outcomes, torch.Tensor) or outcomes.ndim != 2:
         raise ValueError("Torch GRPO outcomes must have shape [groups, candidates].")
-    centered = outcomes - outcomes.mean(dim=1, keepdim=True)
-    if normalize:
-        centered = centered / outcomes.std(
-            dim=1, keepdim=True, unbiased=False
-        ).clamp_min(float(eps))
+    if valid is None:
+        centered = outcomes - outcomes.mean(dim=1, keepdim=True)
+        if normalize:
+            centered = centered / outcomes.std(
+                dim=1, keepdim=True, unbiased=False
+            ).clamp_min(float(eps))
+    else:
+        weight = valid.to(dtype=outcomes.dtype).reshape(outcomes.shape)
+        count = weight.sum(dim=1, keepdim=True).clamp_min(1.0)
+        mean = (outcomes * weight).sum(dim=1, keepdim=True) / count
+        centered = (outcomes - mean) * weight
+        if normalize:
+            std = ((centered * centered).sum(dim=1, keepdim=True) / count).sqrt()
+            centered = centered / std.clamp_min(float(eps))
     if clip_abs is not None and float(clip_abs) > 0:
         centered = centered.clamp(-float(clip_abs), float(clip_abs))
     return centered

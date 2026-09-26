@@ -348,6 +348,7 @@ def _write_round(
         "released": np.asarray(result["released"], dtype=bool),
         "carry_slip": np.asarray(result["carry_slip"], dtype=bool),
         "wrong_place": np.asarray(result["wrong_place"], dtype=bool),
+        "non_finite": np.asarray(result["non_finite"], dtype=bool),
     }
     attempts_path = output / f"attempts_{stem}.npz"
     np.savez_compressed(attempts_path, schema=np.asarray(SCHEMA), **common)
@@ -397,6 +398,8 @@ def _write_round(
         "attempts": len(scenes),
         "strict_successes": int(selected.size),
         "strict_rate": round(float(strict.mean()), 5),
+        # Ended by a divergence reset; never strict, never harvested.
+        "non_finite_episodes": int(common["non_finite"].sum()),
         "attempts_by_cell": _cell_counts(destination, target_catalog),
         "strict_by_cell": _cell_counts(
             destination, target_catalog, mask=strict
@@ -564,6 +567,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"[collect] shard {args.shard} round {local_round + 1}/"
             f"{args.rounds}: strict {report['strict_successes']}/"
             f"{report['attempts']} ({report['strict_rate']:.3f}), "
+            f"non-finite {report['non_finite_episodes']}, "
             f"by cell {report['strict_by_cell']}",
             flush=True,
         )
@@ -592,6 +596,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "attempts": attempts,
         "strict_successes": successes,
         "strict_rate": round(successes / max(attempts, 1), 5),
+        "non_finite_episodes": sum(
+            int(row["non_finite_episodes"]) for row in reports
+        ),
         "attempts_by_cell": _sum_tables(reports, "attempts_by_cell"),
         "strict_by_cell": _sum_tables(reports, "strict_by_cell"),
         "rounds_detail": reports,

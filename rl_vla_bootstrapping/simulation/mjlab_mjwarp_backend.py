@@ -1231,6 +1231,18 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self._nonfinite_world_seen.zero_()
         return count, mask
 
+    def nonfinite_world_mask(self) -> Any:
+        """Worlds seen non-finite since the last pop, WITHOUT clearing.
+
+        A device tensor, so a rollout can read it after every step without a
+        host sync. The containment reset happens inside ``step``, so the
+        observation that step returns for a flagged world is already the
+        calibrated base state, not the episode's: a consumer has to stop that
+        episode there rather than keep scoring and recording it.
+        """
+
+        return self._nonfinite_world_seen.clone()
+
     def pop_nonfinite_world_events(self) -> int:
         """Return and clear the diverged-world count since the last call.
 

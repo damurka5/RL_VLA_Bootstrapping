@@ -272,6 +272,13 @@ class MujocoReferenceBatchedBackend(CDPRSimulatorBackend):
         self._nonfinite_world_seen[:] = False
         return count, mask
 
+    def nonfinite_world_mask(self) -> Any:
+        """Worlds seen non-finite since the last pop, without clearing."""
+
+        return self.torch.as_tensor(
+            self._nonfinite_world_seen.copy(), dtype=self.torch.bool
+        )
+
     def pop_nonfinite_world_events(self) -> int:
         return self.pop_nonfinite_world_report()[0]
 

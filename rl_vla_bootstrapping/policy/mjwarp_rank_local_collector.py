@@ -82,6 +82,7 @@ def three_stage_group_credit(
     dynamic_min_pass_rate: float,
     dynamic_max_pass_rate: float,
     min_group_reward_std: float,
+    valid: Any | None = None,
 ) -> tuple[Any, Any]:
     """Compute independent GRPO advantages and masks for three milestones.
 
@@ -89,6 +90,10 @@ def three_stage_group_credit(
     binary return for each ordered milestone.  Keeping the stage dimension here
     is the essential difference from a cumulative 0/1/2/3 reward: a placement
     failure cannot turn a successful pickup action into a negative example.
+
+    ``valid`` ([group, candidate]) removes candidates from every statistic --
+    advantage baseline, pass rate and spread -- and a group needs two valid
+    candidates to carry any contrast at all.
     """
 
     import torch
@@ -104,12 +109,22 @@ def three_stage_group_credit(
                 milestone_returns[stage],
                 normalize=normalize,
                 clip_abs=clip_abs,
+                valid=valid,
             )
             for stage in range(THREE_STAGE_COUNT)
         ],
         dim=0,
     )
-    pass_rate = milestone_returns.to(dtype=torch.float32).mean(dim=-1)
+    returns = milestone_returns.to(dtype=torch.float32)
+    if valid is None:
+        pass_rate = returns.mean(dim=-1)
+        spread = returns.std(dim=-1, unbiased=False)
+    else:
+        weight = valid.to(dtype=torch.float32).reshape(returns.shape[1:])
+        count = weight.sum(dim=-1).clamp_min(1.0)
+        pass_rate = (returns * weight).sum(dim=-1) / count
+        centered = (returns - pass_rate.unsqueeze(-1)) * weight
+        spread = ((centered * centered).sum(dim=-1) / count).sqrt()
     if dynamic_sampling:
         usable = (
             (pass_rate > float(dynamic_min_pass_rate))
@@ -118,10 +133,67 @@ def three_stage_group_credit(
     else:
         usable = torch.ones_like(pass_rate, dtype=torch.bool)
     if float(min_group_reward_std) > 0.0:
-        usable &= milestone_returns.std(dim=-1, unbiased=False) >= float(
-            min_group_reward_std
-        )
+        usable &= spread >= float(min_group_reward_std)
+    if valid is not None:
+        usable &= (valid.reshape(returns.shape[1:]).sum(dim=-1) >= 2).unsqueeze(0)
     return advantages, usable
+
+
+class NonFiniteEpisodeGuard:
+    """End an episode at the step its world was reset for going non-finite.
+
+    The backend contains a diverged world by restoring the calibrated base
+    state inside ``step`` -- robot home, objects at their defaults -- and the
+    rollout used to keep stepping, scoring and recording that world as if it
+    were still the same episode. Its later records then describe a different
+    scene under the old episode's credit, and milestones could latch on the
+    reset state. This stops the episode at the diverging step: nothing from
+    that step on is scored, and the caller excludes the whole episode from
+    learning while its pre-divergence milestones still count in the reported
+    rates (a diverged episode is a failure, not a missing row).
+
+    Every world is physics-stepped, finished or not, so the backend's events
+    include worlds whose episode had already ended. Those are ``idle`` and
+    harmless: their records were complete and the reset never reached them.
+    """
+
+    def __init__(self, backend: Any, torch: Any, worlds: int, device: Any) -> None:
+        self._torch = torch
+        self._device = device
+        self._backend = backend
+        self._peek = getattr(backend, "nonfinite_world_mask", None)
+        # Anything still pending belongs to an earlier rollout (validation did
+        # not pop before this fix); clear it so it cannot be charged here.
+        pop = getattr(backend, "pop_nonfinite_world_events", None)
+        self.stale_events = 0 if pop is None else int(pop())
+        self.seen = torch.zeros((int(worlds),), dtype=torch.bool, device=device)
+        self.live = torch.zeros_like(self.seen)
+        self.idle = torch.zeros_like(self.seen)
+
+    @property
+    def enabled(self) -> bool:
+        return self._peek is not None
+
+    def after_step(self, step_active: Any) -> Any:
+        """Record this step's divergences; return ``step_active`` without them."""
+
+        if self._peek is None:
+            return step_active
+        seen = self._torch.as_tensor(
+            self._peek(), dtype=self._torch.bool, device=self._device
+        ).reshape(-1)
+        newly = seen & ~self.seen
+        self.seen |= newly
+        live = newly & step_active
+        self.live |= live
+        self.idle |= newly & ~step_active
+        return step_active & ~live
+
+    def finish(self) -> int:
+        """Pop the backend's event count (plus any stale events) and clear it."""
+
+        pop = getattr(self._backend, "pop_nonfinite_world_events", None)
+        return self.stale_events + (0 if pop is None else int(pop()))
 
 
 def stage_balanced_record_weights(
@@ -3697,6 +3769,7 @@ class RankLocalMJWarpGRPOCollector:
         active = torch.ones(
             (worlds,), dtype=torch.bool, device=self.device
         )
+        nonfinite = NonFiniteEpisodeGuard(self.backend, torch, worlds, self.device)
         candidate_success = torch.zeros_like(active)
         candidate_rewards = torch.zeros(
             (worlds,), dtype=torch.float32, device=self.device
@@ -4093,6 +4166,11 @@ class RankLocalMJWarpGRPOCollector:
                 low_dim = self.backend.step(
                     actions[:, action_index], step_active
                 )
+                # A world reset for divergence ends here: this step's
+                # observation is already the base state, so it is neither
+                # scored nor stepped again. Its records are dropped below.
+                step_active = nonfinite.after_step(step_active)
+                active.logical_and_(~nonfinite.live)
                 low_dim, caught_target, grasp_diagnostics = (
                     self._update_physical_grasp(
                         reset,
@@ -4286,12 +4364,17 @@ class RankLocalMJWarpGRPOCollector:
                 timings["reward_time_s"] += time.perf_counter() - started
             active.logical_and_((decision + 1) < reset.horizons)
 
-        # Worlds the backend had to reset this round because their physics went
-        # non-finite. The backend already contained them per step (a round-end
-        # ee_position check would now always be zero), so this is the true
-        # divergence rate: non-zero but small is tolerable, a climbing trend is
-        # a real physics problem.
-        non_finite_worlds = float(self.backend.pop_nonfinite_world_events())
+        # Backend divergence EVENTS this round, every world counted, finished or
+        # not -- the continuity number. What reaches learning is
+        # `nonfinite.live`: episodes that diverged while running, which are
+        # excluded from the group statistics and the loss below.
+        non_finite_worlds = float(nonfinite.finish())
+        candidate_valid = ~nonfinite.live
+        valid_by_group = (
+            candidate_valid.reshape(self.layout.groups_per_rank, group_size)
+            if nonfinite.enabled
+            else None
+        )
 
         success_by_group = candidate_success.reshape(
             self.layout.groups_per_rank, group_size
@@ -4326,6 +4409,7 @@ class RankLocalMJWarpGRPOCollector:
             rewards_by_group,
             normalize=self.normalize_advantage,
             clip_abs=self.advantage_clip_abs,
+            valid=valid_by_group,
         )
         world_advantage = advantages_by_group.reshape(-1)
         pass_rate = success_by_group.to(dtype=torch.float32).mean(dim=1)
@@ -4397,6 +4481,7 @@ class RankLocalMJWarpGRPOCollector:
                 dynamic_min_pass_rate=self.dynamic_min_pass_rate,
                 dynamic_max_pass_rate=self.dynamic_max_pass_rate,
                 min_group_reward_std=self.min_group_reward_std,
+                valid=valid_by_group,
             )
             record_stage = records["credit_stage"].to(dtype=torch.int64)
             stage_advantage_world = stage_advantage.reshape(
@@ -4462,6 +4547,7 @@ class RankLocalMJWarpGRPOCollector:
                 pre_returns_by_group,
                 normalize=self.normalize_advantage,
                 clip_abs=self.advantage_clip_abs,
+                valid=valid_by_group,
             ).reshape(-1)
             if self.min_group_reward_std > 0.0:
                 degenerate_pre = (
@@ -4492,7 +4578,10 @@ class RankLocalMJWarpGRPOCollector:
                 usable_terminal_world.index_select(0, record_world),
                 usable_pre_world.index_select(0, record_world),
             )
-        loss_mask = record_valid & record_usable
+        record_diverged = record_valid & ~candidate_valid.index_select(
+            0, record_world
+        )
+        loss_mask = record_valid & record_usable & ~record_diverged
         if self.three_stage_sparse_credit:
             records["loss_weight"] = stage_balanced_record_weights(
                 records["credit_stage"], loss_mask
@@ -4525,6 +4614,17 @@ class RankLocalMJWarpGRPOCollector:
             # Rank-local provenance; the optimizer consumes the existing loss
             # fields, while audits can verify capture actually covered live rows.
             vla_capture["world_index"] = world_idx
+            keep = candidate_valid.index_select(0, world_idx)
+            if not bool(keep.all().item()):
+                keep_list = keep.tolist()
+                vla_capture = {
+                    key: (
+                        [row for row, kept in zip(value, keep_list) if kept]
+                        if isinstance(value, list)
+                        else value[keep]
+                    )
+                    for key, value in vla_capture.items()
+                }
             vla_records = vla_capture
         three_stage_metrics: dict[str, float] = {}
         if self.three_stage_sparse_credit:
@@ -4710,6 +4810,22 @@ class RankLocalMJWarpGRPOCollector:
             "informative_groups": float(informative_group.sum().item()),
             "group_pass_rate_mean": float(pass_rate.mean().item()),
             "non_finite_ee_worlds": non_finite_worlds,
+            # Distinct episodes cut short by a divergence reset and excluded
+            # from learning (they still count as failures in every rate), and
+            # how far each had got -- a divergence that only hits carries is a
+            # different problem from one at the approach.
+            "non_finite_live_episodes": float(nonfinite.live.sum().item()),
+            "non_finite_live_episode_rate": float(
+                nonfinite.live.to(dtype=torch.float32).mean().item()
+            ),
+            "non_finite_after_approach_episodes": float(
+                (nonfinite.live & three_stage.approached).sum().item()
+            ),
+            "non_finite_after_pickup_episodes": float(
+                (nonfinite.live & three_stage.picked_up).sum().item()
+            ),
+            "non_finite_idle_worlds_count": float(nonfinite.idle.sum().item()),
+            "non_finite_excluded_records": float(record_diverged.sum().item()),
             "drift_terminations": float(drift_terminated_total.item()),
             "curriculum/horizon_decisions": float(max_decisions),
             "candidate_reward_mean": float(rewards_by_group.mean().item()),
@@ -4975,6 +5091,7 @@ class RankLocalMJWarpGRPOCollector:
         active = torch.ones(
             (worlds,), dtype=torch.bool, device=self.device
         )
+        nonfinite = NonFiniteEpisodeGuard(self.backend, torch, worlds, self.device)
         candidate_success = torch.zeros_like(active)
         candidate_rewards = torch.zeros(
             (worlds,), dtype=torch.float32, device=self.device
@@ -5107,6 +5224,10 @@ class RankLocalMJWarpGRPOCollector:
                     low_dim = self.backend.step(
                         actions[:, action_index], step_active
                     )
+                    # A divergence reset ends the episode as a failure; the
+                    # base state it returns is not this scene.
+                    step_active = nonfinite.after_step(step_active)
+                    active.logical_and_(~nonfinite.live)
                     low_dim, caught_target, grasp_diagnostics = (
                         self._update_physical_grasp(
                             reset,
@@ -5205,6 +5326,7 @@ class RankLocalMJWarpGRPOCollector:
 
         self._sync_for_profile()
         validation_time = time.perf_counter() - validation_started
+        non_finite_events = float(nonfinite.finish())
         return ValidationRound(
             candidate_rewards=candidate_rewards.reshape(
                 self.layout.groups_per_rank, group_size
@@ -5235,6 +5357,15 @@ class RankLocalMJWarpGRPOCollector:
                 **(
                     {
                         **three_stage_count_metrics(three_stage, reset.task_state.instruction_ids, prefix="validation/three_stage_"),
+                        # Episodes ended by a divergence reset. They are in the
+                        # denominators above as failures; this says how many.
+                        "validation/three_stage_non_finite_count": float(
+                            nonfinite.live.sum().item()
+                        ),
+                        "validation/three_stage_non_finite_idle_worlds_count": float(
+                            nonfinite.idle.sum().item()
+                        ),
+                        "validation/three_stage_non_finite_events_count": non_finite_events,
                         "validation/three_stage_approach_rate": float(
                             three_stage.approached.float().mean().item()
                         ),

@@ -66,6 +66,7 @@ from typing import Any, Mapping, Sequence  # noqa: E402
 
 from rl_vla_bootstrapping.simulation.cdpr_full_task_outcome import FullTaskOutcome  # noqa: E402
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (  # noqa: E402
+    NonFiniteEpisodeGuard,
     ThreeStageMilestones,
     advance_three_stage_milestones,
 )
@@ -157,6 +158,9 @@ def run_unassisted(
     )
 
     active = torch.ones((worlds,), dtype=torch.bool, device=torch_device)
+    # A world the backend resets for going non-finite ends there as a failure;
+    # its post-reset base state is not this scene and must not be scored.
+    nonfinite = NonFiniteEpisodeGuard(world.backend, torch, worlds, torch_device)
     outcome = FullTaskOutcome.zeros(torch, worlds, torch_device)
     # The training milestone machine observes the SAME trajectories. It never
     # gates `strict`; it records whether training credit would have been paid.
@@ -273,6 +277,8 @@ def run_unassisted(
                     action[:, 3] = servo.yaw_command(low_dim.ee_yaw)
                 previous_opening = low_dim.gripper_opening.clone()
                 low_dim = world.backend.step(action, step_active)
+                step_active = nonfinite.after_step(step_active)
+                active &= ~nonfinite.live
                 release_in_progress = release_opening_over_goal(
                     command=action[:, 4],
                     opening=low_dim.gripper_opening,
@@ -389,10 +395,11 @@ def run_unassisted(
                 # wrong place, or a timeout that cannot fire at this max_steps.
                 active &= ~place_result.terminated
 
+    nonfinite.finish()
     geometry = (
         place_result.diagnostics["container_xy_error"]
         <= place_result.diagnostics["container_xy_radius"]
-    )
+    ) & ~nonfinite.live
     strict = outcome.strict
     host = lambda tensor: tensor.detach().cpu().numpy()  # noqa: E731
     if video is not None:
@@ -423,6 +430,10 @@ def run_unassisted(
         "completion_steps": host(completion_steps),
         "min_grasp_distance": host(min_target_distance),
         "peak_lift": host(peak_lift),
+        # Ended by a divergence reset while running (a failure in every rate
+        # above), and diverged only after the episode had already ended.
+        "non_finite": host(nonfinite.live),
+        "non_finite_idle": host(nonfinite.idle),
         "milestone_approach": host(milestones.approached),
         "milestone_pickup": host(milestones.picked_up),
         "milestone_placement": host(milestones.placed),
@@ -434,6 +445,24 @@ def run_unassisted(
         "target_catalog": np.asarray(
             [scene.target_catalog for scene in scenes]
         ),
+    }
+
+
+def _non_finite_summary(pooled: Mapping[str, np.ndarray]) -> dict[str, Any]:
+    """Episodes ended by a divergence reset, and worlds that diverged idle."""
+
+    return {
+        "episodes": int(pooled["non_finite"].sum()),
+        "rate": round(float(pooled["non_finite"].mean()), 4),
+        "after_grasp": int((pooled["non_finite"] & pooled["grasped"]).sum()),
+        "after_lift": int((pooled["non_finite"] & pooled["lifted"]).sum()),
+        **{
+            f"episodes_{destination}": int(
+                pooled["non_finite"][pooled["destination"] == destination].sum()
+            )
+            for destination in np.unique(pooled["destination"])
+        },
+        "idle_worlds": int(pooled["non_finite_idle"].sum()),
     }
 
 
@@ -484,6 +513,12 @@ def summarize(rollouts: Sequence[Mapping[str, np.ndarray]]) -> dict[str, Any]:
             else None
         )
     report["conditional_ladder"] = ladder
+    # Reported beside, never inside, the success rates: those already count
+    # these episodes as failures. Absent from rollouts saved before it existed.
+    if "non_finite" in pooled:
+        report["non_finite"] = _non_finite_summary(pooled)
+    else:
+        report["non_finite"] = None
     # Every milestone condition beside the independent strict outcome, so the
     # training observer can be audited against the model-selection verdict.
     report["milestones"] = {}
@@ -684,7 +719,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(
             f"[eval] round {round_index + 1}/{args.rounds}: strict "
             f"{int(row['strict'].sum())}/{row['strict'].size}, native "
-            f"{int(row['native'].sum())}/{row['native'].size}"
+            f"{int(row['native'].sum())}/{row['native'].size}, non-finite "
+            f"{int(row['non_finite'].sum())} (idle {int(row['non_finite_idle'].sum())})"
             + ("" if video is None else f", videos kept {len(video.kept)}"),
             flush=True,
         )
@@ -741,6 +777,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[eval]   {key}: {summary[key]}", flush=True)
     print(f"[eval] phases {summary['phases']}", flush=True)
     print(f"[eval] ladder {summary['conditional_ladder']}", flush=True)
+    print(f"[eval] non-finite {summary['non_finite']}", flush=True)
     print(f"[eval] milestones {summary['milestones']}", flush=True)
     print(f"[eval] wrote {output / 'evaluation.json'}", flush=True)
     return 0

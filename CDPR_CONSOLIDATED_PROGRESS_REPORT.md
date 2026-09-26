@@ -2040,6 +2040,15 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-26 — Divergence-reset episodes now end and leave learning; runs before this commit may have trained on reset-crossing trajectories
+
+- Git commit: the commit that adds this entry (`NonFiniteEpisodeGuard`)
+- Finding: every update of the 2026-09-25 run logs 45–158 (mean 86) `non_finite_ee_worlds`. This is a backend EVENT count over all worlds. `_contain_nonfinite_worlds` restores a diverged world to the calibrated base state inside `backend.step`. The collector popped only the count, discarded the per-world mask, and kept stepping, scoring and recording that world. So after a reset, records carried the old episode's credit on a different scene, milestones could latch on the base state, and the candidate's return still set its group's GRPO baseline. The in-run validation (`validate_round`) and the standalone evaluator/harvester (`run_unassisted`) had the same gap; the evaluator never read the mask at all
+- Repair: a world that diverges while its episode is running ends at that step. Its base-state observation is not scored. All of its records leave the loss. It is removed from the group mean, std, pass rate and spread (a group needs two valid candidates). Its decision-0 LoRA capture rows are dropped. Its pre-divergence milestones still count, so every reported rate treats it as a failure. Divergence in a world whose episode had already ended is reported as idle and changes nothing. Validation now pops the backend state too, so its events no longer leak into the next training round's count
+- New telemetry. Training: `non_finite_live_episodes`, `non_finite_live_episode_rate`, `non_finite_after_approach_episodes`, `non_finite_after_pickup_episodes`, `non_finite_idle_worlds_count`, `non_finite_excluded_records`; `non_finite_ee_worlds` keeps its old meaning. Validation: `validation/three_stage_non_finite_{count,rate}`, `..._idle_worlds_count`, `..._events_count`. Standalone evaluation: `results.non_finite` (episodes, rate, per destination, after grasp/lift, idle worlds) and a per-round line. Harvest: `non_finite_episodes` per round and in total
+- Not yet measured: how many of the ~86 events per update were live episodes rather than idle worlds, so how much training data the bug actually contaminated is unknown. The first update logged after this commit answers it
+- Status: **fix, local tests only** (new `tests/test_nonfinite_episode_exclusion.py`; full suite unchanged apart from the three known failures)
+
 ### 2026-09-25 — Retention-mix strict-success SFT ties `step_52791642`; the retention bank broke the residual and LoRA repaired it
 
 - Git commit: `56a6e03` (launcher header documents the retention invocation)
