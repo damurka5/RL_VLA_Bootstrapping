@@ -2040,6 +2040,15 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-27 — Harvest from `step_56072006`: strict bank and compatible retention bank built
+
+- Git commit: `ae723fb`. Run dir `runs/strict_success_dataset_step_56072006_20260926_223044`
+- Collection: 2 GPUs × 64 rounds × 32 worlds = 4,096 distinct `collection` scenes, `RETENTION_ROWS_PER_STAGE=8`. **1,539 strict successes (37.6%)**; shard 1 alone was 781/2,048. There were no live non-finite episodes on the round lines shown
+- Strict successes available per cell: apple 226 plate / 212 bowl, orange 221 / 165, potato 167 / 104, tomato 237 / 207. Potato→bowl is again the weakest cell
+- Strict SFT bank: 64 per cell → 512 episodes / 512 scenes / 28,945 rows. All frames resolve
+- Retention bank: the first build at 384 rows per object × destination × stage failed as designed. Potato→bowl placement had only 300 rows: its 40 surplus strict episodes at ≤ 8 rows each. It was rebuilt at **300 per cell = 7,200 rows**, from 2,271 episodes on 2,271 scenes, disjoint from the SFT bank. By source: 2,714 `retention_nonstrict` rows (approach/pickup of non-strict grasps) and 4,486 `retention_strict_surplus` rows (every placement row plus the remaining approach/pickup)
+- Next: two SFT arms from `step_56072006`, no retention vs this bank at 0.2, both gated against the 2026-09-26 `step_56072006` evaluation
+
 ### 2026-09-26 — Retention repair implemented: a compatible bank, measured loss/gradient shares, the initializer as a selection candidate, and a paired promotion gate
 
 - Why: the 2026-09-25 retention arm does not test retention. `phase4_bank` predates the fixed-world-yaw contract and asks the three-stage residual for the opposite yaw correction. The 20% retention fit took put_into val MSE to 18.5× its baseline, and a put_into-only LoRA stage then repaired it. The evaluated adapter was therefore a damaged residual plus a refit, not "strict SFT + compatible retention"
