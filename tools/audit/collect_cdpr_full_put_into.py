@@ -166,6 +166,64 @@ def plan_batches(
     ]
 
 
+def plan_repeated_batches(
+    scenes: Sequence[Any],
+    *,
+    worlds: int,
+    repeats: int,
+    shard: int,
+    num_shards: int,
+    max_rounds: int = 0,
+) -> tuple[list[list[Any]], list[list[int]]]:
+    """Every scene ``repeats`` times, repeat-major, for stochastic discovery.
+
+    The strict harvest attempts each scene once and the builder insists on
+    distinct scenes. Discovery asks the opposite question -- given a scene the
+    deterministic policy FAILED, how often does the stochastic behaviour policy
+    solve it -- so each scene is attempted several times, and the attempt
+    number travels with the episode. Repeat-major order puts one attempt of
+    every scene ahead of any second attempt, so a capped run still covers every
+    scene. A remainder that does not fill a batch is dropped and reported.
+    """
+
+    if int(worlds) < 2 or int(worlds) % 2:
+        raise ValueError("--worlds must be an even integer >= 2.")
+    if int(repeats) < 1:
+        raise ValueError("--repeats must be positive.")
+    if int(num_shards) < 1 or not 0 <= int(shard) < int(num_shards):
+        raise ValueError(f"Invalid shard {shard}/{num_shards}.")
+    uids = [str(scene.scene_uid) for scene in scenes]
+    if len(set(uids)) != len(uids):
+        raise ValueError("The scene list repeats a scene_uid; pass --repeats instead.")
+    expanded = [(scene, repeat) for repeat in range(int(repeats)) for scene in scenes]
+    mine = expanded[int(shard) :: int(num_shards)]
+    rounds = len(mine) // int(worlds)
+    if int(max_rounds) > 0:
+        rounds = min(rounds, int(max_rounds))
+    if rounds < 1:
+        raise ValueError(
+            f"Shard {shard} holds {len(mine)} attempts, fewer than one batch of {worlds}."
+        )
+    chosen = mine[: rounds * int(worlds)]
+    batches = [
+        [scene for scene, _ in chosen[start : start + int(worlds)]]
+        for start in range(0, len(chosen), int(worlds))
+    ]
+    repeat_index = [
+        [repeat for _, repeat in chosen[start : start + int(worlds)]]
+        for start in range(0, len(chosen), int(worlds))
+    ]
+    return batches, repeat_index
+
+
+def read_scene_uids(path: Path) -> list[str]:
+    """A JSON list, or an object whose ``scene_uids`` is one."""
+
+    payload = json.loads(Path(path).read_text(encoding="utf-8"))
+    uids = payload["scene_uids"] if isinstance(payload, Mapping) else payload
+    return [str(uid) for uid in uids]
+
+
 class FullTaskTrace:
     """Preallocated host capture for one unassisted rollout round."""
 
@@ -361,6 +419,8 @@ def _write_round(
     round_index: int,
     record_frames: bool,
     retention_rows_per_stage: int = 0,
+    repeat_index: Sequence[int] | None = None,
+    rollout_mode: str = "deterministic",
 ) -> dict[str, Any]:
     strict = np.asarray(result["strict"], dtype=bool)
     selected = np.flatnonzero(strict)
@@ -403,6 +463,13 @@ def _write_round(
         "carry_slip": np.asarray(result["carry_slip"], dtype=bool),
         "wrong_place": np.asarray(result["wrong_place"], dtype=bool),
         "non_finite": np.asarray(result["non_finite"], dtype=bool),
+        # Which attempt of this scene, and under which behaviour: a discovery
+        # run attempts one scene several times with the SAMPLED policy.
+        "repeat_index": np.asarray(
+            [0] * len(scenes) if repeat_index is None else list(repeat_index),
+            dtype=np.int64,
+        ),
+        "rollout_mode": np.asarray([str(rollout_mode)] * len(scenes), dtype="U16"),
     }
     attempts_path = output / f"attempts_{stem}.npz"
     np.savez_compressed(attempts_path, schema=np.asarray(SCHEMA), **common)
@@ -572,6 +639,32 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Action-only audit arm; the resulting bank cannot train vision.",
     )
     parser.add_argument(
+        "--scene-uids",
+        type=Path,
+        default=None,
+        help=(
+            "Attempt only these scenes of --split (a JSON list, or an object "
+            "with a scene_uids list), e.g. discovery_scenes.py select output."
+        ),
+    )
+    parser.add_argument(
+        "--repeats",
+        type=int,
+        default=1,
+        help="Attempts per scene; > 1 or --scene-uids plans repeat-major batches.",
+    )
+    parser.add_argument(
+        "--stochastic-seed",
+        type=int,
+        default=None,
+        help=(
+            "Roll out the SAMPLED residual (the GRPO behaviour policy) instead "
+            "of its deterministic mean. Deterministic rollouts reproduce what "
+            "the policy already does; only sampled ones can discover a success "
+            "on a scene the mean fails."
+        ),
+    )
+    parser.add_argument(
         "--retention-rows-per-stage",
         type=int,
         default=0,
@@ -600,17 +693,39 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     scenes, manifest = read_manifest(scene_manifest)
     selected = select_split(scenes, str(args.split))
+    repeat_indices: list[list[int]] | None = None
     try:
-        batches = plan_batches(
-            selected,
-            worlds=int(args.worlds),
-            rounds=int(args.rounds),
-            shard=int(args.shard),
-            num_shards=int(args.num_shards),
-            scene_offset=int(args.scene_offset),
-        )
+        if args.scene_uids is not None or int(args.repeats) > 1:
+            if args.scene_uids is not None:
+                wanted = read_scene_uids(args.scene_uids.expanduser().resolve())
+                by_uid = {str(scene.scene_uid): scene for scene in selected}
+                missing = [uid for uid in wanted if uid not in by_uid]
+                if missing:
+                    parser.error(
+                        f"{len(missing)} listed scenes are not in split "
+                        f"{args.split!r}, e.g. {missing[:3]}."
+                    )
+                selected = [by_uid[uid] for uid in wanted]
+            batches, repeat_indices = plan_repeated_batches(
+                selected,
+                worlds=int(args.worlds),
+                repeats=int(args.repeats),
+                shard=int(args.shard),
+                num_shards=int(args.num_shards),
+                max_rounds=int(args.rounds),
+            )
+        else:
+            batches = plan_batches(
+                selected,
+                worlds=int(args.worlds),
+                rounds=int(args.rounds),
+                shard=int(args.shard),
+                num_shards=int(args.num_shards),
+                scene_offset=int(args.scene_offset),
+            )
     except ValueError as exc:
         parser.error(str(exc))
+    rollout_mode = "deterministic" if args.stochastic_seed is None else "stochastic"
 
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
@@ -677,6 +792,13 @@ def main(argv: Sequence[str] | None = None) -> int:
             record_frames=record_frames,
         )
         round_started = time.perf_counter()
+        stochastic_generator = None
+        if args.stochastic_seed is not None:
+            stochastic_generator = torch.Generator(device=world.device).manual_seed(
+                int(args.stochastic_seed)
+                + global_round * 1_000_003
+                + int(args.shard) * 10_000_019
+            )
         result = run_unassisted(
             world=world,
             resetter=resetter,
@@ -684,7 +806,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             decisions=int(args.decisions),
             settle_decisions=0,
             assisted_yaw=None,
-            stochastic_generator=None,
+            stochastic_generator=stochastic_generator,
             vision_dim=vision_dim,
             video=None,
             round_index=global_round,
@@ -706,12 +828,14 @@ def main(argv: Sequence[str] | None = None) -> int:
             round_index=global_round,
             record_frames=record_frames,
             retention_rows_per_stage=int(args.retention_rows_per_stage),
+            repeat_index=None if repeat_indices is None else repeat_indices[local_round],
+            rollout_mode=rollout_mode,
         )
         report["wall_seconds"] = round(time.perf_counter() - round_started, 1)
         reports.append(report)
         print(
             f"[collect] shard {args.shard} round {local_round + 1}/"
-            f"{args.rounds}: strict {report['strict_successes']}/"
+            f"{len(batches)} ({rollout_mode}): strict {report['strict_successes']}/"
             f"{report['attempts']} ({report['strict_rate']:.3f}), "
             f"non-finite {report['non_finite_episodes']}, "
             f"retention rows {report['retention_rows']}, "
@@ -735,6 +859,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         "shard": int(args.shard),
         "num_shards": int(args.num_shards),
         "scene_offset": int(args.scene_offset),
+        "rollout_mode": rollout_mode,
+        "stochastic_seed": args.stochastic_seed,
+        "repeats": int(args.repeats),
+        "scene_uids": None if args.scene_uids is None else str(args.scene_uids),
+        "rounds_run": len(batches),
         "worlds": int(args.worlds),
         "rounds": int(args.rounds),
         "decisions": int(args.decisions),

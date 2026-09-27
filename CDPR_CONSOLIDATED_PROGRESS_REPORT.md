@@ -2040,6 +2040,40 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-27 — Step 4, stage 1 implemented: stochastic discovery on deterministic failures
+
+- Why: the SFT entry below shows that the policy's deterministic successes carry no learnable target. New supervision has to come from scenes where the deterministic mean fails but the sampled GRPO behaviour policy sometimes succeeds. Before building any bank, measure how often that happens and for which failure mode
+- `tools/audit/discovery_scenes.py select` classifies every failed scene of a deterministic harvest by how far it got: `no_grasp`, `failed_lift` (grasped, never held a lift), `carry_slip` (lifted then lost it), `placement` (carried, no strict placement: release timing, wrong place, bowl misses). It writes a scene list stratified round-robin over mode × destination, so rare modes are oversampled relative to their natural frequency
+- `collect_cdpr_full_put_into.py --scene-uids LIST --repeats M --stochastic-seed S` attempts each listed scene M times with the sampled residual (repeat-major, so a capped run covers every scene once first). It records `repeat_index` and `rollout_mode` per attempt and keeps strict successes with their exact frames
+- `discovery_scenes.py yield` joins the two, per failure mode, destination and object: attempts, strict successes per attempt, scenes solved at least once
+- Launcher `scripts/collect_cdpr_discovery_remote.sh`: select → record → yield. Default 1,024 hard scenes × 4 attempts = 4,096 stochastic episodes on the `step_56072006` harvest's failures
+- Decision rule for stage 2: build a discovered-solution SFT bank only for modes whose yield gives enough solved scenes. Mix it with the compatible retention bank as the "ordinary rollouts" share, and gate it with the same initializer-eligible selection and paired promotion. The other two parts of step 4 are separate implementations with separate reporting: training from simulator states after the student's own grasps/lifts, and a retention loss inside fresh RL (the three-stage runner rejects the demonstration-bank path)
+- Status: **implemented, local tests only** (`tests/test_discovery_scenes.py`)
+
+### 2026-09-27 — Strict-success SFT from `step_56072006`, with and without compatible retention: both select the untouched checkpoint
+
+- Git commit: `ae723fb` (remote). Banks: the 2026-09-27 harvest, 512 strict episodes / 28,945 rows (26,003 train / 2,942 val by scene), and 7,200 retention rows (6,525 train / 675 val). 20 residual epochs × 51 steps, lr 1e-4, balanced sampler, then 8 LoRA epochs on 8,192 frame rows. Both arms identical except `RETENTION_SOURCE` at 0.2 (realized 0.1992)
+- **Result: both arms `selected: initializer`. No adapter was written, evaluation was skipped, verdict `keep_source`.** No epoch of either stage predicted held-out rows better than the untouched policy
+
+| | no retention | compatible retention 0.2 |
+|---|---:|---:|
+| put_into val MSE, untouched | 0.000344 | 0.000344 |
+| val MSE epoch 0 → 19 | 0.000409 → 0.000458 | 0.000400 → 0.000460 |
+| train MSE epoch 0 → 19 | 0.000351 → 0.000186 | 0.000357 → 0.000195 |
+| best selection score (1.0 = untouched) | 1.136 (epoch 1) | 1.156 (epoch 3) |
+| retention val MSE: untouched, epoch 0 → 19 | — | 0.000377, 0.000468 → 0.000487 |
+| LoRA val MSE: untouched, best epoch | 0.000307, 0.000333 | 0.000307, 0.000334 |
+
+- The retention repair worked as a measurement. It removed the conflict, but it could not make the fit useful:
+  - Loss share tracked row share, 0.19–0.22 against 0.20 of rows. `phase4_bank`'s rows held almost the whole objective at 300× the put_into error
+  - Gradient cosine to put_into was positive every epoch (+0.11 to +0.38), and was −0.015 at the initializer, i.e. orthogonal, not opposed
+  - Retention's gradient share was 0.10–0.21 during training, but **0.55 at the initializer**: at the start, 20% of the rows supplied more than half the pull
+  - No 18.5× blow-up
+  - Retention did not slow the put_into overfit in any useful way (final score 1.327 vs 1.332)
+- Why nothing can be learned here: the strict bank is the deterministic policy's own executed actions, which are its residual mean. After the prior refresh, the only target error left is the prior's fresh noise draw, ≈ 0.00034 MSE. That error is irreducible, so every step fits the training rows' noise: train falls monotonically and val rises from epoch 0. This is the fifth and sixth fit (2026-09-23, -25, and both arms here) where self-imitation of own deterministic successes never beat the untouched policy on held-out rows
+- Conclusion for step 3: retention was not shown to be useless. It was shown to be compatible (it no longer damages) and irrelevant for this bank, because the bank itself is a null target. Retention can only matter alongside supervision that differs from the policy's mean, which is step 4
+- Status: **no promotion; `step_56072006` remains the reference.** Reports: `sft_no_retention/model/sft_report.json` and `sft_retention/model/sft_report.json`
+
 ### 2026-09-27 — Harvest from `step_56072006`: strict bank and compatible retention bank built
 
 - Git commit: `ae723fb`. Run dir `runs/strict_success_dataset_step_56072006_20260926_223044`
