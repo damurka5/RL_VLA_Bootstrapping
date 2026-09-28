@@ -21,7 +21,7 @@ GRPO suffixes, not the proposed full-trajectory imitation dataset. See the
 newest §14 entry for results, evaluation limitations and the next experiment.
 
 **Three-stage collection/SFT specification, 2026-09-10:**
-[`CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`](CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md)
+[`CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`](docs/reports/campaign/CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md)
 defines continuous `move_to → pick_up → put_into` demonstrations, with the
 user-confirmed fixed calibrated pickup yaw, stage-balanced SFT sampling and
 full-task evaluation. It includes a provisional teacher shortlist and the
@@ -337,13 +337,13 @@ release, and about a third do.
 
 | Local file | Created | Last modified | Role in this report |
 |---|---:|---:|---|
-| [`CDPR_SMOLVLA_CAMPAIGN_REPORT.md`](CDPR_SMOLVLA_CAMPAIGN_REPORT.md) | 2026-08-05 11:02 | 2026-08-09 21:45 | Phase 0 reaching and Phase 1 grasp/lift foundations |
-| [`CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md`](CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md) | 2026-08-13 20:10 | 2026-08-13 20:10 | Placement geometry corrections, localization ladder, 15M-step placement result |
-| [`CDPR_PHASE3_SIL_REPORT.md`](CDPR_PHASE3_SIL_REPORT.md) | 2026-08-17 09:49 | 2026-08-17 09:49 | Recording, replay, smoothing, dataset construction, residual SFT, and forgetting evidence |
-| [`CDPR_PHASE4_LOOP_DESIGN.md`](CDPR_PHASE4_LOOP_DESIGN.md) | 2026-08-17 21:33 | 2026-08-19 20:12 | Design and implementation of the alternating RL/SFT loop |
-| [`CDPR_MOVE_TO_VALIDATION_REPORT.md`](CDPR_MOVE_TO_VALIDATION_REPORT.md) | 2026-08-21 09:46 | 2026-08-21 09:50 | Controlled six-leg move-to validation |
-| [`CDPR_PHASE4_RETENTION_REPORT.md`](CDPR_PHASE4_RETENTION_REPORT.md) | 2026-08-24 21:45 | 2026-08-26 08:01 | Retention bank, Cycle 1, placement iteration 2, and preservation rules |
-| [`CDPR_PHASE5_REPORT.md`](CDPR_PHASE5_REPORT.md) | 2026-08-28 22:17 | 2026-08-31 09:27 | Pick-up integration, Cycle 2, later placement runs, Cycle 3, and current result table |
+| [`CDPR_SMOLVLA_CAMPAIGN_REPORT.md`](docs/reports/campaign/CDPR_SMOLVLA_CAMPAIGN_REPORT.md) | 2026-08-05 11:02 | 2026-08-09 21:45 | Phase 0 reaching and Phase 1 grasp/lift foundations |
+| [`CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md`](docs/reports/campaign/CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md) | 2026-08-13 20:10 | 2026-08-13 20:10 | Placement geometry corrections, localization ladder, 15M-step placement result |
+| [`CDPR_PHASE3_SIL_REPORT.md`](docs/reports/campaign/CDPR_PHASE3_SIL_REPORT.md) | 2026-08-17 09:49 | 2026-08-17 09:49 | Recording, replay, smoothing, dataset construction, residual SFT, and forgetting evidence |
+| [`CDPR_PHASE4_LOOP_DESIGN.md`](docs/reports/campaign/CDPR_PHASE4_LOOP_DESIGN.md) | 2026-08-17 21:33 | 2026-08-19 20:12 | Design and implementation of the alternating RL/SFT loop |
+| [`CDPR_MOVE_TO_VALIDATION_REPORT.md`](docs/reports/campaign/CDPR_MOVE_TO_VALIDATION_REPORT.md) | 2026-08-21 09:46 | 2026-08-21 09:50 | Controlled six-leg move-to validation |
+| [`CDPR_PHASE4_RETENTION_REPORT.md`](docs/reports/campaign/CDPR_PHASE4_RETENTION_REPORT.md) | 2026-08-24 21:45 | 2026-08-26 08:01 | Retention bank, Cycle 1, placement iteration 2, and preservation rules |
+| [`CDPR_PHASE5_REPORT.md`](docs/reports/campaign/CDPR_PHASE5_REPORT.md) | 2026-08-28 22:17 | 2026-08-31 09:27 | Pick-up integration, Cycle 2, later placement runs, Cycle 3, and current result table |
 
 The four reports originally identified for consolidation are preserved in this chain. The later Phase 5 report is included because it directly explains and quantifies the three supplied Downloads folders and supersedes the Phase 4 stopping point.
 

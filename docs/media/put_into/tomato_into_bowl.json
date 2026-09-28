@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 132,
+  "destination": "bowl",
+  "event_frames": {
+    "approach": 51,
+    "grasp": 68,
+    "lift": 113,
+    "native_success": 133,
+    "release": 133
+  },
+  "event_seconds": {
+    "approach": 2.55,
+    "grasp": 3.4,
+    "lift": 5.65,
+    "native_success": 6.65,
+    "release": 6.65
+  },
+  "fps": 20.0,
+  "frames": 133,
+  "instruction": "put tomato into bowl",
+  "native": true,
+  "round": 5,
+  "scene_uid": "scene_b93e84bd6abff5ca",
+  "strict": true,
+  "target_catalog": "robocasa_tomato",
+  "video": "strict_bowl_robocasa_tomato_r05_w014.mp4",
+  "world": 14
+}

@@ -85,7 +85,7 @@ class ObjectVariant:
     # The gripper opening at which the pads FIRST make bilateral contact with
     # this object, measured on MJWarp by closing on a pad-centred body until the
     # physics reports contact (2026-08-10; see
-    # CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md). It is not a mesh-bounds
+    # docs/reports/campaign/CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md). It is not a mesh-bounds
     # number, and the earlier values -- which were -- overstated it by 0.15-0.33
     # on every catalog. Two things derive from it and both broke: the
     # caught-object reset seats the fingers at `fitted - 0.033`, which held

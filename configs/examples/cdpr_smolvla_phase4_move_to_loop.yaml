@@ -16,7 +16,7 @@ remote:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
     NCCL_DEBUG: WARN
   notes:
-    - PHASE 4, iteration 0. The RL leg of the iterative RL/SFT loop in CDPR_PHASE4_LOOP_DESIGN.md, on move_to_object.
+    - PHASE 4, iteration 0. The RL leg of the iterative RL/SFT loop in docs/reports/campaign/CDPR_PHASE4_LOOP_DESIGN.md, on move_to_object.
     - Deliberately a near-copy of cdpr_smolvla_move_to_distance_grpo_mjlab_scratch. Every number below is the product of a measured failure (see the comments); iteration 0 has to reproduce that run, or the loop's gain is measured against a baseline nobody has.
     - Only four things differ - name, these notes, vision LoRA left OFF, and the loop-driver contract stated here.
     - VISION LoRA IS OFF ON PURPOSE, and phase 4 turns it on at the FIRST SFT, not here. In RL the adapter sees vla_update_max_records (128) decision-0 records per update, through a PPO objective, through a ten-step flow-matching expert. In SFT it sees every decision of every demonstration under an MSE. If a vision adapter is going to earn its place anywhere it is there, and introducing it here would also change the one configuration that has actually run.
@@ -445,7 +445,7 @@ training:
       residual_scale: 1.0
       # SmolVLA action-expert LoRA (off by default; flip train_vla_lora to true
       # to let RL gradients reach model.vlm_with_expert.lm_expert, vision + VLM
-      # frozen). See SMOLVLA_LORA_FINETUNE_PLAN.md before enabling.
+      # frozen). See docs/reports/side_tracks/SMOLVLA_LORA_FINETUNE_PLAN.md before enabling.
       train_vla_lora: true
       lora_rank: 16
       lora_alpha: 32.0

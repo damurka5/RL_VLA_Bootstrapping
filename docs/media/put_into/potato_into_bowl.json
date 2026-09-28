@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 235,
+  "destination": "bowl",
+  "event_frames": {
+    "approach": 95,
+    "grasp": 99,
+    "lift": 154,
+    "native_success": 236,
+    "release": 230
+  },
+  "event_seconds": {
+    "approach": 4.75,
+    "grasp": 4.95,
+    "lift": 7.7,
+    "native_success": 11.8,
+    "release": 11.5
+  },
+  "fps": 20.0,
+  "frames": 236,
+  "instruction": "put potato into bowl",
+  "native": true,
+  "round": 2,
+  "scene_uid": "scene_169ea42dcebff602",
+  "strict": true,
+  "target_catalog": "robocasa_potato",
+  "video": "strict_bowl_robocasa_potato_r02_w019.mp4",
+  "world": 19
+}

@@ -163,4 +163,4 @@ All from `tests/test_widowx200_embodiment.py` against the compiled model:
 ## Still to do
 
 `widowx200_dataset/` is empty and the MJWarp backend has not been repointed.
-See `WIDOWX200_MIGRATION_REPORT.md` for what remains and in what order.
+See [`WIDOWX200_MIGRATION_REPORT.md`](../../docs/reports/side_tracks/WIDOWX200_MIGRATION_REPORT.md) for what remains and in what order.

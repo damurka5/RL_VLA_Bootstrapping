@@ -1,4 +1,4 @@
-# Derived from the current Phase 7 config; see CDPR_NEXT_CAMPAIGN_PLAN.md.
+# Derived from the current Phase 7 config; see docs/reports/plans/CDPR_NEXT_CAMPAIGN_PLAN.md.
 project:
   name: cdpr_smolvla_release_recovery_pilot
   output_root: ../../runs

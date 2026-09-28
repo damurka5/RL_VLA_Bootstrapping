@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 174,
+  "destination": "plate",
+  "event_frames": {
+    "approach": 99,
+    "grasp": 99,
+    "lift": 146,
+    "native_success": 175,
+    "release": 175
+  },
+  "event_seconds": {
+    "approach": 4.95,
+    "grasp": 4.95,
+    "lift": 7.3,
+    "native_success": 8.75,
+    "release": 8.75
+  },
+  "fps": 20.0,
+  "frames": 175,
+  "instruction": "put orange into plate",
+  "native": true,
+  "round": 2,
+  "scene_uid": "scene_7d97072f463a5fb4",
+  "strict": true,
+  "target_catalog": "robocasa_orange",
+  "video": "strict_plate_robocasa_orange_r02_w017.mp4",
+  "world": 17
+}

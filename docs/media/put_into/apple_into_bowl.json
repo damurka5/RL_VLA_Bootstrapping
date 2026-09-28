@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 163,
+  "destination": "bowl",
+  "event_frames": {
+    "approach": 71,
+    "grasp": 88,
+    "lift": 126,
+    "native_success": 164,
+    "release": 159
+  },
+  "event_seconds": {
+    "approach": 3.55,
+    "grasp": 4.4,
+    "lift": 6.3,
+    "native_success": 8.2,
+    "release": 7.95
+  },
+  "fps": 20.0,
+  "frames": 164,
+  "instruction": "put apple into bowl",
+  "native": true,
+  "round": 5,
+  "scene_uid": "scene_8b7cc629142fc21b",
+  "strict": true,
+  "target_catalog": "robocasa_apple",
+  "video": "strict_bowl_robocasa_apple_r05_w008.mp4",
+  "world": 8
+}

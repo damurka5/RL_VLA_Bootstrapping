@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Record continuous three-stage ``put_into`` chains. No optimizer, ever.
 
-This is the collection half of ``CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md``. It
+This is the collection half of ``docs/reports/campaign/CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md``. It
 runs the move-to, pickup and placement teachers against ONE live scene per
 world, hands off between them without a reset or a pose write, and writes
 durable per-round shards plus the pictures every accepted chain needs.

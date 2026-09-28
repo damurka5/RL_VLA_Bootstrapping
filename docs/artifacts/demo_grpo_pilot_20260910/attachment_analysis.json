@@ -1,0 +1,254 @@
+{
+  "source_directory": "/Users/damirnurtdinov/Downloads",
+  "sha256": {
+    "baseline/episodes_00.csv": "5afe11ab9f4d6cdad48ff383aa2b7d1dea9f144cba2ebfbb8a98fde856bd5e21",
+    "baseline/episodes_01.csv": "c1e1e1ad2d2272b5e02f513beaa079f637e9c3a19c169366fa8f398074ba0684",
+    "baseline/episodes_02.csv": "176a096a64d0fa6d1a5a1a4a16f40f51402dd20f4fdeb42f062de1c21d0974e4",
+    "baseline/log_cuda0.txt": "6ee68762e2da55025aff0121f7146d5186160b6544edb10c1f87a4d9236c846e",
+    "baseline/log_cuda1.txt": "b8a142ffb667a5a3080cf8b9dc4632b0f3f12e902e22f0c1da63baca108474ba",
+    "baseline/record_00.npz": "af0645d2dd5ec7f8668332d7a7c5e8474df14beda56704f76ac0d8f952aa4e61",
+    "baseline/record_01.npz": "6b8dc19b5aa4a5fd35b7363208c17df1a93ccacac800a5bf2cb95815970acd46",
+    "baseline/record_02.npz": "1dc9c6124d47ac41d40f76cc210ae651ec432c7f0af8efd98824f43d9e4b4135",
+    "baseline/summary.json": "0f5e46e4415501c73e8718290fc87bacad641cf2538435549ecdd60dae8175ef",
+    "baseline/summary_cuda0.json": "fa70f980be8265a0170534a39d64a2bd668aecd08eb2d686623ab8936c1ad733",
+    "baseline/summary_cuda1.json": "1b36aa3ec2387a96f23e53b18002107603f1dfcf6de2d42482a079ae56a2a8e8",
+    "final_eval/episodes_00.csv": "27b1cb77789b088cbf59cafa099c28570257c1c2233d8d6dab3bfce250f06878",
+    "final_eval/episodes_01.csv": "51d7e9f6a24124b8e0c11a2beabe94d5a07c1b4dd44f445ce70335909e0f7ec1",
+    "final_eval/episodes_02.csv": "2743efc9a52d1a359f15df582b5f749956d2eb53251912688ddd91f34ca33ed6",
+    "final_eval/log_cuda0.txt": "b0e1e792d92b9832b46d1567398d389334063fc4c51f53025eb96204007979cb",
+    "final_eval/log_cuda1.txt": "73bedc41a0700ee9f9b7f7becc3f9c877a26de7b11b6a2c54bb4de94766a165c",
+    "final_eval/record_00.npz": "d98e6d34c4747bfd3009142f4dd842c9ca8179ffcaa94821bf9dd504c13fbe3f",
+    "final_eval/record_01.npz": "de9dd4c70a6ab70f9099cef1ca348679e97e8bcb7eefacbcf87bd19ccc1d94b7",
+    "final_eval/record_02.npz": "7b51ffb05bc3d6beadf218c4d068e56d490308ca44e73697b2685ab9cdc4c1b5",
+    "final_eval/summary.json": "ae5c8176b55e23421aaf508a83125c8cb8557c8c184e4e46b42b5be40f0746c6",
+    "final_eval/summary_cuda0.json": "427d6071121cd57d1562f373d9dff7ea7ce0e5abebff5a938b492d07d638a511",
+    "final_eval/summary_cuda1.json": "eb3268d3268352c7d5019df02fbee407aa28f7848a9da1800997a23f1829b01c",
+    "train.log": "f0458e80f8fd150a4e5ca0c39fa203079e4f7fb330639b5020dec5416d9deeb6"
+  },
+  "arms": {
+    "baseline": {
+      "move_to_object": {
+        "episodes": 400,
+        "successes": 314,
+        "reset_groups": 50,
+        "ever_held": 0,
+        "held_lift_5cm_from_pre_action_reset": 0,
+        "success_with_held_lift_5cm": 0,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 3,
+        "inside_goal_episodes": 0,
+        "outside_goal_episodes": 0,
+        "outside_goal_successes": 0,
+        "outside_goal_reset_groups": 0,
+        "outside_goal_success_with_held_lift_5cm": 0,
+        "reset_ee_target_xy_max_m": 0.07978871464729309,
+        "horizons": {
+          "19": 400
+        },
+        "rate": 0.785,
+        "outside_goal_rate": null
+      },
+      "put_into_bowl": {
+        "episodes": 352,
+        "successes": 115,
+        "reset_groups": 44,
+        "ever_held": 223,
+        "held_lift_5cm_from_pre_action_reset": 138,
+        "success_with_held_lift_5cm": 81,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 1,
+        "inside_goal_episodes": 144,
+        "outside_goal_episodes": 208,
+        "outside_goal_successes": 15,
+        "outside_goal_reset_groups": 26,
+        "outside_goal_success_with_held_lift_5cm": 15,
+        "reset_ee_target_xy_max_m": 0.0,
+        "horizons": {
+          "40": 352
+        },
+        "rate": 0.32670454545454547,
+        "outside_goal_rate": 0.07211538461538461
+      },
+      "put_into_plate": {
+        "episodes": 456,
+        "successes": 274,
+        "reset_groups": 57,
+        "ever_held": 394,
+        "held_lift_5cm_from_pre_action_reset": 285,
+        "success_with_held_lift_5cm": 196,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 1,
+        "inside_goal_episodes": 424,
+        "outside_goal_episodes": 32,
+        "outside_goal_successes": 12,
+        "outside_goal_reset_groups": 4,
+        "outside_goal_success_with_held_lift_5cm": 11,
+        "reset_ee_target_xy_max_m": 0.0,
+        "horizons": {
+          "40": 456
+        },
+        "rate": 0.6008771929824561,
+        "outside_goal_rate": 0.375
+      },
+      "pick_up": {
+        "episodes": 328,
+        "successes": 83,
+        "reset_groups": 41,
+        "ever_held": 183,
+        "held_lift_5cm_from_pre_action_reset": 83,
+        "success_with_held_lift_5cm": 83,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 27,
+        "inside_goal_episodes": 0,
+        "outside_goal_episodes": 0,
+        "outside_goal_successes": 0,
+        "outside_goal_reset_groups": 0,
+        "outside_goal_success_with_held_lift_5cm": 0,
+        "reset_ee_target_xy_max_m": 0.058302152901887894,
+        "horizons": {
+          "18": 328
+        },
+        "rate": 0.2530487804878049,
+        "outside_goal_rate": null
+      }
+    },
+    "final_eval": {
+      "move_to_object": {
+        "episodes": 400,
+        "successes": 311,
+        "reset_groups": 50,
+        "ever_held": 0,
+        "held_lift_5cm_from_pre_action_reset": 0,
+        "success_with_held_lift_5cm": 0,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 2,
+        "inside_goal_episodes": 0,
+        "outside_goal_episodes": 0,
+        "outside_goal_successes": 0,
+        "outside_goal_reset_groups": 0,
+        "outside_goal_success_with_held_lift_5cm": 0,
+        "reset_ee_target_xy_max_m": 0.07978871464729309,
+        "horizons": {
+          "19": 400
+        },
+        "rate": 0.7775,
+        "outside_goal_rate": null
+      },
+      "put_into_bowl": {
+        "episodes": 352,
+        "successes": 90,
+        "reset_groups": 44,
+        "ever_held": 194,
+        "held_lift_5cm_from_pre_action_reset": 112,
+        "success_with_held_lift_5cm": 47,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 3,
+        "inside_goal_episodes": 144,
+        "outside_goal_episodes": 208,
+        "outside_goal_successes": 13,
+        "outside_goal_reset_groups": 26,
+        "outside_goal_success_with_held_lift_5cm": 13,
+        "reset_ee_target_xy_max_m": 0.0,
+        "horizons": {
+          "40": 352
+        },
+        "rate": 0.2556818181818182,
+        "outside_goal_rate": 0.0625
+      },
+      "put_into_plate": {
+        "episodes": 456,
+        "successes": 263,
+        "reset_groups": 57,
+        "ever_held": 388,
+        "held_lift_5cm_from_pre_action_reset": 273,
+        "success_with_held_lift_5cm": 173,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 3,
+        "inside_goal_episodes": 424,
+        "outside_goal_episodes": 32,
+        "outside_goal_successes": 8,
+        "outside_goal_reset_groups": 4,
+        "outside_goal_success_with_held_lift_5cm": 8,
+        "reset_ee_target_xy_max_m": 0.0,
+        "horizons": {
+          "40": 456
+        },
+        "rate": 0.5767543859649122,
+        "outside_goal_rate": 0.25
+      },
+      "pick_up": {
+        "episodes": 328,
+        "successes": 68,
+        "reset_groups": 41,
+        "ever_held": 177,
+        "held_lift_5cm_from_pre_action_reset": 68,
+        "success_with_held_lift_5cm": 68,
+        "starts_caught_first_recorded_step": 0,
+        "diverged_episodes": 31,
+        "inside_goal_episodes": 0,
+        "outside_goal_episodes": 0,
+        "outside_goal_successes": 0,
+        "outside_goal_reset_groups": 0,
+        "outside_goal_success_with_held_lift_5cm": 0,
+        "reset_ee_target_xy_max_m": 0.058302152901887894,
+        "horizons": {
+          "18": 328
+        },
+        "rate": 0.2073170731707317,
+        "outside_goal_rate": null
+      }
+    }
+  },
+  "recorded_reset_mismatches": [],
+  "reset_max_abs_difference_m": {
+    "reset_object_xyz": 0,
+    "reset_ee_xyz": 0,
+    "initial_target_xyz": 0,
+    "support_surface_z": 0,
+    "release_threshold": 0,
+    "target_rest_height": 0
+  },
+  "validation_lines": [
+    "[smolvla-mjwarp] validation step=100064 success=0.4824 reward=0.4824 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=100064 success=0.4814 episodes=1024 put_into_plate=0.6086 put_into_bowl=0.2955",
+    "[smolvla-mjwarp] validation step=200119 success=0.4971 reward=0.4971 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=200119 success=0.4746 episodes=1024 put_into_plate=0.6020 put_into_bowl=0.2614",
+    "[smolvla-mjwarp] validation step=300654 success=0.5039 reward=0.5039 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=300654 success=0.4727 episodes=1024 put_into_plate=0.5822 put_into_bowl=0.3030",
+    "[smolvla-mjwarp] validation step=410703 success=0.4844 reward=0.4844 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=410703 success=0.4658 episodes=1024 put_into_plate=0.5954 put_into_bowl=0.2765",
+    "[smolvla-mjwarp] validation step=501285 success=0.4580 reward=0.4580 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=501285 success=0.4609 episodes=1024 put_into_plate=0.5789 put_into_bowl=0.2765",
+    "[smolvla-mjwarp] validation step=600253 success=0.4531 reward=0.4531 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=600253 success=0.4922 episodes=1024 put_into_plate=0.6250 put_into_bowl=0.2917",
+    "[smolvla-mjwarp] validation step=708964 success=0.4463 reward=0.4463 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=708964 success=0.4756 episodes=1024 put_into_plate=0.5625 put_into_bowl=0.3295",
+    "[smolvla-mjwarp] validation step=808479 success=0.4492 reward=0.4492 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=808479 success=0.4424 episodes=1024 put_into_plate=0.5230 put_into_bowl=0.2917",
+    "[smolvla-mjwarp] validation step=906766 success=0.4697 reward=0.4697 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=906766 success=0.4521 episodes=1024 put_into_plate=0.5230 put_into_bowl=0.3409",
+    "[smolvla-mjwarp] validation step=1005877 success=0.4473 reward=0.4473 episodes=1024",
+    "[smolvla-mjwarp] validation COMPOSED step=1005877 success=0.4297 episodes=1024 put_into_plate=0.4803 put_into_bowl=0.2992"
+  ],
+  "last_update": 91,
+  "checkpoint_steps": [
+    100064,
+    200119,
+    300654,
+    410703,
+    501285,
+    600253,
+    708964,
+    808479,
+    906766,
+    1005877
+  ],
+  "notes": [
+    "Reset identity covers recorded fields only; full orientations/velocities are absent.",
+    "Eight candidate worlds share a reset group; episode counts are not independent trials.",
+    "Held lift uses pre-action target height and opening <=0.94; it is a descriptive trace metric.",
+    "First recorded caught state is post-action, not a serialized pre-action grasp state.",
+    "Outside-goal uses XY distance > configured success radius without an extra transport margin.",
+    "All reported raw scores retain diverged worlds, matching supplied summaries."
+  ]
+}

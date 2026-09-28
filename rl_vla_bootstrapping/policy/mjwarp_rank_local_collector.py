@@ -2864,7 +2864,7 @@ class BatchedReverseFrontierResetter:
             # placement episode, where target_has_settled is already true at the
             # carried hover height, that is exactly enough for wrong_place_settled
             # to fire on env step 1 of 64, with 46 N on one pad and 22 N on the
-            # other. Measured 2026-08-09; see CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md.
+            # other. Measured 2026-08-09; see docs/reports/campaign/CDPR_PLACEMENT_PHASE2_PREFLIGHT_REPORT.md.
             #
             # The counter is only ever a floor: the first _update_physical_grasp
             # resets it to zero for any world whose pads are NOT actually loaded,

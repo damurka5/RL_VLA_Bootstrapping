@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Phase-4 loop driver: watch an RL run, fire the harvest when it stalls.
 
-Design in CDPR_PHASE4_LOOP_DESIGN.md. This is the outer driver -- RL runs as
+Design in docs/reports/campaign/CDPR_PHASE4_LOOP_DESIGN.md. This is the outer driver -- RL runs as
 its own two-rank torchrun process and this reads its checkpoints from outside.
 
 

@@ -16,7 +16,7 @@ remote:
     TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
     NCCL_DEBUG: WARN
   notes:
-    - Phase 4, placement family only. The RL leg of the iterative RL/SFT loop described in CDPR_PHASE4_LOOP_DESIGN.md.
+    - Phase 4, placement family only. The RL leg of the iterative RL/SFT loop described in docs/reports/campaign/CDPR_PHASE4_LOOP_DESIGN.md.
     - ONE POLICY PER FAMILY. pick_up is deliberately absent, not forgotten - SFT on a subset of instructions erased the excluded one to exactly 0.000 in phase 3, and the harvest is success-gated so an instruction that is not working yet cannot supply its own rehearsal. pick_up gets its own run and its own checkpoint.
     - WARM-START WEIGHTS-ONLY from the phase-4 move_to checkpoint, and do NOT pass --resume-checkpoint for iteration 0. move_to is the right donor here and was not for pick_up: placement IS a move-to with a release at the end, since the grasp is handed over at reset, so there is no grasp-then-lift transition to transfer. From iteration 1 the loop driver supplies the previous SFT checkpoint as a resume.
     - The loop driver stops the RL segment externally on a cap promotion, so max_train_steps is a ceiling and not a plan.

@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 181,
+  "destination": "plate",
+  "event_frames": {
+    "approach": 84,
+    "grasp": 84,
+    "lift": 165,
+    "native_success": 182,
+    "release": 180
+  },
+  "event_seconds": {
+    "approach": 4.2,
+    "grasp": 4.2,
+    "lift": 8.25,
+    "native_success": 9.1,
+    "release": 9.0
+  },
+  "fps": 20.0,
+  "frames": 182,
+  "instruction": "put apple into plate",
+  "native": true,
+  "round": 6,
+  "scene_uid": "scene_986f819a9e2d6759",
+  "strict": true,
+  "target_catalog": "robocasa_apple",
+  "video": "strict_plate_robocasa_apple_r06_w001.mp4",
+  "world": 1
+}

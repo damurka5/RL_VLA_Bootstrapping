@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 218,
+  "destination": "plate",
+  "event_frames": {
+    "approach": 132,
+    "grasp": 134,
+    "lift": 176,
+    "native_success": 219,
+    "release": 218
+  },
+  "event_seconds": {
+    "approach": 6.6,
+    "grasp": 6.7,
+    "lift": 8.8,
+    "native_success": 10.95,
+    "release": 10.9
+  },
+  "fps": 20.0,
+  "frames": 219,
+  "instruction": "put potato into plate",
+  "native": true,
+  "round": 3,
+  "scene_uid": "scene_9fedca03f1a8c0f4",
+  "strict": true,
+  "target_catalog": "robocasa_potato",
+  "video": "strict_plate_robocasa_potato_r03_w010.mp4",
+  "world": 10
+}

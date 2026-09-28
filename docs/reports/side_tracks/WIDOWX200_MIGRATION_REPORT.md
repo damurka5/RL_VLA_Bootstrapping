@@ -37,7 +37,7 @@ space, and therefore no per-world divergence to contain.
 
 The last one has the widest blast radius and is covered in §5.
 
-![reach, descend, close, lift](assets/research/widowx200/wx200_grasp_sequence.png)
+![reach, descend, close, lift](../../../assets/research/widowx200/wx200_grasp_sequence.png)
 
 Overview and wrist cameras through a scripted grasp driven only through the
 normalized five-channel action. Object lifts 77 mm; scripted grasp succeeds in

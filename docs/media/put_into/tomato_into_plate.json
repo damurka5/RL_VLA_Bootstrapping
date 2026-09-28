@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 197,
+  "destination": "plate",
+  "event_frames": {
+    "approach": 126,
+    "grasp": 126,
+    "lift": 167,
+    "native_success": 198,
+    "release": 197
+  },
+  "event_seconds": {
+    "approach": 6.3,
+    "grasp": 6.3,
+    "lift": 8.35,
+    "native_success": 9.9,
+    "release": 9.85
+  },
+  "fps": 20.0,
+  "frames": 198,
+  "instruction": "put tomato into plate",
+  "native": true,
+  "round": 0,
+  "scene_uid": "scene_96a027968059a41b",
+  "strict": true,
+  "target_catalog": "robocasa_tomato",
+  "video": "strict_plate_robocasa_tomato_r00_w009.mp4",
+  "world": 9
+}

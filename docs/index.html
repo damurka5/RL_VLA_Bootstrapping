@@ -1,0 +1,371 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>RL-VLA Bootstrapping</title>
+<meta name="description" content="Teaching a pretrained vision-language-action model to manipulate objects on a new robot without a human-collected dataset: residual GRPO, self-generated data, and staged sparse rewards.">
+<meta property="og:title" content="RL-VLA Bootstrapping">
+<meta property="og:description" content="A pretrained VLA learns pick-and-place on a new robot from reward and its own experience, with no human demonstrations for that robot.">
+<meta property="og:image" content="media/put_into/orange_into_plate.jpg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1d1d1f;
+    --muted: #5d5d63;
+    --line: #e4e1da;
+    --accent: #2f6fdd;
+    --accent-soft: #e6eefc;
+    --good: #2e8b57;
+    --bar: #2f6fdd;
+    --bar-muted: #b9c8e6;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111214;
+      --surface: #1a1b1e;
+      --surface-2: #222328;
+      --text: #ececef;
+      --muted: #a2a2aa;
+      --line: #2e2f35;
+      --accent: #7aa7ff;
+      --accent-soft: #1e2a42;
+      --good: #5cc28b;
+      --bar: #7aa7ff;
+      --bar-muted: #3a4a6a;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111214;
+    --surface: #1a1b1e;
+    --surface-2: #222328;
+    --text: #ececef;
+    --muted: #a2a2aa;
+    --line: #2e2f35;
+    --accent: #7aa7ff;
+    --accent-soft: #1e2a42;
+    --good: #5cc28b;
+    --bar: #7aa7ff;
+    --bar-muted: #3a4a6a;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 16px/1.6 Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: .88em; background: var(--surface-2); padding: .1em .35em; border-radius: 4px; }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 16px; }
+  nav {
+    position: sticky; top: 0; z-index: 10;
+    background: color-mix(in srgb, var(--bg) 88%, transparent);
+    backdrop-filter: blur(8px);
+    border-bottom: 1px solid var(--line);
+  }
+  nav .wrap { display: flex; align-items: center; gap: 20px; height: 52px; overflow-x: auto; white-space: nowrap; }
+  nav .brand { font-weight: 700; color: var(--text); margin-right: auto; }
+  nav a.link { color: var(--muted); font-size: 14px; }
+  nav a.link:hover { color: var(--text); text-decoration: none; }
+  header { padding: 64px 0 32px; }
+  .eyebrow { color: var(--accent); font-weight: 600; font-size: 14px; letter-spacing: .02em; text-transform: uppercase; }
+  h1 { font-size: clamp(30px, 5vw, 48px); line-height: 1.12; margin: 10px 0 18px; letter-spacing: -.02em; max-width: 880px; }
+  .lede { font-size: clamp(17px, 2.2vw, 20px); color: var(--muted); max-width: 760px; margin: 0; }
+  .cta { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 26px; }
+  .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 16px; border-radius: 8px; font-weight: 600; font-size: 15px; border: 1px solid var(--line); background: var(--surface); color: var(--text); }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn:hover { text-decoration: none; filter: brightness(1.05); }
+  .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-top: 36px; }
+  .stat { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+  .stat .v { font-size: 30px; font-weight: 700; letter-spacing: -.02em; }
+  .stat .k { color: var(--muted); font-size: 14px; line-height: 1.4; }
+  section { padding: 48px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: clamp(24px, 3.4vw, 32px); letter-spacing: -.015em; margin: 0 0 8px; }
+  h3 { font-size: 18px; margin: 0 0 6px; }
+  .sub { color: var(--muted); margin: 0 0 28px; max-width: 760px; }
+  .gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .clip { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; overflow: hidden; box-shadow: var(--shadow); margin: 0; }
+  .clip video { display: block; width: 100%; aspect-ratio: 8 / 3; background: #000; }
+  .clip figcaption { display: flex; justify-content: space-between; gap: 8px; padding: 10px 14px; font-size: 14px; }
+  .clip figcaption .instr { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 13px; }
+  .clip figcaption .meta { color: var(--muted); }
+  .note { color: var(--muted); font-size: 14px; margin-top: 16px; }
+  .steps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 12px; padding: 20px; box-shadow: var(--shadow); }
+  .card .n { display: inline-flex; width: 28px; height: 28px; border-radius: 50%; align-items: center; justify-content: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; font-size: 14px; margin-bottom: 10px; }
+  .card p { margin: 0; color: var(--muted); font-size: 15px; }
+  .callout { margin-top: 20px; border-left: 3px solid var(--accent); background: var(--surface); border-radius: 0 10px 10px 0; padding: 16px 20px; font-size: 15px; color: var(--muted); }
+  .callout strong { color: var(--text); }
+  .flow { display: flex; flex-wrap: wrap; align-items: stretch; gap: 10px; }
+  .flow .box { flex: 1 1 150px; background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 12px 14px; font-size: 14px; }
+  .flow .box b { display: block; font-size: 15px; margin-bottom: 2px; }
+  .flow .box span { color: var(--muted); }
+  .flow .arrow { align-self: center; color: var(--muted); font-size: 20px; }
+  .flow.col { flex-direction: column; }
+  .flow.col .box { flex: 0 0 auto; }
+  .formula { margin: 18px 0 0; font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 15px; background: var(--surface-2); border-radius: 8px; padding: 12px 16px; overflow-x: auto; }
+  .two { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; margin-top: 28px; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { font-size: 13px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: .03em; }
+  td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.best td { font-weight: 600; }
+  .table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--line); border-radius: 12px; box-shadow: var(--shadow); }
+  .bars { display: grid; gap: 12px; }
+  .bar-row { display: grid; grid-template-columns: 150px 1fr 64px; align-items: center; gap: 12px; font-size: 14px; }
+  .bar-row .lbl { color: var(--muted); }
+  .bar-row .lbl code { background: none; padding: 0; }
+  .track { height: 22px; background: var(--surface-2); border-radius: 6px; overflow: hidden; }
+  .fill { height: 100%; background: var(--bar-muted); border-radius: 6px; }
+  .bar-row.best .fill { background: var(--bar); }
+  .bar-row .val { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .findings { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+  .timeline { list-style: none; margin: 0; padding: 0; position: relative; }
+  .timeline li { display: grid; grid-template-columns: 110px 1fr; gap: 16px; padding: 12px 0; border-bottom: 1px dashed var(--line); }
+  .timeline .when { color: var(--muted); font-size: 14px; font-variant-numeric: tabular-nums; }
+  .timeline .what b { display: block; }
+  .timeline .what span { color: var(--muted); font-size: 15px; }
+  .open { margin: 0; padding-left: 20px; }
+  .open li { margin-bottom: 8px; }
+  footer { padding: 36px 0 56px; color: var(--muted); font-size: 14px; border-top: 1px solid var(--line); }
+  .theme-toggle { border: 1px solid var(--line); background: var(--surface); color: var(--text); border-radius: 8px; padding: 4px 10px; font: inherit; font-size: 13px; cursor: pointer; }
+  @media (max-width: 760px) {
+    .gallery, .steps, .two, .findings { grid-template-columns: 1fr; }
+    .bar-row { grid-template-columns: 110px 1fr 56px; }
+    .timeline li { grid-template-columns: 1fr; gap: 2px; }
+    .flow .arrow { display: none; }
+    header { padding-top: 40px; }
+  }
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <a class="brand" href="#top">RL-VLA Bootstrapping</a>
+    <a class="link" href="#videos">Videos</a>
+    <a class="link" href="#idea">Idea</a>
+    <a class="link" href="#method">Method</a>
+    <a class="link" href="#results">Results</a>
+    <a class="link" href="#timeline">Timeline</a>
+    <a class="link" href="https://github.com/damurka5/RL_VLA_Bootstrapping">GitHub</a>
+    <button class="theme-toggle" id="themeToggle" type="button" aria-label="Toggle color theme">◐</button>
+  </div>
+</nav>
+
+<header id="top">
+  <div class="wrap">
+    <div class="eyebrow">Thesis project · 2026</div>
+    <h1>Teaching a vision-language-action model to manipulate objects on a new robot, without a human dataset</h1>
+    <p class="lede">A pretrained SmolVLA is placed on a robot it has never seen, a simulated cable-driven parallel robot. It learns to reach, grasp, carry and place objects from reward and from trajectories it generated itself. No teleoperation data is recorded for this robot.</p>
+    <div class="cta">
+      <a class="btn primary" href="#videos">Watch the episodes</a>
+      <a class="btn" href="https://github.com/damurka5/RL_VLA_Bootstrapping">Code on GitHub</a>
+      <a class="btn" href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/CDPR_CONSOLIDATED_PROGRESS_REPORT.md">Full results record</a>
+    </div>
+    <div class="stats">
+      <div class="stat"><div class="v">41.8%</div><div class="k">strict success on the full empty-gripper <code>put_into</code> task, 256 held-out scenes</div></div>
+      <div class="stat"><div class="v">0</div><div class="k">human demonstrations collected for this robot</div></div>
+      <div class="stat"><div class="v">63.0%</div><div class="k"><code>move_to_object</code> at a 2 cm tolerance, from RL alone</div></div>
+      <div class="stat"><div class="v">≈56M</div><div class="k">training steps of GRPO behind the best checkpoint, on 2× A40</div></div>
+    </div>
+  </div>
+</header>
+
+<section id="videos">
+  <div class="wrap">
+    <h2>Full task, one instruction, no assistance</h2>
+    <p class="sub">Each episode starts with an empty gripper and a single instruction. The policy must approach the object, grasp it, lift it, carry it and release it inside the plate or bowl. Each clip shows the overview camera on the left and the wrist camera on the right.</p>
+    <div class="gallery">
+      <figure class="clip"><video src="media/put_into/apple_into_plate.mp4" poster="media/put_into/apple_into_plate.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put apple into plate</span><span class="meta">9.1 s</span></figcaption></figure>
+      <figure class="clip"><video src="media/put_into/apple_into_bowl.mp4" poster="media/put_into/apple_into_bowl.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put apple into bowl</span><span class="meta">8.2 s</span></figcaption></figure>
+      <figure class="clip"><video src="media/put_into/orange_into_plate.mp4" poster="media/put_into/orange_into_plate.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put orange into plate</span><span class="meta">8.8 s</span></figcaption></figure>
+      <figure class="clip"><video src="media/put_into/orange_into_bowl.mp4" poster="media/put_into/orange_into_bowl.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put orange into bowl</span><span class="meta">9.0 s</span></figcaption></figure>
+      <figure class="clip"><video src="media/put_into/potato_into_plate.mp4" poster="media/put_into/potato_into_plate.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put potato into plate</span><span class="meta">11.0 s</span></figcaption></figure>
+      <figure class="clip"><video src="media/put_into/potato_into_bowl.mp4" poster="media/put_into/potato_into_bowl.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put potato into bowl</span><span class="meta">11.8 s</span></figcaption></figure>
+      <figure class="clip"><video src="media/put_into/tomato_into_plate.mp4" poster="media/put_into/tomato_into_plate.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put tomato into plate</span><span class="meta">9.9 s</span></figcaption></figure>
+      <figure class="clip"><video src="media/put_into/tomato_into_bowl.mp4" poster="media/put_into/tomato_into_bowl.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put tomato into bowl</span><span class="meta">6.7 s</span></figcaption></figure>
+    </div>
+    <p class="note">These are strict successes of checkpoint <code>step_28309431</code> (22.3% strict), evaluated on 2026-09-17 on held-out scenes. The current best checkpoint, <code>step_56072006</code>, scores 41.8%; it has no episode-video audit yet.</p>
+  </div>
+</section>
+
+<section id="idea">
+  <div class="wrap">
+    <h2>The idea</h2>
+    <p class="sub">VLA models are usually adapted to a new robot by collecting hundreds of human teleoperation demonstrations and fine-tuning on them. This project asks whether the robot can produce its own training data instead.</p>
+    <div class="steps">
+      <div class="card"><div class="n">1</div><h3>Acquire skills with RL</h3><p>The pretrained VLA stays a frozen action prior. A small residual network learns the correction for this robot with GRPO, from task reward only.</p></div>
+      <div class="card"><div class="n">2</div><h3>Keep them with self-generated data</h3><p>The policy's own successful episodes go into a durable bank of frames and actions. Balanced supervised fine-tuning on that bank brings back skills that later RL erodes.</p></div>
+      <div class="card"><div class="n">3</div><h3>Compose them with staged sparse rewards</h3><p>The full pick-and-place task is trained from an empty gripper with three ordered binary milestones (approach, pick up, place), each with its own group-relative advantage.</p></div>
+    </div>
+    <div class="callout"><strong>What "without a human dataset" means.</strong> No teleoperation or other human demonstrations were collected for this robot. The pretrained SmolVLA did see human robot data during its pretraining. Rewards, success predicates, the simulator and the controller are human-designed. Some intermediate datasets contain actions from scripted controllers: a ground-truth oracle seeded one composition bank, and alignment/yaw controllers bridge the three-stage chains. Removing them from the final policy's lineage is open work.</div>
+  </div>
+</section>
+
+<section id="method">
+  <div class="wrap">
+    <h2>Method</h2>
+    <p class="sub">The robot's action is a world-frame end-effector delta <code>[x, y, z, yaw, gripper] ∈ [-1, 1]⁵</code>. The observation is an overview camera, a wrist camera, the instruction and the robot state. Objects are RoboCasa apple, orange, potato and tomato, with a plate and a bowl as receptacles. MuJoCo Warp runs 512 parallel worlds per GPU.</p>
+
+    <h3>Policy</h3>
+    <div class="flow">
+      <div class="box"><b>Inputs</b><span>instruction, overview + wrist images, 6-D proprioception</span></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>SmolVLA prior</b><span>pretrained and frozen; 8 × 5 action chunk; LoRA on the action expert</span></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Residual MLP</b><span>state + 512-D pooled vision + prior → correction (558 → 1024 → 1024 → 40)</span></div>
+      <div class="arrow">→</div>
+      <div class="box"><b>Execute</b><span>first 4 of 8 actions, then re-plan</span></div>
+    </div>
+    <div class="formula">action = tanh( prior<sub>SmolVLA</sub>(images, instruction, state) + residual<sub>θ</sub>(state, vision, prior) )</div>
+
+    <div class="two">
+      <div>
+        <h3>Skill acquisition and retention loop</h3>
+        <div class="flow col">
+          <div class="box"><b>GRPO on one instruction</b><span>reward only; a start-distance curriculum widens the task</span></div>
+          <div class="box"><b>Harvest successes</b><span>record frames and executed actions, smooth, replay, keep the survivors</span></div>
+          <div class="box"><b>Retention bank → balanced SFT</b><span>priors re-computed from frames under the current model; balanced by decisions per instruction</span></div>
+        </div>
+      </div>
+      <div>
+        <h3>Full-task training</h3>
+        <div class="flow col">
+          <div class="box"><b>Continuous chains</b><span>move_to → pick_up → put_into, relabelled under the final instruction</span></div>
+          <div class="box"><b>Full-task SFT seed</b><span>stage- and destination-balanced sampling</span></div>
+          <div class="box"><b>Staged-sparse GRPO</b><span>approach · pickup · placement milestones with separate advantages, plus a completion bonus</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="results">
+  <div class="wrap">
+    <h2>Results</h2>
+    <p class="sub">Standalone evaluator: held-out scenes, one instruction from the first action, no assistance. <em>Strict</em> success requires that the episode began empty and outside the goal, then grasped, lifted, carried without a slip and released intentionally inside the receptacle.</p>
+
+    <div class="bars" role="img" aria-label="Strict full-task success by checkpoint: SFT seed 3.9%, step_28309431 22.3%, step_52791642 35.6%, step_56072006 41.8%">
+      <div class="bar-row"><div class="lbl">SFT seed</div><div class="track"><div class="fill" style="width:3.9%"></div></div><div class="val">3.9%</div></div>
+      <div class="bar-row"><div class="lbl"><code>step_28309431</code></div><div class="track"><div class="fill" style="width:22.3%"></div></div><div class="val">22.3%</div></div>
+      <div class="bar-row"><div class="lbl"><code>step_52791642</code></div><div class="track"><div class="fill" style="width:35.6%"></div></div><div class="val">35.6%</div></div>
+      <div class="bar-row best"><div class="lbl"><code>step_56072006</code></div><div class="track"><div class="fill" style="width:41.8%"></div></div><div class="val">41.8%</div></div>
+    </div>
+    <p class="note">The best checkpoint beat the previous one on the same 256 scenes, 107 to 85 (exact McNemar p = 0.012). Pooled over two evaluations each, they score 39.1% and 34.4%. One evaluation of one checkpoint flips 25–29% of scene verdicts between runs, mostly because of closed-loop physics chaos. Differences below about 5 points therefore need pooled repeats.</p>
+
+    <div class="two">
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Checkpoint</th><th class="num">Strict</th><th class="num">Native</th></tr></thead>
+          <tbody>
+            <tr><td>SFT seed</td><td class="num">5/128</td><td class="num">—</td></tr>
+            <tr><td><code>step_28309431</code> · 28.3M steps</td><td class="num">57/256</td><td class="num">73/256</td></tr>
+            <tr><td><code>step_52791642</code> · ~53M</td><td class="num">91/256</td><td class="num">111/256</td></tr>
+            <tr class="best"><td><code>step_56072006</code> · ~56M</td><td class="num">107/256</td><td class="num">127/256</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Individual skill (own protocol)</th><th class="num">Success</th></tr></thead>
+          <tbody>
+            <tr><td><code>move_to_object</code>, RL only, 2 cm</td><td class="num">63.0%</td></tr>
+            <tr><td>Place a held object, RL only, from 0%: plate / bowl</td><td class="num">71% / 32%</td></tr>
+            <tr><td>One adapter, four instructions: move-to / pick-up</td><td class="num">47.8% / 11.9%</td></tr>
+            <tr><td>… same adapter: plate / bowl</td><td class="num">73.8% / 53.5%</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <h3 style="margin-top:36px">Main findings</h3>
+    <div class="findings" style="margin-top:12px">
+      <div class="card"><h3>RL alone grounds a pretrained VLA</h3><p>A frozen prior plus a residual learned reaching and placement on a new embodiment from reward only.</p></div>
+      <div class="card"><h3>Tolerance decides if vision is enough</h3><p>The VLA's 3–5 cm localization is too coarse for a ~2 cm grasp and sufficient for 5.7–9.1 cm placement radii.</p></div>
+      <div class="card"><h3>Self-generated data prevents forgetting</h3><p>Balanced SFT on the policy's own successes rebuilt a forgotten skill 3.9×. A 4.3× larger slice broke the retention ceiling where more epochs did not.</p></div>
+      <div class="card"><h3>Staged sparse rewards train the whole task</h3><p>Once each milestone is reachable, strict full-task success rose from 3.9% to 41.8% on the same evaluator.</p></div>
+    </div>
+  </div>
+</section>
+
+<section id="timeline">
+  <div class="wrap">
+    <h2>How the project got here</h2>
+    <p class="sub">Each phase is documented in its own report. The consolidated report keeps the dated ledger.</p>
+    <ol class="timeline">
+      <li><div class="when">Mar – Jun</div><div class="what"><b>OpenVLA-OFT with PPO → GRPO</b><span>345 h of RL without demonstrations produced directional motion (48–62%), but only 9.7% on move-to-object</span></div></li>
+      <li><div class="when">Jul</div><div class="what"><b>Frozen SmolVLA prior + residual on batched MJWarp</b><span>512 worlds per GPU; RL moves to a small residual on top of a pretrained prior</span></div></li>
+      <li><div class="when">Jul – Aug</div><div class="what"><b>Phase 0–1: reaching and grasping</b><span>move-to reaches 63.0%; pick-up is limited by the encoder's localization</span></div></li>
+      <li><div class="when">Aug 13</div><div class="what"><b>Phase 2: placement by RL alone</b><span>plate 71%, bowl 32%, starting from 0%</span></div></li>
+      <li><div class="when">Aug 17 – 31</div><div class="what"><b>Phases 3–5: self-imitation and retention</b><span>a bank of frames and actions; one adapter for all four instructions</span></div></li>
+      <li><div class="when">Aug 30 – Sep 9</div><div class="what"><b>Phases 6–7: composition</b><span>composed pick-and-place with one sparse reward; retention SFT found to erase it</span></div></li>
+      <li><div class="when">Sep 10 – 28</div><div class="what"><b>Phase 8: full task from an empty gripper</b><span>three-stage chains → staged-sparse GRPO: 3.9% → 41.8% strict</span></div></li>
+    </ol>
+  </div>
+</section>
+
+<section id="open">
+  <div class="wrap">
+    <h2>Still open</h2>
+    <ul class="open">
+      <li><b>Holding the object through the carry.</b> Carry slips and post-lift wrong placements are the main failure, and the grasp rate erodes under continued RL.</li>
+      <li><b>Retention and composition together.</b> RL on the composed task and SFT on the retention bank still pull against each other.</li>
+      <li><b>Localization resolution.</b> The frozen encoder's pooled feature reaches the residual without gradient.</li>
+      <li><b>Scope.</b> One simulated embodiment. A WidowX-200 port keeps the action contract, but batched training on it is not wired yet.</li>
+    </ul>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    Damir Nurtdinov · 2026 · <a href="https://github.com/damurka5/RL_VLA_Bootstrapping">github.com/damurka5/RL_VLA_Bootstrapping</a> ·
+    <a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/CDPR_CONSOLIDATED_PROGRESS_REPORT.md">consolidated report</a> ·
+    <a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/research/CDPR_RESEARCH_THEORY.md">research draft</a>
+  </div>
+</footer>
+
+<script>
+  (function () {
+    var root = document.documentElement;
+    try {
+      var saved = localStorage.getItem("theme");
+      if (saved === "light" || saved === "dark") root.setAttribute("data-theme", saved);
+    } catch (e) {}
+    document.getElementById("themeToggle").addEventListener("click", function () {
+      var dark = root.getAttribute("data-theme") === "dark" ||
+        (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      var next = dark ? "light" : "dark";
+      root.setAttribute("data-theme", next);
+      try { localStorage.setItem("theme", next); } catch (e) {}
+    });
+
+    var videos = document.querySelectorAll(".clip video");
+    if (!("IntersectionObserver" in window)) {
+      videos.forEach(function (v) { v.preload = "auto"; v.play().catch(function () {}); });
+      return;
+    }
+    var io = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) {
+        var v = e.target;
+        if (e.isIntersecting) { v.preload = "auto"; v.play().catch(function () {}); }
+        else { v.pause(); }
+      });
+    }, { threshold: 0.35 });
+    videos.forEach(function (v) { io.observe(v); });
+  })();
+</script>
+</body>
+</html>

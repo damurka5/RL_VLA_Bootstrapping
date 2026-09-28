@@ -1,0 +1,625 @@
+{
+  "by_instruction": {
+    "put_into_bowl": {
+      "bounce_m": {
+        "failures": {
+          "mean": 0.00561,
+          "n": 36,
+          "p10": -0.01453,
+          "p50": 0.00192,
+          "p90": 0.03129
+        },
+        "successes": {
+          "mean": -0.0003,
+          "n": 90,
+          "p10": -0.007,
+          "p50": 0.0,
+          "p90": 0.00477
+        }
+      },
+      "episodes": 352,
+      "failure_taxonomy": {
+        "no_grasp": {
+          "episodes": 158,
+          "fraction_of_failures": 0.6031
+        },
+        "no_release": {
+          "episodes": 68,
+          "fraction_of_failures": 0.2595
+        },
+        "not_settled": {
+          "episodes": 20,
+          "fraction_of_failures": 0.0763
+        },
+        "xy_miss": {
+          "episodes": 16,
+          "fraction_of_failures": 0.0611
+        }
+      },
+      "first_grasp_env_step": {
+        "all_that_grasped": {
+          "mean": 36.35567,
+          "n": 194,
+          "p10": 13.0,
+          "p50": 23.0,
+          "p90": 81.1
+        },
+        "successes": {
+          "mean": 35.76667,
+          "n": 90,
+          "p10": 17.0,
+          "p50": 27.0,
+          "p90": 74.2
+        }
+      },
+      "funnel": {
+        "ever_grasped": {
+          "episodes": 194,
+          "fraction_of_all": 0.5511
+        },
+        "ever_released": {
+          "episodes": 126,
+          "fraction_of_all": 0.358
+        },
+        "ever_settled_after_release": {
+          "episodes": 106,
+          "fraction_of_all": 0.3011
+        },
+        "ever_xy_ok_at_rest": {
+          "episodes": 90,
+          "fraction_of_all": 0.2557
+        },
+        "ever_z_ok_at_rest": {
+          "episodes": 106,
+          "fraction_of_all": 0.3011
+        },
+        "success": {
+          "episodes": 90,
+          "fraction_of_all": 0.2557
+        }
+      },
+      "funnel_conditional": {
+        "ever_grasped": 0.5511,
+        "ever_released": 0.6495,
+        "ever_settled_after_release": 0.8413,
+        "ever_xy_ok_at_rest": 0.8491,
+        "ever_z_ok_at_rest": 1.0,
+        "success": 1.0
+      },
+      "min_xy_m": {
+        "failures_any_step": {
+          "mean": 0.06958,
+          "n": 262,
+          "p10": 0.0075,
+          "p50": 0.08437,
+          "p90": 0.10105
+        },
+        "failures_at_rest": {
+          "mean": 0.14301,
+          "n": 16,
+          "p10": 0.07745,
+          "p50": 0.1163,
+          "p90": 0.23001
+        }
+      },
+      "no_release_diagnosis": {
+        "ended_holding": 20,
+        "env_step_budget": {
+          "mean": 160.0,
+          "n": 68,
+          "p10": 160.0,
+          "p50": 160.0,
+          "p90": 160.0
+        },
+        "episodes": 68,
+        "first_grasp_env_step": {
+          "mean": 43.91176,
+          "n": 68,
+          "p10": 13.0,
+          "p50": 21.0,
+          "p90": 130.3
+        },
+        "lost_grip": 48,
+        "timed_out": 24,
+        "timed_out_fraction": 0.3529
+      },
+      "object_to_receptacle_at_reset_m": {
+        "grasped": {
+          "mean": 0.05259,
+          "n": 194,
+          "p10": 0.01051,
+          "p50": 0.02831,
+          "p90": 0.1003
+        },
+        "never_grasped": {
+          "mean": 0.07925,
+          "n": 158,
+          "p10": 0.02514,
+          "p50": 0.08574,
+          "p90": 0.10596
+        }
+      },
+      "radius_m": 0.057,
+      "release_clearance_buckets": [
+        {
+          "bounce_m": {
+            "mean": 0.0,
+            "n": 1,
+            "p10": 0.0,
+            "p50": 0.0,
+            "p90": 0.0
+          },
+          "clearance_high_m": 0.02,
+          "clearance_low_m": 0.0,
+          "episodes": 1,
+          "success_rate": 0.0,
+          "successes": 0
+        },
+        {
+          "bounce_m": {
+            "mean": 0.0,
+            "n": 42,
+            "p10": 0.0,
+            "p50": 0.0,
+            "p90": 0.0
+          },
+          "clearance_high_m": 0.04,
+          "clearance_low_m": 0.02,
+          "episodes": 42,
+          "success_rate": 1.0,
+          "successes": 42
+        },
+        {
+          "bounce_m": {
+            "mean": 0.00181,
+            "n": 20,
+            "p10": -0.00113,
+            "p50": 0.0,
+            "p90": 0.00423
+          },
+          "clearance_high_m": 0.06,
+          "clearance_low_m": 0.04,
+          "episodes": 20,
+          "success_rate": 0.8,
+          "successes": 16
+        },
+        {
+          "bounce_m": {
+            "mean": 0.00088,
+            "n": 19,
+            "p10": -0.00672,
+            "p50": 0.00163,
+            "p90": 0.00799
+          },
+          "clearance_high_m": 0.08,
+          "clearance_low_m": 0.06,
+          "episodes": 19,
+          "success_rate": 0.7895,
+          "successes": 15
+        },
+        {
+          "bounce_m": {
+            "mean": 0.00259,
+            "n": 14,
+            "p10": -0.01198,
+            "p50": 0.00311,
+            "p90": 0.01469
+          },
+          "clearance_high_m": 0.1,
+          "clearance_low_m": 0.08,
+          "episodes": 14,
+          "success_rate": 0.7857,
+          "successes": 11
+        },
+        {
+          "bounce_m": {
+            "mean": 0.00625,
+            "n": 13,
+            "p10": -0.00941,
+            "p50": -0.00348,
+            "p90": 0.0349
+          },
+          "clearance_high_m": 0.14,
+          "clearance_low_m": 0.1,
+          "episodes": 13,
+          "success_rate": 0.3846,
+          "successes": 5
+        },
+        {
+          "bounce_m": {
+            "mean": 0.00025,
+            "n": 17,
+            "p10": -0.01864,
+            "p50": -0.00193,
+            "p90": 0.02059
+          },
+          "clearance_high_m": null,
+          "clearance_low_m": 0.14,
+          "episodes": 17,
+          "success_rate": 0.0588,
+          "successes": 1
+        }
+      ],
+      "release_clearance_m": {
+        "failures": {
+          "mean": 0.12182,
+          "n": 36,
+          "p10": 0.05251,
+          "p50": 0.13479,
+          "p90": 0.17546
+        },
+        "successes": {
+          "mean": 0.05306,
+          "n": 90,
+          "p10": 0.02489,
+          "p50": 0.04318,
+          "p90": 0.09795
+        }
+      },
+      "released_inside_but_failed": {
+        "bounce_m": {
+          "mean": 0.02246,
+          "n": 4,
+          "p10": 0.00365,
+          "p50": 0.02094,
+          "p90": 0.04248
+        },
+        "episodes": 4,
+        "fraction_of_failures": 0.0153,
+        "release_clearance_m": {
+          "mean": 0.1,
+          "n": 4,
+          "p10": 0.09035,
+          "p50": 0.09588,
+          "p90": 0.11296
+        },
+        "settle_gap_m": {
+          "mean": 0.01888,
+          "n": 4,
+          "p10": -0.00309,
+          "p50": 0.00768,
+          "p90": 0.04982
+        },
+        "z_at_rest_m": {
+          "mean": 0.06776,
+          "n": 4,
+          "p10": 0.04419,
+          "p50": 0.05735,
+          "p90": 0.09965
+        }
+      },
+      "spawn_outside_configured_range": {
+        "above_max": 56,
+        "above_max_distance_m": {
+          "mean": 0.10371,
+          "n": 56,
+          "p10": 0.1003,
+          "p50": 0.10386,
+          "p90": 0.10673
+        },
+        "above_max_never_grasped": 33,
+        "below_min": 144,
+        "range_m": [
+          0.06,
+          0.1
+        ]
+      },
+      "success_rate": 0.2557,
+      "successes": 90
+    },
+    "put_into_plate": {
+      "bounce_m": {
+        "failures": {
+          "mean": 0.00068,
+          "n": 34,
+          "p10": -0.02253,
+          "p50": -0.00404,
+          "p90": 0.03022
+        },
+        "successes": {
+          "mean": -0.00177,
+          "n": 263,
+          "p10": -0.01425,
+          "p50": 0.0,
+          "p90": 0.00484
+        }
+      },
+      "episodes": 456,
+      "failure_taxonomy": {
+        "no_grasp": {
+          "episodes": 68,
+          "fraction_of_failures": 0.3523
+        },
+        "no_release": {
+          "episodes": 91,
+          "fraction_of_failures": 0.4715
+        },
+        "not_settled": {
+          "episodes": 21,
+          "fraction_of_failures": 0.1088
+        },
+        "xy_miss": {
+          "episodes": 13,
+          "fraction_of_failures": 0.0674
+        }
+      },
+      "first_grasp_env_step": {
+        "all_that_grasped": {
+          "mean": 30.59794,
+          "n": 388,
+          "p10": 13.0,
+          "p50": 21.5,
+          "p90": 58.3
+        },
+        "successes": {
+          "mean": 29.60076,
+          "n": 263,
+          "p10": 13.0,
+          "p50": 21.0,
+          "p90": 56.8
+        }
+      },
+      "funnel": {
+        "ever_grasped": {
+          "episodes": 388,
+          "fraction_of_all": 0.8509
+        },
+        "ever_released": {
+          "episodes": 297,
+          "fraction_of_all": 0.6513
+        },
+        "ever_settled_after_release": {
+          "episodes": 276,
+          "fraction_of_all": 0.6053
+        },
+        "ever_xy_ok_at_rest": {
+          "episodes": 263,
+          "fraction_of_all": 0.5768
+        },
+        "ever_z_ok_at_rest": {
+          "episodes": 276,
+          "fraction_of_all": 0.6053
+        },
+        "success": {
+          "episodes": 263,
+          "fraction_of_all": 0.5768
+        }
+      },
+      "funnel_conditional": {
+        "ever_grasped": 0.8509,
+        "ever_released": 0.7655,
+        "ever_settled_after_release": 0.9293,
+        "ever_xy_ok_at_rest": 0.9529,
+        "ever_z_ok_at_rest": 1.0,
+        "success": 1.0
+      },
+      "min_xy_m": {
+        "failures_any_step": {
+          "mean": 0.04488,
+          "n": 193,
+          "p10": 0.00711,
+          "p50": 0.05345,
+          "p90": 0.08151
+        },
+        "failures_at_rest": {
+          "mean": 0.12744,
+          "n": 13,
+          "p10": 0.10355,
+          "p50": 0.11985,
+          "p90": 0.15745
+        }
+      },
+      "no_release_diagnosis": {
+        "ended_holding": 14,
+        "env_step_budget": {
+          "mean": 160.0,
+          "n": 91,
+          "p10": 160.0,
+          "p50": 160.0,
+          "p90": 160.0
+        },
+        "episodes": 91,
+        "first_grasp_env_step": {
+          "mean": 31.91209,
+          "n": 91,
+          "p10": 15.0,
+          "p50": 25.0,
+          "p90": 53.0
+        },
+        "lost_grip": 77,
+        "timed_out": 51,
+        "timed_out_fraction": 0.5604
+      },
+      "object_to_receptacle_at_reset_m": {
+        "grasped": {
+          "mean": 0.05257,
+          "n": 388,
+          "p10": 0.00838,
+          "p50": 0.06406,
+          "p90": 0.08887
+        },
+        "never_grasped": {
+          "mean": 0.06971,
+          "n": 68,
+          "p10": 0.02673,
+          "p50": 0.0717,
+          "p90": 0.08905
+        }
+      },
+      "radius_m": 0.091,
+      "release_clearance_buckets": [
+        {
+          "bounce_m": {
+            "mean": 0.0,
+            "n": 3,
+            "p10": 0.0,
+            "p50": 0.0,
+            "p90": 0.0
+          },
+          "clearance_high_m": 0.04,
+          "clearance_low_m": 0.02,
+          "episodes": 3,
+          "success_rate": 1.0,
+          "successes": 3
+        },
+        {
+          "bounce_m": {
+            "mean": 0.0,
+            "n": 100,
+            "p10": 0.0,
+            "p50": 0.0,
+            "p90": 0.0
+          },
+          "clearance_high_m": 0.06,
+          "clearance_low_m": 0.04,
+          "episodes": 100,
+          "success_rate": 1.0,
+          "successes": 100
+        },
+        {
+          "bounce_m": {
+            "mean": -0.00073,
+            "n": 52,
+            "p10": -0.00307,
+            "p50": 0.0,
+            "p90": 0.00197
+          },
+          "clearance_high_m": 0.08,
+          "clearance_low_m": 0.06,
+          "episodes": 52,
+          "success_rate": 0.9615,
+          "successes": 50
+        },
+        {
+          "bounce_m": {
+            "mean": -0.00188,
+            "n": 42,
+            "p10": -0.01135,
+            "p50": -0.00054,
+            "p90": 0.00615
+          },
+          "clearance_high_m": 0.1,
+          "clearance_low_m": 0.08,
+          "episodes": 42,
+          "success_rate": 0.881,
+          "successes": 37
+        },
+        {
+          "bounce_m": {
+            "mean": 0.00087,
+            "n": 77,
+            "p10": -0.01672,
+            "p50": -0.00197,
+            "p90": 0.01754
+          },
+          "clearance_high_m": 0.14,
+          "clearance_low_m": 0.1,
+          "episodes": 77,
+          "success_rate": 0.7403,
+          "successes": 57
+        },
+        {
+          "bounce_m": {
+            "mean": -0.01707,
+            "n": 23,
+            "p10": -0.0293,
+            "p50": -0.01681,
+            "p90": -0.00545
+          },
+          "clearance_high_m": null,
+          "clearance_low_m": 0.14,
+          "episodes": 23,
+          "success_rate": 0.6957,
+          "successes": 16
+        }
+      ],
+      "release_clearance_m": {
+        "failures": {
+          "mean": 0.12096,
+          "n": 34,
+          "p10": 0.08669,
+          "p50": 0.11427,
+          "p90": 0.15589
+        },
+        "successes": {
+          "mean": 0.07907,
+          "n": 263,
+          "p10": 0.04091,
+          "p50": 0.07195,
+          "p90": 0.12961
+        }
+      },
+      "released_inside_but_failed": {
+        "bounce_m": {
+          "mean": 0.00368,
+          "n": 19,
+          "p10": -0.02548,
+          "p50": 0.00149,
+          "p90": 0.0401
+        },
+        "episodes": 19,
+        "fraction_of_failures": 0.0984,
+        "release_clearance_m": {
+          "mean": 0.11796,
+          "n": 19,
+          "p10": 0.09278,
+          "p50": 0.11424,
+          "p90": 0.14942
+        },
+        "settle_gap_m": {
+          "mean": -0.01548,
+          "n": 19,
+          "p10": -0.02608,
+          "p50": -0.02287,
+          "p90": 0.00275
+        },
+        "z_at_rest_m": {
+          "mean": 0.05075,
+          "n": 19,
+          "p10": 0.04046,
+          "p50": 0.04636,
+          "p90": 0.06911
+        }
+      },
+      "spawn_outside_configured_range": {
+        "above_max": 16,
+        "above_max_distance_m": {
+          "mean": 0.10233,
+          "n": 16,
+          "p10": 0.10071,
+          "p50": 0.10233,
+          "p90": 0.10396
+        },
+        "above_max_never_grasped": 5,
+        "below_min": 176,
+        "range_m": [
+          0.06,
+          0.1
+        ]
+      },
+      "success_rate": 0.5768,
+      "successes": 263
+    }
+  },
+  "config": "configs/examples/cdpr_smolvla_demo_grpo_pilot.yaml",
+  "container_episodes": 808,
+  "predicate_disagreements": 0,
+  "recordings": [
+    "/Users/damirnurtdinov/Downloads/final_eval/record_00.npz",
+    "/Users/damirnurtdinov/Downloads/final_eval/record_01.npz",
+    "/Users/damirnurtdinov/Downloads/final_eval/record_02.npz"
+  ],
+  "thresholds": {
+    "bowl_radius_m": 0.057,
+    "bowl_release_max_height_m": null,
+    "container_z_m": 0.12,
+    "container_z_tolerance_m": 0.12,
+    "plate_radius_m": 0.091,
+    "plate_release_max_height_m": null,
+    "release_height_gate_armed": false,
+    "release_opening": 0.55,
+    "settle_margin_m": 0.045,
+    "spawn_max_m": 0.1,
+    "spawn_min_m": 0.06
+  }
+}

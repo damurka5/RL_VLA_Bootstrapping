@@ -1,0 +1,28 @@
+{
+  "completion_env_steps": 179,
+  "destination": "bowl",
+  "event_frames": {
+    "approach": 97,
+    "grasp": 111,
+    "lift": 140,
+    "native_success": 180,
+    "release": 178
+  },
+  "event_seconds": {
+    "approach": 4.85,
+    "grasp": 5.55,
+    "lift": 7.0,
+    "native_success": 9.0,
+    "release": 8.9
+  },
+  "fps": 20.0,
+  "frames": 180,
+  "instruction": "put orange into bowl",
+  "native": true,
+  "round": 0,
+  "scene_uid": "scene_23b1b1bfbc36fdc8",
+  "strict": true,
+  "target_catalog": "robocasa_orange",
+  "video": "strict_bowl_robocasa_orange_r00_w025.mp4",
+  "world": 25
+}
