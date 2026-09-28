@@ -2040,6 +2040,40 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-28 — Closing summary of the four-point review (divergence, candidate + pilot, retention, self-imitation)
+
+| point | what was done | outcome |
+|---|---|---|
+| 1. Simulation recovery | `e3a2740`: a world reset for divergence now ends its episode. It is excluded from the loss and from the GRPO group statistics, counted as a failure, and reported separately in training, validation, evaluation and harvest | Confirmed the local bug was live. **1.77% of training episodes / 1.11% of records per update** were reset-crossing trajectories in every run before the fix. Evaluation: 1–2/256 live, none after grasp, so past standalone numbers were not inflated |
+| 2a. Candidate vs original | Same-scene paired evaluation; `compare_put_into_evaluations.py` (exact McNemar) | `step_56072006` promoted on 107 vs 85 (p = 0.012). With the repeat evaluations below, its pooled rate is 200/512 = 39.1% vs 176/512 = 34.4% for `step_52791642` (+4.7 pp, unpaired p ≈ 0.12). It remains the better checkpoint, but the first 107 was a favourable draw |
+| 2b. ppo_epochs 4 → 1 pilot | `770350d`: `PPO_EPOCHS`, and `LR_OVERRIDE` because resume restores the saved rate and ignores the YAML; the active rate is logged | Stable and 4× fewer optimizer steps. **No strict gain** (in-run 35.3–37.9%); grasp kept eroding 74.7 → 68.6%. High early KL did not depend on epoch count |
+| 3. Retention repair | `ae723fb`: retention harvested under the same checkpoint/config in the same rollouts, balanced object × destination × stage, scene-disjoint; per-source loss/gradient shares and cosine; the untouched checkpoint as selection candidate (the `inf` bug fixed); paired promotion gate | Retention is now **compatible**: loss share = row share, gradient cosine +0.11 to +0.38, no 18.5× damage. Both SFT arms (with and without retention) **selected the untouched checkpoint**. The strict bank is the policy's own mean, so nothing is learnable and retention has nothing to protect against |
+| 4. Self-imitation of new solutions | `f0b8d75`/`31339fb`: deterministic failures classified by mode (failed lift, carry slip, placement/release, no grasp) and re-attempted 4× with the sampled policy; discovered-success bank; SFT with 0.5 ordinary rollouts | Sampling solved 42% of those scenes, **but the deterministic mean re-run solved them as often (20.4% vs 18.6% per attempt)**. The discovered-bank SFT also kept the initializer. On empty starts there are no residual-level "new solutions": a deterministic failure is a draw from ~25–29% run-to-run verdict noise, not a hard scene |
+
+- Not run, deliberately: the other two parts of step 4. Training from simulator states after the student's own grasps/lifts, and a retention loss inside fresh RL, both presuppose recoverable new solutions on specific scenes. Point 4's control showed those do not exist at the residual level, so neither was built. The final evaluation protocol (unassisted, empty start) is unchanged
+- What the campaign now knows that it did not before:
+  1. Evaluation resolution: one 256-scene evaluation of one checkpoint moves by up to 14 strict (5.5 pp) between runs and flips 25–29% of scene verdicts. Checkpoint comparisons below ~5 pp need pooled repeats, not one pair
+  2. The dominant randomness is physics/closed-loop chaos, not the SmolVLA prior's noise (below) and not the residual's exploration (point 4)
+  3. Offline selection of SFT on the policy's own trajectories should keep the initializer eligible; seven fits never beat it
+- Reference checkpoint: `runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006/smolvla_grpo_adapter.pt`, evaluated at prior noise scale 1
+
+### 2026-09-28 — Same-scale repeats: run-to-run verdict noise is ~25–29% at either prior noise scale
+
+- Git commit: `deaf880` (remote). Two repeat evaluations of `step_56072006` on the 2026-09-26 scenes, each paired with its earlier twin at the same scale
+
+| pair (same checkpoint, same scenes) | strict | disagreeing scenes | McNemar p |
+|---|---:|---:|---:|
+| scale 0, repeat (`…priornoise0_…134111` vs `…142102`) | 96 → 101 | 29 + 34 = **63 (24.6%)** | 0.615 |
+| scale 1, repeat (`…20260926_120533` vs `…20260928_142054`) | 107 → 93 | 44 + 30 = **74 (28.9%)** | 0.130 |
+
+- Removing the prior's noise barely changes reproducibility (63 vs 74 disagreeing scenes). The outcome randomness is mostly closed-loop physics chaos: micron-scale MuJoCo Warp divergence amplified by the policy into whole-episode verdict flips, measured at 6.6% with pinned actions on 2026-08-14 and evidently far larger over a full put_into chain. **The RL-attribution hypothesis is ruled out**, so no RL run at `PRIOR_NOISE_SCALE=0`
+- Mean rates: scale 0 = (96 + 101)/512 = 38.5%; scale 1 = (107 + 93)/512 = 39.1%. Prior noise scale has **no effect** on success, which confirms the previous entry
+- Consequences for every earlier comparison:
+  - the same checkpoint scored 107 and 93 on identical scenes, a 14-scene (5.5 pp) swing
+  - McNemar's discordant cells are mostly this noise, so it stays valid but needs a larger true effect
+  - `step_56072006` vs `step_52791642`, pooled over two evaluations each, is 200/512 vs 176/512 (+4.7 pp, unpaired p ≈ 0.12). Still ahead, but the promotion rested partly on a favourable first draw
+- Status: prior-noise line closed; `PRIOR_NOISE_SCALE` stays available (default untouched)
+
 ### 2026-09-28 — Lowering the prior's noise at evaluation does not help `step_56072006`
 
 - Git commit: `81ece51` (remote). Same 256 `student_validation` scenes, protocol, and deterministic residual as the 2026-09-26 evaluation; only `PRIOR_NOISE_SCALE` differs. Paired against the scale-1 evaluation (107/256)
