@@ -1,0 +1,15 @@
+backend_name,simulator_version,robot_embodiment,num_environments,camera_count,render_resolution,render_backend,platform,rendered_rgb_frames,sim_steps,step_time_s,render_time_s,total_time_s,step_fps_during_rgb,rgb_frame_fps,cpu_ram_mb,gpu_vram_mb,gpu_utilization_percent,failure_reason,engineering_notes
+mujoco_raw_cdpr,3.2.4,current CDPR gripper MJCF with kinematic waypoint EE controller,1,0,320x240,glfw,Darwin x86_64 24.6.0,0,60,0.000000,0.000000,0.185544,0.00,0.00,48.03,,,"CGLError: invalid CoreGraphics connection; stderr: Exception ignored in: <function Renderer.__del__ at 0x7f9d48124310>
+Traceback (most recent call last):
+  File ""/Library/Frameworks/Python.framework/Versions/3.9/lib/python3.9/site-packages/mujoco/renderer.py"", line 335, in __del__
+    self.close()
+  File ""/Library/Frameworks/Python.framework/Versions/3.9/lib/python3.9/site-packages/mujoco/renderer.py"", line 323, in close
+    if self._mjr_context:
+AttributeError: 'Renderer' object has no attribute '_mjr_context'","Render backend attempted: glfw; platform: Darwin x86_64 24.6.0. Local macOS uses MuJoCo GLFW/CGL; `CGLError: invalid CoreGraphics connection` means this process lacks a usable GUI/CoreGraphics session. Run from an interactive macOS login session, or profile RGB on the Linux server with EGL. Failure: CGLError: invalid CoreGraphics connection. Traceback (most recent call last):
+  File ""/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/tools/sim_compare/mujoco_render_worker.py"", line 92, in main
+    renderer = mj.Renderer(model, height=int(args.height), width=int(args.width))
+  File ""/Library/Frameworks/Python.framework/Versions/3.9/lib/python3.9/site-packages/mujoco/renderer.py"", line 83, in __init__
+    self._gl_context = gl_context.GLContext(width, height)
+  File ""/Library/Frameworks/Python.framework/Versions/3.9/lib/python3.9/site-packages/mujoco/cgl/__init__.py"", line 47, in __init__
+    cgl.CGLChoosePixelFormat(
+mujoco.cgl.cgl.CGLError: invalid CoreGraphics connection"
