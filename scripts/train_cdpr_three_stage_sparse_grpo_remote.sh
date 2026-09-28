@@ -23,6 +23,11 @@ MAX_UPDATES="${MAX_UPDATES:-10}"
 # ignores learning_rate in the YAML. The active rate is logged per update.
 PPO_EPOCHS="${PPO_EPOCHS:-}"
 LR_OVERRIDE="${LR_OVERRIDE:-}"
+# Scale on the SmolVLA prior's flow-matching start noise for rollouts AND
+# in-run validation (RLVLA_SMOLVLA_PRIOR_NOISE_SCALE). Empty keeps LeRobot's
+# unit-normal draw; 0 makes the prior deterministic, so within-group outcome
+# differences come from the residual's own sampling and physics.
+PRIOR_NOISE_SCALE="${PRIOR_NOISE_SCALE:-}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
 SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-256}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
@@ -164,7 +169,8 @@ export RLVLA_SMOLVLA_MAX_TRAIN_STEPS="$MAX_TRAIN_STEPS"
 export RLVLA_SMOLVLA_MJWARP_MAX_UPDATES="$MAX_UPDATES"
 export RLVLA_MJWARP_WORLDS_PER_RANK="$WORLDS_PER_RANK"
 export RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE="$SMOLVLA_MICROBATCH_SIZE"
-unset RLVLA_SMOLVLA_PPO_EPOCHS RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE
+unset RLVLA_SMOLVLA_PPO_EPOCHS RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE RLVLA_SMOLVLA_PRIOR_NOISE_SCALE
+[[ -n "$PRIOR_NOISE_SCALE" ]] && export RLVLA_SMOLVLA_PRIOR_NOISE_SCALE="$PRIOR_NOISE_SCALE"
 [[ -n "$PPO_EPOCHS" ]] && export RLVLA_SMOLVLA_PPO_EPOCHS="$PPO_EPOCHS"
 [[ -n "$LR_OVERRIDE" ]] && export RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE="$LR_OVERRIDE"
 if [[ "$INIT_MODE" == "resume" ]]; then
@@ -183,14 +189,15 @@ printf 'run_dir=%s\nmanifest=%s\n%s=%s\n' \
 printf 'max_train_steps=%s worlds_per_rank=%s groups_per_rank=%s\n' \
   "$MAX_TRAIN_STEPS" "$WORLDS_PER_RANK" "$((WORLDS_PER_RANK / 8))"
 printf 'max_updates=%s; globally empty update stop: 3 consecutive cycles\n' "$MAX_UPDATES"
+printf 'prior noise scale=%s\n' "${PRIOR_NOISE_SCALE:-1 (LeRobot default)}"
 printf 'selection metric: independent strict placement; native and milestone diagnostics separately\n'
 printf 'trainable component: residual actor; initializer LoRA is loaded and frozen\n'
 printf 'command:'; printf ' %q' "${train_cmd[@]}"; printf '\n'
 [[ "$DRY_RUN" == "1" ]] && exit 0
 
-"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" "$CONFIG" "$PPO_EPOCHS" "$LR_OVERRIDE" <<'PYPROVENANCE'
+"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" "$CONFIG" "$PPO_EPOCHS" "$LR_OVERRIDE" "$PRIOR_NOISE_SCALE" <<'PYPROVENANCE'
 import hashlib, json, pathlib, subprocess, sys
-checkpoint, scenes, output, updates, steps, mode, config, ppo_epochs, lr_override = sys.argv[1:]
+checkpoint, scenes, output, updates, steps, mode, config, ppo_epochs, lr_override, prior_noise = sys.argv[1:]
 def digest(path):
     h = hashlib.sha256()
     with open(path, "rb") as source:
@@ -215,6 +222,7 @@ try:
     record["ppo_epochs_overridden"] = bool(ppo_epochs)
     record["learning_rate_yaml"] = rl_args.get("learning_rate")
     record["optimizer_lr_override"] = float(lr_override) if lr_override else None
+    record["prior_noise_scale"] = float(prior_noise) if prior_noise else None
 except Exception as error:  # never block a launch on provenance
     record["stage_loss_weights"] = f"unavailable: {error}"
 try:

@@ -2040,6 +2040,25 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-28 — Lowering the prior's noise at evaluation does not help `step_56072006`
+
+- Git commit: `81ece51` (remote). Same 256 `student_validation` scenes, protocol, and deterministic residual as the 2026-09-26 evaluation; only `PRIOR_NOISE_SCALE` differs. Paired against the scale-1 evaluation (107/256)
+
+| prior noise scale | strict | only scale 1 / only this scale | exact McNemar p |
+|---|---:|---:|---:|
+| 1.0 (every evaluation so far) | 107/256 = 41.8% | — | — |
+| 0.5 | 97/256 = 37.9% | 36 / 26 | 0.253 |
+| 0.0 (deterministic prior) | 96/256 = 37.5% | 42 / 31 | 0.242 |
+
+- Neither is a significant difference; both point the same way (−4 pp). Removing the prior's randomness at deployment does not buy success. If anything the residual, trained for 56M steps on noisy priors, is tuned to them
+- What stands out is the discordance: 62–73 of 256 scenes (24–29%) change verdict between two evaluations of the same checkpoint. Without a same-scale repeat that number is uninterpretable: it mixes the noise-scale effect with ordinary run-to-run variance
+- The question that decides whether the RL-attribution hypothesis (previous entry, point 4) is worth a run: how reproducible is an outcome when the prior is deterministic? Two cheap measurements answer it:
+  - the scale-1 run-to-run discordance, which is free: `step_52791642` was evaluated on these scenes on 2026-09-22 and 2026-09-26
+  - a second scale-0 evaluation paired with the first
+  - If scale-0 repeats agree far better than scale-1 repeats, the prior's noise is most of the outcome randomness. RL at scale 0 would then give GRPO groups whose differences come from the residual's own sampling. If they disagree about as much, physics chaos dominates and the hypothesis is out
+- Prepared: `PRIOR_NOISE_SCALE` in `train_cdpr_three_stage_sparse_grpo_remote.sh` (rollouts and in-run validation; recorded in `launch_provenance.json`)
+- Status: **no change; `step_56072006` at scale 1 remains the reference**
+
 ### 2026-09-28 — The deterministic control erases the "discovery": the residual's sampling finds nothing the prior's noise does not
 
 - Git commit: `31339fb` (remote). Control run `runs/discovery_deterministic_step_56072006_20260928_085443`: the same 1,024 hard scenes (`SELECTION_FROM` the stochastic run), 4 attempts each with the deterministic residual mean and fresh torch seeds
