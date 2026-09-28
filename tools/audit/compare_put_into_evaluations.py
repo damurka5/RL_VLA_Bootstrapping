@@ -123,6 +123,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="Two-sided McNemar level at which a difference is called.",
     )
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--allow-prior-noise-difference",
+        action="store_true",
+        help="Compare evaluations run at different prior noise scales on purpose.",
+    )
     args = parser.parse_args(argv)
     baseline_dir = args.baseline.expanduser().resolve()
     candidate_dir = args.candidate.expanduser().resolve()
@@ -130,7 +135,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.loads((path / "evaluation.json").read_text("utf-8"))
         for path in (baseline_dir, candidate_dir)
     ]
-    for key in ("scene_manifest_sha256", "split", "worlds", "rounds", "distinct_scene_rounds", "decisions"):
+    keys = ["scene_manifest_sha256", "split", "worlds", "rounds", "distinct_scene_rounds", "decisions"]
+    if not args.allow_prior_noise_difference:
+        keys.append("prior_noise_scale")
+    for key in keys:
         if reports[0].get(key) != reports[1].get(key):
             raise SystemExit(f"Protocols differ on {key}: {reports[0].get(key)!r} vs {reports[1].get(key)!r}.")
     baseline = _scene_outcomes(baseline_dir, args.metric)

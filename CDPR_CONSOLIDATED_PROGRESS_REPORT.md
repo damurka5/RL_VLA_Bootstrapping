@@ -2040,6 +2040,31 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-28 — The deterministic control erases the "discovery": the residual's sampling finds nothing the prior's noise does not
+
+- Git commit: `31339fb` (remote). Control run `runs/discovery_deterministic_step_56072006_20260928_085443`: the same 1,024 hard scenes (`SELECTION_FROM` the stochastic run), 4 attempts each with the deterministic residual mean and fresh torch seeds
+
+| same 1,024 deterministic-failure scenes | deterministic mean, re-run | sampled residual |
+|---|---:|---:|
+| strict per attempt | **20.4%** (834/4,096) | 18.6% (763/4,096) |
+| native per attempt | 28.7% | 26.1% |
+| scenes solved ≥ once | 409 (39.9%) | 431 (42.1%) |
+| failed_lift: strict per attempt / scenes solved | 28.1% / 148 of 287 | 26.7% / 161 |
+| carry_slip | 21.2% / 149 of 348 | 18.5% / 145 |
+| no_grasp | 11.1% / 84 of 346 | 10.5% / 98 |
+| placement | 36.0% / 28 of 43 | 31.4% / 27 |
+| non-finite attempts | 56 | 64 |
+
+- **The deterministic mean re-run solves these scenes at least as often as the sampled residual**, in every failure mode. Per attempt it is −1.8 pp for sampling (z ≈ −2.0 over attempts; attempts cluster by scene, so treat this as indicative). Sampling solves 22 more scenes at least once, which is what its extra per-scene diversity is worth, and nothing more
+- What this means:
+  1. A deterministic "failure" is a draw, not a property of the scene. On the scenes the harvest's single deterministic attempt failed, the same policy succeeds ~20% of the time. Scene difficulty is graded, and one evaluation verdict is a Bernoulli sample of it
+  2. The outcome variance that matters comes from the SmolVLA prior. LeRobot's `sample_noise` draws fresh flow-matching noise on every forward (`sil_record.py`, 2026-08-14), plus physics chaos (6.6% verdict flips with pinned actions). The residual's own exploration (log_std ≈ −1.21) adds no successes and costs a little
+  3. Self-imitation on sampled successes therefore imitates luck in the prior, not a residual behaviour. The discovered-bank SFT (`sft_discovered`, `SELECTION_METRIC=main`, strict bank as 0.5 ordinary retention) **also selected the untouched checkpoint** (verdict `keep_source`), consistent with this. The seventh fit to find no learnable target
+  4. Hypothesis for the RL plateau (not yet tested): within a GRPO group, outcome differences are produced mostly by prior noise that the residual neither controls nor pays log-probability for. The advantage is still credited to the residual's sampled actions, so most of the policy-gradient signal is attribution noise
+- Step 4 status: as framed, "newly discovered solutions" do not exist at the residual level on empty starts; the variation lives in the prior. The two remaining parts of step 4 (training from states after the student's own grasps/lifts, and retention inside RL) do not address this
+- Next, the direct test (`d8…` this commit): `RLVLA_SMOLVLA_PRIOR_NOISE_SCALE` scales the flow-matching start noise (1.0 = today, 0 = a deterministic prior). The evaluator records it and the paired comparison refuses mixed scales unless `--allow-prior-noise-difference`. Evaluate `step_56072006` at 0 and 0.5 on the 2026-09-26 scenes and pair them against the scale-1 evaluation. A gain at lower scale is both a deployable improvement and support for (4); a loss says the residual is tuned to noisy priors
+- Status: **no promotion; `step_56072006` remains the reference.** The discovered SFT's `sft_report.json` is still to be copied here
+
 ### 2026-09-28 — Discovery yield: the sampled policy solves 42% of the scenes the deterministic `step_56072006` fails
 
 - Git commit: `f0b8d75` (remote). Run `runs/discovery_step_56072006_20260927_224805`

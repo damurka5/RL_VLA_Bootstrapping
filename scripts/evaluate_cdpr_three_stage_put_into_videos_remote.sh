@@ -45,6 +45,9 @@ VIDEO_OUTCOME="${VIDEO_OUTCOME:-strict}"   # strict | native | failed | all
 VIDEO_FPS="${VIDEO_FPS:-20}"
 MAX_VIDEOS="${MAX_VIDEOS:-0}"              # 0 keeps every matching episode
 STOCHASTIC_SEED="${STOCHASTIC_SEED:-}"     # empty: deterministic residual, as in training validation
+# Scale on the SmolVLA prior's flow-matching start noise. Empty = LeRobot's
+# unit-normal draw (every evaluation so far); 0 = a deterministic prior.
+PRIOR_NOISE_SCALE="${PRIOR_NOISE_SCALE:-}"
 
 if [[ -d "$CHECKPOINT" ]]; then
   CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
@@ -62,7 +65,11 @@ fi
 
 step_name="$(basename "$(dirname "$CHECKPOINT")")"
 run_name="$(basename "$(dirname "$(dirname "$(dirname "$CHECKPOINT")")")")"
-OUTPUT_DIR="${OUTPUT_DIR:-runs/three_stage_put_into_eval/${run_name}_${step_name}_${SPLIT}_$(date +%Y%m%d_%H%M%S)}"
+noise_tag=""
+[[ -n "$PRIOR_NOISE_SCALE" ]] && noise_tag="_priornoise${PRIOR_NOISE_SCALE}"
+OUTPUT_DIR="${OUTPUT_DIR:-runs/three_stage_put_into_eval/${run_name}_${step_name}_${SPLIT}${noise_tag}_$(date +%Y%m%d_%H%M%S)}"
+unset RLVLA_SMOLVLA_PRIOR_NOISE_SCALE
+[[ -n "$PRIOR_NOISE_SCALE" ]] && export RLVLA_SMOLVLA_PRIOR_NOISE_SCALE="$PRIOR_NOISE_SCALE"
 mkdir -p "$OUTPUT_DIR"
 exec > >(tee -a "$OUTPUT_DIR/eval.log") 2>&1
 export CUDA_VISIBLE_DEVICES PYTHONUNBUFFERED=1
@@ -84,6 +91,7 @@ args=(
 [[ -n "$STOCHASTIC_SEED" ]] && args+=(--stochastic-seed "$STOCHASTIC_SEED")
 
 echo "checkpoint=$CHECKPOINT"
+echo "prior noise scale=${PRIOR_NOISE_SCALE:-1 (default)}"
 echo "split=$SPLIT worlds=$WORLDS rounds=$ROUNDS distinct_scenes=$DISTINCT_SCENES decisions=$DECISIONS"
 echo "videos: outcome=$VIDEO_OUTCOME fps=$VIDEO_FPS max=$MAX_VIDEOS -> $OUTPUT_DIR/videos"
 [[ "$SPLIT" == "final_test" ]] && echo "WARNING: final_test is the locked split; run it once, on the selected checkpoint."

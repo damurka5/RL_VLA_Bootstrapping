@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib
+import os
 import warnings
 from dataclasses import dataclass
 from typing import Any, Sequence
@@ -536,6 +537,60 @@ def _torch_dtype_from_name(name: str | None, *, device: Any) -> Any | None:
     raise ValueError(f"Unsupported SmolVLA mixed precision setting: {name!r}")
 
 
+PRIOR_NOISE_SCALE_ENV = "RLVLA_SMOLVLA_PRIOR_NOISE_SCALE"
+
+
+def prior_noise_scale_from_env() -> float | None:
+    """The requested scale on the flow-matching start noise, or None (untouched)."""
+
+    raw = os.environ.get(PRIOR_NOISE_SCALE_ENV, "").strip()
+    if not raw:
+        return None
+    scale = float(raw)
+    if not np.isfinite(scale) or scale < 0.0:
+        raise ValueError(f"{PRIOR_NOISE_SCALE_ENV} must be a finite value >= 0, got {raw!r}.")
+    return scale
+
+
+def apply_prior_noise_scale(policy: Any, scale: float | None = None) -> float | None:
+    """Scale the noise SmolVLA's flow matching integrates from.
+
+    LeRobot's ``sample_actions`` starts from ``self.sample_noise(...)``, a bare
+    ``torch.normal`` with no generator, on every forward. That draw is the
+    prior's randomness, and it is not small: re-running the "deterministic"
+    policy on the scenes it failed solved 20.4% of attempts, more than the
+    sampled residual's 18.6% (2026-09-28). A scale of 1.0 is today's behaviour;
+    0.0 integrates from the zero vector, which makes the prior a deterministic
+    function of its inputs. Wrapped on the instance before any torch.compile,
+    so the compiled graph sees it. Returns the applied scale (None: untouched).
+    """
+
+    scale = prior_noise_scale_from_env() if scale is None else float(scale)
+    if scale is None or scale == 1.0:
+        return None
+    model = getattr(policy, "model", None)
+    original = getattr(model, "sample_noise", None)
+    if model is None or not callable(original):
+        raise RuntimeError(
+            "A prior noise scale was requested but this LeRobot SmolVLA does not "
+            "expose model.sample_noise; refusing to run with an unapplied knob."
+        )
+    if getattr(model, "_rlvla_prior_noise_scale", None) is not None:
+        return float(model._rlvla_prior_noise_scale)
+
+    def scaled_sample_noise(*args: Any, **kwargs: Any) -> Any:
+        noise = original(*args, **kwargs)
+        return noise * scale if scale > 0.0 else torch.zeros_like(noise)
+
+    model.sample_noise = scaled_sample_noise
+    model._rlvla_prior_noise_scale = float(scale)
+    warnings.warn(
+        f"SmolVLA prior noise scaled by {scale} ({PRIOR_NOISE_SCALE_ENV}).",
+        RuntimeWarning,
+    )
+    return float(scale)
+
+
 class SmolVLARuntime:
     def __init__(
         self,
@@ -643,6 +698,7 @@ class SmolVLARuntime:
                 resolved_model_image_size,
             )
 
+        apply_prior_noise_scale(policy)
         original_sample_actions = None
         compile_enabled = False
         if bool(compile_model) and torch_device.type == "cuda":

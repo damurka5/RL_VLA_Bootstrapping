@@ -58,6 +58,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tools.audit.xy_approach_probe import _build_world  # noqa: E402
+from rl_vla_bootstrapping.policy.smolvla_cdpr import prior_noise_scale_from_env  # noqa: E402
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -750,6 +751,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         "arm": ("assisted_yaw_diagnostic" if calibration else "unassisted")
         + ("" if args.stochastic_seed is None else "_stochastic"),
         "stochastic_seed": args.stochastic_seed,
+        # The flow-matching start-noise scale the SmolVLA prior ran with; None
+        # is LeRobot's unit-normal draw.
+        "prior_noise_scale": prior_noise_scale_from_env(),
         "checkpoint": str(args.checkpoint),
         "config": str(args.config),
         "scene_manifest": str(args.scene_manifest),
@@ -785,6 +789,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     (output / "evaluation.json").write_text(
         json.dumps(report, indent=2, sort_keys=True), encoding="utf-8"
     )
+    print(f"[eval] prior noise scale {report['prior_noise_scale']}", flush=True)
     print(
         f"[eval] {report['arm']}: native {summary['native']}, strict "
         f"{summary['strict']}",
