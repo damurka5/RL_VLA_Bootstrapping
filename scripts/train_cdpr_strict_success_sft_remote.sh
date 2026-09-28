@@ -155,6 +155,8 @@ fi
 RETENTION_DATASET="${RETENTION_DATASET:-}"
 RETENTION_FRACTION="${RETENTION_FRACTION:-0.2}"
 BASELINE_EVAL_DIR="${BASELINE_EVAL_DIR:-$WORK_DIR/eval_baseline}"
+# relative (default) or main; see sil_sft.py --selection-metric.
+SELECTION_METRIC="${SELECTION_METRIC:-relative}"
 PROMOTION_ALPHA="${PROMOTION_ALPHA:-0.05}"
 
 # The verdict is an unassisted rollout, not the held-out imitation loss.
@@ -286,6 +288,7 @@ if has_step train; then
     --split-by scene
     --sampler balanced
     --progress never
+    --selection-metric "$SELECTION_METRIC"
   )
   if [[ -n "$RETENTION_DATASET" ]]; then
     [[ -f "$RETENTION_DATASET" ]] || {

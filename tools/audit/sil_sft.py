@@ -1713,6 +1713,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--selection-metric",
+        choices=("relative", "main"),
+        default="relative",
+        help=(
+            "relative: (1-f)*main/main_base + f*retention/retention_base, each "
+            "against its own untouched error. main: the main bank's ratio alone, "
+            "with retention still measured and reported. A sampled-action bank's "
+            "untouched error is dominated by exploration noise, so a real shift "
+            "of its mean is a small relative gain that the retention ratio (at "
+            "prior-noise scale) can swamp; the closed-loop gate stays the "
+            "arbiter either way."
+        ),
+    )
+    parser.add_argument(
         "--retention-fraction",
         type=float,
         default=0.0,
@@ -2092,7 +2106,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             retention_base=(
                 None if baseline_retention_val is None else baseline_retention_val["mse"]
             ),
-            retention_fraction=mixer.fraction if mixer.active else 0.0,
+            retention_fraction=(
+                mixer.fraction
+                if mixer.active and str(args.selection_metric) == "relative"
+                else 0.0
+            ),
         )
 
     # One fixed mixed batch for the gradient probe, drawn in the training
@@ -2575,7 +2593,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             strict=True,
         )
         val_index = np.flatnonzero(val_rows)
-        for column in ("stage_name", "destination", "target_catalog"):
+        for column in ("stage_name", "destination", "target_catalog", "source_group"):
             per_stage[f"val_by_{column}"] = per_group_metrics(
                 restored,
                 torch,
@@ -2649,6 +2667,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # written; there is nothing to evaluate and nothing to promote.
         "selected": selected,
         "adapter_written": adapter_written,
+        "selection_metric": str(args.selection_metric),
         "initializer_selection_score": round(float(initializer_score), 6),
         "best_selection_score": round(float(best), 6),
         "lora": lora_report,

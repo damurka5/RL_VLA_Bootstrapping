@@ -147,9 +147,13 @@ def discovery_yield(
 
     wanted = set(selection["scene_uids"])
     attempts: dict[str, list[Mapping[str, Any]]] = {}
+    rollout_modes = {str(row.get("rollout_mode")) for row in stochastic}
+    if len(rollout_modes) != 1:
+        raise SystemExit(
+            f"Attempts mix rollout modes {sorted(rollout_modes)}; measure the "
+            "stochastic run and the deterministic control separately."
+        )
     for row in stochastic:
-        if str(row.get("rollout_mode")) != "stochastic":
-            raise SystemExit(f"{row['source']} holds a non-stochastic attempt.")
         uid = str(row["scene_uid"])
         if uid not in wanted:
             raise SystemExit(f"Stochastic attempt on unselected scene {uid} ({row['source']}).")
@@ -193,6 +197,7 @@ def discovery_yield(
         report[f"by_{column}"] = table
     repeats = sorted({int(row["repeat_index"]) for rows in attempts.values() for row in rows})
     report["repeats_seen"] = repeats
+    report["rollout_mode"] = next(iter(rollout_modes))
     return report
 
 

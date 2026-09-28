@@ -47,6 +47,11 @@ MODES="${MODES:-no_grasp failed_lift carry_slip placement}"
 DECISIONS="${DECISIONS:-128}"
 MICROBATCH="${MICROBATCH:-16}"
 STOCHASTIC_SEED="${STOCHASTIC_SEED:-20260927}"
+# stochastic (discovery) or deterministic (the CONTROL: the same hard scenes
+# re-run with the deterministic mean. The prior draws fresh noise every forward,
+# so a deterministic "failure" is itself partly chance; only the stochastic
+# yield ABOVE this control is discovery by sampling.)
+ROLLOUT="${ROLLOUT:-stochastic}"
 SEED_TORCH="${SEED_TORCH:-20260927}"
 SELECTION_SEED="${SELECTION_SEED:-20260927}"
 STEPS="${STEPS:-select record yield}"
@@ -55,8 +60,11 @@ if [[ -d "$CHECKPOINT" ]]; then
   CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
 fi
 STEP_NAME="$(basename "$(dirname "$CHECKPOINT")")"
-RUN_DIR="${RUN_DIR:-runs/discovery_${STEP_NAME}_$(date +%Y%m%d_%H%M%S)}"
-TAG="${TAG:-disc_${STEP_NAME//_/}}"
+case "$ROLLOUT" in stochastic|deterministic) ;; *) echo "ROLLOUT must be stochastic or deterministic." >&2; exit 2 ;; esac
+RUN_DIR="${RUN_DIR:-runs/discovery_${ROLLOUT}_${STEP_NAME}_$(date +%Y%m%d_%H%M%S)}"
+TAG="${TAG:-disc_${ROLLOUT:0:3}_${STEP_NAME//_/}}"
+# A control reuses the stochastic run's scene list so both measure the same scenes.
+SELECTION_FROM="${SELECTION_FROM:-}"
 [[ -f "$CHECKPOINT" ]] || { echo "Checkpoint not found: $CHECKPOINT" >&2; exit 2; }
 for pair in "WORLDS:$WORLDS" "REPEATS:$REPEATS"; do
   [[ "${pair#*:}" =~ ^[1-9][0-9]*$ ]] || { echo "${pair%%:*} must be positive." >&2; exit 2; }
@@ -73,10 +81,13 @@ exec > >(tee -a "$RUN_DIR/discovery_$(date +%Y%m%d_%H%M%S)_$$.log") 2>&1
 echo "=== stochastic discovery on deterministic failures ==="
 echo "checkpoint=$CHECKPOINT"
 echo "deterministic harvest=$DET_RUN_DIR"
-echo "max scenes=$MAX_SCENES x repeats=$REPEATS, modes=$MODES, stochastic seed=$STOCHASTIC_SEED"
+echo "max scenes=$MAX_SCENES x repeats=$REPEATS, modes=$MODES, rollout=$ROLLOUT (seed $STOCHASTIC_SEED)"
 echo "run_dir=$RUN_DIR"
 
-if has_step select; then
+if has_step select && [[ -n "$SELECTION_FROM" ]]; then
+  cp "$SELECTION_FROM" "$RUN_DIR/hard_scenes.json"
+  echo "reusing scene list $SELECTION_FROM"
+elif has_step select; then
   shopt -s nullglob
   ATTEMPTS=("$DET_RUN_DIR"/bank_shard*/attempts_*.npz)
   shopt -u nullglob
@@ -90,6 +101,8 @@ if has_step record; then
   [[ -f "$RUN_DIR/hard_scenes.json" ]] || { echo "Run STEPS=select first." >&2; exit 1; }
   PIDS=()
   SHARD=0
+  MODE_ARGS=()
+  [[ "$ROLLOUT" == "stochastic" ]] && MODE_ARGS+=(--stochastic-seed "$STOCHASTIC_SEED")
   for gpu in "${GPU_LIST[@]}"; do
     OUT="$RUN_DIR/bank_shard${SHARD}"
     mkdir -p "$OUT"
@@ -97,7 +110,7 @@ if has_step record; then
       CUDA_VISIBLE_DEVICES="$gpu" run tools/audit/collect_cdpr_full_put_into.py \
         --config "$CONFIG" --checkpoint "$CHECKPOINT" --scene-manifest "$SCENES" \
         --split collection --scene-uids "$RUN_DIR/hard_scenes.json" \
-        --repeats "$REPEATS" --rounds 0 --stochastic-seed "$STOCHASTIC_SEED" \
+        --repeats "$REPEATS" --rounds 0 "${MODE_ARGS[@]}" \
         --output "$OUT" --device cuda:0 --worlds "$WORLDS" \
         --decisions "$DECISIONS" --microbatch "$MICROBATCH" \
         --shard "$SHARD" --num-shards "$NUM_SHARDS" \

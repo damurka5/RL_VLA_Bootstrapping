@@ -60,8 +60,13 @@ def scan_candidates(
     *,
     target_catalogs: Sequence[str],
     destinations: Sequence[str],
+    allow_repeated_scenes: bool = False,
 ) -> tuple[list[dict[str, Any]], dict[str, str]]:
-    """Read only per-episode metadata and verify the strict contract."""
+    """Read only per-episode metadata and verify the strict contract.
+
+    ``allow_repeated_scenes`` is for a discovery harvest, which attempts one
+    scene several times on purpose; the caller then caps successes per scene.
+    """
 
     expected_cells = {
         (str(catalog), str(destination))
@@ -156,7 +161,7 @@ def scan_candidates(
                         f"episode_uid {uid!r} appears in {seen_episode[uid]} "
                         f"and {path}."
                     )
-                if scene in seen_scene:
+                if scene in seen_scene and not allow_repeated_scenes:
                     raise ValueError(
                         f"scene_uid {scene!r} appears in two successful "
                         f"episodes ({seen_scene[scene]} and {path}); training "
@@ -171,6 +176,11 @@ def scan_candidates(
                         "scene_uid": scene,
                         "target_catalog": cell[0],
                         "destination": cell[1],
+                        "rollout_mode": (
+                            str(data["rollout_mode"][column])
+                            if "rollout_mode" in data.files
+                            else "deterministic"
+                        ),
                     }
                 )
     if not candidates:
@@ -379,7 +389,7 @@ def build_rows(selected: Sequence[Mapping[str, Any]]) -> dict[str, np.ndarray]:
                     )
                     add("full_chain_success", True)
                     add("release_event_repaired", release_repaired)
-                    add("source_group", "strict_policy")
+                    add("source_group", str(episode.get("source_group", "strict_policy")))
                     add("starts_grasped", False)
 
     return {
@@ -703,7 +713,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument(
         "--mode",
-        choices=("strict", "retention"),
+        choices=("strict", "retention", "discovered"),
         default="strict",
         help=(
             "strict: the balanced strict-success SFT bank (default). "
@@ -712,6 +722,24 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--retention-records", type=Path, nargs="*", default=[])
+    parser.add_argument(
+        "--selection",
+        type=Path,
+        default=None,
+        help="--mode discovered: discovery_scenes.py select output (failure modes).",
+    )
+    parser.add_argument(
+        "--max-per-scene",
+        type=int,
+        default=2,
+        help="--mode discovered: cap on strict successes kept from one scene.",
+    )
+    parser.add_argument(
+        "--modes",
+        nargs="+",
+        default=["no_grasp", "failed_lift", "carry_slip", "placement"],
+        help="--mode discovered: failure modes whose discovered solutions are kept.",
+    )
     parser.add_argument(
         "--exclude-dataset",
         type=Path,
@@ -728,6 +756,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.mode == "retention":
         return build_retention_main(args)
+    if args.mode == "discovered":
+        return build_discovered_main(args)
 
     paths = sorted({path.expanduser().resolve() for path in args.records})
     if not paths:
@@ -858,6 +888,142 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{frame_report['rows']} rows",
             flush=True,
         )
+    return 0
+
+
+def select_discovered(
+    candidates: Sequence[Mapping[str, Any]],
+    *,
+    failure_mode: Mapping[str, str],
+    modes: Sequence[str],
+    max_per_scene: int,
+    seed: int,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    """Keep up to ``max_per_scene`` sampled successes of each hard scene.
+
+    Every candidate must be a STOCHASTIC strict success on a scene the
+    deterministic policy failed; its failure mode travels as the source group
+    (``discovered_<mode>``), so the SFT report can break validation out by it.
+    The cap stops one easy-to-rediscover scene from supplying four copies of
+    nearly the same trajectory.
+    """
+
+    if int(max_per_scene) < 1:
+        raise ValueError("--max-per-scene must be positive.")
+    by_scene: dict[str, list[dict[str, Any]]] = {}
+    for row in candidates:
+        if row.get("rollout_mode") != "stochastic":
+            raise ValueError(
+                f"{row['episode_uid']} is a {row.get('rollout_mode')!r} success; a "
+                "discovered bank takes sampled-policy successes only."
+            )
+        uid = str(row["scene_uid"])
+        if uid not in failure_mode:
+            raise ValueError(f"{row['episode_uid']} is on scene {uid}, which is not in the selection.")
+        by_scene.setdefault(uid, []).append(dict(row))
+    selected: list[dict[str, Any]] = []
+    cells: dict[str, dict[str, int]] = {}
+    for uid, rows in sorted(by_scene.items()):
+        mode = str(failure_mode[uid])
+        key = f"{mode}/{rows[0]['destination']}"
+        cell = cells.setdefault(key, {"scenes": 0, "available": 0, "selected": 0})
+        cell["available"] += len(rows)
+        if mode not in modes:
+            continue
+        rows.sort(key=lambda row: _selection_rank(str(row["episode_uid"]), int(seed)))
+        take = rows[: int(max_per_scene)]
+        for row in take:
+            row["source_group"] = f"discovered_{mode}"
+        selected.extend(take)
+        cell["scenes"] += 1
+        cell["selected"] += len(take)
+    selected.sort(key=lambda row: str(row["episode_uid"]))
+    if not selected:
+        raise ValueError("No discovered successes survived the mode filter.")
+    return selected, {
+        "max_per_scene": int(max_per_scene),
+        "modes": list(modes),
+        "selection_seed": int(seed),
+        "cells": dict(sorted(cells.items())),
+        "available_total": len(candidates),
+        "selected_total": len(selected),
+        "scenes_selected": len({row["scene_uid"] for row in selected}),
+    }
+
+
+def build_discovered_main(args: argparse.Namespace) -> int:
+    """``--mode discovered``: sampled successes on deterministic failures."""
+
+    if args.selection is None:
+        raise SystemExit("--mode discovered needs --selection (discovery_scenes.py select output).")
+    selection_file = json.loads(args.selection.expanduser().resolve().read_text(encoding="utf-8"))
+    paths = sorted({path.expanduser().resolve() for path in args.records})
+    output = args.output.expanduser().resolve()
+    output.mkdir(parents=True, exist_ok=True)
+    try:
+        candidates, provenance = scan_candidates(
+            paths,
+            target_catalogs=args.target_catalogs,
+            destinations=args.destinations,
+            allow_repeated_scenes=True,
+        )
+        selected, selection = select_discovered(
+            candidates,
+            failure_mode=selection_file["failure_mode"],
+            modes=args.modes,
+            max_per_scene=int(args.max_per_scene),
+            seed=int(args.selection_seed),
+        )
+        dataset = build_rows(selected)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    frame_paths = sorted({path.expanduser().resolve() for path in args.frames if path.is_file()})
+    frame_report = None
+    if frame_paths:
+        frame_report = verify_frame_coverage(dataset, frame_paths)
+        if frame_report["resolved_fraction"] < 1.0 and not bool(args.allow_missing_frames):
+            raise SystemExit(
+                f"Not every discovered row has its exact frame: {frame_report['unresolved_examples']}."
+            )
+    elif not bool(args.allow_missing_frames):
+        raise SystemExit("No --frames were supplied for the discovered bank.")
+    np.savez_compressed(output / "demonstrations.npz", **dataset)
+    groups = {
+        str(name): int((dataset["source_group"] == name).sum())
+        for name in np.unique(dataset["source_group"])
+    }
+    report = {
+        "schema": DATASET_SCHEMA,
+        "source_schema": RECORD_SCHEMA,
+        "priors_stale": False,
+        "priors_stale_reason": None,
+        "records": [str(path) for path in paths],
+        "discovery_selection": str(args.selection),
+        "frames_files": [str(path) for path in frame_paths],
+        "provenance": provenance,
+        "selection": selection,
+        "rows_by_source_group": groups,
+        "dataset": dataset_report(dataset),
+        "frames": frame_report,
+        "contract": {
+            "discovered": True,
+            "rollout_mode": "stochastic",
+            "scenes_failed_by_deterministic_policy": True,
+            "empty_start": True,
+            "one_final_instruction": True,
+            "continuous_single_policy": True,
+            "simulator_recovery": False,
+            "strict_success_only": True,
+            "max_successes_per_scene": int(args.max_per_scene),
+        },
+    }
+    (output / "dataset.json").write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
+    print(
+        f"[discovered] wrote {output / 'demonstrations.npz'}: {dataset['state'].shape[0]} rows, "
+        f"{selection['selected_total']} episodes on {selection['scenes_selected']} scenes; "
+        f"rows by mode {groups}",
+        flush=True,
+    )
     return 0
 
 

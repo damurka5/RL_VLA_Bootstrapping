@@ -55,12 +55,13 @@ class HelperTests(unittest.TestCase):
         self.assertNotIn(2, stage_decisions(active_decisions=9, grasp_step=6, lift_step=10, per=2, include_placement=False))
 
 
-def _round(output: Path) -> None:
+def _round(output: Path, *, rollout_mode: str = "deterministic", scene_index=None, stem: str = "tag_s0_r0000") -> dict:
     """Eight worlds: four strict, three grasped-and-lifted failures, one miss."""
 
     worlds = 8
     destinations = ["plate", "bowl"] * 4
-    scenes = [_Scene(index, destinations[index]) for index in range(worlds)]
+    scene_index = list(range(worlds)) if scene_index is None else list(scene_index)
+    scenes = [_Scene(scene_index[world], destinations[world]) for world in range(worlds)]
     trace = FullTaskTrace(decisions=DECISIONS, worlds=worlds, actions_per_decision=PER, record_frames=True)
     generator = np.random.default_rng(0)
     trace.state = generator.normal(size=(DECISIONS, worlds, 6)).astype(np.float32)
@@ -92,15 +93,17 @@ def _round(output: Path) -> None:
         "non_finite": np.zeros(worlds, dtype=bool),
     }
     report = _write_round(
-        output=output, stem="tag_s0_r0000", scenes=scenes, trace=trace, result=result,
+        output=output, stem=stem, scenes=scenes, trace=trace, result=result,
         checkpoint=Path("ckpt.pt"), checkpoint_sha256="abc", config=Path("config.yaml"),
         manifest_sha256="m", split="collection", shard=0, round_index=0,
         record_frames=True, retention_rows_per_stage=2,
+        rollout_mode=rollout_mode, repeat_index=[world % 2 for world in range(worlds)],
     )
     # Worlds 4 and 5 lifted (approach + pickup), world 6 only grasped (approach),
     # world 7 never grasped (nothing). Two rows each at most per stage.
     assert report["retention_episodes"] == 3, report
     assert report["retention_rows"] == 2 + 2 + 2 + 2 + 2, report
+    return report
 
 
 class RetentionBankTests(unittest.TestCase):

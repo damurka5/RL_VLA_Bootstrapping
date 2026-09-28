@@ -99,11 +99,14 @@ class YieldTests(unittest.TestCase):
         self.assertEqual(report["by_mode"]["failed_lift"]["strict_per_attempt"], 1.0)
         self.assertEqual(report["by_mode"]["placement"]["solved_scene_fraction"], 0.0)
 
-    def test_deterministic_attempts_are_refused_as_discovery(self):
+    def test_mixed_rollout_modes_are_refused_and_a_control_is_labelled(self):
         selection = {"scene_uids": ["a"], "failure_mode": {"a": "no_grasp"},
                      "destination": {"a": "plate"}, "target_catalog": {"a": "x"}}
         with self.assertRaises(SystemExit):
-            discovery_yield(selection, [_row("a")])
+            discovery_yield(selection, [_row("a"), _row("a", mode="stochastic", repeat=1)])
+        control = discovery_yield(selection, [_row("a"), _row("a", repeat=1, strict=True)])
+        self.assertEqual(control["rollout_mode"], "deterministic")
+        self.assertEqual(control["all"]["strict_successes"], 1)
 
     def test_select_cli_reads_a_legacy_attempts_file(self):
         # Attempts written before repeat_index/rollout_mode existed.
@@ -122,6 +125,55 @@ class YieldTests(unittest.TestCase):
             result = json.loads(output.read_text())
             self.assertEqual(sorted(result["scene_uids"]), ["b", "c"])
             self.assertEqual(result["failure_mode"], {"b": "failed_lift", "c": "no_grasp"})
+
+
+class DiscoveredBankTests(unittest.TestCase):
+    def test_caps_per_scene_labels_mode_and_refuses_deterministic(self):
+        from tools.audit.build_cdpr_full_put_into_dataset import select_discovered
+
+        rows = [
+            {"episode_uid": f"e{i}", "scene_uid": "s1", "destination": "plate", "rollout_mode": "stochastic"}
+            for i in range(4)
+        ] + [{"episode_uid": "f0", "scene_uid": "s2", "destination": "bowl", "rollout_mode": "stochastic"}]
+        selected, report = select_discovered(
+            rows, failure_mode={"s1": "failed_lift", "s2": "no_grasp"},
+            modes=["failed_lift"], max_per_scene=2, seed=3,
+        )
+        self.assertEqual(len(selected), 2)
+        self.assertEqual({row["source_group"] for row in selected}, {"discovered_failed_lift"})
+        self.assertEqual(report["cells"]["no_grasp/bowl"]["selected"], 0)
+        with self.assertRaises(ValueError):
+            select_discovered(
+                [dict(rows[0], rollout_mode="deterministic")],
+                failure_mode={"s1": "failed_lift"}, modes=["failed_lift"], max_per_scene=2, seed=3,
+            )
+
+    def test_build_from_a_stochastic_round(self):
+        from test_retention_bank import CATALOG, _round
+        from tools.audit.build_cdpr_full_put_into_dataset import main as build_main
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            shard = root / "bank_shard0"
+            shard.mkdir()
+            # Strict worlds 0..3 are two attempts each of scenes 0 and 1.
+            _round(shard, rollout_mode="stochastic", scene_index=[0, 0, 1, 1, 4, 5, 6, 7])
+            selection = root / "hard.json"
+            selection.write_text(json.dumps({"failure_mode": {
+                "scene_0000": "failed_lift", "scene_0001": "carry_slip"}}))
+            code = build_main([
+                "--mode", "discovered", "--records", *map(str, shard.glob("record_*.npz")),
+                "--frames", *map(str, shard.glob("frames_*.npz")),
+                "--selection", str(selection), "--max-per-scene", "1",
+                "--output", str(root / "discovered"),
+                "--target-catalogs", CATALOG, "--destinations", "plate", "bowl",
+            ])
+            self.assertEqual(code, 0)
+            with np.load(root / "discovered" / "demonstrations.npz") as bank:
+                self.assertEqual(len(np.unique(bank["episode_uid"])), 2)
+                self.assertEqual(set(bank["source_group"]), {"discovered_failed_lift", "discovered_carry_slip"})
+            report = json.loads((root / "discovered" / "dataset.json").read_text())
+            self.assertEqual(report["frames"]["resolved_fraction"], 1.0)
 
 
 if __name__ == "__main__":

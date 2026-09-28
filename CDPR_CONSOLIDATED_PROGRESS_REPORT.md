@@ -2040,6 +2040,28 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-28 — Discovery yield: the sampled policy solves 42% of the scenes the deterministic `step_56072006` fails
+
+- Git commit: `f0b8d75` (remote). Run `runs/discovery_step_56072006_20260927_224805`
+- Scenes: from the 2026-09-27 deterministic harvest's ~2,557 failures, 1,024 were chosen round-robin over failure mode × destination, which oversamples the rare modes. Each got 4 attempts with the sampled residual (the GRPO behaviour policy, no episode offsets): 4,096 episodes
+
+| deterministic failure mode | scenes | scenes solved ≥ once | strict per attempt | native per attempt |
+|---|---:|---:|---:|---:|
+| **all** | 1,024 | **431 (42.1%)** | **18.6%** (763) | 26.1% |
+| failed_lift (grasped, no held lift) | 287 | 161 (56.1%) | 26.7% | 37.6% |
+| placement (carried, no strict place) | 43 | 27 (62.8%) | 31.4% | 39.5% |
+| carry_slip | 348 | 145 (41.7%) | 18.5% | 27.7% |
+| no_grasp | 346 | 98 (28.3%) | 10.5% | 13.3% |
+| destination plate / bowl | 537 / 487 | 45.4% / 38.4% | 21.3% / 15.7% | |
+| potato (weakest object) | 339 | 37.8% | 15.4% | |
+
+- By mode × destination: failed_lift plate 60.3% of scenes solved, bowl 49.6%; carry_slip plate/bowl 41.4/42.0%; no_grasp plate/bowl 33.5/23.1%; placement plate/bowl 56.3/66.7%. 64 of 4,096 attempts (1.6%) diverged and count as failures
+- Reading: the scenes the deterministic mean fails are mostly not out of reach. A lift or a placement it misses is recovered by sampling on more than half of those scenes. The hardest mode is the one the chain starts with: a scene whose approach/grasp failed is solved a quarter of the time
+- Caveat, and the control that resolves it: the "deterministic" policy is not reproducible. The SmolVLA prior draws fresh noise on every forward (≈6.6% verdict flips measured earlier), so some of these scenes would also be solved by re-running the deterministic mean. Only the stochastic yield above that control is discovery by sampling. `ROLLOUT=deterministic SELECTION_FROM=<this run>/hard_scenes.json` re-runs the same 1,024 scenes with the mean
+- For RL: at 18.6% per attempt, a GRPO group of 8 on these scenes has at least one success and one failure with probability ≈ 0.81. That is the most informative scene population measured for this checkpoint, which argues for weighting RL scene sampling toward it, as step 4 suggests
+- Stage 2 tooling (this commit, `build_cdpr_full_put_into_dataset.py --mode discovered`): sampled strict successes on these scenes only, ≤ K per scene (`--max-per-scene`, default 2), labelled `discovered_<mode>`. `sil_sft.py --selection-metric main` selects on the discovered bank's own error ratio (sampled-action targets carry exploration noise, so a real mean shift is a small relative gain that the retention ratio would swamp); retention is still measured, and the paired closed-loop gate decides. Validation is broken out by `source_group`, i.e. per failure mode
+- Status: **measurement; stage 2 ready to run**
+
 ### 2026-09-27 — Step 4, stage 1 implemented: stochastic discovery on deterministic failures
 
 - Why: the SFT entry below shows that the policy's deterministic successes carry no learnable target. New supervision has to come from scenes where the deterministic mean fails but the sampled GRPO behaviour policy sometimes succeeds. Before building any bank, measure how often that happens and for which failure mode
