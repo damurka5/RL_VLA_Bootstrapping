@@ -1430,6 +1430,14 @@ def _task_metadata(args: Any) -> dict[str, Any]:
 # reads as a fraction of the work actually done, and a per-rank setting left
 # out reads as the rank count times its real value.
 _RANK_MEAN_UPDATE_METRICS = frozenset({
+                # Reference anchor: a setting, a drift over identical weights
+                # and bank, a per-rank gradient norm, and a per-rank row count.
+                # Summed, the 2026-09-30 pilot logged coef 2 and rows 9600 for
+                # a configured 1.0 and 4800, and a doubled kl_bank.
+                "anchor/coef",
+                "anchor/kl_bank",
+                "anchor/grad_norm_first",
+                "anchor/rows",
                 "entropy_mean",
                 "approx_kl_mean",
                 "clip_fraction_mean",

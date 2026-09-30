@@ -151,6 +151,14 @@ class ReferenceAnchorTests(unittest.TestCase):
             self.assertEqual(metrics["anchor/kl_batch_mean"], 0.0)
 
 
+class AnchorMetricSyncTests(unittest.TestCase):
+    def test_anchor_metrics_are_rank_means(self):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import _RANK_MEAN_UPDATE_METRICS
+
+        for key in ("anchor/coef", "anchor/kl_bank", "anchor/grad_norm_first", "anchor/rows"):
+            self.assertIn(key, _RANK_MEAN_UPDATE_METRICS)
+
+
 class AnchorEnvKnobTests(unittest.TestCase):
     def test_env_knobs_reach_the_training_argv_and_parse(self):
         import os

@@ -2040,6 +2040,30 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-30 — Anchor pilot (coef 1.0), 56.07M → 58.92M: drift held near 0.0015, in-run validation indistinguishable from the unanchored run
+
+- Run/config: `RESUME_CHECKPOINT=…/step_56072006`, `LR_OVERRIDE=1e-5`, `PPO_EPOCHS=1`, `ANCHOR_COEF=1.0`, `ANCHOR_STAGES=move_to,pick_up`. The anchor bank is the step_56072006 retention bank, 4,800 approach/pickup rows. Commit `3c28815`; tfevents `events.out.tfevents.1790764842.VLAPU.378850.0`. 33 updates, 12 validations, 9.6 h; the run was near its 59.07M target when the file was copied
+- Logging bug: the metric sync SUMMED `anchor/coef`, `anchor/kl_bank`, `anchor/grad_norm_first` and `anchor/rows` over the two ranks, so they logged coef 2, rows 9,600 and a doubled KL. `anchor/kl_batch_mean` was averaged and is correct. Fixed here by adding those keys to `_RANK_MEAN_UPDATE_METRICS`. The values below are halved
+- Anchor, true values:
+  - KL to step_56072006 on the approach/pickup bank rose 0.0005 → 0.0014 by 57.2M, then held at 0.0014–0.0017 (last 0.0015). `kl_batch_mean` agrees
+  - The anchor's gradient norm has a median of 0.14, about 2.4% of the RL `gradient_norm_mean` (5.74)
+  - For comparison, the unanchored run had KL 0.075 on the same stages at +7.45M. A straight line gives about 0.027 at +2.7M; a matched checkpoint measurement is pending. The anchor holds drift at an equilibrium roughly 15–20× lower at a small fraction of the gradient, which fits an RL gradient that is mostly noise with a small systematic component
+- Optimization unchanged: lr 1e-5 on every update, 575 optimizer steps per update, `approx_kl` median 0.0035 (0.0038 unanchored), clip fraction 0.015 (0.016), entropy 0.90 → 0.94. One late spike: `approx_kl` 0.081 on the last update (the unanchored run had 0.208)
+- Divergence: 1.73% of live episodes (1.96% unanchored), 7,521 records excluded per update (9,069). Training strict 23.9% against 23.5% over the unanchored run's first 33 updates
+- In-run validation (same panel and seed as the unanchored run; means over the 11 points after the start, against the unanchored run's 10 points in the same window):
+
+| metric | anchored start | anchored mean | unanchored mean | anchored last |
+|---|---:|---:|---:|---:|
+| strict | 39.06% | 38.86% | 38.83% | 40.53% |
+| physical grasp | 75.59% | 74.76% | 74.58% | 75.59% |
+| physical held lift | 66.80% | 65.56% | 65.51% | 66.50% |
+| plate / bowl strict | 41.60 / 36.52% | 40.11 / 37.61% | 40.92 / 36.74% | 41.80 / 39.26% |
+| plate / bowl held lift | 55.86 / 77.73% | 56.61 / 74.52% | 57.09 / 73.93% | 57.62 / 75.39% |
+
+- Noise floor: both runs started from the same weights, yet the first validation read 39.06% here and 37.89% in the unanchored run, 12 of 1,024. The in-run panel cannot resolve arm differences of about 1 pp; the last three anchored points (40.4, 39.0, 40.5) are within that
+- Reading: the anchor does its mechanical job, holding approach/pickup drift near zero, and costs nothing visible in learning speed over 2.9M steps. It is too early to see a retention benefit, because the unanchored run's lift loss only showed at 66M in the matched evaluation. In-run grasp and lift did not erode in either arm over this window
+- Status: **diagnostic pilot, not promoted.** Next: continue the same lineage to 66,086,572, the unanchored run's final step, then a repeated matched evaluation of the anchored endpoint against step_56072006 and step_66086572 on the same off-panel scenes
+
 ### 2026-09-30 — Repeated matched result: no gain at 66M, lift retention down; frozen-reference anchor implemented for the next pilot
 
 - The matched comparison as reported (off-panel scenes, `compare_put_into_repeats.py`):
