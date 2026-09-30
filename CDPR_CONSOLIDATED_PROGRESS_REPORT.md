@@ -2064,6 +2064,17 @@ Newest first. Entries follow the §13 template.
 - Logged every update: `anchor/kl_bank` (the drift over the whole bank, even at coef 0), `anchor/kl_batch_mean`, `anchor/grad_norm_first` (beside `gradient_norm_mean`), `anchor/coef`. The census goes to `run_dir/reference_anchor.json`
 - Launcher: `ANCHOR_BANK`, `ANCHOR_REFERENCE`, `ANCHOR_COEF` (default 0), `ANCHOR_BATCH` (256), `ANCHOR_STAGES`. They are recorded in `launch_provenance.json`, and the anchor tests join the preflight
 - Calibration: `tools/audit/reference_anchor_drift.py` is a CPU-only readout. It gives the KL of saved checkpoints to the reference by stage, destination and object, the anchor's gradient norm at that drift, and the coefficient at which that gradient is a chosen fraction of the RL gradient. The median `gradient_norm_mean` over the LR 1e-5 continuation was 5.78
+- Drift of the unanchored LR 1e-5 continuation from `step_56072006`, on the retention bank, all three stages (`reference_anchor_drift.py`, run `three_stage_sparse_grpo_20260928_174719`):
+
+| checkpoint | KL all | move_to | pick_up | placement | plate / bowl | anchor grad norm at coef 1 |
+|---|---:|---:|---:|---:|---:|---:|
+| `step_63525522` (+7.45M) | 0.0878 | 0.0686 | 0.0813 | 0.1149 | 0.0868 / 0.0888 | 1.203 |
+| `step_66086572` (+10.01M) | 0.1131 | 0.0876 | 0.1012 | 0.1525 | 0.1134 / 0.1129 | 1.164 |
+
+  - The drift grows about linearly with steps, 0.0118 and 0.0113 nats per million steps, with no sign of saturation. At 0.113 nats per dim the mean action has moved about 0.48σ RMS on the reference's own completed-stage states
+  - The drift is destination-neutral: plate states moved as much as bowl states. The plate loss is therefore not explained by a larger drift on plate states; plate is more sensitive to the same size of change
+  - Placement drifted most, which is expected because the RL signal is placement-heavy. The anchor leaves placement out by default
+  - Coefficient: ratio 0.25 of the median RL gradient (5.78) at the 66M drift gives 1.24. **Pilot at `ANCHOR_COEF=1.0`**, about 0.2 of the RL gradient at that drift and weaker below it. An unanchored run would reach about 0.034 by +3M steps
 - Status: **implemented, local tests only (CPU, two-rank gloo); not yet run on GPU**
 
 ### 2026-09-30 — Repeated matched evaluation prepared for the LR 1e-5 continuation (`step_63525522`, final `step_66086572` vs `step_56072006`)
