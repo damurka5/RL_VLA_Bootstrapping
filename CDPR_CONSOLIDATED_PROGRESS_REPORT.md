@@ -2040,6 +2040,32 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-30 — Repeated matched result: no gain at 66M, lift retention down; frozen-reference anchor implemented for the next pilot
+
+- The matched comparison as reported (off-panel scenes, `compare_put_into_repeats.py`):
+  - `step_66086572` − `step_56072006`: strict 95% CI **−3.32 to +1.90 pp**, no demonstrated improvement
+  - The lift retention guard fired: lifted 66.3% → 63.6%
+  - Destinations moved in opposite directions: bowl +2.65 pp, plate −3.99 pp
+  - Strict given lift 57.1% → 58.5%, but over a different set of lifted scenes
+  - The lift and destination p-values are unadjusted; Holm covers only strict
+  - The `step_63525522` rows and the raw table were not in the summary supplied and are still to be recorded
+- Reading: this is the fourth plate-for-bowl, grasp/lift-for-placement trade in this lineage (the 52.8→56.8M segment, the ppo_epochs=1 pilot, the SFT arms, now this run). LR 1e-5 slowed it but did not stop it. Per-update sampled KL was 0.009, yet the drift accumulated over 113 updates, so the per-step trust region is not the missing piece
+- What the code had: nothing tied the residual to a fixed policy. `vla_kl_coef` compares the LoRA prior with the prior at rollout time, not with a fixed reference. The achieved-negative scale only removes some negative advantages; other updates to the shared residual still move approach/pickup behaviour
+- Implemented, `rl_vla_bootstrapping/policy/reference_anchor.py`:
+  - The anchor pulls the residual's mean toward a frozen reference's mean on a bank of that reference's own completed-stage states. Default stages are `move_to,pick_up`; the step_56072006 retention bank has 300 rows per object × destination × stage
+  - The three-stage config freezes the LoRA (`vla_lora_updates_enabled: false`), so the bank's stored `(state, prior)` stay valid inputs for the whole run. The reference means are computed once; after that the anchor costs one residual forward per optimizer step, with no VLA forward, frames or reference network
+  - The target is the reference's mean on the same input, not the recorded action. The recorded action carries the recording-time prior noise: the null target of the SFT arms, which would pull the residual toward ignoring the prior. Against the reference's mean the anchor is exactly 0 at the start
+  - The loss is the mean term of KL(reference ‖ current) at the reference's σ, in nats per action dim, so it does not fight the entropy bonus through log_std
+- Wiring and guards:
+  - The anchor is added inside the last micro-batch's backward through the unwrapped module. DDP still sees one backward per micro-batch; a two-rank gloo smoke (`tests/_reference_anchor_ddp_smoke.py`) gives identical rank parameters and a falling KL
+  - The reference comes from an explicit checkpoint, so a resumed pilot stays anchored to its start
+  - The build refuses a LoRA that differs from the reference's, and refuses to run with LoRA updates on
+  - It reports `recorded_action_mse_vs_reference_mean`, which is ≈ 0 for a bank the reference recorded deterministically
+- Logged every update: `anchor/kl_bank` (the drift over the whole bank, even at coef 0), `anchor/kl_batch_mean`, `anchor/grad_norm_first` (beside `gradient_norm_mean`), `anchor/coef`. The census goes to `run_dir/reference_anchor.json`
+- Launcher: `ANCHOR_BANK`, `ANCHOR_REFERENCE`, `ANCHOR_COEF` (default 0), `ANCHOR_BATCH` (256), `ANCHOR_STAGES`. They are recorded in `launch_provenance.json`, and the anchor tests join the preflight
+- Calibration: `tools/audit/reference_anchor_drift.py` is a CPU-only readout. It gives the KL of saved checkpoints to the reference by stage, destination and object, the anchor's gradient norm at that drift, and the coefficient at which that gradient is a chosen fraction of the RL gradient. The median `gradient_norm_mean` over the LR 1e-5 continuation was 5.78
+- Status: **implemented, local tests only (CPU, two-rank gloo); not yet run on GPU**
+
 ### 2026-09-30 — Repeated matched evaluation prepared for the LR 1e-5 continuation (`step_63525522`, final `step_66086572` vs `step_56072006`)
 
 - Run under test: the LR 1e-5, one-epoch continuation 56.07M → 66.09M (113 updates, 41 validations). Its best in-run strict is `step_63525522` at 430/1,024. The analysis is in `analysis/three_stage_20260930/diagnosis.md`

@@ -165,6 +165,23 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     lr_override = os.environ.get("RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE", "").strip()
     if lr_override:
         injected["optimizer_lr_override"] = float(lr_override)
+    # Frozen-reference anchor (reference_anchor.py). The bank and reference are
+    # paths; coef 0 with a bank logs the drift without pulling.
+    anchor_bank = os.environ.get("RLVLA_SMOLVLA_REFERENCE_ANCHOR_BANK", "").strip()
+    if anchor_bank:
+        injected["reference_anchor_bank"] = anchor_bank
+        injected["reference_anchor_checkpoint"] = os.environ.get(
+            "RLVLA_SMOLVLA_REFERENCE_ANCHOR_CHECKPOINT", ""
+        ).strip()
+        injected["reference_anchor_coef"] = float(
+            os.environ.get("RLVLA_SMOLVLA_REFERENCE_ANCHOR_COEF", "0") or 0.0
+        )
+        anchor_batch = os.environ.get("RLVLA_SMOLVLA_REFERENCE_ANCHOR_BATCH", "").strip()
+        if anchor_batch:
+            injected["reference_anchor_batch_size"] = int(anchor_batch)
+        anchor_stages = os.environ.get("RLVLA_SMOLVLA_REFERENCE_ANCHOR_STAGES", "").strip()
+        if anchor_stages:
+            injected["reference_anchor_stages"] = anchor_stages
     noise_schedule_start_step = os.environ.get(
         "RLVLA_SMOLVLA_NOISE_SCHEDULE_START_STEP", ""
     ).strip()

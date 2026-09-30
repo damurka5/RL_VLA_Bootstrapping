@@ -463,6 +463,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     # residual optimizer group after any checkpoint load, so a changed rate
     # actually takes effect. The active rate is logged as optimizer_lr_mean.
     parser.add_argument("--optimizer-lr-override", type=float, default=None)
+    # Frozen-reference anchor (reference_anchor.py): pulls the residual's mean
+    # toward a fixed reference's mean on a bank of that reference's own
+    # completed-stage states. A bank with coef 0 only logs the drift.
+    parser.add_argument("--reference-anchor-bank", default="")
+    parser.add_argument("--reference-anchor-checkpoint", default="")
+    parser.add_argument("--reference-anchor-coef", type=float, default=0.0)
+    parser.add_argument("--reference-anchor-batch-size", type=int, default=256)
+    parser.add_argument("--reference-anchor-stages", default="move_to,pick_up")
     parser.add_argument("--adam-eps", type=float, default=1.0e-5)
     parser.add_argument("--weight-decay", type=float, default=0.0)
     parser.add_argument("--init-log-std", type=float, default=-1.2)
@@ -1377,6 +1385,22 @@ class SmolVLAGRPOTrainer:
 
         # A globally empty update must not advance Adam moments or parameters.
         active_epochs = int(schedule.ppo_epochs) if schedule.global_max_records > 0 else 0
+        anchor = getattr(self, "reference_anchor", None)
+        anchor_active = anchor is not None and float(anchor.coef) > 0.0
+        anchor_kl_total = 0.0
+        anchor_batches = 0
+        anchor_grad_norm = float("nan")
+        if anchor_active and active_epochs > 0:
+            # Size of the anchor's pull on this update's starting weights, as a
+            # local gradient norm beside gradient_norm_mean. autograd.grad
+            # leaves .grad and the DDP reducer untouched.
+            probe = float(anchor.coef) * anchor.kl(base, anchor.sample())
+            grads = torch.autograd.grad(
+                probe, [p for p in base.parameters() if p.requires_grad], allow_unused=True
+            )
+            anchor_grad_norm = float(
+                torch.sqrt(sum((g.detach() ** 2).sum() for g in grads if g is not None)).item()
+            )
         for _epoch in range(active_epochs):
             order = torch.randperm(target, device=self.device)
             for start in range(0, target, minibatch):
@@ -1425,6 +1449,15 @@ class SmolVLAGRPOTrainer:
                         - float(self.args.entropy_coef) * entropy_mean
                         + float(self.args.action_l2) * l2_mean
                     ) / (1 if credit_stages is not None else (minibatch // microbatch))
+                    if anchor_active and micro_start + microbatch >= minibatch:
+                        # Once per optimizer step, inside the last micro-batch's
+                        # backward: through the unwrapped module, like log_std
+                        # above, so the DDP reducer sees one backward and every
+                        # parameter's gradient in it.
+                        anchor_kl = anchor.kl(base, anchor.sample())
+                        loss = loss + float(anchor.coef) * anchor_kl
+                        anchor_kl_total += float(anchor_kl.detach().item())
+                        anchor_batches += 1
                     synchronize_profile()
                     if self.profile_update:
                         update_forward_time_s += (
@@ -1483,8 +1516,23 @@ class SmolVLAGRPOTrainer:
                     loss_weights[selected].sum().item() / float(schedule.minibatches_per_epoch))
         metric_denominator = metric_weight.clamp_min(1.0)
         valid_advantages = advantages[valid]
+        anchor_metrics: dict[str, float] = {}
+        if anchor is not None:
+            # The drift readout: KL to the frozen reference over the WHOLE bank
+            # after this update. Logged even at coef 0, where it measures the
+            # drift an unanchored run accumulates.
+            anchor_metrics = {
+                "anchor/kl_bank": float(anchor.full_kl(base)),
+                "anchor/coef": float(anchor.coef),
+                "anchor/kl_batch_mean": (
+                    anchor_kl_total / anchor_batches if anchor_batches else 0.0
+                ),
+                "anchor/grad_norm_first": anchor_grad_norm,
+                "anchor/rows": float(anchor.rows),
+            }
         return {
             **stage_metrics,
+            **anchor_metrics,
             "loss_policy_mean": float(
                 (policy_loss_total / metric_denominator).detach().item()
             ),

@@ -1819,6 +1819,63 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"[smolvla-mjwarp] resumed {checkpoint} at global step "
                 f"{global_step}",
             )
+        anchor_bank = str(getattr(args, "reference_anchor_bank", "") or "").strip()
+        if anchor_bank:
+            from rl_vla_bootstrapping.policy.reference_anchor import ReferenceAnchor
+
+            anchor_reference = str(
+                getattr(args, "reference_anchor_checkpoint", "") or ""
+            ).strip()
+            if not anchor_reference:
+                raise SystemExit(
+                    "--reference-anchor-bank needs --reference-anchor-checkpoint: "
+                    "the reference must be named explicitly, never taken from "
+                    "whatever this run resumed from."
+                )
+            if update_vla_lora:
+                raise SystemExit(
+                    "The reference anchor assumes a frozen LoRA (the bank's "
+                    "priors are then this run's priors for its whole length); "
+                    "vla_lora_updates_enabled is on."
+                )
+            trainer.reference_anchor = ReferenceAnchor.build(
+                torch=torch,
+                actor=trainer._unwrap(trainer.actor),
+                bank_path=Path(anchor_bank),
+                reference_checkpoint=_resolve_checkpoint(anchor_reference),
+                stages=[
+                    item.strip()
+                    for item in str(args.reference_anchor_stages).split(",")
+                    if item.strip()
+                ],
+                coef=float(args.reference_anchor_coef),
+                batch_size=int(args.reference_anchor_batch_size),
+                seed=int(args.seed) + 7_919 * int(dist_ctx.rank),
+                device=device,
+                runtime_lora_state=(
+                    runtime.policy.state_dict() if train_vla_lora else None
+                ),
+            )
+            anchor_start_kl = trainer.reference_anchor.full_kl(
+                trainer._unwrap(trainer.actor)
+            )
+            _log(
+                dist_ctx,
+                "[smolvla-mjwarp] reference anchor: coef="
+                f"{float(args.reference_anchor_coef):g} "
+                f"batch={int(args.reference_anchor_batch_size)} "
+                f"KL to reference at start={anchor_start_kl:.6g} "
+                f"census={json.dumps(trainer.reference_anchor.census, sort_keys=True)}",
+            )
+            if dist_ctx.is_main:
+                _write_json(
+                    run_dir / "reference_anchor.json",
+                    {**trainer.reference_anchor.census,
+                     "coef": float(args.reference_anchor_coef),
+                     "batch_size": int(args.reference_anchor_batch_size),
+                     "kl_at_start": anchor_start_kl},
+                )
+
         # Resume restores the saved rate, so the YAML learning_rate is NOT what
         # runs unless optimizer_lr_override is set. Say which one is active.
         _log(

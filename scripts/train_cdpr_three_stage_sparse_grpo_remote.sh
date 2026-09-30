@@ -28,6 +28,16 @@ LR_OVERRIDE="${LR_OVERRIDE:-}"
 # unit-normal draw; 0 makes the prior deterministic, so within-group outcome
 # differences come from the residual's own sampling and physics.
 PRIOR_NOISE_SCALE="${PRIOR_NOISE_SCALE:-}"
+# Frozen-reference anchor on the residual (rl_vla_bootstrapping/policy/
+# reference_anchor.py). ANCHOR_BANK: a build_cdpr_full_put_into_dataset.py bank
+# recorded by ANCHOR_REFERENCE (e.g. the step_56072006 retention bank).
+# ANCHOR_REFERENCE must be named explicitly so a resumed pilot stays anchored
+# to its starting policy. ANCHOR_COEF=0 with a bank only logs anchor/kl_bank.
+ANCHOR_BANK="${ANCHOR_BANK:-}"
+ANCHOR_REFERENCE="${ANCHOR_REFERENCE:-}"
+ANCHOR_COEF="${ANCHOR_COEF:-0}"
+ANCHOR_BATCH="${ANCHOR_BATCH:-256}"
+ANCHOR_STAGES="${ANCHOR_STAGES:-move_to,pick_up}"
 WORLDS_PER_RANK="${WORLDS_PER_RANK:-512}"
 SMOLVLA_MICROBATCH_SIZE="${SMOLVLA_MICROBATCH_SIZE:-256}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
@@ -71,6 +81,12 @@ if [[ "$INIT_MODE" == "resume" ]]; then
     exit 2
   fi
   echo "resume: checkpoint global_step=$resumed_step, training $((MAX_TRAIN_STEPS - resumed_step)) more steps"
+fi
+if [[ -n "$ANCHOR_BANK" ]]; then
+  [[ -f "$ANCHOR_BANK" ]] || { echo "Anchor bank not found: $ANCHOR_BANK" >&2; exit 2; }
+  [[ -d "$ANCHOR_REFERENCE" ]] && ANCHOR_REFERENCE="$ANCHOR_REFERENCE/smolvla_grpo_adapter.pt"
+  [[ -f "$ANCHOR_REFERENCE" ]] || { echo "ANCHOR_BANK needs ANCHOR_REFERENCE (adapter file); got '$ANCHOR_REFERENCE'." >&2; exit 2; }
+  [[ "$ANCHOR_COEF" =~ ^[0-9]*\.?[0-9]+([eE][-+]?[0-9]+)?$ ]] || { echo "ANCHOR_COEF must be a non-negative number." >&2; exit 2; }
 fi
 if [[ -n "$PPO_EPOCHS" && ! "$PPO_EPOCHS" =~ ^[1-9][0-9]*$ ]]; then
   echo "PPO_EPOCHS must be a positive integer." >&2; exit 2
@@ -170,6 +186,15 @@ export RLVLA_SMOLVLA_MJWARP_MAX_UPDATES="$MAX_UPDATES"
 export RLVLA_MJWARP_WORLDS_PER_RANK="$WORLDS_PER_RANK"
 export RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE="$SMOLVLA_MICROBATCH_SIZE"
 unset RLVLA_SMOLVLA_PPO_EPOCHS RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE RLVLA_SMOLVLA_PRIOR_NOISE_SCALE
+unset RLVLA_SMOLVLA_REFERENCE_ANCHOR_BANK RLVLA_SMOLVLA_REFERENCE_ANCHOR_CHECKPOINT RLVLA_SMOLVLA_REFERENCE_ANCHOR_COEF
+unset RLVLA_SMOLVLA_REFERENCE_ANCHOR_BATCH RLVLA_SMOLVLA_REFERENCE_ANCHOR_STAGES
+if [[ -n "$ANCHOR_BANK" ]]; then
+  export RLVLA_SMOLVLA_REFERENCE_ANCHOR_BANK="$(realpath "$ANCHOR_BANK")"
+  export RLVLA_SMOLVLA_REFERENCE_ANCHOR_CHECKPOINT="$(realpath "$ANCHOR_REFERENCE")"
+  export RLVLA_SMOLVLA_REFERENCE_ANCHOR_COEF="$ANCHOR_COEF"
+  export RLVLA_SMOLVLA_REFERENCE_ANCHOR_BATCH="$ANCHOR_BATCH"
+  export RLVLA_SMOLVLA_REFERENCE_ANCHOR_STAGES="$ANCHOR_STAGES"
+fi
 [[ -n "$PRIOR_NOISE_SCALE" ]] && export RLVLA_SMOLVLA_PRIOR_NOISE_SCALE="$PRIOR_NOISE_SCALE"
 [[ -n "$PPO_EPOCHS" ]] && export RLVLA_SMOLVLA_PPO_EPOCHS="$PPO_EPOCHS"
 [[ -n "$LR_OVERRIDE" ]] && export RLVLA_SMOLVLA_OPTIMIZER_LR_OVERRIDE="$LR_OVERRIDE"
@@ -190,14 +215,21 @@ printf 'max_train_steps=%s worlds_per_rank=%s groups_per_rank=%s\n' \
   "$MAX_TRAIN_STEPS" "$WORLDS_PER_RANK" "$((WORLDS_PER_RANK / 8))"
 printf 'max_updates=%s; globally empty update stop: 3 consecutive cycles\n' "$MAX_UPDATES"
 printf 'prior noise scale=%s\n' "${PRIOR_NOISE_SCALE:-1 (LeRobot default)}"
+if [[ -n "$ANCHOR_BANK" ]]; then
+  printf 'reference anchor: coef=%s batch=%s stages=%s bank=%s reference=%s\n' \
+    "$ANCHOR_COEF" "$ANCHOR_BATCH" "$ANCHOR_STAGES" "$ANCHOR_BANK" "$ANCHOR_REFERENCE"
+else
+  printf 'reference anchor: off\n'
+fi
 printf 'selection metric: independent strict placement; native and milestone diagnostics separately\n'
 printf 'trainable component: residual actor; initializer LoRA is loaded and frozen\n'
 printf 'command:'; printf ' %q' "${train_cmd[@]}"; printf '\n'
 [[ "$DRY_RUN" == "1" ]] && exit 0
 
-"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" "$CONFIG" "$PPO_EPOCHS" "$LR_OVERRIDE" "$PRIOR_NOISE_SCALE" <<'PYPROVENANCE'
+"${python_cmd[@]}" - "$INIT_CHECKPOINT" "$SCENES" "$RUN_DIR/launch_provenance.json" "$MAX_UPDATES" "$MAX_TRAIN_STEPS" "$INIT_MODE" "$CONFIG" "$PPO_EPOCHS" "$LR_OVERRIDE" "$PRIOR_NOISE_SCALE" "$ANCHOR_BANK" "$ANCHOR_REFERENCE" "$ANCHOR_COEF" "$ANCHOR_BATCH" "$ANCHOR_STAGES" <<'PYPROVENANCE'
 import hashlib, json, pathlib, subprocess, sys
-checkpoint, scenes, output, updates, steps, mode, config, ppo_epochs, lr_override, prior_noise = sys.argv[1:]
+(checkpoint, scenes, output, updates, steps, mode, config, ppo_epochs, lr_override, prior_noise,
+ anchor_bank, anchor_reference, anchor_coef, anchor_batch, anchor_stages) = sys.argv[1:]
 def digest(path):
     h = hashlib.sha256()
     with open(path, "rb") as source:
@@ -211,6 +243,10 @@ record = {"init_mode": mode, "checkpoint": str(pathlib.Path(checkpoint).resolve(
           "max_updates": int(updates), "max_train_steps": int(steps),
           "reward_protocol": "three_stage_accessible_v5_full_task_bonus", "termination_protocol": "wrong_place_requires_held_lift", "outcome_protocol": "independent_strict_full_task_v1",
           "lora_updates_enabled": False}
+record["reference_anchor"] = None if not anchor_bank else {
+    "bank": str(pathlib.Path(anchor_bank).resolve()), "bank_sha256": digest(anchor_bank),
+    "reference": str(pathlib.Path(anchor_reference).resolve()), "reference_sha256": digest(anchor_reference),
+    "coef": float(anchor_coef), "batch_size": int(anchor_batch), "stages": anchor_stages.split(",")}
 try:
     import yaml
     rl_args = yaml.safe_load(open(config, encoding="utf-8"))["training"]["rl"]["args"]
@@ -238,6 +274,9 @@ PYPROVENANCE
 if [[ "$RUN_PREFLIGHT" == "1" ]]; then
   "${python_cmd[@]}" -m unittest discover -s tests -p test_grpo_three_stage_sparse_credit.py
   "${python_cmd[@]}" -m unittest discover -s tests -p test_three_stage_repairs.py
+  if [[ -n "$ANCHOR_BANK" ]]; then
+    "${python_cmd[@]}" -m unittest discover -s tests -p test_reference_anchor.py
+  fi
   huggingface_public_models_preflight "$ENV_NAME"
   "${python_cmd[@]}" scripts/preflight_cdpr_mjlab.py \
     --config "$CONFIG" --require-gpus 2 --worlds "$WORLDS_PER_RANK" \
