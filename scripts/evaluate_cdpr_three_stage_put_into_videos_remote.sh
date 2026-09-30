@@ -48,6 +48,14 @@ STOCHASTIC_SEED="${STOCHASTIC_SEED:-}"     # empty: deterministic residual, as i
 # Scale on the SmolVLA prior's flow-matching start noise. Empty = LeRobot's
 # unit-normal draw (every evaluation so far); 0 = a deterministic prior.
 PRIOR_NOISE_SCALE="${PRIOR_NOISE_SCALE:-}"
+# 0: no MP4s (per-scene outcomes are still in evaluation.json). For repeats.
+VIDEOS="${VIDEOS:-1}"
+# 1: drop the training run's fixed in-run validation panel (validation_seed,
+# 512 worlds / group 8 per rank, 2 ranks, 1 round) from the split first.
+EXCLUDE_VALIDATION_PANEL="${EXCLUDE_VALIDATION_PANEL:-0}"
+PANEL_VALIDATION_SEED="${PANEL_VALIDATION_SEED:-2000000}"
+PANEL_GROUPS_PER_RANK="${PANEL_GROUPS_PER_RANK:-64}"
+PANEL_RANKS="${PANEL_RANKS:-2}"
 
 if [[ -d "$CHECKPOINT" ]]; then
   CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
@@ -55,7 +63,9 @@ fi
 [[ -f "$CHECKPOINT" ]] || { echo "Checkpoint not found: $CHECKPOINT" >&2; exit 2; }
 [[ -f "$CONFIG" ]] || { echo "Config not found: $CONFIG" >&2; exit 2; }
 [[ -f "$SCENES" ]] || { echo "Scene manifest not found: $SCENES" >&2; exit 2; }
-command -v ffmpeg >/dev/null || { echo "ffmpeg is required for the videos." >&2; exit 2; }
+if [[ "$VIDEOS" == "1" ]]; then
+  command -v ffmpeg >/dev/null || { echo "ffmpeg is required for the videos." >&2; exit 2; }
+fi
 case "$VIDEO_OUTCOME" in strict|native|failed|all) ;; *)
   echo "VIDEO_OUTCOME must be strict, native, failed or all." >&2; exit 2 ;;
 esac
@@ -84,19 +94,34 @@ args=(
   --worlds "$WORLDS" --rounds "$ROUNDS" --microbatch "$MICROBATCH"
   --device "$DEVICE" --decisions "$DECISIONS" --settle-decisions "$SETTLE_DECISIONS"
   --output "$OUTPUT_DIR"
-  --video-dir "$OUTPUT_DIR/videos" --video-outcome "$VIDEO_OUTCOME"
-  --video-fps "$VIDEO_FPS" --max-videos "$MAX_VIDEOS"
 )
+if [[ "$VIDEOS" == "1" ]]; then
+  args+=(--video-dir "$OUTPUT_DIR/videos" --video-outcome "$VIDEO_OUTCOME"
+    --video-fps "$VIDEO_FPS" --max-videos "$MAX_VIDEOS")
+fi
+if [[ "$EXCLUDE_VALIDATION_PANEL" == "1" ]]; then
+  args+=(--exclude-validation-panel --panel-validation-seed "$PANEL_VALIDATION_SEED"
+    --panel-groups-per-rank "$PANEL_GROUPS_PER_RANK" --panel-ranks "$PANEL_RANKS")
+fi
 [[ "$DISTINCT_SCENES" == "1" ]] && args+=(--distinct-scene-rounds)
 [[ -n "$STOCHASTIC_SEED" ]] && args+=(--stochastic-seed "$STOCHASTIC_SEED")
 
 echo "checkpoint=$CHECKPOINT"
 echo "prior noise scale=${PRIOR_NOISE_SCALE:-1 (default)}"
 echo "split=$SPLIT worlds=$WORLDS rounds=$ROUNDS distinct_scenes=$DISTINCT_SCENES decisions=$DECISIONS"
-echo "videos: outcome=$VIDEO_OUTCOME fps=$VIDEO_FPS max=$MAX_VIDEOS -> $OUTPUT_DIR/videos"
+if [[ "$VIDEOS" == "1" ]]; then
+  echo "videos: outcome=$VIDEO_OUTCOME fps=$VIDEO_FPS max=$MAX_VIDEOS -> $OUTPUT_DIR/videos"
+else
+  echo "videos: off"
+fi
+echo "exclude in-run validation panel=$EXCLUDE_VALIDATION_PANEL"
 [[ "$SPLIT" == "final_test" ]] && echo "WARNING: final_test is the locked split; run it once, on the selected checkpoint."
 sha256sum "$CHECKPOINT" | tee "$OUTPUT_DIR/checkpoint.sha256"
 git rev-parse HEAD > "$OUTPUT_DIR/git_commit.txt"
 
 conda run --no-capture-output -n "$ENV_NAME" python3 "${args[@]}"
-echo "=== done: $OUTPUT_DIR/evaluation.json, $(find "$OUTPUT_DIR/videos" -name '*.mp4' | wc -l) videos ==="
+if [[ "$VIDEOS" == "1" ]]; then
+  echo "=== done: $OUTPUT_DIR/evaluation.json, $(find "$OUTPUT_DIR/videos" -name '*.mp4' | wc -l) videos ==="
+else
+  echo "=== done: $OUTPUT_DIR/evaluation.json ==="
+fi

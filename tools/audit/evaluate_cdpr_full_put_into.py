@@ -85,6 +85,7 @@ from rl_vla_bootstrapping.policy.cdpr_staged_demonstrations import (  # noqa: E4
 )
 from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (  # noqa: E402
     FullTaskSceneResetter,
+    grouped_full_task_scenes,
 )
 from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (  # noqa: E402
     INSTRUCTION_TO_ID,
@@ -577,6 +578,36 @@ def summarize(rollouts: Sequence[Mapping[str, np.ndarray]]) -> dict[str, Any]:
     return report
 
 
+def validation_panel_uids(
+    split_scenes: Sequence[Any],
+    *,
+    seed: int,
+    groups_per_rank: int,
+    ranks: int,
+    rounds: int,
+) -> set[str]:
+    """Scene uids of a training run's fixed in-run validation panel.
+
+    In-run validation always resets with ``update_index=0`` and the same seed,
+    so every validation of a run scores the same scenes. This replays
+    ``GroupedFullTaskSceneResetter``'s choice for each rank and round.
+    """
+
+    return {
+        str(scene.scene_uid)
+        for rank in range(int(ranks))
+        for round_index in range(int(rounds))
+        for scene in grouped_full_task_scenes(
+            split_scenes,
+            groups=int(groups_per_rank),
+            rank=rank,
+            update_index=0,
+            round_index=round_index,
+            base_seed=int(seed),
+        )
+    }
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -645,10 +676,53 @@ def main(argv: Sequence[str] | None = None) -> int:
             "the first --worlds scenes. Not the protocol of earlier reports."
         ),
     )
+    parser.add_argument(
+        "--exclude-validation-panel",
+        action="store_true",
+        help=(
+            "Drop the training run's fixed in-run validation panel from the "
+            "split before choosing scenes. A checkpoint picked as that panel's "
+            "best must not be re-scored on the scenes that picked it."
+        ),
+    )
+    parser.add_argument("--panel-validation-seed", type=int, default=2_000_000)
+    parser.add_argument(
+        "--panel-groups-per-rank",
+        type=int,
+        default=64,
+        help="Training worlds_per_rank / group_size (512 / 8).",
+    )
+    parser.add_argument("--panel-ranks", type=int, default=2)
+    parser.add_argument("--panel-rounds", type=int, default=1)
     args = parser.parse_args(argv)
 
     scenes, manifest = read_manifest(args.scene_manifest.expanduser().resolve())
     selected = select_split(scenes, str(args.split))
+    panel = None
+    if args.exclude_validation_panel:
+        panel_uids = validation_panel_uids(
+            selected,
+            seed=int(args.panel_validation_seed),
+            groups_per_rank=int(args.panel_groups_per_rank),
+            ranks=int(args.panel_ranks),
+            rounds=int(args.panel_rounds),
+        )
+        before = len(selected)
+        selected = [scene for scene in selected if scene.scene_uid not in panel_uids]
+        panel = {
+            "validation_seed": int(args.panel_validation_seed),
+            "groups_per_rank": int(args.panel_groups_per_rank),
+            "ranks": int(args.panel_ranks),
+            "rounds": int(args.panel_rounds),
+            "panel_scenes": len(panel_uids),
+            "split_scenes_before": before,
+            "split_scenes_after": len(selected),
+        }
+        print(
+            f"[eval] excluded the in-run validation panel: {len(panel_uids)} "
+            f"scenes, {len(selected)} of {before} remain",
+            flush=True,
+        )
     needed = int(args.worlds) * (int(args.rounds) if args.distinct_scene_rounds else 1)
     if len(selected) < needed:
         raise SystemExit(
@@ -762,6 +836,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "worlds": int(args.worlds),
         "rounds": int(args.rounds),
         "distinct_scene_rounds": bool(args.distinct_scene_rounds),
+        # Absent (None) in reports written before the option existed.
+        "excluded_validation_panel": panel,
         "videos": (
             None
             if video is None

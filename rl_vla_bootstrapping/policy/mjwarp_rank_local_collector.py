@@ -3193,6 +3193,47 @@ class FullTaskSceneResetter:
         )
 
 
+def grouped_full_task_scenes(
+    scenes: Sequence[Any],
+    *,
+    groups: int,
+    rank: int,
+    update_index: int,
+    round_index: int,
+    base_seed: int,
+) -> list[Any]:
+    """The scene each GRPO group of one rank starts from.
+
+    A pure function of the split, so tools can reconstruct a run's validation
+    panel without a simulator. ``scenes`` is sorted by ``scene_index`` here,
+    exactly as ``GroupedFullTaskSceneResetter`` sorts it.
+    """
+
+    ordered = tuple(sorted(scenes, key=lambda item: item.scene_index))
+    groups = int(groups)
+    rank = int(rank)
+    # Ranks receive disjoint consecutive windows; rounds and updates advance
+    # over the split without consulting checkpoint curriculum state.
+    start = (
+        rank * groups
+        + int(round_index) * groups * 1_009
+        + int(update_index) * groups * 1_000_003
+        + int(base_seed)
+    ) % len(ordered)
+    by_destination = {
+        name: tuple(scene for scene in ordered if scene.destination == name)
+        for name in ("plate", "bowl")
+    }
+    available = [items for items in by_destination.values() if items]
+    if not available:
+        raise ValueError("Full-task scenes must have plate or bowl destinations.")
+    # Alternate destinations, including across ranks for one-group ranks.
+    # Within each destination keep deterministic advancing scene windows.
+    return [available[(rank * groups + group) % len(available)][
+        (start + group // len(available)) % len(available[(rank * groups + group) % len(available)])
+    ] for group in range(groups)]
+
+
 class GroupedFullTaskSceneResetter:
     """GRPO resetter for manifest-backed, end-to-end ``put_into`` episodes.
 
@@ -3248,28 +3289,14 @@ class GroupedFullTaskSceneResetter:
         del low, high  # A manifest's verified topology is immutable.
 
     def _group_scenes(self, update_index: int, round_index: int) -> list[Any]:
-        groups = int(self.layout.groups_per_rank)
-        # Ranks receive disjoint consecutive windows; rounds and updates advance
-        # over the split without consulting checkpoint curriculum state.
-        start = (
-            self.rank * groups
-            + int(round_index) * groups * 1_009
-            + int(update_index) * groups * 1_000_003
-            + self.base_seed
-        ) % len(self.scenes)
-        by_destination = {
-            name: tuple(scene for scene in self.scenes if scene.destination == name)
-            for name in ("plate", "bowl")
-        }
-        available = [scenes for scenes in by_destination.values() if scenes]
-        if not available:
-            raise ValueError("Full-task scenes must have plate or bowl destinations.")
-        # Alternate destinations, including across ranks for one-group ranks.
-        # Within each destination keep deterministic advancing scene windows.
-        return [available[(self.rank * groups + group) % len(available)][
-            (start + group // len(available)) % len(available[(self.rank * groups + group) % len(available)])
-        ] for group in range(groups)]
-
+        return grouped_full_task_scenes(
+            self.scenes,
+            groups=int(self.layout.groups_per_rank),
+            rank=self.rank,
+            update_index=update_index,
+            round_index=round_index,
+            base_seed=self.base_seed,
+        )
 
     def reset(
         self,

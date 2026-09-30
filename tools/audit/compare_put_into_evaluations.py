@@ -135,7 +135,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         json.loads((path / "evaluation.json").read_text("utf-8"))
         for path in (baseline_dir, candidate_dir)
     ]
-    keys = ["scene_manifest_sha256", "split", "worlds", "rounds", "distinct_scene_rounds", "decisions"]
+    keys = [
+        "scene_manifest_sha256", "split", "worlds", "rounds", "distinct_scene_rounds",
+        "decisions", "excluded_validation_panel",
+    ]
     if not args.allow_prior_noise_difference:
         keys.append("prior_noise_scale")
     for key in keys:

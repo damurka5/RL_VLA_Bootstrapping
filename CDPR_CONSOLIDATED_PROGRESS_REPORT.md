@@ -2040,6 +2040,23 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-09-30 — Repeated matched evaluation prepared for the LR 1e-5 continuation (`step_63525522`, final `step_66086572` vs `step_56072006`)
+
+- Run under test: the LR 1e-5, one-epoch continuation 56.07M → 66.09M (113 updates, 41 validations). Its best in-run strict is `step_63525522` at 430/1,024. The analysis is in `analysis/three_stage_20260930/diagnosis.md`
+- The in-run validation panel is fixed: `update_index=0`, `validation_seed` 2,000,000, 64 groups per rank × 2 ranks, so 128 scenes, the same at all 41 validations. The 41.99% peak is the maximum of 41 correlated reads on those scenes, so the checkpoint is re-scored off-panel
+- Tooling:
+  - `grouped_full_task_scenes` is now a pure function, with the resetter delegating to it
+  - `evaluate_cdpr_full_put_into.py --exclude-validation-panel` rebuilds that panel and drops it from the split, and `evaluation.json` records what was excluded
+  - The eval launcher gains `VIDEOS=0` and `EXCLUDE_VALIDATION_PANEL=1`
+- `scripts/compare_cdpr_three_stage_repeats_remote.sh` evaluates each checkpoint `REPEATS` times (default 4) on one 512-scene off-panel set. Jobs run repeat-major, dealt round-robin over both GPUs, and the script can resume
+- `tools/audit/compare_put_into_repeats.py`:
+  - The unit of analysis is the scene. The effect is the mean per-scene difference of repeat-averaged outcomes, with a scene-bootstrap 95% CI and a within-scene label-permutation p (hypergeometric null)
+  - Holm correction across candidates on strict
+  - Grasp and lift are checked as retention guards
+  - Each checkpoint's own repeat discordance is reported as the noise floor. Per-repeat McNemar is printed as a readout only
+- Resolution, planning figure: with ~28% repeat discordance, 512 scenes × 4 repeats gives an SE of about 1.2 pp on the strict difference. The minimum detectable difference at 80% power is therefore about 3.3 pp. The run's trend (+1.1 pp first-ten → last-ten) is below that, so "no significant difference" is the expected result if the trend is the true effect
+- Status: **implemented, local tests only; not yet run**
+
 ### 2026-09-28 — Closing summary of the four-point review (divergence, candidate + pilot, retention, self-imitation)
 
 | point | what was done | outcome |
