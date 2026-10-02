@@ -116,6 +116,7 @@ def run_unassisted(
     video: EpisodeVideoRecorder | None = None,
     round_index: int = 0,
     trace: Any = None,
+    kinematics: Any = None,
 ) -> dict[str, Any]:
     """One rollout of the student over a batch of full-task scenes."""
 
@@ -194,6 +195,13 @@ def run_unassisted(
     # With video on, the frame rendered after an action is the observation of
     # the next decision; reuse it rather than rendering the same state twice.
     pending_cameras = None
+    if kinematics is not None:
+        kinematics.start_round(
+            round_index=round_index,
+            scenes=scenes,
+            target_slots=place_state.target_slots,
+            reference_slots=place_state.reference_slots,
+        )
     with torch.inference_mode():
         if video is not None:
             pending_cameras = world.backend.render_policy_cameras()
@@ -335,6 +343,17 @@ def run_unassisted(
                     released=released, release_in_progress=release_in_progress,
                     wrong_place=place_result.diagnostics["wrong_place_drop"],
                 )
+                if kinematics is not None:
+                    kinematics.record_step(
+                        decision_index=decision_index,
+                        action=action,
+                        low_dim=low_dim,
+                        active=step_active,
+                        physical_grasp=caught,
+                        bilateral_contact=grasp_diagnostics["bilateral_contact"],
+                        release_in_progress=release_in_progress,
+                        outcome=outcome,
+                    )
                 milestones = advance_three_stage_milestones(
                     milestones, reset=reset, low_dim=low_dim, result=place_result,
                     physical_grasp=caught, gripper_command=action[:, 4],
@@ -398,6 +417,8 @@ def run_unassisted(
                 active &= ~place_result.terminated
 
     nonfinite.finish()
+    if kinematics is not None:
+        kinematics.finish_round(strict=outcome.strict, non_finite=nonfinite.live)
     geometry = (
         place_result.diagnostics["container_xy_error"]
         <= place_result.diagnostics["container_xy_radius"]
@@ -723,6 +744,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     parser.add_argument("--scene-class", default=None)
+    parser.add_argument(
+        "--trace-dir",
+        type=Path,
+        default=None,
+        help=(
+            "Write per-env-step kinematic traces (commanded vs measured EE, "
+            "gripper command/opening/contact, object and receptacle, camera "
+            "frustum flags) for summarize_kinematic_traces.py."
+        ),
+    )
     args = parser.parse_args(argv)
 
     scenes, manifest = read_manifest(args.scene_manifest.expanduser().resolve())
@@ -839,6 +870,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             outcome_filter=str(args.video_outcome),
             max_videos=int(args.max_videos),
         )
+    kinematics = None
+    if args.trace_dir is not None:
+        import torch
+
+        from tools.audit.episode_kinematic_trace import KinematicTrace
+
+        kinematics = KinematicTrace(
+            backend=world.backend, output_dir=args.trace_dir.expanduser().resolve(), torch=torch
+        )
     rollouts = []
     for round_index in range(int(args.rounds)):
         rollouts.append(
@@ -853,6 +893,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 stochastic_generator=stochastic_generator,
                 video=video,
                 round_index=round_index,
+                kinematics=kinematics,
             )
         )
         row = rollouts[-1]
@@ -885,6 +926,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         # Absent (None) in reports written before the option existed.
         "excluded_validation_panel": panel,
         "scene_list": scene_list,
+        "trace_dir": None if args.trace_dir is None else str(args.trace_dir),
         "videos": (
             None
             if video is None

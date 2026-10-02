@@ -60,6 +60,9 @@ PANEL_RANKS="${PANEL_RANKS:-2}"
 # with SCENE_CLASS, e.g. never). ROUNDS is then len // WORLDS.
 SCENE_LIST="${SCENE_LIST:-}"
 SCENE_CLASS="${SCENE_CLASS:-}"
+# 1: per-env-step kinematic traces in $OUTPUT_DIR/trace (summarize with
+# tools/audit/summarize_kinematic_traces.py). About 60 kB per episode.
+TRACE="${TRACE:-0}"
 
 if [[ -d "$CHECKPOINT" ]]; then
   CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
@@ -103,6 +106,7 @@ if [[ "$VIDEOS" == "1" ]]; then
   args+=(--video-dir "$OUTPUT_DIR/videos" --video-outcome "$VIDEO_OUTCOME"
     --video-fps "$VIDEO_FPS" --max-videos "$MAX_VIDEOS")
 fi
+[[ "$TRACE" == "1" ]] && args+=(--trace-dir "$OUTPUT_DIR/trace")
 if [[ -n "$SCENE_LIST" ]]; then
   [[ -f "$SCENE_LIST" ]] || { echo "Scene list not found: $SCENE_LIST" >&2; exit 2; }
   args+=(--scene-list "$SCENE_LIST")
