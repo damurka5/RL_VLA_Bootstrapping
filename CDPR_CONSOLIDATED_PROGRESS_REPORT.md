@@ -2040,6 +2040,37 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-02 — Scene-level breakdown: failures are scene-determined, and one coordinate (target y) carries most of it
+
+- Tool: `tools/audit/scene_difficulty_breakdown.py` (`7216861`) on `runs/three_stage_put_into_repeats/20260930_110216`. 512 off-panel scenes × 16 draws: `step_56072006`, `step_63525522`, `step_66086572`, `step_66163255`, 4 repeats each
+- Pooling check, strict off-panel: 37.8 / **35.5** / 37.2 / 37.4%. Per-scene rates correlate 0.67–0.79 between checkpoints. **`step_63525522`, the in-run peak at 41.99%, is the worst of the four off-panel.** That is the winner's curse of selecting on the fixed 128-scene panel, now measured
+- Scene-determined variance:
+
+| stage | mean | ICC | true-rate SD | never (binomial expectation) | always (binomial) | split-half r |
+|---|---:|---:|---:|---:|---:|---:|
+| strict | 37.0% | **0.44** | 0.321 | **139** (0.3) | 11 (0.0) | 0.866 |
+| grasped | 75.0% | **0.55** | 0.322 | 33 (0.0) | 213 (5.1) | 0.920 |
+| lifted | 64.8% | 0.44 | 0.318 | 41 (0.0) | 93 (0.5) | 0.874 |
+
+  Lift given grasp, over 450 scenes with ≥ 4 grasps: mean 85.9%; 4 scenes never lift and 188 always do. The grasp→lift step is mostly reliable per scene. Its erosion under RL is a small, broad shift, not a set of broken scenes
+- Failure mass by strict-difficulty class:
+
+| class | scenes | share of all failures | no grasp | grasp, no lift | lift, no strict | carry slip | wrong place |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| never | 139 | 43.1% | 50.5% | 9.3% | 40.2% | 39.6% | 38.0% |
+| hard | 101 | 26.7% | 40.3% | 16.8% | 42.9% | 35.0% | 29.6% |
+| middle | 161 | 25.4% | 24.7% | 24.4% | 50.9% | 24.5% | 16.0% |
+| easy | 100 | 4.8% | 18.8% | 28.8% | 52.4% | 8.1% | 3.3% |
+| all | 512 | | 39.7% | 16.1% | 44.2% | | |
+
+  240 never/hard scenes (47%) hold 70% of all failures. Their failures are no-grasp and post-lift slip/misplacement, not grasp→lift
+- Object × destination: potato→bowl is worst (strict 22.7%, lift | grasp 74.0%, strict | lift 36.4%, 27 never). Tomato→plate and orange→plate are best (≈ 45%). Bowl strict | lift is below plate for every object (36–57% against 55–66%)
+- **Geometry: `target_y` dominates.** Spearman with per-scene strict −0.743 (plate −0.747, bowl −0.740), grasp −0.374, lift | grasp −0.204, strict | lift −0.661. Strict by `target_y` quartile: **66.0%, 51.9%, 24.0%, 6.0%**. No other feature exceeds |0.12|: target x +0.09, distance from the workspace centre +0.03, start distance, transport distance, start height, yaw and shade ~0
+- What +y means: the overview camera sits at (0, −0.541, 0.5125), pitched 30° down, so +y is the far side of the desk from it. A target at y = +0.19 is about twice as far from the camera as one at −0.19. It is seen at a shallower angle, and a gripper above it sits between the camera and the object. The large strict | lift effect (−0.66) means post-lift carrying and placing also fail at high y, not only the grasp. The receptacle position was not yet in the feature set; `receptacle_x/y`, start EE x/y, carry direction and a target_y × receptacle_y grid are added here
+- Reading for the plateau: about a quarter of the scene distribution (top `target_y` quartile) succeeds 6% of the time deterministically, and less under training noise. GRPO groups of 8 there are almost always all-fail and carry no advantage, so RL receives essentially no signal from the region where most failures live. This fits two flat 10M continuations. Failures are systematic, not chaos: 139 never-solved scenes against 0.3 expected
+- Diagnostics added: the breakdown prints per-stage quartile tables by destination and a 2-D strict grid. `evaluate_cdpr_full_put_into.py --scene-list scene_classes.json --scene-class never` (launcher `SCENE_LIST`/`SCENE_CLASS`) evaluates exactly those scenes, with videos
+- Status: **diagnosis in progress.** Open question: is the +y failure perceptual (far side of the overview camera) or physical (cable-robot kinematics/dynamics at +y)? The receptacle_y split, and failure videos of the never class against the easy class, decide it
+
 ### 2026-10-02 — Repeated matched evaluation: neither 10M continuation beats `step_56072006`; the anchor halves the damage but adds no gain
 
 - Protocol: `compare_put_into_repeats.py`, out root `runs/three_stage_put_into_repeats/20260930_110216`. 512 `student_validation` scenes with the 128-scene in-run panel excluded, 4 repeats per checkpoint, the same protocol for all three

@@ -108,6 +108,30 @@ class CliTests(unittest.TestCase):
             result = json.loads((out / "breakdown.json").read_text())
             self.assertLess(result["geometry"]["transport_xy_distance"]["spearman"]["strict"], -0.5)
             self.assertIn("nearest_distractor_m", result["geometry"])
+            self.assertIn("receptacle_y", result["geometry"])
+            # Detail tables: 4 quartiles x (all, plate, bowl), episode-pooled.
+            table = result["detail"]["target_y"]
+            self.assertEqual(len(table), 12)
+            self.assertEqual(sum(r["scenes"] for r in table if r["destination"] == "all"), 64)
+            self.assertEqual(sum(c["scenes"] for c in result["detail"]["grid"]["cells"]), 64)
+
+
+class SceneListTests(unittest.TestCase):
+    def test_select_scene_list_keeps_order_and_whole_rounds(self):
+        from types import SimpleNamespace
+
+        from tools.audit.evaluate_cdpr_full_put_into import select_scene_list
+
+        scenes = [SimpleNamespace(scene_uid=f"u{i}") for i in range(10)]
+        picked, rounds = select_scene_list(scenes, ["u7", "u2", "u5", "u1", "u9"], worlds=2)
+        self.assertEqual(rounds, 2)
+        self.assertEqual([s.scene_uid for s in picked], ["u7", "u2", "u5", "u1"])
+        with self.assertRaises(SystemExit):
+            select_scene_list(scenes, ["u1", "nope"], worlds=2)
+        with self.assertRaises(SystemExit):
+            select_scene_list(scenes, ["u1", "u1"], worlds=2)
+        with self.assertRaises(SystemExit):
+            select_scene_list(scenes, ["u1"], worlds=2)
 
     def test_refuses_mismatched_scenes(self):
         with tempfile.TemporaryDirectory() as tmp:

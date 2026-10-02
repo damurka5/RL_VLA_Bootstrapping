@@ -227,7 +227,17 @@ def scene_features(manifest_path: Path, scenes: Sequence[str]) -> dict[str, np.n
         add("target_x", tx)
         add("target_y", ty)
         add("target_radius", math.hypot(tx - cx, ty - cy))
+        add("receptacle_x", receptacle.xy[0])
+        add("receptacle_y", receptacle.xy[1])
         add("receptacle_radius", math.hypot(receptacle.xy[0] - cx, receptacle.xy[1] - cy))
+        add("start_ee_x", scene.ee_xyz[0])
+        add("start_ee_y", scene.ee_xyz[1])
+        # Carry direction in the desk frame: +1 = the object is carried toward
+        # +y (away from the overview camera), -1 = toward the camera.
+        add("carry_dy", receptacle.xy[1] - ty)
+        add("carry_dx", receptacle.xy[0] - tx)
+        # Farthest of the two places the policy must act, along y.
+        add("max_y_target_receptacle", max(ty, receptacle.xy[1]))
         add("approach_xy_distance", scene.approach_xy_distance)
         add("approach_xyz_distance", scene.approach_xyz_distance)
         add("transport_xy_distance", scene.transport_xy_distance)
@@ -464,6 +474,77 @@ def print_summary(result: Mapping[str, Any]) -> None:
                   f"{f(s.get('strict_plate')):>8}{f(s.get('strict_bowl')):>8}   {quart}")
 
 
+def print_detail(
+    rows: Sequence[Mapping[str, Any]],
+    features: Mapping[str, np.ndarray],
+    detail: Sequence[str],
+    grid: Sequence[str],
+) -> dict[str, Any]:
+    """Quartile tables with every stage per destination, and a 2-D strict grid.
+
+    Rates are pooled over episodes in the bin (successes / draws), so a stage's
+    conditional rate is ratio-of-sums, not a mean of per-scene ratios.
+    """
+
+    draws = np.asarray([r["draws"] for r in rows], dtype=np.float64)
+    count = {k: np.asarray([r[k] for r in rows], dtype=np.float64)
+             for k in ("strict", "grasped", "lifted", "carry_slip", "wrong_place")}
+    destination = np.asarray([r["destination"] for r in rows])
+    pct = lambda num, den: "   -  " if den <= 0 else f"{100 * num / den:5.1f}%"
+    out: dict[str, Any] = {}
+
+    def edges_of(values: np.ndarray) -> np.ndarray:
+        return np.quantile(values[np.isfinite(values)], [0, 0.25, 0.5, 0.75, 1.0])
+
+    def bin_of(values: np.ndarray, edges: np.ndarray) -> np.ndarray:
+        return np.clip(np.searchsorted(edges[1:-1], values, side="right"), 0, 3)
+
+    for name in detail:
+        if name not in features:
+            print(f"(no feature {name!r})")
+            continue
+        values = features[name]
+        edges = edges_of(values)
+        bins = bin_of(values, edges)
+        print(f"\n{name}: quartiles by stage (episode-pooled)")
+        print(f"  {'bin':>20s}{'dest':>7s}{'scenes':>7s}{'strict':>8s}{'grasp':>8s}{'lift':>8s}"
+              f"{'lift|gr':>9s}{'str|lift':>9s}{'slip':>8s}{'wrongpl':>9s}{'never':>7s}")
+        table = []
+        for q in range(4):
+            for dest in ("all", "plate", "bowl"):
+                mask = (bins == q) & ((destination == dest) | (dest == "all"))
+                d = draws[mask].sum()
+                c = {k: v[mask].sum() for k, v in count.items()}
+                never = int(((count["strict"] == 0) & mask).sum())
+                print(f"  {f'[{edges[q]:+.3f},{edges[q + 1]:+.3f}]' if dest == 'all' else '':>20s}{dest:>7s}{int(mask.sum()):7d}"
+                      f"{pct(c['strict'], d):>8s}{pct(c['grasped'], d):>8s}{pct(c['lifted'], d):>8s}"
+                      f"{pct(c['lifted'], c['grasped']):>9s}{pct(c['strict'], c['lifted']):>9s}"
+                      f"{pct(c['carry_slip'], d):>8s}{pct(c['wrong_place'], d):>9s}{never:7d}")
+                table.append({"quartile": q, "low": float(edges[q]), "high": float(edges[q + 1]),
+                              "destination": dest, "scenes": int(mask.sum()), "draws": float(d),
+                              **{k: float(v) for k, v in c.items()}, "never_strict": never})
+        out[name] = table
+
+    rows_name, cols_name = grid
+    if rows_name in features and cols_name in features:
+        re_, ce = edges_of(features[rows_name]), edges_of(features[cols_name])
+        rb, cb = bin_of(features[rows_name], re_), bin_of(features[cols_name], ce)
+        print(f"\nstrict grid: rows {rows_name} quartiles, columns {cols_name} quartiles (rate / scenes)")
+        print("  " + " " * 18 + "".join(f"{f'[{ce[j]:+.2f},{ce[j + 1]:+.2f}]':>16s}" for j in range(4)))
+        grid_out = []
+        for i in range(4):
+            cells = []
+            for j in range(4):
+                mask = (rb == i) & (cb == j)
+                d = draws[mask].sum()
+                cells.append(f"{pct(count['strict'][mask].sum(), d).strip():>9s} /{int(mask.sum()):3d}  ")
+                grid_out.append({"row": i, "col": j, "scenes": int(mask.sum()),
+                                 "strict": float(count["strict"][mask].sum()), "draws": float(d)})
+            print(f"  {f'[{re_[i]:+.2f},{re_[i + 1]:+.2f}]':>18s}" + "".join(f"{c:>16s}" for c in cells))
+        out["grid"] = {"rows": rows_name, "cols": cols_name, "cells": grid_out}
+    return out
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--eval-root", type=Path, default=None,
@@ -472,6 +553,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--only", nargs="+", default=None, help="Labels to pool (default: all found).")
     parser.add_argument("--scene-manifest", type=Path, default=None)
     parser.add_argument("--output", type=Path, default=None)
+    parser.add_argument(
+        "--detail", nargs="*", default=["target_y", "receptacle_y"],
+        help="Features to print as full quartile tables (every stage, by destination).",
+    )
+    parser.add_argument(
+        "--grid", nargs=2, default=["target_y", "receptacle_y"], metavar=("ROWS", "COLS"),
+        help="Two features for a 4x4 quartile grid of strict (and scene counts).",
+    )
     args = parser.parse_args(argv)
 
     groups: dict[str, list[Path]] = {}
@@ -488,6 +577,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     features = scene_features(args.scene_manifest, scenes) if args.scene_manifest else None
     result, rows = analyse(loaded, scenes, features=features)
     print_summary(result)
+    if features:
+        result["detail"] = print_detail(rows, features, args.detail, args.grid)
     if args.output is not None:
         out = args.output.expanduser().resolve()
         out.mkdir(parents=True, exist_ok=True)

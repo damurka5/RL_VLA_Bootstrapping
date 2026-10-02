@@ -56,6 +56,10 @@ EXCLUDE_VALIDATION_PANEL="${EXCLUDE_VALIDATION_PANEL:-0}"
 PANEL_VALIDATION_SEED="${PANEL_VALIDATION_SEED:-2000000}"
 PANEL_GROUPS_PER_RANK="${PANEL_GROUPS_PER_RANK:-64}"
 PANEL_RANKS="${PANEL_RANKS:-2}"
+# Diagnostic: evaluate exactly these scenes (a JSON list, or scene_classes.json
+# with SCENE_CLASS, e.g. never). ROUNDS is then len // WORLDS.
+SCENE_LIST="${SCENE_LIST:-}"
+SCENE_CLASS="${SCENE_CLASS:-}"
 
 if [[ -d "$CHECKPOINT" ]]; then
   CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
@@ -98,6 +102,11 @@ args=(
 if [[ "$VIDEOS" == "1" ]]; then
   args+=(--video-dir "$OUTPUT_DIR/videos" --video-outcome "$VIDEO_OUTCOME"
     --video-fps "$VIDEO_FPS" --max-videos "$MAX_VIDEOS")
+fi
+if [[ -n "$SCENE_LIST" ]]; then
+  [[ -f "$SCENE_LIST" ]] || { echo "Scene list not found: $SCENE_LIST" >&2; exit 2; }
+  args+=(--scene-list "$SCENE_LIST")
+  [[ -n "$SCENE_CLASS" ]] && args+=(--scene-class "$SCENE_CLASS")
 fi
 if [[ "$EXCLUDE_VALIDATION_PANEL" == "1" ]]; then
   args+=(--exclude-validation-panel --panel-validation-seed "$PANEL_VALIDATION_SEED"

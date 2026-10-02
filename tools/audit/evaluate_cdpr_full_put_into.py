@@ -578,6 +578,23 @@ def summarize(rollouts: Sequence[Mapping[str, np.ndarray]]) -> dict[str, Any]:
     return report
 
 
+def select_scene_list(
+    scenes: Sequence[Any], listed: Sequence[str], *, worlds: int
+) -> tuple[list[Any], int]:
+    """The listed scenes in list order, cut to whole rounds of ``worlds``."""
+
+    by_uid = {scene.scene_uid: scene for scene in scenes}
+    missing = [uid for uid in listed if uid not in by_uid]
+    if missing:
+        raise SystemExit(f"{len(missing)} listed scenes are not in the manifest, e.g. {list(missing[:2])}.")
+    if len(set(listed)) != len(listed):
+        raise SystemExit("The scene list repeats scenes.")
+    rounds = len(listed) // int(worlds)
+    if rounds < 1:
+        raise SystemExit(f"{len(listed)} listed scenes; --worlds {worlds} needs at least that many.")
+    return [by_uid[uid] for uid in listed[: rounds * int(worlds)]], rounds
+
+
 def validation_panel_uids(
     split_scenes: Sequence[Any],
     *,
@@ -694,6 +711,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--panel-ranks", type=int, default=2)
     parser.add_argument("--panel-rounds", type=int, default=1)
+    parser.add_argument(
+        "--scene-list",
+        type=Path,
+        default=None,
+        help=(
+            "Evaluate exactly these scenes (any split): a JSON list of "
+            "scene_uids, or a dict of lists such as scene_classes.json with "
+            "--scene-class. Rounds become len // --worlds; the remainder is "
+            "dropped. A diagnostic arm, not a comparable headline."
+        ),
+    )
+    parser.add_argument("--scene-class", default=None)
     args = parser.parse_args(argv)
 
     scenes, manifest = read_manifest(args.scene_manifest.expanduser().resolve())
@@ -723,6 +752,23 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"scenes, {len(selected)} of {before} remain",
             flush=True,
         )
+    scene_list = None
+    if args.scene_list is not None:
+        listed = json.loads(args.scene_list.expanduser().resolve().read_text("utf-8"))
+        if isinstance(listed, dict):
+            if args.scene_class is None:
+                raise SystemExit(f"{args.scene_list} is a dict; name one of {sorted(listed)} with --scene-class.")
+            listed = listed[str(args.scene_class)]
+        selected, rounds = select_scene_list(scenes, listed, worlds=int(args.worlds))
+        args.rounds = rounds
+        args.distinct_scene_rounds = True
+        scene_list = {
+            "path": str(args.scene_list),
+            "class": args.scene_class,
+            "listed": len(listed),
+            "evaluated": len(selected),
+        }
+        print(f"[eval] scene list: {len(selected)} of {len(listed)} listed scenes, {rounds} rounds", flush=True)
     needed = int(args.worlds) * (int(args.rounds) if args.distinct_scene_rounds else 1)
     if len(selected) < needed:
         raise SystemExit(
@@ -838,6 +884,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "distinct_scene_rounds": bool(args.distinct_scene_rounds),
         # Absent (None) in reports written before the option existed.
         "excluded_validation_panel": panel,
+        "scene_list": scene_list,
         "videos": (
             None
             if video is None
