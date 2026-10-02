@@ -2040,6 +2040,39 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-02 — Target vs receptacle position: two separate y effects, a far-side grasp loss and a carry-toward-camera placement collapse
+
+- Same 512 × 16 breakdown, rerun with receptacle position, start-EE position and carry direction (`119044b`)
+- Spearman with per-scene strict, plate / bowl alike: `target_y` −0.743, **`carry_dy` (receptacle y − target y) +0.704**, `start_ee_y` −0.635 (the start is within 6–10 cm of the target), `receptacle_y` **+0.300**, `max_y_target_receptacle` −0.507. Every x feature, distance and height is |r| < 0.18
+- By `target_y` quartile, episode-pooled:
+
+| target_y | strict | grasp | lift \| grasp | strict \| lift | carry slip | wrong place | never-solved scenes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| −0.167…−0.073 | 66.0% | 90.8% | 92.7% | 78.4% | 17.3% | 9.8% | 0 |
+| −0.073…+0.002 | 52.0% | 81.6% | 86.8% | 73.3% | 17.9% | 11.7% | 5 |
+| +0.002…+0.074 | 24.0% | 69.6% | 82.9% | 41.6% | 32.7% | 28.3% | 37 |
+| +0.074…+0.163 | 6.0% | 57.9% | 80.5% | **12.9%** | 39.8% | 37.6% | 97 |
+
+- By `receptacle_y` quartile: grasp is flat (69–80%), but strict | lift goes **36.9% → 52.7% → 68.7% → 68.6%** and slip goes 39.4% → 20.3%. A receptacle near the camera (low y) is worse after the lift
+- Strict grid (rows target_y quartiles, columns receptacle_y quartiles):
+
+| target_y \ receptacle_y | −0.12…−0.04 | −0.04…0.00 | 0.00…+0.05 | +0.05…+0.12 |
+|---|---:|---:|---:|---:|
+| −0.17…−0.07 | 70.0% (20) | 71.6% (33) | 69.1% (40) | 54.8% (35) |
+| −0.07…0.00 | 49.4% (20) | 47.4% (19) | 54.9% (32) | 52.7% (57) |
+| 0.00…+0.07 | **9.7% (56)** | 25.0% (26) | 44.2% (26) | 36.2% (20) |
+| +0.07…+0.16 | 3.7% (32) | 3.8% (50) | 5.6% (30) | 18.4% (16) |
+
+- Reading. There are two separable effects; the scene generator couples them, because the target is placed at a random bearing around a uniformly placed receptacle:
+  1. **Far-side grasp loss, a target-position effect.** Grasp falls 90.8% → 57.9% with target y and does not depend on receptacle y (r +0.09). It happens before any carrying, so it is about reaching or seeing a target on the far side of the overview camera
+  2. **Post-lift collapse when carrying toward the camera.** Strict | lift falls 78% → 13% with target y, with slip and wrong place quadrupling. At fixed target y it recovers when the receptacle is farther from the camera (row 3: 9.7% → 44.2%). At fixed carry direction it still worsens with target y (diagonal: 70% → 47% → 44% → 18%). So the carry direction and the far-side start both matter
+- Candidate mechanisms, not yet distinguished:
+  - **Monocular depth error.** The overview camera looks along +y from y = −0.54, so y is its depth axis. Image resolution in y degrades with distance much faster than in x, and the x effects are nil. Prediction: misses and misplacements are along y, with spread growing with target y
+  - **Direction-dependent carry dynamics.** With yaw fixed at 0 (wrist camera facing −y), accelerating toward −y loads the grasp from one fixed side. Prediction: slips cluster at carry onset and in −y carries, independent of where the receptacle is seen
+  - **Wrist-camera geometry.** The wrist camera faces −y, so during a −y carry the receptacle is ahead and in view. That predicts the opposite sign, which makes a wrist-view explanation unlikely
+- Bowl: carry slip is about 2× plate's in the near-camera half (26% against 10%), whatever the y effect. Strict | lift for bowl is below plate in every target_y quartile except the last
+- Status: **diagnosis in progress.** Videos of the never class against the easy class are pending (user). A quantitative test would be per-episode close-point and release-point offsets: EE − target at gripper closure, and object − receptacle at release, in x and y. A depth-error mechanism predicts y-spread growing with target y and no comparable x-spread
+
 ### 2026-10-02 — Scene-level breakdown: failures are scene-determined, and one coordinate (target y) carries most of it
 
 - Tool: `tools/audit/scene_difficulty_breakdown.py` (`7216861`) on `runs/three_stage_put_into_repeats/20260930_110216`. 512 off-panel scenes × 16 draws: `step_56072006`, `step_63525522`, `step_66086572`, `step_66163255`, 4 repeats each
