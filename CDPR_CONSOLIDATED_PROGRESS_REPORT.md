@@ -2040,6 +2040,22 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-02 — Failure videos and a per-step trace recorder
+
+- Video review by the user: 23 videos covering every object/destination cell, plus the metadata of all 128 never-class episodes (`step_56072006`):
+  - **Failed carries:** the object often stays between the fingers while the hand climbs out of the overview frame. It then falls behind or beside the receptacle
+  - Across 51 slip-labelled episodes, the median lift-to-slip time is 2.65 s, and only 3/51 slip within 0.5 s of the lift. So this is not an immediate loss at the lift
+  - **Failed grasps:** the hand often moves away from the target and stays away. No consistent forward/back y offset was visible by eye
+  - **Wrist view:** the receptacle leaves the wrist view during several failed ascents
+- Code facts behind those observations:
+  - The controller allows the EE up to z = 0.60 m (`controller_workspace_z_bounds: [0.18, 0.60]`, x/y ±0.28), while the config's own camera-framing band ends at 0.32 m (`ee_workspace_z_bounds`). Nothing limits the ascent to the part of the workspace the overview camera frames
+  - `carry_slip` is contact lost with no exempted release, and the exemption (`release_opening_over_goal`) requires the object to be over the goal. So a commanded opening mid-carry and a passive grip failure carry the same flag
+- Added (`e28553e`): `evaluate_cdpr_full_put_into.py --trace-dir` (launcher `TRACE=1`) and `tools/audit/summarize_kinematic_traces.py`
+  - The recorder logs every env step: commanded vs measured EE, gripper command/opening, pad contact, object and receptacle position, and EE/object/receptacle membership in the overview and wrist frustums, from the live camera poses and the model fovy (frustum membership only, no occlusion)
+  - The summary classifies each slip as commanded open, uncommanded opening or passive, with timing, height and offset to the receptacle
+  - It also reports post-lift peak z, the time above the band and out of frame, tracking error, and the x/y offsets of grasp misses, all by target-y quartile with the breakdown's edges
+- Status: tooling ready; trace evaluation pending
+
 ### 2026-10-02 — Target vs receptacle position: two separate y effects, a far-side grasp loss and a carry-toward-camera placement collapse
 
 - Same 512 × 16 breakdown, rerun with receptacle position, start-EE position and carry direction (`119044b`)
