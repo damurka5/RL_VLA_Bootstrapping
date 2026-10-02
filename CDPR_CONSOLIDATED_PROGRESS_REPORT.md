@@ -2040,6 +2040,40 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-02 — Repeated matched evaluation: neither 10M continuation beats `step_56072006`; the anchor halves the damage but adds no gain
+
+- Protocol: `compare_put_into_repeats.py`, out root `runs/three_stage_put_into_repeats/20260930_110216`. 512 `student_validation` scenes with the 128-scene in-run panel excluded, 4 repeats per checkpoint, the same protocol for all three
+- Per checkpoint (pooled over 4 × 512 episodes):
+
+| checkpoint | strict | native | grasp | held lift | lift \| grasp | strict \| lift | repeat flip | strict per repeat |
+|---|---:|---:|---:|---:|---:|---:|---:|---|
+| `step_56072006` (reference) | 37.8% | 45.6% | 75.0% | 66.3% | 88.3% | 57.1% | 24.6% | 193, 194, 197, 191 |
+| `step_66086572` (unanchored 10M) | 37.2% | 45.9% | 74.1% | 63.6% | 85.8% | 58.5% | 24.6% | 193, 183, 184, 201 |
+| `step_66163255` (anchored 10M) | 37.4% | 46.2% | 75.8% | 64.8% | 85.4% | 57.8% | 25.4% | 178, 193, 193, 202 |
+
+- Each continuation against `step_56072006` (scene-level mean difference, scene-bootstrap 95% CI, within-scene permutation p; Holm applies only to strict):
+
+| metric | unanchored − reference | anchored − reference |
+|---|---|---|
+| strict | −0.68 pp [−3.27, +1.90], p 0.57, Holm 1.0 | −0.44 pp [−2.59, +1.71], p 0.73, Holm 1.0 |
+| native | +0.29 [−2.20, +2.83] | +0.63 [−1.32, +2.59] |
+| grasped | −0.93 [−3.37, +1.51] | +0.73 [−1.07, +2.59] |
+| lifted | **−2.73 [−5.37, −0.05], p 0.016** | −1.56 [−3.86, +0.68], p 0.16 |
+| carry slip | −1.90 [−4.39, +0.63] | −0.63 [−2.69, +1.46] |
+| wrong place | −2.34 [−4.59, −0.10], p 0.023 | −0.54 [−2.39, +1.32] |
+| strict plate | **−3.99 [−7.68, −0.39], p 0.013** | −1.26 [−4.57, +2.04] |
+| strict bowl | +2.65 [−1.08, +6.37] | +0.39 [−2.25, +3.14] |
+
+- Reading:
+  1. **20M steps of RL past `step_56072006`, in two 10M arms, bought no measurable strict gain.** Both CIs sit around zero and exclude gains above +1.9 pp. `step_56072006` stays the reference. Its rate on this off-panel set is 775/2,048 = 37.8%; the earlier 39.1% came from a different 256-scene set
+  2. **The anchor did its job on drift:** every difference is closer to zero and its CIs are narrower. The plate/bowl trade almost vanishes (−1.26 / +0.39 against −3.99 / +2.65), and the lift loss is about halved and no longer significant
+  3. **The anchor did not protect the grasp→lift conversion.** Lift | grasp fell by the same amount in both arms (88.3 → 85.8 and 85.4%); anchored grasp rose 0.8 pp, which offset part of it. Approach/pickup KL on the bank stayed ≤ 0.002 throughout, so the erosion is NOT on the reference's own successful pickup states. Candidates:
+     - pickup-stage states the reference never visited successfully, i.e. near-miss and slipping lifts, which a success-only bank does not cover
+     - the end of the lift falling into placement-credited decisions, which the anchor leaves free
+     - noise: no conditional test was run, and the unconditional lifted difference has p 0.16
+  4. One checkpoint's four repeats span 178–202 strict (4.7 pp) and flip about 25% of scene verdicts. Both continuations' effects are smaller than that spread
+- Status: **neither promoted; `step_56072006` remains the reference.** A 20–30M continuation of either configuration is not supported: two 10M arms showed no gain, and the anchored configuration can only gain through placement while the measured ceiling sits at the grasp→lift step
+
 ### 2026-10-02 — Anchored continuation to 66.16M: drift pinned at ≤0.002, in-run strict flat over 10M
 
 - Run/config: the anchor pilot resumed from its last checkpoint to `MAX_TRAIN_STEPS=66086572`, with coef 1.0, the step_56072006 reference and LR 1e-5 / 1 epoch. Tfevents `events.out.tfevents.1790801544.VLAPU.384523.0`: 86 updates and 31 validations, 58.75M → 66.16M, 25.8 h. The launch predates `7dae12a`, so `anchor/*` again log 2× (coef 2.0); the values below are halved
