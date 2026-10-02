@@ -2040,6 +2040,39 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-02 — Anchored continuation to 66.16M: drift pinned at ≤0.002, in-run strict flat over 10M
+
+- Run/config: the anchor pilot resumed from its last checkpoint to `MAX_TRAIN_STEPS=66086572`, with coef 1.0, the step_56072006 reference and LR 1e-5 / 1 epoch. Tfevents `events.out.tfevents.1790801544.VLAPU.384523.0`: 86 updates and 31 validations, 58.75M → 66.16M, 25.8 h. The launch predates `7dae12a`, so `anchor/*` again log 2× (coef 2.0); the values below are halved
+- Full anchored lineage 56.07M → 66.16M, 42 validations, against the unanchored run at the same steps:
+
+| window | anchored strict | unanchored strict | anchored grasp / held lift | unanchored grasp / held lift | anchored plate / bowl strict | unanchored plate / bowl strict |
+|---|---:|---:|---:|---:|---:|---:|
+| 56–58M | 38.42 | 38.77 | 74.45 / 65.33 | 74.77 / 65.77 | 39.70 / 37.13 | 40.43 / 37.11 |
+| 58–60M | 39.31 | 37.59 | 75.54 / 66.06 | 73.61 / 63.81 | 40.14 / 38.48 | 39.53 / 35.64 |
+| 60–62M | 37.49 | 37.77 | 74.30 / 63.81 | 73.63 / 64.65 | 37.45 / 37.52 | 39.48 / 36.06 |
+| 62–64M | 39.07 | 39.79 | 75.22 / 65.12 | 75.99 / 66.03 | 39.43 / 38.72 | 41.80 / 37.79 |
+| 64–66M | 38.52 | 39.88 | 74.94 / 65.14 | 76.84 / 66.45 | 38.57 / 38.46 | 41.08 / 38.67 |
+
+- Anchored first ten → last ten validations:
+  - strict 38.70 → 38.52%
+  - grasp 74.75 → 74.94%, held lift 65.46 → 65.14%
+  - plate 40.14 → 38.57%, bowl 37.27 → 38.46%
+- Unanchored first ten → last ten, same panel: strict 38.74 → 39.83%, grasp 74.65 → 76.92%, held lift 65.59 → 66.61%
+- Anchored best was `step_63571368` at 40.72%; the endpoint `step_66163255` read 39.06%, with grasp 74.22% and held lift 63.87%
+- Anchor:
+  - True `kl_bank` held at 0.0012–0.0020 for the whole run, slowly creeping (0.0014 at 58.8M, 0.0020 at 66.1M). The unanchored run was at 0.094 on the same stages by 66M
+  - The anchor's gradient norm has a median of 0.14, against an RL gradient of 5.62
+- Optimization:
+  - `approx_kl` median 0.0033, with two spikes, 0.071 at 57.1M and 0.081 at 58.9M
+  - entropy 0.90 → 0.98, the same as the unanchored run
+  - live non-finite 1.71% (1.96% unanchored)
+- Training strict (fresh `collection` scenes each update), first twenty → last twenty updates: anchored 24.04 → 24.39%, unanchored 24.02 → 23.49%
+- Reading:
+  - The anchor held approach/pickup behaviour at the reference for 10M steps, and the run did not get better on the in-run panel. The unanchored run looked better on the same panel (+1.1 pp strict, +2.3 pp grasp), yet the repeated matched evaluation off the panel showed it had lost lift. So the 128-scene panel's trend is not evidence about generalization in either direction
+  - Training strict, on fresh scenes, leans slightly the anchored way (+0.35 against −0.53 pp), which is within what update-to-update variation can produce
+  - By construction the anchor pins approach and pickup, so any gain has to come through placement. At the measured ladder (grasp ~77%, lift given grasp ~86%) even a large placement gain cannot approach 70%
+- Status: **not promoted; matched evaluation pending.** The question it answers is retention: does the anchored endpoint keep step_56072006's grasp and lift where the unanchored endpoint lost them (66.3 → 63.6%)?
+
 ### 2026-09-30 — Anchor pilot (coef 1.0), 56.07M → 58.92M: drift held near 0.0015, in-run validation indistinguishable from the unanchored run
 
 - Run/config: `RESUME_CHECKPOINT=…/step_56072006`, `LR_OVERRIDE=1e-5`, `PPO_EPOCHS=1`, `ANCHOR_COEF=1.0`, `ANCHOR_STAGES=move_to,pick_up`. The anchor bank is the step_56072006 retention bank, 4,800 approach/pickup rows. Commit `3c28815`; tfevents `events.out.tfevents.1790764842.VLAPU.378850.0`. 33 updates, 12 validations, 9.6 h; the run was near its 59.07M target when the file was copied
