@@ -16,7 +16,12 @@ This records, for every env step of every episode:
 * whether the EE, the object and the receptacle fall inside the overview and
   the wrist camera frustums, computed from each world's live camera pose and
   the model's fovy. This is frustum membership, not occlusion,
-* the outcome observer's latched flags, so events can be timed.
+* the outcome observer's latched flags, so events can be timed,
+* at every policy decision, the SmolVLA prior and the final action chunk. The
+  residual policy acts as ``tanh(prior + residual_scale * residual)``, so
+  ``tanh(prior)`` is what the frozen prior alone would command, and
+  ``atanh(final) - prior`` is the residual's push. That attributes the
+  far-side upward Z to one or the other.
 
 One ``trace_round<k>.npz`` per round, arrays shaped (steps, worlds, ...),
 float32 or bool. ``summarize_kinematic_traces.py`` turns them into tables.
@@ -31,8 +36,19 @@ import numpy as np
 
 
 class KinematicTrace:
-    def __init__(self, *, backend: Any, output_dir: Path, torch: Any) -> None:
+    def __init__(
+        self,
+        *,
+        backend: Any,
+        output_dir: Path,
+        torch: Any,
+        residual_scale: float = float("nan"),
+        action_step_xyz: float = float("nan"),
+    ) -> None:
         self.backend = backend
+        self.residual_scale = float(residual_scale)
+        self.action_step_xyz = float(action_step_xyz)
+        self._decisions: list[dict[str, Any]] = []
         self.torch = torch
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -79,7 +95,10 @@ class KinematicTrace:
 
     def start_round(self, *, round_index: int, scenes: Sequence[Any], target_slots: Any, reference_slots: Any) -> None:
         self._rows = []
+        self._decisions = []
         self._meta = {
+            "residual_scale": np.float32(self.residual_scale),
+            "action_step_xyz": np.float32(self.action_step_xyz),
             "round_index": int(round_index),
             "scene_uid": np.asarray([str(s.scene_uid) for s in scenes]),
             "destination": np.asarray([str(s.destination) for s in scenes]),
@@ -88,6 +107,19 @@ class KinematicTrace:
         }
         self._target_slots = target_slots
         self._reference_slots = reference_slots
+
+    def record_decision(self, *, decision_index: int, prior: Any, chunk: Any, active: Any) -> None:
+        """The prior and the executed chunk of one decision, (worlds, per, 5)."""
+
+        per = int(chunk.shape[1])
+        worlds, dims = int(chunk.shape[0]), int(chunk.shape[-1])
+        prior = prior.reshape(worlds, -1, dims)[:, :per]
+        self._decisions.append({
+            "decision_index": int(decision_index),
+            "prior": prior.detach().to(self.torch.float32).clone(),
+            "final": chunk.detach().to(self.torch.float32).clone(),
+            "active": active.detach().clone(),
+        })
 
     def record_step(
         self,
@@ -139,11 +171,18 @@ class KinematicTrace:
             if array.dtype == np.float64:
                 array = array.astype(np.float32)
             out[key] = array
+        if self._decisions:
+            out["decision_index"] = np.asarray([d["decision_index"] for d in self._decisions], dtype=np.int32)
+            for key in ("prior", "final", "active"):
+                out[f"decision_{key}"] = self.torch.stack(
+                    [d[key] for d in self._decisions], dim=0
+                ).cpu().numpy()
         out["strict_final"] = strict.detach().cpu().numpy().astype(bool)
         out["non_finite"] = non_finite.detach().cpu().numpy().astype(bool)
         path = self.output_dir / f"trace_round{int(self._meta['round_index']):03d}.npz"
         np.savez_compressed(path, **out)
         self._rows = []
+        self._decisions = []
         return path
 
 

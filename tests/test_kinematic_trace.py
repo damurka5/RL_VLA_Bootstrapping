@@ -72,6 +72,14 @@ class SummaryTests(unittest.TestCase):
                 command = torch.full((worlds, 5), -0.5)
                 if t >= 18:
                     command[1, 4] = 0.8
+                if t % 4 == 0:
+                    # Prior pushes up (+1.0 pre-tanh) in every world; the
+                    # residual pushes down by 0.25 pre-tanh.
+                    prior = torch.zeros(worlds, 8, 5)
+                    prior[..., 2] = 1.0
+                    final = torch.tanh(prior[:, :4] - 0.25)
+                    trace.record_decision(decision_index=t // 4, prior=prior, chunk=final,
+                                          active=torch.ones(worlds, dtype=torch.bool))
                 trace.record_step(
                     decision_index=t // 4,
                     action=command,
@@ -98,6 +106,23 @@ class SummaryTests(unittest.TestCase):
             self.assertAlmostEqual(miss["dx"]["median"], 0.0, places=4)
             high = summary["post_lift"]["slip|all"]
             self.assertGreater(high["peak_ee_z_after_lift"]["mean"], 0.3)
+            carry = summary["z_attribution"]["carry|slip|all"]
+            self.assertAlmostEqual(carry["z_prior_only"]["mean"], float(np.tanh(1.0)), places=4)
+            self.assertAlmostEqual(carry["z_residual_push"]["mean"], -0.25, places=4)
+            self.assertAlmostEqual(carry["z_final"]["mean"], float(np.tanh(0.75)), places=4)
+            # The never-grasp world hovers within 6 cm of the object.
+            self.assertIn("hover|no_grasp|all", summary["z_attribution"])
+
+
+class CeilingOverrideTests(unittest.TestCase):
+    def test_override_keeps_floor_and_rejects_bad_ceiling(self):
+        from tools.audit.xy_approach_probe import override_controller_z_ceiling
+
+        args = SimpleNamespace(controller_workspace_z_bounds=[0.18, 0.60])
+        override_controller_z_ceiling(args, 0.40)
+        self.assertEqual(args.controller_workspace_z_bounds, [0.18, 0.40])
+        with self.assertRaises(SystemExit):
+            override_controller_z_ceiling(args, 0.10)
 
 
 if __name__ == "__main__":

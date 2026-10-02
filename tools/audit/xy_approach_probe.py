@@ -304,6 +304,17 @@ def _set_config_controller_workspace(args: Namespace, configured: Mapping[str, A
     args.controller_workspace_z_bounds = [low, high]
 
 
+def override_controller_z_ceiling(args: Any, z_max: float) -> None:
+    """An evaluation-time intervention on the controller's ceiling only; the
+    floor and the policy are untouched."""
+
+    bounds = getattr(args, "controller_workspace_z_bounds", None) or (0.18, 0.60)
+    low = float(min(bounds))
+    if float(z_max) <= low:
+        raise SystemExit(f"--controller-z-max {z_max} must exceed the floor {low}.")
+    args.controller_workspace_z_bounds = [low, float(z_max)]
+
+
 def _build_world(
     *,
     checkpoint: Path,
@@ -317,6 +328,7 @@ def _build_world(
     start_distance_cap: float | None = None,
     metadata_overrides: Sequence[str] = (),
     controller_workspace_from_config: bool = False,
+    controller_z_max: float | None = None,
 ) -> _World:
     """Reproduce the training stack. ``load_policy`` False skips SmolVLA."""
 
@@ -419,6 +431,9 @@ def _build_world(
     if controller_workspace_from_config:
         _set_config_controller_workspace(args, project.training.rl.args)
         print(f"[full-task] controller Z bounds from config: {args.controller_workspace_z_bounds}", flush=True)
+    if controller_z_max is not None:
+        override_controller_z_ceiling(args, controller_z_max)
+        print(f"[full-task] controller Z ceiling OVERRIDDEN: {args.controller_workspace_z_bounds}", flush=True)
 
     layout = RankLocalGroupLayout(
         worlds_per_rank=int(args.worlds_per_rank),

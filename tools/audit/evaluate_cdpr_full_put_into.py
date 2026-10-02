@@ -270,6 +270,10 @@ def run_unassisted(
                     states=state_tensor, priors=prior, action_count=per,
                     generator=stochastic_generator,
                 )
+            if kinematics is not None:
+                kinematics.record_decision(
+                    decision_index=decision_index, prior=prior, chunk=chunk, active=active
+                )
             if trace is not None:
                 trace.record_decision(
                     decision_index=decision_index,
@@ -745,6 +749,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--scene-class", default=None)
     parser.add_argument(
+        "--controller-z-max",
+        type=float,
+        default=None,
+        help=(
+            "Intervention arm: lower the controller's Z ceiling (config 0.60) "
+            "for this evaluation only. Reported under controller_z_max; never "
+            "compare it against an unmodified evaluation as the same protocol."
+        ),
+    )
+    parser.add_argument(
         "--trace-dir",
         type=Path,
         default=None,
@@ -838,6 +852,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         microbatch=int(args.microbatch),
         load_policy=True,
         run_dir=output,
+        controller_z_max=args.controller_z_max,
     )
     resetter = FullTaskSceneResetter(
         backend=world.backend,
@@ -877,7 +892,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         from tools.audit.episode_kinematic_trace import KinematicTrace
 
         kinematics = KinematicTrace(
-            backend=world.backend, output_dir=args.trace_dir.expanduser().resolve(), torch=torch
+            backend=world.backend, output_dir=args.trace_dir.expanduser().resolve(), torch=torch,
+            residual_scale=float(getattr(world.args, "residual_scale", float("nan"))),
+            action_step_xyz=float(world.args.action_step_xyz),
         )
     rollouts = []
     for round_index in range(int(args.rounds)):
@@ -927,6 +944,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         "excluded_validation_panel": panel,
         "scene_list": scene_list,
         "trace_dir": None if args.trace_dir is None else str(args.trace_dir),
+        "controller_z_max": args.controller_z_max,
+        "controller_workspace_z_bounds": list(
+            getattr(world.args, "controller_workspace_z_bounds", None) or []
+        ),
         "videos": (
             None
             if video is None

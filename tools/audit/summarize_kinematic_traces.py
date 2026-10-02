@@ -14,6 +14,12 @@ Questions it answers, each split by target-y quartile (fixed edges from the
    overview and wrist frustums -- for strict successes against failures.
 3. **Does the controller follow the command?** Post-lift tracking error between
    the commanded target and the measured EE, in xyz and in z alone.
+5. **Who commands the vertical motion?** At each policy decision the executed
+   action is ``tanh(prior + residual_scale * residual)``. Per phase -- hovering
+   over the object before any grasp, and after the lift until any slip -- it
+   compares the executed Z command with ``tanh(prior)`` (the frozen SmolVLA
+   prior alone) and with the residual's push ``atanh(final) - prior``. Z > 0
+   is up. Needs traces written with decision records.
 4. **Are grasp misses depth errors?** For episodes that never grasp: the EE -
    object offset at the closest approach, in x and in y. Overview depth error
    predicts a y spread that grows with target y and no matching x spread.
@@ -120,7 +126,45 @@ def episode_rows(trace: Mapping[str, np.ndarray], *, band_top: float, open_windo
             row["miss_closed"] = bool((get("gripper_command")[max(0, k - 8): k + 8] < -1e-6).any())
             row["miss_object_in_overview"] = bool(get("object_in_overview")[k])
         rows.append(row)
+        row.update(_attribution(trace, w, end=end, grasp_t=grasp_t, lift_t=lift_t, slip_t=slip_t))
     return rows
+
+
+def _attribution(trace: Mapping[str, np.ndarray], w: int, *, end: int, grasp_t: int | None,
+                 lift_t: int | None, slip_t: int | None, hover_xy: float = 0.06) -> dict[str, Any]:
+    """Mean Z command per phase: executed, prior-only, residual push."""
+
+    if "decision_final" not in trace:
+        return {}
+    final = trace["decision_final"][:, w, :, 2].astype(np.float64)       # (D, per)
+    prior = trace["decision_prior"][:, w, :, 2].astype(np.float64)
+    live = trace["decision_active"][:, w].astype(bool)
+    step_decision = trace["decision"][:end, w]
+    ee, obj = trace["ee_xyz"][:end, w], trace["object_xyz"][:end, w]
+    out: dict[str, Any] = {}
+    phases = {"hover": [], "carry": []}
+    for k, index in enumerate(trace["decision_index"]):
+        if not live[k]:
+            continue
+        hits = np.flatnonzero(step_decision == index)
+        if hits.size == 0:
+            continue
+        t0 = int(hits[0])
+        before_grasp = grasp_t is None or t0 < grasp_t
+        if before_grasp and np.linalg.norm(ee[t0, :2] - obj[t0, :2]) <= hover_xy:
+            phases["hover"].append(k)
+        if lift_t is not None and t0 >= lift_t and (slip_t is None or t0 < slip_t):
+            phases["carry"].append(k)
+    for name, ks in phases.items():
+        if not ks:
+            continue
+        f, pr = final[ks], prior[ks]
+        out[f"{name}_decisions"] = len(ks)
+        out[f"{name}_z_final"] = float(f.mean())
+        out[f"{name}_z_prior_only"] = float(np.tanh(pr).mean())
+        out[f"{name}_z_residual_push"] = float((np.arctanh(np.clip(f, -0.999999, 0.999999)) - pr).mean())
+        out[f"{name}_z_up_share"] = float((f > 0).mean())
+    return out
 
 
 def quartile_of(y: float, edges: Sequence[float]) -> int:
@@ -177,6 +221,21 @@ def summarize(rows: Sequence[Mapping[str, Any]], *, edges: Sequence[float]) -> d
                     "track_err_z_mean", "lift_to_receptacle_xy")},
             }
 
+    out["z_attribution"] = {}
+    for phase, groups in (("hover", ("strict", "no_grasp", "grasp_no_lift", "slip")),
+                          ("carry", ("strict", "slip"))):
+        for group in groups:
+            for i, label in [(None, "all"), *enumerate(labels)]:
+                sel = [r for r, qq in zip(rows, q) if r["outcome"] == group
+                       and f"{phase}_z_final" in r and (i is None or qq == i)]
+                if not sel:
+                    continue
+                out["z_attribution"][f"{phase}|{group}|{label}"] = {
+                    "episodes": len(sel),
+                    **{k: stat([r[f"{phase}_{k}"] for r in sel])
+                       for k in ("z_final", "z_prior_only", "z_residual_push", "z_up_share")},
+                }
+
     out["grasp_miss"] = {}
     for i, label in [(None, "all"), *enumerate(labels)]:
         sel = [r for r, qq in zip(rows, q) if r["outcome"] == "no_grasp" and (i is None or qq == i)]
@@ -216,6 +275,15 @@ def print_summary(s: Mapping[str, Any]) -> None:
         print(f"  {key:20s}{row['episodes']:5d}{g('peak_ee_z_after_lift'):>8s}{g('above_band_frac'):>8s}"
               f"{g('object_in_overview_frac'):>9s}{g('ee_in_overview_frac'):>8s}{g('receptacle_in_overview_frac'):>9s}"
               f"{g('receptacle_in_wrist_frac'):>10s}{g('track_err_xyz_mean'):>9s}{g('track_err_z_mean'):>8s}")
+    if s.get("z_attribution"):
+        print("\nwho commands Z (action units, + = up; means of per-episode means):")
+        print("  hover = before any grasp with the EE within 6 cm XY of the object;"
+              " carry = after the lift until any slip")
+        print(f"  {'phase|outcome|bin':26s}{'n':>5s}{'executed':>10s}{'prior only':>12s}{'residual push':>15s}{'up share':>10s}")
+        m = lambda d: "     -  " if not d else f"{d['mean']:+.3f}"  # noqa: E731
+        for key, row in s["z_attribution"].items():
+            print(f"  {key:26s}{row['episodes']:5d}{m(row['z_final']):>10s}{m(row['z_prior_only']):>12s}"
+                  f"{m(row['z_residual_push']):>15s}{m(row['z_up_share']):>10s}")
     print("\ngrasp misses (never grasped): EE - object at closest XY approach (sd shows the spread)")
     print(f"  {'':5s}{'n':>5s}{'dx med':>8s}{'dx sd':>8s}{'dy med':>8s}{'dy sd':>8s}{'xy med':>8s}{'dz med':>8s}"
           f"{'closed':>8s}{'obj out':>9s}")

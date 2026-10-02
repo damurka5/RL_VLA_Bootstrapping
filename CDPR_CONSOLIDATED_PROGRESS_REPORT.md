@@ -2040,6 +2040,17 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-02 — Tooling for Z attribution (prior vs residual) and a controller-ceiling intervention
+
+- Attribution: the residual policy's action is `tanh(prior + residual_scale · residual)`. The trace now also stores, at every decision, the SmolVLA prior chunk and the executed chunk. `summarize_kinematic_traces.py` reports the executed Z command, `tanh(prior)` (the frozen prior alone) and the residual's push `atanh(final) − prior`, in two phases, by outcome and target-y quartile:
+  - *hover*: before any grasp, with the EE within 6 cm XY of the object
+  - *carry*: after the lift, until any slip
+  
+  It decides whether the far-side upward Z comes from the frozen prior or from the RL residual. Traces written before this commit lack decision records, so the attribution table needs a re-run
+- Intervention: `evaluate_cdpr_full_put_into.py --controller-z-max` (launcher `CONTROLLER_Z_MAX`) lowers the controller ceiling (config 0.60) for one evaluation; the floor and the policy are unchanged. `controller_z_max` and the realized `controller_workspace_z_bounds` are written to `evaluation.json`. Both comparison tools now treat `controller_z_max` as protocol and refuse to mix arms unless `--allow-protocol-difference controller_z_max` is passed
+- Planned arms on the same 512 off-panel scenes, `step_56072006`, with traces: ceiling 0.60 (baseline re-run), 0.40, 0.32. Prediction if the climb causes the far-side drops: Q3/Q4 commanded-open "slips" fall and strict rises at 0.40/0.32, while grasp misses (no descent) are unchanged
+- Status: implemented, local tests only
+
 ### 2026-10-02 — Trace result: far-side failures are the policy flying high, not grip physics and not y depth error
 
 - Protocol: `step_56072006`, 512 off-panel `student_validation` scenes (64 × 8 distinct rounds), `TRACE=1`, `summarize_kinematic_traces.py`. 504 finite episodes. One draw per scene; target-y bins use the breakdown's quartile edges

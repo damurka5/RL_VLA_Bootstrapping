@@ -55,6 +55,7 @@ PROTOCOL_KEYS = (
     "decisions",
     "settle_decisions",
     "excluded_validation_panel",
+    "controller_z_max",
     "prior_noise_scale",
     "stochastic_seed",
     "arm",
@@ -277,6 +278,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--alpha", type=float, default=0.05)
     parser.add_argument("--resamples", type=int, default=20_000)
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument(
+        "--allow-protocol-difference", action="append", default=[], metavar="KEY",
+        help="Compare arms that differ on this protocol key on purpose (e.g. controller_z_max).",
+    )
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
 
@@ -300,6 +305,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     reference = everything[0]["report"]
     for ev in everything[1:]:
         for key in PROTOCOL_KEYS:
+            if key in set(args.allow_protocol_difference):
+                continue
             if ev["report"].get(key) != reference.get(key):
                 raise SystemExit(
                     f"Protocols differ on {key}: {ev['dir']} has {ev['report'].get(key)!r}, "

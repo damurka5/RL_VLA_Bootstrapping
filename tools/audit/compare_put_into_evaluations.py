@@ -124,6 +124,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--output", type=Path, default=None)
     parser.add_argument(
+        "--allow-protocol-difference",
+        action="append",
+        default=[],
+        metavar="KEY",
+        help=(
+            "Pair evaluations that differ on this protocol key on purpose, e.g. "
+            "controller_z_max for the ceiling intervention. Repeatable."
+        ),
+    )
+    parser.add_argument(
         "--allow-prior-noise-difference",
         action="store_true",
         help="Compare evaluations run at different prior noise scales on purpose.",
@@ -137,10 +147,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     ]
     keys = [
         "scene_manifest_sha256", "split", "worlds", "rounds", "distinct_scene_rounds",
-        "decisions", "excluded_validation_panel",
+        "decisions", "excluded_validation_panel", "controller_z_max",
     ]
     if not args.allow_prior_noise_difference:
         keys.append("prior_noise_scale")
+    keys = [key for key in keys if key not in set(args.allow_protocol_difference)]
     for key in keys:
         if reports[0].get(key) != reports[1].get(key):
             raise SystemExit(f"Protocols differ on {key}: {reports[0].get(key)!r} vs {reports[1].get(key)!r}.")

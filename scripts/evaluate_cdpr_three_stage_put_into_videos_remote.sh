@@ -63,6 +63,9 @@ SCENE_CLASS="${SCENE_CLASS:-}"
 # 1: per-env-step kinematic traces in $OUTPUT_DIR/trace (summarize with
 # tools/audit/summarize_kinematic_traces.py). About 60 kB per episode.
 TRACE="${TRACE:-0}"
+# Intervention arm: lower the controller Z ceiling (config 0.60) for this
+# evaluation only, e.g. 0.40 or 0.32 (the camera-framing band top).
+CONTROLLER_Z_MAX="${CONTROLLER_Z_MAX:-}"
 
 if [[ -d "$CHECKPOINT" ]]; then
   CHECKPOINT="$CHECKPOINT/smolvla_grpo_adapter.pt"
@@ -107,6 +110,7 @@ if [[ "$VIDEOS" == "1" ]]; then
     --video-fps "$VIDEO_FPS" --max-videos "$MAX_VIDEOS")
 fi
 [[ "$TRACE" == "1" ]] && args+=(--trace-dir "$OUTPUT_DIR/trace")
+[[ -n "$CONTROLLER_Z_MAX" ]] && args+=(--controller-z-max "$CONTROLLER_Z_MAX")
 if [[ -n "$SCENE_LIST" ]]; then
   [[ -f "$SCENE_LIST" ]] || { echo "Scene list not found: $SCENE_LIST" >&2; exit 2; }
   args+=(--scene-list "$SCENE_LIST")
@@ -128,6 +132,7 @@ else
   echo "videos: off"
 fi
 echo "exclude in-run validation panel=$EXCLUDE_VALIDATION_PANEL"
+echo "controller z ceiling override=${CONTROLLER_Z_MAX:-none (config)}"
 [[ "$SPLIT" == "final_test" ]] && echo "WARNING: final_test is the locked split; run it once, on the selected checkpoint."
 sha256sum "$CHECKPOINT" | tee "$OUTPUT_DIR/checkpoint.sha256"
 git rev-parse HEAD > "$OUTPUT_DIR/git_commit.txt"
