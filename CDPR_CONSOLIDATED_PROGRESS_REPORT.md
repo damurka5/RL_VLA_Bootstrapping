@@ -2040,6 +2040,30 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-02 — Trace result: far-side failures are the policy flying high, not grip physics and not y depth error
+
+- Protocol: `step_56072006`, 512 off-panel `student_validation` scenes (64 × 8 distinct rounds), `TRACE=1`, `summarize_kinematic_traces.py`. 504 finite episodes. One draw per scene; target-y bins use the breakdown's quartile edges
+- Outcomes by target_y quartile: strict **69.3 / 52.4 / 18.1 / 6.3%**; no grasp 7.9 / 21.0 / 32.3 / 41.3%; slip 16.5 / 14.5 / 35.4 / 44.4%; wrong place below 1% everywhere
+- **"Slips" are commanded releases: 97.1% (136/140) occur while the gripper is being commanded open.** None are uncommanded openings; 2.9% are passive losses. The policy lets go; the grip does not fail
+- Where it lets go (median at the slip step):
+
+| target_y | slips | EE z | object out of overview | distance to receptacle / radius | object − receptacle dx, dy (m) | lift → slip (env steps) |
+|---|---:|---:|---:|---:|---|---:|
+| Q1 | 21 | 0.287 | 4.8% | 1.27 | +0.005, −0.018 | 30 |
+| Q2 | 18 | 0.317 | 22.2% | 1.22 | −0.059, +0.042 | 40.5 |
+| Q3 | 45 | **0.516** | 57.8% | **4.94** | −0.194, **+0.333** | 47 |
+| Q4 | 56 | **0.535** | 62.5% | **4.36** | −0.184, **+0.271** | 46.5 |
+
+  On the far side the hand climbs to about 0.52 m, near the 0.60 controller ceiling and far above the 0.32 m framing band. It moves further +y, away from the receptacle and the camera, and opens about 4–5 success radii from the goal. On the near side, slips are near misses (about 1.2 R) at band height
+- After the lift (medians): strict episodes peak at z 0.28, are never above the band, and keep object, EE and receptacle in the overview 100% of the time, with the receptacle in the wrist view 88% of the time. Far-side slips peak at 0.51–0.53, spend 48–56% of post-lift steps above the band, and have the object in the overview only 68–79% of the time. **The receptacle is in the wrist view 0% of the time** (46–53% for near-side slips)
+- Tracking error is 7–11 mm in xyz and 3–6 mm in z in every group. The controller follows the command; the climb is commanded by the policy
+- Grasp misses (129 never-grasped episodes), EE − object at the closest XY approach:
+  - dx sd 0.024–0.039 and dy sd 0.031–0.041, symmetric, and dy does not widen with target y (Q4 0.031). Median XY gap 4.8 cm. **The overview depth-error hypothesis is not supported**
+  - **dz median +0.13 m (Q1 0.088 → Q4 0.156), and the gripper is commanded closed near that point in 93% of misses.** The hand reaches roughly over the object, does not descend, and closes in the air. The object is in the overview frame in every case
+- Reading: the far-side failures are one vertical behaviour seen twice. At high target y the policy keeps the hand too high before the grasp (no descent; closing 13–16 cm above the object) and drives it too high after the lift (to about 0.52 m, out of the framed band, away from the receptacle, then opens). Successful episodes never leave the band. Not supported: passive grip loss, controller tracking error, and depth error along y
+- Open: which component produces the y-dependent upward z — the frozen SmolVLA prior or the RL residual — and whether capping the controller ceiling to the framing band (an evaluation-time intervention) rescues far-side carries
+- Status: mechanism identified at the behaviour level; attribution and intervention pending
+
 ### 2026-10-02 — Failure videos and a per-step trace recorder
 
 - Video review by the user: 23 videos covering every object/destination cell, plus the metadata of all 128 never-class episodes (`step_56072006`):
