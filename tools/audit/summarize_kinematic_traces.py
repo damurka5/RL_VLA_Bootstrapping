@@ -127,7 +127,56 @@ def episode_rows(trace: Mapping[str, np.ndarray], *, band_top: float, open_windo
             row["miss_object_in_overview"] = bool(get("object_in_overview")[k])
         rows.append(row)
         row.update(_attribution(trace, w, end=end, grasp_t=grasp_t, lift_t=lift_t, slip_t=slip_t))
+        row.update(_attribution_all_dims(trace, w, end=end, grasp_t=grasp_t, lift_t=lift_t, slip_t=slip_t))
     return rows
+
+
+DIMS = ("x", "y", "z", "yaw", "grip")
+
+
+def _attribution_all_dims(trace: Mapping[str, np.ndarray], w: int, *, end: int, grasp_t: int | None,
+                          lift_t: int | None, slip_t: int | None, hover_xy: float = 0.06,
+                          preslip_decisions: int = 3) -> dict[str, Any]:
+    """Every action dimension: executed, prior-only, residual push, prior spread
+    and residual saturation, per phase (hover, carry, the decisions just before
+    a slip). Gripper > 0 is OPEN."""
+
+    if "decision_final" not in trace:
+        return {}
+    scale = float(trace.get("residual_scale", np.float32(1.0)))
+    final = trace["decision_final"][:, w].astype(np.float64)       # (D, per, 5)
+    prior = trace["decision_prior"][:, w].astype(np.float64)
+    live = trace["decision_active"][:, w].astype(bool)
+    step_decision = trace["decision"][:end, w]
+    ee, obj = trace["ee_xyz"][:end, w], trace["object_xyz"][:end, w]
+    phases: dict[str, list[int]] = {"hover": [], "carry": [], "preslip": []}
+    starts = []
+    for k, index in enumerate(trace["decision_index"]):
+        hits = np.flatnonzero(step_decision == index)
+        starts.append(int(hits[0]) if (live[k] and hits.size) else None)
+    for k, t0 in enumerate(starts):
+        if t0 is None:
+            continue
+        if (grasp_t is None or t0 < grasp_t) and np.linalg.norm(ee[t0, :2] - obj[t0, :2]) <= hover_xy:
+            phases["hover"].append(k)
+        if lift_t is not None and t0 >= lift_t and (slip_t is None or t0 < slip_t):
+            phases["carry"].append(k)
+    if slip_t is not None:
+        before = [k for k, t0 in enumerate(starts) if t0 is not None and t0 <= slip_t]
+        phases["preslip"] = before[-preslip_decisions:]
+    out: dict[str, Any] = {}
+    for name, ks in phases.items():
+        if not ks:
+            continue
+        f, pr = final[ks], prior[ks]
+        push = np.arctanh(np.clip(f, -0.999999, 0.999999)) - pr
+        for d, dim in enumerate(DIMS):
+            out[f"{name}_{dim}_final"] = float(f[..., d].mean())
+            out[f"{name}_{dim}_prior_only"] = float(np.tanh(pr[..., d]).mean())
+            out[f"{name}_{dim}_prior_sd"] = float(np.tanh(pr[..., d]).std())
+            out[f"{name}_{dim}_push"] = float(push[..., d].mean())
+            out[f"{name}_{dim}_saturated"] = float((np.abs(push[..., d]) > 0.9 * scale).mean())
+    return out
 
 
 def _attribution(trace: Mapping[str, np.ndarray], w: int, *, end: int, grasp_t: int | None,
@@ -236,6 +285,21 @@ def summarize(rows: Sequence[Mapping[str, Any]], *, edges: Sequence[float]) -> d
                        for k in ("z_final", "z_prior_only", "z_residual_push", "z_up_share")},
                 }
 
+    out["dim_attribution"] = {}
+    for phase, groups in (("hover", ("strict", "no_grasp")), ("carry", ("strict", "slip")),
+                          ("preslip", ("slip",))):
+        for group in groups:
+            for i, label in [(None, "all"), *enumerate(labels)]:
+                sel = [r for r, qq in zip(rows, q) if r["outcome"] == group
+                       and f"{phase}_z_final" in r and f"{phase}_grip_final" in r and (i is None or qq == i)]
+                if not sel:
+                    continue
+                out["dim_attribution"][f"{phase}|{group}|{label}"] = {
+                    "episodes": len(sel),
+                    **{f"{dim}_{m}": round(float(np.mean([r[f"{phase}_{dim}_{m}"] for r in sel])), 4)
+                       for dim in DIMS for m in ("final", "prior_only", "prior_sd", "push", "saturated")},
+                }
+
     out["grasp_miss"] = {}
     for i, label in [(None, "all"), *enumerate(labels)]:
         sel = [r for r, qq in zip(rows, q) if r["outcome"] == "no_grasp" and (i is None or qq == i)]
@@ -284,6 +348,17 @@ def print_summary(s: Mapping[str, Any]) -> None:
         for key, row in s["z_attribution"].items():
             print(f"  {key:26s}{row['episodes']:5d}{m(row['z_final']):>10s}{m(row['z_prior_only']):>12s}"
                   f"{m(row['z_residual_push']):>15s}{m(row['z_up_share']):>10s}")
+    if s.get("dim_attribution"):
+        print("\nall action dims, per phase (means of per-episode means; grip > 0 = OPEN;"
+              " preslip = last 3 decisions before a slip):")
+        print("  each cell: executed / prior-only / residual push  [prior sd, push saturated share]")
+        for key, row in s["dim_attribution"].items():
+            if not key.endswith(("|all", "|Q1", "|Q4")):
+                continue
+            print(f"  {key} (n={row['episodes']})")
+            for dim in DIMS:
+                print(f"     {dim:5s} {row[f'{dim}_final']:+.3f} / {row[f'{dim}_prior_only']:+.3f} / "
+                      f"{row[f'{dim}_push']:+.3f}   [{row[f'{dim}_prior_sd']:.3f}, {100 * row[f'{dim}_saturated']:.0f}%]")
     print("\ngrasp misses (never grasped): EE - object at closest XY approach (sd shows the spread)")
     print(f"  {'':5s}{'n':>5s}{'dx med':>8s}{'dx sd':>8s}{'dy med':>8s}{'dy sd':>8s}{'xy med':>8s}{'dz med':>8s}"
           f"{'closed':>8s}{'obj out':>9s}")

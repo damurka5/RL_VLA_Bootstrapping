@@ -112,6 +112,10 @@ class SummaryTests(unittest.TestCase):
             self.assertAlmostEqual(carry["z_final"]["mean"], float(np.tanh(0.75)), places=4)
             # The never-grasp world hovers within 6 cm of the object.
             self.assertIn("hover|no_grasp|all", summary["z_attribution"])
+            dims = summary["dim_attribution"]["carry|slip|all"]
+            self.assertAlmostEqual(dims["z_push"], -0.25, places=4)
+            self.assertAlmostEqual(dims["x_prior_only"], 0.0, places=4)
+            self.assertIn("preslip|slip|all", summary["dim_attribution"])
 
 
 class CeilingOverrideTests(unittest.TestCase):

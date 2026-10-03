@@ -2040,6 +2040,35 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-03 — Z attribution: the frozen prior always commands "up"; the residual spends its whole range cancelling it, and far-side failures are where it stops. Capping the ceiling changes nothing
+
+- Protocol: `step_56072006`, 512 off-panel scenes, traces with decision records (`e5ea608`), two arms on identical scenes: controller ceiling 0.60 (config) and 0.40. The 0.60 re-run reproduces the previous trace: strict 184/512, Q1–Q4 65.1 / 54.0 / 23.0 / 3.2%, 98.4% of slips commanded opens, far-side slips at z ≈ 0.53
+- Z attribution: executed action = `tanh(prior + residual_scale · residual)`, `residual_scale` 1.0. Means of per-episode means, + = up:
+
+| phase / outcome | executed | prior alone `tanh(prior)` | residual push |
+|---|---:|---:|---:|
+| hover / strict | +0.021 | +0.756 | **−0.961** |
+| hover / grasp, no lift | +0.027 | +0.755 | −0.952 |
+| hover / no grasp, all | **+0.517** | +0.755 | **+0.025** |
+| hover / no grasp, Q1 → Q4 | +0.420 → +0.628 | +0.755 | −0.192 → **+0.247** |
+| carry / strict | +0.212 | +0.756 | −0.724 |
+| carry / slip, all | **+0.622** | +0.756 | **+0.184** |
+| carry / slip, Q1 → Q4 | +0.405 → +0.753 | +0.756 | −0.321 → **+0.492** |
+
+- Reading:
+  1. **The frozen SmolVLA prior's Z command is the same upward value in every phase, outcome and quartile:** `tanh(prior)` 0.754–0.756, i.e. about +0.99 before the tanh. On average it carries no state information in Z; it is a bias. The prior's within-episode spread is not yet reported
+  2. **Successful behaviour is the residual cancelling that bias:** −0.96 while hovering to grasp, −0.72 while carrying. With `residual_scale` 1.0 that is 96% of the residual's range. A downward executed command needs a push below −0.99, which is the edge of the range. In this regime the residual's tanh is saturated (derivative ≈ 0.08 at −0.96), so the gradient reaching those parameters is about 12× smaller than at zero
+  3. **Every far-side failure is the residual not cancelling, and in Q4 adding to the bias** (+0.25 hovering, +0.49 carrying). The y-dependence lives in the residual; the prior is identical across quartiles. "No descent" and "climbs away" are the same failure seen before and after the grasp
+- **Ceiling intervention: none.** At ceiling 0.40 strict is 185/512 against 184 at 0.60 (58 / 59 discordant scenes, exact McNemar p = 1.0). Keeping the hand lower does not rescue far-side episodes. The climb is a symptom of the residual's failure, not the cause of the drop. The 0.32 arm and the 0.40 trace tables were not supplied
+- Open: do the other action dimensions show the same structure? In particular, is the commanded-open "slip" the residual failing to cancel a prior "open" bias in the gripper channel? `summarize_kinematic_traces.py` now reports, for every dimension (x, y, z, yaw, gripper): executed, prior alone, residual push, the prior's spread and the share of saturated residual pushes, per phase (hover, carry, and the last three decisions before a slip). The existing traces suffice
+- Implications to weigh once that is known:
+  - more residual authority (a larger `residual_scale`, warm-started by distilling the current policy)
+  - removing the prior's constant bias in the parameterization (`tanh(prior − b + scale · residual)` with b the measured bias)
+  - training the action-expert LoRA so the prior itself stops pushing up
+  
+  Each changes what RL has to learn, and none is a training-length lever
+- Status: mechanism localized to the residual's cancellation of a constant prior bias in Z; all-dimension readout pending
+
 ### 2026-10-02 — Tooling for Z attribution (prior vs residual) and a controller-ceiling intervention
 
 - Attribution: the residual policy's action is `tanh(prior + residual_scale · residual)`. The trace now also stores, at every decision, the SmolVLA prior chunk and the executed chunk. `summarize_kinematic_traces.py` reports the executed Z command, `tanh(prior)` (the frozen prior alone) and the residual's push `atanh(final) − prior`, in two phases, by outcome and target-y quartile:
