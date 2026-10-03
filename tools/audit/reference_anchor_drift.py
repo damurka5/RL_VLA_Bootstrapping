@@ -53,6 +53,11 @@ def _adapter(path: Path) -> Path:
 def build_residual(payload: dict[str, Any], torch: Any) -> Any:
     from rl_vla_bootstrapping.policy.smolvla_grpo_finetune_cdpr import SmolVLAGRPOPolicy
 
+    from rl_vla_bootstrapping.policy.latent_correction_policy import (
+        require_legacy_policy_checkpoint,
+    )
+
+    require_legacy_policy_checkpoint(payload, "reference_anchor_drift")
     saved = dict(payload.get("args") or {})
     policy = SmolVLAGRPOPolicy(
         state_dim=int(payload["state_dim"]),

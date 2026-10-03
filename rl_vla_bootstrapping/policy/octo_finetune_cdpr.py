@@ -798,11 +798,22 @@ if nn is not None:
             output_dim = int(chunk_size) * int(action_dim)
             self.net = MLP((input_dim, hidden_dim, hidden_dim, output_dim))
 
-        def forward(self, state: torch.Tensor, prior_chunk: torch.Tensor) -> torch.Tensor:
+        def reference_terms(
+            self, state: torch.Tensor, prior_chunk: torch.Tensor
+        ) -> tuple[torch.Tensor, torch.Tensor]:
+            """The bounded residual and the pre-tanh logit, computed directly.
+
+            ``forward`` is ``tanh`` of the second value; reading the logit here
+            avoids reconstructing it with ``atanh(mean)`` near the bounds.
+            """
+
             prior = prior_chunk.reshape(prior_chunk.shape[0], self.chunk_size, self.action_dim)
             features = torch.cat([state, prior.reshape(prior.shape[0], -1)], dim=-1)
             residual = torch.tanh(self.net(features)).reshape_as(prior)
-            return torch.tanh(prior + self.residual_scale * residual)
+            return residual, prior + self.residual_scale * residual
+
+        def forward(self, state: torch.Tensor, prior_chunk: torch.Tensor) -> torch.Tensor:
+            return torch.tanh(self.reference_terms(state, prior_chunk)[1])
 
         def action_at(
             self,

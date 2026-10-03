@@ -271,8 +271,13 @@ def run_unassisted(
                     generator=stochastic_generator,
                 )
             if kinematics is not None:
+                # Direct components (reference, correction, combined logits and
+                # the mean), not an atanh reconstruction of the executed chunk.
                 kinematics.record_decision(
-                    decision_index=decision_index, prior=prior, chunk=chunk, active=active
+                    decision_index=decision_index, prior=prior, chunk=chunk, active=active,
+                    components=world.trainer.action_components_tensor(
+                        states=state_tensor, priors=prior, action_count=per
+                    ),
                 )
             if trace is not None:
                 trace.record_decision(
@@ -472,6 +477,22 @@ def run_unassisted(
         "target_catalog": np.asarray(
             [scene.target_catalog for scene in scenes]
         ),
+    }
+
+
+def _policy_provenance(world: Any) -> dict[str, Any]:
+    payload = world.payload
+    trainer = world.trainer
+    return {
+        "policy_architecture": str(trainer.policy_architecture),
+        "action_likelihood": str(trainer.action_likelihood),
+        "checkpoint_policy_architecture": payload.get("policy_architecture"),
+        "global_step": payload.get("global_step"),
+        "pilot_global_step": payload.get("pilot_global_step"),
+        "source_global_step": payload.get("source_global_step"),
+        "reference_sha256": payload.get("reference_sha256"),
+        "lora_sha256": payload.get("lora_sha256"),
+        "lineage": payload.get("lineage"),
     }
 
 
@@ -895,6 +916,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             backend=world.backend, output_dir=args.trace_dir.expanduser().resolve(), torch=torch,
             residual_scale=float(getattr(world.args, "residual_scale", float("nan"))),
             action_step_xyz=float(world.args.action_step_xyz),
+            policy_architecture=str(world.trainer.policy_architecture),
         )
     rollouts = []
     for round_index in range(int(args.rounds)):
@@ -933,6 +955,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         # is LeRobot's unit-normal draw.
         "prior_noise_scale": prior_noise_scale_from_env(),
         "checkpoint": str(args.checkpoint),
+        # Which actor ran. A correction checkpoint is always evaluated with its
+        # correction; reference_sha256 identifies the frozen branch under it.
+        "policy_provenance": _policy_provenance(world),
         "config": str(args.config),
         "scene_manifest": str(args.scene_manifest),
         "scene_manifest_sha256": manifest.get("manifest_sha256"),

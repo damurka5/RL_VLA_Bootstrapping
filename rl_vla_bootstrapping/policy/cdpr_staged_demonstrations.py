@@ -1534,6 +1534,11 @@ def load_teacher_entries(
             payload = torch.load(path, map_location="cpu", weights_only=False)
         except TypeError:  # pragma: no cover - PyTorch before weights_only
             payload = torch.load(path, map_location="cpu")
+        from rl_vla_bootstrapping.policy.latent_correction_policy import (
+            require_legacy_policy_checkpoint,
+        )
+
+        require_legacy_policy_checkpoint(payload, f"staged-demonstration teacher {role!r}")
         if "policy" not in payload or not isinstance(
             payload.get("args"), Mapping
         ):

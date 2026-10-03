@@ -64,6 +64,53 @@ FLAGS = ("strict", "native", "grasped", "lifted", "released", "carry_slip", "wro
 # Outcomes a candidate must not lose while gaining strict (grasp erosion).
 PRIMARY = "strict"
 RETENTION = ("grasped", "lifted")
+# Target-y quartile edges, identical to summarize_kinematic_traces.DEFAULT_Y_EDGES.
+TARGET_Y_EDGES = (-0.073, 0.002, 0.074)
+
+
+def pilot_promotion(pair: Mapping[str, Any], *, margin: float) -> dict[str, Any]:
+    """The pre-declared pilot rule (CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md).
+
+    Promote only if the strict difference's paired 95% interval lies above
+    zero AND, for grasp and held lift, the interval's lower bound exceeds
+    -margin. Otherwise retention is labelled inconclusive or failed. The
+    margin is a pilot decision rule, not a measured property of the task.
+    """
+
+    strict_low = float(pair["metrics"][PRIMARY]["ci95"][0])
+    retention = {
+        flag: {
+            "difference": pair["metrics"][flag]["difference"],
+            "ci95_low": float(pair["metrics"][flag]["ci95"][0]),
+            "lower_bound_required": -float(margin),
+            "pass": float(pair["metrics"][flag]["ci95"][0]) > -float(margin),
+        }
+        for flag in RETENTION
+    }
+    if strict_low <= 0.0:
+        decision = "no_promotion:strict_interval_not_above_zero"
+    elif not all(entry["pass"] for entry in retention.values()):
+        failed = [flag for flag, entry in retention.items() if not entry["pass"]]
+        decision = "no_promotion:retention_inconclusive_or_failed:" + ",".join(failed)
+    else:
+        decision = "promote"
+    return {"margin": float(margin), "strict_ci95_low": strict_low,
+            "retention": retention, "decision": decision}
+
+
+def target_y_by_scene(manifest: Path, scenes: Sequence[str]) -> np.ndarray:
+    try:
+        from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import read_manifest
+    except ModuleNotFoundError:  # run as a plain script from tools/audit
+        import sys
+
+        sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+        from rl_vla_bootstrapping.simulation.cdpr_composition_scenes import read_manifest
+    by_uid = {scene.scene_uid: scene for scene in read_manifest(manifest)[0]}
+    missing = [uid for uid in scenes if uid not in by_uid]
+    if missing:
+        raise SystemExit(f"{len(missing)} evaluated scenes are not in {manifest}.")
+    return np.asarray([float(by_uid[uid].target.xy[1]) for uid in scenes])
 
 
 def load_evaluation(directory: Path) -> dict[str, Any]:
@@ -195,6 +242,7 @@ def compare_pair(
     *,
     rng: np.random.Generator,
     resamples: int,
+    target_y: np.ndarray | None = None,
 ) -> dict[str, Any]:
     first = base_evals[0]["episodes"]
     destination = np.asarray([first[uid]["destination"] for uid in scenes])
@@ -229,6 +277,14 @@ def compare_pair(
     for name in np.unique(target):
         mask = target == name
         out["strict_by_object"][str(name)] = effect(base[:, mask], cand[:, mask], test=False)
+    if target_y is not None:
+        quartile = np.searchsorted(np.asarray(TARGET_Y_EDGES), target_y, side="right")
+        out["strict_by_target_y_quartile"] = {}
+        for q in range(len(TARGET_Y_EDGES) + 1):
+            mask = quartile == q
+            if mask.any():
+                out["strict_by_target_y_quartile"][f"Q{q + 1}"] = effect(
+                    base[:, mask], cand[:, mask], test=True)
     # Readout only: how single matched pairs (repeat i vs repeat i) scatter.
     out["per_repeat_mcnemar"] = [
         {
@@ -281,6 +337,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--allow-protocol-difference", action="append", default=[], metavar="KEY",
         help="Compare arms that differ on this protocol key on purpose (e.g. controller_z_max).",
+    )
+    parser.add_argument(
+        "--retention-margin", type=float, default=None, metavar="FRACTION",
+        help="Also apply the pilot promotion rule with this grasp/lift margin (0.03 = 3 pp).",
+    )
+    parser.add_argument(
+        "--scene-manifest", type=Path, default=None,
+        help="Adds paired strict effects by target-y quartile (edges -0.073/0.002/0.074 m).",
     )
     parser.add_argument("--output", type=Path, default=None)
     args = parser.parse_args(argv)
@@ -341,11 +405,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         },
         "comparisons": {},
     }
+    target_y = (
+        None if args.scene_manifest is None
+        else target_y_by_scene(args.scene_manifest.expanduser().resolve(), scenes)
+    )
     for label, evs in groups.items():
         if label == baseline_label:
             continue
         result["comparisons"][label] = compare_pair(
-            groups[baseline_label], evs, scenes, rng=rng, resamples=int(args.resamples)
+            groups[baseline_label], evs, scenes, rng=rng, resamples=int(args.resamples),
+            target_y=target_y,
         )
     adjusted = holm(
         {
@@ -356,6 +425,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     for label, pair in result["comparisons"].items():
         pair["strict_p_holm"] = round(adjusted[label], 5)
         pair["verdict"] = verdict(pair, alpha=float(args.alpha), adjusted_p=adjusted[label])
+        if args.retention_margin is not None:
+            pair["pilot_promotion"] = pilot_promotion(pair, margin=float(args.retention_margin))
 
     print(json.dumps(result, indent=2))
     print_table(result)
@@ -394,6 +465,15 @@ def print_table(result: Mapping[str, Any]) -> None:
                 f"  strict {name:<5}{100 * row['difference']:+6.2f} pp  CI [{100 * low:+.2f}, {100 * high:+.2f}]"
                 f"  p {row['permutation_p']}  ({row['scenes']} scenes)"
             )
+        for name, row in pair.get("strict_by_target_y_quartile", {}).items():
+            low, high = row["ci95"]
+            print(
+                f"  strict {name:<5}{100 * row['difference']:+6.2f} pp  CI [{100 * low:+.2f}, {100 * high:+.2f}]"
+                f"  p {row['permutation_p']}  ({row['scenes']} scenes, target y)"
+            )
+        if "pilot_promotion" in pair:
+            print(f"  pilot rule (margin {100 * pair['pilot_promotion']['margin']:.0f} pp): "
+                  f"{pair['pilot_promotion']['decision']}")
         print("  per-repeat McNemar p:", [row["p"] for row in pair["per_repeat_mcnemar"]])
 
 

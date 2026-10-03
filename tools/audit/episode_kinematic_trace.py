@@ -18,10 +18,17 @@ This records, for every env step of every episode:
   the model's fovy. This is frustum membership, not occlusion,
 * the outcome observer's latched flags, so events can be timed,
 * at every policy decision, the SmolVLA prior and the final action chunk. The
-  residual policy acts as ``tanh(prior + residual_scale * residual)``, so
-  ``tanh(prior)`` is what the frozen prior alone would command, and
+  legacy residual policy acts as ``tanh(prior + residual_scale * residual)``,
+  so ``tanh(prior)`` is what the frozen prior alone would command, and
   ``atanh(final) - prior`` is the residual's push. That attributes the
   far-side upward Z to one or the other.
+* when the caller passes the actor's direct components, the reference logit,
+  the correction logit, the combined logit and the mean action as separate
+  arrays (``decision_reference_logit`` etc.), with ``policy_architecture`` in
+  the metadata. For ``frozen_reference_logit_correction_v1`` traces
+  ``atanh(final) - prior`` is NOT the bounded residual: it mixes the frozen
+  reference's push with the learned correction (and, on stochastic arms, the
+  exploration noise), so the summarizer uses the direct arrays instead.
 
 One ``trace_round<k>.npz`` per round, arrays shaped (steps, worlds, ...),
 float32 or bool. ``summarize_kinematic_traces.py`` turns them into tables.
@@ -44,8 +51,10 @@ class KinematicTrace:
         torch: Any,
         residual_scale: float = float("nan"),
         action_step_xyz: float = float("nan"),
+        policy_architecture: str = "bounded_residual_v0",
     ) -> None:
         self.backend = backend
+        self.policy_architecture = str(policy_architecture)
         self.residual_scale = float(residual_scale)
         self.action_step_xyz = float(action_step_xyz)
         self._decisions: list[dict[str, Any]] = []
@@ -99,6 +108,7 @@ class KinematicTrace:
         self._meta = {
             "residual_scale": np.float32(self.residual_scale),
             "action_step_xyz": np.float32(self.action_step_xyz),
+            "policy_architecture": np.asarray(self.policy_architecture),
             "round_index": int(round_index),
             "scene_uid": np.asarray([str(s.scene_uid) for s in scenes]),
             "destination": np.asarray([str(s.destination) for s in scenes]),
@@ -108,18 +118,35 @@ class KinematicTrace:
         self._target_slots = target_slots
         self._reference_slots = reference_slots
 
-    def record_decision(self, *, decision_index: int, prior: Any, chunk: Any, active: Any) -> None:
-        """The prior and the executed chunk of one decision, (worlds, per, 5)."""
+    def record_decision(
+        self, *, decision_index: int, prior: Any, chunk: Any, active: Any,
+        components: Mapping[str, Any] | None = None,
+    ) -> None:
+        """The prior and the executed chunk of one decision, (worlds, per, 5).
+
+        ``components`` (from ``trainer.action_components_tensor``) adds the
+        directly computed reference logit, correction logit, combined logit
+        and deterministic mean action.
+        """
 
         per = int(chunk.shape[1])
         worlds, dims = int(chunk.shape[0]), int(chunk.shape[-1])
         prior = prior.reshape(worlds, -1, dims)[:, :per]
-        self._decisions.append({
+        record = {
             "decision_index": int(decision_index),
             "prior": prior.detach().to(self.torch.float32).clone(),
             "final": chunk.detach().to(self.torch.float32).clone(),
             "active": active.detach().clone(),
-        })
+        }
+        if components is not None:
+            for key, name in (
+                ("reference_logit", "reference_logit"),
+                ("correction", "correction_logit"),
+                ("logit", "combined_logit"),
+                ("mean", "mean"),
+            ):
+                record[name] = components[key][:, :per].detach().to(self.torch.float32).clone()
+        self._decisions.append(record)
 
     def record_step(
         self,
@@ -173,7 +200,12 @@ class KinematicTrace:
             out[key] = array
         if self._decisions:
             out["decision_index"] = np.asarray([d["decision_index"] for d in self._decisions], dtype=np.int32)
-            for key in ("prior", "final", "active"):
+            keys = ["prior", "final", "active"] + [
+                key
+                for key in ("reference_logit", "correction_logit", "combined_logit", "mean")
+                if all(key in d for d in self._decisions)
+            ]
+            for key in keys:
                 out[f"decision_{key}"] = self.torch.stack(
                     [d[key] for d in self._decisions], dim=0
                 ).cpu().numpy()

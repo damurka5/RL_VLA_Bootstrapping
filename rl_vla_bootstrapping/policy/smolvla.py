@@ -122,6 +122,15 @@ def build_smolvla_rl_plan(config: ProjectConfig, run_dir: Path) -> StagePlan:
     resume_checkpoint = os.environ.get("RLVLA_SMOLVLA_RESUME_CHECKPOINT", "").strip()
     if resume_checkpoint:
         injected["resume_checkpoint"] = resume_checkpoint
+    # Latent-likelihood pilot: weights-only conversion of a legacy checkpoint
+    # (distinct from the resume above), and the arm's architecture. The config
+    # names the candidate; the matched control overrides only the architecture.
+    legacy_init_checkpoint = os.environ.get("RLVLA_SMOLVLA_LEGACY_INIT_CHECKPOINT", "").strip()
+    if legacy_init_checkpoint:
+        injected["legacy_init_checkpoint"] = legacy_init_checkpoint
+    policy_architecture = os.environ.get("RLVLA_SMOLVLA_POLICY_ARCHITECTURE", "").strip()
+    if policy_architecture:
+        injected["policy_architecture"] = policy_architecture
     max_train_steps = os.environ.get("RLVLA_SMOLVLA_MAX_TRAIN_STEPS", "").strip()
     if max_train_steps:
         injected["max_train_steps"] = int(max_train_steps)

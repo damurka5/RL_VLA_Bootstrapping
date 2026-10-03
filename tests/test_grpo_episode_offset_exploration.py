@@ -148,12 +148,14 @@ class EpisodeOffsetExplorationTests(unittest.TestCase):
             )
 
     def test_offset_reaches_the_gradient_on_the_mean(self):
-        """The regression test for the bug that cost two training runs.
+        """Documents the LEGACY marginal estimator's behaviour on one toy.
 
-        Build a batch whose advantage is exactly the offset signal -- worlds
-        with a larger offset scored better -- and check the gradient on the
-        policy mean actually points along it. Under the shipped-then-reverted
-        conditional form this is ~0.
+        The advantage here is exactly the offset, which the policy mean cannot
+        influence, so the conditional score's ~0 is the correct answer for this
+        toy rather than evidence of a bug. The earlier reading of it ("the
+        conditional form makes the offset invisible") is superseded; the
+        estimator is validated against an action-dependent stochastic control
+        problem in tests/test_latent_correction_likelihood.py instead.
         """
 
         sigma, offset_std, worlds = 0.333, 0.25, 40000

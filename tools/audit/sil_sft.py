@@ -627,6 +627,11 @@ def _build_actor(payload: Mapping[str, Any], device: Any) -> Any:
         ResidualChunkActor,
     )
 
+    from rl_vla_bootstrapping.policy.latent_correction_policy import (
+        require_legacy_policy_checkpoint,
+    )
+
+    require_legacy_policy_checkpoint(payload, "sil_sft._build_actor")
     args = dict(payload["args"])
     actor = ResidualChunkActor(
         state_dim=int(payload["state_dim"]),
@@ -1871,6 +1876,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     dataset = {key: value[rows] for key, value in dataset.items()}
 
     payload = _load_checkpoint(args.checkpoint.expanduser().resolve())
+    from rl_vla_bootstrapping.policy.latent_correction_policy import (
+        require_legacy_policy_checkpoint,
+    )
+
+    require_legacy_policy_checkpoint(payload, "sil_sft")
     residual_scale = float(
         payload.get(
             "residual_scale", dict(payload["args"]).get("residual_scale", 1.0)

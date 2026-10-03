@@ -159,6 +159,11 @@ class ReferenceAnchor:
             payload = torch.load(reference_checkpoint, map_location=device)
         if "policy" not in payload:
             raise KeyError(f"{reference_checkpoint} has no 'policy' weights.")
+        from rl_vla_bootstrapping.policy.latent_correction_policy import (
+            require_legacy_policy_checkpoint,
+        )
+
+        require_legacy_policy_checkpoint(payload, "ReferenceAnchor")
         reference = copy.deepcopy(actor)
         reference.load_state_dict(payload["policy"])
         reference.eval()

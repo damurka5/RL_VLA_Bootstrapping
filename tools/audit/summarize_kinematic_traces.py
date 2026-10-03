@@ -41,6 +41,33 @@ from typing import Any, Mapping, Sequence
 import numpy as np
 
 DEFAULT_Y_EDGES = (-0.073, 0.002, 0.074)
+
+
+def _decision_pushes(trace: Mapping[str, np.ndarray], w: int) -> tuple[np.ndarray, np.ndarray | None]:
+    """(reference push, correction) per decision, (D, per, 5).
+
+    The reference push is the bounded residual's contribution in logit space,
+    ``reference_logit - prior``. Traces written with direct components use the
+    stored arrays. Legacy traces have no components; for them the push is
+    reconstructed as ``atanh(final) - prior``, which is the bounded residual
+    only because a legacy actor has no correction (and only on deterministic
+    arms). A correction-architecture trace without components is refused:
+    reconstructing it would attribute the correction to the residual.
+    """
+
+    prior = trace["decision_prior"][:, w].astype(np.float64)
+    if "decision_reference_logit" in trace:
+        reference = trace["decision_reference_logit"][:, w].astype(np.float64) - prior
+        correction = trace["decision_correction_logit"][:, w].astype(np.float64)
+        return reference, correction
+    architecture = str(np.asarray(trace.get("policy_architecture", "bounded_residual_v0")))
+    if architecture != "bounded_residual_v0":
+        raise ValueError(
+            f"Trace from a {architecture!r} actor has no direct component arrays; "
+            "re-run the evaluation with this revision's tracing."
+        )
+    final = trace["decision_final"][:, w].astype(np.float64)
+    return np.arctanh(np.clip(final, -0.999999, 0.999999)) - prior, None
 OUTCOMES = ("strict", "no_grasp", "grasp_no_lift", "slip", "wrong_place", "lifted_other")
 
 
@@ -146,6 +173,7 @@ def _attribution_all_dims(trace: Mapping[str, np.ndarray], w: int, *, end: int, 
     scale = float(trace.get("residual_scale", np.float32(1.0)))
     final = trace["decision_final"][:, w].astype(np.float64)       # (D, per, 5)
     prior = trace["decision_prior"][:, w].astype(np.float64)
+    reference_push, correction = _decision_pushes(trace, w)
     live = trace["decision_active"][:, w].astype(bool)
     step_decision = trace["decision"][:end, w]
     ee, obj = trace["ee_xyz"][:end, w], trace["object_xyz"][:end, w]
@@ -169,13 +197,16 @@ def _attribution_all_dims(trace: Mapping[str, np.ndarray], w: int, *, end: int, 
         if not ks:
             continue
         f, pr = final[ks], prior[ks]
-        push = np.arctanh(np.clip(f, -0.999999, 0.999999)) - pr
+        push = reference_push[ks]
         for d, dim in enumerate(DIMS):
             out[f"{name}_{dim}_final"] = float(f[..., d].mean())
             out[f"{name}_{dim}_prior_only"] = float(np.tanh(pr[..., d]).mean())
             out[f"{name}_{dim}_prior_sd"] = float(np.tanh(pr[..., d]).std())
+            # The bounded (reference) residual's push and its saturation.
             out[f"{name}_{dim}_push"] = float(push[..., d].mean())
             out[f"{name}_{dim}_saturated"] = float((np.abs(push[..., d]) > 0.9 * scale).mean())
+            if correction is not None:
+                out[f"{name}_{dim}_correction"] = float(correction[ks][..., d].mean())
     return out
 
 
@@ -187,6 +218,9 @@ def _attribution(trace: Mapping[str, np.ndarray], w: int, *, end: int, grasp_t: 
         return {}
     final = trace["decision_final"][:, w, :, 2].astype(np.float64)       # (D, per)
     prior = trace["decision_prior"][:, w, :, 2].astype(np.float64)
+    reference_push, correction = _decision_pushes(trace, w)
+    reference_push = reference_push[..., 2]
+    correction = None if correction is None else correction[..., 2]
     live = trace["decision_active"][:, w].astype(bool)
     step_decision = trace["decision"][:end, w]
     ee, obj = trace["ee_xyz"][:end, w], trace["object_xyz"][:end, w]
@@ -211,7 +245,9 @@ def _attribution(trace: Mapping[str, np.ndarray], w: int, *, end: int, grasp_t: 
         out[f"{name}_decisions"] = len(ks)
         out[f"{name}_z_final"] = float(f.mean())
         out[f"{name}_z_prior_only"] = float(np.tanh(pr).mean())
-        out[f"{name}_z_residual_push"] = float((np.arctanh(np.clip(f, -0.999999, 0.999999)) - pr).mean())
+        out[f"{name}_z_residual_push"] = float(reference_push[ks].mean())
+        if correction is not None:
+            out[f"{name}_z_correction"] = float(correction[ks].mean())
         out[f"{name}_z_up_share"] = float((f > 0).mean())
     return out
 

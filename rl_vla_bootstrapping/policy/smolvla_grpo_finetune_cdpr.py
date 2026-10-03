@@ -50,6 +50,26 @@ from rl_vla_bootstrapping.policy.octo_finetune_cdpr import (
     AdaptiveInstructionSampler,
 )
 from rl_vla_bootstrapping.policy.smolvla_cdpr import DEFAULT_SMOLVLA_CHECKPOINT, load_smolvla_runtime
+from rl_vla_bootstrapping.policy.latent_correction_policy import (
+    ACTION_LIKELIHOOD_CODES,
+    ACTION_LIKELIHOOD_LATENT,
+    ACTION_LIKELIHOOD_LEGACY,
+    ACTION_LIKELIHOODS,
+    ACTION_AXES,
+    LATENT_RECORD_FIELDS,
+    POLICY_ARCHITECTURE_CORRECTION,
+    POLICY_ARCHITECTURE_LEGACY,
+    POLICY_ARCHITECTURES,
+    FrozenParameterGuard,
+    FrozenReferenceCorrectionActor,
+    actor_components,
+    check_legacy_geometry,
+    checkpoint_action_likelihood,
+    checkpoint_policy_architecture,
+    convert_legacy_policy_state,
+    latent_gaussian_log_prob,
+    tensor_fingerprint,
+)
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     EqualDDPSchedule,
     global_stage_loss_weights,
@@ -98,13 +118,22 @@ if nn is not None:
             init_log_std: float,
             min_log_std: float,
             max_log_std: float,
+            architecture: str = POLICY_ARCHITECTURE_LEGACY,
         ) -> None:
             super().__init__()
             self.chunk_size = int(chunk_size)
             self.action_dim = int(action_dim)
             self.min_log_std = float(min_log_std)
             self.max_log_std = float(max_log_std)
-            self.actor = ResidualChunkActor(
+            if architecture not in POLICY_ARCHITECTURES:
+                raise ValueError(f"Unknown policy architecture {architecture!r}.")
+            self.architecture = str(architecture)
+            actor_class = (
+                FrozenReferenceCorrectionActor
+                if self.architecture == POLICY_ARCHITECTURE_CORRECTION
+                else ResidualChunkActor
+            )
+            self.actor = actor_class(
                 state_dim=int(state_dim),
                 chunk_size=int(chunk_size),
                 action_dim=int(action_dim),
@@ -179,6 +208,33 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--run-root-dir", default="runs")
     parser.add_argument("--run-id", default="smolvla_cdpr_grpo")
     parser.add_argument("--resume-checkpoint", default=None)
+    # Weights-only conversion from a legacy (bounded_residual_v0) GRPO
+    # checkpoint into this run's architecture and likelihood, with a fresh
+    # optimizer and pilot step 0. Distinct from --resume-checkpoint, which
+    # continues a checkpoint of THIS run's architecture and likelihood.
+    parser.add_argument("--legacy-init-checkpoint", default=None)
+    parser.add_argument(
+        "--policy-architecture",
+        choices=POLICY_ARCHITECTURES,
+        default=POLICY_ARCHITECTURE_LEGACY,
+        help=(
+            "bounded_residual_v0: tanh(prior + s*tanh(net(x))). "
+            "frozen_reference_logit_correction_v1: the same reference network, "
+            "frozen, plus an unbounded zero-initialized correction in the final "
+            "pre-tanh coordinates."
+        ),
+    )
+    parser.add_argument(
+        "--action-likelihood",
+        choices=ACTION_LIKELIHOODS,
+        default=ACTION_LIKELIHOOD_LEGACY,
+        help=(
+            "clipped_action_v0: historical; scores the clipped action, widening "
+            "the std by the episode-offset std. "
+            "latent_gaussian_conditional_offset_v1: scores the unclipped latent "
+            "sample conditioned on the realized episode offset."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--device", default=_default_device())
     _bool_arg(parser, "distributed", default=True, help_text="Enable torch.distributed under torchrun.")
@@ -808,6 +864,34 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
             f"(={int(args.action_dim)}) values, got "
             f"{len(args.episode_offset_std)}"
         )
+    if (
+        args.policy_architecture == POLICY_ARCHITECTURE_CORRECTION
+        and args.action_likelihood != ACTION_LIKELIHOOD_LATENT
+    ):
+        parser.error(
+            "--policy-architecture frozen_reference_logit_correction_v1 requires "
+            "--action-likelihood latent_gaussian_conditional_offset_v1"
+        )
+    if args.action_likelihood == ACTION_LIKELIHOOD_LATENT:
+        if bool(args.train_vla_lora) and bool(args.vla_lora_updates_enabled):
+            parser.error(
+                "The latent likelihood has no LoRA update path; set "
+                "--no-vla-lora-updates-enabled (the LoRA is loaded and frozen)"
+            )
+        if bool(args.train_vla_vision_lora):
+            parser.error("The latent-likelihood pilot keeps vision LoRA disabled")
+        if str(args.reference_anchor_bank or "").strip():
+            parser.error("The latent-likelihood pilot does not use the reference anchor")
+    if args.legacy_init_checkpoint and args.resume_checkpoint:
+        parser.error(
+            "--legacy-init-checkpoint (conversion, fresh optimizer, step 0) and "
+            "--resume-checkpoint (continue) are mutually exclusive"
+        )
+    if args.legacy_init_checkpoint and args.action_likelihood != ACTION_LIKELIHOOD_LATENT:
+        parser.error(
+            "--legacy-init-checkpoint is the latent-likelihood pilot's initializer; "
+            "legacy runs warm start with RLVLA_SMOLVLA_WARMSTART_CHECKPOINT"
+        )
     args.grpo_dynamic_min_pass_rate = float(np.clip(args.grpo_dynamic_min_pass_rate, 0.0, 1.0))
     args.grpo_dynamic_max_pass_rate = float(np.clip(args.grpo_dynamic_max_pass_rate, 0.0, 1.0))
     if args.grpo_dynamic_min_pass_rate >= args.grpo_dynamic_max_pass_rate:
@@ -909,6 +993,26 @@ class SmolVLAGRPOTrainer:
         self.run_dir = Path(run_dir)
         self.device = device
         self.distributed = distributed or DistributedContext(device=str(device))
+        self.policy_architecture = str(
+            getattr(args, "policy_architecture", POLICY_ARCHITECTURE_LEGACY)
+        )
+        self.action_likelihood = str(
+            getattr(args, "action_likelihood", ACTION_LIKELIHOOD_LEGACY)
+        )
+        if self.policy_architecture not in POLICY_ARCHITECTURES:
+            raise ValueError(f"Unknown policy architecture {self.policy_architecture!r}.")
+        if self.action_likelihood not in ACTION_LIKELIHOODS:
+            raise ValueError(f"Unknown action likelihood {self.action_likelihood!r}.")
+        if (
+            self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION
+            and self.action_likelihood != ACTION_LIKELIHOOD_LATENT
+        ):
+            raise ValueError(
+                "The correction architecture is only supported with the latent likelihood."
+            )
+        self.latent_likelihood = self.action_likelihood == ACTION_LIKELIHOOD_LATENT
+        # The reference branch is frozen inside the actor's constructor, so it
+        # is excluded BEFORE DDP wrapping and before the optimizer's groups.
         policy = SmolVLAGRPOPolicy(
             state_dim=int(state_dim),
             chunk_size=int(chunk_size),
@@ -918,6 +1022,7 @@ class SmolVLAGRPOTrainer:
             init_log_std=float(args.init_log_std),
             min_log_std=float(args.min_log_std),
             max_log_std=float(args.max_log_std),
+            architecture=self.policy_architecture,
         ).to(device)
         if self.distributed.enabled:
             from torch.nn.parallel import DistributedDataParallel as DDP
@@ -932,8 +1037,11 @@ class SmolVLAGRPOTrainer:
             ddp_kwargs["broadcast_buffers"] = False
             policy = DDP(policy, **ddp_kwargs)
         self.actor = policy
+        # Legacy: every parameter trains, in the historical order, so its
+        # optimizer state dict is unchanged. Correction: the correction
+        # branch and log_std only.
         self.optimizer = torch.optim.AdamW(
-            self.actor.parameters(),
+            [param for param in self.actor.parameters() if param.requires_grad],
             lr=float(args.learning_rate),
             eps=float(args.adam_eps),
             weight_decay=float(args.weight_decay),
@@ -963,10 +1071,94 @@ class SmolVLAGRPOTrainer:
         self.episode_offset_enabled = bool(
             float(self.episode_offset_std.abs().max().item()) > 0.0
         )
+        # Lineage of a converted run (source checkpoint, hash, step); restored
+        # on resume, written into every checkpoint of a latent-likelihood run.
+        self.lineage: dict[str, Any] = {}
+        self.reference_guard: FrozenParameterGuard | None = None
+        self.lora_guard: FrozenParameterGuard | None = None
+        self._arm_reference_guard()
 
     @staticmethod
     def _unwrap(module: nn.Module) -> nn.Module:
         return module.module if hasattr(module, "module") else module
+
+    # ----------------------------------------------------------- architecture
+
+    def _reference_named_parameters(self) -> dict[str, Any]:
+        base = self._unwrap(self.actor)
+        if self.policy_architecture != POLICY_ARCHITECTURE_CORRECTION:
+            return {}
+        return dict(base.actor.reference_net.named_parameters())
+
+    def _arm_reference_guard(self) -> None:
+        """Snapshot the frozen reference after every (re)load of its weights."""
+
+        if self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION:
+            base = self._unwrap(self.actor)
+            base.actor.assert_reference_frozen()
+            self.reference_guard = FrozenParameterGuard(self._reference_named_parameters())
+
+    def reference_max_abs_change(self) -> float:
+        if self.reference_guard is None:
+            return 0.0
+        return self.reference_guard.max_abs_change(self._reference_named_parameters())
+
+    def _lora_named_parameters(self) -> dict[str, Any]:
+        runtime = getattr(self, "vla_runtime", None)
+        if runtime is None:
+            return {}
+        return {
+            name: param
+            for name, param in runtime.policy.named_parameters()
+            if "lora_" in name
+        }
+
+    def freeze_vla_lora(self) -> int:
+        """Latent-likelihood runs load the LoRA and keep it fixed.
+
+        ``train_vla_lora`` still attaches it so the checkpoint's adapter can be
+        restored; this removes it from autograd entirely and snapshots it so a
+        change is detected rather than assumed impossible.
+        """
+
+        params = self._lora_named_parameters()
+        for param in params.values():
+            param.requires_grad_(False)
+        self.lora_guard = FrozenParameterGuard(params) if params else None
+        return len(params)
+
+    def lora_max_abs_change(self) -> float:
+        if self.lora_guard is None:
+            return 0.0
+        return self.lora_guard.max_abs_change(self._lora_named_parameters())
+
+    def trainable_parameter_count(self) -> int:
+        return int(
+            sum(
+                param.numel()
+                for group in self.optimizer.param_groups
+                for param in group["params"]
+            )
+        )
+
+    def _require_legacy_likelihood(self, path: str) -> None:
+        if self.latent_likelihood:
+            raise RuntimeError(
+                f"{path} scores clipped actions and is not supported with "
+                f"--action-likelihood {ACTION_LIKELIHOOD_LATENT}; use the "
+                "MJWarp rank-local collector and update_tensor_records."
+            )
+
+    def action_components_tensor(
+        self, *, states: torch.Tensor, priors: torch.Tensor, action_count: int
+    ) -> dict[str, torch.Tensor]:
+        """Direct reference, correction and combined logits for telemetry."""
+
+        count = max(1, min(int(action_count), int(self.chunk_size)))
+        with torch.inference_mode():
+            base = self._unwrap(self.actor)
+            components = actor_components(base.actor, states, priors)
+        return {key: value[:, :count] for key, value in components.items()}
 
     def sample_episode_offsets(
         self,
@@ -1027,6 +1219,21 @@ class SmolVLAGRPOTrainer:
     ) -> torch.Tensor:
         """log_std of the MARGINAL behaviour distribution, over the offset.
 
+        LEGACY likelihood only (``clipped_action_v0``). The reasoning below is
+        SUPERSEDED (2026-10-03, CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md):
+        the offset is exogenous with a parameter-free density, so the
+        conditional likelihood is exact and its score is unbiased for any
+        return-dependent process -- the offset reaches learning through the
+        returns and later states it changes. The "-0.015 vs +1.43" toy below
+        sets the advantage to the offset itself, which the policy mean cannot
+        influence, so ~0 is the correct conditional answer, not a defect.
+        Scoring each step against an independent widened marginal is instead
+        biased once the offset persists across steps (and scoring the clipped
+        action is biased under clipping); both are measured against finite
+        differences in tests/test_latent_correction_likelihood.py. Kept
+        unchanged so legacy runs replay bit for bit.
+
+        Original note:
         This is the correction that makes a per-episode offset do anything.
 
         Sampling ``a = mu + eps + noise*sigma`` with ``eps ~ N(0, s^2)`` drawn
@@ -1078,6 +1285,7 @@ class SmolVLAGRPOTrainer:
         action_index: int,
         group_size: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+        self._require_legacy_likelihood("sample_action_group")
         state_t = torch.as_tensor(state, dtype=torch.float32, device=self.device).unsqueeze(0)
         prior_t = torch.as_tensor(prior, dtype=torch.float32, device=self.device).unsqueeze(0)
         idx_t = torch.full((1,), int(action_index), dtype=torch.long, device=self.device)
@@ -1118,6 +1326,7 @@ class SmolVLAGRPOTrainer:
         action_count: int,
     ) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
         """Sample open-loop chunks for several candidate states in one forward."""
+        self._require_legacy_likelihood("sample_action_chunks_batch")
         count = max(1, min(int(action_count), int(self.chunk_size)))
         state_t = torch.as_tensor(states, dtype=torch.float32, device=self.device)
         prior_t = torch.as_tensor(priors, dtype=torch.float32, device=self.device)
@@ -1166,6 +1375,20 @@ class SmolVLAGRPOTrainer:
         measures what the policy has learned, not how it was perturbed.
         """
 
+        if self.latent_likelihood:
+            if offset_std is not None:
+                raise ValueError(
+                    "offset_std widens the clipped-action likelihood; the latent "
+                    "likelihood conditions on the realized offset instead."
+                )
+            sample = self.sample_latent_action_chunks_tensor(
+                states=states,
+                priors=priors,
+                action_count=action_count,
+                generator=generator,
+                mean_offset=mean_offset,
+            )
+            return sample["executed_action"], sample["old_log_prob"], sample["mean"]
         count = max(1, min(int(action_count), int(self.chunk_size)))
         if states.device != self.device or priors.device != self.device:
             raise RuntimeError("Rank-local GRPO sampling tensors must stay on the trainer GPU.")
@@ -1203,6 +1426,91 @@ class SmolVLAGRPOTrainer:
             )
         return actions, log_probs, mean_chunk
 
+    def sample_latent_action_chunks_tensor(
+        self,
+        *,
+        states: torch.Tensor,
+        priors: torch.Tensor,
+        action_count: int,
+        generator: torch.Generator | None = None,
+        mean_offset: torch.Tensor | None = None,
+        noise: torch.Tensor | None = None,
+        with_components: bool = False,
+    ) -> dict[str, torch.Tensor]:
+        """Latent-Gaussian sampling: ``u = mu + b + sigma*eps``, ``a = clip(u)``.
+
+        Consumes the generator exactly as the legacy sampler does (one
+        ``randn`` of the mean chunk's shape), so with the same generator state,
+        mean, std and offset the executed actions are identical to the legacy
+        path's. ``noise`` replaces that draw for equivalence checks.
+
+        Returns ``executed_action`` (to the controller), ``policy_sample`` (the
+        detached latent ``u``), ``behavior_mean_offset`` (the realized
+        effective offset per world, zeros when the gate is off or the feature
+        is disabled), ``old_log_prob`` (per slot, conditional on that offset)
+        and ``mean`` (the unperturbed policy mean). With ``with_components``
+        the direct reference/correction/combined logits are added.
+        """
+
+        count = max(1, min(int(action_count), int(self.chunk_size)))
+        if states.device != self.device or priors.device != self.device:
+            raise RuntimeError("Rank-local GRPO sampling tensors must stay on the trainer GPU.")
+        if states.ndim != 2 or priors.ndim != 3:
+            raise ValueError(
+                f"Expected states [B,D] and priors [B,H,A], got "
+                f"{tuple(states.shape)} and {tuple(priors.shape)}."
+            )
+        if int(states.shape[0]) != int(priors.shape[0]):
+            raise ValueError("GRPO state and prior batch sizes differ.")
+        with torch.no_grad():
+            base = self._unwrap(self.actor)
+            components = actor_components(base.actor, states, priors)
+            mean_chunk = components["mean"][:, :count]
+            worlds = int(mean_chunk.shape[0])
+            if mean_offset is None:
+                offset = torch.zeros(
+                    (worlds, int(self.action_dim)),
+                    dtype=mean_chunk.dtype,
+                    device=mean_chunk.device,
+                )
+            else:
+                if tuple(mean_offset.shape) != (worlds, int(self.action_dim)):
+                    raise ValueError(
+                        f"mean_offset must be [{worlds}, {self.action_dim}], got "
+                        f"{tuple(mean_offset.shape)}."
+                    )
+                offset = mean_offset.to(dtype=mean_chunk.dtype, device=mean_chunk.device)
+            log_std = base.clamped_log_std()[:count].unsqueeze(0)
+            if noise is None:
+                noise = torch.randn(
+                    mean_chunk.shape,
+                    dtype=mean_chunk.dtype,
+                    device=mean_chunk.device,
+                    generator=generator,
+                )
+            elif tuple(noise.shape) != tuple(mean_chunk.shape):
+                raise ValueError(
+                    f"noise must be {tuple(mean_chunk.shape)}, got {tuple(noise.shape)}."
+                )
+            behaviour_mean = mean_chunk + offset.unsqueeze(1)
+            policy_sample = behaviour_mean + noise * torch.exp(log_std)
+            executed = torch.clamp(policy_sample, -1.0, 1.0)
+            log_probs = latent_gaussian_log_prob(
+                policy_sample, mean_chunk, offset.unsqueeze(1), log_std
+            )
+        result = {
+            "executed_action": executed,
+            "policy_sample": policy_sample.detach(),
+            "behavior_mean_offset": offset.detach(),
+            "old_log_prob": log_probs.detach(),
+            "mean": mean_chunk,
+        }
+        if with_components:
+            result["components"] = {
+                key: value[:, :count] for key, value in components.items()
+            }
+        return result
+
     def deterministic_action_chunks_tensor(
         self,
         *,
@@ -1237,14 +1545,31 @@ class SmolVLAGRPOTrainer:
     ) -> dict[str, float]:
         """DDP-safe PPO update with an identical collective schedule per rank."""
 
-        required = {
-            "state",
-            "prior",
-            "action",
-            "action_index",
-            "old_log_prob",
-            "advantage",
-        }
+        if self.latent_likelihood:
+            # Latent records carry the unclipped sample and the realized offset;
+            # a legacy clipped-action buffer cannot be migrated into them.
+            required = set(LATENT_RECORD_FIELDS)
+            forbidden = sorted({"action", "offset_std"}.intersection(records))
+            if forbidden:
+                raise KeyError(
+                    f"Latent-likelihood update received legacy record fields "
+                    f"{forbidden}; clipped-action records are not on-policy data "
+                    "for this likelihood."
+                )
+        else:
+            required = {
+                "state",
+                "prior",
+                "action",
+                "action_index",
+                "old_log_prob",
+                "advantage",
+            }
+            if "policy_sample" in records or "likelihood_version" in records:
+                raise KeyError(
+                    "Legacy-likelihood update received latent-likelihood records; "
+                    f"set --action-likelihood {ACTION_LIKELIHOOD_LATENT}."
+                )
         missing = sorted(required.difference(records))
         if missing:
             raise KeyError(f"Missing GPU GRPO record tensors: {missing}.")
@@ -1309,8 +1634,44 @@ class SmolVLAGRPOTrainer:
 
         states = padded["state"].to(dtype=torch.float32)
         priors = padded["prior"].to(dtype=torch.float32)
-        actions = padded["action"].to(dtype=torch.float32)
         action_indices = padded["action_index"].to(dtype=torch.long)
+        latent_metrics: dict[str, float] = {}
+        if self.latent_likelihood:
+            expected_code = ACTION_LIKELIHOOD_CODES[ACTION_LIKELIHOOD_LATENT]
+            versions = padded["likelihood_version"][mask > 0.0]
+            if bool((versions != expected_code).any().item()):
+                raise ValueError(
+                    "Record likelihood_version does not match "
+                    f"{ACTION_LIKELIHOOD_LATENT!r} (code {expected_code}); refusing "
+                    "to score records sampled under another likelihood."
+                )
+            # Score targets: the latent sample and the offset it was drawn
+            # around. The executed (clipped) action is used for diagnostics only.
+            actions = padded["policy_sample"].to(dtype=torch.float32).detach()
+            behaviour_offsets = padded["behavior_mean_offset"].to(dtype=torch.float32).detach()
+            executed = padded["executed_action"].to(dtype=torch.float32)
+            if tuple(actions.shape) != tuple(executed.shape) or tuple(
+                behaviour_offsets.shape
+            ) != tuple(actions.shape):
+                raise ValueError(
+                    "policy_sample, executed_action and behavior_mean_offset must "
+                    f"share a shape; got {tuple(actions.shape)}, "
+                    f"{tuple(executed.shape)}, {tuple(behaviour_offsets.shape)}."
+                )
+            valid_rows = mask > 0.0
+            valid_n = max(1, int(valid_rows.sum().item()))
+            clipped = (actions != executed) & valid_rows.unsqueeze(-1)
+            gated = (behaviour_offsets != 0.0) & valid_rows.unsqueeze(-1)
+            for dim, axis in enumerate(ACTION_AXES[: int(self.action_dim)]):
+                latent_metrics[f"latent/update_clip_fraction_{axis}"] = float(
+                    clipped[:, dim].sum().item() / valid_n
+                )
+                latent_metrics[f"latent/update_offset_gate_fraction_{axis}"] = float(
+                    gated[:, dim].sum().item() / valid_n
+                )
+        else:
+            actions = padded["action"].to(dtype=torch.float32)
+            behaviour_offsets = None
         old_log_probs = padded["old_log_prob"].to(dtype=torch.float32)
         advantages = padded["advantage"].to(dtype=torch.float32)
         loss_weights = (
@@ -1368,6 +1729,17 @@ class SmolVLAGRPOTrainer:
 
         base = self._unwrap(self.actor)
         initial_log_std = base.clamped_log_std().detach().clone()
+        correction_grad_norms: dict[str, list[float]] = {"final": [], "hidden": [], "log_std": []}
+        correction_final = None
+        correction_hidden: list[Any] = []
+        if self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION:
+            correction_final = base.actor.correction_output_layer()
+            final_ids = {id(param) for param in correction_final.parameters()}
+            correction_hidden = [
+                param
+                for param in base.actor.correction_net.parameters()
+                if id(param) not in final_ids
+            ]
         policy_loss_total = torch.zeros((), dtype=torch.float32, device=self.device)
         entropy_total = torch.zeros_like(policy_loss_total)
         kl_total = torch.zeros_like(policy_loss_total)
@@ -1416,16 +1788,25 @@ class SmolVLAGRPOTrainer:
                     policy_mean, log_std = self._mean_and_log_std(
                         states[idx], priors[idx], action_indices[idx]
                     )
-                    behaviour_log_std = self._marginal_log_std(
-                        log_std,
-                        None if offset_stds is None else offset_stds[idx],
-                    )
-                    log_prob = _normal_log_prob(
-                        actions[idx], policy_mean, behaviour_log_std
-                    )
+                    if behaviour_offsets is not None:
+                        # Conditional on the recorded realized offset; the
+                        # offset's own density has no parameters and cancels.
+                        log_prob = latent_gaussian_log_prob(
+                            actions[idx], policy_mean, behaviour_offsets[idx], log_std
+                        )
+                    else:
+                        behaviour_log_std = self._marginal_log_std(
+                            log_std,
+                            None if offset_stds is None else offset_stds[idx],
+                        )
+                        log_prob = _normal_log_prob(
+                            actions[idx], policy_mean, behaviour_log_std
+                        )
                     # Entropy stays the POLICY's, not the widened behaviour
                     # distribution's: the bonus regulates what the policy learns,
-                    # and the offset is exploration layered on top of it.
+                    # and the offset is exploration layered on top of it. In the
+                    # latent mode this is the latent Gaussian's entropy, NOT the
+                    # entropy of the clipped executed-action distribution.
                     entropy = _normal_entropy(log_std)
                     ratio = torch.exp(
                         (log_prob - old_log_probs[idx]).clamp(-20.0, 20.0)
@@ -1485,6 +1866,17 @@ class SmolVLAGRPOTrainer:
                         )
                         clip_total += (outside.to(torch.float32) * weight).sum()
                 optimizer_started = time.perf_counter()
+                if correction_final is not None:
+                    # Pre-clip norms; zero hidden-layer norm on the first step
+                    # is expected (the zeroed output layer blocks it).
+                    with torch.no_grad():
+                        def _norm(params: Sequence[Any]) -> float:
+                            grads = [p.grad.detach().pow(2).sum() for p in params if p.grad is not None]
+                            return float(torch.sqrt(torch.stack(grads).sum()).item()) if grads else 0.0
+
+                        correction_grad_norms["final"].append(_norm(list(correction_final.parameters())))
+                        correction_grad_norms["hidden"].append(_norm(correction_hidden))
+                        correction_grad_norms["log_std"].append(_norm([base.log_std]))
                 grad_limit = (
                     float(self.args.max_grad_norm)
                     if float(self.args.max_grad_norm) > 0.0
@@ -1530,9 +1922,38 @@ class SmolVLAGRPOTrainer:
                 "anchor/grad_norm_first": anchor_grad_norm,
                 "anchor/rows": float(anchor.rows),
             }
+        if self.latent_likelihood:
+            latent_metrics["latent/gaussian_entropy_mean"] = float(
+                (entropy_total / metric_denominator).detach().item()
+            )
+            latent_metrics["latent/sampled_kl_estimate_mean"] = float(
+                (kl_total / metric_denominator).detach().item()
+            )
+        if correction_final is not None:
+            for name, values in correction_grad_norms.items():
+                latent_metrics[f"correction/grad_norm_{name}_mean"] = (
+                    float(np.mean(values)) if values else 0.0
+                )
+            reference_change = self.reference_max_abs_change()
+            latent_metrics["correction/reference_max_abs_change"] = reference_change
+            if reference_change != 0.0:
+                raise RuntimeError(
+                    f"Frozen reference parameters changed by {reference_change:g} "
+                    "during the update."
+                )
+        if self.lora_guard is not None:
+            lora_change = self.lora_max_abs_change()
+            latent_metrics["policy/lora_max_abs_change"] = lora_change
+            if lora_change != 0.0:
+                raise RuntimeError(f"Frozen LoRA parameters changed by {lora_change:g}.")
+        if self.latent_likelihood:
+            latent_metrics["policy/trainable_parameter_count"] = float(
+                self.trainable_parameter_count()
+            )
         return {
             **stage_metrics,
             **anchor_metrics,
+            **latent_metrics,
             "loss_policy_mean": float(
                 (policy_loss_total / metric_denominator).detach().item()
             ),
@@ -1591,6 +2012,7 @@ class SmolVLAGRPOTrainer:
         *,
         hindsight_records: Sequence[Mapping[str, Any]] = (),
     ) -> dict[str, float]:
+        self._require_legacy_likelihood("update")
         if not records:
             return {}
         states = torch.as_tensor(np.stack([row["state"] for row in records]), dtype=torch.float32, device=self.device)
@@ -1872,6 +2294,7 @@ class SmolVLAGRPOTrainer:
 
         import torch.distributed as dist
 
+        self._require_legacy_likelihood("update_vla_lora")
         runtime = getattr(self, "vla_runtime", None)
         if runtime is None:
             raise RuntimeError("attach_vla_lora must run before update_vla_lora.")
@@ -2070,6 +2493,19 @@ class SmolVLAGRPOTrainer:
                     )
         base = self._unwrap(self.actor)
         if "policy" in payload:
+            stored_architecture = checkpoint_policy_architecture(payload)
+            stored_likelihood = checkpoint_action_likelihood(payload)
+            if (stored_architecture, stored_likelihood) != (
+                self.policy_architecture,
+                self.action_likelihood,
+            ):
+                raise RuntimeError(
+                    f"Resume checkpoint {checkpoint_path} is "
+                    f"({stored_architecture}, {stored_likelihood}) but this run is "
+                    f"({self.policy_architecture}, {self.action_likelihood}). A "
+                    "resume never changes architecture or likelihood; convert a "
+                    "legacy checkpoint with --legacy-init-checkpoint instead."
+                )
             base.load_state_dict(payload["policy"])
             if "optimizer" in payload:
                 self.optimizer.load_state_dict(payload["optimizer"])
@@ -2079,7 +2515,20 @@ class SmolVLAGRPOTrainer:
             self.gradient_step = int(payload.get("gradient_step", 0))
             self.loaded_extra_state = dict(payload.get("extra_state") or {})
             self.bootstrap_source = "grpo_resume"
+            self.lineage = dict(payload.get("lineage") or {})
+            self._arm_reference_guard()
+            stored_reference = payload.get("reference_sha256")
+            if stored_reference and self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION:
+                actual = tensor_fingerprint(self._reference_named_parameters())
+                if actual != stored_reference:
+                    raise RuntimeError(
+                        "Resumed reference branch does not match the checkpoint's "
+                        f"reference_sha256 ({actual} != {stored_reference})."
+                    )
+            if self.latent_likelihood and getattr(self, "vla_runtime", None) is not None:
+                self.freeze_vla_lora()
         elif "actor" in payload:
+            self._require_legacy_likelihood("TD3 actor bootstrap")
             base.actor.load_state_dict(payload["actor"])
             self.gradient_step = 0
             self.loaded_extra_state = {}
@@ -2293,6 +2742,12 @@ class SmolVLAGRPOTrainer:
         exactly.
         """
 
+        if self.latent_likelihood:
+            raise RuntimeError(
+                "Weights-only warm start is ambiguous under the latent likelihood: "
+                "use --legacy-init-checkpoint to convert a legacy checkpoint, or "
+                "--resume-checkpoint to continue one of this run's checkpoints."
+            )
         try:
             payload = torch.load(
                 Path(checkpoint_path), map_location=self.device, weights_only=False
@@ -2302,6 +2757,12 @@ class SmolVLAGRPOTrainer:
         if "policy" not in payload:
             raise KeyError(
                 f"Warm-start checkpoint {checkpoint_path} has no 'policy' weights."
+            )
+        if checkpoint_policy_architecture(payload) != self.policy_architecture:
+            raise RuntimeError(
+                f"Warm-start checkpoint {checkpoint_path} is "
+                f"{checkpoint_policy_architecture(payload)!r}; this run is "
+                f"{self.policy_architecture!r}."
             )
         policy_state = payload["policy"]
         info: dict[str, float] = {}
@@ -2324,6 +2785,165 @@ class SmolVLAGRPOTrainer:
         self.loaded_extra_state = {}
         self.bootstrap_source = "grpo_warmstart_weights"
         return info
+
+    def initialize_from_legacy_checkpoint(
+        self, checkpoint_path: "Path | str"
+    ) -> dict[str, Any]:
+        """Weights-only conversion of a legacy checkpoint into this run.
+
+        The source must be a ``bounded_residual_v0`` / ``clipped_action_v0``
+        GRPO checkpoint. Its geometry, reference scale and log_std bounds must
+        match this run's. For the correction architecture the residual becomes
+        the frozen reference and a zero-output copy becomes the correction; for
+        the legacy architecture (the likelihood-repair control) the residual is
+        loaded unchanged. LoRA tensors are restored exactly and frozen. The
+        optimizer stays the fresh one built in ``__init__`` -- no Adam moments
+        are carried -- and the pilot starts at step 0 with its lineage
+        recorded separately.
+        """
+
+        if not self.latent_likelihood:
+            raise RuntimeError("Legacy conversion is only defined for the latent likelihood.")
+        path = Path(checkpoint_path).expanduser().resolve()
+        try:
+            payload = torch.load(path, map_location=self.device, weights_only=False)
+        except TypeError:  # PyTorch < 2.6
+            payload = torch.load(path, map_location=self.device)
+        if "policy" not in payload:
+            raise KeyError(f"Legacy checkpoint {path} has no 'policy' weights.")
+        source_architecture = checkpoint_policy_architecture(payload)
+        source_likelihood = checkpoint_action_likelihood(payload)
+        if source_architecture != POLICY_ARCHITECTURE_LEGACY:
+            raise RuntimeError(
+                f"--legacy-init-checkpoint expects a {POLICY_ARCHITECTURE_LEGACY!r} "
+                f"checkpoint; {path} is {source_architecture!r}. Continue it with "
+                "--resume-checkpoint instead."
+            )
+        if source_likelihood != ACTION_LIKELIHOOD_LEGACY:
+            raise RuntimeError(
+                f"{path} was trained with {source_likelihood!r}; it is not a "
+                "legacy source. Continue it with --resume-checkpoint."
+            )
+        source_args = dict(payload.get("args") or {})
+        expectations = {
+            "state_dim": (payload.get("state_dim"), self.state_dim),
+            "chunk_size": (payload.get("chunk_size"), self.chunk_size),
+            "action_dim": (payload.get("action_dim"), self.action_dim),
+            "hidden_dim": (payload.get("hidden_dim"), int(self.args.hidden_dim)),
+        }
+        mismatched = {
+            key: values
+            for key, values in expectations.items()
+            if values[0] is not None and int(values[0]) != int(values[1])
+        }
+        if payload.get("residual_scale") is not None and not math.isclose(
+            float(payload["residual_scale"]), float(self.args.residual_scale), rel_tol=0.0, abs_tol=0.0
+        ):
+            mismatched["residual_scale"] = (payload["residual_scale"], self.args.residual_scale)
+        for bound in ("min_log_std", "max_log_std"):
+            if bound in source_args and float(source_args[bound]) != float(getattr(self.args, bound)):
+                mismatched[bound] = (source_args[bound], getattr(self.args, bound))
+        if mismatched:
+            details = ", ".join(
+                f"{key}: checkpoint={old!r}, runtime={new!r}"
+                for key, (old, new) in mismatched.items()
+            )
+            raise RuntimeError(f"Legacy checkpoint metadata does not match this run: {details}.")
+        policy_state = payload["policy"]
+        geometry = check_legacy_geometry(
+            policy_state,
+            state_dim=self.state_dim,
+            chunk_size=self.chunk_size,
+            action_dim=self.action_dim,
+            hidden_dim=int(self.args.hidden_dim),
+        )
+        legacy_actor_state = {
+            key[len("actor."):]: value
+            for key, value in policy_state.items()
+            if str(key).startswith("actor.")
+        }
+        source_reference_sha256 = tensor_fingerprint(legacy_actor_state)
+        if self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION:
+            new_state = convert_legacy_policy_state(policy_state)
+        else:
+            new_state = {key: value.detach().clone() for key, value in policy_state.items()}
+        base = self._unwrap(self.actor)
+        base.load_state_dict(new_state)
+        lora_state = payload.get("vla_lora")
+        runtime = getattr(self, "vla_runtime", None)
+        lora_sha256 = None
+        if lora_state:
+            if runtime is None:
+                raise RuntimeError(
+                    "The legacy checkpoint carries action-expert LoRA weights but "
+                    "no LoRA is attached; set train_vla_lora with the checkpoint's "
+                    "rank/alpha/MLP settings."
+                )
+            runtime_keys = {
+                name for name in runtime.policy.state_dict() if "lora_" in name
+            }
+            if runtime_keys != set(lora_state):
+                raise RuntimeError(
+                    "LoRA layout differs from the checkpoint: "
+                    f"{len(runtime_keys - set(lora_state))} runtime-only and "
+                    f"{len(set(lora_state) - runtime_keys)} checkpoint-only tensors."
+                )
+            runtime.policy.load_state_dict(lora_state, strict=False)
+            restored = {
+                name: tensor
+                for name, tensor in runtime.policy.state_dict().items()
+                if "lora_" in name
+            }
+            lora_sha256 = tensor_fingerprint(restored)
+            if lora_sha256 != tensor_fingerprint(dict(lora_state)):
+                raise RuntimeError("Restored LoRA tensors differ from the checkpoint's.")
+            self.freeze_vla_lora()
+        elif runtime is not None:
+            raise RuntimeError(
+                "train_vla_lora attached an adapter but the legacy checkpoint has "
+                "none; the prior would not be the checkpoint's."
+            )
+        self.gradient_step = 0
+        self.loaded_extra_state = {}
+        self.bootstrap_source = "legacy_conversion"
+        self._arm_reference_guard()
+        if self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION:
+            converted_reference_sha256 = tensor_fingerprint(
+                {
+                    key: value
+                    for key, value in base.actor.reference_net.state_dict().items()
+                }
+            )
+            expected_reference_sha256 = tensor_fingerprint(
+                {
+                    key[len("net."):]: value
+                    for key, value in legacy_actor_state.items()
+                    if key.startswith("net.")
+                }
+            )
+            if converted_reference_sha256 != expected_reference_sha256:
+                raise RuntimeError("Converted reference branch is not an exact copy.")
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for block in iter(lambda: handle.read(1 << 20), b""):
+                digest.update(block)
+        self.lineage = {
+            "init_mode": "legacy_conversion",
+            "source_checkpoint": str(path),
+            "source_sha256": digest.hexdigest(),
+            "source_global_step": int(payload.get("global_step", 0)),
+            "source_gradient_step": int(payload.get("gradient_step", 0)),
+            "source_policy_architecture": source_architecture,
+            "source_action_likelihood": source_likelihood,
+            "source_actor_sha256": source_reference_sha256,
+            "source_lora_sha256": lora_sha256,
+            "target_policy_architecture": self.policy_architecture,
+            "target_action_likelihood": self.action_likelihood,
+            "geometry": geometry,
+            "residual_scale": float(self.args.residual_scale),
+            "log_std_bounds": [float(self.args.min_log_std), float(self.args.max_log_std)],
+        }
+        return dict(self.lineage)
 
     def _vla_lora_state_dict(self) -> dict[str, Any] | None:
         """Only the LoRA tensors from the frozen runtime, or None if unused."""
@@ -2372,8 +2992,36 @@ class SmolVLAGRPOTrainer:
         extra_state: Mapping[str, Any] | None = None,
         simulator_metadata: Mapping[str, Any] | None = None,
     ) -> Path:
+        reference_sha256 = None
+        if self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION:
+            change = self.reference_max_abs_change()
+            if change != 0.0:
+                raise RuntimeError(
+                    f"Refusing to save: the frozen reference changed by {change:g}."
+                )
+            reference_sha256 = tensor_fingerprint(self._reference_named_parameters())
+        latent_fields: dict[str, Any] = {}
+        if self.latent_likelihood:
+            latent_fields = {
+                "lineage": dict(self.lineage),
+                # Lineage and pilot progress are tracked separately: global_step
+                # is this pilot's selected actions, the source's step is lineage.
+                "source_global_step": self.lineage.get("source_global_step"),
+                "pilot_global_step": int(global_step),
+                "reference_sha256": reference_sha256,
+                "reference_scale": float(args.residual_scale),
+                "correction_scale": 1.0,
+                "lora_sha256": (
+                    tensor_fingerprint(self._lora_named_parameters())
+                    if self._lora_named_parameters()
+                    else None
+                ),
+            }
         payload = {
             "policy_type": "smolvla_cdpr_grpo",
+            "policy_architecture": self.policy_architecture,
+            "action_likelihood": self.action_likelihood,
+            **latent_fields,
             "base_checkpoint": str(args.base_checkpoint),
             "global_step": int(global_step),
             "gradient_step": int(self.gradient_step),
@@ -4012,6 +4660,16 @@ def _parameter_summary(trainer: SmolVLAGRPOTrainer, runtime_policy: Any, args: a
 def main(argv: Sequence[str] | None = None) -> None:
     args = parse_args(argv)
     _require_torch()
+    if (
+        args.action_likelihood != ACTION_LIKELIHOOD_LEGACY
+        or args.policy_architecture != POLICY_ARCHITECTURE_LEGACY
+        or args.legacy_init_checkpoint
+    ):
+        raise SystemExit(
+            "The CPU-backend GRPO loop scores clipped actions and only supports "
+            f"({POLICY_ARCHITECTURE_LEGACY}, {ACTION_LIKELIHOOD_LEGACY}); the latent "
+            "likelihood and the correction architecture run on smolvla_grpo_mjwarp_cdpr."
+        )
     dist_ctx = _configure_distributed(args)
     _set_quiet_env(args, dist_ctx)
     _set_seed(int(args.seed))

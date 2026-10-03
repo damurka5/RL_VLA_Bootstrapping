@@ -4627,3 +4627,27 @@ which is five times slower and more reliable).
 - Local artifact path: none yet; the calibration is regenerated in one second by `tools/audit/calibrate_cdpr_pickup_yaw.py`
 - SHA-256: not applicable
 - Missing provenance: every rollout number in the pipeline
+
+### 2026-10-03 — Zero-init correction and latent likelihood implemented; no GPU run yet
+
+- Git commit: this change
+- Run/config: `configs/examples/cdpr_smolvla_three_stage_put_into_latent_correction.yaml`. It is the three-stage config plus two tags: `policy_architecture: frozen_reference_logit_correction_v1` and `action_likelihood: latent_gaussian_conditional_offset_v1`. A test asserts no other `rl.args` difference. The launcher is `scripts/train_cdpr_latent_correction_pilot_remote.sh` (ARM=candidate/control). Note: `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md`
+- Source checkpoint and lineage: intended source `step_56072006`. It was not loaded: its SHA-256 is unrecorded because the file is only on the training host
+- Training steps / updates: **zero**
+- Evaluation protocol: none executed
+- Measured result (unit tests on synthetic checkpoints, CPU):
+  - Zero-update means are bitwise equal to the legacy actor (max error 0.0 over 320 inputs × 8 slots × 5 dims, saturated residual, reference scale 0.7).
+  - Resume continuation is exact.
+  - Single-step score gradient with clipping: latent-conditional 0.3543764 against an integrated true gradient of 0.3543766. The historical clipped/marginal estimator gives 0.3604168.
+  - Three-step problem with a persistent offset that moves later states: the latent-conditional score agrees with CRN finite differences at z = −0.13 and 0.22. The historical clipped-action/marginal estimator is off by z = 52 and −151; a per-step independent marginal on latents by z = 112 and 82.
+  - Two-rank CPU/gloo DDP update matches the one-rank full batch to 7.5e-9.
+  - 39 new tests pass. The full suite (1604 tests) keeps only the three pre-existing local failures.
+- What this result supports:
+  - The candidate starts as exactly the source policy and can leave the legacy mean bounds.
+  - The latent likelihood is an unbiased score estimator under clipping and persistent offsets.
+  - The historical likelihood is biased on these toy problems.
+- What it does not support: any success-rate claim, or any claim that the bias mattered in past runs. Nothing was trained or evaluated on the real task
+- Status: implementation landed. Next steps are the GPU preflight (`scripts/preflight_cdpr_latent_correction_remote.sh`), a one-update two-rank smoke per arm, then the 10-update diagnostic
+- Local artifact path: none
+- SHA-256: source checkpoint pending
+- Missing provenance: every real-checkpoint and GPU number

@@ -141,7 +141,21 @@ class SmolVLACDPREvalRuntime:
         hidden_dim = int(self.payload.get("hidden_dim", 512))
         residual_scale = float(self.payload.get("residual_scale", 0.35))
         actor_state_dim = int(self.actor_state_dim or state_dim)
-        actor = ResidualChunkActor(
+        from rl_vla_bootstrapping.policy.latent_correction_policy import (
+            POLICY_ARCHITECTURE_CORRECTION,
+            FrozenReferenceCorrectionActor,
+            checkpoint_policy_architecture,
+        )
+
+        # Version-aware: a correction checkpoint must run with its correction,
+        # never as its reference branch alone.
+        self.policy_architecture = checkpoint_policy_architecture(self.payload)
+        actor_class = (
+            FrozenReferenceCorrectionActor
+            if self.policy_architecture == POLICY_ARCHITECTURE_CORRECTION
+            else ResidualChunkActor
+        )
+        actor = actor_class(
             state_dim=actor_state_dim,
             chunk_size=chunk_size,
             action_dim=action_dim,
@@ -150,7 +164,8 @@ class SmolVLACDPREvalRuntime:
         ).to(self.device)
         print(
             f"[smolvla-eval] Materializing residual actor on {self.device} "
-            f"(state_dim={actor_state_dim}, chunk_size={chunk_size}, action_dim={action_dim})",
+            f"(state_dim={actor_state_dim}, chunk_size={chunk_size}, action_dim={action_dim}, "
+            f"architecture={self.policy_architecture})",
             flush=True,
         )
         actor.load_state_dict(self.actor_state)
@@ -290,13 +305,15 @@ def _checkpoint_state_dim(payload: dict[str, Any]) -> int | None:
             pass
 
     actor = payload.get("actor")
-    first_weight_key = "net.net.0.weight"
+    first_weight_keys = ("net.net.0.weight",)
     if not isinstance(actor, dict):
         actor = payload.get("policy")
-        first_weight_key = "actor.net.net.0.weight"
+        first_weight_keys = ("actor.net.net.0.weight", "actor.reference_net.net.0.weight")
     if not isinstance(actor, dict):
         return None
-    first_weight = actor.get(first_weight_key)
+    first_weight = next(
+        (actor[key] for key in first_weight_keys if key in actor), None
+    )
     if first_weight is None or not hasattr(first_weight, "shape"):
         return None
     try:

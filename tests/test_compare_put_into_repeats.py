@@ -113,3 +113,24 @@ class ValidationPanelTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PilotPromotionRuleTests(unittest.TestCase):
+    """The latent pilot's pre-declared rule: strict CI above 0, retention > -3 pp."""
+
+    @staticmethod
+    def _pair(strict_ci, grasp_ci, lift_ci):
+        def row(ci):
+            return {"difference": (ci[0] + ci[1]) / 2, "ci95": list(ci), "permutation_p": 0.5}
+
+        return {"metrics": {"strict": row(strict_ci), "grasped": row(grasp_ci), "lifted": row(lift_ci)}}
+
+    def test_decisions(self):
+        from tools.audit.compare_put_into_repeats import pilot_promotion
+
+        rule = lambda *cis: pilot_promotion(self._pair(*cis), margin=0.03)["decision"]  # noqa: E731
+        self.assertEqual(rule((0.01, 0.05), (-0.02, 0.02), (-0.029, 0.01)), "promote")
+        self.assertTrue(rule((-0.001, 0.05), (0.0, 0.01), (0.0, 0.01)).startswith(
+            "no_promotion:strict_interval_not_above_zero"))
+        self.assertEqual(rule((0.01, 0.05), (-0.02, 0.02), (-0.031, 0.01)),
+                         "no_promotion:retention_inconclusive_or_failed:lifted")

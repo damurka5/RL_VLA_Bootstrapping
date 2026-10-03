@@ -72,6 +72,175 @@ THREE_STAGE_PICKUP = 1
 THREE_STAGE_PLACEMENT = 2
 THREE_STAGE_COUNT = 3
 
+# Target-y quartile edges (object world y at the start), identical to
+# tools/audit/summarize_kinematic_traces.py DEFAULT_Y_EDGES so training-time
+# diagnostics bin the same way as the evaluation tables.
+TARGET_Y_QUARTILE_EDGES = (-0.073, 0.002, 0.074)
+_LATENT_AXES = ("x", "y", "z", "yaw", "gripper")
+# Fixed threshold for the inherited inner tanh of the frozen reference.
+_INNER_TANH_SATURATION = 0.9
+
+
+def gate_episode_offsets(values: Any, holding: Any) -> Any:
+    """The effective per-world offset (or its std) for one decision.
+
+    ``values`` is the episode's realized draw, fixed since the reset; worlds
+    not yet holding get exactly zero. Evaluated once per decision, before the
+    chunk is sampled, so every slot of that chunk carries the same offset.
+    """
+
+    return values * holding.unsqueeze(-1).to(dtype=values.dtype)
+
+
+def latent_slot_records(torch: Any, sample: Mapping[str, Any], action_index: int, likelihood_code: int) -> dict[str, Any]:
+    """Records for one executed slot of a latent-likelihood decision.
+
+    Everything comes from the decision that sampled the chunk: the latent
+    sample, the clipped command and the effective offset in force when the
+    chunk was drawn -- not a later observation or gate. The offset is cloned so
+    a later in-place change to the episode offsets cannot reach a stored row.
+    """
+
+    executed = sample["executed_action"][:, action_index]
+    return {
+        "executed_action": executed.detach(),
+        "policy_sample": sample["policy_sample"][:, action_index].detach(),
+        "behavior_mean_offset": sample["behavior_mean_offset"].detach().clone(),
+        "old_log_prob": sample["old_log_prob"][:, action_index].detach(),
+        "likelihood_version": torch.full(
+            (int(executed.shape[0]),), int(likelihood_code), dtype=torch.int8, device=executed.device
+        ),
+    }
+
+
+class LatentRolloutTelemetry:
+    """Per-round summaries of the action components and the latent sampler.
+
+    Components are those of the deterministic mean, over live worlds and the
+    executed slots of each decision. Clipping and offsets are per executed
+    slot of each live world. Quantiles are of the pooled per-slot values.
+    """
+
+    def __init__(self, torch: Any, action_dim: int) -> None:
+        self.torch = torch
+        self.action_dim = int(action_dim)
+        self.parts: dict[str, list[Any]] = {
+            name: []
+            for name in ("reference_logit", "correction", "logit", "mean", "reference_residual")
+        }
+        self.slots = 0
+        self.clipped = None
+        self.gated_slots = 0
+        self.offset_abs = None
+
+    def record_decision(self, components: Mapping[str, Any], live: Any) -> None:
+        for name in self.parts:
+            values = components[name][live]
+            self.parts[name].append(values.reshape(-1, self.action_dim).detach().float())
+
+    def record_slot(self, sample: Mapping[str, Any], action_index: int, live: Any) -> None:
+        torch = self.torch
+        latent = sample["policy_sample"][:, action_index][live]
+        executed = sample["executed_action"][:, action_index][live]
+        offset = sample["behavior_mean_offset"][live]
+        clipped = (latent != executed).to(torch.float32).sum(dim=0)
+        gated = (offset != 0.0).any(dim=-1)
+        offset_abs = offset[gated].abs().sum(dim=0)
+        self.clipped = clipped if self.clipped is None else self.clipped + clipped
+        self.offset_abs = offset_abs if self.offset_abs is None else self.offset_abs + offset_abs
+        self.slots += int(live.sum().item())
+        self.gated_slots += int(gated.sum().item())
+
+    def metrics(self) -> dict[str, float]:
+        torch = self.torch
+        out: dict[str, float] = {}
+        axes = _LATENT_AXES[: self.action_dim]
+        if self.parts["mean"]:
+            pooled = {name: torch.cat(values, dim=0) for name, values in self.parts.items()}
+            derived = {
+                "reference_logit": pooled["reference_logit"],
+                "correction_logit": pooled["correction"],
+                "combined_logit": pooled["logit"],
+                "mean_action": pooled["mean"],
+                "abs_correction": pooled["correction"].abs(),
+                "output_tanh_slope": 1.0 - pooled["mean"].pow(2),
+            }
+            quantiles = torch.tensor([0.05, 0.5, 0.95], dtype=torch.float32, device=pooled["mean"].device)
+            for name, values in derived.items():
+                q = torch.quantile(values, quantiles, dim=0) if values.shape[0] else None
+                for dim, axis in enumerate(axes):
+                    out[f"policy_components/{name}_{axis}_mean"] = float(values[:, dim].mean().item())
+                    if q is not None:
+                        out[f"policy_components/{name}_{axis}_q05"] = float(q[0, dim].item())
+                        out[f"policy_components/{name}_{axis}_q50"] = float(q[1, dim].item())
+                        out[f"policy_components/{name}_{axis}_q95"] = float(q[2, dim].item())
+            saturated = (pooled["reference_residual"].abs() > _INNER_TANH_SATURATION).to(torch.float32)
+            for dim, axis in enumerate(axes):
+                # Inherited from the frozen reference; it cannot change in a
+                # correction run and is reported as a diagnostic only.
+                out[f"policy_components/frozen_reference_inner_tanh_saturated_{axis}_fraction"] = float(
+                    saturated[:, dim].mean().item()
+                )
+        if self.slots and self.clipped is not None:
+            for dim, axis in enumerate(axes):
+                out[f"latent/clip_fraction_{axis}"] = float(self.clipped[dim].item() / self.slots)
+            out["latent/offset_gate_occupancy_fraction"] = float(self.gated_slots / self.slots)
+            for dim, axis in enumerate(axes):
+                out[f"latent/realized_offset_abs_{axis}_mean"] = float(
+                    self.offset_abs[dim].item() / max(1, self.gated_slots)
+                )
+        return out
+
+
+def target_y_quartile_metrics(
+    torch: Any,
+    *,
+    target_y: Any,
+    instruction_ids: Any,
+    group_size: int,
+    stage_usable: Any,
+    record_world: Any,
+    record_stage: Any,
+    loss_mask: Any,
+    advantage: Any,
+    plate_id: int,
+    bowl_id: int,
+) -> dict[str, float]:
+    """Informative groups and selected stage records by target-y quartile.
+
+    Pure diagnostics: nothing here feeds the sampler or the loss. Record counts
+    are not gradient mass; the |advantage| sums are the unweighted advantage
+    mass of the selected rows, also not gradient mass.
+    """
+
+    edges = torch.tensor(TARGET_Y_QUARTILE_EDGES, dtype=target_y.dtype, device=target_y.device)
+    world_quartile = torch.bucketize(target_y.contiguous(), edges, right=True)
+    group_quartile = world_quartile.reshape(-1, int(group_size))[:, 0]
+    group_destination = instruction_ids.reshape(-1, int(group_size))[:, 0]
+    usable_group = stage_usable.any(dim=0)
+    record_quartile = world_quartile.index_select(0, record_world)
+    record_destination = instruction_ids.index_select(0, record_world)
+    selected = loss_mask.to(dtype=torch.bool)
+    out: dict[str, float] = {}
+    for q in range(len(TARGET_Y_QUARTILE_EDGES) + 1):
+        in_group = group_quartile == q
+        out[f"stage_y_quartile/q{q + 1}_usable_groups"] = float((usable_group & in_group).sum().item())
+        for destination, did in (("plate", plate_id), ("bowl", bowl_id)):
+            out[f"stage_y_quartile/q{q + 1}_{destination}_usable_groups"] = float(
+                (usable_group & in_group & (group_destination == did)).sum().item()
+            )
+        for stage, name in ((THREE_STAGE_APPROACH, "approach"), (THREE_STAGE_PICKUP, "pickup"), (THREE_STAGE_PLACEMENT, "placement")):
+            rows = selected & (record_quartile == q) & (record_stage == stage)
+            out[f"stage_y_quartile/q{q + 1}_{name}_selected_records"] = float(rows.sum().item())
+            out[f"stage_y_quartile/q{q + 1}_{name}_selected_records_abs_advantage"] = float(
+                advantage[rows].abs().sum().item()
+            )
+            for destination, did in (("plate", plate_id), ("bowl", bowl_id)):
+                out[f"stage_y_quartile/q{q + 1}_{destination}_{name}_selected_records"] = float(
+                    (rows & (record_destination == did)).sum().item()
+                )
+    return out
+
 
 def three_stage_group_credit(
     milestone_returns: Any,
@@ -3809,6 +3978,11 @@ class RankLocalMJWarpGRPOCollector:
         actions_per_world = torch.zeros(
             (worlds,), dtype=torch.int64, device=self.device
         )
+        latent = bool(getattr(self.trainer, "latent_likelihood", False))
+        if latent and self.store_vla_records:
+            raise RuntimeError(
+                "The latent likelihood has no LoRA update path; VLA capture must be off."
+            )
         record_lists: dict[str, list[Any]] = {
             "state": [],
             "prior": [],
@@ -3817,6 +3991,21 @@ class RankLocalMJWarpGRPOCollector:
             "old_log_prob": [],
             "world_index": [],
         }
+        latent_telemetry = None
+        likelihood_code = 0
+        if latent:
+            from rl_vla_bootstrapping.policy.latent_correction_policy import (
+                ACTION_LIKELIHOOD_CODES,
+                ACTION_LIKELIHOOD_LATENT,
+            )
+
+            likelihood_code = int(ACTION_LIKELIHOOD_CODES[ACTION_LIKELIHOOD_LATENT])
+            # The controller command and the scored latent sample are stored
+            # separately; there is no "action" column a Gaussian could score.
+            del record_lists["action"]
+            for key in ("executed_action", "policy_sample", "behavior_mean_offset", "likelihood_version"):
+                record_lists[key] = []
+            latent_telemetry = LatentRolloutTelemetry(torch, int(self.trainer.action_dim))
         if self.split_credit_at_grasp:
             # Which phase each record belongs to. Appended BEFORE the physics
             # step, so it reads "was this action taken while already holding?"
@@ -3844,10 +4033,11 @@ class RankLocalMJWarpGRPOCollector:
                 worlds, -1
             ).contiguous()
         )
-        if episode_offsets is not None:
+        if episode_offsets is not None and not latent:
             # The offset STD in effect per record, not the realised offset.
             # Scoring against the marginal N(mu, sigma^2 + s^2) needs only the
-            # width; the draw itself never has to be replayed.
+            # width; the draw itself never has to be replayed. (The latent
+            # likelihood records the realized effective offset instead.)
             record_lists["offset_std"] = []
         valid_masks: list[Any] = []
         timings = {
@@ -3928,6 +4118,9 @@ class RankLocalMJWarpGRPOCollector:
         )
         policy_target_cosine_first = torch.zeros_like(
             prior_target_cosine_first
+        )
+        target_y_start = torch.zeros(
+            (worlds,), dtype=torch.float32, device=self.device
         )
         residual_target_cosine_first = torch.zeros_like(
             prior_target_cosine_first
@@ -4031,7 +4224,9 @@ class RankLocalMJWarpGRPOCollector:
             # gated one collapsed indistinguishably, because the estimator made
             # the offset invisible to the gradient either way -- see
             # _marginal_log_std. The gate is worth keeping on its own terms; it
-            # was never the fix.
+            # was never the fix. (That "invisible" diagnosis is superseded: see
+            # _marginal_log_std. The latent likelihood conditions on the
+            # realized gated offset recorded below.)
             step_offsets = episode_offsets
             step_offset_std = offset_std_row
             if episode_offsets is not None and (
@@ -4056,19 +4251,37 @@ class RankLocalMJWarpGRPOCollector:
                     # miss the offset on decision 0 -- and they are exactly the
                     # regime the plant probe measured.
                     holding = holding | reset.prelifted.to(dtype=torch.bool)
-                gate = holding.unsqueeze(-1).to(dtype=episode_offsets.dtype)
-                step_offsets = episode_offsets * gate
-                step_offset_std = offset_std_row * gate
-            actions, log_probs, action_means = (
-                self.trainer.sample_action_chunks_tensor(
+                step_offsets = gate_episode_offsets(episode_offsets, holding)
+                step_offset_std = gate_episode_offsets(offset_std_row, holding)
+            latent_sample = None
+            if latent:
+                # Same generator draw as the legacy sampler; the realized gated
+                # offset of THIS decision is stored with every slot it produces.
+                latent_sample = self.trainer.sample_latent_action_chunks_tensor(
                     states=state_tensor,
                     priors=prior,
                     action_count=self.actions_per_policy_decision,
                     generator=self._sample_generator,
                     mean_offset=step_offsets,
-                    offset_std=step_offset_std,
+                    with_components=True,
                 )
-            )
+                actions = latent_sample["executed_action"]
+                log_probs = latent_sample["old_log_prob"]
+                action_means = latent_sample["mean"]
+                latent_telemetry.record_decision(
+                    latent_sample["components"], active & (decision < reset.horizons)
+                )
+            else:
+                actions, log_probs, action_means = (
+                    self.trainer.sample_action_chunks_tensor(
+                        states=state_tensor,
+                        priors=prior,
+                        action_count=self.actions_per_policy_decision,
+                        generator=self._sample_generator,
+                        mean_offset=step_offsets,
+                        offset_std=step_offset_std,
+                    )
+                )
 
             # Residual magnitude over the whole rollout, on the mean action.
             taken = int(action_means.shape[1])
@@ -4092,6 +4305,7 @@ class RankLocalMJWarpGRPOCollector:
                 target0 = gather_world_slots(
                     low_dim.object_positions, reset.task_state.target_slots
                 )
+                target_y_start = target0[:, 1].detach().clone()
                 rel_xy0 = (target0 - low_dim.ee_position)[:, :2]
                 prior_target_cosine_first = _cosine_2d(
                     prior[:, 0, :2], rel_xy0
@@ -4147,7 +4361,17 @@ class RankLocalMJWarpGRPOCollector:
                     )
                 record_lists["state"].append(state_tensor.detach())
                 record_lists["prior"].append(prior.detach())
-                record_lists["action"].append(actions[:, action_index].detach())
+                if latent_sample is not None:
+                    for key, value in latent_slot_records(
+                        torch, latent_sample, action_index, likelihood_code
+                    ).items():
+                        record_lists[key].append(value)
+                    latent_telemetry.record_slot(latent_sample, action_index, step_active)
+                else:
+                    record_lists["action"].append(actions[:, action_index].detach())
+                    record_lists["old_log_prob"].append(
+                        log_probs[:, action_index].detach()
+                    )
                 record_lists["action_index"].append(
                     torch.full(
                         (worlds,),
@@ -4155,9 +4379,6 @@ class RankLocalMJWarpGRPOCollector:
                         dtype=torch.int64,
                         device=self.device,
                     )
-                )
-                record_lists["old_log_prob"].append(
-                    log_probs[:, action_index].detach()
                 )
                 record_lists["world_index"].append(
                     torch.arange(
@@ -4179,7 +4400,7 @@ class RankLocalMJWarpGRPOCollector:
                         torch.full_like(first_grasp_step, THREE_STAGE_APPROACH),
                     )
                     record_lists["credit_stage"].append(credit_stage)
-                if step_offset_std is not None:
+                if step_offset_std is not None and not latent:
                     # The width ACTUALLY in effect for this decision, gated or
                     # not. Recording the ungated constant would price a
                     # behaviour distribution the rollout never sampled from.
@@ -4736,6 +4957,21 @@ class RankLocalMJWarpGRPOCollector:
             three_stage_metrics["three_stage/carry_slip_rate"] = float(
                 three_stage.carry_slip.to(dtype=torch.float32).mean().item()
             )
+            three_stage_metrics.update(
+                target_y_quartile_metrics(
+                    torch,
+                    target_y=target_y_start,
+                    instruction_ids=reset.task_state.instruction_ids,
+                    group_size=group_size,
+                    stage_usable=stage_usable,
+                    record_world=record_world,
+                    record_stage=records["credit_stage"].to(dtype=torch.int64),
+                    loss_mask=loss_mask,
+                    advantage=records["advantage"],
+                    plate_id=int(INSTRUCTION_TO_ID["put_into_plate"]),
+                    bowl_id=int(INSTRUCTION_TO_ID["put_into_bowl"]),
+                )
+            )
             three_stage_metrics["three_stage/wrong_place_rate"] = float(
                 three_stage.wrong_place.to(dtype=torch.float32).mean().item()
             )
@@ -4813,6 +5049,7 @@ class RankLocalMJWarpGRPOCollector:
         metrics = {
             **timings,
             **three_stage_metrics,
+            **({} if latent_telemetry is None else latent_telemetry.metrics()),
             "reset_time_s": float(reset_time),
             "rollout_time_s": float(total_time),
             "sampled_environment_actions": float(sampled_actions.item()),

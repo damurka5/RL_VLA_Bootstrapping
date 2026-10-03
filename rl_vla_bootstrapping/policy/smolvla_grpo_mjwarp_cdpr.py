@@ -1465,7 +1465,15 @@ _RANK_MEAN_UPDATE_METRICS = frozenset({
                 "vla_lora/ppo_loss",
                 "vla_lora/kl",
                 "vla_lora/grad_norm",
+                # Latent-likelihood pilot: per-rank settings and integrity
+                # checks, identical on every rank.
+                "policy/trainable_parameter_count",
+                "policy/lora_max_abs_change",
 })
+
+# Every metric under these prefixes is a per-rank mean, quantile, fraction or
+# integrity check, never a count (counts live under stage_y_quartile/).
+_RANK_MEAN_UPDATE_PREFIXES = ("policy_components/", "latent/", "correction/")
 
 
 def _synchronize_update_metrics_once(
@@ -1513,6 +1521,7 @@ def _synchronize_update_metrics_once(
             or key.endswith("_loss_mass")
             or "_mean_" in key
             or key.startswith("loss_")
+            or key.startswith(_RANK_MEAN_UPDATE_PREFIXES)
             or key in _RANK_MEAN_UPDATE_METRICS
         ):
             summed[key] /= float(world_size)
@@ -1766,6 +1775,32 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "[smolvla-mjwarp] loaded LoRA is frozen for this GRPO run; "
                     "only the residual actor receives milestone-balanced updates",
                 )
+        latent_likelihood = bool(trainer.latent_likelihood)
+        legacy_init_checkpoint = str(
+            getattr(args, "legacy_init_checkpoint", None) or ""
+        ).strip()
+        if latent_likelihood:
+            if update_vla_lora:
+                raise SystemExit("The latent likelihood requires frozen LoRA updates off.")
+            if os.environ.get("RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", "").strip():
+                raise SystemExit(
+                    "RLVLA_SMOLVLA_WARMSTART_CHECKPOINT is ambiguous under the latent "
+                    "likelihood; use --legacy-init-checkpoint (conversion) or "
+                    "--resume-checkpoint (continue)."
+                )
+            if bool(legacy_init_checkpoint) == bool(args.resume_checkpoint):
+                raise SystemExit(
+                    "The latent-likelihood pilot needs exactly one initializer: "
+                    "--legacy-init-checkpoint (conversion, step 0) or "
+                    "--resume-checkpoint (continue a pilot checkpoint)."
+                )
+            if getattr(args, "optimizer_lr_override", None) is None:
+                raise SystemExit(
+                    "The latent-likelihood pilot sets its learning rate explicitly; "
+                    "pass --optimizer-lr-override (LR_OVERRIDE in the launcher)."
+                )
+            if train_vla_lora:
+                trainer.freeze_vla_lora()
         simulator_metadata = _runtime_metadata(args, backend)
         global_step = 0
         # 1.0 when the starting policy came through sil_sft, 0.0 when it did
@@ -1810,6 +1845,20 @@ def main(argv: Sequence[str] | None = None) -> None:
                     "set but the checkpoint already matches this width; "
                     "nothing was inserted.",
                 )
+        if legacy_init_checkpoint:
+            resolved_legacy = _resolve_checkpoint(legacy_init_checkpoint)
+            lineage = trainer.initialize_from_legacy_checkpoint(resolved_legacy)
+            started_from_sft = _log_policy_provenance(
+                dist_ctx, resolved_legacy, "legacy conversion"
+            )
+            _log(
+                dist_ctx,
+                "[latent-pilot] converted "
+                f"{resolved_legacy} (sha256 {lineage['source_sha256'][:16]}..., "
+                f"source_global_step={lineage['source_global_step']}) into "
+                f"{trainer.policy_architecture} / {trainer.action_likelihood}; "
+                "fresh optimizer, pilot_global_step=0",
+            )
         if args.resume_checkpoint:
             checkpoint = _resolve_checkpoint(args.resume_checkpoint)
             global_step = trainer.load(
@@ -1883,6 +1932,112 @@ def main(argv: Sequence[str] | None = None) -> None:
                      "batch_size": int(args.reference_anchor_batch_size),
                      "kl_at_start": anchor_start_kl},
                 )
+
+        pilot_counters: dict[str, float] = {
+            "selected_environment_actions": 0.0,
+            "sampled_environment_actions": 0.0,
+            "episodes": 0.0,
+            "optimizer_steps": 0.0,
+            "updates": 0.0,
+            "wall_time_s": 0.0,
+        }
+        if latent_likelihood:
+            stored_counters = trainer.loaded_extra_state.get("pilot_counters")
+            if isinstance(stored_counters, Mapping):
+                pilot_counters.update(
+                    {key: float(value) for key, value in stored_counters.items()}
+                )
+            if args.resume_checkpoint and int(
+                pilot_counters["selected_environment_actions"]
+            ) != int(global_step):
+                raise SystemExit(
+                    "Resumed pilot counters disagree with the checkpoint's "
+                    f"global_step ({pilot_counters['selected_environment_actions']} "
+                    f"vs {global_step})."
+                )
+            override = float(args.optimizer_lr_override)
+            resolved = [float(group["lr"]) for group in trainer.optimizer.param_groups]
+            if any(value != override for value in resolved):
+                raise SystemExit(
+                    f"Resolved optimizer lr {resolved} != requested {override}."
+                )
+            base_policy = trainer._unwrap(trainer.actor)
+            protocol = {
+                "policy_architecture": trainer.policy_architecture,
+                "action_likelihood": trainer.action_likelihood,
+                "init_mode": "resume" if args.resume_checkpoint else "legacy_conversion",
+                "lineage": dict(trainer.lineage),
+                "pilot_global_step_at_start": int(global_step),
+                "pilot_counters_at_start": dict(pilot_counters),
+                "trainable_parameter_count": trainer.trainable_parameter_count(),
+                "trainable_parameter_names": [
+                    name for name, param in base_policy.named_parameters() if param.requires_grad
+                ],
+                "frozen_parameter_names": [
+                    name for name, param in base_policy.named_parameters() if not param.requires_grad
+                ],
+                "lora_tensors_frozen": len(trainer._lora_named_parameters()),
+                "lora_trainable": [
+                    name for name, param in trainer._lora_named_parameters().items() if param.requires_grad
+                ],
+                "optimizer": {
+                    "type": type(trainer.optimizer).__name__,
+                    "lr_resolved": resolved,
+                    "lr_yaml": float(args.learning_rate),
+                    "lr_override": override,
+                    "adam_eps": float(args.adam_eps),
+                    "weight_decay": float(args.weight_decay),
+                    "state_entries": len(trainer.optimizer.state),
+                },
+                "ppo_epochs": int(args.ppo_epochs),
+                "entropy_coef": float(args.entropy_coef),
+                "max_grad_norm": float(args.max_grad_norm),
+                "log_std_bounds": [float(args.min_log_std), float(args.max_log_std)],
+                "clip_range": [float(args.clip_range_low), float(args.clip_range_high)],
+                "episode_offset_std": [float(value) for value in trainer.episode_offset_std.tolist()],
+                "episode_offset_gate": (
+                    "three_stage_picked_up" if bool(args.three_stage_sparse_credit)
+                    else ("first_grasp" if bool(args.episode_offset_after_grasp) else "none")
+                ),
+                "reference_scale": float(args.residual_scale),
+                "correction_scale": 1.0,
+                "max_train_steps": int(args.max_train_steps),
+                "mjwarp_max_updates": int(args.mjwarp_max_updates),
+            }
+            if trainer.policy_architecture != "bounded_residual_v0":
+                from rl_vla_bootstrapping.policy.latent_correction_policy import tensor_fingerprint
+
+                protocol["reference_sha256"] = tensor_fingerprint(
+                    trainer._reference_named_parameters()
+                )
+            _log(
+                dist_ctx,
+                "[latent-pilot] trainable="
+                f"{protocol['trainable_parameter_count']} "
+                f"({', '.join(protocol['trainable_parameter_names'])}); "
+                f"frozen={len(protocol['frozen_parameter_names'])} tensors; "
+                f"LoRA frozen tensors={protocol['lora_tensors_frozen']}; "
+                f"episode_offset_std={protocol['episode_offset_std']} "
+                f"gate={protocol['episode_offset_gate']}",
+            )
+            if dist_ctx.is_main:
+                name = (
+                    "latent_pilot_protocol_resume.json"
+                    if args.resume_checkpoint
+                    else "latent_pilot_protocol.json"
+                )
+                _write_json(run_dir / name, protocol)
+                if not args.resume_checkpoint:
+                    # The zero-update candidate, before any optimization.
+                    zero_path = trainer.save(
+                        global_step=0,
+                        args=args,
+                        latest=False,
+                        extra_state={"pilot_counters": dict(pilot_counters)},
+                        simulator_metadata=simulator_metadata,
+                    )
+                    _log(dist_ctx, f"[latent-pilot] zero-update checkpoint={zero_path}")
+            _distributed_barrier()
 
         # Resume restores the saved rate, so the YAML learning_rate is NOT what
         # runs unless optimizer_lr_override is set. Say which one is active.
@@ -2125,6 +2280,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "RLVLA_CDPR_DEMO_BANK; its phase-local records come only from "
                 "fresh manifest rollouts."
             )
+        if latent_likelihood and demo_bank_path:
+            raise RuntimeError(
+                "The latent-likelihood pilot has no demonstration path: assisted "
+                "rollouts do not record latent samples or realized offsets."
+            )
         if demo_bank_path:
             from rl_vla_bootstrapping.policy.cdpr_demonstration_training import DemonstrationTraining
             demonstration_training = DemonstrationTraining(
@@ -2293,6 +2453,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 < int(args.mjwarp_max_updates)
             )
         ):
+            update_wall_started = time.perf_counter()
             scene_object_range = _apply_scene_object_curriculum(
                 resetter,
                 curriculum_steps=scene_curriculum_steps,
@@ -2595,6 +2756,25 @@ def main(argv: Sequence[str] | None = None) -> None:
             )
             global_step += global_selected
             update_index += 1
+            if latent_likelihood:
+                pilot_counters["selected_environment_actions"] += float(global_selected)
+                pilot_counters["sampled_environment_actions"] += float(
+                    synchronized_metrics.get("sampled_environment_actions", 0.0)
+                )
+                pilot_counters["episodes"] += float(
+                    synchronized_metrics.get("candidate_worlds", 0.0)
+                )
+                pilot_counters["optimizer_steps"] += float(
+                    synchronized_metrics.get("optimizer_steps", 0.0)
+                )
+                pilot_counters["updates"] += 1.0
+                pilot_counters["wall_time_s"] += time.perf_counter() - update_wall_started
+                synchronized_metrics.update(
+                    {f"pilot/{key}": float(value) for key, value in pilot_counters.items()}
+                )
+                synchronized_metrics["pilot/source_global_step"] = float(
+                    trainer.lineage.get("source_global_step", -1)
+                )
             if demonstration_training is not None and synchronized_metrics.get("demo/stalled_ranks", 0) > 0:
                 _append_jsonl(run_dir / f"demonstration_stop_rank{dist_ctx.rank}.jsonl", synchronized_metrics)
                 raise RuntimeError("Demonstration pilot stopped: 12 consecutive attempts for a family supplied no usable groups. Inspect demonstration_rank*.jsonl; do not silently continue ordinary-only training.")
@@ -2994,6 +3174,11 @@ def main(argv: Sequence[str] | None = None) -> None:
                         "validation": {
                             "last_step": int(last_validation_step),
                         },
+                        **(
+                            {"pilot_counters": dict(pilot_counters)}
+                            if latent_likelihood
+                            else {}
+                        ),
                     },
                     simulator_metadata=simulator_metadata,
                 )

@@ -14,6 +14,8 @@
 #     bash scripts/compare_cdpr_three_stage_repeats_remote.sh
 #
 # A bare step_<N> is looked up as runs/*/rl/step_<N>; it must match exactly one.
+# LABEL=PATH names a checkpoint explicitly, for runs whose step directories
+# share a name (e.g. matched pilot arms: candidate=runs/A/rl/step_N control=...).
 #
 # Outputs under $OUT_ROOT:
 #   <label>/rep<i>/          one evaluate_cdpr_three_stage_put_into_videos_remote.sh run
@@ -33,6 +35,10 @@ WORLDS="${WORLDS:-64}"
 ROUNDS="${ROUNDS:-8}"                   # WORLDS x ROUNDS distinct scenes
 EXCLUDE_VALIDATION_PANEL="${EXCLUDE_VALIDATION_PANEL:-1}"
 OUT_ROOT="${OUT_ROOT:-runs/three_stage_put_into_repeats/$(date +%Y%m%d_%H%M%S)}"
+# Optional: the pilot promotion rule (grasp/lift CI lower bound > -margin, e.g.
+# 0.03) and a paired strict breakdown by target-y quartile from the manifest.
+RETENTION_MARGIN="${RETENTION_MARGIN:-}"
+SCENE_MANIFEST="${SCENE_MANIFEST:-}"
 
 resolve_checkpoint() {
   local spec="$1" matches
@@ -54,10 +60,15 @@ resolve_checkpoint() {
 labels=()
 paths=()
 for spec in $CHECKPOINTS; do
+  explicit_label=""
+  if [[ "$spec" == *=* ]]; then
+    explicit_label="${spec%%=*}"
+    spec="${spec#*=}"
+  fi
   path="$(resolve_checkpoint "$spec")"
   [[ -d "$path" ]] && path="$path/smolvla_grpo_adapter.pt"
   [[ -f "$path" ]] || { echo "Adapter not found: $path" >&2; exit 2; }
-  label="$(basename "$(dirname "$path")")"
+  label="${explicit_label:-$(basename "$(dirname "$path")")}"
   for existing in "${labels[@]:-}"; do
     [[ "$existing" == "$label" ]] && { echo "Duplicate label $label." >&2; exit 2; }
   done
@@ -124,6 +135,8 @@ for i in "${!labels[@]}"; do
   for ((rep = 1; rep <= REPEATS; rep++)); do dirs+="$OUT_ROOT/${labels[$i]}/rep${rep},"; done
   compare_args+=(--checkpoint "${labels[$i]}=${dirs%,}")
 done
+[[ -n "$RETENTION_MARGIN" ]] && compare_args+=(--retention-margin "$RETENTION_MARGIN")
+[[ -n "$SCENE_MANIFEST" ]] && compare_args+=(--scene-manifest "$SCENE_MANIFEST")
 conda run --no-capture-output -n "$ENV_NAME" python3 tools/audit/compare_put_into_repeats.py \
   "${compare_args[@]}" --output "$OUT_ROOT/comparison.json" \
   | tee "$OUT_ROOT/comparison.log" | sed -n '/^=== /,$p'
