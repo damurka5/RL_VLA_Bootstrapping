@@ -2040,6 +2040,46 @@ Add each new promoted result to the top of §1 and append one ledger entry below
 
 Newest first. Entries follow the §13 template.
 
+### 2026-10-03 — All-dimension attribution: the SmolVLA prior is a constant action offset; the residual is the whole policy, mostly saturated, and failures are a saturated drift with the offset
+
+- Protocol: the same `zcap_060` traces as the Z attribution (`step_56072006`, 512 off-panel scenes, 505 finite episodes), re-summarized with `summarize_kinematic_traces.py` (`3ccd2eb`). The executed action is `tanh(prior + residual_scale · residual)`, with `residual_scale` 1.0. Values are means of per-episode means. "Prior sd" is the prior's spread within an episode's phase. "Saturated" is the share of residual pushes with |push| > 0.9. Gripper > 0 commands OPEN
+- **The frozen prior is a constant offset, not a policy.** In every phase, outcome and quartile `tanh(prior)` is about **x −0.30, y +0.66, z +0.76, gripper −0.48**. Its within-episode spread is at most 0.04 in every dimension (z 0.000–0.001, y 0.003–0.013, gripper 0.02, x 0.02–0.04). Yaw is the only channel whose prior differs between episode groups (−0.00 to +0.73), and it too is constant within an episode. The prior therefore carries almost no state information during an episode; all task-dependent behaviour is produced by the residual
+- Successful episodes cancel the offset. Hovering to grasp (strict, n = 184):
+
+| dim | executed | prior alone | residual push | saturated |
+|---|---:|---:|---:|---:|
+| x | −0.004 | −0.280 | +0.284 | 3% |
+| y | −0.007 | +0.652 | −0.782 | 36% |
+| z | +0.021 | +0.756 | **−0.961** | **91%** |
+| yaw | +0.020 | +0.056 | −0.044 | 16% |
+| gripper | −0.039 | −0.487 | +0.483 | 18% |
+
+  To hold still above the object the residual must output about the negative of the offset, at saturation in z 91% of the time
+- **Failures are the residual saturated in the same direction as the offset**, a fixed-direction drift at near-maximal speed rather than a weak or missing correction. Far side, the last three decisions before a slip (preslip, Q4, n = 53):
+
+| dim | executed | prior alone | residual push | saturated |
+|---|---:|---:|---:|---:|
+| x | **−0.777** | −0.387 | **−0.828** | 87% |
+| y | **+0.819** | +0.687 | **+0.747** | 94% |
+| z | **+0.864** | +0.756 | **+0.769** | 92% |
+| yaw | +0.241 | +0.181 | +0.237 | 89% |
+| gripper | +0.301 | −0.484 | **+0.806** | 95% |
+
+  The hand moves −x, +y (away from the camera) and up together, which matches the measured drop offsets (dx −0.23, dy +0.28 m from the receptacle). The same pattern, weaker, appears while carrying in slip episodes (Q4: x −0.53, y +0.48, z +0.49 pushes, 67–81% saturated) and while hovering in never-grasped episodes (Q4: x −0.42, y +0.32, z +0.25, 53–79% saturated)
+- **The gripper channel has the opposite structure from Z.** The prior pushes CLOSED (−0.48). The commanded-open "slips" come from the residual overriding it (+0.81 push, 95% saturated in the far-side preslip window). So the release is the residual's active, saturated decision, taken during the drift. This completes the slip finding: 98% commanded opens, and the command comes from the residual against the prior
+- Saturation is pervasive even in successes: z 91% while hovering, gripper 87% while carrying (that phase includes the final release), y 36–39%. In tanh saturation the policy behaves close to bang-bang, and the score-function gradient through the mean is attenuated (tanh′ ≈ 0.08 at |push| 0.96). Both fit RL refinements that stall and an unvisited far-side regime that falls into a fixed saturated mode
+- Implications:
+  1. For the thesis: in this embodiment the pretrained SmolVLA action head with its frozen LoRA contributes a constant action bias and no closed-loop behaviour. The deployed policy is the residual MLP on proprioception plus SmolVLA vision features; the VLA's role is the vision features and an offset. Earlier claims about prior quality should be read in that light
+  2. The residual's range is spent cancelling the offset: z at −0.96 just to hover, so it has no headroom to descend faster or brake. That offset should be removed from the parameterization. Candidates:
+     - subtract the measured constant: `tanh(prior − b + s · residual)`
+     - widen `s`
+     - train the LoRA so the prior's offset disappears
+     
+     Each needs the current behaviour carried over by distillation, not a raw weight copy, because `tanh` makes no rescaling exact
+  3. Saturation control is the second lever, e.g. a penalty on the pre-tanh residual magnitude, or a wider scale with a weaker net, so that rarely visited states do not default to a saturated corner command
+  4. The scene result stands: far-side scenes are where this drift happens. A fixed parameterization should be judged on the never class and the target-y quartiles, not only on the pooled rate
+- Status: diagnosis complete at the action level; no training change made yet
+
 ### 2026-10-03 — Z attribution: the frozen prior always commands "up"; the residual spends its whole range cancelling it, and far-side failures are where it stops. Capping the ceiling changes nothing
 
 - Protocol: `step_56072006`, 512 off-panel scenes, traces with decision records (`e5ea608`), two arms on identical scenes: controller ceiling 0.60 (config) and 0.40. The 0.60 re-run reproduces the previous trace: strict 184/512, Q1–Q4 65.1 / 54.0 / 23.0 / 3.2%, 98.4% of slips commanded opens, far-side slips at z ≈ 0.53
