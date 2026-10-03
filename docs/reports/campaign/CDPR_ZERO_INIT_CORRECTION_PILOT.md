@@ -300,7 +300,28 @@ What the comparison reports:
 
 ## 5. GPU preflight results
 
-Not run yet.
+**2026-10-03, checks 9.1–9.4: PASSED** (`scripts/preflight_cdpr_latent_correction_remote.sh`, 64 worlds).
+
+- Source `step_56072006/smolvla_grpo_adapter.pt`, SHA-256
+  `af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb`.
+- Captured real `(state, prior)` rows from the legacy rollout, shared by every
+  actor:
+
+  | Outcome | Early | Middle | Late |
+  |---|---|---|---|
+  | Strict | 152 | 97 | 12 |
+  | Failed | 360 | 305 | 309 |
+
+- Converted candidate and control: max |mean − legacy mean| = 0, and
+  max |correction| = 0.
+- Sampled controller commands under fixed noise and offsets are identical.
+- After save and reload through the resume path, all of the above is
+  unchanged.
+- Integrity: the reference equals the source, the LoRA equals the source, and
+  both are frozen.
+
+Pending: check 9.5 (one-update two-rank smoke per arm, then the trained
+checkpoint through the evaluator's loader).
 
 ## 6. Training and evaluation results
 

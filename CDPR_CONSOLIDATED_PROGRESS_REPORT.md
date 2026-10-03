@@ -4632,7 +4632,7 @@ which is five times slower and more reliable).
 
 - Git commit: this change
 - Run/config: `configs/examples/cdpr_smolvla_three_stage_put_into_latent_correction.yaml`. It is the three-stage config plus two tags: `policy_architecture: frozen_reference_logit_correction_v1` and `action_likelihood: latent_gaussian_conditional_offset_v1`. A test asserts no other `rl.args` difference. The launcher is `scripts/train_cdpr_latent_correction_pilot_remote.sh` (ARM=candidate/control). Note: `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md`
-- Source checkpoint and lineage: intended source `step_56072006`. It was not loaded: its SHA-256 is unrecorded because the file is only on the training host
+- Source checkpoint and lineage: `step_56072006`, SHA-256 `af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb`. GPU preflight (2026-10-03) PASSED on 1235 real captured inputs spanning strict and failed episodes: zero-update means bitwise equal and correction exactly 0 for both arms; sampled commands identical; save/reload unchanged; reference and LoRA equal to the source and frozen
 - Training steps / updates: **zero**
 - Evaluation protocol: none executed
 - Measured result (unit tests on synthetic checkpoints, CPU):
@@ -4649,5 +4649,5 @@ which is five times slower and more reliable).
 - What it does not support: any success-rate claim, or any claim that the bias mattered in past runs. Nothing was trained or evaluated on the real task
 - Status: implementation landed. Next steps are the GPU preflight (`scripts/preflight_cdpr_latent_correction_remote.sh`), a one-update two-rank smoke per arm, then the 10-update diagnostic
 - Local artifact path: none
-- SHA-256: source checkpoint pending
-- Missing provenance: every real-checkpoint and GPU number
+- SHA-256: source `af8e31f6…dbcb` (full hash above)
+- Missing provenance: every training and evaluation number
