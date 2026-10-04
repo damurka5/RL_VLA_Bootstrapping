@@ -320,8 +320,38 @@ What the comparison reports:
 - Integrity: the reference equals the source, the LoRA equals the source, and
   both are frozen.
 
-Pending: check 9.5 (one-update two-rank smoke per arm, then the trained
-checkpoint through the evaluator's loader).
+**2026-10-04, check 9.5: PASSED.** One update, two ranks, 512 worlds per rank.
+
+| | candidate (`latent_smoke_candidate_20261003_224201`) | control (`latent_smoke_control_20261004_154929`) |
+|---|---|---|
+| optimizer steps / LR | 554 / 1e-5 | 564 / 1e-5 |
+| sampled-latent KL estimate | 0.00076 | 0.0053 |
+| PPO clip fraction | 0.0045 | 0.0196 |
+| grad norm mean (pre-clip; cap 1.0) | 10.39 | 5.79 |
+| correction grad norm final / hidden / log_std | 10.39 / 0.023 / 0.187 | n/a |
+| reference / LoRA max abs change | 0 / 0 | n/a / 0 |
+| latent clip fraction x/y/z/yaw/gripper | .156/.192/.204/.221/.040 | .154/.188/.200/.218/.039 |
+| offset gate occupancy; mean abs gripper offset | 0.089; 0.127 | 0.094; 0.130 |
+| non-finite live episode rate | 0.0146 | 0.0117 |
+| rollout pickup / placement milestone rate | 0.619 / 0.256 | 0.632 / 0.253 |
+| selected / sampled actions, wall time | 87,009 / 689,634, 890 s | 85,406 / 688,838, 888 s |
+
+Readings:
+
+- **Hidden-layer gradient.** The hidden norm is a mean over 554 optimizer
+  steps. Only the first step's is exactly zero (unit-tested); it becomes
+  nonzero once the output layer moves.
+- **Matched LR is not matched step size.** At the same LR the candidate moved
+  about 7× less KL than the control, plausibly because only its output layer
+  and `log_std` train at first. A flat candidate curve may therefore reflect
+  a smaller effective step, not the architecture. Report KL alongside any
+  result.
+- **Clipping is common.** 15–22% of latent samples on x/y/z/yaw lie outside
+  [-1, 1]. That is the share of samples the legacy likelihood mis-scored.
+  This is a measurement of the data, not a task result.
+- **Evaluator path.** The preflight with `CANDIDATE_CHECKPOINT=…/step_0087009`
+  passed: the checkpoint loaded as the correction architecture, with a nonzero
+  correction, through the evaluator's loader.
 
 ## 6. Training and evaluation results
 
