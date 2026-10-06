@@ -7,6 +7,7 @@ tables. Completion is distinct from numerical health and experiment promotion.
 from __future__ import annotations
 
 import argparse
+import glob
 import json
 import math
 from pathlib import Path
@@ -189,7 +190,15 @@ def main() -> int:
     brief = args.list or not args.runs
     runs = args.runs or sorted(path.parent for path in args.runs_root.glob("*/launch_provenance.json"))
     reports = []
+    invalid_paths = False
     for run in runs:
+        if not run.is_dir():
+            invalid_paths = True
+            if glob.has_magic(str(run)):
+                print(f"Unexpanded run pattern: {run}. No matching directories were supplied by the shell; check --list.")
+            else:
+                print(f"Run directory does not exist: {run}")
+            continue
         try:
             report = summarize(run, args.expect_updates)
         except (OSError, TypeError, AttributeError) as error:
@@ -199,6 +208,8 @@ def main() -> int:
             continue
         reports.append(report)
         print_report(report, brief=brief)
+    if invalid_paths:
+        return 2
     if not reports:
         print("No latent pilot runs found. Pass the actual training run directory, not a preflight directory.")
         return 2

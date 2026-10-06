@@ -133,6 +133,27 @@ class PilotSummaryTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
             self.assertIn("arm=candidate updates=10/10", result.stdout)
 
+    def test_cli_rejects_missing_paths_without_fabricating_run_status(self):
+        tool = Path(__file__).resolve().parents[1] / "tools/audit/summarize_latent_pilot.py"
+        for name, message in (("latent_diag_*", "Unexpanded run pattern"),
+                              ("missing_run", "Run directory does not exist")):
+            with self.subTest(name=name):
+                result = subprocess.run([sys.executable, str(tool), str(self.run.parent / name)],
+                                        capture_output=True, text=True)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn(message, result.stdout)
+                self.assertNotIn("incomplete", result.stdout)
+                self.assertNotIn("missing metrics", result.stdout)
+
+    def test_cli_still_reports_existing_runs_with_an_unmatched_pattern(self):
+        self.fixture()
+        tool = Path(__file__).resolve().parents[1] / "tools/audit/summarize_latent_pilot.py"
+        result = subprocess.run([sys.executable, str(tool), str(self.run.parent / "missing_*"),
+                                 str(self.run)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("Unexpanded run pattern", result.stdout)
+        self.assertIn("arm=candidate updates=10/10", result.stdout)
+
     def check_launcher_exit(self, exit_code):
         """Run the real shell launcher with only the GPU/conda boundary stubbed."""
         self.fixture()
