@@ -1,6 +1,15 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — current through 2026-09-17, Europe/Moscow**
+**Living report — latest status update 2026-10-06, Europe/Moscow**
+
+**Current experiment:** zero-init correction over frozen `step_56072006`,
+with latent conditional likelihood and a matched likelihood-only control.
+GPU preflight and the one-update smokes passed; no completed 10-update
+diagnostic or 2M comparison has yet been supplied. The latest pasted control
+log is the already recorded `latent_smoke_control_20261004_154929`, ending
+at 85,406 selected actions after one update. Use the
+[pilot inspection runbook](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#6-inspecting-runs-before-extending-2026-10-06)
+before extending training. The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
 pilot, the 2026-09-14 10M-step run, its full resume to 28,309,431 steps, and
@@ -4648,6 +4657,33 @@ which is five times slower and more reliable).
   - The historical likelihood is biased on these toy problems.
 - What it does not support: any success-rate claim, or any claim that the bias mattered in past runs. Nothing was trained or evaluated on the real task
 - Status: implementation landed. Next steps are the GPU preflight (`scripts/preflight_cdpr_latent_correction_remote.sh`), a one-update two-rank smoke per arm, then the 10-update diagnostic
+
+### 2026-10-06 — Disambiguate smoke, preflight and diagnostic outputs before extending
+
+- Supplied control log: `latent_smoke_control_20261004_154929`, update 1,
+  selected step 85,406; initial strict validation 0.3828, final 0.3809 over
+  1,024 episodes. This is the smoke already recorded in the pilot note, not
+  a new 10-update result. Its progress bar can end at 9% normally because
+  the update cap is independent of the action budget.
+- Supplied preflight: passed on 1,286 captured inputs, source SHA-256
+  `af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb`;
+  reference/LoRA equal to source and frozen. This establishes the reported
+  integrity checks, not trained-policy improvement or diagnostic completion.
+- Added `tools/audit/summarize_latent_pilot.py`: lists actual run directories,
+  reads launch/resolved provenance plus update/validation JSONL, distinguishes
+  configured stopping limits and resumed counters, and flags missing/corrupt
+  data, non-finite metrics and frozen-weight changes. The launcher now records
+  training/logging exit codes and prints the report and exact output path.
+- Corrected the smoke instructions: hidden gradients are zero only on the
+  first optimizer step, not throughout the first multi-minibatch update.
+- Local validation: 13 artifact-reporting and stubbed-launcher tests passed;
+  these cover successful/failed launcher exits, old smoke vs diagnostic,
+  resume counters, cap ordering, corrupt/missing data, integrity violations
+  and zero-signal stops. Shell syntax and whitespace checks passed. No GPU
+  training was run locally for this reporting change.
+- Status: reporting/inspection repair; learning behavior unchanged. Review or
+  collect both fresh 10-update/1M-capped diagnostics, then a matched 2M pilot
+  and repeated development evaluation. No new checkpoint is promoted.
 - Local artifact path: none
 - SHA-256: source `af8e31f6…dbcb` (full hash above)
 - Missing provenance: every training and evaluation number

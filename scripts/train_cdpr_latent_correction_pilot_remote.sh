@@ -282,4 +282,24 @@ if [[ "$RUN_PREFLIGHT" == "1" ]]; then
     --config "$CONFIG" --require-gpus 2 --worlds "$WORLDS_PER_RANK" \
     --output "$RUN_DIR/preflight.json"
 fi
+# Keep the run identity visible after tqdm, and preserve both failure codes.
+# Historical runs only had a step progress bar, which can finish below 100%
+# when MAX_UPDATES is reached and looks indistinguishable from an interruption.
+set +e
 "${train_cmd[@]}" 2>&1 | tee "$RUN_DIR/train.log"
+train_status=("${PIPESTATUS[@]}")
+set -e
+"${python_cmd[@]}" - "$RUN_DIR/launch_result.json" "${train_status[0]}" "${train_status[1]}" <<'PYRESULT'
+import datetime, json, pathlib, sys
+pathlib.Path(sys.argv[1]).write_text(json.dumps({
+    "train_exit_code": int(sys.argv[2]),
+    "log_exit_code": int(sys.argv[3]),
+    "finished_at_utc": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+}, indent=2) + "\n")
+PYRESULT
+"${python_cmd[@]}" tools/audit/summarize_latent_pilot.py "$RUN_DIR" || \
+  echo "[latent-pilot] Report needs attention; inspect the CHECK lines and $RUN_DIR/train.log"
+printf '\n[latent-pilot] run_dir=%s train_exit=%s log_exit=%s\n' \
+  "$RUN_DIR" "${train_status[0]}" "${train_status[1]}"
+[[ "${train_status[0]}" == 0 ]] || exit "${train_status[0]}"
+exit "${train_status[1]}"

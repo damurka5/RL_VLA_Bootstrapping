@@ -2,8 +2,9 @@
 
 Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
-evidence, GPU preflight, and training/evaluation results. Only the first two
-exist as of 2026-10-03.
+evidence, GPU preflight, and training/evaluation results. GPU preflight and
+one-update smoke evidence are recorded in §5. As of 2026-10-06, no completed
+10-update diagnostic or matched 2M comparison has been supplied.
 
 ## 1. Implementation status
 
@@ -169,8 +170,8 @@ them on a clean stash; the third is the documented pre-existing failure in code
 this change does not touch.
 
 **Not run locally**: anything on the real `step_56072006` checkpoint, the
-SmolVLA runtime or MJWarp. Its SHA-256 is **not yet recorded**: the checkpoint
-is only on the training host.
+SmolVLA runtime or MJWarp. The checkpoint is only on the training host; its
+subsequently supplied SHA-256 and remote preflight results are recorded in §5.
 
 ## 4. Remote commands
 
@@ -215,8 +216,10 @@ ARM=candidate LEGACY_INIT_CHECKPOINT="$SRC" EXPECTED_SOURCE_SHA256=<sha> \
 
 Confirm in `train.log` and `metrics.jsonl`:
 
-- `latent_pilot_protocol.json` and `rl/step_0000000/` exist;
-- `correction/grad_norm_final_mean > 0` and `correction/grad_norm_hidden_mean == 0` on update 1;
+- `rl/latent_pilot_protocol.json` and `rl/step_0000000/` exist;
+- `correction/grad_norm_final_mean > 0`; the hidden gradient is zero only on
+  the first **optimizer step**, not necessarily on the first rollout update
+  (which contains hundreds of optimizer steps);
 - `correction/reference_max_abs_change == 0` and `policy/lora_max_abs_change == 0`;
 - the losses are finite.
 
@@ -238,7 +241,9 @@ ARM=control   LEGACY_INIT_CHECKPOINT="$SRC" EXPECTED_SOURCE_SHA256=<sha> MAX_TRA
 
 **Equal-budget 2M pilot, only if the diagnostic passes.** The update cap is
 explicitly off. Checkpoints are written at 0, every 250k (`save_every_steps`),
-and at the end:
+and at the end. Limits and save intervals are checked at update boundaries:
+actual saved steps can overshoot the requested budget/interval. Report each
+arm's actual selected and sampled action counts, not an exact 2M claim:
 
 ```bash
 ARM=candidate LEGACY_INIT_CHECKPOINT="$SRC" EXPECTED_SOURCE_SHA256=<sha> MAX_TRAIN_STEPS=2000000 MAX_UPDATES=0 bash scripts/train_cdpr_latent_correction_pilot_remote.sh
@@ -353,6 +358,75 @@ Readings:
   passed: the checkpoint loaded as the correction architecture, with a nonzero
   correction, through the evaluator's loader.
 
-## 6. Training and evaluation results
+## 6. Inspecting runs before extending (2026-10-06)
 
-None. No claim about success rates follows from the tests above.
+The newly supplied log excerpt identifies
+`latent_smoke_control_20261004_154929/rl/step_0085406`: it is the already
+recorded one-update control smoke, not evidence of a completed diagnostic.
+Its initial in-run strict validation is 0.3828 and final is 0.3809 (about
+−0.19 percentage points); this single comparison cannot establish a gain or
+regression. The separately supplied preflight passed frozen-state integrity
+on 1,286 captured inputs (336/328/302 failed early/late/middle and 176/24/120
+strict early/late/middle). The excerpt does not identify a trained checkpoint
+or establish ten completed updates.
+
+Use the standard-library reporter on the remote host after pulling:
+
+```bash
+python3 tools/audit/summarize_latent_pilot.py --list
+python3 tools/audit/summarize_latent_pilot.py runs/latent_smoke_control_20261004_154929 --expect-updates 10
+# If the diagnostic directories exist, inspect all matches explicitly:
+python3 tools/audit/summarize_latent_pilot.py runs/latent_diag_candidate_* runs/latent_diag_control_* --expect-updates 10
+```
+
+The smoke command intentionally flags fewer than ten updates. The reporter
+reads `launch_provenance.json`, `rl/latent_pilot_protocol*.json`,
+`rl/metrics.jsonl`, and `rl/validation.jsonl`. It prints arm, source hash,
+Git commit, configured limits, per-update diagnostics, cumulative interaction
+counts, and validation rows. Missing/corrupt metrics and frozen-weight changes
+are flagged, rather than hidden behind `-` columns. It does not select a
+checkpoint or approve a longer run automatically.
+
+New launcher runs also write `launch_result.json` with training/logging exit
+codes and print the report plus exact run directory on exit. Existing runs
+without an exit record are labeled by the limit evidenced in saved metrics;
+this is not proof of the process's current state. A killed launcher can also
+leave no exit record. A metrics row appears only after that update's validation
+and checkpoint, so an empty file while an update is running is not a failure
+by itself. A preflight directory has no training metrics.
+
+`MAX_UPDATES=1` can end normally at 9% of a 1M-action progress bar.
+`MAX_UPDATES=10 MAX_TRAIN_STEPS=1000000` stops at whichever limit comes first;
+ten updates are not guaranteed if selected-action throughput changes. The
+report distinguishes invocation-local updates from cumulative resumed counts.
+The EPA warning alone does not explain an early exit; inspect exit codes,
+saved counters and the log for an actual failure.
+
+If no diagnostic exists, run both fresh arms sequentially from the original
+source (do not resume the smoke and call it an identical fresh diagnostic):
+
+```bash
+SRC=runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006
+SHA=af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb
+for arm in candidate control; do
+  ARM="$arm" LEGACY_INIT_CHECKPOINT="$SRC" EXPECTED_SOURCE_SHA256="$SHA" \
+    MAX_TRAIN_STEPS=1000000 MAX_UPDATES=10 RUN_LABEL="latent_diag_$arm" \
+    bash scripts/train_cdpr_latent_correction_pilot_remote.sh || break
+done
+```
+
+Before the matched 2M pilot in §4, inspect both reports for finite optimization
+metrics, exactly unchanged frozen reference/LoRA, active correction gradients,
+KL/clip and correction trends, non-finite live-episode rates, and pickup,
+placement and strict-validation behavior. Non-finite **simulation episode
+rates** were already around 1–1.5% in the smoke; they are not the same as NaN
+losses, and their trend needs review rather than a made-up zero threshold.
+Keep the matched LR and objective unchanged for this screen. Missing diagnostic
+evidence is a reason to collect it, not evidence that the actor needs repair.
+After the 2M pilot, perform the repeated matched development evaluation and
+retention checks in §4 before choosing a longer training direction.
+
+## 7. Training and evaluation results
+
+Only smoke results are available. No completed diagnostic, 2M pilot, or
+promotion claim follows from the supplied excerpts.
