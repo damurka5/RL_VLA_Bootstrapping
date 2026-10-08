@@ -4,15 +4,19 @@
 
 **Current experiment:** zero-init correction over frozen `step_56072006`,
 with latent conditional likelihood and a matched likelihood-only control.
-GPU preflight and the one-update smokes passed. The control diagnostic now
-completed ten updates / 852,587 selected actions: strict validation 38.48%
-→ 40.53%, with finite optimizer metrics, unchanged LoRA, transient KL spikes
-and two rows of NaN contact-force telemetry. Candidate diagnostic evidence
-and the matched 2M comparison remain pending. See the
+GPU preflight, one-update smokes and both ten-update diagnostics are complete.
+Candidate: 827,913 selected actions, strict validation 37.89% → 37.99%;
+control: 852,587 actions, 38.48% → 40.53%. Reported optimization is finite and
+frozen weights remain unchanged. Candidate policy movement is smaller, and
+its mean non-finite simulation episode rate is higher (~2.18% vs 1.59%).
+Both have NaN contact-force telemetry on some updates. Next: the bounded
+matched 2M pilot, followed by repeated development evaluation; neither arm
+is promoted. See the
 [control diagnostic analysis](docs/reports/campaign/CDPR_LATENT_CONTROL_DIAGNOSTIC_20261008.md)
 and the
 [pilot inspection runbook](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#6-inspecting-runs-before-extending-2026-10-06)
-before extending training. The historical summary below predates this work.
+and [2M launch commands](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#8-decision-after-both-diagnostics-2026-10-08).
+The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
 pilot, the 2026-09-14 10M-step run, its full resume to 28,309,431 steps, and
@@ -4714,3 +4718,29 @@ which is five times slower and more reliable).
   metrics. All five validation rows are finite.
 - Status: control diagnostic completed with caveats; candidate report and
   exact launch/protocol provenance still needed before the matched 2M pilot.
+
+### 2026-10-08 — Candidate diagnostic completes; proceed to the bounded matched pilot
+
+- Evidence: user-pasted summary for `latent_diag_candidate_20261006_191536`,
+  Git `c4811a77414bb65bd58b6c871bacbf9e81bb3689`, verified legacy source hash
+  `af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb`.
+  Raw candidate files and full launch/protocol provenance were not attached.
+- Ten updates / 827,913 selected actions / approximately 6.63673M sampled
+  actions / 20,480 episodes / 5,434 optimizer steps; reported completed at
+  the update cap. Frozen reference and LoRA change remain exactly zero.
+  Hidden-layer gradients and nonzero correction magnitudes confirm learning.
+- Strict validation is 388/1024 → 389/1024 (37.89% → 37.99%), effectively
+  flat. Median sampled KL is 0.000863, roughly 4.6 times below control's
+  0.003975 at the same LR. This is not evidence of a disconnected branch.
+- Mean per-update non-finite episode rate is ~2.178%, above control's 1.587%;
+  it rises through much of updates 1–9 then falls at update 10. Both pad-force
+  averages are NaN on updates 3/4/6/10. Contact health remains unresolved.
+- Decision: proceed to the previously specified bounded 2M selected-action
+  pilot for both arms, fresh from the same hash-checked legacy source, LR
+  1e-5, one PPO epoch, update cap disabled. This is not an automatic 10M
+  extension or a performance promotion. Keep actual interaction counts and
+  simulator failures visible, and compare final-budget checkpoints using
+  the repeated development protocol before selecting a longer direction.
+- Full comparison, evidence limits and remote commands are in
+  [pilot note §§7–8](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#7-training-and-evaluation-results).
+  Documentation-only change; launcher syntax and whitespace checks passed.

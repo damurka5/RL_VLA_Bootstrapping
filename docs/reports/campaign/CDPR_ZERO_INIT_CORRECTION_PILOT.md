@@ -3,9 +3,9 @@
 Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
-one-update smoke evidence are recorded in §5. As of 2026-10-08, the control
-10-update diagnostic is complete; candidate diagnostic evidence and the
-matched 2M comparison remain pending (see §7).
+one-update smoke evidence are recorded in §5. As of 2026-10-08, both
+10-update diagnostics are complete. The bounded 2M comparison is the next
+experiment; contact-health caveats remain (see §§7–8).
 
 ## 1. Implementation status
 
@@ -437,4 +437,85 @@ NaN pad-force averages on updates 1/8 remain caveats; the latter now produce
 reporter warnings rather than a false impression of a failed training process.
 Simulator behavior is unchanged. Full evidence hashes, subgroup tradeoffs and
 limitations are in the [control diagnostic analysis](CDPR_LATENT_CONTROL_DIAGNOSTIC_20261008.md).
-Candidate diagnostic results, matched 2M evaluation and promotion remain pending.
+**2026-10-08: candidate diagnostic completed**, from the user's pasted reporter
+output (raw candidate JSONL/protocol files were not attached):
+`latent_diag_candidate_20261006_191536`, Git
+`c4811a77414bb65bd58b6c871bacbf9e81bb3689`, legacy conversion from source SHA-256
+`af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb`.
+Resolved architecture `frozen_reference_logit_correction_v1`, LR 1e-5.
+Ten updates end at 827,913 selected actions, approximately 6.63673M sampled
+actions, 20,480 episodes, 5,434 optimizer steps and 9,413.89 pilot wall seconds.
+The report says `completed: update cap` and has no CHECK lines.
+
+| Diagnostic | Candidate | Control |
+|---|---:|---:|
+| Initial strict validation | 37.89% | 38.48% |
+| Final strict validation | 37.99% | 40.53% |
+| Median sampled latent KL | 0.000863 | 0.003975 |
+| PPO clip fraction range | 0.263–0.471% | 1.70–2.69% |
+| Non-finite live-episode rate, mean over updates | ~2.178% | 1.587% |
+| Rows with NaN pad-force averages | 3, 4, 6, 10 | 1, 8 |
+
+Candidate initial strict validation is **37.8906% (388/1024)**; its final is
+**37.9883% (389/1024)**, a one-episode difference, **+0.098 pp**. The supplied
+intermediate rows are 39.8438% at step 504,088 and 38.9648% at 750,484. Treat
+the final candidate curve as flat, not as evidence of a gain. The pasted
+report contains four validation rows; no raw candidate file was available
+to investigate the absence of a row near its first 250k crossing.
+
+Reference and LoRA max change are exactly zero throughout. Hidden-layer
+gradient means rise from 0.0243 to 0.1126, and absolute correction magnitude
+becomes nonzero (last reported z 0.07399, gripper 0.02409). The zeros in the
+first correction row are expected: component statistics describe the rollout
+collected before that update's optimization. These are not a measurement of
+the final saved checkpoint's correction on a fixed input bank.
+
+The candidate's typical sampled KL is about 4.6 times smaller than control's;
+equal LR did not produce equal effective policy movement. Do not infer that
+the branch is disconnected, or automatically raise LR to match the control.
+Candidate non-finite episode rates climb through much of updates 1–9 (peak
+2.686%) and fall to 1.758% on update 10. This is a simulator-health caveat,
+not evidence of a NaN loss; the last lower value does not prove the issue is
+resolved. No raw force samples or subgroup validation were supplied for it.
+
+## 8. Decision after both diagnostics (2026-10-08)
+
+Proceed to the **bounded, matched 2M selected-action pilot per arm** already
+specified in §4, retaining the conservative LR and objective. Both diagnostics
+establish functioning optimization and frozen-weight integrity in the reported
+metrics; neither establishes performance superiority or fully healthy contact
+telemetry. Retain simulator failures and force warnings in the comparison.
+This is an experiment under known caveats, not checkpoint promotion or an
+automatic 10M extension. Do not silently repair contact values by zeroing them.
+
+Start both arms fresh from the same verified source so this follows the
+predeclared independent pilot protocol and does not splice differing
+diagnostic histories into the primary comparison:
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+git pull --ff-only
+unset RUN_NAME RESUME_CHECKPOINT WARMSTART_CHECKPOINT
+SRC=runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006
+SHA=af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb
+for arm in candidate control; do
+  ARM="$arm" LEGACY_INIT_CHECKPOINT="$SRC" EXPECTED_SOURCE_SHA256="$SHA" \
+    MAX_TRAIN_STEPS=2000000 MAX_UPDATES=0 PPO_EPOCHS=1 LR_OVERRIDE=1e-5 \
+    WORLDS_PER_RANK=512 SMOLVLA_MICROBATCH_SIZE=256 PRIOR_NOISE_SCALE=1 \
+    CONFIG=configs/examples/cdpr_smolvla_three_stage_put_into_latent_correction.yaml \
+    SCENES=runs/three_stage/scenes_8192.json CUDA_VISIBLE_DEVICES=0,1 \
+    RUN_PREFLIGHT=1 DRY_RUN=0 RUN_LABEL="latent_2m_$arm" \
+    bash scripts/train_cdpr_latent_correction_pilot_remote.sh || break
+done
+```
+
+`MAX_UPDATES=0` disables the update cap; the 2M-action cap remains active.
+Both may overshoot at update boundaries; report actual action counts.
+Use the final budget checkpoint for each primary comparison, followed by the
+four-repeat matched development evaluation against the source and against
+each other in §4. Keep `final_test` untouched. Inspect reports during the run
+for any growing numerical failure trend; stop and investigate an actual
+non-finite optimizer metric or frozen-weight violation before continuing.
+
+This update records supplied evidence and commands only; no model, optimizer,
+reward, simulation or training code was changed, and no remote run was started.
