@@ -1,13 +1,16 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — latest status update 2026-10-06, Europe/Moscow**
+**Living report — latest status update 2026-10-08, Europe/Moscow**
 
 **Current experiment:** zero-init correction over frozen `step_56072006`,
 with latent conditional likelihood and a matched likelihood-only control.
-GPU preflight and the one-update smokes passed; no completed 10-update
-diagnostic or 2M comparison has yet been supplied. The latest pasted control
-log is the already recorded `latent_smoke_control_20261004_154929`, ending
-at 85,406 selected actions after one update. Use the
+GPU preflight and the one-update smokes passed. The control diagnostic now
+completed ten updates / 852,587 selected actions: strict validation 38.48%
+→ 40.53%, with finite optimizer metrics, unchanged LoRA, transient KL spikes
+and two rows of NaN contact-force telemetry. Candidate diagnostic evidence
+and the matched 2M comparison remain pending. See the
+[control diagnostic analysis](docs/reports/campaign/CDPR_LATENT_CONTROL_DIAGNOSTIC_20261008.md)
+and the
 [pilot inspection runbook](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#6-inspecting-runs-before-extending-2026-10-06)
 before extending training. The historical summary below predates this work.
 
@@ -4687,3 +4690,27 @@ which is five times slower and more reliable).
 - Local artifact path: none
 - SHA-256: source `af8e31f6…dbcb` (full hash above)
 - Missing provenance: every training and evaluation number
+
+### 2026-10-08 — Control diagnostic completes; force-telemetry warning is not a training exit
+
+- Run: `latent_diag_control_20261006_223344`, ten updates, 852,587 selected
+  actions, 6,888,452 sampled actions, 20,480 episodes, 5,594 optimizer steps.
+  User-supplied terminal output reports training/log exits both zero.
+- Initial/final strict validation: 394/1024 → 415/1024 (38.48% → 40.53%).
+  Plate improves 5.47 pp; bowl declines 1.37 pp; carry slip rises 3.32 pp.
+  No paired performance or promotion claim follows from this in-run panel.
+- LoRA stays unchanged; optimizer metrics are finite. KL spikes to 0.07544
+  and 0.03682 on updates 3/4, then returns near its previous range. Non-finite
+  live simulation episodes total 325/20,480 (1.587%).
+- The only NaN metrics are both pad-force averages on updates 1/8. The
+  reporter now preserves them as explicit contact-health warnings, without
+  returning a failed-report exit for those two observational metrics alone.
+  Other non-finite metrics/integrity failures remain errors. No training or
+  simulator behavior changes; the contact issue is not claimed repaired.
+- Evidence, hashes and analysis:
+  [control diagnostic report](docs/reports/campaign/CDPR_LATENT_CONTROL_DIAGNOSTIC_20261008.md).
+  Local verification: 17 focused tests passed; direct inspection of attached
+  metrics confirms two contact-warning rows and no other non-finite numeric
+  metrics. All five validation rows are finite.
+- Status: control diagnostic completed with caveats; candidate report and
+  exact launch/protocol provenance still needed before the matched 2M pilot.

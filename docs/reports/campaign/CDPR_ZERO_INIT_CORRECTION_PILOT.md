@@ -3,8 +3,9 @@
 Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
-one-update smoke evidence are recorded in §5. As of 2026-10-06, no completed
-10-update diagnostic or matched 2M comparison has been supplied.
+one-update smoke evidence are recorded in §5. As of 2026-10-08, the control
+10-update diagnostic is complete; candidate diagnostic evidence and the
+matched 2M comparison remain pending (see §7).
 
 ## 1. Implementation status
 
@@ -428,5 +429,12 @@ retention checks in §4 before choosing a longer training direction.
 
 ## 7. Training and evaluation results
 
-Only smoke results are available. No completed diagnostic, 2M pilot, or
-promotion claim follows from the supplied excerpts.
+**2026-10-08: control diagnostic completed**, ten updates, 852,587 selected
+actions and 6,888,452 sampled actions; training/log exits both zero. Initial
+strict validation 394/1024 (38.48%), final 415/1024 (40.53%). Loss/gradient/std
+metrics are finite and LoRA remains unchanged. KL spikes on updates 3/4 and
+NaN pad-force averages on updates 1/8 remain caveats; the latter now produce
+reporter warnings rather than a false impression of a failed training process.
+Simulator behavior is unchanged. Full evidence hashes, subgroup tradeoffs and
+limitations are in the [control diagnostic analysis](CDPR_LATENT_CONTROL_DIAGNOSTIC_20261008.md).
+Candidate diagnostic results, matched 2M evaluation and promotion remain pending.

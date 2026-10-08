@@ -105,6 +105,37 @@ class PilotSummaryTests(unittest.TestCase):
         self.assertIn("incomplete", report["status"])
         self.assertTrue(any("no completed update" in issue for issue in report["issues"]))
 
+    def test_contact_force_nan_warns_without_failing_successful_training(self):
+        self.fixture(cap=1, updates=1)
+        self.write("launch_result.json", dict(train_exit_code=0, log_exit_code=0))
+        row = json.loads((self.run / "rl/metrics.jsonl").read_text())
+        row.update(left_pad_normal_force_mean_n=float("nan"),
+                   right_pad_normal_force_mean_n=float("inf"))
+        self.write("rl/metrics.jsonl", row)
+        report = summarize(self.run)
+        self.assertEqual(report["status"], "completed: update cap")
+        self.assertEqual(report["issues"], [])
+        self.assertIn("contact-force diagnostics", report["warnings"][0])
+        tool = Path(__file__).resolve().parents[1] / "tools/audit/summarize_latent_pilot.py"
+        result = subprocess.run([sys.executable, str(tool), str(self.run)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("WARNING:", result.stdout)
+        self.assertIn("not been repaired", result.stdout)
+
+    def test_contact_warning_does_not_hide_optimizer_or_other_nan(self):
+        self.fixture(cap=1, updates=1)
+        row = json.loads((self.run / "rl/metrics.jsonl").read_text())
+        row.update(left_pad_normal_force_mean_n=float("nan"),
+                   gradient_norm_mean=float("nan"), candidate_reward_mean=float("nan"))
+        self.write("rl/metrics.jsonl", row)
+        report = summarize(self.run)
+        self.assertTrue(report["warnings"])
+        self.assertIn("gradient_norm_mean", "\n".join(report["issues"]))
+        self.assertIn("candidate_reward_mean", "\n".join(report["issues"]))
+        tool = Path(__file__).resolve().parents[1] / "tools/audit/summarize_latent_pilot.py"
+        result = subprocess.run([sys.executable, str(tool), str(self.run)], capture_output=True, text=True)
+        self.assertEqual(result.returncode, 1)
+
     def test_protocol_mismatch_and_missing_final_validation(self):
         self.fixture()
         path = self.run / "rl/latent_pilot_protocol.json"

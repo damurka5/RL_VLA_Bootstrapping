@@ -17,6 +17,12 @@ ARCHITECTURES = {
     "candidate": "frozen_reference_logit_correction_v1",
     "control": "bounded_residual_v0",
 }
+# These are observational contact-force averages, not optimizer inputs. Keep
+# their corruption visible without calling a successfully completed training
+# process a failure. Do not generalize this exception to other NaN metrics.
+CONTACT_FORCE_DIAGNOSTICS = frozenset({
+    "left_pad_normal_force_mean_n", "right_pad_normal_force_mean_n",
+})
 METRICS = {
     "update": "update_index",
     "selected": "pilot/selected_environment_actions",
@@ -63,10 +69,18 @@ def fmt(value) -> str:
     return f"{value:.6g}" if isinstance(value, (int, float)) else "-" if value is None else str(value)
 
 
+def nonfinite_metrics(row: dict) -> tuple[list[str], list[str]]:
+    bad = [key for key, value in row.items()
+           if isinstance(value, (int, float)) and not finite(value)]
+    return ([key for key in bad if key not in CONTACT_FORCE_DIAGNOSTICS],
+            [key for key in bad if key in CONTACT_FORCE_DIAGNOSTICS])
+
+
 def summarize(run: Path, expect_updates: int | None = None) -> dict:
     if run.name == "rl":
         run = run.parent
     issues: list[str] = []
+    warnings: list[str] = []
     launch = next(iter(read_objects(run / "launch_provenance.json", issues)), {})
     protocol_name = "latent_pilot_protocol_resume.json" if launch.get("init_mode") == "resume" else "latent_pilot_protocol.json"
     protocol = next(iter(read_objects(run / "rl" / protocol_name, issues)), {})
@@ -134,9 +148,13 @@ def summarize(run: Path, expect_updates: int | None = None) -> dict:
         nonnumeric = [key for key in required if key in row and not isinstance(row[key], (int, float))]
         if nonnumeric:
             issues.append(f"row {index} non-numeric metrics: {', '.join(nonnumeric)}")
-        bad = [key for key, value in row.items() if isinstance(value, (float, int)) and not finite(value)]
+        bad, contact_bad = nonfinite_metrics(row)
         if bad:
             issues.append(f"row {index} non-finite metrics: {', '.join(bad)}")
+        if contact_bad:
+            warnings.append(f"row {index} non-finite contact-force diagnostics: {', '.join(contact_bad)}; "
+                            "force averages are unavailable, not evidence of NaN loss. "
+                            "Review simulator/contact health; these values have not been repaired.")
         for key in ("correction/reference_max_abs_change", "policy/lora_max_abs_change"):
             if key in row and row[key] != 0:
                 issues.append(f"row {index} frozen weights changed: {key}={row[key]}")
@@ -149,7 +167,7 @@ def summarize(run: Path, expect_updates: int | None = None) -> dict:
             issues.append(f"validation row {index} lacks a finite success rate")
     return dict(run=str(run), arm=arm, launch=launch, protocol=protocol, metrics=metrics,
                 validation=validation, status=status, updates=updates, selected=selected,
-                issues=issues, exit_record=bool(result))
+                issues=issues, warnings=warnings, exit_record=bool(result))
 
 
 def print_report(report: dict, *, brief: bool = False) -> None:
@@ -176,6 +194,8 @@ def print_report(report: dict, *, brief: bool = False) -> None:
             ("sampled_environment_actions", "episodes", "optimizer_steps", "wall_time_s")))
     for issue in report["issues"]:
         print(f"  CHECK: {issue}")
+    for warning in report["warnings"]:
+        print(f"  WARNING: {warning}")
     print("  Review KL, clipping, correction/gradient trends, simulator non-finite episode rates and validation before extending.")
     print("  This report does not establish a success-rate gain or approve promotion.")
 
