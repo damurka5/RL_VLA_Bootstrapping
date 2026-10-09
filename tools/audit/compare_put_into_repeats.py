@@ -33,6 +33,7 @@ The first ``--checkpoint`` is the baseline unless ``--baseline`` names another.
 from __future__ import annotations
 
 import argparse
+import copy
 import itertools
 import json
 import math
@@ -249,9 +250,11 @@ def compare_pair(
     target = np.asarray([first[uid]["target_catalog"] for uid in scenes])
     out: dict[str, Any] = {"metrics": {}, "strict_by_destination": {}, "strict_by_object": {}}
 
-    def effect(base: np.ndarray, cand: np.ndarray, *, test: bool) -> dict[str, Any]:
+    def effect(base: np.ndarray, cand: np.ndarray, *, test: bool,
+               metric_rng: np.random.Generator | None = None) -> dict[str, Any]:
+        effect_rng = rng if metric_rng is None else metric_rng
         diff = cand.mean(axis=0) - base.mean(axis=0)
-        low, high = scene_bootstrap(diff, rng=rng, resamples=resamples)
+        low, high = scene_bootstrap(diff, rng=effect_rng, resamples=resamples)
         row = {
             "scenes": int(diff.size),
             "baseline": round(float(base.mean()), 4),
@@ -261,7 +264,7 @@ def compare_pair(
         }
         if test:
             row["permutation_p"] = round(
-                permutation_p(base, cand, rng=rng, resamples=resamples), 5
+                permutation_p(base, cand, rng=effect_rng, resamples=resamples), 5
             )
         return row
 
@@ -299,6 +302,20 @@ def compare_pair(
         }
         for b, c in zip(base, cand)
     ]
+    # Simulator failures were in pooled summaries but absent from paired
+    # comparisons. Use a copied RNG so adding this diagnostic does not alter
+    # any existing interval/p-value, including those of the next checkpoint.
+    if all("non_finite" in ev["episodes"][uid]
+           for ev in (*base_evals, *cand_evals) for uid in scenes):
+        out["metrics"]["non_finite"] = effect(
+            outcome_matrix(base_evals, scenes, "non_finite"),
+            outcome_matrix(cand_evals, scenes, "non_finite"),
+            test=True, metric_rng=copy.deepcopy(rng),
+        )
+    else:
+        out["unavailable_metrics"] = {
+            "non_finite": "Missing per-scene non_finite flags in one or more evaluations."
+        }
     return out
 
 

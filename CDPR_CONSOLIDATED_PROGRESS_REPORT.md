@@ -2,16 +2,17 @@
 
 **Living report — latest status update 2026-10-09, Europe/Moscow**
 
-**Current experiment:** zero-init correction over frozen `step_56072006`,
-with latent conditional likelihood and a matched likelihood-only control.
-Both 2M training pilots are complete. Candidate: 2,007,079 selected actions,
-strict validation 39.36% → 38.18%; control: 2,052,558 actions, 38.77% → 40.92%.
-Recorded optimization is finite and frozen weights remain unchanged, but
-candidate non-finite simulation episodes rise during training (2.90% overall
-versus control 1.57%; final validation 3.61% versus 1.17%). Both retain some
-NaN contact-force telemetry. **Pause further training for repeated matched
-development evaluation; neither arm is promoted.** See the
-[2M review and exact evaluation commands](docs/reports/campaign/CDPR_LATENT_2M_REVIEW_20261009.md).
+**Current development checkpoint: promoted latent-likelihood control**
+`runs/latent_2m_control_20261009_033534/rl/step_2052558`.
+Repeated off-panel evaluation (512 scenes × four repeats) gives **41.16% strict
+versus source 36.91%**, +4.25 pp, paired 95% CI [+2.10, +6.40], Holm p=0.00030.
+Grasp and held-lift retention pass the predeclared −3 pp margin. The correction
+candidate reaches 37.55%, has no demonstrated strict gain, loses grasp rate
+and has more non-finite episodes (3.56% versus control 1.12% / source 0.98%).
+Do not extend that candidate as-is. Next recommended development leg: resume
+the promoted control to 5M total pilot actions at unchanged settings, then
+repeat endpoint evaluation; final_test remains untouched. See
+[promotion evidence and commands](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#10-repeated-evaluation-promote-control-for-development-2026-10-09).
 The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
@@ -83,6 +84,13 @@ The central idea is now demonstrated end to end:
 > Start from a pretrained SmolVLA action prior, learn task-specific corrections with a compact residual policy and GRPO, harvest successful trajectories, preserve them in a retention bank, and alternate family-specific RL with balanced residual SFT so one adapter can recover old skills while adding or strengthening a new one.
 
 ### Current headline achievements
+
+**Latest matched evaluation, 2026-10-09: the repaired-likelihood bounded-residual
+control passes the development promotion rule**, with 843/2048 strict successes
+(41.16%) versus 756/2048 (36.91%) for original `step_56072006`. Its scene-paired
+strict interval is wholly positive and grasp/lift retention pass. The zero-init
+correction arm fails the same rule. This is a development result, not final-test
+performance; details and the promoted checkpoint hash are in the newest §14 entry.
 
 **Latest completed evaluation, 2026-09-25: strict-success SFT with a 20%
 retention mix ties `step_52791642`, 93/256 = 36.33% strict against 91/256
@@ -4765,3 +4773,34 @@ which is five times slower and more reliable).
   existing runner can resolve its unique `step_2007079` without guessing the
   timestamp. Documentation-only update; documented shell block and evaluator
   launcher syntax checked locally. No remote evaluation was run.
+
+### 2026-10-09 — Repeated comparison promotes the bounded-residual control
+
+- Evidence: [retained comparison JSON](docs/artifacts/latent_2m_comparison_20261009/comparison.json),
+  SHA-256 `1180527660ae5c299264077fafafa51f10b80b1e068283fee434a87ebf01e19f`.
+  512 student_validation scenes excluding the fixed 128-scene panel; four
+  repeats / 2,048 episodes per checkpoint; original source hash verified.
+- Control `step_2052558`: 843/2048 = 41.16% strict, source 756/2048 = 36.91%.
+  Difference +4.25 pp, paired CI [+2.10, +6.40], Holm p=0.00030. Grasp
+  difference +1.07 pp, CI [−0.73, +2.93]; lift +3.27 pp, CI [+1.12, +5.42].
+  Both retention lower bounds exceed −3 pp. Bowl and plate point gains are
+  +4.61 and +3.89 pp. Status: **promoted for further development**.
+- New development checkpoint:
+  `runs/latent_2m_control_20261009_033534/rl/step_2052558/smolvla_grpo_adapter.pt`,
+  SHA-256 `91a5b74815a6868ec941069e9431ecf7eab31b15375c46be76fc9fe6c89be893`.
+  Preserve original source and pilot endpoints.
+- Correction candidate: 769/2048 = 37.55%, +0.63 pp, CI [−1.76, +3.03].
+  Grasp −2.93 pp, CI [−5.08, −0.83], fails retention. Non-finite episodes
+  3.56% versus source 0.98% and control 1.12%. Status: **not promoted; stop
+  this candidate's unchanged continuation**. No causal claim about all
+  correction architectures or the isolated likelihood effect follows.
+- Next: bounded control resume to 5M total pilot actions (about 2.95M more),
+  unchanged LR/task/optimizer settings, then endpoint comparison against
+  promoted 2M control and original source. No automatic 10M extension and
+  no final_test claim. Full commands and qualifications are in
+  [pilot note §10](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#10-repeated-evaluation-promote-control-for-development-2026-10-09).
+- Reporting fix: add previously omitted paired non-finite effects without
+  perturbing existing intervals/p-values or the shared RNG stream. Missing
+  flags are labeled unavailable. Three new regression tests and seven
+  existing comparator tests pass. Recompute reference/control-baseline
+  reports from saved per-scene evaluations on CPU; no GPU reruns required.

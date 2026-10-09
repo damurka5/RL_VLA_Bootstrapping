@@ -4,9 +4,9 @@ Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
 one-update smoke evidence are recorded in §5. As of 2026-10-09, both
-10-update diagnostics and 2M training pilots are complete. Pause further
-training for the repeated matched evaluation; candidate simulator-failure
-rates increased during the pilot (see §9).
+10-update diagnostics, 2M pilots and the repeated reference comparisons are
+complete. The bounded-residual control passes development promotion; the
+correction candidate does not. See §10 for evidence and the next bounded leg.
 
 ## 1. Implementation status
 
@@ -541,3 +541,115 @@ predeclared final-budget checkpoints, not retrospectively selected peaks.
 [Full review, evidence hashes and exact remote commands](CDPR_LATENT_2M_REVIEW_20261009.md)
 cover all three checkpoints and candidate-versus-control attribution. No new
 checkpoint is promoted and no training/simulator code was changed.
+
+## 10. Repeated evaluation: promote control for development (2026-10-09)
+
+Evidence: user-supplied `2m_comparison_comparison.json`, retained verbatim as
+[comparison.json](../../artifacts/latent_2m_comparison_20261009/comparison.json),
+SHA-256 `1180527660ae5c299264077fafafa51f10b80b1e068283fee434a87ebf01e19f`.
+The report identifies 512 distinct `student_validation` scenes, four repeats
+per checkpoint, 128 decisions, no settling or controller override, prior noise
+scale 1, unassisted deterministic-mean deployment, and exclusion of the 128
+in-run panel scenes. Original source hash matches the predeclared reference.
+Each checkpoint has 2,048 episodes; uncertainty is paired by scene, not based
+on treating all repeats as independent scenes. No final_test result is claimed.
+
+| Checkpoint | Strict successes | Strict rate | Difference vs source, paired 95% CI | Non-finite rate |
+|---|---:|---:|---|---:|
+| Source `step_56072006` | 756/2048 | 36.91% | reference | 0.98% |
+| Correction `step_2007079` | 769/2048 | 37.55% | +0.63 pp [−1.76, +3.03] | 3.56% |
+| Control `step_2052558` | 843/2048 | **41.16%** | **+4.25 pp [+2.10, +6.40]** | 1.12% |
+
+**Control passes the predeclared promotion rule.** Strict permutation p is
+0.00015, Holm-adjusted across the two reference comparisons p=0.00030. Grasp
+difference is +1.07 pp, CI [−0.73, +2.93]; lift difference is +3.27 pp, CI
+[+1.12, +5.42]. Both retention lower bounds exceed −3 pp. Bowl strict improves
+4.61 pp, CI [+1.47, +7.65]; plate improves 3.89 pp, CI [+0.97, +6.81]. These
+subgroup intervals are descriptive, not a new multiplicity-adjusted promotion
+test. Native success improves 2.64 pp, CI [+0.63, +4.64].
+
+The control's Q1/Q2 gains are larger than its far-side gains. Q4 strict remains
+only 7.56% versus source 5.62%; its interval touches zero. This is not a solved
+far-side failure mode. Strict per repeat is 218/211/213/201 versus source
+189/178/188/201: three gains and one tie, with substantial repeat noise still
+present.
+
+**Do not promote or extend the correction candidate as-is.** Its strict
+interval spans zero (Holm p=0.60432). Grasp declines 2.93 pp, CI
+[−5.08, −0.83], failing the −3 pp retention lower-bound requirement. Lift's
+lower bound −2.78 pp barely passes that requirement. Non-finite episodes are
+3.56% versus reference 0.98%, consistent with the training-health concern.
+Local subgroup improvements do not override failed primary/retention criteria.
+
+This selects the control lineage for development. It supports additional
+training with the repaired likelihood and bounded residual at these settings;
+it does not isolate the likelihood repair's causal contribution versus doing
+the same extra training with the historical likelihood. Neither does it prove
+the correction architecture cannot work under different settings or budgets.
+The aggregate report compares each arm against reference, **not directly
+against each other**. Its control-minus-candidate strict point difference is
+3.61 pp, but the paired interval cannot be reconstructed from these aggregates.
+
+### Selected checkpoint and next bounded continuation
+
+New development checkpoint:
+`runs/latent_2m_control_20261009_033534/rl/step_2052558/smolvla_grpo_adapter.pt`,
+SHA-256 `91a5b74815a6868ec941069e9431ecf7eab31b15375c46be76fc9fe6c89be893`.
+Keep the original source and both pilot endpoints intact.
+
+Recommended next leg: resume this control to **5,000,000 total pilot selected
+actions**, approximately 2,947,442 additional actions before update-boundary
+overshoot. This is a new bounded development leg, not a claim of an optimal
+budget. Preserve LR 1e-5, one PPO epoch, frozen LoRA and all task settings.
+Reevaluate its final endpoint against this promoted 2M control and the original
+source before a further extension; keep final_test locked during selection.
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+git pull --ff-only
+unset RUN_NAME LEGACY_INIT_CHECKPOINT WARMSTART_CHECKPOINT
+ARM=control \
+  RESUME_CHECKPOINT=runs/latent_2m_control_20261009_033534/rl/step_2052558 \
+  EXPECTED_SOURCE_SHA256=91a5b74815a6868ec941069e9431ecf7eab31b15375c46be76fc9fe6c89be893 \
+  MAX_TRAIN_STEPS=5000000 MAX_UPDATES=0 PPO_EPOCHS=1 LR_OVERRIDE=1e-5 \
+  WORLDS_PER_RANK=512 SMOLVLA_MICROBATCH_SIZE=256 PRIOR_NOISE_SCALE=1 \
+  CONFIG=configs/examples/cdpr_smolvla_three_stage_put_into_latent_correction.yaml \
+  SCENES=runs/three_stage/scenes_8192.json CUDA_VISIBLE_DEVICES=0,1 \
+  RUN_PREFLIGHT=1 DRY_RUN=0 RUN_LABEL=latent_control_to5m \
+  bash scripts/train_cdpr_latent_correction_pilot_remote.sh
+```
+
+On resume, `EXPECTED_SOURCE_SHA256` checks the **resumed adapter**, so it is
+the promoted control's hash rather than the original legacy hash. The pilot
+counter is cumulative; do not add the original 56M lineage to this budget.
+
+### Complete the paired attribution/health report without GPU reruns
+
+The received report includes pooled non-finite rates but its comparator
+omitted paired non-finite effects. That reporting omission is now fixed:
+where every episode has a non-finite flag, the comparator adds the paired
+interval and permutation p. Missing flags are reported as unavailable.
+A copied random generator keeps all prior statistics and subsequent
+checkpoint comparisons unchanged. Training/evaluation policy behavior is
+unchanged. Ten focused comparator tests pass, including preservation of the
+existing statistics and RNG stream.
+
+Recompute from the existing per-scene evaluation artifacts (CPU only):
+
+```bash
+OUT=runs/latent_2m_comparison_20261009_135414
+for baseline in reference control; do
+  conda run --no-capture-output -n cdpr-mjlab python3 tools/audit/compare_put_into_repeats.py \
+    --baseline "$baseline" \
+    --checkpoint "reference=$OUT/reference/rep1,$OUT/reference/rep2,$OUT/reference/rep3,$OUT/reference/rep4" \
+    --checkpoint "candidate=$OUT/candidate/rep1,$OUT/candidate/rep2,$OUT/candidate/rep3,$OUT/candidate/rep4" \
+    --checkpoint "control=$OUT/control/rep1,$OUT/control/rep2,$OUT/control/rep3,$OUT/control/rep4" \
+    --retention-margin 0.03 --scene-manifest runs/three_stage/scenes_8192.json \
+    --output "$OUT/comparison_${baseline}_updated.json" || break
+done
+```
+
+This audit does not require retraining or repeating the 6,144 evaluations and
+does not gate the already demonstrated control-versus-reference promotion.
+It supplies the missing direct candidate-versus-control and paired simulator
+failure evidence. No additional remote work was executed locally.

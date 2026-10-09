@@ -1,5 +1,10 @@
 # Matched latent-likelihood 2M pilots: training review
 
+**Follow-up:** the subsequent repeated evaluation promotes the control for
+development and rejects the correction candidate under the pilot rule. See
+[pilot note §10](CDPR_ZERO_INIT_CORRECTION_PILOT.md#10-repeated-evaluation-promote-control-for-development-2026-10-09).
+The review below records the earlier training-only evidence.
+
 Reviewed 2026-10-09 from four user-attached JSONL files and the control's
 console report. These artifacts suffice for a training diagnosis. They do
 not contain the independent repeated scene-level evaluation needed to select
@@ -104,8 +109,10 @@ the final budget checkpoints and original source: 512 development scenes,
 excluding the in-run panel, four repeats per checkpoint (6,144 episodes total).
 Use deterministic residual means, prior noise scale 1, 128 decisions, no
 controller intervention, and preserve non-finite failures in the outcomes.
-The comparator already reports scene-clustered strict/grasp/lift and
-non-finite differences. Keep `final_test` untouched.
+The comparator reports scene-clustered strict/grasp/lift differences. Paired
+non-finite differences were inadvertently omitted in the version used for
+the first comparison; they were added in the follow-up reporting fix above.
+Keep `final_test` untouched.
 
 The runner supports `LABEL=step_N` and refuses ambiguous/missing matches, so
 the unknown candidate timestamp does not need to be guessed:
