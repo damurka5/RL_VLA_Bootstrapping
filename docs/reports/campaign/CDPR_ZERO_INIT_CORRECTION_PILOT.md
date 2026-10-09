@@ -3,9 +3,10 @@
 Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
-one-update smoke evidence are recorded in §5. As of 2026-10-08, both
-10-update diagnostics are complete. The bounded 2M comparison is the next
-experiment; contact-health caveats remain (see §§7–8).
+one-update smoke evidence are recorded in §5. As of 2026-10-09, both
+10-update diagnostics and 2M training pilots are complete. Pause further
+training for the repeated matched evaluation; candidate simulator-failure
+rates increased during the pilot (see §9).
 
 ## 1. Implementation status
 
@@ -519,3 +520,24 @@ non-finite optimizer metric or frozen-weight violation before continuing.
 
 This update records supplied evidence and commands only; no model, optimizer,
 reward, simulation or training code was changed, and no remote run was started.
+
+## 9. Both 2M pilots completed (2026-10-09)
+
+The four supplied metrics/validation JSONL files establish completed budgets,
+finite recorded optimization metrics and unchanged frozen weights. Candidate
+ends at step **2,007,079** after 25 updates; control at **2,052,558** after 24.
+Initial → final strict validation is **39.36% → 38.18%** for candidate and
+**38.77% → 40.92%** for control. This favors control descriptively, but the
+in-run panel does not establish a reliable gain over the source.
+
+Candidate non-finite live training episodes increase from 1.96% in its first
+five updates to 3.27% in its last five (2.90% overall, versus control 1.57%).
+Final validation non-finite rates are 3.61% and 1.17%, respectively. Contact
+health is therefore more concerning than at the diagnostic stage. Do not
+interpret finite losses or small sampled KL as proof of healthy simulation.
+
+**Next: repeated matched evaluation, no further training yet.** Use the
+predeclared final-budget checkpoints, not retrospectively selected peaks.
+[Full review, evidence hashes and exact remote commands](CDPR_LATENT_2M_REVIEW_20261009.md)
+cover all three checkpoints and candidate-versus-control attribution. No new
+checkpoint is promoted and no training/simulator code was changed.

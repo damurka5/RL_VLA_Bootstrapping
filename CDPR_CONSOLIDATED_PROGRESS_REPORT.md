@@ -1,21 +1,17 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — latest status update 2026-10-08, Europe/Moscow**
+**Living report — latest status update 2026-10-09, Europe/Moscow**
 
 **Current experiment:** zero-init correction over frozen `step_56072006`,
 with latent conditional likelihood and a matched likelihood-only control.
-GPU preflight, one-update smokes and both ten-update diagnostics are complete.
-Candidate: 827,913 selected actions, strict validation 37.89% → 37.99%;
-control: 852,587 actions, 38.48% → 40.53%. Reported optimization is finite and
-frozen weights remain unchanged. Candidate policy movement is smaller, and
-its mean non-finite simulation episode rate is higher (~2.18% vs 1.59%).
-Both have NaN contact-force telemetry on some updates. Next: the bounded
-matched 2M pilot, followed by repeated development evaluation; neither arm
-is promoted. See the
-[control diagnostic analysis](docs/reports/campaign/CDPR_LATENT_CONTROL_DIAGNOSTIC_20261008.md)
-and the
-[pilot inspection runbook](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#6-inspecting-runs-before-extending-2026-10-06)
-and [2M launch commands](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#8-decision-after-both-diagnostics-2026-10-08).
+Both 2M training pilots are complete. Candidate: 2,007,079 selected actions,
+strict validation 39.36% → 38.18%; control: 2,052,558 actions, 38.77% → 40.92%.
+Recorded optimization is finite and frozen weights remain unchanged, but
+candidate non-finite simulation episodes rise during training (2.90% overall
+versus control 1.57%; final validation 3.61% versus 1.17%). Both retain some
+NaN contact-force telemetry. **Pause further training for repeated matched
+development evaluation; neither arm is promoted.** See the
+[2M review and exact evaluation commands](docs/reports/campaign/CDPR_LATENT_2M_REVIEW_20261009.md).
 The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
@@ -4744,3 +4740,28 @@ which is five times slower and more reliable).
 - Full comparison, evidence limits and remote commands are in
   [pilot note §§7–8](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#7-training-and-evaluation-results).
   Documentation-only change; launcher syntax and whitespace checks passed.
+
+### 2026-10-09 — Both 2M pilots finish; candidate flat with increasing simulator failures
+
+- Evidence: user-supplied metrics and validation JSONL for both arms, plus
+  control console provenance. Candidate ends at step 2,007,079 / 25 updates;
+  control at 2,052,558 / 24 updates. Sampled actions: 16,091,547 / 16,320,292;
+  optimizer steps: 13,264 / 13,349. Both have nine validation rows.
+- Strict validation initial → final: candidate 403/1024 → 391/1024
+  (39.36% → 38.18%); control 397/1024 → 419/1024 (38.77% → 40.92%).
+  Control currently looks stronger, but no repeated paired performance
+  comparison has been supplied and neither checkpoint is promoted.
+- Recorded optimization remains finite; frozen reference/LoRA integrity holds.
+  Candidate non-finite live episodes total 1,483/51,200 (2.90%) versus
+  control 770/49,152 (1.57%). Candidate first-five/last-five update rates are
+  1.96% / 3.27%; final validation non-finite episodes 37/1024 versus 12/1024.
+  Contact-force NaNs occur in 11 candidate updates and six control updates.
+- Decision: no longer training or LR increase now. Evaluate original source
+  and both final-budget checkpoints on 512 off-panel development scenes,
+  four repeats each; compare candidate against source and control, including
+  simulator failure outcomes. Keep final_test untouched.
+- [Full analysis, evidence hashes and commands](docs/reports/campaign/CDPR_LATENT_2M_REVIEW_20261009.md).
+  Candidate run directory/full launch provenance were not supplied; the
+  existing runner can resolve its unique `step_2007079` without guessing the
+  timestamp. Documentation-only update; documented shell block and evaluator
+  launcher syntax checked locally. No remote evaluation was run.
