@@ -7,10 +7,18 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from tools.audit.summarize_latent_pilot import ARCHITECTURES, summarize
+from tools.audit.summarize_latent_pilot import ARCHITECTURES, fmt, summarize
 
 
 class PilotSummaryTests(unittest.TestCase):
+    def test_integer_steps_preserve_checkpoint_identity(self):
+        for value in (19503223, 19503223.0, 20068312.0):
+            self.assertEqual(fmt(value), str(int(value)))
+        self.assertEqual(fmt(0.0031183143), "0.00311831")
+        self.assertEqual(fmt(None), "-")
+        self.assertEqual(fmt(float("nan")), "nan")
+        self.assertEqual(fmt(float("inf")), "inf")
+
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)

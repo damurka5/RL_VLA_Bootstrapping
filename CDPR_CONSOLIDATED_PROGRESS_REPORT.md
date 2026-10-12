@@ -1,6 +1,6 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — latest status update 2026-10-09, Europe/Moscow**
+**Living report — latest status update 2026-10-12, Europe/Moscow**
 
 **Current development checkpoint: promoted latent-likelihood control**
 `runs/latent_2m_control_20261009_033534/rl/step_2052558`.
@@ -9,9 +9,13 @@ versus source 36.91%**, +4.25 pp, paired 95% CI [+2.10, +6.40], Holm p=0.00030.
 Grasp and held-lift retention pass the predeclared −3 pp margin. The correction
 candidate reaches 37.55%, has no demonstrated strict gain, loses grasp rate
 and has more non-finite episodes (3.56% versus control 1.12% / source 0.98%).
-Do not extend that candidate as-is. Next recommended development leg: resume
-the promoted control to 5M total pilot actions at unchanged settings, then
-repeat endpoint evaluation; final_test remains untouched. See
+Do not extend that candidate as-is. The subsequent long control run is now
+complete at **20,068,312** total actions: in-run strict validation **53.03%**,
+with a **54.20%** panel peak at **19,503,223**. Next: compare endpoint and peak
+against the promoted 2M control on repeated off-panel development evaluations;
+the 2M control remains promoted until that comparison is available. See the
+[long-run analysis and commands](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md)
+and earlier
 [promotion evidence and commands](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#10-repeated-evaluation-promote-control-for-development-2026-10-09).
 The historical summary below predates this work.
 
@@ -4804,3 +4808,30 @@ which is five times slower and more reliable).
   flags are labeled unavailable. Three new regression tests and seven
   existing comparator tests pass. Recompute reference/control-baseline
   reports from saved per-scene evaluations on CPU; no GPU reruns required.
+
+### 2026-10-12 — Long control finishes at 20.07M; shortlist endpoint and panel peak
+
+- Run: `latent_control_long_20261009_160735`, resumed from promoted
+  `step_2052558`, source hash `91a5b748…89be893`, Git `2b156603…`.
+  User-supplied console states a 20M cap; event metadata confirms final step
+  **20,068,312**, adding 18,015,754 selected actions across 237 new updates
+  (261 cumulative), 485,376 new episodes, about 72.26 training hours.
+- In-run strict: initial 433/1024 (42.29%); final 543/1024 (53.03%); highest
+  of 73 readings 555/1024 (54.20%) at **19,503,223**. Final grasp 84.77%, held
+  lift 80.08%, plate strict 59.38%, bowl strict 46.68%. The endpoint/peak
+  gap is only 12 in-run successes and does not establish superiority.
+- Non-finite live training episodes: 7,874/485,376 = 1.622%; first/last 20
+  update means 1.636% / 1.650%. LoRA change remains zero. TensorBoard stores
+  only 187 of 237 pad-force readings because non-finite scalars are skipped;
+  missing readings must not be interpreted as proof of finite contact metrics.
+- Decision: evaluate `step_20068312` (primary), `step_19503223` (panel-selected
+  secondary), and promoted `step_2052558` on the existing repeated off-panel
+  protocol. Compare peak directly with endpoint from those same artifacts.
+  Preserve original source, leave final_test untouched, and select a resume
+  checkpoint on matched evidence before another extension.
+- [Full report and commands](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md);
+  [derived evidence and source hashes](docs/artifacts/latent_control_long_20261012/summary.json).
+  Exact checkpoint IDs use integer TensorBoard event steps, not rounded
+  float scalar values. Fixed reporter integer formatting; 18 tests pass.
+  Chart visually checked and evaluation shell block syntax checked locally.
+  No remote evaluation or training-code change was made in this review.

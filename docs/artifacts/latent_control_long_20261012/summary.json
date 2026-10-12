@@ -1,0 +1,26 @@
+{
+  "sources": [
+    {
+      "name": "events.out.tfevents.1791551302.VLAPU.571633.0",
+      "sha256": "04f1b99ae332d4be74f68c9d33df0a6f4dc9e5058f1a1cafb554d0f368d13ec1"
+    },
+    {
+      "name": "Pasted text.txt",
+      "sha256": "7dd9234f09f2f3623446add9a3bb2e4e63447822a57af29b4c368139bc01ed33"
+    }
+  ],
+  "run": "latent_control_long_20261009_160735",
+  "configured_budget_from_console": 20000000,
+  "start_step": 2052558,
+  "final_step": 20068312,
+  "peak_step": 19503223,
+  "new_updates": 237,
+  "cumulative_updates": 261.0,
+  "validation_rows": 73,
+  "new_selected_actions": 18015754,
+  "new_episodes": 485376.0,
+  "non_finite_live_episodes": 7874.0,
+  "elapsed_hours": 72.26292534722222,
+  "force_scalar_rows": 187,
+  "caveat": "TensorBoard omits non-finite scalars; missing force values cannot be recovered. Event step integers, not float scalar values, identify checkpoints."
+}

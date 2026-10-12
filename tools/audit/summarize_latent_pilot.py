@@ -66,6 +66,10 @@ def finite(value) -> bool:
 
 
 def fmt(value) -> str:
+    # Counts/steps identify exact checkpoint directories. Six significant
+    # digits round a step like 19,503,223 to 1.95032e+07, losing that identity.
+    if finite(value) and (isinstance(value, int) or value.is_integer()):
+        return str(int(value))
     return f"{value:.6g}" if isinstance(value, (int, float)) else "-" if value is None else str(value)
 
 

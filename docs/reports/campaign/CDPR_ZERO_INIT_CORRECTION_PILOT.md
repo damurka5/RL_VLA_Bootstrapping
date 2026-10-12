@@ -3,10 +3,10 @@
 Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
-one-update smoke evidence are recorded in §5. As of 2026-10-09, both
-10-update diagnostics, 2M pilots and the repeated reference comparisons are
-complete. The bounded-residual control passes development promotion; the
-correction candidate does not. See §10 for evidence and the next bounded leg.
+one-update smoke evidence are recorded in §5. As of 2026-10-12, the promoted
+bounded-residual control has completed a long continuation to 20,068,312
+total actions. Its endpoint and in-run peak await matched evaluation against
+the promoted 2M control (see §11). The correction candidate remains unpromoted.
 
 ## 1. Implementation status
 
@@ -653,3 +653,29 @@ This audit does not require retraining or repeating the 6,144 evaluations and
 does not gate the already demonstrated control-versus-reference promotion.
 It supplies the missing direct candidate-versus-control and paired simulator
 failure evidence. No additional remote work was executed locally.
+
+## 11. Long control continuation completed (2026-10-12)
+
+The user subsequently chose substantial training rather than another short
+pilot. Chat supplied a 10M-total resume command; the completed run's supplied
+console reports an actual **20M cap**. TensorBoard confirms 2,052,558 →
+20,068,312 total selected actions in 237 new updates (18,015,754 additional
+actions), about 72.26 recorded training hours.
+
+In-run strict validation rises from 42.29% at resume to 53.03% at the endpoint;
+the highest of 73 validation readings is 54.20% at **step 19,503,223**. Grasp
+and held lift also improve. Non-finite live training episodes average 1.62%
+without a sustained upward trend, and LoRA remains unchanged. Missing pad-force
+TensorBoard values still limit the contact-health assessment.
+
+Shortlist **final `step_20068312`**, **panel peak `step_19503223`**, and the
+promoted **2M baseline `step_2052558`** for repeated off-panel evaluation.
+Final is primary and the panel-selected peak is secondary; do not promote
+the peak merely for its 12 additional in-run successes. No long-run endpoint
+is promoted yet. Exact steps were recovered from integer event metadata.
+
+[Full analysis, checkpoint paths, chart and complete evaluation commands](CDPR_LONG_CONTROL_REVIEW_20261012.md).
+Preserve the original source as historical reference. No weight upload is
+needed; return the new comparison JSON and peak-versus-final JSON. The pilot
+reporter now prints step IDs exactly instead of rounding them; 18 local tests
+pass. No optimizer or simulator behavior changes.
