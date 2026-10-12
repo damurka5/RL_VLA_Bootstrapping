@@ -1,4 +1,8 @@
-# Long control continuation: checkpoint shortlist and evaluation handoff
+# Long control continuation: evaluation and endpoint promotion
+
+**Current decision:** repeated off-panel evaluation promotes final `step_20068312`
+for development; continue the unchanged control to 40M total actions. See the
+matched results and resume command below.
 
 Reviewed 2026-10-12 from the user-supplied TensorBoard event file and pasted
 terminal summary. Run: `latent_control_long_20261009_160735`, reported Git
@@ -88,7 +92,7 @@ run steps should have checkpoint directories. They were not inspected locally;
 the evaluator checks file existence before allocating the evaluation jobs.
 Use these explicit step directories, not a moving `latest.pt` alias.
 
-## Next: compare the long run against the promoted control
+## Completed comparison protocol (historical handoff)
 
 Run the same 512-scene off-panel development protocol, four repeats for each
 of the three checkpoints (6,144 episodes total). Baseline is now the promoted
@@ -139,3 +143,92 @@ can identify checkpoint directories without decoding rounded scientific
 notation. Eighteen reporter tests pass, including exact large-step formatting.
 The evaluation command block passed shell syntax checking; no remote training
 or evaluation was launched locally and no optimizer/simulator behavior changed.
+
+## Matched results received: promote final20m
+
+Evidence from `latent_control_long_comparison_20261012_202417`:
+[comparison.json](../../artifacts/latent_control_long_comparison_20261012/comparison.json)
+and [peak_vs_final.json](../../artifacts/latent_control_long_comparison_20261012/peak_vs_final.json).
+Both reports agree on checkpoint hashes, repeat directories, aggregates and
+protocol. They cover 512 development scenes, four repeats / 2,048 episodes
+per checkpoint, excluding the 128-scene training validation panel. The direct
+peak/final report reuses the same episodes; it is not additional replication.
+
+| Checkpoint | Strict successes | Strict | Grasp | Held lift | Non-finite |
+|---|---:|---:|---:|---:|---:|
+| control2m | 784/2048 | 38.28% | 75.05% | 68.07% | 0.98% |
+| final20m | 1095/2048 | 53.47% | 85.99% | 82.23% | 0.88% |
+| peak19m | 1072/2048 | 52.34% | 86.28% | 82.28% | 1.07% |
+
+Final versus 2M: **+15.19 pp strict**, scene-paired 95% bootstrap interval
+**[+12.70, +17.68] pp**, Holm p=0.00010. All four repeats improve (by 81,
+78, 76 and 76 successes). Grasp +10.94 pp, CI [+8.89, +13.09]; held lift
++14.16 pp, CI [+11.72, +16.65]. Both exceed the −3 pp retention floor.
+This retention check concerns grasp/lift within full-task put_into episodes;
+it does not establish retention across other instruction families.
+
+The peak also passes against 2M, but peak minus final is −1.12 pp strict,
+CI [−3.22, +0.98], p=0.30808. There is no demonstrated advantage for switching
+to the panel-selected peak, nor proof the checkpoints are equivalent. Select
+the predesignated primary endpoint, which also has the higher point estimate.
+The direct report's `no_promotion:strict_interval_not_above_zero` refers to
+promoting peak over final; it does not reverse final's promotion over 2M.
+
+The baseline is 38.28% in these reruns versus 41.16% in the earlier comparison.
+Use the contemporaneous matched baseline, not a cross-run subtraction. Repeat
+variability is present; the large matched gain is consistent across all four
+repeats. These reports alone do not identify the cause of the baseline shift.
+
+Final's non-finite difference is −0.10 pp, CI [−0.78, +0.54]; no detected
+increase, but not proof of equivalence. Carry-slip and wrong-place intervals
+also cross zero. The increased success comes with better grasp/lift and
+strict-given-lift (56.24% → 65.02%), not a demonstrated reduction in either
+of those error rates. The outcome flags need not be mutually exclusive.
+
+Both destination types improve: bowl 33.92% → 48.14%, plate 42.61% → 58.75%.
+All four object types and target-y quartiles have positive reported strict
+intervals (exploratory subgroup intervals, not multiplicity-adjusted claims).
+Remaining weaknesses include potato strict 41.80%, bowl 48.14%, and Q4 target-y
+strict 13.76% versus Q1 82.69%. These identify future analysis targets, not a
+reason to change the successful objective or learning rate now.
+
+## Next training: resume final20m to 40M total actions
+
+Selected checkpoint:
+`runs/latent_control_long_20261009_160735/rl/step_20068312/smolvla_grpo_adapter.pt`.
+SHA-256: `d6c4aacd1e5dfbc59d230983c4a420f5e7aedb38e2fdb75f3e8196232f16de47`.
+
+Recommend one substantial continuation with the same architecture, task,
+LR=1e-5, PPO epochs=1, frozen LoRA and existing validation/checkpoint cadence.
+**40M is a proposed next budget, not an established optimum**: it adds
+19,931,688 selected actions before the final full-rollout overshoot. Based
+on the last leg's throughput, allow roughly 80 training hours plus startup;
+actual runtime and further gains are uncertain. No extra pilot or evaluation
+is required before this continuation. Keep final_test untouched during model
+selection. The launcher name retains `pilot` for historical reasons.
+
+```bash
+cd /root/repo/RL_VLA_Bootstrapping
+git pull --ff-only && \
+env -u LEGACY_INIT_CHECKPOINT -u WARMSTART_CHECKPOINT \
+  ARM=control \
+  RESUME_CHECKPOINT=runs/latent_control_long_20261009_160735/rl/step_20068312 \
+  EXPECTED_SOURCE_SHA256=d6c4aacd1e5dfbc59d230983c4a420f5e7aedb38e2fdb75f3e8196232f16de47 \
+  MAX_TRAIN_STEPS=40000000 MAX_UPDATES=0 \
+  PPO_EPOCHS=1 LR_OVERRIDE=1e-5 PRIOR_NOISE_SCALE=1 \
+  CONFIG=configs/examples/cdpr_smolvla_three_stage_put_into_latent_correction.yaml \
+  SCENES=runs/three_stage/scenes_8192.json \
+  CUDA_VISIBLE_DEVICES=0,1 WORLDS_PER_RANK=512 SMOLVLA_MICROBATCH_SIZE=256 \
+  RUN_PREFLIGHT=1 DRY_RUN=0 RUN_LABEL=latent_control_to40m \
+  bash scripts/train_cdpr_latent_correction_pilot_remote.sh
+```
+
+The source hash checks the resumed 20M adapter, not the original legacy source.
+`MAX_UPDATES=0` removes the update cap; 40M is cumulative in the repaired-
+likelihood lineage and does not add the historical 56M source counter.
+Preserve the 20M promoted endpoint as the next matched evaluation baseline,
+the 19.5M alternative and the historical 2M/original source checkpoints.
+After completion return metrics.jsonl, validation.jsonl and the launcher
+summary; evaluate the new endpoint against 20M before choosing another source.
+No remote training was launched locally. This update changes documentation
+and preserves supplied evidence; it changes no training or evaluation code.

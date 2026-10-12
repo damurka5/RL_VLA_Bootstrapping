@@ -1,0 +1,613 @@
+{
+  "tool": "compare_put_into_repeats.py",
+  "scenes": 512,
+  "protocol": {
+    "scene_manifest_sha256": "30dc9d53027c7e7ba871379e1ec17f0f148a08517f03fc4fa531549a15ef9208",
+    "split": "student_validation",
+    "worlds": 64,
+    "rounds": 8,
+    "distinct_scene_rounds": true,
+    "decisions": 128,
+    "settle_decisions": 0,
+    "excluded_validation_panel": {
+      "groups_per_rank": 64,
+      "panel_scenes": 128,
+      "ranks": 2,
+      "rounds": 1,
+      "split_scenes_after": 1102,
+      "split_scenes_before": 1230,
+      "validation_seed": 2000000
+    },
+    "controller_z_max": null,
+    "prior_noise_scale": 1.0,
+    "stochastic_seed": null,
+    "arm": "unassisted"
+  },
+  "baseline": "control2m",
+  "alpha": 0.05,
+  "checkpoints": {
+    "control2m": {
+      "path": "runs/latent_2m_control_20261009_033534/rl/step_2052558/smolvla_grpo_adapter.pt",
+      "sha256": "91a5b74815a6868ec941069e9431ecf7eab31b15375c46be76fc9fe6c89be893",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/control2m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/control2m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/control2m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/control2m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        197,
+        202,
+        200,
+        185
+      ],
+      "strict_repeat_discordance": 0.2311,
+      "strict_scenes_always": 89,
+      "strict_scenes_never": 208,
+      "strict": 0.3828,
+      "native": 0.4531,
+      "grasped": 0.7505,
+      "lifted": 0.6807,
+      "released": 0.6606,
+      "carry_slip": 0.2891,
+      "wrong_place": 0.2495,
+      "non_finite": 0.0098,
+      "lifted_given_grasped": 0.907,
+      "strict_given_lifted": 0.5624
+    },
+    "final20m": {
+      "path": "runs/latent_control_long_20261009_160735/rl/step_20068312/smolvla_grpo_adapter.pt",
+      "sha256": "d6c4aacd1e5dfbc59d230983c4a420f5e7aedb38e2fdb75f3e8196232f16de47",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/final20m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/final20m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/final20m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/final20m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        278,
+        280,
+        276,
+        261
+      ],
+      "strict_repeat_discordance": 0.2197,
+      "strict_scenes_always": 160,
+      "strict_scenes_never": 147,
+      "strict": 0.5347,
+      "native": 0.5762,
+      "grasped": 0.8599,
+      "lifted": 0.8223,
+      "released": 0.7783,
+      "carry_slip": 0.2793,
+      "wrong_place": 0.2524,
+      "non_finite": 0.0088,
+      "lifted_given_grasped": 0.9563,
+      "strict_given_lifted": 0.6502
+    },
+    "peak19m": {
+      "path": "runs/latent_control_long_20261009_160735/rl/step_19503223/smolvla_grpo_adapter.pt",
+      "sha256": "2d7cb72a99af60a85c757798656e7ac7535cb721299d1036542f22751974c1f3",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/peak19m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/peak19m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/peak19m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_long_comparison_20261012_202417/peak19m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        253,
+        275,
+        274,
+        270
+      ],
+      "strict_repeat_discordance": 0.2305,
+      "strict_scenes_always": 147,
+      "strict_scenes_never": 152,
+      "strict": 0.5234,
+      "native": 0.5698,
+      "grasped": 0.8628,
+      "lifted": 0.8228,
+      "released": 0.7827,
+      "carry_slip": 0.2881,
+      "wrong_place": 0.2607,
+      "non_finite": 0.0107,
+      "lifted_given_grasped": 0.9536,
+      "strict_given_lifted": 0.6362
+    }
+  },
+  "comparisons": {
+    "final20m": {
+      "metrics": {
+        "strict": {
+          "scenes": 512,
+          "baseline": 0.3828,
+          "candidate": 0.5347,
+          "difference": 0.1519,
+          "ci95": [
+            0.127,
+            0.1768
+          ],
+          "permutation_p": 5e-05
+        },
+        "native": {
+          "scenes": 512,
+          "baseline": 0.4531,
+          "candidate": 0.5762,
+          "difference": 0.123,
+          "ci95": [
+            0.1006,
+            0.146
+          ],
+          "permutation_p": 5e-05
+        },
+        "grasped": {
+          "scenes": 512,
+          "baseline": 0.7505,
+          "candidate": 0.8599,
+          "difference": 0.1094,
+          "ci95": [
+            0.0889,
+            0.1309
+          ],
+          "permutation_p": 5e-05
+        },
+        "lifted": {
+          "scenes": 512,
+          "baseline": 0.6807,
+          "candidate": 0.8223,
+          "difference": 0.1416,
+          "ci95": [
+            0.1172,
+            0.1665
+          ],
+          "permutation_p": 5e-05
+        },
+        "carry_slip": {
+          "scenes": 512,
+          "baseline": 0.2891,
+          "candidate": 0.2793,
+          "difference": -0.0098,
+          "ci95": [
+            -0.0342,
+            0.0146
+          ],
+          "permutation_p": 0.37603
+        },
+        "wrong_place": {
+          "scenes": 512,
+          "baseline": 0.2495,
+          "candidate": 0.2524,
+          "difference": 0.0029,
+          "ci95": [
+            -0.0186,
+            0.0249
+          ],
+          "permutation_p": 0.80431
+        },
+        "non_finite": {
+          "scenes": 512,
+          "baseline": 0.0098,
+          "candidate": 0.0088,
+          "difference": -0.001,
+          "ci95": [
+            -0.0078,
+            0.0054
+          ],
+          "permutation_p": 0.86906
+        }
+      },
+      "strict_by_destination": {
+        "bowl": {
+          "scenes": 255,
+          "baseline": 0.3392,
+          "candidate": 0.4814,
+          "difference": 0.1422,
+          "ci95": [
+            0.1059,
+            0.1784
+          ],
+          "permutation_p": 5e-05
+        },
+        "plate": {
+          "scenes": 257,
+          "baseline": 0.4261,
+          "candidate": 0.5875,
+          "difference": 0.1615,
+          "ci95": [
+            0.1274,
+            0.1965
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "strict_by_object": {
+        "robocasa_apple": {
+          "scenes": 138,
+          "baseline": 0.3587,
+          "candidate": 0.5109,
+          "difference": 0.1522,
+          "ci95": [
+            0.1069,
+            0.1993
+          ]
+        },
+        "robocasa_orange": {
+          "scenes": 123,
+          "baseline": 0.4187,
+          "candidate": 0.6037,
+          "difference": 0.185,
+          "ci95": [
+            0.1341,
+            0.2378
+          ]
+        },
+        "robocasa_potato": {
+          "scenes": 122,
+          "baseline": 0.3135,
+          "candidate": 0.418,
+          "difference": 0.1045,
+          "ci95": [
+            0.0512,
+            0.1598
+          ]
+        },
+        "robocasa_tomato": {
+          "scenes": 129,
+          "baseline": 0.4399,
+          "candidate": 0.6047,
+          "difference": 0.1647,
+          "ci95": [
+            0.1163,
+            0.2151
+          ]
+        }
+      },
+      "strict_by_target_y_quartile": {
+        "Q1": {
+          "scenes": 130,
+          "baseline": 0.6827,
+          "candidate": 0.8269,
+          "difference": 0.1442,
+          "ci95": [
+            0.0942,
+            0.1962
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q2": {
+          "scenes": 125,
+          "baseline": 0.568,
+          "candidate": 0.736,
+          "difference": 0.168,
+          "ci95": [
+            0.11,
+            0.224
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q3": {
+          "scenes": 128,
+          "baseline": 0.2246,
+          "candidate": 0.4414,
+          "difference": 0.2168,
+          "ci95": [
+            0.1621,
+            0.2734
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q4": {
+          "scenes": 129,
+          "baseline": 0.0581,
+          "candidate": 0.1376,
+          "difference": 0.0795,
+          "ci95": [
+            0.0484,
+            0.1124
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "per_repeat_mcnemar": [
+        {
+          "baseline_successes": 197,
+          "candidate_successes": 278,
+          "baseline_only": 29,
+          "candidate_only": 110,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 202,
+          "candidate_successes": 280,
+          "baseline_only": 36,
+          "candidate_only": 114,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 200,
+          "candidate_successes": 276,
+          "baseline_only": 29,
+          "candidate_only": 105,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 185,
+          "candidate_successes": 261,
+          "baseline_only": 32,
+          "candidate_only": 108,
+          "p": 0.0
+        }
+      ],
+      "strict_p_holm": 0.0001,
+      "verdict": "candidate_better",
+      "pilot_promotion": {
+        "margin": 0.03,
+        "strict_ci95_low": 0.127,
+        "retention": {
+          "grasped": {
+            "difference": 0.1094,
+            "ci95_low": 0.0889,
+            "lower_bound_required": -0.03,
+            "pass": true
+          },
+          "lifted": {
+            "difference": 0.1416,
+            "ci95_low": 0.1172,
+            "lower_bound_required": -0.03,
+            "pass": true
+          }
+        },
+        "decision": "promote"
+      }
+    },
+    "peak19m": {
+      "metrics": {
+        "strict": {
+          "scenes": 512,
+          "baseline": 0.3828,
+          "candidate": 0.5234,
+          "difference": 0.1406,
+          "ci95": [
+            0.1152,
+            0.1665
+          ],
+          "permutation_p": 5e-05
+        },
+        "native": {
+          "scenes": 512,
+          "baseline": 0.4531,
+          "candidate": 0.5698,
+          "difference": 0.1167,
+          "ci95": [
+            0.0923,
+            0.1411
+          ],
+          "permutation_p": 5e-05
+        },
+        "grasped": {
+          "scenes": 512,
+          "baseline": 0.7505,
+          "candidate": 0.8628,
+          "difference": 0.1123,
+          "ci95": [
+            0.0894,
+            0.1367
+          ],
+          "permutation_p": 5e-05
+        },
+        "lifted": {
+          "scenes": 512,
+          "baseline": 0.6807,
+          "candidate": 0.8228,
+          "difference": 0.1421,
+          "ci95": [
+            0.1172,
+            0.1675
+          ],
+          "permutation_p": 5e-05
+        },
+        "carry_slip": {
+          "scenes": 512,
+          "baseline": 0.2891,
+          "candidate": 0.2881,
+          "difference": -0.001,
+          "ci95": [
+            -0.0264,
+            0.0249
+          ],
+          "permutation_p": 0.964
+        },
+        "wrong_place": {
+          "scenes": 512,
+          "baseline": 0.2495,
+          "candidate": 0.2607,
+          "difference": 0.0112,
+          "ci95": [
+            -0.0117,
+            0.0347
+          ],
+          "permutation_p": 0.29289
+        },
+        "non_finite": {
+          "scenes": 512,
+          "baseline": 0.0098,
+          "candidate": 0.0107,
+          "difference": 0.001,
+          "ci95": [
+            -0.0063,
+            0.0078
+          ],
+          "permutation_p": 0.87361
+        }
+      },
+      "strict_by_destination": {
+        "bowl": {
+          "scenes": 255,
+          "baseline": 0.3392,
+          "candidate": 0.4608,
+          "difference": 0.1216,
+          "ci95": [
+            0.0853,
+            0.1588
+          ],
+          "permutation_p": 5e-05
+        },
+        "plate": {
+          "scenes": 257,
+          "baseline": 0.4261,
+          "candidate": 0.5856,
+          "difference": 0.1595,
+          "ci95": [
+            0.1245,
+            0.1946
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "strict_by_object": {
+        "robocasa_apple": {
+          "scenes": 138,
+          "baseline": 0.3587,
+          "candidate": 0.4946,
+          "difference": 0.1359,
+          "ci95": [
+            0.096,
+            0.1793
+          ]
+        },
+        "robocasa_orange": {
+          "scenes": 123,
+          "baseline": 0.4187,
+          "candidate": 0.5772,
+          "difference": 0.1585,
+          "ci95": [
+            0.1037,
+            0.2154
+          ]
+        },
+        "robocasa_potato": {
+          "scenes": 122,
+          "baseline": 0.3135,
+          "candidate": 0.4201,
+          "difference": 0.1066,
+          "ci95": [
+            0.0512,
+            0.1639
+          ]
+        },
+        "robocasa_tomato": {
+          "scenes": 129,
+          "baseline": 0.4399,
+          "candidate": 0.6008,
+          "difference": 0.1609,
+          "ci95": [
+            0.1105,
+            0.2132
+          ]
+        }
+      },
+      "strict_by_target_y_quartile": {
+        "Q1": {
+          "scenes": 130,
+          "baseline": 0.6827,
+          "candidate": 0.7885,
+          "difference": 0.1058,
+          "ci95": [
+            0.0519,
+            0.1596
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q2": {
+          "scenes": 125,
+          "baseline": 0.568,
+          "candidate": 0.726,
+          "difference": 0.158,
+          "ci95": [
+            0.1,
+            0.216
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q3": {
+          "scenes": 128,
+          "baseline": 0.2246,
+          "candidate": 0.4453,
+          "difference": 0.2207,
+          "ci95": [
+            0.1699,
+            0.2734
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q4": {
+          "scenes": 129,
+          "baseline": 0.0581,
+          "candidate": 0.1376,
+          "difference": 0.0795,
+          "ci95": [
+            0.0484,
+            0.1124
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "per_repeat_mcnemar": [
+        {
+          "baseline_successes": 197,
+          "candidate_successes": 253,
+          "baseline_only": 41,
+          "candidate_only": 97,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 202,
+          "candidate_successes": 275,
+          "baseline_only": 32,
+          "candidate_only": 105,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 200,
+          "candidate_successes": 274,
+          "baseline_only": 38,
+          "candidate_only": 112,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 185,
+          "candidate_successes": 270,
+          "baseline_only": 34,
+          "candidate_only": 119,
+          "p": 0.0
+        }
+      ],
+      "strict_p_holm": 0.0001,
+      "verdict": "candidate_better",
+      "pilot_promotion": {
+        "margin": 0.03,
+        "strict_ci95_low": 0.1152,
+        "retention": {
+          "grasped": {
+            "difference": 0.1123,
+            "ci95_low": 0.0894,
+            "lower_bound_required": -0.03,
+            "pass": true
+          },
+          "lifted": {
+            "difference": 0.1421,
+            "ci95_low": 0.1172,
+            "lower_bound_required": -0.03,
+            "pass": true
+          }
+        },
+        "decision": "promote"
+      }
+    }
+  }
+}

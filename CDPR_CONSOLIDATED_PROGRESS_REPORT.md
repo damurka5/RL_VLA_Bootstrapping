@@ -2,21 +2,17 @@
 
 **Living report — latest status update 2026-10-12, Europe/Moscow**
 
-**Current development checkpoint: promoted latent-likelihood control**
-`runs/latent_2m_control_20261009_033534/rl/step_2052558`.
-Repeated off-panel evaluation (512 scenes × four repeats) gives **41.16% strict
-versus source 36.91%**, +4.25 pp, paired 95% CI [+2.10, +6.40], Holm p=0.00030.
-Grasp and held-lift retention pass the predeclared −3 pp margin. The correction
-candidate reaches 37.55%, has no demonstrated strict gain, loses grasp rate
-and has more non-finite episodes (3.56% versus control 1.12% / source 0.98%).
-Do not extend that candidate as-is. The subsequent long control run is now
-complete at **20,068,312** total actions: in-run strict validation **53.03%**,
-with a **54.20%** panel peak at **19,503,223**. Next: compare endpoint and peak
-against the promoted 2M control on repeated off-panel development evaluations;
-the 2M control remains promoted until that comparison is available. See the
-[long-run analysis and commands](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md)
-and earlier
-[promotion evidence and commands](docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_PILOT.md#10-repeated-evaluation-promote-control-for-development-2026-10-09).
+**Current development checkpoint: promoted 20M latent-likelihood control**
+`runs/latent_control_long_20261009_160735/rl/step_20068312`.
+Matched off-panel development evaluation (512 scenes × four repeats):
+**53.47% strict versus the 2M baseline's 38.28%**, +15.19 pp, paired 95% CI
+[+12.70, +17.68], Holm p=0.00010. Grasp and held-lift improve and pass retention;
+non-finite rates are 0.88% versus 0.98%, with no detected increase. The panel
+peak at 19,503,223 reaches 52.34% and has no demonstrated advantage over final.
+Next: resume final with unchanged settings to **40M total selected actions**,
+about 19.93M additional. This remains development evidence; final_test is
+untouched. The zero-init correction candidate remains unpromoted.
+See [matched results, source hash and full command](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#matched-results-received-promote-final20m).
 The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
@@ -89,12 +85,12 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
-**Latest matched evaluation, 2026-10-09: the repaired-likelihood bounded-residual
-control passes the development promotion rule**, with 843/2048 strict successes
-(41.16%) versus 756/2048 (36.91%) for original `step_56072006`. Its scene-paired
-strict interval is wholly positive and grasp/lift retention pass. The zero-init
-correction arm fails the same rule. This is a development result, not final-test
-performance; details and the promoted checkpoint hash are in the newest §14 entry.
+**Latest matched evaluation, 2026-10-12: long bounded-residual control passes
+the development promotion rule**, with 1095/2048 strict successes (53.47%)
+versus 784/2048 (38.28%) for its 2M baseline. The paired gain is +15.19 pp,
+CI [+12.70, +17.68], and grasp/lift retention passes. Carry forward final
+`step_20068312`; the panel-selected 19.5M peak has no demonstrated advantage.
+This supersedes the 2M promotion for development, not as a final-test claim.
 
 **Latest completed evaluation, 2026-09-25: strict-success SFT with a 20%
 retention mix ties `step_52791642`, 93/256 = 36.33% strict against 91/256
@@ -4835,3 +4831,27 @@ which is five times slower and more reliable).
   float scalar values. Fixed reporter integer formatting; 18 tests pass.
   Chart visually checked and evaluation shell block syntax checked locally.
   No remote evaluation or training-code change was made in this review.
+
+### 2026-10-12 — Matched long-run evaluation promotes final20m
+
+- Evidence: [comparison](docs/artifacts/latent_control_long_comparison_20261012/comparison.json)
+  and [peak versus final](docs/artifacts/latent_control_long_comparison_20261012/peak_vs_final.json).
+  512 off-panel student_validation scenes × four repeats per checkpoint;
+  direct peak comparison reuses those episodes. Checkpoint hashes and protocol
+  agree across the reports.
+- Final: 1095/2048 = 53.47% strict; matched 2M baseline 784/2048 = 38.28%.
+  +15.19 pp, CI [+12.70, +17.68], Holm p=0.00010. Grasp +10.94 pp and held
+  lift +14.16 pp, both positive intervals and passing the −3 pp retention rule.
+  Non-finite 0.88% versus 0.98%; paired CI for difference [−0.78, +0.54] pp.
+- Peak: 1072/2048 = 52.34%; peak minus final −1.12 pp, CI [−3.22, +0.98],
+  p=0.30808. No demonstrated peak advantage; choose the primary final endpoint.
+- Promoted source: `runs/latent_control_long_20261009_160735/rl/step_20068312`,
+  adapter SHA-256 `d6c4aacd1e5dfbc59d230983c4a420f5e7aedb38e2fdb75f3e8196232f16de47`.
+- Next recommendation: unchanged control resume to 40M cumulative selected
+  actions, about 19.93M additional. No further pilot is needed. Keep 20M as
+  the next evaluation baseline, preserve alternative/historical checkpoints,
+  and leave final_test untouched. [Full evidence and command](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md).
+- Remaining weaknesses: Q4 target-y 13.76% strict, potato 41.80%, bowl 48.14%.
+  Carry-slip/wrong-place changes are inconclusive. Subgroup figures are
+  exploratory; further training benefit is not guaranteed. Documentation and
+  evidence only; no training behavior changed and no remote job launched.

@@ -5,8 +5,10 @@ This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
 one-update smoke evidence are recorded in §5. As of 2026-10-12, the promoted
 bounded-residual control has completed a long continuation to 20,068,312
-total actions. Its endpoint and in-run peak await matched evaluation against
-the promoted 2M control (see §11). The correction candidate remains unpromoted.
+total actions. Matched evaluation now promotes final `step_20068312`: 53.47%
+strict versus 38.28% for the 2M baseline, +15.19 pp, paired CI [+12.70, +17.68].
+The panel peak has no demonstrated advantage over final. Continue final to
+40M total actions (see §12). The correction candidate remains unpromoted.
 
 ## 1. Implementation status
 
@@ -679,3 +681,19 @@ Preserve the original source as historical reference. No weight upload is
 needed; return the new comparison JSON and peak-versus-final JSON. The pilot
 reporter now prints step IDs exactly instead of rounding them; 18 local tests
 pass. No optimizer or simulator behavior changes.
+
+## 12. Long endpoint promoted; continue control to 40M (2026-10-12)
+
+The returned matched reports supersede §11's pending evaluation status.
+Final `step_20068312` records 1095/2048 strict successes (53.47%) versus
+784/2048 (38.28%) for 2M: +15.19 pp, paired CI [+12.70, +17.68], Holm
+p=0.00010. Grasp/lift retention passes with positive improvements. Non-finite
+rate is 0.88% versus 0.98%, with the paired difference interval crossing zero.
+Panel peak `step_19503223` reaches 52.34%; peak minus final CI [−3.22, +0.98]
+pp gives no demonstrated reason to switch to it. Promote the primary final
+checkpoint for development; this is not final-test performance.
+
+Resume final to **40M total selected actions**, about 19.93M more, with the
+same settings. No further pilot is needed. The proposal is a substantial
+continuation budget, not a claim that doubling the budget guarantees gains.
+[Full matched evidence, checkpoint hash and complete resume command](CDPR_LONG_CONTROL_REVIEW_20261012.md#next-training-resume-final20m-to-40m-total-actions).
