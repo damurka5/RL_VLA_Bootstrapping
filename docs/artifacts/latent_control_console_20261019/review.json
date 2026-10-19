@@ -1,0 +1,29 @@
+{
+  "received_date": "2026-10-19",
+  "source_sha256": "f7bfc86224290649d3b8f2695612a21ede3eebe1c64277e1110dd0cc789580d7",
+  "run": "latent_control_long_20261009_160735",
+  "relationship": "Same 20M run previously reviewed; not evidence of a completed 40M continuation",
+  "final_step_from_checkpoint_path": 20068312,
+  "configured_cap": 20000000,
+  "new_updates": 237,
+  "validation_rows": 73,
+  "validation_matches_retained_event_export_to_console_precision": true,
+  "lora_change_zero_all_printed_updates": true,
+  "last_update": {
+    "update": "237",
+    "selected_rounded": "2.00683e+07",
+    "kl": "0.00311831",
+    "ppo_clip": "0.0152933",
+    "grad": "5.03835",
+    "hidden_grad": "-",
+    "corr_z": "0",
+    "corr_grip": "0",
+    "latent_clip_z": "0.159956",
+    "log_std": "-1.22707",
+    "nonfinite_ep": "0.0126953",
+    "pickup": "0.773926",
+    "placement": "0.359863",
+    "ref_change": "-",
+    "lora_change": "0"
+  }
+}

@@ -39,7 +39,8 @@ No human demonstrations are recorded for this robot at any stage.
 one instruction, and must approach, grasp, lift, carry and release the object
 inside the receptacle. Left half: overview camera; right half: wrist camera.
 The clips are strict successes of checkpoint `step_28309431` (2026-09-17,
-22.3% strict). The current best checkpoint scores about twice that; see
+22.3% strict). The current development checkpoint reaches 53.47% on the
+separate repeated evaluation described below; these clips are historical. See
 [Results](#results). Original MP4s and per-episode records are in
 [`docs/media/put_into/`](docs/media/put_into/).</sub>
 
@@ -136,10 +137,45 @@ flowchart TD
 | 4–5 | Aug 21 – 31 | Retention bank; one adapter for all four instructions |
 | 6–7 | Aug 30 – Sep 9 | Composed pick-and-place; one sparse reward for all instructions |
 | 8 | Sep 10 – 28 | Three-stage chains → staged-sparse GRPO on the full empty-start task |
+| 9 | Oct 3 – 19 | Latent-likelihood control; 20M continuation promoted on repeated development evaluation |
 
 ## Results
 
 ### Full task: empty gripper → object in the receptacle
+
+**Latest status, 2026-10-19:** carry forward the bounded-residual control at
+`runs/latent_control_long_20261009_160735/rl/step_20068312`. Its 20.07M selected
+actions are counted since conversion to the repaired latent likelihood; it
+inherits the historical 56M source and was not trained from scratch in 20M.
+
+The matched evaluation uses **512 student-validation scenes × four repeats
+(2,048 episodes per checkpoint)**, excluding the fixed 128-scene training
+validation panel. These are development results; `final_test` remains untouched.
+
+| Checkpoint | Strict success | Physical grasp | Held lift | Non-finite episodes |
+|---|---:|---:|---:|---:|
+| 2M control baseline | 784/2048 = 38.28% | 75.05% | 68.07% | 0.98% |
+| **20M final control (promoted)** | **1095/2048 = 53.47%** | **85.99%** | **82.23%** | **0.88%** |
+| 19.5M in-run panel peak | 1072/2048 = 52.34% | 86.28% | 82.28% | 1.07% |
+
+Final versus 2M: **+15.19 percentage points strict**, scene-paired 95% CI
+**[+12.70, +17.68]**, Holm p=0.00010. Grasp/lift retention passes. The panel
+peak has no demonstrated advantage over final (peak minus final −1.12 pp,
+CI [−3.22, +0.98], p=0.308). Non-finite rates show no detected increase;
+this does not establish zero simulator failures or equivalence.
+
+The completed run's in-run validation is **53.03%** (543/1024), distinct from
+the repeated 53.47% result. The console supplied on October 19 confirms this
+same 20M run; it does not establish completion of the proposed 40M continuation.
+Next: **resume final to 40M total selected actions with unchanged parameters**
+(LR 1e-5, one PPO epoch, frozen LoRA, same task/rewards and world count).
+No additional pilot is needed. Further improvement remains an experiment.
+
+[Full analysis and resume command](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#next-training-resume-final20m-to-40m-total-actions)
+· [Matched evidence](docs/artifacts/latent_control_long_comparison_20261012/comparison.json)
+· [Peak versus final](docs/artifacts/latent_control_long_comparison_20261012/peak_vs_final.json)
+
+#### Historical evaluations (different panels and repeat counts)
 
 Standalone evaluator: 256 distinct held-out scenes, one instruction from the
 first action, no assistance. *Strict* success means the episode began empty and
@@ -151,7 +187,7 @@ intentionally inside the receptacle.
 | SFT seed on self-generated chains | — | 5/128 = 3.9% | — |
 | `step_28309431` | 28.3M steps staged-sparse GRPO | 57/256 = 22.3% | 73/256 = 28.5% |
 | `step_52791642` | + equal stage mass, completion bonus (~53M) | 91/256 = 35.6% | 111/256 = 43.4% |
-| **`step_56072006`** (current best) | + grasp-preservation continuation (~56M) | **107/256 = 41.8%** | **127/256 = 49.6%** |
+| `step_56072006` (historical source) | + grasp-preservation continuation (~56M) | **107/256 = 41.8%** | **127/256 = 49.6%** |
 
 `step_56072006` beat `step_52791642` on the same scenes, 107 to 85 (exact
 McNemar p = 0.012). Pooled over two evaluations each, the two checkpoints score
@@ -181,8 +217,9 @@ verdicts between runs, so differences below about 5 points need pooled repeats.
    composed pick-and-place skill that RL had built. The two halves of the loop
    have to be reconciled.
 5. **Staged sparse rewards train the complete task once each milestone is
-   reachable.** On the same standalone evaluator, strict full-task success
-   rose from 3.9% for the SFT seed to 41.8%.
+   reachable.** Historical evaluations rose from 3.9% for the SFT seed to
+   41.8%. The repaired-likelihood control later reached 53.47% on the separate
+   repeated development protocol above; these are not one matched comparison.
 6. **Measure before steering.** Evaluation noise comes mostly from closed-loop
    physics chaos, not from the VLA's sampling. Seven SFT fits on the policy's
    own successes never beat their initializer.
@@ -193,9 +230,10 @@ The full evidence, protocols, and negative results are in the
 
 ## What is not solved yet
 
-- **Holding the object through the carry.** Carry slips and post-lift wrong
-  placements are the dominant failure, and the grasp rate erodes under
-  continued RL.
+- **Completing placement after pickup.** The latest control improves grasp
+  and held lift, while carry-slip and wrong-placement changes remain
+  inconclusive. Bowl strict is 48.14%, potato 41.80%, and the highest
+  target-y quartile 13.76%; these subgroup results are exploratory.
 - **Retention and composition together.** RL on the composed task and SFT on
   the retention bank still pull against each other.
 - **Localization resolution.** The frozen encoder's pooled feature feeds the

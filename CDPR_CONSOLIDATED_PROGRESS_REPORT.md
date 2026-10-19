@@ -1,6 +1,6 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — latest status update 2026-10-12, Europe/Moscow**
+**Living report — latest status update 2026-10-19, Europe/Moscow**
 
 **Current development checkpoint: promoted 20M latent-likelihood control**
 `runs/latent_control_long_20261009_160735/rl/step_20068312`.
@@ -13,6 +13,10 @@ Next: resume final with unchanged settings to **40M total selected actions**,
 about 19.93M additional. This remains development evidence; final_test is
 untouched. The zero-init correction candidate remains unpromoted.
 See [matched results, source hash and full command](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#matched-results-received-promote-final20m).
+**October 19 evidence check:** the newly supplied console is from this same
+20M run, with 237 updates and 73 validation rows matching the retained event
+export. It provides no evidence of a completed 40M continuation. The next
+recommendation remains unchanged; see the newest dated ledger entry.
 The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
@@ -4855,3 +4859,42 @@ which is five times slower and more reliable).
   Carry-slip/wrong-place changes are inconclusive. Subgroup figures are
   exploratory; further training benefit is not guaranteed. Documentation and
   evidence only; no training behavior changed and no remote job launched.
+
+### 2026-10-19 — Console confirms existing 20M result; continue unchanged
+
+- The supplied console identifies `latent_control_long_20261009_160735`,
+  Git `2b15660361d2b612048f85652dcf521b07ec57e6`, source hash
+  `91a5b74815a6868ec941069e9431ecf7eab31b15375c46be76fc9fe6c89be893`,
+  20M configured cap and exact checkpoint `step_20068312`. This is the same
+  20M run previously reviewed, not a new replicate or the proposed 40M leg.
+- Parsed all 237 printed update rows and verified all 73 validation rows
+  against the retained event export at console precision. Final validation
+  is 543/1024 = 53.03%; the in-run peak remains 555/1024 = 54.20% at 19,503,223.
+  LoRA change is zero in every printed update. Final KL 0.00311831, PPO clip
+  1.52933%, gradient mean 5.03835; final non-finite episode rate 1.26953%.
+- The late pad-force warning confirms unavailable contact diagnostics;
+  finite printed optimizer metrics do not repair those readings. The earlier
+  whole-run non-finite episode rate remains 1.622%. EPA horizon warnings do
+  not by themselves establish a failed run or justify changing simulator
+  parameters during this continuation.
+- Existing matched off-panel evidence remains decisive: final 1095/2048
+  (53.47%) versus baseline 784/2048 (38.28%), +15.19 pp, CI [+12.70, +17.68],
+  Holm p=0.00010. Grasp/lift improve; the panel peak has no demonstrated
+  advantage over final. Do not count the newly pasted log as extra evaluation.
+- Recommendation agrees with the user's preference: resume promoted final
+  to **40M total selected actions**, retaining LR=1e-5, PPO epochs=1, bounded
+  residual, frozen LoRA, latent conditional likelihood, current stage rewards,
+  horizon and 512 worlds/rank on two GPUs. About 19.93M additional actions;
+  no extra pilot required and no claim that more compute guarantees a gain.
+  [Exact command](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#next-training-resume-final20m-to-40m-total-actions).
+- Keep 20M as the baseline for evaluation after the next leg. Reconsider
+  methodology if a substantial continuation produces no demonstrated matched
+  gain, loses grasp/lift retention, or shows sustained worsening in simulator
+  health. Investigate carry/placement and the weak target-y region before
+  selecting a targeted change. Do not switch methods based on isolated noisy
+  validation readings; leave final_test untouched during this selection.
+- Updated the GitHub README and Pages source (`docs/index.html`) with the
+  matched results, protocol, promoted source and next budget. Historical
+  results/videos remain explicitly labeled. No training code changed.
+- Evidence: [original console](docs/artifacts/latent_control_console_20261019/console.txt)
+  and [verification summary](docs/artifacts/latent_control_console_20261019/review.json).

@@ -232,3 +232,23 @@ After completion return metrics.jsonl, validation.jsonl and the launcher
 summary; evaluate the new endpoint against 20M before choosing another source.
 No remote training was launched locally. This update changes documentation
 and preserves supplied evidence; it changes no training or evaluation code.
+
+## October 19 console confirmation
+
+The [new console excerpt](../../artifacts/latent_control_console_20261019/console.txt)
+contains the same run name, 20M cap, initializer hash and final checkpoint as
+this report. All 237 update rows parse, and all 73 validation readings match
+the retained event export at the printed precision; see the
+[verification summary](../../artifacts/latent_control_console_20261019/review.json).
+This is additional provenance for the existing run, not an independent run or
+evidence of a finished 40M continuation.
+
+The recommendation remains to execute the 40M-total resume command above with
+unchanged parameters. The matched improvement and stable recorded training
+health support another substantial continuation; there is no demonstrated
+need to switch architecture, rewards or learning rate now. Preserve 20M as
+the next matched baseline. Reconsider the method after a continuation without
+a demonstrated gain, retention loss or sustained simulator-health degradation;
+use carry/placement and target-y diagnostics to choose a targeted intervention.
+No extra pilot is needed. The console's pad-force/EPA warnings remain visible;
+they do not establish NaN optimizer loss or repair simulator contact health.
