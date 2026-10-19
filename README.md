@@ -164,16 +164,22 @@ peak has no demonstrated advantage over final (peak minus final −1.12 pp,
 CI [−3.22, +0.98], p=0.308). Non-finite rates show no detected increase;
 this does not establish zero simulator failures or equivalence.
 
-The completed run's in-run validation is **53.03%** (543/1024), distinct from
-the repeated 53.47% result. The console supplied on October 19 confirms this
-same 20M run; it does not establish completion of the proposed 40M continuation.
-Next: **resume final to 40M total selected actions with unchanged parameters**
-(LR 1e-5, one PPO epoch, frozen LoRA, same task/rewards and world count).
-No additional pilot is needed. Further improvement remains an experiment.
+**40M continuation completed:** final `step_40056193` reaches **61.23%**
+in-run strict validation (627/1024), versus 54.20% at resume. The panel peak
+is **64.84%** (664/1024) at `step_39804332`. Over 299 updates, recorded optimizer
+metrics remain finite, LoRA stays frozen and reported non-finite episodes
+average about 1.62%. These panel results have not yet passed matched off-panel
+evaluation; the 20M result above remains the promoted development baseline.
 
-[Full analysis and resume command](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#next-training-resume-final20m-to-40m-total-actions)
-· [Matched evidence](docs/artifacts/latent_control_long_comparison_20261012/comparison.json)
-· [Peak versus final](docs/artifacts/latent_control_long_comparison_20261012/peak_vs_final.json)
+Next: compare 20M, final40m and peak39m on the same repeated off-panel protocol.
+The current parameters remain promising; no new training pilot or method
+switch is indicated by this history. Select the next resume source after
+comparison. The earlier October 19 console paste was the old 20M run; the
+subsequent event file confirms the separate 40M continuation.
+
+[40M analysis and evaluation command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md)
+· [20M matched evidence](docs/artifacts/latent_control_long_comparison_20261012/comparison.json)
+· [20M peak versus final](docs/artifacts/latent_control_long_comparison_20261012/peak_vs_final.json)
 
 #### Historical evaluations (different panels and repeat counts)
 

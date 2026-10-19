@@ -271,8 +271,9 @@
       </table>
     </div>
     <p><b>Final gains 15.19 percentage points strict over 2M</b>, paired 95% CI [+12.70, +17.68], Holm p=0.00010. Grasp/lift retention passes. The panel peak has no demonstrated advantage over final (peak minus final CI [−3.22, +0.98] pp, p=0.308). Non-finite rates show no detected increase, not proof of equivalence.</p>
-    <p class="note">Promoted checkpoint: <code>latent_control_long_20261009_160735/rl/step_20068312</code>. The October 19 console confirms the same completed 20M run (237 updates, 53.03% in-run validation), not completion of the proposed 40M continuation. Next: continue unchanged to 40M total selected actions, with LR 1e-5, one PPO epoch and frozen LoRA. Further gains are not guaranteed.</p>
-    <p><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md">Analysis and full resume command</a> · <a href="artifacts/latent_control_long_comparison_20261012/comparison.json">Matched evidence</a> · <a href="artifacts/latent_control_long_comparison_20261012/peak_vs_final.json">Peak versus final</a></p>
+    <p class="note">Promoted checkpoint: <code>latent_control_long_20261009_160735/rl/step_20068312</code>. A separate continuation now finishes at <code>latent_control_to40m_20261012_230538/rl/step_40056193</code>: <b>61.23% in-run strict validation</b> (627/1024), versus 54.20% at resume. The panel peak is <b>64.84%</b> at <code>step_39804332</code>. These 40M panel scores await matched off-panel evaluation and do not replace the promoted 20M result above.</p>
+    <p>Recorded optimizer metrics remain finite over 299 new updates, LoRA stays frozen, and reported non-finite training episodes average about 1.62%. Next: compare promoted20m, final40m and peak39m before choosing the next resume source. The current parameters remain promising; no additional training pilot is needed.</p>
+    <p><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md">40M analysis and evaluation command</a> · <a href="artifacts/latent_control_long_comparison_20261012/comparison.json">20M matched evidence</a> · <a href="artifacts/latent_control_long_comparison_20261012/peak_vs_final.json">20M peak versus final</a></p>
 
     <h3>Historical evaluations · different panels and repeat counts</h3>
     <div class="bars" role="img" aria-label="Strict full-task success by checkpoint: SFT seed 3.9%, step_28309431 22.3%, step_52791642 35.6%, step_56072006 41.8%">
@@ -330,7 +331,7 @@
       <li><div class="when">Aug 17 – 31</div><div class="what"><b>Phases 3–5: self-imitation and retention</b><span>a bank of frames and actions; one adapter for all four instructions</span></div></li>
       <li><div class="when">Aug 30 – Sep 9</div><div class="what"><b>Phases 6–7: composition</b><span>composed pick-and-place with one sparse reward; retention SFT found to erase it</span></div></li>
       <li><div class="when">Sep 10 – 28</div><div class="what"><b>Phase 8: full task from an empty gripper</b><span>three-stage chains → staged-sparse GRPO: 3.9% → 41.8% strict</span></div></li>
-      <li><div class="when">Oct 3 – 19</div><div class="what"><b>Latent-likelihood control promoted</b><span>20M final: 53.47% versus 38.28% for matched 2M baseline; next, unchanged continuation to 40M total actions</span></div></li>
+      <li><div class="when">Oct 3 – 19</div><div class="what"><b>Latent-likelihood control promoted</b><span>20M final: 53.47% versus 38.28% for matched 2M baseline; 40M continuation complete at 61.23% in-run validation, awaiting matched evaluation</span></div></li>
     </ol>
   </div>
 </section>

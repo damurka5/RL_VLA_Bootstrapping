@@ -9,14 +9,19 @@ Matched off-panel development evaluation (512 scenes × four repeats):
 [+12.70, +17.68], Holm p=0.00010. Grasp and held-lift improve and pass retention;
 non-finite rates are 0.88% versus 0.98%, with no detected increase. The panel
 peak at 19,503,223 reaches 52.34% and has no demonstrated advantage over final.
-Next: resume final with unchanged settings to **40M total selected actions**,
-about 19.93M additional. This remains development evidence; final_test is
-untouched. The zero-init correction candidate remains unpromoted.
-See [matched results, source hash and full command](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#matched-results-received-promote-final20m).
-**October 19 evidence check:** the newly supplied console is from this same
-20M run, with 237 updates and 73 validation rows matching the retained event
-export. It provides no evidence of a completed 40M continuation. The next
-recommendation remains unchanged; see the newest dated ledger entry.
+**Latest training result:** the separate 40M continuation is now complete at
+`runs/latent_control_to40m_20261012_230538/rl/step_40056193`: **61.23% in-run
+strict**, with a **64.84%** panel peak at `step_39804332`. The event file confirms
+299 additional updates and 19,987,881 selected actions, with frozen LoRA and
+approximately 1.62% non-finite training episodes. These are training-panel
+results, not a matched comparison against the promoted 20M checkpoint.
+Next: compare 20M, final40m and peak39m on the repeated off-panel protocol.
+The promoted checkpoint above stays 20M pending that evidence; final_test
+remains untouched. The correction candidate remains unpromoted.
+See the [40M analysis and complete evaluation command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md)
+and [20M matched evidence](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#matched-results-received-promote-final20m).
+The earlier October 19 console paste was the old 20M run; the subsequently
+supplied TensorBoard file establishes this separate completed 40M continuation.
 The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
@@ -4898,3 +4903,27 @@ which is five times slower and more reliable).
   results/videos remain explicitly labeled. No training code changed.
 - Evidence: [original console](docs/artifacts/latent_control_console_20261019/console.txt)
   and [verification summary](docs/artifacts/latent_control_console_20261019/review.json).
+
+### 2026-10-19 — 40M continuation complete; compare final and panel peak
+
+- New event evidence confirms run `latent_control_to40m_20261012_230538`
+  (path supplied by user), 20,068,312 → **40,056,193**: 19,987,881 more selected
+  actions, 299 updates, 609,792 episodes, 141,277 optimizer steps, 89.14 hours.
+- In-run strict 555/1024 (54.20%) at resume → 627/1024 (61.23%) at final;
+  highest of 81 readings 664/1024 (64.84%) at **39,804,332**. First/last 20
+  validation means 55.05% / 61.91%. Final grasp 90.14%, lift 85.35%, plate
+  strict 70.90%, bowl strict 51.56%. No off-panel promotion is inferred.
+- LR stays 1e-5, LoRA change zero; all 299 checked optimizer metric rows are
+  finite. Mean reported non-finite episode rate 1.619%; global count-derived rate
+  1.620% (9,881/609,792). Five smaller updates have 1,536 episodes; rank-mean
+  rates must not be converted to counts with a fixed 2,048 denominator. Pad-force
+  streams omit 71 readings; TensorBoard cannot recover those raw values.
+- Same-parameter training remains a reasonable direction. Next evaluate
+  promoted20m, final40m and peak39m, four repeats of 512 off-panel scenes,
+  then compare peak directly against final using those same saved results.
+  No additional training pilot is needed; choose the next source on this
+  evidence, retain 20M as baseline, and keep final_test untouched.
+- [Full review and exact command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md),
+  [summary and source hash](docs/artifacts/latent_control_40m_20261019/summary.json).
+  Public README/Pages now distinguish completed 40M panel results from the
+  still-promoted 20M matched result. No training behavior changed.

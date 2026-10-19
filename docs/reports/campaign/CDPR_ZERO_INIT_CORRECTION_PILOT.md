@@ -3,12 +3,13 @@
 Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
-one-update smoke evidence are recorded in §5. As of 2026-10-12, the promoted
+one-update smoke evidence are recorded in §5. As of 2026-10-19, the promoted
 bounded-residual control has completed a long continuation to 20,068,312
 total actions. Matched evaluation now promotes final `step_20068312`: 53.47%
 strict versus 38.28% for the 2M baseline, +15.19 pp, paired CI [+12.70, +17.68].
-The panel peak has no demonstrated advantage over final. Continue final to
-40M total actions (see §12). The correction candidate remains unpromoted.
+The 40M continuation has now completed at 61.23% in-run strict, with a
+64.84% panel peak; its matched evaluation is pending (see §13). The correction
+candidate remains unpromoted.
 
 ## 1. Implementation status
 
@@ -697,3 +698,13 @@ Resume final to **40M total selected actions**, about 19.93M more, with the
 same settings. No further pilot is needed. The proposal is a substantial
 continuation budget, not a claim that doubling the budget guarantees gains.
 [Full matched evidence, checkpoint hash and complete resume command](CDPR_LONG_CONTROL_REVIEW_20261012.md#next-training-resume-final20m-to-40m-total-actions).
+
+## 13. 40M continuation completed (2026-10-19)
+
+The subsequent event file confirms 299 new updates through `step_40056193`
+in `latent_control_to40m_20261012_230538`. Final in-run strict is 61.23%;
+peak `step_39804332` is 64.84%. Recorded training remains stable enough to
+support the existing direction, with approximately 1.62% reported non-finite
+episodes and frozen LoRA. Compare both checkpoints against promoted20m;
+20M remains the development baseline until those matched results arrive.
+[Analysis, telemetry caveats and complete command](CDPR_40M_CONTROL_REVIEW_20261019.md).
