@@ -1,9 +1,8 @@
 # Long control continuation: evaluation and endpoint promotion
 
-**Latest status (2026-10-19):** the 40M continuation is now complete. The 20M
-checkpoint remains the promoted development baseline pending the new matched
-comparison. See the [40M review and next command](CDPR_40M_CONTROL_REVIEW_20261019.md).
-The 40M training command below is retained as the historical launch recipe.
+**Latest status (2026-10-19):** matched evaluation now promotes the 40M final
+checkpoint. See the [40M review and 60M resume command](CDPR_40M_CONTROL_REVIEW_20261019.md).
+The 20M results and 40M launch command below are retained as historical evidence.
 
 Reviewed 2026-10-12 from the user-supplied TensorBoard event file and pasted
 terminal summary. Run: `latent_control_long_20261009_160735`, reported Git

@@ -2,26 +2,18 @@
 
 **Living report — latest status update 2026-10-19, Europe/Moscow**
 
-**Current development checkpoint: promoted 20M latent-likelihood control**
-`runs/latent_control_long_20261009_160735/rl/step_20068312`.
-Matched off-panel development evaluation (512 scenes × four repeats):
-**53.47% strict versus the 2M baseline's 38.28%**, +15.19 pp, paired 95% CI
-[+12.70, +17.68], Holm p=0.00010. Grasp and held-lift improve and pass retention;
-non-finite rates are 0.88% versus 0.98%, with no detected increase. The panel
-peak at 19,503,223 reaches 52.34% and has no demonstrated advantage over final.
-**Latest training result:** the separate 40M continuation is now complete at
-`runs/latent_control_to40m_20261012_230538/rl/step_40056193`: **61.23% in-run
-strict**, with a **64.84%** panel peak at `step_39804332`. The event file confirms
-299 additional updates and 19,987,881 selected actions, with frozen LoRA and
-approximately 1.62% non-finite training episodes. These are training-panel
-results, not a matched comparison against the promoted 20M checkpoint.
-Next: compare 20M, final40m and peak39m on the repeated off-panel protocol.
-The promoted checkpoint above stays 20M pending that evidence; final_test
-remains untouched. The correction candidate remains unpromoted.
-See the [40M analysis and complete evaluation command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md)
-and [20M matched evidence](docs/reports/campaign/CDPR_LONG_CONTROL_REVIEW_20261012.md#matched-results-received-promote-final20m).
-The earlier October 19 console paste was the old 20M run; the subsequently
-supplied TensorBoard file establishes this separate completed 40M continuation.
+**Current development checkpoint: promoted 40M latent-likelihood control**
+`runs/latent_control_to40m_20261012_230538/rl/step_40056193`.
+Matched off-panel evaluation (512 development scenes × four repeats):
+**61.43% strict versus the 20M baseline's 51.56%**, +9.86 pp, paired 95% CI
+[+7.37, +12.30], Holm p=0.00010. Grasp/lift retention passes; carry slips and
+wrong placements decrease. Non-finite rates are 1.37% versus 1.32%, with no
+detected increase. The panel peak `step_39804332` scores 61.33% and has no
+demonstrated advantage over final. Next: unchanged control resume to **60M total
+selected actions**, about 19.94M more. These are development results; final_test
+remains untouched. The zero-init correction candidate remains unpromoted.
+[Matched evidence, checkpoint hash and full resume command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md#matched-evaluation-promote-final40m).
+The training-panel final 61.23% and peak 64.84% are separate measurements.
 The historical summary below predates this work.
 
 **Repository state reviewed:** the 2026-09-13 staged-sparse GRPO repairs and
@@ -94,12 +86,13 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
-**Latest matched evaluation, 2026-10-12: long bounded-residual control passes
-the development promotion rule**, with 1095/2048 strict successes (53.47%)
-versus 784/2048 (38.28%) for its 2M baseline. The paired gain is +15.19 pp,
-CI [+12.70, +17.68], and grasp/lift retention passes. Carry forward final
-`step_20068312`; the panel-selected 19.5M peak has no demonstrated advantage.
-This supersedes the 2M promotion for development, not as a final-test claim.
+**Latest matched evaluation, 2026-10-19: 40M control passes development
+promotion**, with 1258/2048 strict successes (61.43%) versus 1056/2048 (51.56%)
+for the matched 20M baseline. The gain is +9.86 pp, CI [+7.37, +12.30], Holm
+p=0.00010. Grasp/lift improve, and carry-slip/wrong-placement intervals now
+show decreases. Promote final `step_40056193`; the 39.8M panel peak has no
+demonstrated advantage. Next is unchanged continuation to 60M total actions.
+This is a development result, not a final-test claim.
 
 **Latest completed evaluation, 2026-09-25: strict-success SFT with a 20%
 retention mix ties `step_52791642`, 93/256 = 36.33% strict against 91/256
@@ -4927,3 +4920,28 @@ which is five times slower and more reliable).
   [summary and source hash](docs/artifacts/latent_control_40m_20261019/summary.json).
   Public README/Pages now distinguish completed 40M panel results from the
   still-promoted 20M matched result. No training behavior changed.
+
+### 2026-10-19 — Matched 40M evaluation passes; resume final to 60M
+
+- [Matched report](docs/artifacts/latent_control_40m_comparison_20261019/comparison.json)
+  and [peak versus final](docs/artifacts/latent_control_40m_comparison_20261019/peak_vs_final.json):
+  protocol, hashes and repeated aggregates agree; 20M baseline hash matches
+  the prior promoted adapter. 512 off-panel development scenes × four repeats.
+- Final 1258/2048 = 61.43%; baseline 1056/2048 = 51.56%. +9.86 pp strict,
+  CI [+7.37, +12.30], Holm p=0.00010, all four repeats improve. Grasp +3.81
+  pp and lift +5.37 pp with positive intervals; retention passes.
+- Carry slip −4.49 pp, CI [−6.79, −2.25]; wrong place −5.37 pp, CI
+  [−7.62, −3.17]. Non-finite 1.37% versus 1.32%, difference CI [−0.73, +0.83]
+  pp: no detected increase, not equivalence. Q4 target-y 10.08% → 29.07%
+  (exploratory); potato remains 46.11%, bowl 54.22%, plate 68.58% strict.
+- Peak 1256/2048 = 61.33%; peak minus final −0.10 pp, CI [−2.05, +1.81],
+  p=0.9598. Promote the primary final checkpoint, not the panel maximum.
+- Promoted source `runs/latent_control_to40m_20261012_230538/rl/step_40056193`,
+  adapter SHA-256 `63aff785cc0202ecea2f9c1e713f58648f14a0695a593975fa3022b4f2505e91`.
+- Recommend unchanged continuation to **60M total selected actions**, about
+  19.94M additional. No further pilot or new method is needed on this evidence.
+  Keep final40m as next baseline and final_test untouched. Prior sections are
+  historical; this decision supersedes the pending comparison status.
+  [Full interpretation and command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md#next-training-unchanged-control-to-60m-total-actions).
+- Updated README and Pages source, retained supplied JSON verbatim, checked
+  report consistency and command syntax. No training code changed.

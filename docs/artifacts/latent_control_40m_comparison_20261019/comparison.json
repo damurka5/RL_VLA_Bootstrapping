@@ -1,0 +1,613 @@
+{
+  "tool": "compare_put_into_repeats.py",
+  "scenes": 512,
+  "protocol": {
+    "scene_manifest_sha256": "30dc9d53027c7e7ba871379e1ec17f0f148a08517f03fc4fa531549a15ef9208",
+    "split": "student_validation",
+    "worlds": 64,
+    "rounds": 8,
+    "distinct_scene_rounds": true,
+    "decisions": 128,
+    "settle_decisions": 0,
+    "excluded_validation_panel": {
+      "groups_per_rank": 64,
+      "panel_scenes": 128,
+      "ranks": 2,
+      "rounds": 1,
+      "split_scenes_after": 1102,
+      "split_scenes_before": 1230,
+      "validation_seed": 2000000
+    },
+    "controller_z_max": null,
+    "prior_noise_scale": 1.0,
+    "stochastic_seed": null,
+    "arm": "unassisted"
+  },
+  "baseline": "control20m",
+  "alpha": 0.05,
+  "checkpoints": {
+    "control20m": {
+      "path": "runs/latent_control_long_20261009_160735/rl/step_20068312/smolvla_grpo_adapter.pt",
+      "sha256": "d6c4aacd1e5dfbc59d230983c4a420f5e7aedb38e2fdb75f3e8196232f16de47",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/control20m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/control20m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/control20m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/control20m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        266,
+        275,
+        259,
+        256
+      ],
+      "strict_repeat_discordance": 0.2227,
+      "strict_scenes_always": 151,
+      "strict_scenes_never": 154,
+      "strict": 0.5156,
+      "native": 0.5674,
+      "grasped": 0.8584,
+      "lifted": 0.8052,
+      "released": 0.7798,
+      "carry_slip": 0.2832,
+      "wrong_place": 0.25,
+      "non_finite": 0.0132,
+      "lifted_given_grasped": 0.938,
+      "strict_given_lifted": 0.6404
+    },
+    "final40m": {
+      "path": "runs/latent_control_to40m_20261012_230538/rl/step_40056193/smolvla_grpo_adapter.pt",
+      "sha256": "63aff785cc0202ecea2f9c1e713f58648f14a0695a593975fa3022b4f2505e91",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        310,
+        303,
+        318,
+        327
+      ],
+      "strict_repeat_discordance": 0.2428,
+      "strict_scenes_always": 188,
+      "strict_scenes_never": 97,
+      "strict": 0.6143,
+      "native": 0.6646,
+      "grasped": 0.8965,
+      "lifted": 0.8589,
+      "released": 0.8154,
+      "carry_slip": 0.2383,
+      "wrong_place": 0.1963,
+      "non_finite": 0.0137,
+      "lifted_given_grasped": 0.9581,
+      "strict_given_lifted": 0.7152
+    },
+    "peak39m": {
+      "path": "runs/latent_control_to40m_20261012_230538/rl/step_39804332/smolvla_grpo_adapter.pt",
+      "sha256": "989fcc8f11c3c28d5845fed6add23a4be9fb7b45a9fc9072b4b0617e855cfbc0",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        311,
+        310,
+        314,
+        321
+      ],
+      "strict_repeat_discordance": 0.2441,
+      "strict_scenes_always": 185,
+      "strict_scenes_never": 99,
+      "strict": 0.6133,
+      "native": 0.6689,
+      "grasped": 0.8965,
+      "lifted": 0.8657,
+      "released": 0.8145,
+      "carry_slip": 0.2427,
+      "wrong_place": 0.1973,
+      "non_finite": 0.0176,
+      "lifted_given_grasped": 0.9657,
+      "strict_given_lifted": 0.7084
+    }
+  },
+  "comparisons": {
+    "final40m": {
+      "metrics": {
+        "strict": {
+          "scenes": 512,
+          "baseline": 0.5156,
+          "candidate": 0.6143,
+          "difference": 0.0986,
+          "ci95": [
+            0.0737,
+            0.123
+          ],
+          "permutation_p": 5e-05
+        },
+        "native": {
+          "scenes": 512,
+          "baseline": 0.5674,
+          "candidate": 0.6646,
+          "difference": 0.0972,
+          "ci95": [
+            0.0732,
+            0.1216
+          ],
+          "permutation_p": 5e-05
+        },
+        "grasped": {
+          "scenes": 512,
+          "baseline": 0.8584,
+          "candidate": 0.8965,
+          "difference": 0.0381,
+          "ci95": [
+            0.0195,
+            0.0571
+          ],
+          "permutation_p": 5e-05
+        },
+        "lifted": {
+          "scenes": 512,
+          "baseline": 0.8052,
+          "candidate": 0.8589,
+          "difference": 0.0537,
+          "ci95": [
+            0.0327,
+            0.0752
+          ],
+          "permutation_p": 5e-05
+        },
+        "carry_slip": {
+          "scenes": 512,
+          "baseline": 0.2832,
+          "candidate": 0.2383,
+          "difference": -0.0449,
+          "ci95": [
+            -0.0679,
+            -0.0225
+          ],
+          "permutation_p": 5e-05
+        },
+        "wrong_place": {
+          "scenes": 512,
+          "baseline": 0.25,
+          "candidate": 0.1963,
+          "difference": -0.0537,
+          "ci95": [
+            -0.0762,
+            -0.0317
+          ],
+          "permutation_p": 5e-05
+        },
+        "non_finite": {
+          "scenes": 512,
+          "baseline": 0.0132,
+          "candidate": 0.0137,
+          "difference": 0.0005,
+          "ci95": [
+            -0.0073,
+            0.0083
+          ],
+          "permutation_p": 1.0
+        }
+      },
+      "strict_by_destination": {
+        "bowl": {
+          "scenes": 255,
+          "baseline": 0.4598,
+          "candidate": 0.5422,
+          "difference": 0.0824,
+          "ci95": [
+            0.048,
+            0.1167
+          ],
+          "permutation_p": 5e-05
+        },
+        "plate": {
+          "scenes": 257,
+          "baseline": 0.571,
+          "candidate": 0.6858,
+          "difference": 0.1148,
+          "ci95": [
+            0.0798,
+            0.1498
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "strict_by_object": {
+        "robocasa_apple": {
+          "scenes": 138,
+          "baseline": 0.4728,
+          "candidate": 0.6123,
+          "difference": 0.1395,
+          "ci95": [
+            0.0888,
+            0.192
+          ]
+        },
+        "robocasa_orange": {
+          "scenes": 123,
+          "baseline": 0.5935,
+          "candidate": 0.6768,
+          "difference": 0.0833,
+          "ci95": [
+            0.0366,
+            0.1321
+          ]
+        },
+        "robocasa_potato": {
+          "scenes": 122,
+          "baseline": 0.4119,
+          "candidate": 0.4611,
+          "difference": 0.0492,
+          "ci95": [
+            0.002,
+            0.0963
+          ]
+        },
+        "robocasa_tomato": {
+          "scenes": 129,
+          "baseline": 0.5853,
+          "candidate": 0.7016,
+          "difference": 0.1163,
+          "ci95": [
+            0.0678,
+            0.1647
+          ]
+        }
+      },
+      "strict_by_target_y_quartile": {
+        "Q1": {
+          "scenes": 130,
+          "baseline": 0.7942,
+          "candidate": 0.8346,
+          "difference": 0.0404,
+          "ci95": [
+            -0.0019,
+            0.0827
+          ],
+          "permutation_p": 0.07155
+        },
+        "Q2": {
+          "scenes": 125,
+          "baseline": 0.734,
+          "candidate": 0.78,
+          "difference": 0.046,
+          "ci95": [
+            -0.006,
+            0.098
+          ],
+          "permutation_p": 0.0601
+        },
+        "Q3": {
+          "scenes": 128,
+          "baseline": 0.4375,
+          "candidate": 0.5547,
+          "difference": 0.1172,
+          "ci95": [
+            0.0703,
+            0.1641
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q4": {
+          "scenes": 129,
+          "baseline": 0.1008,
+          "candidate": 0.2907,
+          "difference": 0.1899,
+          "ci95": [
+            0.1434,
+            0.2384
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "per_repeat_mcnemar": [
+        {
+          "baseline_successes": 266,
+          "candidate_successes": 310,
+          "baseline_only": 41,
+          "candidate_only": 85,
+          "p": 0.00011
+        },
+        {
+          "baseline_successes": 275,
+          "candidate_successes": 303,
+          "baseline_only": 49,
+          "candidate_only": 77,
+          "p": 0.01582
+        },
+        {
+          "baseline_successes": 259,
+          "candidate_successes": 318,
+          "baseline_only": 42,
+          "candidate_only": 101,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 256,
+          "candidate_successes": 327,
+          "baseline_only": 40,
+          "candidate_only": 111,
+          "p": 0.0
+        }
+      ],
+      "strict_p_holm": 0.0001,
+      "verdict": "candidate_better",
+      "pilot_promotion": {
+        "margin": 0.03,
+        "strict_ci95_low": 0.0737,
+        "retention": {
+          "grasped": {
+            "difference": 0.0381,
+            "ci95_low": 0.0195,
+            "lower_bound_required": -0.03,
+            "pass": true
+          },
+          "lifted": {
+            "difference": 0.0537,
+            "ci95_low": 0.0327,
+            "lower_bound_required": -0.03,
+            "pass": true
+          }
+        },
+        "decision": "promote"
+      }
+    },
+    "peak39m": {
+      "metrics": {
+        "strict": {
+          "scenes": 512,
+          "baseline": 0.5156,
+          "candidate": 0.6133,
+          "difference": 0.0977,
+          "ci95": [
+            0.0732,
+            0.1221
+          ],
+          "permutation_p": 5e-05
+        },
+        "native": {
+          "scenes": 512,
+          "baseline": 0.5674,
+          "candidate": 0.6689,
+          "difference": 0.1016,
+          "ci95": [
+            0.0771,
+            0.1265
+          ],
+          "permutation_p": 5e-05
+        },
+        "grasped": {
+          "scenes": 512,
+          "baseline": 0.8584,
+          "candidate": 0.8965,
+          "difference": 0.0381,
+          "ci95": [
+            0.021,
+            0.0562
+          ],
+          "permutation_p": 5e-05
+        },
+        "lifted": {
+          "scenes": 512,
+          "baseline": 0.8052,
+          "candidate": 0.8657,
+          "difference": 0.0605,
+          "ci95": [
+            0.04,
+            0.0811
+          ],
+          "permutation_p": 5e-05
+        },
+        "carry_slip": {
+          "scenes": 512,
+          "baseline": 0.2832,
+          "candidate": 0.2427,
+          "difference": -0.0405,
+          "ci95": [
+            -0.063,
+            -0.0186
+          ],
+          "permutation_p": 0.0002
+        },
+        "wrong_place": {
+          "scenes": 512,
+          "baseline": 0.25,
+          "candidate": 0.1973,
+          "difference": -0.0527,
+          "ci95": [
+            -0.0742,
+            -0.0317
+          ],
+          "permutation_p": 5e-05
+        },
+        "non_finite": {
+          "scenes": 512,
+          "baseline": 0.0132,
+          "candidate": 0.0176,
+          "difference": 0.0044,
+          "ci95": [
+            -0.0039,
+            0.0127
+          ],
+          "permutation_p": 0.27704
+        }
+      },
+      "strict_by_destination": {
+        "bowl": {
+          "scenes": 255,
+          "baseline": 0.4598,
+          "candidate": 0.5422,
+          "difference": 0.0824,
+          "ci95": [
+            0.048,
+            0.1176
+          ],
+          "permutation_p": 5e-05
+        },
+        "plate": {
+          "scenes": 257,
+          "baseline": 0.571,
+          "candidate": 0.6839,
+          "difference": 0.1128,
+          "ci95": [
+            0.0778,
+            0.1479
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "strict_by_object": {
+        "robocasa_apple": {
+          "scenes": 138,
+          "baseline": 0.4728,
+          "candidate": 0.6196,
+          "difference": 0.1467,
+          "ci95": [
+            0.0978,
+            0.1975
+          ]
+        },
+        "robocasa_orange": {
+          "scenes": 123,
+          "baseline": 0.5935,
+          "candidate": 0.6484,
+          "difference": 0.0549,
+          "ci95": [
+            0.0102,
+            0.1016
+          ]
+        },
+        "robocasa_potato": {
+          "scenes": 122,
+          "baseline": 0.4119,
+          "candidate": 0.4857,
+          "difference": 0.0738,
+          "ci95": [
+            0.0205,
+            0.127
+          ]
+        },
+        "robocasa_tomato": {
+          "scenes": 129,
+          "baseline": 0.5853,
+          "candidate": 0.6938,
+          "difference": 0.1085,
+          "ci95": [
+            0.062,
+            0.157
+          ]
+        }
+      },
+      "strict_by_target_y_quartile": {
+        "Q1": {
+          "scenes": 130,
+          "baseline": 0.7942,
+          "candidate": 0.85,
+          "difference": 0.0558,
+          "ci95": [
+            0.0135,
+            0.1
+          ],
+          "permutation_p": 0.01035
+        },
+        "Q2": {
+          "scenes": 125,
+          "baseline": 0.734,
+          "candidate": 0.766,
+          "difference": 0.032,
+          "ci95": [
+            -0.024,
+            0.09
+          ],
+          "permutation_p": 0.20559
+        },
+        "Q3": {
+          "scenes": 128,
+          "baseline": 0.4375,
+          "candidate": 0.5664,
+          "difference": 0.1289,
+          "ci95": [
+            0.082,
+            0.1758
+          ],
+          "permutation_p": 5e-05
+        },
+        "Q4": {
+          "scenes": 129,
+          "baseline": 0.1008,
+          "candidate": 0.2733,
+          "difference": 0.1725,
+          "ci95": [
+            0.126,
+            0.2209
+          ],
+          "permutation_p": 5e-05
+        }
+      },
+      "per_repeat_mcnemar": [
+        {
+          "baseline_successes": 266,
+          "candidate_successes": 311,
+          "baseline_only": 43,
+          "candidate_only": 88,
+          "p": 0.0001
+        },
+        {
+          "baseline_successes": 275,
+          "candidate_successes": 310,
+          "baseline_only": 48,
+          "candidate_only": 83,
+          "p": 0.00283
+        },
+        {
+          "baseline_successes": 259,
+          "candidate_successes": 314,
+          "baseline_only": 44,
+          "candidate_only": 99,
+          "p": 0.0
+        },
+        {
+          "baseline_successes": 256,
+          "candidate_successes": 321,
+          "baseline_only": 46,
+          "candidate_only": 111,
+          "p": 0.0
+        }
+      ],
+      "strict_p_holm": 0.0001,
+      "verdict": "candidate_better",
+      "pilot_promotion": {
+        "margin": 0.03,
+        "strict_ci95_low": 0.0732,
+        "retention": {
+          "grasped": {
+            "difference": 0.0381,
+            "ci95_low": 0.021,
+            "lower_bound_required": -0.03,
+            "pass": true
+          },
+          "lifted": {
+            "difference": 0.0605,
+            "ci95_low": 0.04,
+            "lower_bound_required": -0.03,
+            "pass": true
+          }
+        },
+        "decision": "promote"
+      }
+    }
+  }
+}

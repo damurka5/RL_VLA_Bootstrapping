@@ -3,13 +3,12 @@
 Implements `docs/reports/campaign/CDPR_ZERO_INIT_CORRECTION_IMPLEMENTATION.md`.
 This note keeps four things separate: implementation status, local test
 evidence, GPU preflight, and training/evaluation results. GPU preflight and
-one-update smoke evidence are recorded in §5. As of 2026-10-19, the promoted
-bounded-residual control has completed a long continuation to 20,068,312
-total actions. Matched evaluation now promotes final `step_20068312`: 53.47%
-strict versus 38.28% for the 2M baseline, +15.19 pp, paired CI [+12.70, +17.68].
-The 40M continuation has now completed at 61.23% in-run strict, with a
-64.84% panel peak; its matched evaluation is pending (see §13). The correction
-candidate remains unpromoted.
+one-update smoke evidence are recorded in §5. As of 2026-10-19, matched evaluation promotes the 40M
+bounded-residual control `step_40056193`: 61.43% strict versus 51.56% for 20M,
++9.86 pp, paired CI [+7.37, +12.30]. Grasp/lift retention passes and carry-slip/
+wrong-placement rates improve. The 39.8M peak has no demonstrated advantage.
+Next: unchanged continuation to 60M total actions. The correction candidate
+remains unpromoted. See §14 and the linked full report.
 
 ## 1. Implementation status
 
@@ -708,3 +707,13 @@ support the existing direction, with approximately 1.62% reported non-finite
 episodes and frozen LoRA. Compare both checkpoints against promoted20m;
 20M remains the development baseline until those matched results arrive.
 [Analysis, telemetry caveats and complete command](CDPR_40M_CONTROL_REVIEW_20261019.md).
+
+## 14. 40M final promoted; continue unchanged to 60M (2026-10-19)
+
+The returned matched evaluation supersedes §13's pending status. Final
+`step_40056193` gives 1258/2048 = 61.43% strict versus 1056/2048 = 51.56%
+for 20M: +9.86 pp, CI [+7.37, +12.30], Holm p=0.00010. Grasp/lift retention
+passes, carry slips/wrong placements decrease, and no non-finite increase is
+detected. Peak39m has no demonstrated advantage over final (p=0.9598).
+Promote final for development and continue unchanged to 60M total actions.
+[Full evidence, source hash and command](CDPR_40M_CONTROL_REVIEW_20261019.md#next-training-unchanged-control-to-60m-total-actions).

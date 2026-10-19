@@ -1,0 +1,338 @@
+{
+  "tool": "compare_put_into_repeats.py",
+  "scenes": 512,
+  "protocol": {
+    "scene_manifest_sha256": "30dc9d53027c7e7ba871379e1ec17f0f148a08517f03fc4fa531549a15ef9208",
+    "split": "student_validation",
+    "worlds": 64,
+    "rounds": 8,
+    "distinct_scene_rounds": true,
+    "decisions": 128,
+    "settle_decisions": 0,
+    "excluded_validation_panel": {
+      "groups_per_rank": 64,
+      "panel_scenes": 128,
+      "ranks": 2,
+      "rounds": 1,
+      "split_scenes_after": 1102,
+      "split_scenes_before": 1230,
+      "validation_seed": 2000000
+    },
+    "controller_z_max": null,
+    "prior_noise_scale": 1.0,
+    "stochastic_seed": null,
+    "arm": "unassisted"
+  },
+  "baseline": "final40m",
+  "alpha": 0.05,
+  "checkpoints": {
+    "final40m": {
+      "path": "runs/latent_control_to40m_20261012_230538/rl/step_40056193/smolvla_grpo_adapter.pt",
+      "sha256": "63aff785cc0202ecea2f9c1e713f58648f14a0695a593975fa3022b4f2505e91",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/final40m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        310,
+        303,
+        318,
+        327
+      ],
+      "strict_repeat_discordance": 0.2428,
+      "strict_scenes_always": 188,
+      "strict_scenes_never": 97,
+      "strict": 0.6143,
+      "native": 0.6646,
+      "grasped": 0.8965,
+      "lifted": 0.8589,
+      "released": 0.8154,
+      "carry_slip": 0.2383,
+      "wrong_place": 0.1963,
+      "non_finite": 0.0137,
+      "lifted_given_grasped": 0.9581,
+      "strict_given_lifted": 0.7152
+    },
+    "peak39m": {
+      "path": "runs/latent_control_to40m_20261012_230538/rl/step_39804332/smolvla_grpo_adapter.pt",
+      "sha256": "989fcc8f11c3c28d5845fed6add23a4be9fb7b45a9fc9072b4b0617e855cfbc0",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_control_40m_comparison_20261019_152358/peak39m/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        311,
+        310,
+        314,
+        321
+      ],
+      "strict_repeat_discordance": 0.2441,
+      "strict_scenes_always": 185,
+      "strict_scenes_never": 99,
+      "strict": 0.6133,
+      "native": 0.6689,
+      "grasped": 0.8965,
+      "lifted": 0.8657,
+      "released": 0.8145,
+      "carry_slip": 0.2427,
+      "wrong_place": 0.1973,
+      "non_finite": 0.0176,
+      "lifted_given_grasped": 0.9657,
+      "strict_given_lifted": 0.7084
+    }
+  },
+  "comparisons": {
+    "peak39m": {
+      "metrics": {
+        "strict": {
+          "scenes": 512,
+          "baseline": 0.6143,
+          "candidate": 0.6133,
+          "difference": -0.001,
+          "ci95": [
+            -0.0205,
+            0.0181
+          ],
+          "permutation_p": 0.9598
+        },
+        "native": {
+          "scenes": 512,
+          "baseline": 0.6646,
+          "candidate": 0.6689,
+          "difference": 0.0044,
+          "ci95": [
+            -0.0142,
+            0.0234
+          ],
+          "permutation_p": 0.70341
+        },
+        "grasped": {
+          "scenes": 512,
+          "baseline": 0.8965,
+          "candidate": 0.8965,
+          "difference": 0.0,
+          "ci95": [
+            -0.0132,
+            0.0127
+          ],
+          "permutation_p": 1.0
+        },
+        "lifted": {
+          "scenes": 512,
+          "baseline": 0.8589,
+          "candidate": 0.8657,
+          "difference": 0.0068,
+          "ci95": [
+            -0.0078,
+            0.0215
+          ],
+          "permutation_p": 0.40578
+        },
+        "carry_slip": {
+          "scenes": 512,
+          "baseline": 0.2383,
+          "candidate": 0.2427,
+          "difference": 0.0044,
+          "ci95": [
+            -0.0137,
+            0.0225
+          ],
+          "permutation_p": 0.70101
+        },
+        "wrong_place": {
+          "scenes": 512,
+          "baseline": 0.1963,
+          "candidate": 0.1973,
+          "difference": 0.001,
+          "ci95": [
+            -0.0161,
+            0.0176
+          ],
+          "permutation_p": 0.95665
+        },
+        "non_finite": {
+          "scenes": 512,
+          "baseline": 0.0137,
+          "candidate": 0.0176,
+          "difference": 0.0039,
+          "ci95": [
+            -0.0029,
+            0.0108
+          ],
+          "permutation_p": 0.31483
+        }
+      },
+      "strict_by_destination": {
+        "bowl": {
+          "scenes": 255,
+          "baseline": 0.5422,
+          "candidate": 0.5422,
+          "difference": 0.0,
+          "ci95": [
+            -0.0265,
+            0.0265
+          ],
+          "permutation_p": 1.0
+        },
+        "plate": {
+          "scenes": 257,
+          "baseline": 0.6858,
+          "candidate": 0.6839,
+          "difference": -0.0019,
+          "ci95": [
+            -0.0292,
+            0.0243
+          ],
+          "permutation_p": 0.94765
+        }
+      },
+      "strict_by_object": {
+        "robocasa_apple": {
+          "scenes": 138,
+          "baseline": 0.6123,
+          "candidate": 0.6196,
+          "difference": 0.0072,
+          "ci95": [
+            -0.0308,
+            0.0435
+          ]
+        },
+        "robocasa_orange": {
+          "scenes": 123,
+          "baseline": 0.6768,
+          "candidate": 0.6484,
+          "difference": -0.0285,
+          "ci95": [
+            -0.063,
+            0.0041
+          ]
+        },
+        "robocasa_potato": {
+          "scenes": 122,
+          "baseline": 0.4611,
+          "candidate": 0.4857,
+          "difference": 0.0246,
+          "ci95": [
+            -0.0164,
+            0.0676
+          ]
+        },
+        "robocasa_tomato": {
+          "scenes": 129,
+          "baseline": 0.7016,
+          "candidate": 0.6938,
+          "difference": -0.0078,
+          "ci95": [
+            -0.0484,
+            0.031
+          ]
+        }
+      },
+      "strict_by_target_y_quartile": {
+        "Q1": {
+          "scenes": 130,
+          "baseline": 0.8346,
+          "candidate": 0.85,
+          "difference": 0.0154,
+          "ci95": [
+            -0.0173,
+            0.0481
+          ],
+          "permutation_p": 0.49523
+        },
+        "Q2": {
+          "scenes": 125,
+          "baseline": 0.78,
+          "candidate": 0.766,
+          "difference": -0.014,
+          "ci95": [
+            -0.05,
+            0.022
+          ],
+          "permutation_p": 0.58342
+        },
+        "Q3": {
+          "scenes": 128,
+          "baseline": 0.5547,
+          "candidate": 0.5664,
+          "difference": 0.0117,
+          "ci95": [
+            -0.0332,
+            0.0566
+          ],
+          "permutation_p": 0.66922
+        },
+        "Q4": {
+          "scenes": 129,
+          "baseline": 0.2907,
+          "candidate": 0.2733,
+          "difference": -0.0174,
+          "ci95": [
+            -0.0581,
+            0.0233
+          ],
+          "permutation_p": 0.47913
+        }
+      },
+      "per_repeat_mcnemar": [
+        {
+          "baseline_successes": 310,
+          "candidate_successes": 311,
+          "baseline_only": 57,
+          "candidate_only": 58,
+          "p": 1.0
+        },
+        {
+          "baseline_successes": 303,
+          "candidate_successes": 310,
+          "baseline_only": 59,
+          "candidate_only": 66,
+          "p": 0.59168
+        },
+        {
+          "baseline_successes": 318,
+          "candidate_successes": 314,
+          "baseline_only": 65,
+          "candidate_only": 61,
+          "p": 0.7894
+        },
+        {
+          "baseline_successes": 327,
+          "candidate_successes": 321,
+          "baseline_only": 58,
+          "candidate_only": 52,
+          "p": 0.63376
+        }
+      ],
+      "strict_p_holm": 0.9598,
+      "verdict": "no_significant_difference",
+      "pilot_promotion": {
+        "margin": 0.03,
+        "strict_ci95_low": -0.0205,
+        "retention": {
+          "grasped": {
+            "difference": 0.0,
+            "ci95_low": -0.0132,
+            "lower_bound_required": -0.03,
+            "pass": true
+          },
+          "lifted": {
+            "difference": 0.0068,
+            "ci95_low": -0.0078,
+            "lower_bound_required": -0.03,
+            "pass": true
+          }
+        },
+        "decision": "no_promotion:strict_interval_not_above_zero"
+      }
+    }
+  }
+}

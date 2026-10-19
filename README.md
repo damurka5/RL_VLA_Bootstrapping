@@ -39,7 +39,7 @@ No human demonstrations are recorded for this robot at any stage.
 one instruction, and must approach, grasp, lift, carry and release the object
 inside the receptacle. Left half: overview camera; right half: wrist camera.
 The clips are strict successes of checkpoint `step_28309431` (2026-09-17,
-22.3% strict). The current development checkpoint reaches 53.47% on the
+22.3% strict). The current development checkpoint reaches 61.43% on the
 separate repeated evaluation described below; these clips are historical. See
 [Results](#results). Original MP4s and per-episode records are in
 [`docs/media/put_into/`](docs/media/put_into/).</sub>
@@ -137,49 +137,43 @@ flowchart TD
 | 4–5 | Aug 21 – 31 | Retention bank; one adapter for all four instructions |
 | 6–7 | Aug 30 – Sep 9 | Composed pick-and-place; one sparse reward for all instructions |
 | 8 | Sep 10 – 28 | Three-stage chains → staged-sparse GRPO on the full empty-start task |
-| 9 | Oct 3 – 19 | Latent-likelihood control; 20M continuation promoted on repeated development evaluation |
+| 9 | Oct 3 – 19 | Latent-likelihood control; 40M control promoted on repeated development evaluation |
 
 ## Results
 
 ### Full task: empty gripper → object in the receptacle
 
-**Latest status, 2026-10-19:** carry forward the bounded-residual control at
-`runs/latent_control_long_20261009_160735/rl/step_20068312`. Its 20.07M selected
-actions are counted since conversion to the repaired latent likelihood; it
-inherits the historical 56M source and was not trained from scratch in 20M.
+**Latest status, 2026-10-19:** promoted bounded-residual control:
+`runs/latent_control_to40m_20261012_230538/rl/step_40056193`.
+Its 40.06M selected actions are counted since latent-likelihood conversion;
+it inherits the historical 56M source and was not trained from scratch in 40M.
 
-The matched evaluation uses **512 student-validation scenes × four repeats
-(2,048 episodes per checkpoint)**, excluding the fixed 128-scene training
-validation panel. These are development results; `final_test` remains untouched.
+Matched evaluation: **512 development scenes × four repeats (2,048 episodes
+per checkpoint)**, excluding the fixed 128-scene training validation panel.
+`final_test` remains untouched.
 
 | Checkpoint | Strict success | Physical grasp | Held lift | Non-finite episodes |
 |---|---:|---:|---:|---:|
-| 2M control baseline | 784/2048 = 38.28% | 75.05% | 68.07% | 0.98% |
-| **20M final control (promoted)** | **1095/2048 = 53.47%** | **85.99%** | **82.23%** | **0.88%** |
-| 19.5M in-run panel peak | 1072/2048 = 52.34% | 86.28% | 82.28% | 1.07% |
+| 20M control baseline | 1056/2048 = 51.56% | 85.84% | 80.52% | 1.32% |
+| **40M final control (promoted)** | **1258/2048 = 61.43%** | **89.65%** | **85.89%** | **1.37%** |
+| 39.8M in-run panel peak | 1256/2048 = 61.33% | 89.65% | 86.57% | 1.76% |
 
-Final versus 2M: **+15.19 percentage points strict**, scene-paired 95% CI
-**[+12.70, +17.68]**, Holm p=0.00010. Grasp/lift retention passes. The panel
-peak has no demonstrated advantage over final (peak minus final −1.12 pp,
-CI [−3.22, +0.98], p=0.308). Non-finite rates show no detected increase;
-this does not establish zero simulator failures or equivalence.
+Final versus 20M: **+9.86 percentage points strict**, scene-paired 95% CI
+**[+7.37, +12.30]**, Holm p=0.00010. Grasp/lift retention passes. Carry slips
+fall from 28.32% to 23.83%; wrong placements from 25.00% to 19.63%, with
+negative paired intervals. Non-finite rates show no detected increase.
+The panel peak has no demonstrated advantage over final: peak minus final
+−0.10 pp, CI [−2.05, +1.81], p=0.9598.
 
-**40M continuation completed:** final `step_40056193` reaches **61.23%**
-in-run strict validation (627/1024), versus 54.20% at resume. The panel peak
-is **64.84%** (664/1024) at `step_39804332`. Over 299 updates, recorded optimizer
-metrics remain finite, LoRA stays frozen and reported non-finite episodes
-average about 1.62%. These panel results have not yet passed matched off-panel
-evaluation; the 20M result above remains the promoted development baseline.
+The training-panel final 61.23% and peak 64.84% are distinct measurements.
+Use this comparison's 51.56% baseline rather than the prior 53.47% from separate
+repeats. Next: **resume final with unchanged parameters to 60M total actions**,
+about 19.94M more (LR 1e-5, one PPO epoch, frozen LoRA, same task/rewards).
+No further pilot is needed; additional gains are not guaranteed.
 
-Next: compare 20M, final40m and peak39m on the same repeated off-panel protocol.
-The current parameters remain promising; no new training pilot or method
-switch is indicated by this history. Select the next resume source after
-comparison. The earlier October 19 console paste was the old 20M run; the
-subsequent event file confirms the separate 40M continuation.
-
-[40M analysis and evaluation command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md)
-· [20M matched evidence](docs/artifacts/latent_control_long_comparison_20261012/comparison.json)
-· [20M peak versus final](docs/artifacts/latent_control_long_comparison_20261012/peak_vs_final.json)
+[Full analysis and resume command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md#next-training-unchanged-control-to-60m-total-actions)
+· [Matched evidence](docs/artifacts/latent_control_40m_comparison_20261019/comparison.json)
+· [Peak versus final](docs/artifacts/latent_control_40m_comparison_20261019/peak_vs_final.json)
 
 #### Historical evaluations (different panels and repeat counts)
 
@@ -224,7 +218,7 @@ verdicts between runs, so differences below about 5 points need pooled repeats.
    have to be reconciled.
 5. **Staged sparse rewards train the complete task once each milestone is
    reachable.** Historical evaluations rose from 3.9% for the SFT seed to
-   41.8%. The repaired-likelihood control later reached 53.47% on the separate
+   41.8%. The repaired-likelihood control later reached 61.43% on the separate
    repeated development protocol above; these are not one matched comparison.
 6. **Measure before steering.** Evaluation noise comes mostly from closed-loop
    physics chaos, not from the VLA's sampling. Seven SFT fits on the policy's
@@ -236,10 +230,10 @@ The full evidence, protocols, and negative results are in the
 
 ## What is not solved yet
 
-- **Completing placement after pickup.** The latest control improves grasp
-  and held lift, while carry-slip and wrong-placement changes remain
-  inconclusive. Bowl strict is 48.14%, potato 41.80%, and the highest
-  target-y quartile 13.76%; these subgroup results are exploratory.
+- **Completing placement after pickup.** The latest control improves grasp,
+  held lift, carry slips and wrong placements. Bowl strict remains 54.22%,
+  potato 46.11%, and the highest target-y quartile 29.07%; these subgroup
+  results are exploratory.
 - **Retention and composition together.** RL on the composed task and SFT on
   the retention bank still pull against each other.
 - **Localization resolution.** The frozen encoder's pooled feature feeds the
