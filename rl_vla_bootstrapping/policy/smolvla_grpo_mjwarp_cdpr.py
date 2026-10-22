@@ -39,6 +39,7 @@ from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     add_three_stage_rates,
     instruction_outcome_counts,
 )
+from rl_vla_bootstrapping.policy.early_stopping import early_stop_metric_value
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     RankLocalGroupLayout,
     synchronize_equal_ddp_schedule,
@@ -342,6 +343,76 @@ def _validation_enabled(args: Any) -> bool:
         int(getattr(args, "validation_every_steps", 0)) > 0
         and int(getattr(args, "validation_episodes_per_instruction", 0)) > 0
     )
+
+
+class EarlyStopRule:
+    """Decide, from synchronized validation metrics, when a stage is done.
+
+    Every rank sees the same validation numbers (they are reduced before they
+    are returned), so every rank reaches the same verdict on the same update
+    and no extra collective is needed to agree on stopping.
+
+    Two independent reasons, both reported:
+
+    * target -- the metric reached ``target`` on ``patience`` consecutive
+      validations. Consecutive, because one validation round of a few hundred
+      episodes per instruction swings by several points on its own.
+    * plateau -- the best value has not improved by more than ``min_delta``
+      across the last ``plateau_validations`` validations.
+
+    Neither may fire before ``min_steps``.
+    """
+
+    def __init__(self, args: Any) -> None:
+        self.metric = str(getattr(args, "early_stop_metric", "validation/success_rate"))
+        self.target = float(getattr(args, "early_stop_target", 0.0))
+        self.patience = max(1, int(getattr(args, "early_stop_patience", 2)))
+        self.plateau = max(0, int(getattr(args, "early_stop_plateau_validations", 0)))
+        self.min_delta = float(getattr(args, "early_stop_min_delta", 0.02))
+        self.min_steps = max(0, int(getattr(args, "early_stop_min_steps", 0)))
+        self.history: list[tuple[int, float]] = []
+        self.streak = 0
+
+    @property
+    def enabled(self) -> bool:
+        return self.target > 0.0 or self.plateau > 0
+
+    def value(self, metrics: Mapping[str, Any]) -> float:
+        return early_stop_metric_value(metrics, self.metric)
+
+    def update(self, metrics: Mapping[str, Any], global_step: int) -> dict[str, Any] | None:
+        if not self.enabled:
+            return None
+        value = self.value(metrics)
+        if not math.isfinite(value):
+            return None
+        self.history.append((int(global_step), value))
+        self.streak = self.streak + 1 if (self.target > 0.0 and value >= self.target) else 0
+        if int(global_step) < self.min_steps:
+            return None
+        if self.target > 0.0 and self.streak >= self.patience:
+            return {
+                "reason": "target",
+                "metric": self.metric,
+                "value": value,
+                "target": self.target,
+                "consecutive": self.streak,
+                "global_step": int(global_step),
+            }
+        if self.plateau > 0 and len(self.history) > self.plateau:
+            before = max(item[1] for item in self.history[: -self.plateau])
+            recent = max(item[1] for item in self.history[-self.plateau :])
+            if recent - before <= self.min_delta:
+                return {
+                    "reason": "plateau",
+                    "metric": self.metric,
+                    "best_before_window": before,
+                    "best_in_window": recent,
+                    "window_validations": self.plateau,
+                    "min_delta": self.min_delta,
+                    "global_step": int(global_step),
+                }
+        return None
 
 
 def _validation_due(
@@ -656,14 +727,16 @@ def _run_gpu_validation(
         1,
         int(math.ceil(requested / max(1, global_worlds_per_round))),
     )
-    device_index = int(device.index or torch.cuda.current_device())
+    on_cuda = device.type == "cuda"
+    fork_devices = [int(device.index or torch.cuda.current_device())] if on_cuda else []
     validation_seed = int(args.validation_seed) + int(rank) * 1_000_003
     was_training = bool(trainer.actor.training)
     trainer.actor.eval()
     try:
-        with torch.random.fork_rng(devices=[device_index]):
+        with torch.random.fork_rng(devices=fork_devices):
             torch.manual_seed(validation_seed)
-            torch.cuda.manual_seed(validation_seed)
+            if on_cuda:
+                torch.cuda.manual_seed(validation_seed)
             rounds = [
                 collector.validate_round(
                     round_index=round_index,
@@ -1588,7 +1661,13 @@ def main(argv: Sequence[str] | None = None) -> None:
     _set_quiet_env(args, dist_ctx)
     _set_seed(int(args.seed) + int(dist_ctx.rank) * 1_000_003)
     device = torch.device(str(dist_ctx.device))
-    if device.type != "cuda":
+    # Test-only, matching the backend's RLVLA_MJWARP_ALLOW_CPU: MJWarp runs on
+    # Warp's CPU device, so the whole loop can be exercised on a laptop.
+    cpu_allowed = (
+        os.environ.get("RLVLA_MJWARP_ALLOW_CPU", "").strip() == "1"
+        and device.type == "cpu"
+    )
+    if device.type != "cuda" and not cpu_allowed:
         _destroy_distributed(dist_ctx)
         raise RuntimeError("MJWarp production training requires one CUDA GPU per rank.")
 
@@ -1598,7 +1677,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     # fraction of the device so a fixed slice is always available to Warp for
     # its physics and render buffers. Opt-in and tunable; 0 disables it.
     memory_fraction = float(os.environ.get("RLVLA_TORCH_MEMORY_FRACTION", "0.82"))
-    if 0.0 < memory_fraction < 1.0:
+    if 0.0 < memory_fraction < 1.0 and device.type == "cuda":
         torch.cuda.set_per_process_memory_fraction(memory_fraction, device)
         _log(
             dist_ctx,
@@ -1829,6 +1908,23 @@ def main(argv: Sequence[str] | None = None) -> None:
                 f"[smolvla-mjwarp] warm-started weights from {resolved_warmstart} "
                 "(fresh optimizer / curriculum / global step 0)",
             )
+            # A weights-only handoff keeps the actor's log_std, which the
+            # previous stage annealed toward its own task. A stage that changes
+            # the reward (dense -> binary) starts exploration over instead.
+            if _flag_env("RLVLA_SMOLVLA_RESET_LOG_STD"):
+                actor = trainer._unwrap(trainer.actor)  # noqa: SLF001
+                log_std = getattr(actor, "log_std", None)
+                if log_std is None:
+                    raise SystemExit(
+                        "RLVLA_SMOLVLA_RESET_LOG_STD=1 but the actor has no log_std."
+                    )
+                with torch.no_grad():
+                    log_std.fill_(float(args.init_log_std))
+                _log(
+                    dist_ctx,
+                    "[smolvla-mjwarp] reset actor log_std to "
+                    f"init_log_std={float(args.init_log_std):g}",
+                )
             if expand and expand_info.get("vision_expand/inserted", 0.0) > 0:
                 _log(
                     dist_ctx,
@@ -2426,6 +2522,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             last_validation_step = int(global_step)
         run_start_step = int(global_step)
         zero_signal_streak = 0
+        early_stop = EarlyStopRule(args)
+        early_stop_decision: dict[str, Any] | None = None
         if three_stage_sparse_credit and validation_collector is not None:
             initial_validation = _run_gpu_validation(
                 args=args, collector=validation_collector, trainer=trainer,
@@ -3108,6 +3206,21 @@ def main(argv: Sequence[str] | None = None) -> None:
                     }
                 )
                 last_validation_step = int(global_step)
+                early_stop_decision = early_stop.update(
+                    validation_metrics, int(global_step)
+                )
+                if early_stop_decision is not None:
+                    # The checkpoint for this validation is written below
+                    # (validation_due forces one), and the loop ends after it.
+                    final_update = True
+                    if dist_ctx.is_main:
+                        _write_json(run_dir / "early_stop.json", early_stop_decision)
+                        _log(
+                            dist_ctx,
+                            "[smolvla-mjwarp] early stop: "
+                            + json.dumps(early_stop_decision, sort_keys=True),
+                            progress=progress,
+                        )
                 if dist_ctx.is_main:
                     _append_jsonl(validation_path, validation_metrics)
                     _log_tensorboard_metrics(
@@ -3259,6 +3372,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             torch.cuda.empty_cache()
             if stop_for_zero_signal:
                 _log(dist_ctx, f"[three-stage] stopped after {zero_signal_streak} globally empty updates; inspect stage diagnostics before extending")
+                break
+            if early_stop_decision is not None:
                 break
     finally:
         if progress is not None:

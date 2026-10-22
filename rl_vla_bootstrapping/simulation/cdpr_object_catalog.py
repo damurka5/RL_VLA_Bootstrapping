@@ -1,9 +1,33 @@
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
+import os
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Iterable
+
+
+# Which robot the object catalog is sized for. Read once, at import, because
+# every consumer -- the collector's rest-height and fitted-opening tables, the
+# composition-scene radii, the backend's per-world collider tables -- snapshots
+# OBJECT_VARIANTS into module constants when it is first imported. An
+# environment variable is the one switch that reaches all of them, torchrun
+# workers and the SIL tools included, before any of them has taken that
+# snapshot. The backend refuses a scene whose robot does not match it.
+EMBODIMENT_ENV = "RLVLA_EMBODIMENT"
+SUPPORTED_EMBODIMENTS: tuple[str, ...] = ("cdpr", "widowx200")
+
+
+def active_embodiment() -> str:
+    value = os.environ.get(EMBODIMENT_ENV, "cdpr").strip().lower() or "cdpr"
+    if value not in SUPPORTED_EMBODIMENTS:
+        raise ValueError(
+            f"{EMBODIMENT_ENV}={value!r} is not one of {SUPPORTED_EMBODIMENTS}."
+        )
+    return value
+
+
+ACTIVE_EMBODIMENT = active_embodiment()
 
 
 PRIMITIVE_NAMES: tuple[str, ...] = (
@@ -98,6 +122,10 @@ class ObjectVariant:
     # gripper or the meshes change; do not derive it from geometry.
     fitted_gripper_opening: float
     primitives: tuple[PrimitiveSpec, ...]
+    # Multiplier on the visual mesh's XML scale, applied at compile time. 1.0
+    # on the CDPR; the WidowX catalog shrinks the graspable objects to its
+    # gripper (see `widowx200_object_variants`).
+    visual_mesh_scale: float = 1.0
 
     @property
     def visual_mesh_name(self) -> str:
@@ -326,6 +354,121 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
 }
 
 
+# ---------------------------------------------------------------------------
+# WidowX-200 catalog
+# ---------------------------------------------------------------------------
+#
+# The WidowX gripper spans 8-52 mm between its pads (0.0 -> 1.0 normalized),
+# against the CDPR's 35-95 mm, and nothing in the CDPR catalog fits it (see
+# robots/widowx200/README.md). The graspable objects are therefore shrunk
+# UNIFORMLY to a ~35 mm minor width -- the bottom of the measured 30-56 mm
+# graspable band, chosen there rather than mid-band because the pads only open
+# to 52 mm: a 35 mm object leaves ~8.5 mm of lateral tolerance per side, close
+# to the CDPR's grasp tolerance relative to its own localization error. A 7 cm
+# apple is out of scale for a 200 g-payload arm anyway; this is the physically
+# sensible correction, not a workaround.
+#
+# Banana and carrot are long and thin: scaling their 28 mm minor width up to
+# the band makes them 20 cm long, longer than the 18 cm lattice spacing. They
+# keep their CDPR size and the WidowX configs leave them out of every pool.
+#
+# The receptacles shrink a little (plate 0.8, bowl 0.85) so a plate and a bowl
+# fit side by side in the arm's annular workspace with room for the carry.
+WIDOWX200_OBJECT_SCALE: dict[str, float] = {
+    "robocasa_apple": 0.50,
+    "robocasa_banana": 1.0,
+    "robocasa_carrot": 1.0,
+    "robocasa_bell_pepper": 0.47,
+    "robocasa_tomato": 0.60,
+    "robocasa_orange": 0.60,
+    "robocasa_potato": 0.60,
+    "robocasa_mug": 0.46,
+    "robocasa_plate": 0.80,
+    "robocasa_bowl": 0.85,
+}
+
+# First bilateral pad contact on the WidowX gripper, MEASURED with
+# tools/audit/measure_widowx200_fitted_openings.py on the compiled scene (the
+# same "close until the physics reports contact" protocol as the CDPR values),
+# not derived from widths. Receptacles are never grasped and stay 0.0; banana
+# and carrot are out of the WidowX pools and are not measured.
+WIDOWX200_FITTED_GRIPPER_OPENING: dict[str, float] = {
+    "robocasa_apple": 0.685,
+    "robocasa_banana": 0.0,
+    "robocasa_carrot": 0.0,
+    "robocasa_bell_pepper": 0.691,
+    "robocasa_tomato": 0.692,
+    "robocasa_orange": 0.692,
+    "robocasa_potato": 0.692,
+    "robocasa_mug": 0.698,
+    "robocasa_plate": 0.0,
+    "robocasa_bowl": 0.0,
+}
+
+# The squeeze past first contact that seats a caught-object start, in this
+# gripper's normalized units. Measured with the same tool, by seating, lifting
+# 5 cm through the normalized action, and checking the object came along:
+#
+#   squeeze   0.03-0.08   0.12          0.20+
+#   holds     none-some   all but mug   all six, 8-9 cm lift
+#
+# Not the CDPR's 0.04. "First contact" is read at MJWarp's 2 mm contact
+# tolerance, so on this 44 mm span the reported opening sits ~0.08 above the
+# geometric surface; 0.04 below it the pads are still not touching, and the
+# kp=200 finger servo needs a few millimetres of overlap to make a grip.
+WIDOWX200_CAUGHT_START_GRIP_SQUEEZE = 0.20
+
+# Objects lighter than this rattle in a grip; uniform scaling would take the
+# mug to 21 g.
+_WIDOWX200_MIN_MASS = 0.04
+
+
+def _scaled_primitive(primitive: PrimitiveSpec, scale: float) -> PrimitiveSpec:
+    return replace(
+        primitive,
+        size=tuple(float(value) * scale for value in primitive.size),
+        pos=tuple(float(value) * scale for value in primitive.pos),
+    )
+
+
+def widowx200_object_variants(
+    variants: dict[str, ObjectVariant],
+) -> dict[str, ObjectVariant]:
+    """The CDPR catalog, uniformly rescaled for the WidowX-200 gripper.
+
+    Uniform scaling about the body origin keeps every derived quantity exact:
+    collider sizes and offsets and the rest height scale by ``s``; mass by
+    ``s**3`` (floored), and inertia by the mass ratio times ``s**2``.
+    """
+
+    scaled: dict[str, ObjectVariant] = {}
+    for name, variant in variants.items():
+        factor = float(WIDOWX200_OBJECT_SCALE[name])
+        mass = max(_WIDOWX200_MIN_MASS, float(variant.mass) * factor**3)
+        if factor == 1.0:
+            mass = float(variant.mass)
+        inertia_ratio = (mass / float(variant.mass)) * factor**2
+        scaled[name] = replace(
+            variant,
+            mass=mass,
+            inertia=tuple(float(value) * inertia_ratio for value in variant.inertia),
+            rest_height=float(variant.rest_height) * factor,
+            fitted_gripper_opening=float(WIDOWX200_FITTED_GRIPPER_OPENING[name]),
+            primitives=tuple(
+                _scaled_primitive(primitive, factor)
+                for primitive in variant.primitives
+            ),
+            visual_mesh_scale=factor,
+        )
+    return scaled
+
+
+CDPR_OBJECT_VARIANTS: dict[str, ObjectVariant] = OBJECT_VARIANTS
+if ACTIVE_EMBODIMENT == "widowx200":
+    OBJECT_VARIANTS = widowx200_object_variants(CDPR_OBJECT_VARIANTS)
+    CAUGHT_START_GRIP_SQUEEZE = WIDOWX200_CAUGHT_START_GRIP_SQUEEZE
+
+
 def slot_geom_name(slot: int, geom_slot: str) -> str:
     if slot < 0 or slot >= 4:
         raise IndexError(slot)
@@ -429,7 +572,38 @@ def _spec_body(spec: object, name: str) -> object:
     raise KeyError(f"MjSpec body {name!r} was not found.")
 
 
+def _spec_mesh(spec: object, name: str) -> object:
+    named_access = getattr(spec, "mesh", None)
+    if callable(named_access):
+        mesh = named_access(name)
+        if mesh is not None:
+            return mesh
+    for mesh in getattr(spec, "meshes", ()):
+        if getattr(mesh, "name", None) == name:
+            return mesh
+    raise KeyError(f"MjSpec mesh {name!r} was not found.")
+
+
+def _scale_catalog_meshes(spec: object) -> None:
+    """Apply every variant's ``visual_mesh_scale`` to its mesh asset.
+
+    ALL catalog meshes, in every compiled variant, not only the one that variant
+    shows: MJWarp shares mesh vertex data across worlds and takes it from ONE
+    host model, while per-world switching only swaps ``geom_dataid``. A mesh
+    left unscaled in that host model would render at the CDPR size in every
+    world that selects it.
+    """
+
+    for variant in OBJECT_VARIANTS.values():
+        factor = float(variant.visual_mesh_scale)
+        if factor == 1.0:
+            continue
+        mesh = _spec_mesh(spec, variant.visual_mesh_name)
+        mesh.scale = tuple(float(value) * factor for value in mesh.scale)
+
+
 def _configure_variant_spec(spec: object, variant: ObjectVariant) -> None:
+    _scale_catalog_meshes(spec)
     primitive_by_name = {
         primitive.primitive: primitive for primitive in variant.primitives
     }

@@ -70,6 +70,27 @@ def sparse_binary_reward_requested(metadata: dict[str, Any] | None) -> bool:
     return bool(raw)
 
 
+# The staged ("milestone") reward. Like `sparse_binary_reward` it keeps every
+# piece of success-predicate geometry and zeroes every shaping weight; unlike
+# it, the episode return is the FRACTION of the instruction's ordered milestones
+# reached, each latched once reached:
+#
+#   move_to_object    near (XY within staged_move_to_approach_distance), success
+#   pick_up           approach, grasp, success (= held lift)
+#   put_into_*        approach, grasp, held lift, carry over the receptacle, success
+#
+# so success is always 1.0, a failure is credited for how far along the chain
+# it got, and nothing can be earned without the physics having done it (grasp
+# is the latched physical grasp, lift the peak-while-held ratchet). This is the
+# reward the joint phase uses: one scale across all four instructions, with
+# the partial credit a 1-in-8 composed success needs to have a group spread.
+def staged_milestone_reward_requested(metadata: dict[str, Any] | None) -> bool:
+    raw = (metadata or {}).get("staged_milestone_reward", False)
+    if isinstance(raw, str):
+        return raw.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(raw)
+
+
 @dataclass(frozen=True)
 class BatchedMoveToDistanceReward:
     """GPU form of the established CPU ``move to`` distance reward.
@@ -101,6 +122,8 @@ class BatchedMoveToDistanceReward:
     # advantage far better than the old penalty whose scale dwarfed the XY term.
     distance_include_z: bool = False
     approach_z: float = 0.27
+    staged_milestones: bool = False
+    staged_approach_distance: float = 0.06
 
     @classmethod
     def from_metadata(
@@ -184,7 +207,15 @@ class BatchedMoveToDistanceReward:
                 "move_to_object_approach_z", 0.5 * (z_low + z_high)
             ),
         )
-        if sparse_binary_reward_requested(values):
+        if staged_milestone_reward_requested(values):
+            reward = replace(
+                reward,
+                staged_milestones=True,
+                staged_approach_distance=max(
+                    number("staged_move_to_approach_distance", 0.06), 0.0
+                ),
+            )
+        if sparse_binary_reward_requested(values) or reward.staged_milestones:
             # xy_window_low/high and z_window_low/high are NOT touched: they are
             # read back out by `_task_thresholds` as `move_to_xy_low`/
             # `move_to_xy` and are the move_to SUCCESS TEST, not shaping.
@@ -306,6 +337,9 @@ class BatchedCatchReleaseDenseReward:
     pick_lift_reward_scale: float = 0.05
     pick_lift_success_height: float = 0.05
     pick_success_bonus: float = 2.0
+    staged_milestones: bool = False
+    # Distance from the grasp point that counts as the approach milestone.
+    staged_approach_distance: float = 0.03
 
     @classmethod
     def from_metadata(
@@ -414,7 +448,15 @@ class BatchedCatchReleaseDenseReward:
                 "pick_success_bonus", default_success_bonus
             ),
         )
-        if sparse_binary_reward_requested(values):
+        if staged_milestone_reward_requested(values):
+            reward = replace(
+                reward,
+                staged_milestones=True,
+                staged_approach_distance=max(
+                    number("staged_approach_distance", 0.03), 0.0
+                ),
+            )
+        if sparse_binary_reward_requested(values) or reward.staged_milestones:
             # Zeroed: every shaping weight and every intermediate bonus.
             # KEPT, because the success predicate reads them --
             # plate_radius, bowl_radius, container_z_tolerance,
@@ -470,6 +512,11 @@ class BatchedTaskState:
     # afterwards the object falls, and both end at the same resting height.
     # None keeps the pre-latch behaviour for callers that predate this.
     release_clearance: Any | None = None
+    # [world, 5] latched milestones for the staged reward (approach, grasp,
+    # lift, carry, placed). Allocated on the first scored step when the staged
+    # reward is on, seeded from ever_grasped so a caught start begins with the
+    # milestones its reset handed it.
+    milestones: Any | None = None
 
     def validate(self, batch_size: int, device: Any) -> None:
         import torch
@@ -1278,6 +1325,81 @@ def evaluate_active_sparse_tasks(
         pick_grasp_distance = torch.linalg.vector_norm(
             target - ee_position, dim=-1
         )
+    staged_move_to = bool(
+        move_to_distance_reward is not None
+        and move_to_distance_reward.staged_milestones
+    )
+    staged_manipulation = bool(
+        catch_release_dense_reward is not None
+        and catch_release_dense_reward.staged_milestones
+    )
+    staged_fraction = None
+    if staged_move_to or staged_manipulation:
+        if state.milestones is None:
+            state.milestones = torch.zeros(
+                (batch_size, 5), dtype=torch.bool, device=ee_position.device
+            )
+            seeded = state.ever_grasped.to(dtype=torch.bool)
+            state.milestones[:, 0] |= seeded
+            state.milestones[:, 1] |= seeded
+            state.milestones[:, 2] |= seeded
+        lift_height = (
+            float(catch_release_dense_reward.pick_lift_success_height)
+            if catch_release_dense_reward is not None
+            else 0.05
+        )
+        approach_distance = (
+            float(catch_release_dense_reward.staged_approach_distance)
+            if catch_release_dense_reward is not None
+            else 0.03
+        )
+        near_move_to = ee_xy_distance <= (
+            float(move_to_distance_reward.staged_approach_distance)
+            if move_to_distance_reward is not None
+            else 0.06
+        )
+        lifted = credited_lift >= lift_height
+        carried = (
+            state.grasped.to(dtype=torch.bool)
+            & lifted
+            & (container_xy <= container_radius)
+        )
+        reached = torch.where(
+            is_move_to,
+            near_move_to,
+            (pick_grasp_distance <= approach_distance) | state.ever_grasped,
+        )
+        events = torch.stack(
+            (
+                reached,
+                state.ever_grasped.to(dtype=torch.bool),
+                lifted,
+                carried,
+                success,
+            ),
+            dim=-1,
+        )
+        state.milestones |= events & active[:, None]
+        latched = state.milestones.to(dtype=ee_position.dtype)
+        move_fraction = 0.5 * (latched[:, 0] + latched[:, 4])
+        pick_fraction = (latched[:, 0] + latched[:, 1] + latched[:, 4]) / 3.0
+        place_fraction = latched.sum(dim=-1) / 5.0
+        staged_fraction = torch.where(
+            is_move_to,
+            move_fraction,
+            torch.where(is_pick_up, pick_fraction, place_fraction),
+        )
+        # Success implies every earlier milestone; a success that skipped one
+        # (a placement whose lift was never read as "held") still scores 1.
+        staged_fraction = torch.where(
+            success, torch.ones_like(staged_fraction), staged_fraction
+        )
+        staged_instruction = torch.where(
+            is_move_to,
+            torch.full_like(success, staged_move_to),
+            torch.full_like(success, staged_manipulation),
+        )
+        rewards = torch.where(staged_instruction, staged_fraction, rewards)
     return BatchedTaskResult(
         rewards=rewards,
         success=success,
@@ -1327,5 +1449,10 @@ def evaluate_active_sparse_tasks(
             "wrong_place_drop": wrong_place_settled,
             # The unconditional form, whether or not it terminates this run.
             "wrong_place_drop_legacy": wrong_place_legacy & active,
+            "staged_fraction": (
+                staged_fraction
+                if staged_fraction is not None
+                else torch.zeros_like(rewards)
+            ),
         },
     )

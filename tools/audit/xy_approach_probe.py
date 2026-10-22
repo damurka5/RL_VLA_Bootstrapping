@@ -351,12 +351,16 @@ def _build_world(
         BatchedMoveToDistanceReward,
     )
 
-    if not torch.cuda.is_available():
+    device = torch.device(device_str)
+    cpu_allowed = (
+        os.environ.get("RLVLA_MJWARP_ALLOW_CPU", "").strip() == "1"
+        and device.type == "cpu"
+    )
+    if not torch.cuda.is_available() and not cpu_allowed:
         raise RuntimeError(
             "This probe measures the MJWarp plant training runs on; it needs a "
             "CUDA GPU in the cdpr-mjlab environment."
         )
-    device = torch.device(device_str)
     project = load_project_config(config_path)
     if str(project.simulator.backend) != "mjlab_mjwarp":
         raise ValueError(

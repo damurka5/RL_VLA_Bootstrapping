@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from typing import Any, Mapping, Sequence
@@ -1410,6 +1411,14 @@ class BatchedReverseFrontierResetter:
             number("placement_grasp_object_max_distance", 0.10),
             self.placement_grasp_object_min_distance,
         )
+        # Leave an uncaught placement object on its own lattice cell rather
+        # than moving it to [min, max] from the receptacle. The lattice is
+        # collision-free by construction; a relocated object is not, and on a
+        # sector as small as the WidowX's it can land on the other receptacle.
+        # The carry then spans the real cell spacing, which is the full task.
+        self.placement_uncaught_object_at_cell = flag(
+            "placement_uncaught_object_at_cell", False
+        )
         # 32 decisions = 128 env steps. The oracle needs 77-119 for a
         # grasp-then-carry, against 35-47 for the carry alone, so this is the
         # measured cost of the grasp prefix plus headroom -- not a guess.
@@ -1595,6 +1604,55 @@ class BatchedReverseFrontierResetter:
                 "scene_object_scene_shift_m instead -- a common shift moves "
                 "every object together and costs no separation."
             )
+        # An explicit object lattice, replacing the 3x3 grid. A serial arm's
+        # reachable set is an annular sector, and the CDPR grid's corners fall
+        # outside it (robots/widowx200/widowx200_mujoco/workspace.py,
+        # `sector_lattice`). Four of the N cells are drawn per group, exactly
+        # as four of the nine are on the grid; the shift and jitter apply the
+        # same way. Unset keeps the grid and its generator stream untouched.
+        raw_cells = metadata.get("scene_object_cells")
+        self.scene_object_cells: tuple[tuple[float, float], ...] | None = None
+        if raw_cells:
+            cells = tuple(
+                (float(cell[0]), float(cell[1])) for cell in raw_cells
+            )
+            if len(cells) < 4:
+                raise ValueError(
+                    f"scene_object_cells needs at least 4 cells, got {len(cells)}."
+                )
+            closest = min(
+                ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5
+                for index, a in enumerate(cells)
+                for b in cells[index + 1 :]
+            )
+            if closest - self.scene_object_jitter < minimum_separation:
+                raise ValueError(
+                    "scene_object_cells would let two objects overlap: closest "
+                    f"cells {closest:.3f} m - jitter {self.scene_object_jitter:.3f} "
+                    f"< {minimum_separation:.3f} m."
+                )
+            self.scene_object_cells = cells
+        # Where an arm can put its tool: [centre_x, centre_y, r_min, r_max] in
+        # world XY. Sampled gripper starts and the on-desk object of an
+        # uncaught placement start are projected radially into it. The CDPR's
+        # box workspace needs nothing of the kind; on the WidowX a start the
+        # IK cannot reach would be clamped onto the reach boundary AFTER a
+        # caught object had been placed at the requested point, and the object
+        # would fall out of a hand that is not there.
+        raw_annulus = metadata.get("reach_annulus")
+        self.reach_annulus: tuple[float, float, float, float] | None = None
+        if raw_annulus:
+            cx, cy, r_min, r_max = (float(value) for value in raw_annulus)
+            if not 0.0 <= r_min < r_max:
+                raise ValueError(f"reach_annulus radii must satisfy 0 <= min < max: {raw_annulus}")
+            self.reach_annulus = (cx, cy, r_min, r_max)
+        # Range of the sampled start yaw. The CDPR's yaw hinge spans a full
+        # turn; the WidowX wrist is kept within +-pi/2 (a parallel gripper is
+        # symmetric under a half turn), so a caught object must be aligned
+        # to a yaw the arm will actually take.
+        self.ee_start_yaw_range = bounds(
+            "ee_start_yaw_range", (-math.pi, math.pi)
+        )
         self.torch = backend.torch
         self.device = backend.device
         instruction_ids = resolve_mjwarp_instruction_ids(instruction_types)
@@ -1726,6 +1784,16 @@ class BatchedReverseFrontierResetter:
             dtype=self.torch.float32,
             device=self.device,
         )
+
+    def _project_into_reach(self, xy: Any) -> Any:
+        """Move XY points radially into ``reach_annulus``; inside ones stay."""
+
+        cx, cy, r_min, r_max = self.reach_annulus
+        centre = self.torch.tensor((cx, cy), dtype=xy.dtype, device=xy.device)
+        offset = xy - centre
+        radius = self.torch.linalg.vector_norm(offset, dim=-1, keepdim=True)
+        scale = radius.clamp(r_min, r_max) / radius.clamp_min(1.0e-6)
+        return centre + offset * scale
 
     def _generator(self, update_index: int, round_index: int) -> Any:
         generator = self.torch.Generator(device=self.device)
@@ -2056,25 +2124,38 @@ class BatchedReverseFrontierResetter:
         # Framing: max |coord| = 0.18 + 0.01 + 0.015 = 0.205 m, inside the
         # ~0.23 m half-width the dollied-in overview camera still covers at the
         # near edge of the desk.
-        grid_coordinates = torch.tensor(
-            (-self.scene_object_grid_step, 0.0, self.scene_object_grid_step),
-            dtype=torch.float32,
-            device=self.device,
-        )
-        cell_choice = torch.rand(
-            (groups, 9), generator=generator, device=self.device
-        ).argsort(dim=1)[:, :4]
-        cell_xy = torch.stack(
-            (
-                grid_coordinates.index_select(
-                    0, (cell_choice % 3).reshape(-1)
-                ).reshape(groups, 4),
-                grid_coordinates.index_select(
-                    0, (cell_choice // 3).reshape(-1)
-                ).reshape(groups, 4),
-            ),
-            dim=-1,
-        )
+        if self.scene_object_cells is not None:
+            cell_table = torch.tensor(
+                self.scene_object_cells, dtype=torch.float32, device=self.device
+            )
+            cell_choice = torch.rand(
+                (groups, int(cell_table.shape[0])),
+                generator=generator,
+                device=self.device,
+            ).argsort(dim=1)[:, :4]
+            cell_xy = cell_table.index_select(0, cell_choice.reshape(-1)).reshape(
+                groups, 4, 2
+            )
+        else:
+            grid_coordinates = torch.tensor(
+                (-self.scene_object_grid_step, 0.0, self.scene_object_grid_step),
+                dtype=torch.float32,
+                device=self.device,
+            )
+            cell_choice = torch.rand(
+                (groups, 9), generator=generator, device=self.device
+            ).argsort(dim=1)[:, :4]
+            cell_xy = torch.stack(
+                (
+                    grid_coordinates.index_select(
+                        0, (cell_choice % 3).reshape(-1)
+                    ).reshape(groups, 4),
+                    grid_coordinates.index_select(
+                        0, (cell_choice // 3).reshape(-1)
+                    ).reshape(groups, 4),
+                ),
+                dim=-1,
+            )
         # Common shift moves the whole scene without changing separation, so it
         # is the cheap way to make the lattice stop being a lattice: widen it
         # and the same nine cells stop landing on the same nine points. Jitter
@@ -2600,6 +2681,9 @@ class BatchedReverseFrontierResetter:
                     curriculum_active, confined, ee_group[:, 2]
                 )
 
+        if self.reach_annulus is not None:
+            ee_group[:, :2] = self._project_into_reach(ee_group[:, :2])
+
         zone_half = torch.full((groups,), 0.015, device=self.device)
         relation_boundary = zone_half / random_direction.abs().amax(
             dim=-1
@@ -2735,7 +2819,20 @@ class BatchedReverseFrontierResetter:
         # pick_up leaves behind, which is exactly what stage 5 has to continue
         # from. `uncaught_container` is disjoint from `caught_group` by
         # construction (held_group excludes it), so nothing here races.
-        if bool(uncaught_container.any().item()):
+        if bool(uncaught_container.any().item()) and self.placement_uncaught_object_at_cell:
+            # target_position is the lattice cell at rest height, captured
+            # before the placement paths moved slot 0 toward the receptacle.
+            object_positions_group[:, 0] = torch.where(
+                uncaught_container[:, None],
+                target_position,
+                object_positions_group[:, 0],
+            )
+            uncaught_ee = target_position.clone()
+            uncaught_ee[:, 2] += grasp_offset + 0.01
+            ee_group = torch.where(
+                uncaught_container[:, None], uncaught_ee, ee_group
+            )
+        elif bool(uncaught_container.any().item()):
             grasp_span = float(self.placement_grasp_object_max_distance) - float(
                 self.placement_grasp_object_min_distance
             )
@@ -2754,6 +2851,10 @@ class BatchedReverseFrontierResetter:
             uncaught_object[:, 1] = uncaught_object[:, 1].clamp(
                 self.workspace_y_bounds[0], self.workspace_y_bounds[1]
             )
+            if self.reach_annulus is not None:
+                uncaught_object[:, :2] = self._project_into_reach(
+                    uncaught_object[:, :2]
+                )
             uncaught_object[:, 2] = self.support_surface_z + rest_height[:, 0]
             object_positions_group[:, 0] = torch.where(
                 uncaught_container[:, None],
@@ -2833,11 +2934,17 @@ class BatchedReverseFrontierResetter:
             object_positions_group[group_rows, target_slot_group],
             initial_target_group,
         )
-        yaw_group = (
-            torch.rand((groups,), generator=generator, device=self.device)
-            * (2.0 * torch.pi)
-            - torch.pi
-        )
+        yaw_low, yaw_high = self.ee_start_yaw_range
+        if (yaw_low, yaw_high) == (-math.pi, math.pi):
+            yaw_group = (
+                torch.rand((groups,), generator=generator, device=self.device)
+                * (2.0 * torch.pi)
+                - torch.pi
+            )
+        else:
+            yaw_group = yaw_low + torch.rand(
+                (groups,), generator=generator, device=self.device
+            ) * (yaw_high - yaw_low)
 
         object_positions = object_positions_group.repeat_interleave(
             group_size, dim=0

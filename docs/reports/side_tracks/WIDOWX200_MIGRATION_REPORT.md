@@ -5,6 +5,19 @@ Date: 2026-08-28
 Status: **the robot, the controller, and the scene are built and verified on
 CPU MuJoCo. The batched MJWarp training path is designed but not yet wired.**
 
+**Update 2026-10-22: §7 items 1-6 are done.** The MJWarp backend
+(`widowx200_mjwarp_backend.py`, behind `RLVLA_EMBODIMENT=widowx200`), the
+rescaled catalog (graspables ~35 mm; first-contact openings 0.685-0.698 and a
+0.20 caught-start squeeze, both measured), the sector-lattice object placement
+and reach annulus in the collector, the WidowX heights and horizons, and a
+plant preflight. Verified on Warp's CPU device: reset poses 100% reachable at
+every ladder rung of every stage, caught starts 100% held, scripted top-down
+grasp and 5 cm lift 100% across the lattice, a scripted grasp-carry-release
+onto the plate within 4 mm. The full staged pipeline is
+`scripts/train_widowx200_pipeline_remote.sh`; see `robots/widowx200/README.md`,
+"Training on it". Item 7 (warm start from a CDPR checkpoint) was not taken: the
+pipeline starts from `lerobot/smolvla_base`.
+
 Everything measured, every number that came out differently from the estimate,
 and the ordered list of what is left. Written so a fresh session can continue
 from here without re-deriving any of it.

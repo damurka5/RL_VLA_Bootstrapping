@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib
+import os
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Mapping, Sequence
@@ -16,6 +17,7 @@ from .cdpr_backend import (
 )
 from .cdpr_object_catalog import (
     ACTIVE_CDPR_CATALOGS,
+    ACTIVE_EMBODIMENT,
     COLLISION_GEOM_SLOT_NAMES,
     GEOM_SLOT_NAMES,
     INACTIVE_CATALOG_ID,
@@ -212,17 +214,25 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             else None
         )
         require_pinned_versions()
-        if not bool(self.torch.cuda.is_available()):
-            raise SimulatorDependencyError(
-                "MJLab/MuJoCo Warp backend requires a CUDA-enabled PyTorch runtime."
-            )
-
         self._device = self.torch.device(str(config.device))
-        if self._device.type != "cuda":
-            raise ValueError(
-                f"Production MJWarp rollout requires a CUDA device, got {self._device}."
-            )
-        self.torch.cuda.set_device(self._device)
+        # Test-only: MJWarp and its renderer also run on Warp's CPU device,
+        # which is how the backend is exercised on a laptop. Never set in a
+        # launcher; production is CUDA and says so below.
+        cpu_allowed = (
+            os.environ.get("RLVLA_MJWARP_ALLOW_CPU", "").strip() == "1"
+            and self._device.type == "cpu"
+        )
+        if not cpu_allowed:
+            if not bool(self.torch.cuda.is_available()):
+                raise SimulatorDependencyError(
+                    "MJLab/MuJoCo Warp backend requires a CUDA-enabled PyTorch runtime."
+                )
+            if self._device.type != "cuda":
+                raise ValueError(
+                    f"Production MJWarp rollout requires a CUDA device, got {self._device}."
+                )
+            self.torch.cuda.set_device(self._device)
+        self._check_embodiment()
         self.wp.init()
         self.wp.set_device(str(self._device))
 
@@ -238,7 +248,8 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         # GPU substeps therefore advance 14 ms, rather than the unstable
         # 116.7 ms produced by the former 1/60 s override.
         self.host_model.opt.timestep = 0.002
-        self._calibration = _calibrate_host_cdpr(self.mujoco, self.host_model)
+        self._prepare_host_models()
+        self._calibration = self._calibrate_host()
         self._resolve_host_ids()
 
         with self.wp.ScopedDevice(str(self._device)):
@@ -292,12 +303,83 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
     def device(self) -> Any:
         return self._device
 
+    # -- embodiment hooks ------------------------------------------------
+    #
+    # Everything the robot owns -- how the host model is prepared and
+    # calibrated, which names it resolves, the controller state, and how an
+    # action becomes actuator commands -- sits behind these methods. The rest
+    # of the backend (world allocation, reset, broadcast, rendering, contacts,
+    # catalogs, visual randomization, export) is shared. This class keeps the
+    # CDPR in every hook; `widowx200_mjwarp_backend` overrides them.
+
+    embodiment = "cdpr"
+
+    def _check_embodiment(self) -> None:
+        if ACTIVE_EMBODIMENT != self.embodiment:
+            raise RuntimeError(
+                f"The object catalog is sized for {ACTIVE_EMBODIMENT!r} "
+                f"(RLVLA_EMBODIMENT) but this backend simulates "
+                f"{self.embodiment!r}. Every rest height, collider, and fitted "
+                "gripper opening would describe the wrong robot."
+            )
+
+    def _prepare_host_models(self) -> None:
+        return None
+
+    def _calibrate_host(self) -> dict[str, Any]:
+        return _calibrate_host_cdpr(self.mujoco, self.host_model)
+
+    def _controller_state_tensors(self) -> tuple[Any, ...]:
+        """Per-world controller state that a GRPO group broadcast must copy."""
+
+        return (
+            self._controller_target,
+            self._controller_yaw,
+            self._controller_gripper,
+            self._controller_prev_lengths,
+            self._controller_attach_offset,
+            self._slider_q_per_length,
+            self._dlength_dq,
+            self._last_actions,
+        )
+
     def _resolve_host_ids(self) -> None:
         mj = self.mujoco
         model = self.host_model
         self.ee_body_id = _host_name_id(
             mj, model, mj.mjtObj.mjOBJ_BODY, "ee_base"
         )
+        self.overview_camera_id = _host_name_id(
+            mj, model, mj.mjtObj.mjOBJ_CAMERA, "overview"
+        )
+        self.wrist_camera_id = _host_name_id(
+            mj, model, mj.mjtObj.mjOBJ_CAMERA, "ee_camera"
+        )
+        self.desk_geom_id = _host_name_id(
+            mj, model, mj.mjtObj.mjOBJ_GEOM, "mjwarp_desk_surface"
+        )
+        self.desk_visual_geom_id = _host_name_id(
+            mj, model, mj.mjtObj.mjOBJ_GEOM, "mjwarp_desk_surface_visual"
+        )
+        self.desk_material_ids = tuple(
+            _host_name_id(
+                mj,
+                model,
+                mj.mjtObj.mjOBJ_MATERIAL,
+                f"mjwarp_desk_mat_{index}",
+            )
+            for index in range(7)
+        )
+        self.finger_pad_geom_ids = tuple(
+            _host_name_id(mj, model, mj.mjtObj.mjOBJ_GEOM, name)
+            for name in ("left_finger_pad", "right_finger_pad")
+        )
+        self._resolve_embodiment_ids()
+        self._resolve_object_slot_ids()
+
+    def _resolve_embodiment_ids(self) -> None:
+        mj = self.mujoco
+        model = self.host_model
         self.ee_free_joint_id = _host_name_id(
             mj, model, mj.mjtObj.mjOBJ_JOINT, "ee_free"
         )
@@ -321,18 +403,6 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self.gripper_actuator_id = _host_name_id(
             mj, model, mj.mjtObj.mjOBJ_ACTUATOR, "act_gripper"
         )
-        self.overview_camera_id = _host_name_id(
-            mj, model, mj.mjtObj.mjOBJ_CAMERA, "overview"
-        )
-        self.wrist_camera_id = _host_name_id(
-            mj, model, mj.mjtObj.mjOBJ_CAMERA, "ee_camera"
-        )
-        self.desk_geom_id = _host_name_id(
-            mj, model, mj.mjtObj.mjOBJ_GEOM, "mjwarp_desk_surface"
-        )
-        self.desk_visual_geom_id = _host_name_id(
-            mj, model, mj.mjtObj.mjOBJ_GEOM, "mjwarp_desk_surface_visual"
-        )
         self.cable_visual_geom_ids = tuple(
             _host_name_id(
                 mj,
@@ -341,15 +411,6 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
                 f"mjwarp_cable_visual_{index}",
             )
             for index in range(1, 5)
-        )
-        self.desk_material_ids = tuple(
-            _host_name_id(
-                mj,
-                model,
-                mj.mjtObj.mjOBJ_MATERIAL,
-                f"mjwarp_desk_mat_{index}",
-            )
-            for index in range(7)
         )
         self.gripper_surface_geom_ids = tuple(
             _host_name_id(mj, model, mj.mjtObj.mjOBJ_GEOM, name)
@@ -365,10 +426,6 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
                 "right_finger_pad",
             )
         )
-        self.finger_pad_geom_ids = tuple(
-            _host_name_id(mj, model, mj.mjtObj.mjOBJ_GEOM, name)
-            for name in ("left_finger_pad", "right_finger_pad")
-        )
         self.slider_qadr = tuple(
             int(value) for value in self._calibration["slider_qadr"]
         )
@@ -381,6 +438,10 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self.slider_actuator_ids = tuple(
             int(value) for value in self._calibration["slider_actuator_ids"]
         )
+
+    def _resolve_object_slot_ids(self) -> None:
+        mj = self.mujoco
+        model = self.host_model
         self.object_body_ids = tuple(
             _host_name_id(
                 mj,
@@ -530,8 +591,22 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             "sensordata",
         ):
             value = getattr(self.data, name, None)
-            if value is not None:
-                setattr(self, f"_{name}", to_torch(value))
+            if value is None:
+                continue
+            if 0 in tuple(value.shape):
+                # Nothing to alias (the WidowX has no tendons or activations),
+                # and Warp's CPU path cannot export a zero-width array.
+                setattr(
+                    self,
+                    f"_{name}",
+                    self.torch.zeros(
+                        tuple(value.shape),
+                        dtype=self.torch.float32,
+                        device=self._device,
+                    ),
+                )
+                continue
+            setattr(self, f"_{name}", to_torch(value))
         self._contact_geom = to_torch(self.data.contact.geom)
         self._contact_worldid = to_torch(self.data.contact.worldid)
         self._contact_dist = to_torch(self.data.contact.dist)
@@ -578,24 +653,9 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         self._object_dofadr_tensor = self.torch.tensor(
             self.object_dofadr, dtype=self.torch.int64, device=self._device
         )
-        self._slider_qadr_tensor = self.torch.tensor(
-            self.slider_qadr, dtype=self.torch.int64, device=self._device
-        )
-        self._slider_actuator_ids_tensor = self.torch.tensor(
-            self.slider_actuator_ids,
-            dtype=self.torch.int64,
-            device=self._device,
-        )
-        self._tendon_ids_tensor = self.torch.tensor(
-            self.tendon_ids, dtype=self.torch.int64, device=self._device
-        )
+        self._bind_embodiment_views()
         self._desk_material_ids_tensor = self.torch.tensor(
             self.desk_material_ids, dtype=self.torch.int32, device=self._device
-        )
-        self._cable_visual_geom_ids_tensor = self.torch.tensor(
-            self.cable_visual_geom_ids,
-            dtype=self.torch.int64,
-            device=self._device,
         )
         self._gripper_surface_geom_ids_tensor = self.torch.tensor(
             self.gripper_surface_geom_ids,
@@ -660,6 +720,24 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             dtype=self.torch.float32,
             device=self._device,
         ).expand(self.worlds_per_rank, -1).clone()
+
+    def _bind_embodiment_views(self) -> None:
+        self._slider_qadr_tensor = self.torch.tensor(
+            self.slider_qadr, dtype=self.torch.int64, device=self._device
+        )
+        self._slider_actuator_ids_tensor = self.torch.tensor(
+            self.slider_actuator_ids,
+            dtype=self.torch.int64,
+            device=self._device,
+        )
+        self._tendon_ids_tensor = self.torch.tensor(
+            self.tendon_ids, dtype=self.torch.int64, device=self._device
+        )
+        self._cable_visual_geom_ids_tensor = self.torch.tensor(
+            self.cable_visual_geom_ids,
+            dtype=self.torch.int64,
+            device=self._device,
+        )
 
     def _restore_calibrated_base_state(self, indices: Any | None = None) -> None:
         """Restore dynamic preload state without redefining model.qpos0."""
@@ -964,7 +1042,11 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             self._copy_subset_value(self._qvel, indices, qvel)
         with self.wp.ScopedDevice(str(self._device)):
             self.mjw.forward(self.model, self.data)
+        self._reset_controller_state(indices, controller_state)
 
+    def _reset_controller_state(
+        self, indices: Any, controller_state: Mapping[str, Any] | None
+    ) -> None:
         state = dict(controller_state or {})
         defaults = {
             "target_position": self._xpos[:, self.ee_body_id],
@@ -1030,14 +1112,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             if target is not None and target.ndim > 0:
                 target.index_copy_(0, destinations, target.index_select(0, sources))
         for target in (
-            self._controller_target,
-            self._controller_yaw,
-            self._controller_gripper,
-            self._controller_prev_lengths,
-            self._controller_attach_offset,
-            self._slider_q_per_length,
-            self._dlength_dq,
-            self._last_actions,
+            *self._controller_state_tensors(),
             self._catalog_ids,
             self._object_rest_height,
         ):

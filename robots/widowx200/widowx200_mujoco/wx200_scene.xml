@@ -9,7 +9,7 @@
     What changes is the robot and, necessarily, where the objects may be. The
     arm mounts at the BACK of the desk facing the overview camera, and the
     object-spawn region is the annular sector in `workspace.DEFAULT_LAYOUT`
-    rather than the CDPR's symmetric square -- see that module for why a box
+    rather than the CDPR's symmetric square - see that module for why a box
     does not fit a serial arm's reachable set.
 
     The object slots themselves are deliberately NOT included here. They live in
@@ -73,7 +73,7 @@
       looks like a gripper floating at the top of the frame, because every link
       is foreshortened onto the one behind it. This three-quarter pose, 40
       degrees off the arm's axis, shows the shoulder, upper arm, forearm, and
-      wrist as separate things -- which is what makes the arm's configuration
+      wrist as separate things - which is what makes the arm's configuration
       legible to a policy at all.
 
       DISTANCE AND AIM. It stands 0.42 m from the working volume and looks at
@@ -121,8 +121,8 @@
     The mount pose is NOT written here. `wx200_mount` is a static body, so
     `workspace.mount_widowx200` writes its `body_pos`/`body_quat` on the
     compiled model instead, from the single `DEFAULT_LAYOUT` that the
-    controller also reads. Two copies of the mount pose -- one in XML, one in
-    the controller -- is exactly the sort of pair that drifts apart and then
+    controller also reads. Two copies of the mount pose - one in XML, one in
+    the controller - is exactly the sort of pair that drifts apart and then
     solves IK in the wrong frame with no error anywhere.
 
     It also makes the mount a per-world field, which is what MJWarp needs if

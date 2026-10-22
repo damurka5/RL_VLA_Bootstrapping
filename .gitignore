@@ -10,3 +10,6 @@ assets/externals/*
 !assets/externals/.gitkeep
 benchmarks/externals/*
 !benchmarks/externals/.gitkeep
+
+# Per-stage configs written by tools/train/run_widowx200_pipeline.py
+configs/widowx200_pipeline/

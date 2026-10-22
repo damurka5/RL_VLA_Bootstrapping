@@ -835,6 +835,41 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validation-video-count", type=int, default=3)
     parser.add_argument("--validation-video-fps", type=float, default=10.0)
     parser.add_argument("--comparison-validation-episodes-per-instruction", type=int, default=10)
+    # Early stopping on in-run validation, for runs that are one stage of a
+    # longer pipeline (tools/train/run_widowx200_pipeline.py). Off unless a
+    # target or a plateau window is set, so every existing run is unchanged.
+    parser.add_argument(
+        "--early-stop-metric",
+        default="validation/success_rate",
+        help=(
+            "Validation key the stop rule reads. 'min_by_instruction' is the "
+            "worst instruction's success rate, so a multi-instruction stage "
+            "cannot stop on its easiest instruction."
+        ),
+    )
+    parser.add_argument(
+        "--early-stop-target",
+        type=float,
+        default=0.0,
+        help="Stop once the metric is >= this for --early-stop-patience validations in a row. 0 disables.",
+    )
+    parser.add_argument("--early-stop-patience", type=int, default=2)
+    parser.add_argument(
+        "--early-stop-plateau-validations",
+        type=int,
+        default=0,
+        help=(
+            "Stop when the best metric has not improved by more than "
+            "--early-stop-min-delta over this many validations. 0 disables."
+        ),
+    )
+    parser.add_argument("--early-stop-min-delta", type=float, default=0.02)
+    parser.add_argument(
+        "--early-stop-min-steps",
+        type=int,
+        default=0,
+        help="Neither rule may stop the run before this many global steps.",
+    )
 
     args = parser.parse_args(argv)
     if args.three_stage_stage_loss_weights is not None:

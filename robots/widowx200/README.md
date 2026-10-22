@@ -167,7 +167,28 @@ All from `tests/test_widowx200_embodiment.py` against the compiled model:
 - Overview camera: 0.42 m from the working volume, robot covers 13.7% of the
   frame, all four spawn cells fully visible across three arm poses.
 
-## Still to do
+## Training on it
 
-`widowx200_dataset/` is empty and the MJWarp backend has not been repointed.
-See [`WIDOWX200_MIGRATION_REPORT.md`](../../docs/reports/side_tracks/WIDOWX200_MIGRATION_REPORT.md) for what remains and in what order.
+The batched MJWarp backend, the rescaled object catalog and the full staged
+RL pipeline exist (2026-10-22):
+
+| piece | where |
+|---|---|
+| MJWarp backend | `rl_vla_bootstrapping/simulation/widowx200_mjwarp_backend.py`, selected by `RLVLA_EMBODIMENT=widowx200` |
+| MJWarp scene | `widowx200_mujoco/wx200_mjwarp_scene.xml` (this arm + the shared object slots) |
+| object catalog | `cdpr_object_catalog.widowx200_object_variants`: graspables at ~35 mm, first-contact openings measured by `tools/audit/measure_widowx200_fitted_openings.py` |
+| stage configs | `configs/examples/widowx200_smolvla_pipeline.yaml` (base config + every stage) |
+| driver | `tools/train/run_widowx200_pipeline.py` |
+| one command | `scripts/train_widowx200_pipeline_remote.sh` |
+| plant preflight | `scripts/preflight_widowx200_pipeline.py` |
+
+Stages: move_to, pick_up, put_into with dense reward; the same three with a
+binary reward and re-initialized GRPO state; then all four instructions
+jointly under a staged milestone reward. Each stage stops on its own
+validation and hands its best checkpoint to the next weights-only; when an
+earlier instruction degrades, self-imitation cycles (bank harvested from each
+skill's best checkpoint, re-primed under the current policy, residual SFT,
+paired re-evaluation) repair it before the next stage.
+
+`widowx200_dataset/` is still empty: the pipeline uses the shared task code.
+See [`WIDOWX200_MIGRATION_REPORT.md`](../../docs/reports/side_tracks/WIDOWX200_MIGRATION_REPORT.md) for the measurements.

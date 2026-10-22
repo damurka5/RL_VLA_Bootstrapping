@@ -1,0 +1,624 @@
+# WidowX-200 + SmolVLA: the whole staged RL pipeline in one file.
+#
+# Read by tools/train/run_widowx200_pipeline.py (launcher:
+# scripts/train_widowx200_pipeline_remote.sh). Everything above
+# `widowx200_pipeline:` is an ordinary, complete project config -- it is the
+# stage-1 move_to dense config, and `python -m rl_vla_bootstrapping.cli.train
+# --config <this file> --stage rl` runs that stage on its own. The
+# `widowx200_pipeline:` section (ignored by the config loader) lists every
+# stage as overrides deep-merged onto this base; the driver writes each merged
+# stage config to configs/widowx200_pipeline/ before launching it.
+#
+# What is carried over from the CDPR campaign unchanged, because the action
+# contract is identical ([x, y, z, yaw, gripper] in [-1, 1], world-frame EE
+# deltas, robots/widowx200/CONTROL_API.md): the policy stack (frozen SmolVLA
+# prior + 518-wide residual + action-expert LoRA), GRPO with trajectory groups
+# and dynamic sampling, the approach curriculum, the reward objects and the
+# success predicates. What is converted, and why:
+#
+#   control period   hold_steps 6 -> 24 (14 ms -> 50 ms, the arm's 20 Hz)
+#   scene            wx200_mjwarp_scene.xml; objects on the arm's annular
+#                    sector lattice instead of the CDPR's 3x3 grid
+#   objects          graspables shrunk to ~35 mm for the 8-52 mm gripper
+#                    (RLVLA_EMBODIMENT=widowx200, cdpr_object_catalog);
+#                    banana and carrot dropped; mug never a grasp target
+#   heights          desk unchanged at 0.1502; the arm's top-down ceiling is
+#                    0.27, so hover/carry/release heights all sit below it
+#   grasp offset     0.0: ee_base sits between the pads on this arm
+#   receptacles      plate r 0.073, bowl r 0.048 (scaled 0.8 / 0.85)
+
+project:
+  name: widowx200_smolvla_pipeline
+  output_root: ../../runs
+  python_executable: python3
+
+repos:
+  # Code libraries (task hooks, dataset helpers) shared by both embodiments.
+  dataset_repo: ../../robots/cdpr
+  embodiment_repo: ../../robots/cdpr
+
+remote:
+  env_vars:
+    PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True,max_split_size_mb:128,garbage_collection_threshold:0.8
+    TOKENIZERS_PARALLELISM: "false"
+    TRANSFORMERS_VERBOSITY: error
+    HF_HUB_DISABLE_PROGRESS_BARS: "1"
+    TORCH_NCCL_ASYNC_ERROR_HANDLING: "1"
+    NCCL_DEBUG: WARN
+    # Sizes the object catalog for this gripper and selects the WidowX MJWarp
+    # backend. The driver also exports it, so every child (trainer, SIL tools)
+    # agrees; a mismatched backend refuses to start.
+    RLVLA_EMBODIMENT: widowx200
+  notes:
+    - WidowX-200 pipeline. See the header comment and robots/widowx200/CONTROL_API.md.
+
+embodiment:
+  name: widowx200_5dof_mjwarp
+  kind: mjlab_mjwarp
+  robot_root: ../../robots/widowx200/widowx200_mujoco
+  xml_path: ../../robots/widowx200/widowx200_mujoco/wx200_mjwarp_scene.xml
+  dof: 5
+  extra_python_paths: [../../robots/cdpr]
+  cameras:
+    overview: overview
+    wrist: ee_camera
+  controller:
+    # Host-side controller, for preview/tooling only; training uses the batched
+    # MJWarp controller inside WidowX200MJWarpBackend.
+    file: ../../robots/widowx200/widowx200_mujoco/controller.py
+    class_name: WidowX200TaskSpaceController
+    init_kwargs: {}
+    preview_steps: 1
+  action_adapter:
+    common_action_keys: [x, y, z, yaw, gripper]
+    controller_scales:
+      x: 0.015
+      y: 0.015
+      z: 0.015
+      yaw: 0.08
+      gripper: 0.05
+    controller_limits:
+      x: [-0.30, 0.30]
+      y: [-0.12, 0.22]
+      z: [0.168, 0.27]
+      yaw: [-1.5707963, 1.5707963]
+      gripper: [0.0, 1.0]
+
+task:
+  instruction_types: [move_to_object]
+  target_objects:
+    [
+      robocasa_apple,
+      robocasa_tomato,
+      robocasa_orange,
+      robocasa_potato,
+      robocasa_bell_pepper,
+      robocasa_mug,
+      robocasa_plate,
+      robocasa_bowl,
+    ]
+  reward:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_reward
+  success_predicate:
+    file: ../../robots/cdpr/cdpr_dataset/rl_instruction_tasks.py
+    function: compute_instruction_validation_success
+  metadata:
+    instruction_sampling: uniform_cycle
+    reward_mode: dense
+    target_object_pool: &all_objects
+      [
+        robocasa_apple,
+        robocasa_tomato,
+        robocasa_orange,
+        robocasa_potato,
+        robocasa_bell_pepper,
+        robocasa_mug,
+        robocasa_plate,
+        robocasa_bowl,
+      ]
+    distractor_object_pool: *all_objects
+    scene_object_pool: *all_objects
+    catchable_object_pool: &graspables
+      [robocasa_apple, robocasa_tomato, robocasa_orange, robocasa_potato, robocasa_bell_pepper]
+    # The mug's handle sits across the fingers at yaw 0; it stays in every
+    # scene and as a move_to target, never as a grasp target.
+    excluded_target_catalogs: [robocasa_mug]
+    min_scene_objects: 1
+    max_scene_objects: 3
+    scene_object_curriculum_steps: [0]
+
+    # --- the arm's workspace (robots/widowx200/widowx200_mujoco/workspace.py)
+    # sector_lattice(DEFAULT_LAYOUT): rings at 0.16 and 0.34 m around the base
+    # at (0, 0.24), 0.18 m apart. Shift/jitter are kept to 1-2 cm so the outer
+    # ring stays inside the 0.358 m reach the arm has at the 0.25 m carry
+    # height (0.02 m reach margin included).
+    scene_object_cells:
+      - [-0.1226, 0.1372]
+      - [0.1226, 0.1372]
+      - [-0.2605, 0.0215]
+      - [-0.0975, -0.0857]
+      - [0.0975, -0.0857]
+      - [0.2605, 0.0215]
+    scene_object_scene_shift_m: 0.02
+    scene_object_jitter_m: 0.01
+    # Scaled plate (0.073) + bowl (0.048), plus margin.
+    scene_object_min_separation_m: 0.13
+    # [base_x, base_y, r_min, r_max]: sampled gripper starts (and uncaught
+    # placement objects) are projected into the arm's reach.
+    reach_annulus: [0.0, 0.24, 0.16, 0.35]
+    ee_start_yaw_range: [-1.2, 1.2]
+    ee_workspace_x_bounds: [-0.27, 0.27]
+    ee_workspace_y_bounds: [-0.10, 0.20]
+    ee_workspace_z_bounds: [0.205, 0.255]
+    random_workspace_gripper_start: true
+    random_workspace_min_goal_xy_distance: 0.10
+
+    # --- move_to_object: hover within 2 cm XY of the named object, in a Z band
+    # 6.5-9.5 cm above the desk (the CDPR's 0.26-0.28 is above this arm's
+    # 0.27 ceiling).
+    distance_reward_exponent: 2.0
+    success_distance: 0.02
+    success_bonus: 0.0
+    move_to_object_xy_reward_scale: 0.08
+    move_to_object_distance_reward_weight: 1.0
+    move_to_object_xy_tolerance: 0.02
+    move_to_object_xy_window_low: 0.0
+    move_to_object_xy_window_high: 0.02
+    move_to_object_excess_distance_penalty_weight: 0.0
+    move_to_object_too_close_penalty_weight: 0.0
+    move_to_object_success_bonus: 0.0
+    move_to_object_require_z_window: true
+    move_to_object_z_window_low: 0.215
+    move_to_object_z_window_high: 0.245
+    move_to_object_distance_include_z: true
+    move_to_object_approach_z: 0.23
+    move_to_object_z_penalty_scale: 0.05
+    move_to_object_z_penalty_weight: 0.5
+    action_saturation_penalty_weight: 0.0
+    move_to_object_validation_distance_min: 0.0
+    move_to_object_validation_distance_threshold: 0.02
+
+    # --- grasp geometry shared by every manipulation stage
+    pick_grasp_height_offset: 0.0
+    pick_lift_success_height: 0.05
+    put_plate_xy_tolerance: 0.073
+    put_bowl_xy_tolerance: 0.048
+    put_plate_release_height: 0.07
+    put_bowl_release_height: 0.07
+    put_container_z_tolerance: 0.12
+    put_require_release: true
+    put_require_target_grasp_history: true
+    container_object_pool: [robocasa_plate, robocasa_bowl]
+
+    # --- approach curriculum (start-distance cap, metres, 3-D)
+    random_workspace_start_distance_curriculum_enabled: true
+    curriculum_cap_includes_z: true
+    random_workspace_start_distance_initial: 0.03
+    random_workspace_start_distance_final: 0.30
+    random_workspace_start_distance_increment: 0.02
+    random_workspace_start_distance_ladder: [0.03, 0.05, 0.08, 0.11, 0.14, 0.18, 0.22, 0.26, 0.30]
+    random_workspace_start_distance_promote_pass_rate: 0.30
+    random_workspace_start_distance_demote_pass_rate: 0.12
+    random_workspace_start_distance_pass_rate_ema_decay: 0.9
+    random_workspace_start_distance_cooldown_updates: 15
+    random_workspace_start_distance_promote_dwell_updates: 5
+    # Horizons in decisions (4 actions each). The arm's effective step is
+    # 10.4 mm, 69% of the CDPR's, but its workspace is ~70% the size too, so
+    # the CDPR's decision budgets carry over; 24 decisions = 96 actions =
+    # ~1 m of travel against a 0.30 m furthest start.
+    random_workspace_horizon_low: 24
+    random_workspace_horizon_high: 24
+    curriculum_horizon_coupling_enabled: true
+    curriculum_horizon_min: 8
+    curriculum_horizon_max: 24
+    reset_on_drift_enabled: false
+
+simulation:
+  entrypoint:
+    file: ../../robots/cdpr/cdpr_dataset/generate_cdpr_dataset.py
+    function: build_wrapper_if_needed
+  preview_scene: desk
+  preview_objects: [robocasa_apple, robocasa_plate, robocasa_bowl]
+  catalog_path: ../../robots/cdpr/cdpr_dataset/datasets/cdpr_scene_catalog.yaml
+  build_kwargs:
+    table_z: 0.15
+  randomization:
+    random_scene_count: 256
+    max_objects: 4
+    use_domain_randomization: true
+
+simulator:
+  backend: mjlab_mjwarp
+  worlds_per_rank: 512
+  groups_per_rank: 64
+  nconmax: 256
+  njmax: 1024
+  render_width: 320
+  render_height: 240
+  object_slots: 4
+  fixed_scene_xml: ../../robots/widowx200/widowx200_mujoco/wx200_mjwarp_scene.xml
+
+policy:
+  type: smolvla_cdpr
+  base_checkpoint: lerobot/smolvla_base
+  rl_script: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+  num_images_in_input: 3
+  action_codec:
+    chunk_size: 8
+    normalized_low: -1.0
+    normalized_high: 1.0
+    quantization:
+      enabled: false
+      bins: 256
+    export_filename: smolvla_action_codec.json
+
+training:
+  preview_before_rl: false
+  rl:
+    enabled: true
+    algorithm: smolvla_residual_grpo_mjwarp
+    script_path: ../../rl_vla_bootstrapping/policy/smolvla_grpo_mjwarp_cdpr.py
+    launcher: torchrun
+    launcher_args:
+      standalone: true
+      nproc_per_node: 2
+    args:
+      max_train_steps: 10000000
+      max_env_steps: 128
+      chunk_size: 8
+      replan_every: 4
+      image_size: 256
+      smolvla_model_image_size: 256
+      smolvla_compile_model: true
+      smolvla_compile_mode: max-autotune-no-cudagraphs
+      smolvla_inference_microbatch_size: 256
+      state_dim: 6
+      residual_relative_target: false
+      # The residual architecture must be identical in every stage: each one
+      # hands its weights to the next through a strict load.
+      residual_vision_features: true
+      residual_vision_dim: 512
+      residual_vision_pooling: flat_random
+      include_wrist: true
+      include_aux_camera: true
+      mask_empty_aux_camera: true
+      mixed_precision: bf16
+      smolvla_action_normalization: tanh
+      hidden_dim: 1024
+      residual_scale: 1.0
+      train_vla_lora: true
+      train_vla_vision_lora: false
+      lora_rank: 16
+      lora_alpha: 32.0
+      lora_dropout: 0.0
+      lora_include_mlp: true
+      lora_expert_name_contains: lm_expert
+      vla_lr: 1.0e-5
+      vla_kl_coef: 0.1
+      vla_microbatch_size: 16
+      vla_update_max_records: 128
+      learning_rate: 1.0e-4
+      adam_eps: 1.0e-5
+      weight_decay: 0.0
+      init_log_std: -1.2
+      min_log_std: -2.5
+      max_log_std: -1.10
+      clip_range_low: 0.20
+      clip_range_high: 0.28
+      entropy_coef: 0.0002
+      max_grad_norm: 1.0
+      grpo_group_size: 8
+      grpo_group_selection: uniform
+      grpo_normalize_group_advantage: true
+      grpo_clip_advantage_abs: 6.0
+      grpo_trajectory_groups: true
+      grpo_dynamic_sampling: true
+      grpo_dynamic_min_pass_rate: 0.10
+      grpo_dynamic_max_pass_rate: 0.90
+      grpo_min_group_reward_std: 0.05
+      grpo_target_records_per_update: 1024
+      grpo_max_groups_per_update: 64
+      grpo_max_collection_seconds_per_update: 900
+      ppo_epochs: 4
+      minibatch_size: 512
+      microbatch_size: 512
+      complex_training_approach: none
+      action_step_xyz: 0.015
+      action_step_yaw: 0.08
+      action_step_gripper: 0.05
+      # 50 ms per action: the WidowX control period (CONTROL_API.md, Timing).
+      # The backend refuses anything under 12.
+      hold_steps: 24
+      controller_workspace_z_bounds: [0.20, 0.27]
+      lock_non_commanded_axes: false
+      lock_non_commanded_axes_threshold: 0.05
+      validation_every_steps: 250000
+      validation_episodes_per_instruction: 512
+      validation_seed: 4000000
+      validation_video_count: 0
+      save_every_steps: 250000
+      mjwarp_profile_timers: true
+      mjwarp_profile_updates: 4
+      distributed: true
+      distributed_backend: nccl
+      distributed_timeout_seconds: 21600
+      progress: true
+      progress_only: true
+      device: cuda
+  sft:
+    enabled: false
+
+evaluation:
+  benchmarks: []
+
+
+# ===========================================================================
+# The pipeline. Read only by tools/train/run_widowx200_pipeline.py.
+# ===========================================================================
+widowx200_pipeline:
+  # Skills: what a stage trains, what its harvest/evaluation config is, and
+  # the instructions it owns. Retention is tracked per instruction.
+  skills:
+    move_to:
+      instructions: [move_to_object]
+      # Start-distance cap the bank is harvested and retention is measured at:
+      # the top of the ladder, i.e. the full task.
+      eval_cap: 0.30
+      overrides: {}
+
+    pick_up:
+      instructions: [pick_up]
+      eval_cap: 0.20
+      overrides:
+        task:
+          instruction_types: [pick_up]
+          target_objects:
+            [robocasa_apple, robocasa_tomato, robocasa_orange, robocasa_potato, robocasa_bell_pepper, robocasa_mug]
+          metadata:
+            target_object_pool: *graspables
+            scene_object_pool:
+              [robocasa_apple, robocasa_tomato, robocasa_orange, robocasa_potato, robocasa_bell_pepper, robocasa_mug]
+            distractor_object_pool:
+              [robocasa_apple, robocasa_tomato, robocasa_orange, robocasa_potato, robocasa_bell_pepper, robocasa_mug]
+            max_scene_objects: 2
+            ee_workspace_z_bounds: [0.18, 0.245]
+            catch_release_distance_reward_scale: 0.08
+            catch_release_distance_reward_weight: 1.0
+            catch_release_fine_distance_reward_scale: 0.01
+            catch_release_fine_distance_reward_weight: 0.5
+            catch_release_fine_distance_window: 0.0
+            pick_contact_bonus: 0.25
+            pick_distance_window: 0.02
+            pick_grasp_bonus: 0.5
+            pick_grasp_bonus_min_lift: 0.005
+            pick_lift_reward_scale: 0.05
+            pick_lift_reward_weight: 2.0
+            pick_success_bonus: 3.0
+            # Training aids from the CDPR pick_up config: a third of groups
+            # start holding the object (lift only), a fifth start aligned and
+            # open (close + lift). Validation never gets either.
+            pick_up_prelifted_group_fraction: 0.35
+            pick_up_aligned_group_fraction: 0.2
+            pick_up_prelifted_curriculum_enabled: false
+            placement_start_with_caught_object: false
+            random_workspace_start_distance_final: 0.20
+            random_workspace_start_distance_ladder: [0.03, 0.04, 0.05, 0.06, 0.08, 0.10, 0.13, 0.16, 0.20]
+            random_workspace_start_distance_pass_rate_ema_decay: 0.95
+            # descend + close (0.05/action from open) + 5 cm lift + settle.
+            random_workspace_horizon_low: 28
+            random_workspace_horizon_high: 28
+            curriculum_horizon_min: 28
+            curriculum_horizon_max: 28
+        training:
+          rl:
+            args:
+              controller_workspace_z_bounds: [0.168, 0.27]
+              split_credit_at_grasp: true
+              episode_offset_after_grasp: true
+              episode_offset_std: [0.0, 0.0, 0.25, 0.0, 0.0]
+
+    put_into:
+      instructions: [put_into_plate, put_into_bowl]
+      eval_cap: 0.18
+      overrides:
+        task:
+          instruction_types: [put_into_plate, put_into_bowl]
+          metadata:
+            target_object_pool: *graspables
+            required_scene_object_pool: [robocasa_plate, robocasa_bowl]
+            max_scene_objects: 3
+            catch_release_distance_include_z: true
+            catch_release_distance_reward_scale: 0.08
+            catch_release_distance_reward_weight: 1.0
+            catch_release_fine_distance_reward_scale: 0.01
+            catch_release_fine_distance_reward_weight: 0.5
+            catch_release_fine_distance_window: 0.0
+            caught_object_start_release_opening_margin: 0.04
+            placement_start_with_caught_object: true
+            placement_caught_object_fraction: 1.0
+            placement_distance_window: 0.02
+            placement_release_success_bonus: 2.0
+            placement_wrong_drop_penalty: 0.25
+            placement_wrong_drop_settle_margin: 0.045
+            placement_far_rung_min_cap: 0.09
+            placement_far_rung_z_bounds: [0.20, 0.25]
+            pick_contact_bonus: 0.25
+            pick_distance_window: 0.02
+            pick_grasp_bonus: 1.0
+            pick_lift_reward_scale: 0.05
+            pick_lift_reward_weight: 1.0
+            pick_success_bonus: 2.0
+            ee_workspace_z_bounds: [0.20, 0.25]
+            random_workspace_start_distance_final: 0.18
+            random_workspace_start_distance_initial_by_instruction:
+              put_into_plate: 0.01
+              put_into_bowl: 0.01
+            # The first rungs start over the receptacle: release only. The
+            # ladder then widens into carry-and-release.
+            random_workspace_start_distance_ladder_by_instruction:
+              put_into_plate: [0.01, 0.03, 0.06, 0.10, 0.14, 0.18]
+              put_into_bowl: [0.01, 0.02, 0.03, 0.045, 0.06, 0.08, 0.10, 0.13, 0.16, 0.18]
+            random_workspace_horizon_low: 24
+            random_workspace_horizon_high: 32
+            curriculum_horizon_min: 16
+            curriculum_horizon_max: 32
+        training:
+          rl:
+            args:
+              controller_workspace_z_bounds: [0.168, 0.27]
+
+    joint:
+      instructions: [move_to_object, pick_up, put_into_plate, put_into_bowl]
+      eval_cap: 0.18
+      overrides:
+        task:
+          instruction_types: [move_to_object, pick_up, put_into_plate, put_into_bowl]
+          metadata:
+            required_scene_object_pool: [robocasa_plate, robocasa_bowl]
+            max_scene_objects: 3
+            catch_release_distance_include_z: true
+            placement_start_with_caught_object: true
+            # Composition: placement groups start holding the object only
+            # this often, and the caught curriculum anneals it toward 0 as
+            # composed success rises -- ending at the full task, empty hand.
+            placement_caught_object_fraction: 0.5
+            placement_caught_curriculum_enabled: true
+            placement_caught_fraction_min: 0.0
+            placement_caught_fraction_step: 0.1
+            placement_caught_reduce_success: 0.45
+            placement_caught_restore_success: 0.30
+            placement_caught_success_ema_decay: 0.9
+            placement_caught_cooldown_updates: 40
+            placement_grasp_horizon_min_decisions: 40
+            # Uncaught starts leave the object on its own lattice cell, gripper
+            # open 1 cm above it: grasp, lift, carry the cell spacing, release.
+            placement_uncaught_object_at_cell: true
+            placement_wrong_drop_requires_lift: true
+            placement_wrong_drop_settle_margin: 0.045
+            placement_far_rung_min_cap: 0.13
+            placement_far_rung_z_bounds: [0.20, 0.25]
+            pick_up_prelifted_group_fraction: 0.15
+            pick_up_aligned_group_fraction: 0.10
+            approach_gate_uncaught_only: true
+            ee_workspace_z_bounds: [0.19, 0.25]
+            random_workspace_start_distance_promote_pass_rate: 0.45
+            random_workspace_start_distance_demote_pass_rate: 0.30
+            random_workspace_start_distance_initial_by_instruction:
+              move_to_object: 0.03
+              pick_up: 0.06
+              put_into_plate: 0.02
+              put_into_bowl: 0.02
+            random_workspace_start_distance_ladder_by_instruction:
+              move_to_object: [0.03, 0.08, 0.14, 0.20, 0.26, 0.30]
+              pick_up: [0.06, 0.10, 0.14, 0.20]
+              put_into_plate: [0.02, 0.06, 0.10, 0.14, 0.18]
+              put_into_bowl: [0.02, 0.05, 0.08, 0.12, 0.15, 0.18]
+            random_workspace_horizon_low: 24
+            random_workspace_horizon_high: 32
+            curriculum_horizon_min: 16
+            curriculum_horizon_max: 32
+            # The staged reward: every shaping weight off, the return is the
+            # fraction of the instruction's ordered milestones reached
+            # (cdpr_batched_tasks.staged_milestone_reward_requested).
+            staged_milestone_reward: true
+            staged_approach_distance: 0.03
+            staged_move_to_approach_distance: 0.06
+        training:
+          rl:
+            args:
+              controller_workspace_z_bounds: [0.168, 0.27]
+              composed_validation_episodes_per_instruction: 256
+              grpo_max_groups_per_update: 256
+              grpo_target_informative_groups: 64
+
+  # Reward phases, applied on top of a skill.
+  phases:
+    dense: {}
+    binary:
+      # Dense shaping off; success predicates unchanged
+      # (cdpr_batched_tasks.sparse_binary_reward_requested). The RL state
+      # restarts: weights-only handoff (fresh Adam moments, curriculum, step
+      # counter) and log_std back to init_log_std.
+      reset_log_std: true
+      overrides:
+        task:
+          metadata:
+            sparse_binary_reward: true
+        training:
+          rl:
+            args:
+              # A binary reward needs the DAPO refill loop to actually refill:
+              # max_groups well above groups_per_rank (memory: dynamic
+              # sampling was masking).
+              grpo_max_groups_per_update: 256
+              grpo_target_informative_groups: 64
+    staged:
+      reset_log_std: true
+      overrides: {}
+
+  # The run order. `budget_steps` is a cap; each stage normally ends earlier on
+  # its own validation (early_stop: target reached for `patience` validations
+  # in a row, or no gain of more than min_delta over `plateau` validations).
+  stages:
+    - name: s1_move_to_dense
+      skill: move_to
+      phase: dense
+      init: base
+      budget_steps: 12000000
+      early_stop: {metric: validation/success_rate, target: 0.70, patience: 2, plateau: 10, min_delta: 0.02, min_steps: 3000000}
+    - name: s2_pick_up_dense
+      skill: pick_up
+      phase: dense
+      budget_steps: 16000000
+      early_stop: {metric: validation/success_rate, target: 0.55, patience: 2, plateau: 12, min_delta: 0.02, min_steps: 3000000}
+    - name: s3_put_into_dense
+      skill: put_into
+      phase: dense
+      budget_steps: 12000000
+      early_stop: {metric: min_by_instruction, target: 0.70, patience: 2, plateau: 10, min_delta: 0.02, min_steps: 2000000}
+    - name: s4_move_to_binary
+      skill: move_to
+      phase: binary
+      budget_steps: 6000000
+      early_stop: {metric: validation/success_rate, target: 0.80, patience: 2, plateau: 8, min_delta: 0.02, min_steps: 1000000}
+    - name: s5_pick_up_binary
+      skill: pick_up
+      phase: binary
+      budget_steps: 8000000
+      early_stop: {metric: validation/success_rate, target: 0.65, patience: 2, plateau: 8, min_delta: 0.02, min_steps: 1000000}
+    - name: s6_put_into_binary
+      skill: put_into
+      phase: binary
+      budget_steps: 6000000
+      early_stop: {metric: min_by_instruction, target: 0.80, patience: 2, plateau: 8, min_delta: 0.02, min_steps: 1000000}
+    - name: s7_joint_staged
+      skill: joint
+      phase: staged
+      budget_steps: 30000000
+      sil: false
+      early_stop: {metric: min_by_instruction_composed, target: 0.60, patience: 2, plateau: 16, min_delta: 0.02, min_steps: 5000000}
+
+  # Self-imitation retention. After every stage the new policy is evaluated on
+  # every instruction learned so far; an instruction "degrades" when it falls
+  # below its own best by more than both tolerances. Degradation triggers up to
+  # `max_cycles` SIL cycles: a balanced bank (each skill harvested from its own
+  # best checkpoint, frames + executed actions) is re-primed under the current
+  # policy, the residual is fitted to it, and the candidate is kept only if the
+  # degraded instructions improve and nothing else falls further.
+  sil:
+    enabled: true
+    max_cycles: 2
+    degrade_abs: 0.08
+    degrade_rel: 0.20
+    # Candidate acceptance: mean gain on the degraded instructions must exceed
+    # this, and no other instruction may lose more than `max_collateral`.
+    accept_min_gain: 0.02
+    max_collateral: 0.05
+    harvest_rounds: 4
+    eval_rounds: 2
+    frame_worlds: 96
+    smooth_window: 5
+    rows_per_instruction: 12000
+    sft_epochs: 20
+    seed_torch: 0

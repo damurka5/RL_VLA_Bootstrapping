@@ -329,6 +329,19 @@ def create_cdpr_backend(
 ) -> CDPRSimulatorBackend:
     config.validate()
     if config.backend == "mjlab_mjwarp":
+        # The robot is chosen by RLVLA_EMBODIMENT, the same switch that sizes
+        # the object catalog, so the two can never disagree; each backend also
+        # checks its scene and refuses the other robot's.
+        from .cdpr_object_catalog import ACTIVE_EMBODIMENT
+
+        if ACTIVE_EMBODIMENT == "widowx200":
+            from .widowx200_mjwarp_backend import (
+                WidowX200MJWarpBackend,
+                widowx200_backend_config_check,
+            )
+
+            widowx200_backend_config_check(config)
+            return WidowX200MJWarpBackend(config=config, **kwargs)
         from .mjlab_mjwarp_backend import MJLabMJWarpCDPRBackend
 
         return MJLabMJWarpCDPRBackend(config=config, **kwargs)

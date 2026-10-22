@@ -1,0 +1,24 @@
+<mujoco model="wx200_mjwarp_scene">
+  <!--
+    The scene the batched MJWarp backend loads for this arm: the robot and room
+    from `wx200_scene.xml` plus the CDPR's four fixed-topology object slots,
+    included rather than copied.
+
+    The slot file is embodiment-independent by design (four free bodies, one
+    visual mesh and eleven primitive colliders each), so sharing the one copy
+    keeps the two embodiments' slot names, collider classes, and park poses
+    identical - which is what lets the collector, the rewards, and the success
+    predicates run on either robot unedited. Its asset paths
+    (`../../../assets/externals/robocasa/...`) resolve from this directory to
+    the same repository root as from the CDPR's, because both scene files sit
+    three levels below it. That is also why `wx200.xml` names its meshes as
+    `meshes/...` rather than through a `meshdir`: a compiler meshdir would apply
+    to the RoboCasa meshes too and send them to the wrong place.
+
+    Object SIZES are not set here. `cdpr_object_catalog` rescales every visual
+    mesh and primitive collider for this gripper's 8-52 mm span when
+    RLVLA_EMBODIMENT=widowx200, at compile time, so the XML stays shared.
+  -->
+  <include file="wx200_scene.xml"/>
+  <include file="../../cdpr/cdpr_mujoco/cdpr_mjwarp_object_slots.xml"/>
+</mujoco>

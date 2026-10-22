@@ -22,7 +22,7 @@
 
     Frames follow the URDF exactly: base_link at the mount, +x forward, +z up.
   -->
-  <compiler autolimits="true" angle="radian" meshdir="meshes"/>
+  <compiler autolimits="true" angle="radian"/>
 
   <default>
     <site type="sphere" rgba="1 0 0 1" size="0.005"/>
@@ -43,8 +43,8 @@
             rgba="0.2 0.2 0.2 1"/>
     </default>
     <!--
-      Finger pads. Mirrors the CDPR `finger_pad_collision` class exactly --
-      condim 4, friction 3.0, the stiff solref/solimp pair, and a 1 mm margin --
+      Finger pads. Mirrors the CDPR `finger_pad_collision` class exactly -
+      condim 4, friction 3.0, the stiff solref/solimp pair, and a 1 mm margin -
       because the grasp-stability thresholds (bilateral contact, minimum solved
       normal force, bounded slip) were tuned against those numbers.
     -->
@@ -77,15 +77,15 @@
               specular="0.30" shininess="0.35" reflectance="0.04"/>
     <material name="interbotix_grey" rgba="0.55 0.57 0.60 1"
               specular="0.35" shininess="0.40" reflectance="0.06"/>
-    <mesh name="wx200_base" file="wx200_1_base.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_shoulder" file="wx200_2_shoulder.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_upper_arm" file="wx200_3_upper_arm.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_forearm" file="wx200_4_forearm.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_wrist" file="wx200_5_wrist.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_gripper" file="wx200_6_gripper.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_gripper_prop" file="wx200_7_gripper_prop.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_gripper_bar" file="wx200_8_gripper_bar.stl" scale="0.001 0.001 0.001"/>
-    <mesh name="wx200_gripper_finger" file="wx200_9_gripper_finger.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_base" file="meshes/wx200_1_base.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_shoulder" file="meshes/wx200_2_shoulder.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_upper_arm" file="meshes/wx200_3_upper_arm.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_forearm" file="meshes/wx200_4_forearm.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_wrist" file="meshes/wx200_5_wrist.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper" file="meshes/wx200_6_gripper.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper_prop" file="meshes/wx200_7_gripper_prop.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper_bar" file="meshes/wx200_8_gripper_bar.stl" scale="0.001 0.001 0.001"/>
+    <mesh name="wx200_gripper_finger" file="meshes/wx200_9_gripper_finger.stl" scale="0.001 0.001 0.001"/>
   </asset>
 
   <worldbody>
@@ -144,7 +144,7 @@
                             diaginertia="0.0000216 0.0000273 0.0000353"/>
                   <joint name="wrist_rotate" class="wx200_joint" axis="1 0 0"
                          range="-3.1405927 3.1405927"/>
-                  <geom class="wx200_visual" mesh="wx200_gripper"
+                  <geom name="wx200_gripper_visual" class="wx200_visual" mesh="wx200_gripper"
                         pos="-0.02 0 0" euler="0 0 1.5707963"/>
                   <geom class="wx200_visual" mesh="wx200_gripper_prop"
                         pos="-0.0685 0 0" euler="0 0 1.5707963"
@@ -156,7 +156,7 @@
                   <body name="gripper_bar_link" pos="0.043 0 0">
                     <inertial pos="0.009687 0 0.004962" mass="0.034199"
                               diaginertia="0.0000074 0.0000284 0.0000286"/>
-                    <geom class="wx200_visual" mesh="wx200_gripper_bar"
+                    <geom name="wx200_gripper_bar_visual" class="wx200_visual" mesh="wx200_gripper_bar"
                           pos="-0.063 0 0" euler="0 0 1.5707963"/>
                     <!-- Sized from the compiled gripper-bar mesh bounds. -->
                     <geom class="wx200_collision" type="box"
@@ -181,7 +181,7 @@
                       The first row was the original bracket, 8 cm above the
                       bar. From up there the bar is BETWEEN the camera and the
                       fingers: it ate 41% of the frame, each finger was one
-                      percent of it, and the object being grasped was 0.1% --
+                      percent of it, and the object being grasped was 0.1% -
                       effectively invisible. A wrist camera that cannot see the
                       fingers close on the thing they are closing on is not
                       doing the job the second camera slot exists for.
@@ -224,7 +224,7 @@
                         every `*_grasp_height_offset` in the task configs is a
                         small correction. Tracking the arm flange instead would
                         make that correction 0.05 m and silently invalidate all
-                        of them -- the exact shape of the failure that cost
+                        of them - the exact shape of the failure that cost
                         pick_up 10M steps (see cdpr_gripper_geometry). Here the
                         offset is near zero by construction, and
                         widowx200_gripper_geometry measures the residual from
@@ -243,7 +243,7 @@
                         <joint name="left_finger" type="slide" axis="0 1 0"
                                limited="true" range="0.015 0.037" damping="3.0"
                                armature="0.005"/>
-                        <geom class="wx200_visual" mesh="wx200_gripper_finger"
+                        <geom name="left_finger_visual" class="wx200_visual" mesh="wx200_gripper_finger"
                               pos="0 0.005 0" euler="3.1415927 3.1415927 0"/>
                         <!--
                           Pad box, placed on the finger's INNER face. All three
@@ -265,7 +265,7 @@
                         <joint name="right_finger" type="slide" axis="0 -1 0"
                                limited="true" range="0.015 0.037" damping="3.0"
                                armature="0.005"/>
-                        <geom class="wx200_visual" mesh="wx200_gripper_finger"
+                        <geom name="right_finger_visual" class="wx200_visual" mesh="wx200_gripper_finger"
                               pos="0 -0.005 0" euler="0 3.1415927 0"/>
                         <geom name="right_finger_pad" class="finger_pad_collision"
                               type="box" size="0.017 0.002 0.010"
