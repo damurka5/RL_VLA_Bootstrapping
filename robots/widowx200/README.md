@@ -17,7 +17,11 @@ widowx200_mujoco/
 widowx200_dataset/        scenes, tasks, reward wiring (not yet populated)
 ```
 
-Tests: `tests/test_widowx200_embodiment.py` (34, all passing).
+Tests: `tests/test_widowx200_embodiment.py` (37, all passing).
+
+**Driving it:** [`CONTROL_API.md`](CONTROL_API.md) — the five controllable
+dimensions, what the arm reports back, both controller entry points, and how
+to put SmolVLA on top with its action expert re-headed to 5 DOF.
 
 ![reach, descend, close, lift](../../assets/research/widowx200/wx200_grasp_sequence.png)
 
