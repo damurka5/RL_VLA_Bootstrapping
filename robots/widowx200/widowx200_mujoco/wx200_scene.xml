@@ -71,14 +71,27 @@
       It is also OFF-AXIS. A camera on the arm's own +y axis sees the arm
       end-on: rendered from straight in front, a correctly placed arm still
       looks like a gripper floating at the top of the frame, because every link
-      is foreshortened onto the one behind it. This three-quarter pose, 0.75 m
-      out at 45 degrees, shows the shoulder, upper arm, forearm, and wrist as
-      separate things -- which is what makes the arm's configuration legible to
-      a policy at all.
+      is foreshortened onto the one behind it. This three-quarter pose, 40
+      degrees off the arm's axis, shows the shoulder, upper arm, forearm, and
+      wrist as separate things -- which is what makes the arm's configuration
+      legible to a policy at all.
 
-      It looks at (0, 0.05, 0.25) -- the centroid of the objects plus the arm --
-      and fovy 55 covers the scene with margin. xyaxes is the exact frame for
-      that view direction.
+      DISTANCE AND AIM. It stands 0.42 m from the working volume and looks at
+      (0, 0.03, 0.20), well below the arm's own height. The earlier 0.75 m pose
+      left the robot covering 4.6% of the frame against a third of it being
+      empty sky; this one puts it at 13.7% and fills the frame with desk.
+
+      0.42 m is as close as the scene allows, and the binding constraint is the
+      objects, not the arm: at this distance with the aim left at 0.25 only two
+      of the four spawn cells stay fully inside the frame, and an instruction
+      naming an object the overview cannot see is unanswerable. Dropping the
+      aim to 0.20 brings all four back. Measured across three arm poses and all
+      four lattice cells.
+
+      One accepted cost: the upper arm now touches the top edge in the
+      furthest-reach poses. The base, elbow, forearm, wrist, and gripper all
+      stay in frame, which is the part manipulation depends on. Widening to
+      fovy 60 un-crops it at the price of some of the closeness.
 
       This does change the overview image distribution relative to the CDPR
       checkpoints. That is unavoidable: the scene now contains a different
@@ -86,8 +99,8 @@
       same standoff class), because it sees mostly gripper and object, which
       are the parts a warm start can still recognise.
     -->
-    <camera name="overview" mode="fixed" pos="-0.45 -0.45 0.55"
-            xyaxes="0.7432 -0.6689 0  0.2716 0.3018 0.9103" fovy="55"/>
+    <camera name="overview" mode="fixed" pos="-0.2238 -0.2167 0.4849"
+            xyaxes="0.74067 -0.67187 0.00000  0.43665 0.48136 0.76001" fovy="55"/>
 
     <geom name="floor" type="plane" size="5 5 0.1" pos="0 0 -0.1"
           rgba="0.8 0.8 0.8 1"/>

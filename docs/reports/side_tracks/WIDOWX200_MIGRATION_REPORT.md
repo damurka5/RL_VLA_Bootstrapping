@@ -164,17 +164,61 @@ paper:
   and crops the arm to a gripper hanging in from the top edge. Worse, a camera
   on the arm's own axis sees it **end-on**: every link foreshortens onto the one
   behind it, so a correctly placed arm still renders as a floating gripper. The
-  overview is now a three-quarter view at `(-0.45, -0.45, 0.55)`, fovy 55, which
-  shows shoulder, upper arm, forearm, and wrist as separate things.
+  overview is a three-quarter view, 40° off the arm's axis, which shows
+  shoulder, upper arm, forearm, and wrist as separate things.
 
 This does change the overview image distribution relative to the CDPR
-checkpoints — unavoidable, since the scene now contains a different robot. The
-**wrist** camera is held to the old contract (fovy 60, comparable standoff)
-because it sees mostly gripper and object, which are the parts a warm start can
-still recognise. Its mount was solved against the compiled model rather than
-eyeballed: 11.9 cm standoff, optical axis on the grasp point to under 0.01°,
-gripper occupying 8.5% of the frame (measured by segmentation render; on the
-bar itself it is 15.2%).
+checkpoints — unavoidable, since the scene now contains a different robot.
+
+### Both cameras were re-sited after looking at what they actually resolve
+
+The first pass placed both cameras by construction — aim the optic at the right
+point, check nothing is out of frame — and both were wrong in the same way:
+geometrically correct and visually useless. Fixed on 2026-10-22, measured by
+segmentation render rather than by eye.
+
+**Overview: 0.75 m → 0.42 m, aim dropped from z = 0.25 to z = 0.20.**
+At 0.75 m the robot covered **4.6%** of the frame and a third of the image was
+empty sky. It is now **13.7%**, three times the pixels, with the sky gone.
+
+0.42 m is as close as the scene allows, and the binding constraint is the
+objects rather than the arm: at that distance with the old aim, only two of the
+four spawn cells stay fully inside the frame, and an instruction naming an
+object the overview cannot see is unanswerable. Dropping the aim to 0.20 brings
+all four back — checked across three arm poses and all four lattice cells.
+
+Accepted cost: the upper arm touches the top edge in the furthest-reach poses.
+Base, elbow, forearm, wrist, and gripper all stay in frame. No elevation at
+0.42 m avoids this — a 0.45 m arm and a 0.57 m object sector do not both fit —
+so it is 0.42 m with a crop, or 0.50 m without. fovy 60 un-crops it at the
+price of some of the closeness.
+
+**Wrist: moved down level with the gripper bar, from 8 cm above it.**
+This was the worse of the two, and the original rationale was simply backwards.
+The first mount reasoned that pulling the camera back off the bar reduces how
+much gripper fills the frame — true, and irrelevant, because from up there the
+**bar is between the camera and the fingers**. Measured with the fingers at 70%
+open and an object between them:
+
+| mount (local x, z) | fingers/side | bar | object |
+|---|---:|---:|---:|
+| `(-0.055, 0.055)` — original | 1.0% | 41.0% | **0.1%** |
+| `(-0.015, 0.055)` | 6.7% | 33.3% | 8.5% |
+| `(0.000, 0.055)` — shipped | **15.2%** | **12.1%** | **13.0%** |
+
+The object being grasped occupied **one pixel in a thousand**. A wrist camera
+that cannot see the fingers close on the thing they are closing on is not doing
+the job the second camera slot exists for, and no amount of correct aiming fixes
+it while the bar is in the way.
+
+Dropping the camera level with the bar clears that silhouette: 15× the finger
+pixels, 130× the object, and the bar down from 41% to 12%. Both fingers are now
+symmetric about the optical axis, so the **gap between them is legible** — which
+is what makes gripper state readable from the image at all. Standoff 7.5 cm,
+optical axis on the grasp point to 0.000°, fovy still 60 to match the CDPR
+contract.
+
+![overview and wrist, before and after](../../../assets/research/widowx200/wx200_camera_change.png)
 
 **Object placement had to change shape, not just size.** The CDPR collector
 draws four objects from a 3×3 Cartesian grid at 0.18 m spacing. That grid's

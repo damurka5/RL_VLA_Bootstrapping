@@ -163,32 +163,49 @@
                           size="0.014 0.052 0.025" pos="0.014 0 0.011"/>
 
                     <!--
-                      Wrist camera, on a bracket above the gripper bar. It is
-                      11.9 cm from the grasp point and the euler below aims
-                      its optical axis exactly at that point (residual < 0.01
-                      deg, solved against the compiled model, not eyeballed),
-                      so the fingers and whatever they are closing on are
-                      centred through the whole approach.
+                      Wrist camera, on a short bracket beside the gripper
+                      bar, level with it rather than above it. 7.5 cm from the
+                      grasp point, with the euler below aiming its optical axis
+                      exactly at that point (residual 0.000 deg, solved against
+                      the compiled model, not eyeballed).
 
-                      The mount offset is a measured trade, not a guess. With
-                      the camera on the bar itself the gripper fills 15.2% of
-                      the frame (segmentation render, fingers at mid-open);
-                      backing it off to this 12 cm bracket halves that to 8.5%
-                      while keeping a mount a real arm could carry. Going
-                      further (14 cm) reaches 4.9% but the standoff starts
-                      shrinking the object in frame.
+                      The mount is where it is because of what the camera has
+                      to RESOLVE, measured by segmentation render with the
+                      fingers at 70% open and an object between them:
+
+                        mount (local x, z)   fingers/side   bar    object
+                        (-0.055, 0.055)          1.0%      41.0%    0.1%
+                        (-0.015, 0.055)          6.7%      33.3%    8.5%
+                        ( 0.000, 0.055)         15.2%      12.1%   13.0%
+
+                      The first row was the original bracket, 8 cm above the
+                      bar. From up there the bar is BETWEEN the camera and the
+                      fingers: it ate 41% of the frame, each finger was one
+                      percent of it, and the object being grasped was 0.1% --
+                      effectively invisible. A wrist camera that cannot see the
+                      fingers close on the thing they are closing on is not
+                      doing the job the second camera slot exists for.
+
+                      Dropping it level with the bar clears that silhouette.
+                      Both fingers are now symmetric about the optical axis, so
+                      the GAP between them is legible, which is what makes
+                      gripper state readable from the image at all.
+
+                      fovy stays 60 to match the CDPR wrist camera. The wrist
+                      view is half the policy's input and a warm start from a
+                      CDPR checkpoint depends on its image statistics.
 
                       fovy stays 60 to match the CDPR wrist camera exactly. The
                       wrist view is half the policy's input and a warm start
                       from a CDPR checkpoint depends on its image statistics;
                       a wider lens would buy ~4 cm of context and cost that.
                     -->
-                    <body name="wrist_camera_body" pos="-0.055 0 0.055"
+                    <body name="wrist_camera_body" pos="0.0 0 0.055"
                           euler="0 0 0">
                       <site name="wrist_camera_marker" type="sphere"
                             size="0.004" rgba="0 1 0 1"/>
                       <camera name="ee_camera" mode="fixed" fovy="60"
-                              euler="0 -1.0908000 -1.5707963"/>
+                              euler="0 -0.7435095 -1.5707963"/>
                     </body>
 
                     <body name="fingers_link" pos="0.023 0 0">

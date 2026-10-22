@@ -8,7 +8,7 @@ runs on it unchanged from the CDPR.
 ```text
 widowx200_mujoco/
   wx200.xml               robot: URDF-exact kinematics, visual meshes, primitive collision
-  wx200_scene.xml         desk, lights, overview camera; includes wx200.xml
+  wx200_scene.xml         desk, lights, three-quarter overview camera
   meshes/                 upstream Interbotix STLs (BSD-3, Trossen) + LICENSE
   kinematics.py           closed-form FK and top-down IK, NumPy and Torch
   controller.py           host controller + the shared action-integration algebra
@@ -157,8 +157,11 @@ All from `tests/test_widowx200_embodiment.py` against the compiled model:
   lifted object at z = 0.24, nothing above z = 0.41.
 - Object lattice: 6 cells, **0.180 m** minimum separation, all reachable.
 - Scripted grasp success across the spawn sector: **29/30**.
-- Wrist camera: 11.9 cm standoff, grasp point on the optical axis, gripper
-  occupies 8.5% of the frame.
+- Wrist camera: 7.5 cm standoff, grasp point on the optical axis to 0.000°.
+  With the fingers at 70% open and an object between them, each finger covers
+  15.2% of the frame, the gripper bar 12.1%, the object 13.0%.
+- Overview camera: 0.42 m from the working volume, robot covers 13.7% of the
+  frame, all four spawn cells fully visible across three arm poses.
 
 ## Still to do
 

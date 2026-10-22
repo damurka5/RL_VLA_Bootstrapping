@@ -754,3 +754,179 @@ class SectorLatticeTests(unittest.TestCase):
                 layout.spawn_radius[1],
                 f"outer lattice ring is out of reach at z={world_z}",
             )
+
+
+@requires_mujoco
+class CameraFramingTests(unittest.TestCase):
+    """What the two policy cameras actually resolve, not just where they point.
+
+    Both cameras were first placed by construction -- aim the optic at the right
+    point, check nothing falls out of frame -- and both were wrong in the same
+    way: geometrically correct and visually useless. The wrist camera sat 8 cm
+    above the gripper bar, which put the bar BETWEEN it and the fingers; it
+    rendered 41% gripper bar, 1% finger, and 0.1% object. Aiming it correctly
+    did not help, because the problem was never the aim.
+
+    So these tests measure coverage by segmentation render rather than checking
+    angles. They need a GL context and skip cleanly without one.
+    """
+
+    ARM_BAR = {"gripper_bar_link", "gripper_link", "wrist_link"}
+
+    def setUp(self) -> None:
+        self.layout = W.DEFAULT_LAYOUT
+        self.spec = WidowX200ControlSpec(
+            mount=WidowX200MountPose(self.layout.base_position, self.layout.base_yaw),
+            workspace_x=self.layout.workspace_x,
+            workspace_y=self.layout.workspace_y,
+            workspace_z=self.layout.workspace_z,
+            min_reach_radius=self.layout.min_reach_radius,
+        )
+
+    def _scene_with_objects(self):
+        cells = W.sector_lattice()[2:]
+        bodies = "".join(
+            f"""
+    <body name="obj{index}" pos="{x} {y} 0.172">
+      <freejoint/>
+      <inertial pos="0 0 0" mass="0.1" diaginertia="4e-5 4e-5 4e-5"/>
+      <geom name="objg{index}" type="sphere" size="0.022" contype="1"
+            conaffinity="6" condim="4" friction="1.2 0.02 0.002"
+            solref="0.006 1" solimp="0.95 0.99 0.001" margin="0.001"
+            rgba="0.9 0.7 0.2 1"/>
+    </body>"""
+            for index, (x, y) in enumerate(cells)
+        )
+        text = SCENE_XML.read_text().replace(
+            "</mujoco>", f"<worldbody>{bodies}</worldbody></mujoco>"
+        )
+        path = ROBOT_DIR / "_camera_test.xml"
+        path.write_text(text)
+        try:
+            model = mj.MjModel.from_xml_path(str(path))
+        finally:
+            os.remove(path)
+        W.mount_widowx200(model, self.layout, mujoco=mj)
+        return model, cells
+
+    def _renderer(self, model):
+        try:
+            return mj.Renderer(model, 240, 320)
+        except Exception as error:  # pragma: no cover - headless host
+            self.skipTest(f"no GL context for offscreen rendering: {error}")
+
+    def _pose_at(self, model, data, target, opening):
+        mj.mj_resetData(model, data)
+        solution = joint_targets_from_task_targets(
+            np.asarray(target, dtype=np.float64),
+            np.float64(0.0),
+            np.float64(opening),
+            self.spec,
+        )
+        for name, value in zip(K.JOINT_NAMES, np.asarray(solution["q"]).reshape(5)):
+            data.qpos[
+                model.jnt_qposadr[mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, name)]
+            ] = value
+        low, high = K.FINGER_LIMITS
+        for name in ("left_finger", "right_finger"):
+            data.qpos[
+                model.jnt_qposadr[mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, name)]
+            ] = low + opening * (high - low)
+        mj.mj_forward(model, data)
+
+    def _segment(self, model, data, renderer, camera):
+        renderer.enable_segmentation_rendering()
+        renderer.update_scene(data, camera=camera)
+        segment = renderer.render()[:, :, 0]
+        renderer.disable_segmentation_rendering()
+        return segment
+
+    def _body_fraction(self, model, segment, bodies):
+        geoms = [
+            geom
+            for geom in range(model.ngeom)
+            if mj.mj_id2name(model, mj.mjtObj.mjOBJ_BODY, model.geom_bodyid[geom])
+            in bodies
+        ]
+        return float(np.isin(segment, geoms).sum()) / segment.size
+
+    def test_wrist_camera_resolves_the_fingers_and_the_object(self) -> None:
+        model, cells = self._scene_with_objects()
+        data = mj.MjData(model)
+        renderer = self._renderer(model)
+        target = np.array([cells[1][0], cells[1][1], 0.172])
+        self._pose_at(model, data, target, opening=0.70)
+        segment = self._segment(model, data, renderer, "ee_camera")
+
+        left = self._body_fraction(model, segment, {"left_finger_link"})
+        right = self._body_fraction(model, segment, {"right_finger_link"})
+        bar = self._body_fraction(model, segment, self.ARM_BAR)
+        obj = float(
+            (segment == mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "objg1")).sum()
+        ) / segment.size
+
+        # Measured 15.2% / 15.2% / 12.1% / 13.0%. The floors are what separates
+        # the shipped mount from the original, which scored 1.0% and 0.1%.
+        self.assertGreater(left, 0.08, "left finger is not resolvable")
+        self.assertGreater(right, 0.08, "right finger is not resolvable")
+        self.assertGreater(obj, 0.05, "the object being grasped is not visible")
+        self.assertLess(bar, 0.20, "the gripper bar is eating the wrist frame")
+        # Both fingers symmetric about the optical axis is what makes the GAP
+        # between them legible, and so the gripper state readable.
+        self.assertLess(abs(left - right), 0.25 * max(left, right))
+
+    def test_overview_sees_every_object_the_instruction_can_name(self) -> None:
+        """An instruction naming an object the overview cannot see is unanswerable."""
+
+        model, cells = self._scene_with_objects()
+        data = mj.MjData(model)
+        renderer = self._renderer(model)
+        for cell_index, height in ((3, 0.172), (0, 0.172), (1, 0.26)):
+            target = np.array([cells[cell_index][0], cells[cell_index][1], height])
+            self._pose_at(model, data, target, opening=0.70)
+            segment = self._segment(model, data, renderer, "overview")
+            for index in range(len(cells)):
+                geom = mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, f"objg{index}")
+                mask = segment == geom
+                self.assertGreater(
+                    mask.sum(), 0, f"object {index} invisible, arm at cell {cell_index}"
+                )
+                touches_border = bool(
+                    mask[0, :].any()
+                    or mask[-1, :].any()
+                    or mask[:, 0].any()
+                    or mask[:, -1].any()
+                )
+                self.assertFalse(
+                    touches_border,
+                    f"object {index} is clipped by the frame, arm at cell {cell_index}",
+                )
+
+    def test_overview_frames_the_robot_not_the_sky(self) -> None:
+        model, cells = self._scene_with_objects()
+        data = mj.MjData(model)
+        renderer = self._renderer(model)
+        self._pose_at(
+            model, data, np.array([cells[3][0], cells[3][1], 0.172]), opening=0.70
+        )
+        segment = self._segment(model, data, renderer, "overview")
+        arm = self._body_fraction(
+            model,
+            segment,
+            {
+                "base_link",
+                "shoulder_link",
+                "upper_arm_link",
+                "forearm_link",
+                "wrist_link",
+                "gripper_link",
+                "gripper_bar_link",
+                "left_finger_link",
+                "right_finger_link",
+            },
+        )
+        # Measured 8.4% at this resolution and pose; the 0.75 m pose it replaced
+        # scores 3.6% on the identical measurement, with a third of the frame
+        # empty sky. 6% sits between them, so a camera that drifts back out
+        # fails here rather than quietly halving the robot's pixels.
+        self.assertGreater(arm, 0.06, "the overview has drifted back off the robot")
