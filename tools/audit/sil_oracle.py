@@ -92,6 +92,8 @@ class BatchedOracle:
         lift_success_height: float,
         action_step_xyz: float,
         action_step_gripper: float,
+        move_to_approach_z: float = 0.27,
+        workspace_z_bounds: Sequence[float] | None = None,
     ) -> None:
         oracle = load_oracle_module()
         self._oracle = oracle
@@ -102,8 +104,13 @@ class BatchedOracle:
         self.phases: list[tuple[Any, ...]] = []
         self.phase_index = np.zeros(self.worlds, dtype=np.int64)
         self.phase_steps = np.zeros(self.worlds, dtype=np.int64)
-        # Which worlds the oracle has no phase chain for -- move_to, the
-        # relation tasks. They are driven to a zero action rather than dropped,
+        z_bounds = None
+        if workspace_z_bounds is not None:
+            z_bounds = tuple(float(value) for value in workspace_z_bounds)
+            if len(z_bounds) != 2 or not np.isfinite(z_bounds).all() or z_bounds[0] >= z_bounds[1]:
+                raise ValueError(f"Invalid oracle workspace Z bounds: {workspace_z_bounds}")
+        # Which worlds the oracle has no phase chain for -- the relation
+        # tasks. They are driven to a zero action rather than dropped,
         # so the batch shape never depends on the instruction mix.
         self.supported = np.zeros(self.worlds, dtype=bool)
         for world in range(self.worlds):
@@ -120,6 +127,8 @@ class BatchedOracle:
                 release_height=float(release_heights[world]),
                 support_surface_z=float(support_surface_z[world]),
                 lift_success_height=float(lift_success_height),
+                move_to_approach_z=float(move_to_approach_z),
+                workspace_z_bounds=z_bounds,
             )
             self.contexts.append(context)
             try:

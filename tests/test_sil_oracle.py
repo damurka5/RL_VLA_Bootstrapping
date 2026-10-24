@@ -14,6 +14,7 @@ it exists to advance the state machine so the chain can be observed end to end.
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
 
 import numpy as np
 
@@ -134,9 +135,9 @@ class ComposedChainTests(unittest.TestCase):
 
 class BatchBehaviourTests(unittest.TestCase):
     def test_an_unsupported_instruction_gets_a_zero_action(self) -> None:
-        # move_to has no oracle. It must not change the batch shape or raise.
+        # Relation tasks have no oracle. Keep their batch slots intact.
         oracle = BatchedOracle(
-            instruction_types=["move_to_object", "put_into_bowl"],
+            instruction_types=["move_left_of_object", "put_into_bowl"],
             starts_grasped=[False, False],
             instruction_texts=["move to apple", "put apple into bowl"],
             target_slots=[0, 0],
@@ -168,6 +169,120 @@ class BatchBehaviourTests(unittest.TestCase):
         self.assertEqual(action.shape, (2, 5))
         self.assertTrue(bool((action[0] == 0).all()))
         self.assertTrue(bool(np.abs(action[1]).sum() > 0))
+
+    def test_move_to_tracks_the_named_slot_at_the_configured_hover_height(self):
+        oracle = BatchedOracle(
+            instruction_types=["move_to_object"], starts_grasped=[False],
+            instruction_texts=["move to apple"], target_slots=[2], reference_slots=[-1],
+            target_catalogs=["robocasa_apple"], fitted_openings=[FITTED],
+            release_openings=[.95], grasp_height_offset=0.0, release_heights=[.07],
+            support_surface_z=[.1502], lift_success_height=.05,
+            action_step_xyz=STEP_XYZ, action_step_gripper=STEP_GRIPPER,
+            move_to_approach_z=.23, workspace_z_bounds=(.20, .27),
+        )
+        self.assertEqual(oracle.supported.tolist(), [True])
+        objects = np.zeros((1, 4, 3))
+        objects[0, 2] = [.10, -.05, .17]
+        ee = np.array([[0.0, 0.0, .25]])
+        previous = ee.copy()
+        for _ in range(96):
+            action = oracle.actions(
+                ee=ee, ee_velocity=ee-previous, ee_yaw=np.zeros(1),
+                measured_gripper=np.ones(1), commanded_gripper=np.ones(1),
+                object_positions=objects, physical_grasp=np.zeros(1, bool), initial_target_z=np.array([.17]),
+            )
+            previous = ee.copy()
+            ee += action[:, :3] * STEP_XYZ * PLANT_GAIN
+        np.testing.assert_allclose(ee[0], [.10, -.05, .23], atol=.002)
+
+    def test_placement_advances_to_release_under_widowx_height_limit(self):
+        oracle = BatchedOracle(
+            instruction_types=["put_into_bowl"], starts_grasped=[True],
+            instruction_texts=["put apple into bowl"], target_slots=[0], reference_slots=[1],
+            target_catalogs=["robocasa_apple"], fitted_openings=[.7], release_openings=[.95],
+            grasp_height_offset=0.0, release_heights=[.07], support_surface_z=[.1502],
+            lift_success_height=.05, action_step_xyz=STEP_XYZ, action_step_gripper=STEP_GRIPPER,
+            workspace_z_bounds=(.168, .27),
+        )
+        ee = np.array([[0.0, 0.0, .22]])
+        previous = ee.copy()
+        objects = np.zeros((1, 4, 3))
+        objects[0, 1] = [.10, .02, .159]
+        commanded = np.array([.5])
+        seen = []
+        for _ in range(128):
+            objects[0, 0] = ee[0]
+            action = oracle.actions(
+                ee=ee, ee_velocity=ee-previous, ee_yaw=np.zeros(1),
+                measured_gripper=commanded.copy(), commanded_gripper=commanded,
+                object_positions=objects, physical_grasp=np.ones(1, bool), initial_target_z=np.array([.17]),
+            )
+            seen.extend(oracle.phase_names())
+            previous = ee.copy()
+            ee += action[:, :3] * STEP_XYZ * PLANT_GAIN
+            ee[:, 2] = ee[:, 2].clip(.168, .27)
+            commanded = np.clip(commanded + action[:, 4] * STEP_GRIPPER, 0, 1)
+        self.assertEqual(oracle.contexts[0].frozen["transit_z"], .27)
+        self.assertIn("open_gripper_release", seen)
+        self.assertIn("settle_in_receptacle", seen)
+
+    def test_move_to_reaches_each_widowx_cell_with_the_native_controller(self):
+        try:
+            import mujoco as mj
+        except ImportError:
+            self.skipTest("MuJoCo is not installed")
+        from robots.widowx200.widowx200_mujoco import workspace as workspace
+        from robots.widowx200.widowx200_mujoco.controller import (
+            WidowX200ControlSpec, WidowX200MountPose, WidowX200TaskSpaceController,
+        )
+        from tools.train.run_widowx200_pipeline import load_yaml
+
+        root = Path(__file__).resolve().parents[1]
+        config = load_yaml(root / "configs/examples/widowx200_smolvla_pipeline.yaml")
+        metadata = config["task"]["metadata"]
+        model = mj.MjModel.from_xml_path(str(root / "robots/widowx200/widowx200_mujoco/wx200_scene.xml"))
+        model.opt.timestep = .002
+        layout = workspace.DEFAULT_LAYOUT
+        workspace.mount_widowx200(model, layout, mujoco=mj)
+        spec = WidowX200ControlSpec(
+            mount=WidowX200MountPose(layout.base_position, layout.base_yaw),
+            workspace_x=layout.workspace_x, workspace_y=layout.workspace_y,
+            workspace_z=(.20, .27), min_reach_radius=layout.min_reach_radius,
+        )
+        for xy in metadata["scene_object_cells"]:
+            with self.subTest(cell=xy):
+                data = mj.MjData(model)
+                controller = WidowX200TaskSpaceController(model, data, spec=spec, mujoco=mj)
+                controller.reset_to_pose([xy[0] + .08, xy[1] + .04, .25])
+                oracle = BatchedOracle(
+                    instruction_types=["move_to_object"], starts_grasped=[False],
+                    instruction_texts=["move to apple"], target_slots=[0], reference_slots=[-1],
+                    target_catalogs=["robocasa_apple"], fitted_openings=[.7], release_openings=[.95],
+                    grasp_height_offset=0, release_heights=[.07], support_surface_z=[.1502],
+                    lift_success_height=.05, action_step_xyz=spec.action_step_xyz,
+                    action_step_gripper=spec.action_step_gripper,
+                    move_to_approach_z=metadata["move_to_object_approach_z"], workspace_z_bounds=spec.workspace_z,
+                )
+                objects = np.zeros((1, 4, 3))
+                objects[0, 0] = [*xy, .17]
+                previous = controller.get_end_effector_position()
+                success = False
+                for _ in range(4 * metadata["random_workspace_horizon_high"]):
+                    ee = controller.get_end_effector_position()
+                    action = oracle.actions(
+                        ee=ee[None], ee_velocity=(ee - previous)[None], ee_yaw=np.array([controller.get_yaw()]),
+                        measured_gripper=np.array([controller.get_gripper_opening()]),
+                        commanded_gripper=np.array([controller.get_gripper_target()]),
+                        object_positions=objects, physical_grasp=np.zeros(1, bool), initial_target_z=np.array([.17]),
+                    )
+                    previous = ee
+                    controller.apply_normalized_action(action[0])
+                    measured = controller.get_end_effector_position()
+                    if (np.linalg.norm(measured[:2] - xy) <= metadata["move_to_object_xy_tolerance"]
+                            and metadata["move_to_object_z_window_low"] <= measured[2] <= metadata["move_to_object_z_window_high"]):
+                        success = True
+                        break
+                self.assertTrue(success, f"oracle missed cell {xy}; final EE {measured}")
 
     def test_actions_stay_inside_the_normalised_range(self) -> None:
         oracle = _oracle("put_into_bowl", starts_grasped=False)

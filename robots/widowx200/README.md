@@ -210,6 +210,14 @@ an entirely empty production harvest leaves the existing skill bank intact and
 records an `empty_harvest` event. The small smoke pass may use a labelled
 scripted fixture to exercise SIL when two updates have not learned a skill;
 these fixtures stay in the smoke directory and are refused by production SIL.
+The recording oracle supports approach at the configured hover height and
+keeps grasp, lift and transit goals within the evaluated controller's Z bounds.
+An unsuccessful cached oracle round is recollected when resuming. To resume
+an existing smoke run after a code fix, set `SMOKE_DIR` to its directory;
+`PIPELINE_DIR` continues to name the production run.
+For an oracle-only fix, `MEMORY_DIR` can explicitly reuse the prior stress
+directory: an existing `PASSED` is reused, and an incomplete stress pass is
+still required to finish. The default directories remain code-fingerprinted.
 Dataset building filters unfilmed episodes before allocating row arrays, while
 prior refresh decompresses one frame archive at a time. `frame_worlds: 96`
 keeps the largest production frame archive near 1.32 GiB uncompressed.

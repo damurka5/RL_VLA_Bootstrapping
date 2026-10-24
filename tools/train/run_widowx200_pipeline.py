@@ -648,7 +648,7 @@ class Pipeline:
             # with a clearly labelled scripted fixture, isolated in the smoke
             # directory; production banks always contain policy experience.
             oracle_dir = base / "smoke_oracle"
-            if not (oracle_dir / "summary.json").is_file():
+            if not (oracle_dir / "summary.json").is_file() or not has_successful_recording(oracle_dir):
                 run_command([
                     self.python, str(ROOT / "tools/audit/sil_record.py"),
                     "--mode", "oracle", "--checkpoint", str(policy),
@@ -991,6 +991,22 @@ def _mean(values: Iterable[float]) -> float:
 
 def format_rates(rates: Mapping[str, Mapping[str, float]]) -> str:
     return ", ".join(f"{name}={entry['rate']:.3f}/{entry['episodes']}" for name, entry in sorted(rates.items()))
+
+
+def has_successful_recording(directory: Path) -> bool:
+    """A cached zero-success oracle run is not a usable smoke fixture."""
+
+    import numpy as np
+    import zipfile
+
+    for path in sorted(directory.glob("record_*.npz")):
+        try:
+            with np.load(path, allow_pickle=False) as data:
+                if bool(data["success"].any()):
+                    return True
+        except (OSError, ValueError, KeyError, EOFError, zipfile.BadZipFile):
+            continue
+    return False
 
 
 def read_record_rates(directory: Path) -> dict[str, dict[str, float]]:

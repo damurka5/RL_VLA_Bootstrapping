@@ -58,8 +58,8 @@ validation_id="$(
   { git rev-parse HEAD; git diff HEAD -- .; git hash-object "$CONFIG" tools/audit/sil_artifacts.py; } |
     git hash-object --stdin
 )"
-SMOKE_DIR="${PIPELINE_DIR}_smoke_${validation_id:0:12}"
-MEMORY_DIR="${PIPELINE_DIR}_memory_${validation_id:0:12}"
+SMOKE_DIR="${SMOKE_DIR:-${PIPELINE_DIR}_smoke_${validation_id:0:12}}"
+MEMORY_DIR="${MEMORY_DIR:-${PIPELINE_DIR}_memory_${validation_id:0:12}}"
 exec > >(tee -a "$PIPELINE_DIR/launcher.log") 2>&1
 
 export RLVLA_EMBODIMENT=widowx200

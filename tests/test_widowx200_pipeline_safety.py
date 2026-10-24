@@ -5,6 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from argparse import Namespace
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import numpy as np
@@ -142,6 +143,12 @@ class InterruptedArtifactsTests(unittest.TestCase):
     def test_smoke_uses_a_labelled_oracle_fixture_when_learning_has_no_successes(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = pipeline(tmp, "--smoke")
+            # A previous failed invocation already wrote a summary. It must
+            # be recollected after the oracle is repaired, rather than cached.
+            oracle_dir = Path(tmp) / "banks/move_to/s1_move_to_dense/smoke_oracle"
+            oracle_dir.mkdir(parents=True)
+            (oracle_dir / "summary.json").write_text("{}")
+            atomic_savez(oracle_dir / "record_00.npz", success=np.zeros((1, 64), bool))
             with patch.object(p, "record", return_value={"move_to_object": {"rate": 0.0, "episodes": 64}}), \
                  patch.object(p, "write_config", return_value=Path(tmp) / "eval.yaml"), \
                  patch.object(p, "harvest_replays", side_effect=[([], []), (["r.npz"], ["f.npz"])]), \
@@ -149,6 +156,57 @@ class InterruptedArtifactsTests(unittest.TestCase):
                 p.harvest(p.spec["stages"][0], "move_to", Path("policy.pt"), {})
             self.assertIn("oracle", run.call_args.args[0])
             self.assertEqual(p.state["banks"]["move_to"]["provenance"], "oracle_smoke_fixture")
+
+    def test_recording_oracle_reaches_the_actual_pipeline_move_to_success_window(self):
+        import torch
+        from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
+            INSTRUCTION_TO_ID, BatchedTaskState, BatchedMoveToDistanceReward, evaluate_active_sparse_tasks,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = pipeline(tmp).eval_config("move_to")
+        n = 64
+        slots = torch.arange(n) % 4
+        targets = torch.zeros((n, 3))
+        targets[:, 0] = torch.linspace(-.16, .16, n)
+        targets[:, 2] = .17
+        objects = torch.full((n, 4, 3), .20)
+        objects[torch.arange(n), slots] = targets
+        state = BatchedTaskState(
+            instruction_ids=torch.full((n,), INSTRUCTION_TO_ID["move_to_object"], dtype=torch.int64),
+            target_slots=slots, reference_slots=torch.full((n,), -1), second_reference_slots=torch.full((n,), -1),
+            initial_target_positions=targets.clone(), ever_grasped=torch.zeros(n, dtype=torch.bool),
+            grasped=torch.zeros(n, dtype=torch.bool), step_count=torch.zeros(n, dtype=torch.int64),
+            release_threshold=torch.full((n,), .95), support_surface_z=torch.full((n,), .1502),
+            target_rest_height=torch.full((n,), .0198),
+        )
+        reset = SimpleNamespace(task_state=state, group_target_catalog_ids=torch.zeros(n, dtype=torch.int64),
+                                instructions=["move to apple"] * n)
+        world = SimpleNamespace(task_metadata=config["task"]["metadata"], layout=SimpleNamespace(worlds_per_rank=n),
+                                args=Namespace(**config["training"]["rl"]["args"]),
+                                action_step_xyz=.015, action_step_gripper=.05)
+        source = sil_record._OracleActionSource()
+        source.begin(reset, world)
+        backend = SimpleNamespace(controller_state=lambda: {"gripper": np.ones(n)})
+        ee = targets + torch.tensor([.12, -.06, .08])
+        # First-order plant, real recorder/oracle wiring and production success
+        # predicate. This catches a zero-action or wrong-height fallback.
+        for _ in range(96):
+            low = SimpleNamespace(ee_position=ee, ee_yaw=torch.zeros(n), gripper_opening=torch.ones(n), object_positions=objects)
+            action = source(low_dim=low, caught_target=None, backend=backend)
+            ee = ee + torch.from_numpy(action[:, :3]) * .015 * .5
+            ee[:, 2].clamp_(.20, .27)
+        reward = BatchedMoveToDistanceReward.from_metadata(config["task"]["metadata"])
+        result = evaluate_active_sparse_tasks(
+            state=state, ee_position=ee, object_positions=objects, gripper_opening=torch.ones(n),
+            caught_target=torch.zeros(n, dtype=torch.bool), active_mask=torch.ones(n, dtype=torch.bool),
+            max_steps=96, move_to_distance_reward=reward,
+        )
+        self.assertEqual(int(result.success.sum()), n)
+        self.assertAlmostEqual(source.oracle.contexts[0].move_to_approach_z, .23)
+        state.instruction_ids.fill_(INSTRUCTION_TO_ID["move_left_of_object"])
+        with self.assertRaisesRegex(ValueError, "refusing zero-action demonstrations"):
+            source.begin(reset, world)
 
 
 class FixedValidationTests(unittest.TestCase):

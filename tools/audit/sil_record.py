@@ -514,7 +514,12 @@ class _OracleActionSource:
             lift_success_height=number("pick_lift_success_height", 0.05),
             action_step_xyz=float(world.action_step_xyz),
             action_step_gripper=float(world.action_step_gripper),
+            move_to_approach_z=number("move_to_object_approach_z", 0.27),
+            workspace_z_bounds=getattr(world.args, "controller_workspace_z_bounds", None),
         )
+        if not bool(self.oracle.supported.all()):
+            unsupported = sorted({name for name, supported in zip(names, self.oracle.supported) if not supported})
+            raise ValueError(f"No recording oracle for instructions {unsupported}; refusing zero-action demonstrations")
         # Cleared per reset: carrying the previous round's end pose into the
         # next round's first velocity would put one bogus damping term on step
         # 0 of every round after the first.

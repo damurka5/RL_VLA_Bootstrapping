@@ -148,6 +148,13 @@ class EpisodeContext:
     support_surface_z: float
     lift_success_height: float
     frozen: dict[str, Any] = field(default_factory=dict)
+    move_to_approach_z: float = 0.27
+    workspace_z_bounds: tuple[float, float] | None = None
+
+    def bounded_z(self, height: float) -> float:
+        if self.workspace_z_bounds is None:
+            return float(height)
+        return float(np.clip(height, *self.workspace_z_bounds))
 
     @property
     def close_opening(self) -> float:
@@ -160,7 +167,7 @@ def _xy_error(a: np.ndarray, b: np.ndarray) -> float:
 
 def _grasp_point(ctx: EpisodeContext, obs: dict[str, Any]) -> np.ndarray:
     target = np.asarray(obs["object_positions"][ctx.target_slot], dtype=np.float64)
-    return target + np.array((0.0, 0.0, ctx.grasp_height_offset))
+    return np.array((target[0], target[1], ctx.bounded_z(target[2] + ctx.grasp_height_offset)))
 
 
 def _placement_hover(ctx: EpisodeContext, obs: dict[str, Any]) -> np.ndarray:
@@ -169,7 +176,7 @@ def _placement_hover(ctx: EpisodeContext, obs: dict[str, Any]) -> np.ndarray:
         (
             reference[0],
             reference[1],
-            reference[2] + ctx.release_height + ctx.grasp_height_offset,
+            ctx.bounded_z(reference[2] + ctx.release_height + ctx.grasp_height_offset),
         )
     )
 
@@ -189,7 +196,7 @@ def _pick_up_phases() -> tuple[OraclePhase, ...]:
         # Frozen at phase entry: a hover height recomputed from the live ee_z
         # ratchets upward with every overshoot and the approach never converges.
         height = ctx.frozen.setdefault(
-            "hover_z", max(float(obs["ee"][2]), float(grasp[2]) + 0.045)
+            "hover_z", ctx.bounded_z(max(float(obs["ee"][2]), float(grasp[2]) + 0.045))
         )
         return np.array((grasp[0], grasp[1], height))
 
@@ -224,8 +231,8 @@ def _pick_up_phases() -> tuple[OraclePhase, ...]:
             "lift_object",
             lambda ctx, obs: ctx.frozen.setdefault(
                 "lift_goal",
-                np.asarray(obs["ee"], dtype=np.float64)
-                + np.array((0.0, 0.0, ctx.lift_success_height + 0.035)),
+                np.array((obs["ee"][0], obs["ee"][1],
+                          ctx.bounded_z(float(obs["ee"][2]) + ctx.lift_success_height + 0.035))),
             ),
             _hold_grip,
             lambda ctx, obs, steps: float(obs["target_lift"])
@@ -260,7 +267,7 @@ def _placement_phases() -> tuple[OraclePhase, ...]:
     def transit(ctx: EpisodeContext, obs: dict[str, Any]) -> np.ndarray:
         hover = _placement_hover(ctx, obs)
         height = ctx.frozen.setdefault(
-            "transit_z", max(float(obs["ee"][2]), float(hover[2]) + 0.055)
+            "transit_z", ctx.bounded_z(max(float(obs["ee"][2]), float(hover[2]) + 0.055))
         )
         return np.array((float(obs["ee"][0]), float(obs["ee"][1]), height))
 
@@ -319,6 +326,15 @@ def _placement_phases() -> tuple[OraclePhase, ...]:
 def oracle_phases(
     instruction_type: str, *, starts_grasped: bool = True
 ) -> tuple[OraclePhase, ...]:
+    if instruction_type == "move_to_object":
+        def hover(ctx: EpisodeContext, obs: dict[str, Any]) -> np.ndarray:
+            target = obs["object_positions"][ctx.target_slot]
+            return np.array((target[0], target[1], ctx.bounded_z(ctx.move_to_approach_z)))
+
+        # The production predicate terminates on success; keep tracking the
+        # named object at the configured hover height until it does.
+        return (OraclePhase("hover_above_target", hover, lambda ctx, obs: 1.0,
+                            lambda ctx, obs, steps: False),)
     if instruction_type == "pick_up":
         return _pick_up_phases()
     if instruction_type in ("put_into_plate", "put_into_bowl"):
