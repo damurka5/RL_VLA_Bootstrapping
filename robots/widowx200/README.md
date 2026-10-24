@@ -190,5 +190,29 @@ earlier instruction degrades, self-imitation cycles (bank harvested from each
 skill's best checkpoint, re-primed under the current policy, residual SFT,
 paired re-evaluation) repair it before the next stage.
 
+The launcher runs a production-size memory stress pass before the small smoke
+pass: two updates on both GPUs, with compilation, 512 worlds per rank, the
+configured inference/LoRA batches, a 40-decision horizon and four refill rounds.
+It records each rank's Torch peak allocations and free device memory in
+`<pipeline-dir>_memory_<fingerprint>/memory_report.json`. This exercises GPU fit
+before the long run; it is not a measurement of every possible future peak.
+`MEMORY_CHECK_FIRST=0` skips it. Code/config changes invalidate prior passes.
+
+Stopping and checkpoint selection use fixed full-distance validation per
+instruction (0.30 m approach, 0.20 m pickup, 0.18 m placement). Binary pickup
+uses terminal success credit through the whole trajectory. Retention applies
+the evaluated skill's controller bounds, independently of the donor checkpoint.
+
+SIL replay/frame pairs have bank-specific source identities and atomic writes.
+Only pairs with a matching completion record are reused after interruption;
+legacy or incomplete pairs are replayed again. Empty rounds are skipped, and
+an entirely empty production harvest leaves the existing skill bank intact and
+records an `empty_harvest` event. The small smoke pass may use a labelled
+scripted fixture to exercise SIL when two updates have not learned a skill;
+these fixtures stay in the smoke directory and are refused by production SIL.
+Dataset building filters unfilmed episodes before allocating row arrays, while
+prior refresh decompresses one frame archive at a time. `frame_worlds: 96`
+keeps the largest production frame archive near 1.32 GiB uncompressed.
+
 `widowx200_dataset/` is still empty: the pipeline uses the shared task code.
 See [`WIDOWX200_MIGRATION_REPORT.md`](../../docs/reports/side_tracks/WIDOWX200_MIGRATION_REPORT.md) for the measurements.

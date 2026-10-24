@@ -119,6 +119,7 @@ if str(ROOT) not in sys.path:
 # both offline switches at import time, and they are read into module constants
 # on the hub's first import, so setting them afterwards is silently too late.
 from tools.audit.xy_approach_probe import _build_world  # noqa: E402
+from tools.audit.sil_artifacts import atomic_savez, mark_replay_complete, replay_marker  # noqa: E402
 
 import argparse  # noqa: E402
 import contextlib  # noqa: E402
@@ -222,6 +223,7 @@ class _Recording:
     diverged_world_mask: Any = None
     reset_object_xyz: Any = None  # true pre-action pose, not object_xyz[0]
     reset_ee_xyz: Any = None
+    source_key: str = ""
 
     _OPTIONAL_ARRAYS = (
         "states", "priors", "target_catalog_ids", "diverged_world_mask",
@@ -241,7 +243,10 @@ class _Recording:
         ("diverged_worlds", np.int64),
         ("pick_lift_success_height", np.float64),
     )
-    _OPTIONAL_SCALARS = (("start_distance_cap", np.float64, float("nan")),)
+    _OPTIONAL_SCALARS = (
+        ("start_distance_cap", np.float64, float("nan")),
+        ("source_key", np.str_, ""),
+    )
 
     @property
     def has_observations(self) -> bool:
@@ -317,7 +322,7 @@ class _Recording:
             payload[name] = caster(getattr(self, name))
         for name, caster, _ in self._OPTIONAL_SCALARS:
             payload[name] = caster(getattr(self, name))
-        np.savez_compressed(path, **payload)
+        atomic_savez(path, **payload)
 
     @classmethod
     def from_npz(cls, path: Path) -> "_Recording":
@@ -975,9 +980,13 @@ class _DecisionFrameTap:
                 "per decision, so a mismatch means every frame would be paired "
                 "with the wrong action."
             )
+        overview = np.stack(self.overview, axis=0)
+        self.overview.clear()
+        wrist = np.stack(self.wrist, axis=0)
+        self.wrist.clear()
         return {
-            "overview": np.stack(self.overview, axis=0),
-            "wrist": np.stack(self.wrist, axis=0),
+            "overview": overview,
+            "wrist": wrist,
             "world_index": np.asarray(self.worlds, dtype=np.int64),
         }
 
@@ -1993,6 +2002,13 @@ def _build_dataset(
     groups: list[str] = []
     starts_grasped: list[bool] = []
     episodes_kept = 0
+    frame_stats: dict[str, Any] = {}
+    frame_meta = None
+    frame_rows_before = frame_episodes_before = 0
+    if frame_paths:
+        from tools.audit.sil_sft import load_frame_meta, resolve_frame_rows
+
+        frame_meta = load_frame_meta([Path(path) for path in frame_paths])
 
     for rec, group, key in paired:
         per_decision = int(rec.actions_per_decision)
@@ -2001,7 +2017,6 @@ def _build_dataset(
         for world in range(rec.worlds):
             if not success[world]:
                 continue
-            episodes_kept += 1
             last_decision = int(first[world]) // per_decision
             # The label, not just the rung. Two families harvested at the same
             # cap produce the same group ("cap_0.03" for both sil_harvest_0.03
@@ -2009,6 +2024,18 @@ def _build_dataset(
             # and a colliding uid silently merges two real episodes into one,
             # which puts half of each on both sides of the episode split.
             uid = f"{key}/r{int(rec.round_index)}w{world}"
+            if frame_meta is not None:
+                frame_rows_before += last_decision + 1
+                frame_episodes_before += 1
+                # Frames are a contiguous decision sequence. Checking the last
+                # decision excludes incomplete episodes BEFORE allocating row
+                # arrays, so unfilmed successes cannot inflate peak RAM.
+                found, _ = resolve_frame_rows(
+                    np.asarray([uid]), np.asarray([last_decision]), frame_meta
+                )
+                if not bool(found[0]):
+                    continue
+            episodes_kept += 1
             for decision in range(last_decision + 1):
                 start = decision * per_decision
                 stop = start + per_decision
@@ -2024,6 +2051,8 @@ def _build_dataset(
                 starts_grasped.append(bool(rec.starts_grasped[world]))
 
     if not states:
+        if frame_meta is not None:
+            raise ValueError("No episode resolved to a complete set of frames. Check --require-frames.")
         raise ValueError("No successful episodes to build a dataset from.")
 
     dataset = {
@@ -2051,47 +2080,13 @@ def _build_dataset(
         "starts_grasped": np.asarray(starts_grasped, dtype=bool),
     }
 
-    # BEFORE the quota, and before the relabel, so the budget is spent only on
-    # episodes that can actually be trained on.
-    #
-    # A frame budget (--frame-worlds) keeps pictures for a subset of the
-    # surviving worlds, but every surviving episode still lands in the replay
-    # npz -- so pooling them all produces a dataset whose rows are mostly
-    # unresolvable, and sil_refresh_priors then refuses the whole bank. Dropping
-    # them here makes the selection EXPLICIT: "episodes with pictures", rather
-    # than the implicit "whichever rows happened to keep them" that
-    # --min-resolved-fraction exists to catch.
-    #
-    # Whole episodes, never rows: _episode_split holds out whole episodes, and
-    # a partly-resolved one would put consecutive decisions of one trajectory
-    # on both sides of the train/val line.
-    frame_stats: dict[str, Any] = {}
-    if frame_paths:
-        from tools.audit.sil_sft import load_frame_meta, resolve_frame_rows
-
-        meta = load_frame_meta([Path(path) for path in frame_paths])
-        resolved, _ = resolve_frame_rows(
-            dataset["episode_uid"], dataset["decision_index"], meta
-        )
-        complete = {
-            uid
-            for uid in np.unique(dataset["episode_uid"])
-            if bool(resolved[dataset["episode_uid"] == uid].all())
-        }
-        keep_rows = np.isin(dataset["episode_uid"], list(complete))
+    if frame_meta is not None:
         frame_stats = {
-            "rows_before": int(dataset["episode_uid"].shape[0]),
-            "rows_kept": int(keep_rows.sum()),
-            "episodes_before": int(np.unique(dataset["episode_uid"]).size),
-            "episodes_kept": len(complete),
+            "rows_before": frame_rows_before,
+            "rows_kept": len(states),
+            "episodes_before": frame_episodes_before,
+            "episodes_kept": episodes_kept,
         }
-        if not keep_rows.any():
-            raise ValueError(
-                "No episode resolved to a complete set of frames. The "
-                "--require-frames glob probably does not cover these replays."
-            )
-        for key, value in list(dataset.items()):
-            dataset[key] = value[keep_rows]
 
     # BEFORE the quota, so a relabelled episode counts against the budget of
     # the instruction it now carries rather than the one it was recorded as.
@@ -2732,6 +2727,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--controller-workspace-from-config", action="store_true",
+        help="Use the evaluated task's controller bounds instead of the donor checkpoint's bounds.",
+    )
+    parser.add_argument(
         "--mode",
         choices=("record", "replay", "compare", "dataset", "oracle"),
         default="record",
@@ -3084,14 +3083,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # stored. The harvest writes one directory per rung, so the parent
         # name is the rung -- but it is a filesystem convention, not a
         # measurement, and _group_label prefers the stored cap when present.
+        from tools.audit.sil_sft import recording_source_key
+
         dataset, stats = _build_dataset(
             recordings,
             [path.parent.name for path in resolved],
-            # Directory AND stem. Neither alone is unique across both layouts
-            # this tool produces: a harvest writes record_00..NN into one
-            # directory PER RUNG, so stems repeat across rungs; replays of a
-            # whole harvest land in ONE directory, so parents repeat there.
-            [f"{path.parent.name}/{path.stem}" for path in resolved],
+            [rec.source_key or recording_source_key(path) for rec, path in zip(recordings, resolved)],
             rows_per_instruction=int(args.rows_per_instruction),
             quota_seed=int(args.quota_seed),
             composed_fraction=float(args.composed_fraction),
@@ -3100,7 +3097,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 path.expanduser().resolve() for path in args.require_frames
             ],
         )
-        np.savez_compressed(output / "demonstrations.npz", **dataset)
+        atomic_savez(output / "demonstrations.npz", **dataset)
         stats["inputs"] = [str(path) for path in args.inputs]
         (output / "dataset.json").write_text(
             json.dumps(stats, indent=2, sort_keys=True), encoding="utf-8"
@@ -3241,6 +3238,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         run_dir=output,
         start_distance_cap=start_cap,
         metadata_overrides=list(args.metadata_override or []),
+        controller_workspace_from_config=bool(args.controller_workspace_from_config),
     )
 
     # None means "unspecified", which record resolves to 0 and replay resolves
@@ -3543,6 +3541,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # rung while presenting itself as the ladder.
         stem = f"{source_path.parent.name}_{source_path.stem}"
         replay_path = output / f"replay_{stem}.npz"
+        from tools.audit.sil_sft import recording_source_key
+
+        replay.source_key = recording_source_key(replay_path)
+        replay_marker(replay_path).unlink(missing_ok=True)
         replay.to_npz(replay_path)
         _write_csv(output / f"episodes_{stem}.csv", _episode_rows(replay))
         summary["replay_npz"] = str(replay_path)
@@ -3555,6 +3557,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             # single picture -- the arrays are gigabytes and all it needs is
             # how many decisions they hold.
             payload["decisions"] = np.asarray(int(decisions), dtype=np.int64)
+            payload["source_key"] = np.asarray(replay.source_key)
             payload["round_index"] = np.asarray(
                 int(replay.round_index), dtype=np.int64
             )
@@ -3562,7 +3565,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 float(replay.start_distance_cap), dtype=np.float64
             )
             frames_path = output / f"frames_{stem}.npz"
-            np.savez_compressed(frames_path, **payload)
+            atomic_savez(frames_path, **payload)
+            mark_replay_complete(
+                replay_path, frames_path,
+                frame_successes=int(replay.episode_success[frame_worlds].sum()),
+            )
             megabytes = frames_path.stat().st_size / (1024.0 * 1024.0)
             summary["frames_npz"] = str(frames_path)
             summary["frames"] = {

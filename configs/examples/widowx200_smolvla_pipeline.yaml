@@ -548,6 +548,9 @@ widowx200_pipeline:
         training:
           rl:
             args:
+              # Binary success occurs after lifting, so the dense-only
+              # first-grasp return would be identically zero for the approach.
+              split_credit_at_grasp: false
               # A binary reward needs the DAPO refill loop to actually refill:
               # max_groups well above groups_per_rank (memory: dynamic
               # sampling was masking).

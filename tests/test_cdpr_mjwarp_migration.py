@@ -1078,6 +1078,10 @@ class CDPRMJWarpMigrationTests(unittest.TestCase):
             physics_substeps=0,
         )
         backend._xpos = torch.zeros((2, 1, 3), dtype=torch.float32)
+        # step() also checks finite physics state; this fake has no physics
+        # substeps but must still provide the persistent state buffers.
+        backend._qpos = torch.zeros((2, 1), dtype=torch.float32)
+        backend._qvel = torch.zeros((2, 1), dtype=torch.float32)
         backend.ee_body_id = 0
         backend._workspace_min = torch.full((3,), -1.0)
         backend._workspace_max = torch.full((3,), 1.0)

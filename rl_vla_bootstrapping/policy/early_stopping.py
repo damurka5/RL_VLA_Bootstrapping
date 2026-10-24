@@ -7,7 +7,33 @@ number the trainer stopped on, without loading the training stack.
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+import math
+from typing import Any, Mapping, Sequence
+
+
+def parse_validation_caps(values: Sequence[str], instruction_ids: Mapping[str, int]) -> dict[int, float]:
+    """Fixed evaluation distances, independent of the training curriculum."""
+
+    caps: dict[int, float] = {}
+    for value in values:
+        name, separator, raw = str(value).partition("=")
+        if not separator or name not in instruction_ids:
+            raise ValueError(f"Invalid validation cap {value!r}; expected instruction=metres")
+        cap = float(raw)
+        if not math.isfinite(cap) or cap <= 0:
+            raise ValueError(f"Validation cap must be finite and positive: {value!r}")
+        key = int(instruction_ids[name])
+        if key in caps:
+            raise ValueError(f"Duplicate validation cap for {name}")
+        caps[key] = cap
+    return caps
+
+
+def validation_matches_caps(metrics: Mapping[str, Any], caps: Mapping[str, float]) -> bool:
+    return metrics.get("validation/fixed_start_distance") == 1.0 and all(
+        math.isclose(float(metrics.get(f"validation/start_distance_cap/{name}", -1)), cap)
+        for name, cap in caps.items()
+    )
 
 
 def early_stop_metric_value(metrics: Mapping[str, Any], metric: str) -> float:

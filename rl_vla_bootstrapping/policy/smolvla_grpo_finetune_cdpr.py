@@ -834,6 +834,10 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--validation-seed", type=int, default=1000000)
     parser.add_argument("--validation-video-count", type=int, default=3)
     parser.add_argument("--validation-video-fps", type=float, default=10.0)
+    parser.add_argument(
+        "--validation-start-distance-caps", nargs="*", default=[],
+        help="Fixed validation caps as instruction=metres; omitted keeps curriculum validation.",
+    )
     parser.add_argument("--comparison-validation-episodes-per-instruction", type=int, default=10)
     # Early stopping on in-run validation, for runs that are one stage of a
     # longer pipeline (tools/train/run_widowx200_pipeline.py). Off unless a

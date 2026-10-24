@@ -3,9 +3,10 @@
 #
 #   1. GPU preflight of the arm's MJWarp backend against every stage config
 #      (reachable resets, caught starts holding, scripted grasp+lift, cameras)
-#   2. a toy-scale SMOKE pass over every stage and one SIL cycle, so a broken
+#   2. two production-size memory stress updates (40 decisions, max refill)
+#   3. a toy-scale SMOKE pass over every stage and one SIL cycle, so a broken
 #      handoff surfaces in about an hour instead of days in
-#   3. the real pipeline (tools/train/run_widowx200_pipeline.py):
+#   4. the real pipeline (tools/train/run_widowx200_pipeline.py):
 #        s1 move_to dense -> s2 pick_up dense -> s3 put_into dense
 #        s4 move_to binary -> s5 pick_up binary -> s6 put_into binary
 #           (binary = shaping off, fresh GRPO state, log_std re-initialized)
@@ -22,6 +23,7 @@
 #
 # Knobs: MODE=full|smoke|preflight (default full), SMOKE_FIRST=0 to skip the
 # smoke pass, DRY_RUN=1 to write stage configs and print commands only,
+# MEMORY_CHECK_FIRST=0 to skip the production-size memory stress check,
 # RLVLA_HF_OFFLINE=1 to use the local Hugging Face cache only.
 set -euo pipefail
 
@@ -30,6 +32,7 @@ ENV_NAME="${ENV_NAME:-cdpr-mjlab}"
 CONFIG="${CONFIG:-$REPO_ROOT/configs/examples/widowx200_smolvla_pipeline.yaml}"
 MODE="${MODE:-full}"
 SMOKE_FIRST="${SMOKE_FIRST:-1}"
+MEMORY_CHECK_FIRST="${MEMORY_CHECK_FIRST:-1}"
 DRY_RUN="${DRY_RUN:-0}"
 CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0,1}"
 
@@ -50,7 +53,13 @@ configure_huggingface_offline
 timestamp="$(date +%Y%m%d_%H%M%S)"
 PIPELINE_DIR="${PIPELINE_DIR:-$REPO_ROOT/runs/widowx200_pipeline_$timestamp}"
 PIPELINE_DIR="$(mkdir -p "$PIPELINE_DIR" && cd "$PIPELINE_DIR" && pwd)"
-SMOKE_DIR="${PIPELINE_DIR}_smoke"
+# Never reuse a stress/smoke pass across changes to the code or source config.
+validation_id="$(
+  { git rev-parse HEAD; git diff HEAD -- .; git hash-object "$CONFIG" tools/audit/sil_artifacts.py; } |
+    git hash-object --stdin
+)"
+SMOKE_DIR="${PIPELINE_DIR}_smoke_${validation_id:0:12}"
+MEMORY_DIR="${PIPELINE_DIR}_memory_${validation_id:0:12}"
 exec > >(tee -a "$PIPELINE_DIR/launcher.log") 2>&1
 
 export RLVLA_EMBODIMENT=widowx200
@@ -69,6 +78,7 @@ printf '[widowx200] pipeline dir %s (mode %s, smoke first %s)\n' "$PIPELINE_DIR"
 
 # The RoboCasa visual meshes are gitignored and staged per machine; the CDPR
 # runs on this box already staged them, so this is normally a no-op check.
+if [[ "$DRY_RUN" != "1" ]]; then
 if ! "${python_cmd[@]}" - "$REPO_ROOT/robots/widowx200/widowx200_mujoco/wx200_mjwarp_scene.xml" <<'PYEOF'
 import sys
 from pathlib import Path
@@ -82,20 +92,28 @@ then
   "${python_cmd[@]}" scripts/stage_cdpr_robocasa_assets.py
 fi
 huggingface_public_models_preflight "$ENV_NAME"
+fi
 
 driver=("${python_cmd[@]}" tools/train/run_widowx200_pipeline.py --config "$CONFIG" --devices cuda:0,cuda:1)
 [[ "$DRY_RUN" == "1" ]] && driver+=(--dry-run)
 
 # 1. GPU preflight (minutes). Skipped once it has passed for this directory.
-if [[ ! -f "$PIPELINE_DIR/preflight/PASSED" ]]; then
+if [[ "$DRY_RUN" != "1" && ( ! -f "$PIPELINE_DIR/preflight/PASSED" || "$(cat "$PIPELINE_DIR/preflight/PASSED")" != "$validation_id" ) ]]; then
   "${python_cmd[@]}" scripts/preflight_widowx200_pipeline.py \
     --config "$CONFIG" --device cuda:0 --worlds 512 --rounds 2 \
     --output "$PIPELINE_DIR/preflight"
-  touch "$PIPELINE_DIR/preflight/PASSED"
+  printf '%s\n' "$validation_id" > "$PIPELINE_DIR/preflight/PASSED"
 fi
 [[ "$MODE" == "preflight" ]] && exit 0
 
-# 2. Smoke pass over every stage (about an hour), unless disabled or done.
+# The stress pass keeps the production world count, compilation, inference
+# microbatch and LoRA backward. The toy pass alone cannot establish GPU fit.
+if [[ "$MEMORY_CHECK_FIRST" == "1" && ! -f "$MEMORY_DIR/PASSED" ]]; then
+  "${driver[@]}" --pipeline-dir "$MEMORY_DIR" --memory-check
+  [[ "$DRY_RUN" == "1" ]] || touch "$MEMORY_DIR/PASSED"
+fi
+
+# 3. Smoke pass over every stage (about an hour), unless disabled or done.
 if [[ "$MODE" == "smoke" || ( "$SMOKE_FIRST" == "1" && ! -f "$SMOKE_DIR/PASSED" ) ]]; then
   "${driver[@]}" --pipeline-dir "$SMOKE_DIR" --smoke
   [[ "$DRY_RUN" == "1" ]] || touch "$SMOKE_DIR/PASSED"
@@ -103,6 +121,6 @@ if [[ "$MODE" == "smoke" || ( "$SMOKE_FIRST" == "1" && ! -f "$SMOKE_DIR/PASSED" 
 fi
 [[ "$MODE" == "smoke" ]] && exit 0
 
-# 3. The pipeline.
+# 4. The pipeline.
 "${driver[@]}" --pipeline-dir "$PIPELINE_DIR"
 printf '[widowx200] pipeline complete: %s/final_report.md\n' "$PIPELINE_DIR"

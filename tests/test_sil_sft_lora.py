@@ -269,17 +269,23 @@ class JoinKeyAgreementTests(unittest.TestCase):
     # sil_record --mode replay: stem = "<rung dir>_<record stem>"
     REPLAY_STEM = "cap_0.030_record_00"
 
-    def test_the_writers_still_use_the_names_this_join_assumes(self):
-        import inspect
+    def test_persisted_identity_survives_moving_the_frames(self):
+        import tempfile
+        from tools.audit.sil_sft import recording_source_key
 
-        from tools.audit import sil_record
-
-        source = inspect.getsource(sil_record.main)
-        # replay writes both files from one stem...
-        self.assertIn('f"replay_{stem}.npz"', source)
-        self.assertIn('f"frames_{stem}.npz"', source)
-        # ...and dataset keys episodes by parent AND stem of the replay.
-        self.assertIn('f"{path.parent.name}/{path.stem}"', source)
+        with tempfile.TemporaryDirectory() as tmp:
+            original = Path(tmp) / "original"
+            original.mkdir()
+            path = _write_frames(original, self.REPLAY_STEM, worlds=[0], decisions=2)
+            key = recording_source_key(path)
+            with np.load(path) as data:
+                payload = {name: data[name] for name in data.files}
+            np.savez_compressed(path, **payload, source_key=np.asarray(key))
+            moved = Path(tmp) / "moved"
+            original.rename(moved)
+            meta = load_frame_meta([moved / path.name])
+            found, _ = resolve_frame_rows(np.array([f"{key}/r0w0"]), np.array([1]), meta)
+            self.assertTrue(found.all())
 
     def test_the_real_pair_of_names_resolves_to_one_key(self):
         from tools.audit.sil_sft import frame_join_key

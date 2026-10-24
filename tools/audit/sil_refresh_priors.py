@@ -61,6 +61,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from tools.audit.sil_artifacts import atomic_savez  # noqa: E402
+
 from tools.audit.sil_sft import (  # noqa: E402
     _load_dataset,
     build_runtime_and_trainer,
@@ -415,7 +417,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     output = args.output.expanduser().resolve()
     output.mkdir(parents=True, exist_ok=True)
-    np.savez_compressed(output / "demonstrations.npz", **refreshed)
+    atomic_savez(output / "demonstrations.npz", **refreshed)
     report = {
         "dataset": str(args.dataset),
         "checkpoint": str(args.checkpoint),

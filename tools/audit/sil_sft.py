@@ -114,6 +114,7 @@ if str(ROOT) not in sys.path:
 from tools.audit.xy_approach_probe import _load_checkpoint  # noqa: E402
 
 import argparse  # noqa: E402
+import hashlib  # noqa: E402
 import json  # noqa: E402
 import time  # noqa: E402
 from typing import Any, Mapping, Sequence  # noqa: E402
@@ -839,6 +840,18 @@ def frame_join_key(name: str) -> str:
     return tail
 
 
+def recording_source_key(path: Path) -> str:
+    """Identity shared by a colocated replay/frames pair, including its bank.
+
+    Writers persist this key so moving a newly written bank preserves its ids.
+    Older pairs derive it from their common directory at read time.
+    """
+
+    directory = str(Path(path).expanduser().resolve().parent)
+    digest = hashlib.sha256(directory.encode("utf-8")).hexdigest()[:24]
+    return f"source_{digest}_{frame_join_key(Path(path).stem)}"
+
+
 def _npz_member_shape(path: Path, member: str) -> tuple[int, ...]:
     """The shape of one npz member, without decompressing the array.
 
@@ -877,6 +890,7 @@ def load_frame_meta(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
     """
 
     index: dict[str, dict[str, Any]] = {}
+    ambiguous: set[str] = set()
     for path in paths:
         name = Path(path).stem
         if not name.startswith("frames_"):
@@ -885,13 +899,26 @@ def load_frame_meta(paths: Sequence[Path]) -> dict[str, dict[str, Any]]:
             )
         with np.load(path, allow_pickle=False) as data:
             worlds = np.asarray(data["world_index"])
+            source_key = str(data["source_key"].item()) if "source_key" in data.files else recording_source_key(path)
             decisions = (
                 int(data["decisions"]) if "decisions" in data.files else None
             )
         if decisions is None:
             decisions = int(_npz_member_shape(Path(path), "overview")[0])
-        index[frame_join_key(name)] = {
+        legacy_key = frame_join_key(name)
+        # Keep legacy keys where unambiguous, but never let another skill's
+        # identically named file silently overwrite this entry.
+        key = source_key if legacy_key in ambiguous else legacy_key
+        if legacy_key in index:
+            previous = index.pop(legacy_key)
+            index[previous["source_key"]] = previous
+            ambiguous.add(legacy_key)
+            key = source_key
+        if any(entry["source_key"] == source_key for entry in index.values()):
+            raise ValueError(f"Duplicate frames source identity {source_key!r}: {path}")
+        index[key] = {
             "path": str(path),
+            "source_key": source_key,
             "world_column": {
                 int(world): position for position, world in enumerate(worlds)
             },
@@ -918,12 +945,14 @@ def resolve_frame_rows(
 
     keep = np.zeros(episode_uid.shape[0], dtype=bool)
     lookups: list[tuple[str, int, int]] = []
+    source_keys = {entry.get("source_key", key): key for key, entry in frames.items()}
     for row, (uid, decision) in enumerate(zip(episode_uid, decision_index)):
         raw_stem, _, tail = str(uid).rpartition("/")
         # The NORMALISED key travels in the lookup, because materialize_frames
         # indexes the frame index with it. Carrying the raw uid prefix here
         # would resolve the row and then raise a KeyError on the gather.
         stem = frame_join_key(raw_stem)
+        stem = source_keys.get(stem, stem)
         entry = frames.get(stem)
         if entry is None or not tail.startswith("r"):
             continue

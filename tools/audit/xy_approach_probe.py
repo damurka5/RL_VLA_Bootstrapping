@@ -483,6 +483,12 @@ def _build_world(
         f"({layout.groups_per_rank} groups of {layout.group_size}) on {device}",
         flush=True,
     )
+    # Match the production trainer's reserve for Warp's separate allocator.
+    # Replay captures frames too and must not let the Torch cache claim the
+    # whole device before Warp requests a transient physics/render buffer.
+    fraction = float(os.environ.get("RLVLA_TORCH_MEMORY_FRACTION", "0.82"))
+    if device.type == "cuda" and 0.0 < fraction < 1.0:
+        torch.cuda.set_per_process_memory_fraction(fraction, device)
     backend = create_cdpr_backend(backend_config)
 
     curriculum = RankLocalCurriculum(

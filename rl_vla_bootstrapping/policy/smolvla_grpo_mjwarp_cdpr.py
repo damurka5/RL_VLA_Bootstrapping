@@ -39,7 +39,9 @@ from rl_vla_bootstrapping.policy.mjwarp_rank_local_collector import (
     add_three_stage_rates,
     instruction_outcome_counts,
 )
-from rl_vla_bootstrapping.policy.early_stopping import early_stop_metric_value
+from rl_vla_bootstrapping.policy.early_stopping import (
+    early_stop_metric_value, parse_validation_caps, validation_matches_caps,
+)
 from rl_vla_bootstrapping.policy.rank_local_grpo import (
     RankLocalGroupLayout,
     synchronize_equal_ddp_schedule,
@@ -370,6 +372,10 @@ class EarlyStopRule:
         self.plateau = max(0, int(getattr(args, "early_stop_plateau_validations", 0)))
         self.min_delta = float(getattr(args, "early_stop_min_delta", 0.02))
         self.min_steps = max(0, int(getattr(args, "early_stop_min_steps", 0)))
+        self.validation_caps = {
+            value.split("=", 1)[0]: float(value.split("=", 1)[1])
+            for value in getattr(args, "validation_start_distance_caps", ())
+        }
         self.history: list[tuple[int, float]] = []
         self.streak = 0
 
@@ -378,7 +384,18 @@ class EarlyStopRule:
         return self.target > 0.0 or self.plateau > 0
 
     def value(self, metrics: Mapping[str, Any]) -> float:
+        if self.validation_caps and not validation_matches_caps(metrics, self.validation_caps):
+            return float("nan")
         return early_stop_metric_value(metrics, self.metric)
+
+    def state_dict(self) -> dict[str, Any]:
+        return {"metric": self.metric, "validation_caps": self.validation_caps,
+                "history": self.history, "streak": self.streak}
+
+    def load_state_dict(self, state: Mapping[str, Any] | None) -> None:
+        if state and state.get("metric") == self.metric and state.get("validation_caps", {}) == self.validation_caps:
+            self.history = [(int(step), float(value)) for step, value in state.get("history", ())]
+            self.streak = int(state.get("streak", 0))
 
     def update(self, metrics: Mapping[str, Any], global_step: int) -> dict[str, Any] | None:
         if not self.enabled:
@@ -2388,6 +2405,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                 task_metadata=task_metadata, run_dir=run_dir, rank=dist_ctx.rank,
             )
         validation_collector = None
+        fixed_validation_caps = parse_validation_caps(
+            getattr(args, "validation_start_distance_caps", ()), INSTRUCTION_TO_ID
+        )
+        if fixed_validation_caps and set(fixed_validation_caps) != {
+            INSTRUCTION_TO_ID[name] for name in args.instruction_types
+        }:
+            raise ValueError("Fixed validation caps must cover every configured instruction exactly.")
         if _validation_enabled(args):
             validation_resetter_kwargs = {
                 **resetter_kwargs,
@@ -2523,6 +2547,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         run_start_step = int(global_step)
         zero_signal_streak = 0
         early_stop = EarlyStopRule(args)
+        early_stop.load_state_dict(trainer.loaded_extra_state.get("early_stop"))
         early_stop_decision: dict[str, Any] | None = None
         if three_stage_sparse_credit and validation_collector is not None:
             initial_validation = _run_gpu_validation(
@@ -2598,7 +2623,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             # applied scores success 0.266-0.328 and final distance 0.15-0.19 m.
             if validation_collector is not None:
                 validation_collector.resetter.set_random_start_max_goal_distance(
-                    start_distance_caps
+                    fixed_validation_caps or start_distance_caps
                 )
             profile_limit = int(args.mjwarp_profile_updates)
             profile_this_update = bool(args.mjwarp_profile_timers) and (
@@ -3193,6 +3218,13 @@ def main(argv: Sequence[str] | None = None) -> None:
                     )
                 validation_metrics.update(
                     {
+                        "validation/fixed_start_distance": float(bool(fixed_validation_caps)),
+                        **{
+                            f"validation/start_distance_cap/{name}": cap
+                            for name, instruction_id in INSTRUCTION_TO_ID.items()
+                            for cap in [fixed_validation_caps.get(instruction_id)]
+                            if cap is not None
+                        },
                         "global_step": float(global_step),
                         "update_index": float(update_index),
                         "validation/current_move_to_shell": float(
@@ -3287,6 +3319,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                         "validation": {
                             "last_step": int(last_validation_step),
                         },
+                        "early_stop": early_stop.state_dict(),
                         **(
                             {"pilot_counters": dict(pilot_counters)}
                             if latent_likelihood
@@ -3314,6 +3347,17 @@ def main(argv: Sequence[str] | None = None) -> None:
                     ),
                 )
             )
+            if os.environ.get("RLVLA_MEMORY_REPORT") == "1" and device.type == "cuda":
+                free_bytes, total_bytes = torch.cuda.mem_get_info(device)
+                _append_jsonl(run_dir / f"memory_rank{dist_ctx.rank}.jsonl", {
+                    "global_step": int(global_step),
+                    "rounds_collected": len(rounds),
+                    "vla_records": float(update_metrics.get("vla_lora/records", 0)),
+                    "peak_torch_allocated_gib": torch.cuda.max_memory_allocated(device) / 2**30,
+                    "peak_torch_reserved_gib": torch.cuda.max_memory_reserved(device) / 2**30,
+                    "device_free_gib": free_bytes / 2**30,
+                    "device_total_gib": total_bytes / 2**30,
+                })
             if dist_ctx.is_main:
                 _append_jsonl(metrics_path, synchronized_metrics)
                 _log_tensorboard_metrics(

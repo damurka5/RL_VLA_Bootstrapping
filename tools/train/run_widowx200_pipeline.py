@@ -57,6 +57,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from tools.audit.sil_artifacts import completed_replay, valid_npz
+
 PIPELINE_KEY = "widowx200_pipeline"
 GENERATED_CONFIG_DIR = ROOT / "configs" / "widowx200_pipeline"
 EMBODIMENT = "widowx200"
@@ -211,6 +213,8 @@ class Pipeline:
     def _load_state(self) -> dict[str, Any]:
         if self.state_path.is_file():
             state = json.loads(self.state_path.read_text(encoding="utf-8"))
+            if bool(state.get("smoke")) != self.smoke:
+                raise SystemExit("Smoke and production must use separate pipeline directories.")
             log(f"resuming {self.state_path}")
             if state.get("config") != str(self.config_path):
                 log(
@@ -256,6 +260,8 @@ class Pipeline:
         for key in (
             "RLVLA_SMOLVLA_RESUME_CHECKPOINT",
             "RLVLA_SMOLVLA_WARMSTART_CHECKPOINT",
+            "RLVLA_SMOLVLA_LEGACY_INIT_CHECKPOINT",
+            "RLVLA_SMOLVLA_POLICY_ARCHITECTURE",
             "RLVLA_SMOLVLA_RESET_LOG_STD",
             "RLVLA_SMOLVLA_MAX_TRAIN_STEPS",
             "RLVLA_SMOLVLA_MJWARP_MAX_UPDATES",
@@ -267,6 +273,9 @@ class Pipeline:
             "RLVLA_CDPR_DEMO_BANK",
             "RLVLA_TASK_METADATA_JSON",
             "RLVLA_MJWARP_ALLOW_CPU",
+            "RLVLA_MJWARP_WORLDS_PER_RANK",
+            "RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE",
+            "RLVLA_MEMORY_REPORT",
         ):
             env.pop(key, None)
         env["RLVLA_SMOLVLA_NPROC_PER_NODE"] = str(max(1, len(self.devices)))
@@ -284,6 +293,16 @@ class Pipeline:
         if name not in skills:
             raise SystemExit(f"Unknown skill {name!r}; defined: {sorted(skills)}")
         return dict(skills[name])
+
+    def validation_caps(self, skill_name: str) -> dict[str, float]:
+        """Each instruction is evaluated at its skill's full distance."""
+
+        owners = {
+            instruction: float(spec.get("eval_cap", 0.2))
+            for name, spec in self.spec["skills"].items() if name != "joint"
+            for instruction in spec["instructions"]
+        }
+        return {name: owners[name] for name in self.skill(skill_name)["instructions"]}
 
     def phase(self, name: str) -> dict[str, Any]:
         phases = self.spec.get("phases") or {}
@@ -318,6 +337,9 @@ class Pipeline:
         budget = int(stage.get("budget_steps", 10_000_000))
         stage_args = {
             "max_train_steps": budget,
+            "validation_start_distance_caps": [
+                f"{name}={cap:g}" for name, cap in self.validation_caps(str(stage["skill"])).items()
+            ],
             "early_stop_metric": str(early.get("metric", "validation/success_rate")),
             "early_stop_target": float(early.get("target", 0.0)),
             "early_stop_patience": int(early.get("patience", 2)),
@@ -401,6 +423,7 @@ class Pipeline:
             command = [
                 self.python, str(ROOT / "tools" / "audit" / "sil_record.py"),
                 "--mode", "record",
+                "--controller-workspace-from-config",
                 "--checkpoint", str(checkpoint),
                 "--config", str(config),
                 "--start-distance-cap", f"{float(cap):.4f}",
@@ -435,6 +458,8 @@ class Pipeline:
             log(f"{name}: training already complete ({complete})")
             return run_dir / "rl"
         extra: dict[str, str] = {}
+        if getattr(self.args, "memory_check", False):
+            extra.update(RLVLA_SMOLVLA_MJWARP_MAX_UPDATES="2", RLVLA_MEMORY_REPORT="1")
         phase = self.phase(str(stage["phase"]))
         if latest.is_file() and not self.dry_run:
             # An interrupted stage: continue it. MAX_TRAIN_STEPS is a total.
@@ -455,6 +480,60 @@ class Pipeline:
         if not self.dry_run:
             complete.write_text(_dt.datetime.now().isoformat() + "\n", encoding="utf-8")
         return run_dir / "rl"
+
+    def memory_check_config(self) -> dict[str, Any]:
+        """Production model/batches, with the largest rollout and refill budget."""
+
+        joint = next(stage for stage in self.spec["stages"] if stage["skill"] == "joint")
+        configs = [self.stage_config(stage) for stage in self.spec["stages"]]
+        horizon = max(
+            int(config["task"]["metadata"].get(key, 0))
+            for config in configs
+            for key in ("random_workspace_horizon_high", "curriculum_horizon_max", "placement_grasp_horizon_min_decisions")
+        )
+        groups = max(int(config["training"]["rl"]["args"]["grpo_max_groups_per_update"]) for config in configs)
+        return deep_merge(self.stage_config(joint), {
+            "task": {"metadata": {
+                "curriculum_horizon_min": horizon, "curriculum_horizon_max": horizon,
+                "random_workspace_horizon_low": horizon, "random_workspace_horizon_high": horizon,
+                "placement_caught_curriculum_enabled": False, "placement_caught_object_fraction": 0.0,
+            }},
+            "training": {"rl": {"args": {
+                "max_train_steps": 10**12, "early_stop_target": 0.0,
+                "early_stop_plateau_validations": 0, "validation_every_steps": 1,
+                "save_every_steps": 1, "grpo_max_groups_per_update": groups,
+                "grpo_target_informative_groups": 10**9,
+                "grpo_max_collection_seconds_per_update": 0,
+            }}},
+        })
+
+    def run_memory_check(self) -> None:
+        if self.smoke:
+            raise SystemExit("The memory check must use production sizes, without --smoke.")
+        config = self.memory_check_config()
+        path = self.write_config("memory_check", config)
+        stage = {"name": "memory_check", "phase": "staged"}
+        rl_dir = self.train(stage, path, None)
+        if self.dry_run:
+            return
+        args = config["training"]["rl"]["args"]
+        expected_rounds = math.ceil(int(args["grpo_max_groups_per_update"]) / int(config["simulator"]["groups_per_rank"]))
+        reports = []
+        for rank in range(len(self.devices)):
+            report_path = rl_dir / f"memory_rank{rank}.jsonl"
+            rows = [json.loads(line) for line in report_path.read_text().splitlines() if line.strip()]
+            if len(rows) < 2 or any(int(row["rounds_collected"]) < expected_rounds for row in rows[-2:]):
+                raise ChildFailed(f"Memory check rank {rank} did not exercise two maximum-refill updates")
+            if args.get("train_vla_lora") and any(int(row["vla_records"]) < int(args["vla_update_max_records"]) for row in rows[-2:]):
+                raise ChildFailed(f"Memory check rank {rank} did not exercise a full LoRA update")
+            reports.append({"rank": rank, "updates": rows[-2:]})
+        self.dir.mkdir(parents=True, exist_ok=True)
+        (self.dir / "memory_report.json").write_text(json.dumps({
+            "config": str(path), "git_commit": git_commit(), "ranks": reports,
+            "horizon_decisions": config["task"]["metadata"]["curriculum_horizon_max"],
+            "worlds_per_rank": config["simulator"]["worlds_per_rank"],
+        }, indent=2), encoding="utf-8")
+        log(f"Production-size memory check passed; {self.dir / 'memory_report.json'}")
 
     # -- the stage loop --------------------------------------------------------
 
@@ -506,7 +585,10 @@ class Pipeline:
                 # rest of the chain's commands.
                 self.state["current_policy"] = str(rl_dir / f"<best checkpoint of {name}>")
                 return
-            best = select_best_checkpoint(rl_dir, str((stage.get("early_stop") or {}).get("metric", "validation/success_rate")))
+            best = select_best_checkpoint(
+                rl_dir, str((stage.get("early_stop") or {}).get("metric", "validation/success_rate")),
+                validation_caps=self.validation_caps(skill_name),
+            )
             record.update(best)
             early = rl_dir / "early_stop.json"
             record["early_stop"] = json.loads(early.read_text()) if early.is_file() else None
@@ -557,20 +639,84 @@ class Pipeline:
         record["harvest_rates"] = rates
         log(f"{name}: harvest rates {format_rates(rates)}")
 
-        replay_dir = base / "replay"
-        for source in sorted((base / "record").glob("record_*.npz")):
-            stem = f"{source.parent.name}_{source.stem}"
-            if (replay_dir / f"replay_{stem}.npz").is_file():
+        replays, frames = self.harvest_replays(
+            policy, eval_config, cap, base / "record", base / "replay", name,
+        )
+        provenance = "policy"
+        if self.smoke and not replays:
+            # Two updates need not teach a skill. Exercise the data plumbing
+            # with a clearly labelled scripted fixture, isolated in the smoke
+            # directory; production banks always contain policy experience.
+            oracle_dir = base / "smoke_oracle"
+            if not (oracle_dir / "summary.json").is_file():
+                run_command([
+                    self.python, str(ROOT / "tools/audit/sil_record.py"),
+                    "--mode", "oracle", "--checkpoint", str(policy),
+                    "--config", str(eval_config), "--controller-workspace-from-config",
+                    "--start-distance-cap", str(cap), "--rounds", "1",
+                    "--worlds", "64", "--smolvla-microbatch", "64",
+                    "--seed-torch", "0", "--device", self.devices[0],
+                    "--output", str(oracle_dir),
+                ], log_path=self.dir / "logs" / f"{name}_smoke_oracle.log", env=self.child_env(), dry_run=self.dry_run)
+            replays, frames = self.harvest_replays(
+                policy, eval_config, cap, oracle_dir, base / "smoke_fixture_replay", name,
+                smooth_window=1,
+            )
+            provenance = "oracle_smoke_fixture"
+            if not replays and not self.dry_run:
+                raise ChildFailed(f"{name}: smoke oracle produced no usable frames; SIL plumbing was not exercised")
+
+        mean_rate = _mean([rates[i]["rate"] for i in skill["instructions"] if i in rates])
+        previous = self.state["banks"].get(skill_name)
+        if replays and frames and (previous is None or mean_rate >= float(previous.get("mean_rate", -1.0))):
+            self.state["banks"][skill_name] = {
+                "stage": name, "checkpoint": str(policy), "cap": cap,
+                "replays": replays, "frames": frames, "mean_rate": mean_rate,
+                "rates": rates, "provenance": provenance,
+            }
+            log(f"{name}: bank for {skill_name} now from this stage ({provenance}, mean rate {mean_rate:.3f})")
+        elif not replays:
+            record["empty_harvest"] = True
+            self.event("empty_harvest", stage=name, skill=skill_name)
+            log(f"{name}: WARNING no usable successful frames; previous bank retained, if any")
+
+        for instruction in skill["instructions"]:
+            if instruction not in rates:
                 continue
+            reference = self.state["references"].get(instruction)
+            value = float(rates[instruction]["rate"])
+            if reference is None or value > float(reference["rate"]):
+                self.state["references"][instruction] = {
+                    "rate": value, "stage": name, "checkpoint": str(policy), "skill": skill_name,
+                }
+        self.save_state()
+
+    def harvest_replays(
+        self, policy: Path, eval_config: Path, cap: float,
+        source_dir: Path, replay_dir: Path, name: str, *, smooth_window: int | None = None,
+    ) -> tuple[list[str], list[str]]:
+        import numpy as np
+
+        replays, frames = [], []
+        for source in sorted(source_dir.glob("record_*.npz")):
+            with np.load(source, allow_pickle=False) as data:
+                if not bool(data["success"].any()):
+                    log(f"{name}: skip {source.name}: no successful episodes")
+                    continue
+            stem = f"{source.parent.name}_{source.stem}"
+            replay_path = replay_dir / f"replay_{stem}.npz"
+            frames_path = replay_dir / f"frames_{stem}.npz"
+            completion = completed_replay(replay_path, frames_path)
             command = [
                 self.python, str(ROOT / "tools" / "audit" / "sil_record.py"),
                 "--mode", "replay",
+                "--controller-workspace-from-config",
                 "--checkpoint", str(policy),
                 "--config", str(eval_config),
                 "--actions", str(source),
                 "--start-distance-cap", f"{cap:.4f}",
                 "--smooth", "moving_average",
-                "--smooth-window", str(int(self.sil.get("smooth_window", 5))),
+                "--smooth-window", str(smooth_window if smooth_window is not None else int(self.sil.get("smooth_window", 5))),
                 "--record-frames",
                 "--frame-worlds", str(int(self.sil.get("frame_worlds", 96))),
                 "--device", self.devices[0] if self.devices else "cuda:0",
@@ -580,39 +726,13 @@ class Pipeline:
                 command += ["--seed-torch", str(int(self.sil["seed_torch"]))]
             if self.smoke:
                 command += ["--worlds", "64", "--smolvla-microbatch", "64"]
-            run_command(command, log_path=self.dir / "logs" / f"{name}_harvest_replay.log", env=self.child_env(), dry_run=self.dry_run)
-
-        replays = sorted(str(path) for path in replay_dir.glob("replay_*.npz"))
-        frames = sorted(str(path) for path in replay_dir.glob("frames_*.npz"))
-        mean_rate = _mean([rates[i]["rate"] for i in skill["instructions"] if i in rates])
-        previous = self.state["banks"].get(skill_name)
-        if replays and frames and (previous is None or mean_rate >= float(previous.get("mean_rate", -1.0))):
-            self.state["banks"][skill_name] = {
-                "stage": name,
-                "checkpoint": str(policy),
-                "cap": cap,
-                "replays": replays,
-                "frames": frames,
-                "mean_rate": mean_rate,
-                "rates": rates,
-            }
-            log(f"{name}: bank for {skill_name} now from this stage (mean rate {mean_rate:.3f})")
-        elif not (replays and frames):
-            log(f"{name}: WARNING no replays/frames survived; {skill_name} bank unchanged")
-
-        for instruction in skill["instructions"]:
-            if instruction not in rates:
-                continue
-            reference = self.state["references"].get(instruction)
-            value = float(rates[instruction]["rate"])
-            if reference is None or value > float(reference["rate"]):
-                self.state["references"][instruction] = {
-                    "rate": value,
-                    "stage": name,
-                    "checkpoint": str(policy),
-                    "skill": skill_name,
-                }
-        self.save_state()
+            if completion is None:
+                run_command(command, log_path=self.dir / "logs" / f"{name}_harvest_replay.log", env=self.child_env(), dry_run=self.dry_run)
+                completion = completed_replay(replay_path, frames_path)
+            if completion is not None and int(completion["frame_successes"]) > 0:
+                replays.append(str(replay_path))
+                frames.append(str(frames_path))
+        return replays, frames
 
     def raise_references(self, rates: Mapping[str, Mapping[str, float]], policy: Path, source: str) -> None:
         """A reference is the best rate any accepted policy has shown."""
@@ -717,6 +837,8 @@ class Pipeline:
     ) -> dict[str, Any]:
         base = self.dir / "sil" / label
         banks = list(self.state["banks"].values())
+        if not self.smoke and any(bank.get("provenance") == "oracle_smoke_fixture" for bank in banks):
+            raise ChildFailed("Production SIL cannot consume scripted smoke fixtures")
         replays = [path for bank in banks for path in bank["replays"]]
         frames = [path for bank in banks for path in bank["frames"]]
         log(f"{label}: SIL over {len(banks)} banks ({len(replays)} replays) for {list(degraded)}")
@@ -725,7 +847,7 @@ class Pipeline:
         logs = self.dir / "logs"
 
         dataset = base / "dataset" / "demonstrations.npz"
-        if not dataset.is_file():
+        if not valid_npz(dataset, ("state", "prior", "action", "episode_uid")):
             run_command(
                 [
                     self.python, str(ROOT / "tools" / "audit" / "sil_record.py"),
@@ -738,7 +860,7 @@ class Pipeline:
                 log_path=logs / f"{label}_dataset.log", env=env, dry_run=self.dry_run,
             )
         refreshed = base / "refreshed" / "demonstrations.npz"
-        if not refreshed.is_file():
+        if not valid_npz(refreshed, ("state", "prior", "action", "episode_uid")):
             run_command(
                 [
                     self.python, str(ROOT / "tools" / "audit" / "sil_refresh_priors.py"),
@@ -888,7 +1010,9 @@ def read_record_rates(directory: Path) -> dict[str, dict[str, float]]:
     return out
 
 
-def select_best_checkpoint(rl_dir: Path, metric: str) -> dict[str, Any]:
+def select_best_checkpoint(
+    rl_dir: Path, metric: str, *, validation_caps: Mapping[str, float] | None = None,
+) -> dict[str, Any]:
     """The validated checkpoint with the best value of the stage's metric.
 
     Every validation forces a checkpoint at the same global step, so each
@@ -897,7 +1021,7 @@ def select_best_checkpoint(rl_dir: Path, metric: str) -> dict[str, Any]:
     newest checkpoint.
     """
 
-    from rl_vla_bootstrapping.policy.early_stopping import early_stop_metric_value
+    from rl_vla_bootstrapping.policy.early_stopping import early_stop_metric_value, validation_matches_caps
 
     rl_dir = Path(rl_dir)
     best: tuple[float, int, Path] | None = None
@@ -907,6 +1031,8 @@ def select_best_checkpoint(rl_dir: Path, metric: str) -> dict[str, Any]:
             if not line.strip():
                 continue
             row = json.loads(line)
+            if validation_caps is not None and not validation_matches_caps(row, validation_caps):
+                continue
             value = early_stop_metric_value(row, metric)
             step = int(row.get("global_step", -1))
             checkpoint = rl_dir / f"step_{step:07d}" / "smolvla_grpo_adapter.pt"
@@ -915,7 +1041,9 @@ def select_best_checkpoint(rl_dir: Path, metric: str) -> dict[str, Any]:
             if best is None or (value, step) >= (best[0], best[1]):
                 best = (value, step, checkpoint)
     if best is None:
-        steps = sorted(rl_dir.glob("step_*/smolvla_grpo_adapter.pt"))
+        if validation_caps is not None:
+            raise ChildFailed(f"{rl_dir}: no checkpoint validated at the required fixed distances; cannot rank curriculum-only validation")
+        steps = sorted(rl_dir.glob("step_*/smolvla_grpo_adapter.pt"), key=lambda p: int(p.parent.name.split("_", 1)[1]))
         if not steps:
             raise ChildFailed(f"{rl_dir} holds no checkpoint at all.")
         newest = steps[-1]
@@ -942,6 +1070,7 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--pipeline-dir", required=True)
     parser.add_argument("--devices", default="cuda:0,cuda:1")
     parser.add_argument("--smoke", action="store_true", help="Toy-scale pass over every stage and one SIL cycle.")
+    parser.add_argument("--memory-check", action="store_true", help="Two production-size updates at the maximum horizon and refill budget, with per-rank memory reports.")
     parser.add_argument("--dry-run", action="store_true", help="Write the stage configs and print the commands only.")
     parser.add_argument("--only-stage", action="append", default=[], help="Run only these stages (repeatable).")
     return parser.parse_args(argv)
@@ -954,7 +1083,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     os.environ["RLVLA_EMBODIMENT"] = EMBODIMENT
     pipeline = Pipeline(args)
     try:
-        pipeline.run()
+        if args.memory_check:
+            pipeline.run_memory_check()
+        else:
+            pipeline.run()
     except ChildFailed as error:
         pipeline.event("failed", error=str(error))
         log(f"FAILED: {error}")
