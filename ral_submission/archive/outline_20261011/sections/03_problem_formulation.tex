@@ -1,0 +1,9 @@
+\section{Problem Formulation}\label{sec:problem}
+\begin{outline}
+\item Define an instruction-conditioned, partially observed manipulation task with ordinary empty-gripper starts and one final placement instruction; specify reset distribution and horizon.
+\item Actions: normalized $(x,y,z,\mathrm{yaw},\mathrm{gripper})\in[-1,1]^5$, mapped into the CDPR controller. Document chunk length, executed slots, and control frequency from the selected run.
+\item Observations: overview and wrist images, proprioception, and instruction; enumerate the residual's actual inputs and distinguish them from simulator state used only by rewards/evaluation.
+\item Primary endpoint: strict full-task success, requiring valid grasp, held lift, intentional release, and native placement without latched carry-slip or wrong-placement events. State temporal ordering and failure termination explicitly.
+\item Secondary endpoints: native placement, physical grasp, held lift, stage-conditional completion, destination/object breakdowns, and simulator failure rate. These are not interchangeable success definitions.
+\item Objective: maximize expected strict success on a declared scene distribution. Separate training panels, development evaluation, and a locked final test; no generalization claim follows merely from more repeats of known scenes.
+\end{outline}

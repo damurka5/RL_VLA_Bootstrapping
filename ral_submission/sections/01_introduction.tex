@@ -1,0 +1,10 @@
+\section{Introduction}\label{sec:introduction}
+Vision-language-action (VLA) models provide useful visual and language representations for robot control. A new embodiment can still require a different action mapping. Before this mapping is learned, complete-task success may be too rare to provide a useful binary learning signal.
+
+Consider ``put the apple on the plate.'' The robot must approach, grasp, lift, transport, and release the object. Terminal failure alone does not distinguish a missed grasp from a failed release. Learning these skills separately improves the starting point, but training a new skill can also erase earlier behavior. The final policy must both retain the skills and connect them under one instruction.
+
+We address these problems with the pipeline in Fig.~\ref{fig:hero}. Dense rewards first guide individual skill learning. Binary rewards then target skill completion, and balanced self-imitation consolidates successful experience across instructions. Finally, milestone-based RL trains complete-task execution from ordinary empty-gripper starts.
+
+We study embodiment adaptation with SmolVLA on a cable-driven parallel robot (CDPR). A learned residual controller adapts a retained pretrained action expert to the target interface. We also study reward construction with OpenVLA-OFT on LIBERO, where an established action policy lets us examine intermediate feedback separately from learning a new interface.
+
+Our contributions are (i) a staged skill-learning and composition pipeline, (ii) a residual implementation with explicit milestone credit, and (iii) empirical evidence on skill recovery, full-task execution, and phase-aware feedback. LIBERO evaluates reward design; it does not evaluate the complete adaptation schedule.

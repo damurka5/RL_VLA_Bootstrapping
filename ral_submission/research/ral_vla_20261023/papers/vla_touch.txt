@@ -1,0 +1,885 @@
+
+--- PAGE 1 ---
+VLA-Touch: Enhancing Vision-Language-Action
+Models with Dual-Level Tactile Feedback
+Jianxin Bi⋆1, Kevin Yuchen Ma1, Ce Hao1, Mike Zheng Shou1, Harold Soh⋆1,2
+1Dept. of Computer Science, National University of Singapore
+2Smart Systems Institute, NUS
+⋆Correspondence: {jianxin.bi, harold}@comp.nus.edu.sg
+Abstract: Tactile feedback is generally recognized to be crucial for effective in-
+teraction with the physical world. However, state-of-the-art Vision-Language-
+Action (VLA) models often lack the ability to interpret and use tactile signals,
+limiting their effectiveness in contact-rich tasks. Incorporating tactile feedback
+into these systems is challenging due to the absence of large multi-modal datasets.
+We present VLA-Touch, an approach that enhances generalist robot policies with
+tactile sensing without fine-tuning the base VLA. Our method introduces two
+key innovations: (1) a pipeline that leverages a pretrained tactile-language model
+that provides semantic tactile feedback for high-level task planning, and (2) a
+diffusion-based controller that refines VLA-generated actions with tactile signals
+for contact-rich manipulation. Through real-world experiments, we demonstrate
+that our dual-level integration of tactile feedback improves task planning effi-
+ciency while enhancing execution precision. Code is open-sourced at this URL.
+Keywords: Tactile Perception, Vision-Language-Action Models
+1 Introduction
+Recent advances in Vision-Language-Action (VLA) models [1, 2, 3, 4, 5, 6] have improved
+general-purpose policy learning, enabling robots to interpret high-level instructions and execute
+tasks across diverse environments. However, many real-world tasks—particularly those involving
+contact-rich interactions—remain challenging due to the inherent limitations of visual perception
+alone [7]. Vision cannot reliably determine object compliance, surface texture, or contact events due
+to visual ambiguity. While prior research has explored integrating tactile sensing into task-specific
+policies [8, 9, 10], incorporating tactile information into large-scale foundation models remains
+underexplored.
+We hypothesize that tactile feedback benefits contact-rich manipulation at two levels: 1) at the
+planning level, tactile feedback enables reasoning about object properties such as hardness and
+surface roughness that are visually ambiguous; and 2) at the control level, tactile sensing informs
+contact dynamics including surface friction and contact event detection for precise manipulation.
+However, incorporating tactile sensing into large-scale foundation models presents challenges.
+Current VLA models are predominantly trained on visual, language, and action data [4], with no
+intrinsic mechanisms to process or reason over tactile inputs; this fundamentally limits their ability
+to leverage tactile feedback for both planning and control in contact-rich scenarios. Developing
+tactile-informed embodied AI systems requires addressing two key challenges: 1) how to enable an
+agent to effectively acquire and plan with tactile information when most pretrained models have no
+prior exposure to tactile data, and 2) how to integrate tactile sensing into existing VLA pipelines
+when the base models lack dedicated tactile input modalities?
+In this work, we take a step toward addressing the above challenges. Specifically, we investigate
+how tactile signals can be incorporated into existing pipelines with minimal modification. Our
+approach is modular: functional but loosely coupled, allowing us to probe the utility of touch in
+arXiv:2507.17294v2  [cs.RO]  29 Jul 2025
+
+--- PAGE 2 ---
+Instruction 
+VLA  Action Refinement with T ouch
+Environment
+V ision
+T actile
+T ask
+User
+DinoV2
+Marker
+T racking
+T actile Description
+Scene Image + Robot State
+VLM T ask
+Planner
+Interpolant Model
+VLA  Policy
+Generate Language
+Description of T actile Input 
+T actile-Language Model
+ Action Chunk Refined AC
+V ision
+T actile
+Action
+Language
+Figure 1: VLA-Touch incorporates Dual-level Tactile Feedback for Planning and Manipulation.
+Planning: Given a scene image st and task goal g, the VLM Task Planner generates manipulation
+instruction Ik for policy execution. A tactile-language model (Octopi) converts a sequence tactile
+input om
+t−n:t to language description Lm
+t , which informs VLM for updated instruction. Control:
+The base VLA π(at|st, Ik) generates action chunk at based on visual observation st and instruction
+Ik. The action chunk is then refined by an interpolant policy πI (ˆat|st, at, mt) that takes as input
+both visual embeddings from a pretrained DinoV2 model and low-dimensional tactile signals mt
+processed a marker tracking algorithm from raw tactile input om
+t .
+both planning and control without fine-tuning base VLA models. We propose a dual-level tactile
+feedback framework (Fig. 1) inspired by the human neural system, consisting of:
+1. A Task planner (analogous to higher cognitive functions in the prefrontal cortex [11]): a
+Vision-Language Model that processes task goals, scene images, and linguistic feedback to
+reason about the task and generate manipulation instructions for VLA execution;
+2. A Tactile-Language Model (analogous to the Secondary Somatosensory Cortex [12]): a
+pretrained model that converts tactile sensing data into linguistic descriptions of object
+properties such as hardness and texture, providing tactile feedback to the task planner for
+updated planning;
+3. A Tactile-Augmented Controller (analogous to the Posterior Parietal Cortex [13]): a controller
+trained to refine VLA-generated action sequences by incorporating tactile signals to achieve
+precise manipulation in contact-rich tasks.
+We conducted three real-world experiments to evaluate how dual-level tactile feedback affects
+task planning and control performance. Our experiments systematically examine: 1) how
+linguistic tactile feedback improves task planning in visually ambiguous scenarios, 2) how our
+tactile-enhanced controller refines VLA-generated actions for precise manipulation, and 3) the
+necessity of multi-modal sensor input through comprehensive ablation studies. Results demonstrate
+that our method of providing linguistic tactile feedback improves planning efficiency by up to
+40%, while our tactile-incorporated controller achieves up to 35% higher manipulation success
+rates compared to vision-only VLA baselines. In addition, our dual-level tactile feedback system
+leads to up to 35% higher task success rate than using tactile feedback only in planning or only
+in manipulation phase. These findings support our hypothesis that dual-level tactile feedback is
+crucial for contact-rich manipulation. Additionally, our ablation studies show that multi-modal
+sensor fusion combining both vision and touch is important for achieving optimal performance.
+To summarize, our work makes the following key contributions:
+• A dual-level framework that enhances VLA models through tactile feedback, enabling both
+tactile-assisted task planning and policy refinement for contact-rich manipulation;
+• A diffusion-based controller that effectively refines VLA-actions through tactile sensing;
+• Comprehensive real-world experiments in contact-rich tasks, complemented by ablation studies
+that provide further understanding into the critical design elements of our framework.
+2
+
+--- PAGE 3 ---
+Looking ahead, our work serves as a modular scaffold that enables experimentation and isolation
+of tactile input effects, and represents an step toward tactile-aware embodied agents. The system
+shows clear benefits of tactile feedback, but there remains room for improvement. We plan to explore
+alternative forms of high-level and low-level tactile feedback, such as richer linguistic abstractions or
+continuous tactile embeddings. Tighter integration between the planner, tactile model, and controller
+may also reduce redundancy and latency.
+2 Related Work
+Vision-Language-Action Models. VLA models [14, 15, 3, 2, 16, 17, 18, 19, 5, 6, 20] integrate
+visual perception with language understanding to generate robot actions for diverse tasks. These
+models typically leverage either pretrained Visual-Language Models (VLMs) [21] or combine
+separate vision and language foundation models [22, 23, 24], then train a unified backbone with
+an action decoder on robot manipulation datasets [4, 25]. Current VLA models primarily rely
+on visual and proprioceptive feedback, which limits their effectiveness in contact-rich tasks where
+object properties and contact dynamics provide critical information. Recent work [26] has extended
+VLA architectures with additional sensory modalities, but focuses primarily on task-level reasoning
+rather than precise manipulation. [27] incorporates tactile feedback for language-conditioned policy
+but excludes visual perception.
+Tactile Foundation Models and Policy Learning. Tactile foundation models [28, 29, 30]
+are pretrained on large-scale tactile datasets to extract generalizable representations from
+high-dimensional tactile signals across diverse sensor modalities [31, 32, 33, 34]. Recent
+developments have extended these models into multi-modal frameworks that enable object reasoning
+with language [35] and integrate vision and language for unified representation learning [36].
+Our approach utilizes the tactile-language model from [35] to generate semantic interpretations
+of grasped objects for task planning when visual information is ambiguous. Very recent
+tactile-augmented policies have demonstrated improved manipulation capabilities through various
+methods—including augmented 3D tactile point observations [37], tactile-informed dynamics
+models [10], slow-fast architectures for reactive tactile behavior [8, 38], and robust tactile sensing
+[39]—these approaches primarily address control-level improvements for specific tasks. Different
+from these prior works, our framework incorporates tactile feedback at two complementary levels,
+which we posit will improve tactile-informed task planning performance and manipulation precision
+within a unified system.
+Tactile Sensors. Tactile sensors provide contact information that enables dexterous manipulation
+and precise object interaction. Two primary types exist: (1) taxel-based sensors [40, 41] that use
+sensing element arrays to measure contact properties at discrete locations, and (2) vision-based
+sensors [31] that capture tactile information through optical changes in deformable surfaces. These
+sensors measure contact forces, surface textures, and material properties that are difficult to obtain
+through vision alone. For a comprehensive overview of tactile sensing technologies, see [42]. In
+this work, we use the GelSight Mini tactile sensor [31], which features an elastomeric gel membrane
+with embedded 7 × 9 marker arrays and an internal camera. When objects contact the gel surface,
+deformation is recorded as RGB images from which surface geometry and contact force information
+can be extracted.
+3 Methodology
+In this section, we present our approach for integrating tactile sensing to improve both high-level task
+planning and low-level action refinement. Our implementation uses Robot Diffusion Transformer
+(RDT) [43] as the base VLA model, though our methodology remains applicable across various
+VLA architectures.
+3
+
+--- PAGE 4 ---
+3.1 Tactile-Assisted Task Planning
+Motivated by the understanding that tactile sensing provides localized perceptual information,
+we propose a cyclical task planning scheme to acquire tactile information and incorporate it
+into the planning process. Our framework (Fig. 1) consists of several integrated modules. A
+language-conditioned VLM task planner (GPT-4o in this work) generates specific manipulation
+instructions based on the given goal and current observations. A VLA model (RDT in our case)
+then generates action chunks to execute the given manipulation instruction. Upon completion of
+an instruction or exceeding the maximum execution steps, a tactile-language model converts the
+recent tactile signals to a linguistic tactile description, which is given to the planner to generate a
+new manipulation instruction until the task goal is achieved. This interleaved approach of high-level
+planning and low-level control follows established patterns in VLA architectures [16, 6].
+The VLM is prompted with specific instructions defining its capabilities, response format, and
+interaction protocol. Please refer to the Appendix A for prompt details. At a high-level, the prompt
+establishes the following key elements:
+1. System capabilities: The robot has a single arm with a gripper and a tactile sensor capable of
+classifying physical properties (hardness, roughness) and surface patterns.
+2. Response format: For each step, the planner must provide: a) A primitive action described in
+a single sentence, involving one elemental robot action interacting with at most one object. b)
+Information needed to be retrieved (if applicable)
+3. Interaction protocol: The planner is informed that after each action, it will receive feedback
+about information retrieved or action execution results, which it must use to plan the next action.
+For tactile-based object property inference, we employ Octopi [35], a pretrained tactile-language
+model developed for the Gelsight sensor. Octopi infers properties of contacted objects, including
+roughness and hardness, by processing a sequence of tactile signals (6 frames) from the Gelsight
+sensor. Once Octopi is triggered, the tactile signals are converted into linguistic feedback, used for
+subsequent task planning.
+3.2 VLA Policy Refinement with Tactile Sensing
+Since VLA models do not natively incorporate tactile signals, we adopt an interpolant-based
+diffusion controller called BRIDGeR [44] to refine VLA-generated actions using tactile feedback.
+Unlike conventional diffusion models that start from Gaussian noise, BRIDGeR employs stochastic
+interpolants to diffuse from an informative source distribution (in our case, the VLA-generated
+action distribution).
+Our interpolant controller, denoted πI (ˆat:t+Ti |at:t+Ti , st, mt), takes as input a source action chunk
+at:t+Ti of length Ti ≤ Ta (where Ta is the full VLA-generated horizon) and conditions the
+refinement process on the current state st and tactile signal mt. The state st includes RGB images
+and robot proprioception, while mt encodes the tactile force signal. The tactile force signal mt
+is estimated from marker displacements using a 7 ×9 marker array, we compute per-marker force
+vectors, then aggregate them to obtain a summed force vector and magnitudemt = (X, Y, M ). This
+approach follows the methodology of [9], but uses only the aggregated force rather than individual
+marker forces to reduce noise and provide a more compact representation. The controller outputs a
+refined action sequence ˆat:t+Ti for execution.
+We train the controller via supervised learning on a dataset of paired VLA-generated and expert
+action sequences. This dataset is constructed by sampling states from expert demonstrations and
+generating corresponding source actions from the VLA model for Interpolant model to refine. At
+inference time, we implement a sliding window refinement strategy that processes non-overlapping
+segments of the source action chunk sequentially. After executing a refined window, the controller
+advances to the next segment, starting from the endpoint of the previous cycle. This continues until
+the entire VLA action chunk has been refined and executed. Please see Algorithm 1 for an overview
+and Appendix C for implementation details.
+4
+
+--- PAGE 5 ---
+Algorithm 1 Tactile-Assisted Task Planning and Action Refinement
+Require: Task goal g, Scene image ot, VLA Observation st, Task planner GPT-4o, VLA model
+RDT, Tactile-Language Model Octopi, Interpolant Controller πI
+1: Initialize instruction I0 from task goal g and scene image ot by GPT-4o, k = 0, t = 0
+2:
+3: while task not completed do
+4: st, mt ← UpdateObs() {Update visual observation, proprioceptive state, and tactile signal}
+5: // Refine Action Chunk Segments and Execute
+6: while instruction Ik not completed do
+7: at:t+Ta ← π(st, Ik) {Generate action chunks from RDT}
+8: while at:t+Ta not fully refined do
+9: ˆat:t+Tr ← πI (st, at:t+Tr , mt) {Refine Tr steps of actions with tactile feedback}
+10: Execute refined action ˆat:t+Tr
+11: t ← t + Tr
+12: st, mt ← UpdateObs()
+13: end while
+14: if execution failed then
+15: break {Exit execution loop for replanning}
+16: end if
+17: end while
+18: // Update Instruction by Task Planner
+19: om
+t ← GetTactileObs() {Acquire tactile perception}
+20: Lmt ← Octopi(om
+t ) {Convert tactile input to linguistic description}
+21: Ik+1 ← GPT-4o(g, ot, Lmt , Ik) {Update instruction based on task progress}
+22: k ← k + 1
+23: end while
+4 Experiments
+In this section, we describe results from real-world experiments designed to evaluate our main
+hypothesis that dual-level feedback is crucial for contact-rich manipulation tasks. Specifically, we
+seek to answer the following research questions:
+Q1. Does tactile feedback improve task planning performance? Are linguistic descriptions of
+tactile information sufficient for VLM-based planning (versus raw tactile images)?
+Q2. Does tactile feedback benefit VLA policies for control? In addition, how does the
+interpolant-based diffusion compare against simple residual controller?
+Q3. How does our dual-level tactile feedback system benefit performance in contact-rich tasks?
+What if we have only high-level or low-level feedback?
+4.1 Experiment Setup
+Hardware Setup. We use a Franka Emika Panda manipulator equipped with a Robotiq 2F-140
+gripper. A GelSight Mini tactile sensor is mounted on one finger of the gripper. Visual perception
+is provided by two RealSense cameras: one fixed overhead as a scene camera and one mounted on
+the robot’s wrist. All sensor streams are processed on a workstation with an RTX 4090 GPU for
+inference.
+Baseline methods. We evaluate our approach against several baseline methods across both task
+planning and manipulation components. To answer Q1, we test whether tactile feedback improves
+planning, and whether structured (linguistic) representations outperform raw tactile images when
+provided to a off-the-shelf VLM. We compare three ways of using GPT-4o for task planning:
+• GPT-4o: Receives only the scene image (RGB from the fixed camera); no tactile input.
+• GPT-4o + Tactile Image:Receives the scene image and a sequence of raw tactile images from
+the GelSight sensor.
+• GPT-4o + Octopi (Ours): Receives the scene image and linguistic tactile feedback, generated
+by converting tactile images into textual descriptions using Octopi.
+5
+
+--- PAGE 6 ---
+T actile-Assisted Planning
+W ipe
+Initial Scene
+ Manipulation with T actile Feedback
+Plan based on force. Gently place the cup on the plate at varied height.
+Plan based on sponge roughness. Wipe the plate with adequate force under limited observation.
+Plan based on mango hardness. Cut into mango and maintain contact with mango surface during peeling.
+Cup
+Peel
+Figure 2: Experiments pipeline with images captured by the scene camera. Each task contains
+two stages: Planning: inference over contact properties (force, roughness, hardness) with tactile
+perception for tactile-informed task planning. Manipulation: refine action with tactile feedback for
+contact-rich manipulation.
+To answer Q2 regarding manipulation, we evaluate the effectiveness of tactile feedback for
+contact-rich manipulation and assesses which controller architecture better integrates touch for
+policy refinement. We use Robot Diffusion Transformer (RDT-1B) as our base VLA policy, and
+compare RDT against two tactile-enhanced variants:
+• RDT: Vanilla RDT without tactile feedback.
+• RDT + Residual Controller: An RNN-based controller that incorporates tactile signals to
+refine RDT action chunk by predicting residual actions.
+• RDT + Interpolant Controller: The Interpolant controller that refines RDT action chunk
+conditioned on tactile signals.
+Dual-level Tactile Feedback. To answer Q3, we ablate our system to compare against two
+single-level variants: one with tactile feedback used only during planning, and one with tactile
+feedback used only during manipulation. This isolates the contribution of high-level vs. low-level
+tactile feedback.
+• w/o Planning: Planning with GPT-4o, manipulation with RDT + Interpolant controller.
+• w/o Control: Planning with GPT-4o + Octopi, manipulation with RDT.
+• VLA-Touch: Planning with GPT-4o + Octopi, manipulation with RDT + Interpolant controller.
+Tasks. We evaluate on three contact-rich tasks, each requiring tactile inference for both high-level
+planning and low-level control:
+• Cup: The robot must pick up a lidded cup, determine (through tactile feedback) whether it
+contains water, and place it at corresponding location without spilling.
+• Wipe: The robot selects the smoother of two sponges using touch, then wipes ink off a plate.
+• Peel: The robot identifies the softer or harder of two mangoes via touch and peels the selected
+one with a hand-held peeler.
+4.2 Task Planning Results
+Our experimental results show that tactile feedback significantly improves task planning
+performance, and linguistic tactile descriptions are more effective than raw tactile images for
+VLM-based planning. As shown in Figure 3C, GPT-4o fails to infer over tactile properties
+when given only the scene image; its responses are consistently non-committal (e.g., “I can’t
+determine”), and forced choices result in success rates comparable to random guessing. Providing
+raw tactile images enables GPT-4o to identify surface roughness effectively (100% success), but it
+6
+
+--- PAGE 7 ---
+ Place the 1st cup on the plate since 
+ it is filled with water .
+VLM
+ 1st: "Force: (0.639, -0.496, 0.868)"
+ 2nd: "Force: (1.029, -0.617, 0.787)"
+Marker
+T racking
+ Pick up the left sponge since it is 
+ smoother .
+ Left: The roughness level is: 1.62.
+ Right: The roughness level is: 7.71.
+VLM
+A. Raw T actile Input B. Linguistic T actile Feedback
+ C. T actile-Informed T ask Planning  
+ Pick up the right mango since it is 
+ softer .
+ Left: The hardness level is: 4.58.
+ Right: The hardness level is: 2.53.
+VLM
+Roughness
+RoughSmooth
+Force
+Before Pick After Pick
+Hardness
+Hard Soft
+Figure 3: A: Raw tactile images from three tasks requiring feedback on force, surface roughness, and
+hardness. B: Corresponding linguistic tactile descriptions generated by the Tactile-Language Model
+(Octopi) and GPT-4o’s responses.C: Task planning outcomes under three conditions: GPT-4o with
+no tactile input, with raw tactile images, and with linguistic tactile descriptions. Each condition was
+evaluated over 20 trials using tactile data collected from grasps executed by the VLA model with
+the Interpolant Controller.
+struggles with interpreting force (50%) and object hardness (60%). In contrast, when supplied with
+linguistic tactile descriptions generated by Octopi, performance improves substantially—achieving
+90% success for force prediction and 75% for hardness. These results indicate that tactile feedback
+is essential for planning in contact-rich tasks, and that structured, language-based representations
+are more usable by GPT-4o than raw tactile inputs. Refer to Appendix B for extra study.
+For force evaluation specifically, we implemented a separate approach since Octopi is not pretrained
+for force estimation. We use the marker tracking algorithm to get estimated force vectors and provide
+to GPT-4o along with baseline reference vectors. The reference values serve as calibration points
+when force estimates are relative or unnormalized, though they are less critical when methods report
+forces in absolute units (e.g., Newtons).
+4.3 Manipulation Results
+Table 1: Manipulation performance across different tasks
+Tasks Evaluations RDT Residual Interpolant w/o Touch w/o Vision
+Cup Pick 9/20 7 /20 12/20 10/20 10 /20
+Place 7/20 6 /20 10/20 5/20 7 /20
+Wipe Pick 11/20 15 /20 17/20 15/20 15 /20
+Wipe Partial 8/20 13 /20 16/20 12/20 10 /20
+Wipe 5/20 6 /20 12/20 7/20 8 /20
+Peel Pick 13/20 14 /20 18/20 16/20 13 /20
+Peel Partial 8/20 12 /20 13/20 12/20 8 /20
+Peel 6/20 7 /20 10/20 5/20 5 /20
+Our experimental results demonstrate that tactile feedback significantly enhances performance in
+contact-rich manipulation tasks, and the interpolant-based controller (ours) outperforms both the
+base VLA policy and LSTM-based residual controller. As shown in Table 1, our interpolant
+controller consistently achieves the highest success rates across all tasks and evaluation metrics.
+The interpolant controller improves base RDT task success rates by 42% (Cup), 140% (Wipe), and
+67% (Peel) respectively; it also outperforms the residual controller method, achieving 67% (Cup),
+100% (Wipe), and 42% (Peel) higher task success rate. These results support the notion that tactile
+feedback substantially benefits VLA policies for manipulation control, and that interpolant-based
+7
+
+--- PAGE 8 ---
+diffusion controllers outperform simple residual controllers by better capturing the multi-modal
+nature of demonstration data.
+Cup. The cup task reveals critical differences in grasping precision and contact awareness. RDT
+generates imprecise trajectories that cause the gripper to push the cup forward before closing,
+resulting in low pick success ( 9/20) and premature releases during placement due to insufficient
+tactile feedback ( 2/9 successful picks). The residual controller exhibits systematic positioning
+errors, with refined actions consistently posterior to desired positions ( 7/20), leading to unstable
+grasps and water spillage ( 3/20). This behavior reflects the controller’s inability to handle the
+multi-modal nature of cup positioning. In contrast, our interpolant controller effectively corrects
+RDT’s grasping behavior, achieving 12/20 successful picks and demonstrating superior contact
+awareness with only one premature release during placement (1/12 successful picks).
+Wipe. Successful wiping requires grasping the sponge at its center. RDT occasionally generates
+incorrect grasping trajectories (pushing sponge downward or grasping the sponge’s edge), leading to
+incomplete wiping in 5/11 successful picks. The residual controller improves grasping but struggles
+with peripheral wiping, achieving only partial cleaning in 13/15 trials, primarily in central regions,
+which indicates a limitation in capturing multi-modal action distributions. Our interpolant controller
+was better at both grasping and pressure modulation, successfully completing full wiping in 12/20
+trials.
+RDT
+Residual
+Interpolant
+Figure 4: 20 trails of peeling
+results, demonstrating the
+qualitative effect of tactile
+feedback on peeling.
+Peel. The mango peeling task requires contact positioning
+and sustained pressure throughout the motion. RDT frequently
+slides without cutting (5/13 successful grasps) due to the lack of
+tactile feedback. The residual controller shows improved cutting
+initiation but prematurely elevates the peeler midway through
+(5/14 successful grasps), likely due to learning averaged policies
+that terminate early on larger mangoes. Interpolant controller
+maintains better contact throughout the process, as evidenced in
+Figure 4: while RDT removes minimal surface material and the
+residual controller produces 12 pieces with 5 short fragments due to
+contact loss, Interpolant controller removes 13 pieces with only 3
+short fragments, demonstrating improved contact maintenance and
+cutting consistency.
+4.4 Dual-Level Tactile Feedback
+Our experimental results demonstrate that dual-level tactile feedback is essential for optimal
+performance, with either component alone leading to substantial degradation. As shown in Table 2,
+removing tactile feedback from planning reduces success rates by 44% (Cup), 58% (Wipe), and
+14% (Peel), while removing it from control decreases performance by 33% (Cup), 58% (Wipe),
+and 43% (Peel). Tactile-informed planning enables task-level decisions impossible with vision
+alone, such as distinguishing between empty and filled cups or selecting the smoother sponge for
+more effective wiping. For manipulation, tactile feedback provides contact information essential
+for pressure modulation, contact maintenance, and preventing premature releases. These results
+and observations confirm that both planning and control components critically depend on tactile
+information. The ablated systems exhibit failures consistent with individual component evaluations:
+incorrect object selections without planning-level tactile feedback; failed grasping or inaccurate
+contact control due to the lack of control-level tactile feedback.
+Table 2: Interleaved Plan and Manipulation Evaluation.
+Tasks w/o Planning w/o Control VLA-Touch
+Cup 5/20 6 /20 9/20
+Wipe 5/20 5 /20 12/20
+Peel 6/20 4 /20 7/20
+8
+
+--- PAGE 9 ---
+4.5 Ablation Study of Interpolant Controller
+We examine the necessity of multi-modal feedback for the Interpolant controller through ablation.
+Our experimental results demonstrate that both tactile and visual feedback are essential for the
+Interpolant Controller, with tactile feedback being particularly critical for contact-rich manipulation
+phases and visual feedback being important for spatial positioning and grasp planning. As
+shown in Table 1, removing tactile feedback (”w/o Touch”) significantly degrades performance
+in contact-intensive tasks, reducing cup placement success by 50%, wiping by 42%, and peeling
+by 50%. Removing visual feedback (”w/o Vision”) shows less severe but notable degradation,
+particularly affecting cup placement (30% reduction) and task success across all scenarios.
+Tactile Feedback. The removal of tactile perception maintains comparable performance for basic
+picking tasks but severely impacts contact-rich manipulation phases. Without tactile feedback, the
+controller cannot detect contact forces, friction coefficients, or tool-object interactions, leading to
+incomplete task executions despite preserved manipulation capabilities: cup placement success rate
+drops by 50%, wiping drops by 42%, and peeling drops by 50%.
+Visual Feedback. While the Interpolant Controller maintains reasonable performance without
+visual feedback, degradation is evident in spatial positioning tasks. For wiping, pick success rates
+remain acceptable ( 15/20), but the absence of visual information leads to suboptimal grasping
+positions (often at sponge edges), subsequently impairing effective plate cleaning (complete wiping
+drops from 12/20 to 8/20). Similarly, for peeling tasks, visual feedback loss affects cutting precision
+and positioning, contributing to reduced complete peeling success (10/20 to 5/20).
+5 Conclusion
+In this work, we presented VLA-Touch, a novel framework to improve VLA policies with dual-level
+tactile feedback without fine-tuning the VLA model with tactile data. Our work introduces
+two key innovations: (1) a pipeline leveraging a pretrained tactile-language model for semantic
+tactile feedback in high-level task planning, and (2) a interpolant-based controller that refines
+VLA-generated actions with tactile signals for contact-rich manipulation. Through three real-world
+experiments, we demonstrated the effectiveness of our dual-level tactile feedback system. Ablation
+studies confirmed that both visual and tactile are crucial for contact-rich tasks. Our work takes
+one step toward more capable embodied agents that can leverage multiple sensory modalities for
+physical interactions in the real world.
+6 Limitation and Future Works
+Our current implementation has several limitations. First, the gripper control setup differs from the
+Octopi pretraining dataset; this creates discrepancies in contact measurements that can compromise
+tactile interpretation. We observed this particularly for object hardness. Second, we mainly focussed
+on generalization across object positioning and target locations in our experiments (varying cup
+placement heights, different wiping ink patterns, and diverse mango specimens); future work could
+examine generalization across tasks but this would require significantly more training. Third, the
+Interpolant controller operates at 8 hz and does not yet fully leverage high-frequency tactile signals
+(≥ 25 Hz) that could enhance performance during dynamic interactions.
+We identify three directions for future research: (1) developing an active grasping framework
+that dynamically refines grasp poses through combined visual-tactile feedback, enabling more
+sophisticated touch inference; (2) designing an event-triggered inference strategy that accelerates
+processing during contact state transitions while conserving resources during stable periods; and 3)
+developing task-agnostic policy refinement method that can scale to more real-world tasks. These
+advancements would address limitations in grasp quality and temporal resolution while expanding
+the capabilities of tactile-enhanced manipulation.
+9
+
+--- PAGE 10 ---
+References
+[1] M. Ahn, A. Brohan, N. Brown, Y . Chebotar, O. Cortes, B. David, C. Finn, C. Fu,
+K. Gopalakrishnan, K. Hausman, A. Herzog, D. Ho, J. Hsu, J. Ibarz, B. Ichter, A. Irpan,
+E. Jang, R. J. Ruano, K. Jeffrey, S. Jesmonth, N. J. Joshi, R. Julian, D. Kalashnikov, Y . Kuang,
+K.-H. Lee, S. Levine, Y . Lu, L. Luu, C. Parada, P. Pastor, J. Quiambao, K. Rao, J. Rettinghouse,
+D. Reyes, P. Sermanet, N. Sievers, C. Tan, A. Toshev, V . Vanhoucke, F. Xia, T. Xiao, P. Xu,
+S. Xu, M. Yan, and A. Zeng. Do as i can, not as i say: Grounding language in robotic
+affordances, 2022. URL https://arxiv.org/abs/2204.01691.
+[2] M. J. Kim, K. Pertsch, S. Karamcheti, T. Xiao, A. Balakrishna, S. Nair, R. Rafailov, E. P. Foster,
+P. R. Sanketi, Q. Vuong, T. Kollar, B. Burchfiel, R. Tedrake, D. Sadigh, S. Levine, P. Liang, and
+C. Finn. OpenVLA: An open-source vision-language-action model. In 8th Annual Conference
+on Robot Learning, 2024. URL https://openreview.net/forum?id=ZMnD6QZAE6.
+[3] B. Zitkovich, T. Yu, S. Xu, P. Xu, T. Xiao, F. Xia, J. Wu, P. Wohlhart, S. Welker, A. Wahid,
+Q. Vuong, V . Vanhoucke, H. Tran, R. Soricut, A. Singh, J. Singh, P. Sermanet, P. R. Sanketi,
+G. Salazar, M. S. Ryoo, K. Reymann, K. Rao, K. Pertsch, I. Mordatch, H. Michalewski, Y . Lu,
+S. Levine, L. Lee, T.-W. E. Lee, I. Leal, Y . Kuang, D. Kalashnikov, R. Julian, N. J. Joshi,
+A. Irpan, B. Ichter, J. Hsu, A. Herzog, K. Hausman, K. Gopalakrishnan, C. Fu, P. Florence,
+C. Finn, K. A. Dubey, D. Driess, T. Ding, K. M. Choromanski, X. Chen, Y . Chebotar,
+J. Carbajal, N. Brown, A. Brohan, M. G. Arenas, and K. Han. Rt-2: Vision-language-action
+models transfer web knowledge to robotic control. In J. Tan, M. Toussaint, and K. Darvish,
+editors, Proceedings of The 7th Conference on Robot Learning , volume 229 of Proceedings
+of Machine Learning Research , pages 2165–2183. PMLR, 06–09 Nov 2023. URL https:
+//proceedings.mlr.press/v229/zitkovich23a.html.
+[4] O. X.-E. Collaboration, A. O’Neill, A. Rehman, A. Gupta, A. Maddukuri, A. Gupta,
+A. Padalkar, A. Lee, A. Pooley, A. Gupta, A. Mandlekar, A. Jain, A. Tung, A. Bewley,
+A. Herzog, A. Irpan, A. Khazatsky, A. Rai, A. Gupta, A. Wang, A. Kolobov, A. Singh, A. Garg,
+A. Kembhavi, A. Xie, A. Brohan, A. Raffin, A. Sharma, A. Yavary, A. Jain, A. Balakrishna,
+A. Wahid, B. Burgess-Limerick, B. Kim, B. Sch ¨olkopf, B. Wulfe, B. Ichter, C. Lu, C. Xu,
+C. Le, C. Finn, C. Wang, C. Xu, C. Chi, C. Huang, C. Chan, C. Agia, C. Pan, C. Fu, C. Devin,
+D. Xu, D. Morton, D. Driess, D. Chen, D. Pathak, D. Shah, D. B ¨uchler, D. Jayaraman,
+D. Kalashnikov, D. Sadigh, E. Johns, E. Foster, F. Liu, F. Ceola, F. Xia, F. Zhao, F. V . Frujeri,
+F. Stulp, G. Zhou, G. S. Sukhatme, G. Salhotra, G. Yan, G. Feng, G. Schiavi, G. Berseth,
+G. Kahn, G. Yang, G. Wang, H. Su, H.-S. Fang, H. Shi, H. Bao, H. B. Amor, H. I. Christensen,
+H. Furuta, H. Bharadhwaj, H. Walke, H. Fang, H. Ha, I. Mordatch, I. Radosavovic, I. Leal,
+J. Liang, J. Abou-Chakra, J. Kim, J. Drake, J. Peters, J. Schneider, J. Hsu, J. Vakil, J. Bohg,
+J. Bingham, J. Wu, J. Gao, J. Hu, J. Wu, J. Wu, J. Sun, J. Luo, J. Gu, J. Tan, J. Oh, J. Wu, J. Lu,
+J. Yang, J. Malik, J. Silv´erio, J. Hejna, J. Booher, J. Tompson, J. Yang, J. Salvador, J. J. Lim,
+J. Han, K. Wang, K. Rao, K. Pertsch, K. Hausman, K. Go, K. Gopalakrishnan, K. Goldberg,
+K. Byrne, K. Oslund, K. Kawaharazuka, K. Black, K. Lin, K. Zhang, K. Ehsani, K. Lekkala,
+K. Ellis, K. Rana, K. Srinivasan, K. Fang, K. P. Singh, K.-H. Zeng, K. Hatch, K. Hsu, L. Itti,
+L. Y . Chen, L. Pinto, L. Fei-Fei, L. Tan, L. J. Fan, L. Ott, L. Lee, L. Weihs, M. Chen, M. Lepert,
+M. Memmel, M. Tomizuka, M. Itkina, M. G. Castro, M. Spero, M. Du, M. Ahn, M. C. Yip,
+M. Zhang, M. Ding, M. Heo, M. K. Srirama, M. Sharma, M. J. Kim, N. Kanazawa, N. Hansen,
+N. Heess, N. J. Joshi, N. Suenderhauf, N. Liu, N. D. Palo, N. M. M. Shafiullah, O. Mees,
+O. Kroemer, O. Bastani, P. R. Sanketi, P. T. Miller, P. Yin, P. Wohlhart, P. Xu, P. D. Fagan,
+P. Mitrano, P. Sermanet, P. Abbeel, P. Sundaresan, Q. Chen, Q. Vuong, R. Rafailov, R. Tian,
+R. Doshi, R. Mart’in-Mart’in, R. Baijal, R. Scalise, R. Hendrix, R. Lin, R. Qian, R. Zhang,
+R. Mendonca, R. Shah, R. Hoque, R. Julian, S. Bustamante, S. Kirmani, S. Levine, S. Lin,
+S. Moore, S. Bahl, S. Dass, S. Sonawani, S. Tulsiani, S. Song, S. Xu, S. Haldar, S. Karamcheti,
+S. Adebola, S. Guist, S. Nasiriany, S. Schaal, S. Welker, S. Tian, S. Ramamoorthy, S. Dasari,
+S. Belkhale, S. Park, S. Nair, S. Mirchandani, T. Osa, T. Gupta, T. Harada, T. Matsushima,
+T. Xiao, T. Kollar, T. Yu, T. Ding, T. Davchev, T. Z. Zhao, T. Armstrong, T. Darrell, T. Chung,
+10
+
+--- PAGE 11 ---
+V . Jain, V . Kumar, V . Vanhoucke, W. Zhan, W. Zhou, W. Burgard, X. Chen, X. Chen, X. Wang,
+X. Zhu, X. Geng, X. Liu, X. Liangwei, X. Li, Y . Pang, Y . Lu, Y . J. Ma, Y . Kim, Y . Chebotar,
+Y . Zhou, Y . Zhu, Y . Wu, Y . Xu, Y . Wang, Y . Bisk, Y . Dou, Y . Cho, Y . Lee, Y . Cui, Y . Cao, Y .-H.
+Wu, Y . Tang, Y . Zhu, Y . Zhang, Y . Jiang, Y . Li, Y . Li, Y . Iwasawa, Y . Matsuo, Z. Ma, Z. Xu,
+Z. J. Cui, Z. Zhang, Z. Fu, and Z. Lin. Open X-Embodiment: Robotic learning datasets and
+RT-X models. https://arxiv.org/abs/2310.08864, 2023.
+[5] S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su, and J. Zhu. RDT-1b:
+a diffusion foundation model for bimanual manipulation. In The Thirteenth International
+Conference on Learning Representations , 2025. URL https://openreview.net/forum?
+id=yAzN4tz7oI.
+[6] P. Intelligence, K. Black, N. Brown, J. Darpinian, K. Dhabalia, D. Driess, A. Esmail, M. Equi,
+C. Finn, N. Fusai, M. Y . Galliker, D. Ghosh, L. Groom, K. Hausman, B. Ichter, S. Jakubczak,
+T. Jones, L. Ke, D. LeBlanc, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair, K. Pertsch, A. Z.
+Ren, L. X. Shi, L. Smith, J. T. Springenberg, K. Stachowicz, J. Tanner, Q. Vuong, H. Walke,
+A. Walling, H. Wang, L. Yu, and U. Zhilinsky. π0.5: a vision-language-action model with
+open-world generalization, 2025. URL https://arxiv.org/abs/2504.16054.
+[7] N. Funk, C. Chen, T. Schneider, G. Chalvatzaki, R. Calandra, and J. Peters. On the importance
+of tactile sensing for imitation learning: A case study on robotic match lighting, 2025. URL
+https://arxiv.org/abs/2504.13618.
+[8] Z. He, H. Fang, J. Chen, H.-S. Fang, and C. Lu. Foar: Force-aware reactive policy for
+contact-rich robotic manipulation. IEEE Robotics and Automation Letters, 10(6):5625–5632,
+2025. doi:10.1109/LRA.2025.3560871.
+[9] H. Xue, J. Ren, W. Chen, G. Zhang, Y . Fang, G. Gu, H. Xu, and C. Lu. Reactive diffusion
+policy: Slow-fast visual-tactile policy learning for contact-rich manipulation. arXiv preprint
+arXiv:2503.02881, 2025.
+[10] B. Ai, S. Tian, H. Shi, Y . Wang, C. Tan, Y . Li, and J. Wu. Robopack: Learning tactile-informed
+dynamics models for dense packing, 2024. URL https://arxiv.org/abs/2407.01418.
+[11] E. K. Miller and J. D. Cohen. An integrative theory of prefrontal cortex function. Annual
+review of neuroscience, 24(1):167–202, 2001.
+[12] L. Tame, F. Pavani, C. Papadelis, A. Farne, and C. Braun. Early integration of bilateral touch
+in the primary somatosensory cortex. Human brain mapping, 36(4):1506–1523, 2015.
+[13] J. C. Culham and K. F. Valyear. Human parietal cortex in action. Current opinion in
+neurobiology, 16(2):205–212, 2006.
+[14] A. Brohan, N. Brown, J. Carbajal, Y . Chebotar, J. Dabis, C. Finn, K. Gopalakrishnan,
+K. Hausman, A. Herzog, J. Hsu, J. Ibarz, B. Ichter, A. Irpan, T. Jackson, S. Jesmonth,
+N. Joshi, R. Julian, D. Kalashnikov, Y . Kuang, I. Leal, K.-H. Lee, S. Levine, Y . Lu,
+U. Malla, D. Manjunath, I. Mordatch, O. Nachum, C. Parada, J. Peralta, E. Perez, K. Pertsch,
+J. Quiambao, K. Rao, M. Ryoo, G. Salazar, P. Sanketi, K. Sayed, J. Singh, S. Sontakke,
+A. Stone, C. Tan, H. Tran, V . Vanhoucke, S. Vega, Q. Vuong, F. Xia, T. Xiao, P. Xu, S. Xu,
+T. Yu, and B. Zitkovich. Rt-1: Robotics transformer for real-world control at scale. In
+Proceedings of Robotics: Science and Systems, 2023.
+[15] Octo Model Team, D. Ghosh, H. Walke, K. Pertsch, K. Black, O. Mees, S. Dasari, J. Hejna,
+C. Xu, J. Luo, T. Kreiman, Y . Tan, L. Y . Chen, P. Sanketi, Q. Vuong, T. Xiao, D. Sadigh,
+C. Finn, and S. Levine. Octo: An open-source generalist robot policy. In Proceedings of
+Robotics: Science and Systems, Delft, Netherlands, 2024.
+11
+
+--- PAGE 12 ---
+[16] K. Black, N. Brown, D. Driess, A. Esmail, M. Equi, C. Finn, N. Fusai, L. Groom, K. Hausman,
+B. Ichter, S. Jakubczak, T. Jones, L. Ke, S. Levine, A. Li-Bell, M. Mothukuri, S. Nair,
+K. Pertsch, L. X. Shi, J. Tanner, Q. Vuong, A. Walling, H. Wang, and U. Zhilinsky. π0: A
+vision-language-action flow model for general robot control, 2024. URL https://arxiv.
+org/abs/2410.24164.
+[17] D. Driess, F. Xia, M. S. M. Sajjadi, C. Lynch, A. Chowdhery, B. Ichter, A. Wahid,
+J. Tompson, Q. Vuong, T. Yu, W. Huang, Y . Chebotar, P. Sermanet, D. Duckworth, S. Levine,
+V . Vanhoucke, K. Hausman, M. Toussaint, K. Greff, A. Zeng, I. Mordatch, and P. Florence.
+PaLM-e: An embodied multimodal language model. In A. Krause, E. Brunskill, K. Cho,
+B. Engelhardt, S. Sabato, and J. Scarlett, editors, Proceedings of the 40th International
+Conference on Machine Learning, volume 202 of Proceedings of Machine Learning Research,
+pages 8469–8488. PMLR, 23–29 Jul 2023. URL https://proceedings.mlr.press/
+v202/driess23a.html.
+[18] X. Li, M. Liu, H. Zhang, C. Yu, J. Xu, H. Wu, C. Cheang, Y . Jing, W. Zhang, H. Liu, H. Li,
+and T. Kong. Vision-language foundation models as effective robot imitators. In The Twelfth
+International Conference on Learning Representations, 2024. URL https://openreview.
+net/forum?id=lFYj0oibGR.
+[19] C.-L. Cheang, G. Chen, Y . Jing, T. Kong, H. Li, Y . Li, Y . Liu, H. Wu, J. Xu, Y . Yang, H. Zhang,
+and M. Zhu. Gr-2: A generative video-language-action model with web-scale knowledge for
+robot manipulation, 2024. URL https://arxiv.org/abs/2410.06158.
+[20] NVIDIA, :, J. Bjorck, F. Casta ˜neda, N. Cherniadev, X. Da, R. Ding, L. J. Fan, Y . Fang, D. Fox,
+F. Hu, S. Huang, J. Jang, Z. Jiang, J. Kautz, K. Kundalia, L. Lao, Z. Li, Z. Lin, K. Lin, G. Liu,
+E. Llontop, L. Magne, A. Mandlekar, A. Narayan, S. Nasiriany, S. Reed, Y . L. Tan, G. Wang,
+Z. Wang, J. Wang, Q. Wang, J. Xiang, Y . Xie, Y . Xu, Z. Xu, S. Ye, Z. Yu, A. Zhang, H. Zhang,
+Y . Zhao, R. Zheng, and Y . Zhu. Gr00t n1: An open foundation model for generalist humanoid
+robots, 2025. URL https://arxiv.org/abs/2503.14734.
+[21] D. Driess, F. Xia, M. S. M. Sajjadi, C. Lynch, A. Chowdhery, B. Ichter, A. Wahid, J. Tompson,
+Q. Vuong, T. Yu, W. Huang, Y . Chebotar, P. Sermanet, D. Duckworth, S. Levine, V . Vanhoucke,
+K. Hausman, M. Toussaint, K. Greff, A. Zeng, I. Mordatch, and P. Florence. Palm-e: An
+embodied multimodal language model, 2023. URL https://arxiv.org/abs/2303.03378.
+[22] X. Zhai, B. Mustafa, A. Kolesnikov, and L. Beyer. Sigmoid loss for language image
+pre-training. In Proceedings of the IEEE/CVF International Conference on Computer Vision
+(ICCV), pages 11975–11986, October 2023.
+[23] M. Oquab, T. Darcet, T. Moutakanni, H. V . V o, M. Szafraniec, V . Khalidov, P. Fernandez,
+D. HAZIZA, F. Massa, A. El-Nouby, M. Assran, N. Ballas, W. Galuba, R. Howes, P.-Y .
+Huang, S.-W. Li, I. Misra, M. Rabbat, V . Sharma, G. Synnaeve, H. Xu, H. Jegou, J. Mairal,
+P. Labatut, A. Joulin, and P. Bojanowski. DINOv2: Learning robust visual features without
+supervision. Transactions on Machine Learning Research , 2024. ISSN 2835-8856. URL
+https://openreview.net/forum?id=a68SUt6zFt. Featured Certification.
+[24] H. W. Chung, L. Hou, S. Longpre, B. Zoph, Y . Tay, W. Fedus, Y . Li, X. Wang, M. Dehghani,
+S. Brahma, A. Webson, S. S. Gu, Z. Dai, M. Suzgun, X. Chen, A. Chowdhery, A. Castro-Ros,
+M. Pellat, K. Robinson, D. Valter, S. Narang, G. Mishra, A. Yu, V . Zhao, Y . Huang, A. Dai,
+H. Yu, S. Petrov, E. H. Chi, J. Dean, J. Devlin, A. Roberts, D. Zhou, Q. V . Le, and J. Wei.
+Scaling instruction-finetuned language models. Journal of Machine Learning Research , 25
+(70):1–53, 2024. URL http://jmlr.org/papers/v25/23-0870.html.
+[25] H.-S. Fang, H. Fang, Z. Tang, J. Liu, J. Wang, H. Zhu, and C. Lu. Rh20t: A robotic dataset for
+learning diverse skills in one-shot. In RSS 2023 Workshop on Learning for Task and Motion
+Planning, 2023.
+12
+
+--- PAGE 13 ---
+[26] J. Jones, O. Mees, C. Sferrazza, K. Stachowicz, P. Abbeel, and S. Levine. Beyond sight:
+Finetuning generalist robot policies with heterogeneous sensors via language grounding, 2025.
+URL https://arxiv.org/abs/2501.04693.
+[27] P. Hao, C. Zhang, D. Li, X. Cao, X. Hao, S. Cui, and S. Wang. Tla: Tactile-language-action
+model for contact-rich manipulation. arXiv preprint arXiv:2503.08548, 2025.
+[28] J. Zhao, Y . Ma, L. Wang, and E. Adelson. Transferable tactile transformers for representation
+learning across diverse sensors and tasks. In 8th Annual Conference on Robot Learning, 2024.
+URL https://openreview.net/forum?id=KXsropnmNI.
+[29] C. Higuera, A. Sharma, C. K. Bodduluri, T. Fan, P. Lancaster, M. Kalakrishnan, M. Kaess,
+B. Boots, M. Lambeta, T. Wu, and M. Mukadam. Sparsh: Self-supervised touch
+representations for vision-based tactile sensing. In 8th Annual Conference on Robot Learning,
+2024. URL https://openreview.net/forum?id=xYJn2e1uu8.
+[30] R. Feng, J. Hu, W. Xia, T. Gao, A. Shen, Y . Sun, B. Fang, and D. Hu. Learning
+unified static-dynamic representation across multiple visuo-tactile sensors. In The Thirteenth
+International Conference on Learning Representations, 2025. URL https://openreview.
+net/forum?id=XToAemis1h.
+[31] GelSight Inc. GelSight Mini Tactile Sensor. https://www.gelsight.com/
+gelsightmini/, 2023. Accessed: 2025-04-29.
+[32] M. Lambeta, P.-W. Chou, S. Tian, B. Yang, B. Maloon, V . R. Most, D. Stroud, R. Santos,
+A. Byagowi, G. Kammerer, D. Jayaraman, and R. Calandra. Digit: A novel design for
+a low-cost compact high-resolution tactile sensor with application to in-hand manipulation.
+IEEE Robotics and Automation Letters , 5(3):3838–3845, 2020. doi:10.1109/LRA.2020.
+2977257.
+[33] S. Zhang, Y . Yang, F. Sun, L. Bao, J. Shan, Y . Gao, and B. Fang. A compact visuo-tactile
+robotic skin for micron-level tactile perception. IEEE Sensors Journal, 24(9):15273–15282,
+2024. doi:10.1109/JSEN.2024.3376574.
+[34] W. K. Do, B. Jurewicz, and M. Kennedy. Densetact 2.0: Optical tactile sensor for shape and
+force reconstruction. In 2023 IEEE International Conference on Robotics and Automation
+(ICRA), pages 12549–12555, 2023. doi:10.1109/ICRA48891.2023.10161150.
+[35] S. Yu, K. Lin, A. Xiao, J. Duan, and H. Soh. Octopi: Object property reasoning with large
+tactile-language models. In Proceedings of Robotics: Science and Systems, 2024.
+[36] L. Fu, G. Datta, H. Huang, W. C.-H. Panitch, J. Drake, J. Ortiz, M. Mukadam, M. Lambeta,
+R. Calandra, and K. Goldberg. A touch, vision, and language dataset for multimodal
+alignment. In Forty-first International Conference on Machine Learning, 2024. URL https:
+//openreview.net/forum?id=tFEOOH9eH0.
+[37] B. Huang, Y . Wang, X. Yang, Y . Luo, and Y . Li. 3d vitac:learning fine-grained manipulation
+with visuo-tactile sensing. In Proceedings of Robotics: Conference on Robot Learning(CoRL),
+2024.
+[38] H. Xue, J. Ren, W. Chen, G. Zhang, Y . Fang, G. Gu, H. Xu, and C. Lu. Reactive diffusion
+policy: Slow-fast visual-tactile policy learning for contact-rich manipulation, 2025. URL
+https://arxiv.org/abs/2503.02881.
+[39] J. Zhao, N. Kuppuswamy, S. Feng, B. Burchfiel, and E. Adelson. Polytouch: A robust
+multi-modal tactile sensor for contact-rich manipulation using tactile-diffusion policies, 2025.
+URL https://arxiv.org/abs/2504.19341.
+13
+
+--- PAGE 14 ---
+[40] XELA Robotics. uskin patch - tactile sensor, 2024. URL https://www.xelarobotics.
+com/uskin-patch. Accessed: 2025.
+[41] TacNiq. TAC-02 Robotic Finger Development Kit, 2024. URL https://www.tacniq.ai/
+tac-02-robotic-finger-dev-kit . Accessed: July 30, 2025.
+[42] Q. Li, O. Kroemer, Z. Su, F. F. Veiga, M. Kaboli, and H. J. Ritter. A review of tactile
+information: Perception and action through touch. IEEE Transactions on Robotics , 36(6):
+1619–1634, 2020.
+[43] S. Liu, L. Wu, B. Li, H. Tan, H. Chen, Z. Wang, K. Xu, H. Su, and J. Zhu. Rdt-1b: a diffusion
+foundation model for bimanual manipulation. arXiv preprint arXiv:2410.07864, 2024.
+[44] K. Chen, E. Lim, K. Lin, Y . Chen, and H. Soh. Don’t start from scratch: Behavioral refinement
+via interpolant-based policy diffusion. arXiv preprint arXiv:2402.16075, 2024.
+14
+
+--- PAGE 15 ---
+Appendix
+A Prompt Examples
+For all tasks, we first give the VLM the following global context:
+System: You are a robot highly skilled in robotic task planning and interactive reasoning, adept at
+planning actions to retrieve unknown information for reasoning and decision making, and subsequently
+breaking down intricate and long-term tasks into distinct primitive actions. As a robot, you have one
+arm with a gripper. You have a tactile sensor mounted on the gripper, which can be used to classify
+physical properties (hardness, roughness, weight) of objects. Your task is to plan out steps of
+actions to take to retrieve information and complete the task. For each time, return 1. a primitive
+action in the form of one sentence, it should contain one elemental robot action interacting with at
+most one object 2. information needed to retrieve if applicable. After each action, feedback will
+be given back to you for information retrieval or action execution, you will then plan the next robot
+action based on the feedback. The feedback can be in the form of property classification results
+or raw tactile sensor images. Remember to refer to objects by their spatial locations (like left or
+right). Only give physical actions that the robot has to execute. Keep the action and information
+needed concise. Only give one action step in each response and wait for the user feedback.
+Each task is then initiated by a task planning request. In our experiments, we compared two ways
+to provide tactile feedback: a. to provide raw tactile images; and b. to provide linguistic tactile
+feedback generated by Octopi and image processing (ours). Examples of the two methods are given
+below.
+Task 1: Cup
+Raw images
+User: There is a cup in the image. Step by step, identify whether the cup is full or empty. If it is
+not empty, put it onto the plate.
+Robot: 1. **Action:** Grip the cup gently to lift it slightly.
+- **Information Needed:** Determine the weight of the cup to assess if it is full or empty.
+User: The first image is the gelsight tactile sensor image before touching the object: <image1/>.
+The second image is the gelsight tactile sensor image after lifting the object: <image2/>
+Robot: The tactile sensor images indicate that the cup is likely empty, as there is minimal change in
+the sensor pattern.
+2. **Action:** Place the cup back in its original position.
+Ours
+User: There is a cup in the image. Step by step, identify whether the cup is full or empty. If it is
+not empty, put it onto the plate.
+Robot: 1. Action: Grip the cup gently to lift it slightly.
+- Information Needed: Determine the weight of the cup to assess if it is full or empty.
+User: The tactile shear force vector has magnitude: 0.6571505252217286, xy-direction:
+[-0.6038576879954624, 0.7970921481540104].
+For reference, the max force magnitude is around 0.55 for an empty cup and around 1.1 for a full cup.
+Robot: 2. Action: Place the cup onto the plate.
+Information Needed: None.
+Task 2: Wipe
+Raw images
+User: There are two sponges in the image, one on the left and another on the right. Step by step,
+touch and identify the roughness of the sponges, and pick up the smoother one.
+Robot: 1. Touch the sponge on the left to assess its roughness.
+Information needed: Roughness level of the left sponge.
+User: The first image is the gelsight tactile sensor image before touching the object: <image1/>.
+The second image is the gelsight tactile sensor image after touching the object: <image2/>
+Robot: The tactile sensor images show minimal deformation, indicating that the left sponge is
+relatively smooth.
+15
+
+--- PAGE 16 ---
+Next, touch the sponge on the right to assess its roughness.
+Information needed: Roughness level of the right sponge.
+User: The first image is the gelsight tactile sensor image before touching the object: <image1/>.
+The second image is the gelsight tactile sensor image after touching the object: <image2/>
+Robot: The tactile sensor images show significant deformation, indicating that the right sponge is
+rougher than the left sponge.
+Next, pick up the sponge on the left, as it is smoother.
+Ours
+User: There are two sponges in the image, one on the left and another on the right. Step by step,
+touch and identify the roughness of the sponges, and pick up the smoother one.
+Robot: Touch the sponge on the left to assess its roughness.
+User: The hardness level is: 2.973193645477295, The roughness level is: 6.088855266571045
+Robot: Touch the sponge on the right to assess its roughness.
+User: The hardness level is: 4.499370098114014, The roughness level is: 7.802529811859131
+Assistant: Pick up the sponge on the left, as it is smoother.
+Task 3: Mango
+Raw images
+User: There are two mangoes in the image, one on the left and another on the right. Step by step,
+touch and identify the properties of the mangoes, and pick up the riper one.
+Robot: Touch the mango on the left to assess its softness.
+User: The first image is the gelsight tactile sensor image before touching the object: <image1/>.
+The second image is the gelsight tactile sensor image after touching the object: <image2/>
+Robot: The mango on the left is firm. Now, touch the mango on the right to assess its softness.
+User: The first image is the gelsight tactile sensor image before touching the object: <image1/>.
+The second image is the gelsight tactile sensor image after touching the object: <image2/>
+Robot: The mango on the right is also firm. Since both mangoes are firm, pick up either one.
+Ours
+User: There are two mangoes in the image, one on the left and another on the right. Step by step,
+touch and identify the properties of the mangoes, and pick up the riper one.
+Robot: Touch the mango on the left to assess its softness. Please provide feedback on the softness.
+User: The hardness level is: 4.293282985687256, The roughness level is: 5.726420879364014
+Robot: Touch the mango on the right to assess its softness. Please provide feedback on the softness.
+User: The hardness level is: 3.2263505458831787, The roughness level is: 5.662842750549316 Robot:
+Pick up the mango on the right, as it is softer and likely riper.
+B Ablation on Tactile Feedback Format from Octopi
+In the original Octopi framework, the tactile encoder is first trained alongside a classifier to predict
+physical properties on a continuous scale from 1 to 10. In the second phase, the classifier is
+removed, and a language model is trained to align with the encoder’s embeddings. To facilitate
+alignment with language, the physical properties are discretized into categories (e.g., three categories
+for roughness: smooth, slightly rough, and rough). However, in our case, we observed that the
+discretized descriptions failed to distinguish between objects with subtle differences due to their
+limited granularity. In our ablation experiments, we tested the effect of (a) using the full Octopi
+pipeline, with its language model generating a complete language description of the object, versus
+(b) directly using the continuous output from the classifier. Results show that in the wiping task,
+both methods achieved a 100% success rate, as the roughness levels of the two sponges differed
+significantly. However, in the mango peeling task, where the difference in hardness is more subtle,
+16
+
+--- PAGE 17 ---
+method (a) achieved only a 60% success rate, while method (b) reached 75%. This highlights the
+limitations of using natural language to represent physical properties sensed through touch.
+C Interpolant Controller
+Interpolant Model. Bridger [44] leverages stochastic interpolant to bridge arbitrary source and
+target action distributions. Unlike conventional diffusion-based imitation learning methods that
+denoise from standard Gaussian noise, Bridger can utilize more informative source policies as
+starting points, which leads to better performance with fewer diffusion steps. This is particularly
+valuable in our context, where the VLA policy already captures many aspects of the target behavior
+but lacks the refinement that tactile sensing provides.
+Mathematically, Bridger employs a stochastic interpolant that defines a continuous-time stochastic
+process between source policy π0 and target policy π1 with:
+at = I(t, a0, a1, x) + γ(t)z (1)
+where I is an interpolant function with boundary conditions I(0, a0, a1, x) = a0 and
+I(1, a0, a1, x) = a1, γ(t) controls the noise schedule with γ(0) = γ(1) = 0 , and z is standard
+Gaussian noise.
+The forward stochastic differential equation that guides our refinement process is:
+dat = bF (t, at, x)dt +
+p
+2ϵ(t)dWt (2)
+where bF is a velocity function, ϵ(t) controls diffusion strength, and Wt is a Wiener process.
+This formulation allows us to incorporate tactile sensing into the refinement process, ensuring that
+the resulting policy benefits from both the robustness of the VLA model and the precise contact-rich
+manipulation capabilities enabled by tactile feedback.
+Interpolant Controller. We adopt the interpolant model to refine the VLA policy with tactile
+sensing. Our approach uses the VLA model as the source policyπV LA, which provides a foundation
+for manipulation tasks based on visual and proprioceptive feedback. The target policy πExp is the
+expert policy that incorporates tactile feedback for contact-rich manipulation.
+Data Collection. For the three tasks evaluated, we collected datasets through kinesthetic teaching:
+Cup: Pick (40 episodes), Place (60 episodes), in totoal 8 mins data; Wipe: Pick (40 episodes),
+Wipe (60 episodes), in totoal 15 mins data;Peel: Pick (60 episodes), Peel (120 episodes), in total 30
+mins data. Sensor information was collected at 10 Hz, including 2 camera images, Gelsight images
+and robot proprioceptive (end-effector pose and gripper state). We labeled each episode with a
+corresponding linguistic instruction to facilitate instruction-following for VLA.
+We use a single RTX 4090 GPU for finetuning. We first finetuned RDT on unrelated Franka data
+(100k steps, ≈80 hrs) to align action spaces. Next, we finetuned the pretrained VLA model on the
+collected dataset without tactile modality. Each task required 20k training steps (≈16 hrs). Then, we
+used this finetuned model to predict action chunks conditioned on the observations in our dataset.
+By incorporating tactile input, we constructed a dataset DVLA for interpolant controller learning.
+For each episode with length T , we constructed: {st−n:t, Op
+t−n:t, at:t+Ta , aExp
+t:t+Ta }T
+t=n for training,
+where aExp refers to actions from expert demonstrations,n refers to the horizon of history condition,
+Ta refers to action chunk horizon. We adopted Ta = 64 , n = 2 from the VLA pretraining settings
+for our experiments.
+Controller Training. We feed tactile images om
+t into the marker tracking algorithm based on the
+OpenCV library to obtain a low dimensional tactile state mt (force vectors). The RGB images in
+st are fed into a pretrained DinoV2 model to obtain visual embeddings zo
+t . This is concatenated
+17
+
+--- PAGE 18 ---
+with the robot proprioceptive state zr
+t to form the interpolant controller input observation: zt :=
+[zr
+t−n:t, zo
+t−n:t, mt−n:t].
+The Interpolant controller πI (ˆat:t+Ta |at:t+Ta , zt) is trained to generate refined action chunkˆat:t+Ta
+to minimize the MSE loss with respect to expert actions:
+min
+θ
+1
+|DVLA|
+X
+||aExp
+t:t+Ta − πI(ˆat:t+Ta |at:t+Ta ,zt;θ)||2 (3)
+for (at:t+Ta , zt, aExp
+t:t+Ta ) in DV LA.
+Controller Inference. During inference, the first 48 steps of the 64-step action chunk generated by
+the VLA model are used for action refinement. The VLA model updates observations and generates
+new action chunks after the current truncated action chunk refined and executed. The interpolant
+controller updates observations and refines action chunks at most 8 Hz, with the refined actions
+executed at 8 Hz by a Cartesian controller with simple PD control, an exception is for task Mango
+Peeling, we use a impedance controller for execution.
+18

@@ -1,0 +1,18 @@
+\begin{table}[t]
+\caption{LIBERO reward comparison and low-success task. Success and $\Delta$ are percentages and percentage points. Aggregate endpoints use 300 validation rollouts; final task\_1 denominators are unreported. Different update budgets are shown explicitly.}
+\label{tab:libero}\centering\small
+\begin{tabular}{@{}lrrr@{}}\toprule
+Configuration & Updates & Success & $\Delta$\\\midrule
+\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\
+Terminal only, $\lambda=5$ & 160 & 61.7 & +0.7\\
+Dense, $\lambda=5$ & 160 & 65.3 & +4.3\\
+Filtered dense, $\lambda=5$ & 50 & 64.7 & +3.7\\
+Dense, $\lambda=1$ & 110 & 61.0 & +0.0\\
+Phase only, $\lambda=1$ & 110 & 62.3 & +1.3\\
+\midrule
+\multicolumn{4}{@{}l}{task\_1: initial 2.0\% (1,000 rollouts)}\\
+Terminal only & 20 & 11.0 & +9.0\\
+Dense & 20 & 18.0 & +16.0\\
+\bottomrule
+\end{tabular}
+\end{table}

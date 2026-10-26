@@ -1,0 +1,19 @@
+\section{Introduction}\label{sec:introduction}
+Pretrained vision-language-action (VLA) models provide a starting point for instruction-conditioned manipulation, but adapting their outputs to a new robot and improving task completion remain separate challenges. A cable-driven parallel robot (CDPR) exposes a particularly concrete adaptation problem: its controller accepts Cartesian translation, yaw, and gripper commands, while a pretrained model inherits the action conventions and experience of other embodiments. Successful placement additionally requires a sequence of behaviors---approach, grasp, lift, transport, and release---whose failures cannot be diagnosed from a terminal outcome alone.
+
+Group-relative reinforcement learning compares sampled trajectories without learning a separate value function. With binary rewards, however, a group containing only failures gives no outcome contrast, even when some trajectories nearly complete the task. Intermediate feedback can expose this progress. It also creates a second problem: improving an intermediate objective need not improve complete-task success, and penalizing an unsuccessful episode can suppress an already competent prefix.
+
+We investigate this tradeoff through two complementary studies. The first adds phase-aware dense shaping to OpenVLA-OFT training in SimpleVLA-RL on LIBERO-Spatial. The second adapts SmolVLA to cable-driven manipulation through skill bootstrapping and staged residual reinforcement learning. Both retain a terminal task verifier, but their intermediate signals differ: dense progress rewards change trajectory returns, whereas staged sparse credit assigns milestone-specific advantages to portions of a trajectory. The CDPR study also addresses likelihood consistency when exploration contains clipped actions and temporally persistent offsets.
+
+Our contributions are a joint account of these two stage-aware feedback designs; a precise CDPR residual-policy and credit formulation with conditional mathematical analysis; and an empirical study combining LIBERO reward comparisons, matched CDPR development evaluation, and a reserved physical deployment study. The current evidence establishes observed improvements within each protocol. It does not establish that either intermediate-feedback design dominates the other, or that the VLA action prior alone explains the CDPR gain.
+
+\begin{figure}[t]
+\centering
+\fbox{\parbox{0.93\columnwidth}{\small
+\textbf{Shared question:} how can intermediate progress help complete-task RL?\\[3pt]
+\textbf{LIBERO / OpenVLA-OFT:} phase tracker $\rightarrow$ bounded dense reward + terminal verifier $\rightarrow$ LoRA policy updates.\\[3pt]
+\textbf{CDPR / SmolVLA:} skill experience $\rightarrow$ residual initialization $\rightarrow$ protected stage credit + latent likelihood $\rightarrow$ full-task controller.\\[3pt]
+\textbf{Evaluation:} benchmark validation; matched CDPR scenes; physical trials.}}
+\caption{The two study branches share a credit-assignment question, while retaining distinct policies, action distributions, and evaluation protocols. Physical image slots are provided in Fig.~\ref{fig:hardware}.}
+\label{fig:overview}
+\end{figure}

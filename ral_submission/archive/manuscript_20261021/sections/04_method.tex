@@ -1,0 +1,38 @@
+\section{Stage-Aware Learning}\label{sec:method}
+\subsection{CDPR Policy and Bootstrapping}
+A frozen SmolVLA model produces a mapped prior chunk $p$. The residual input $x$ combines proprioception and frozen visual features; the residual network also receives $p$. Its bounded mean is
+\begin{equation}
+\mu_\theta(x,p)=\tanh\!\left(p+s_r\tanh f_\theta(x,p)\right).
+\label{eq:actor}
+\end{equation}
+Both nonlinearities are retained: $s_r$ bounds the correction before the outer action squashing. The inspected configuration uses $s_r=1$, eight-slot chunks with replanning every four executed slots, six proprioceptive dimensions, and a 512-dimensional frozen visual projection. The long continuation trains the residual and exploration parameters while keeping inherited VLA/LoRA weights frozen. \pending{Confirm these dimensions and controller frequency from the selected run's resolved configuration.}
+
+Initialization combines skill acquisition, success-filtered residual supervised fitting, and continuous teacher-chain experience before full-task reinforcement learning. This supplies a starting distribution of behaviors, rather than assuming that isolated skill success composes automatically. No newly collected target-robot teleoperation dataset is required by this branch; pretrained robot data and historical scripted/oracle assistance remain part of its lineage. \pending{Record exact initializer, experience-bank sizes, filtering criteria, and inherited interaction cost.}
+
+\subsection{Protected Stage Credit}
+The full-task collector records three binary milestones: approach, pickup, and strict placement, denoted $M_{i1},M_{i2},M_{i3}=Y_i$ for candidate $i$. Within each scene group, milestone returns are centered and divided by their population standard deviation, with numerical flooring and configured advantage clipping. Let $A_{ik}$ denote this advantage and $U_{ik}$ the corresponding usability mask. Constant-return groups provide no milestone contrast. Invalid candidates are excluded from training statistics, although numerical failures remain failures in evaluation.
+
+For approach and pickup records, a terminal bonus supplements local credit:
+\begin{align}
+\widetilde A_{ik}&=U_{ik}A_{ik}+\beta U_{i3}T_\kappa(A_{i3},M_{ik}),\label{eq:credit}\\
+T_\kappa(a,m)&=\begin{cases}\kappa a,&m=1,\ a<0,\\a,&\text{otherwise}.\end{cases}
+\end{align}
+Placement uses $U_{i3}A_{i3}$ without an additional duplicate bonus. The inspected settings use $\beta=1$ and $\kappa=0$: a failed completion does not contribute a negative terminal bonus to an achieved earlier milestone. This protects one credit component, not every parameter supporting the prefix.
+
+With fixed batch advantages, nonnegative stage/candidate weights $w_r$, and per-record likelihood ratios $\rho_r$, the clipped surrogate is
+\begin{equation}
+S(\theta)=\sum_r w_r\min\{\rho_r\widetilde A_r,
+\operatorname{clip}(\rho_r,1-\epsilon_-,1+\epsilon_+)\widetilde A_r\}.
+\end{equation}
+The weights balance retained stage mass and candidate trajectory lengths. Entropy and mean-action penalties accompany the surrogate, and Adam and gradient clipping determine the actual update. Thus the implemented objective is more specific than the sum of three milestone rewards.
+
+\subsection{Conditional Latent-Action Likelihood}
+At each sampled slot, exploration produces
+\begin{equation}
+u_t=\mu_\theta(x_t,p_t)+b_t+\sigma_\theta\odot\varepsilon_t,
+\qquad a_t=\operatorname{clip}(u_t,-1,1),
+\end{equation}
+where $\varepsilon_t$ is standard Gaussian and $b_t$ is a gated contribution from an exogenous episode-level offset. The collector retains the unclipped sample $u_t$, the realized offset, and the old log probability. New/old ratios score the same sample under the conditional Gaussian density $\mathcal N(\mu_\theta+b_t,\operatorname{diag}\sigma_\theta^2)$.
+
+Scoring the clipped action as a Gaussian observation incorrectly represents probability mass at the bounds. Treating a shared offset as fresh independent noise at every step also loses temporal dependence. Conditioning on its recorded realization avoids both mismatches. It does not eliminate biases introduced by stage selection, invalid-candidate filtering, or repeated surrogate optimization.
+\input{sections/04c_libero_dense_rewards}

@@ -1,0 +1,14 @@
+\section{Experimental Setup}\label{sec:setup}
+\subsection{Cable-Driven Manipulation}
+The simulation study uses a five-channel CDPR in MuJoCo Warp/MJ-Lab, camera inputs, four object categories (apple, orange, potato, tomato), and plate/bowl destinations. The matched evaluation uses 512 distinct development scenes, excluding the 128-scene in-run validation panel, with four repeats per checkpoint. Each episode has a 128-decision horizon and no settling decisions or teacher/yaw assistance. Deployment uses the residual mean with VLA prior noise scale 1. Numerical failures remain in all-attempt denominators. \pending{Supply simulator version, scene-generation ranges, camera calibration, and the resolved action timing.}
+
+The main comparison evaluates the 20M and 40M latent-likelihood bounded-residual checkpoints, with a panel-selected 39.8M checkpoint as a secondary comparison. These counters measure cumulative selected actions since latent-likelihood conversion; they exclude earlier inherited training and do not count all sampled interactions. The 20M--40M leg adds 19,987,881 selected actions, 609,792 episodes, and 299 updates over 89.14 recorded training hours. The learning rate remains $10^{-5}$ and the recorded LoRA change is zero.
+
+Reported effect intervals use a percentile bootstrap of per-scene mean differences, keeping repeats clustered by scene. Within-scene permutation $p$-values use the recorded Holm correction for the primary strict comparisons. Subgroup results are exploratory. This is one continuing training lineage; four evaluation repeats are not four independent training seeds. Final-test results and controlled terminal-only, likelihood, and prior-contribution ablations remain to be added.
+\input{sections/05b_libero_setup}
+
+\subsection{Physical Deployment}
+\assumed{The following protocol and result prose are prepared for a completed successful experiment; retain only details confirmed by the actual trial record.}
+We evaluated the selected policy on the physical cable-driven platform using \pending{hardware configuration}, \pending{camera/state-estimation setup}, and a control frequency of \pending{Hz}. The deployment condition was \pending{direct transfer, calibration only, or hardware adaptation; describe exactly}. The hardware checkpoint was \pending{path and hash}; it must not be inferred from the simulation table.
+
+Each trial began with an empty gripper and an object outside the destination. A successful trial required acquisition, sustained lift and transport, deliberate release, and placement in the instructed receptacle without assistance. We recorded all attempts, interventions, and aborts under \pending{trial/reset protocol and stopping rule}. The evaluation comprised \pending{objects, destinations, layouts, sessions, and trials per policy}, with \pending{baseline and ordering}. The earlier outline's 80-trial design is only a suggestion, not a completed sample size.

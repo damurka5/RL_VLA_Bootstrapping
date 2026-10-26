@@ -1,0 +1,36 @@
+% Review outline only. Replace bullets with prose only after author approval.
+\documentclass[letterpaper,journal]{IEEEtran}
+\usepackage{amsmath,amssymb}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{cite}
+\usepackage{url}
+\usepackage[hidelinks]{hyperref}
+\newcommand{\pending}[1]{\textbf{[Pending: #1]}}
+\newcommand{\planned}[1]{\textbf{[Proposed]} #1}
+\newcommand{\recorded}[1]{\textbf{[Recorded]} #1}
+\newcommand{\reported}[1]{\textbf{[Author-reported]} #1}
+\newenvironment{outline}{\begin{itemize}\raggedright\setlength{\itemsep}{2pt}\setlength{\parsep}{0pt}}{\end{itemize}}
+\begin{document}
+\title{Bootstrapping Vision-Language-Action Control for Cable-Driven Manipulation with Staged Reinforcement Learning}
+\author{Anonymous Authors}
+\maketitle
+\begin{center}\small\textbf{REVIEW OUTLINE --- 11 October 2026}\\
+Bullet points for author approval; results with pending evidence are labeled.
+\end{center}
+\input{sections/00_abstract}
+\begin{IEEEkeywords}
+Robot learning, reinforcement learning, manipulation, cable-driven robots.
+\end{IEEEkeywords}
+\input{sections/01_introduction}
+\input{sections/02_related_work}
+\input{sections/03_problem_formulation}
+\input{sections/04_method}
+\input{sections/04b_mathematical_analysis}
+\input{sections/05_experimental_setup}
+\input{sections/06_results}
+\input{sections/07_discussion}
+\input{sections/08_conclusion}
+\bibliographystyle{IEEEtran}
+\bibliography{references}
+\end{document}

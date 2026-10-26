@@ -1,0 +1,4 @@
+\section{Discussion and Limitations}\label{sec:discussion}
+The pipeline assigns a distinct role to each step: dense feedback guides discovery, binary rewards target completion, balanced imitation consolidates skills, and milestone credit supports composition. The retention results show why consolidation must include earlier instructions. They also show that recovery is partial.
+
+The complete schedule is evaluated on one CDPR training lineage with a retained SmolVLA expert. LIBERO evaluates reward construction with a trained action interface. Neither study isolates every schedule component. Controlled dense-to-binary, SIL, and composition ablations, independent training seeds, and a locked test set are still needed. Manual rewards, inherited training, and historical teacher/scripted data remain part of the method's scope. WX200 and physical deployment results remain pending.

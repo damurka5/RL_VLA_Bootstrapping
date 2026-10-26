@@ -1,0 +1,9 @@
+\section{Why Intermediate Feedback Helps}\label{sec:theory}
+For $G$ independent candidates from one scene, each with binary success probability $p$, the probability of a mixed-outcome group is
+\begin{equation}
+P_{\rm mixed}=1-p^G-(1-p)^G.
+\label{eq:mixed}
+\end{equation}
+At $G=8$, it is 21.6\% for $p=0.03$ and 94.2\% for $p=0.30$. Milestones can therefore provide contrast before full success becomes common. Dense progress can distinguish candidates within one milestone level. Neither guarantees useful learning if the feedback is constant or the collector rejects the group.
+
+With separate Bernoulli gates and raw on-policy ascent, suppressing negative completion credit on achieved gates makes each gate's update nonnegative. This finite-model property does not extend directly to a shared neural controller, PPO clipping, or optimizer momentum. We use it to explain the credit rule, without claiming monotonic improvement~\cite{trpo}.

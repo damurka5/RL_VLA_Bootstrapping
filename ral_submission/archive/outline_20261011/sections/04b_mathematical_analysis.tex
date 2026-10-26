@@ -1,0 +1,36 @@
+\section{Mathematical Analysis}\label{sec:theory}
+\subsection{Correct Likelihood for the Executed Process}
+\begin{outline}
+\item Define $J(\theta)=\mathbb E[Y]$ for a fixed stochastic policy, scene distribution and strict outcome. Include controller memory and milestone latches in the augmented history. Distinguish this training objective from deterministic-mean deployment.
+\item \textbf{Proposition A (latent score).} Under fixed dynamics, frozen prior, exogenous offsets and differentiation regularity, factor the augmented trajectory law to derive
+\begin{equation}
+\nabla J=\mathbb E\!\left[Y\sum_t\nabla\log\pi_\theta(u_t\mid h_t,p_t,b_t)\right].
+\end{equation}
+\item Proof sketch: only policy factors depend on parameters at a fixed history; offset densities cancel and clipping is a deterministic execution map. Include covariance scores if exploration variance is learned. Relate to bounded-action policy-gradient literature~\cite{capg}.
+\item Scope: per-slot PPO ratios, stage filtering, and invalid-episode exclusion do not inherit unbiased full-trajectory gradients merely because their log-density is correct.
+\end{outline}
+\subsection{Signal Availability and Protected Stage Credit}
+\begin{outline}
+\item \textbf{Lemma B (binary group contrast).} For $G$ independent candidates of one scene with milestone probability $p$,
+\begin{equation}
+P_{\rm mixed}=1-p^G-(1-p)^G.
+\end{equation}
+\item Proof sketch: subtract all-success and all-failure groups. At $G=8$, probabilities $p=0.03$ and $0.30$ yield approximately 21.6\% and 94.2\% mixed groups. This predicts usable signal, not guaranteed gradient improvement; saturated milestones also lose contrast.
+\item Explain the binary-group benchmark $\mathbb E[\widehat g\mid c]=c_G(p_c)\nabla p_c$ with $c_G>0$ for full on-policy trajectory scores. Attribute related normalization analysis~\cite{mroueh2026,bay2026}; stage selection and shared parameters restrict its use here.
+\item \textbf{Proposition C (separable stage model).} In a three-gate model with separate logits $q_k=\operatorname{sigmoid}(\theta_k)$, $J=q_1q_2q_3$. With achieved-stage negative-bonus scale $\kappa=0$, each reached gate's credit has the same sign as its score $X_k-q_k$.
+\item Proof sketch: achieved gates receive nonnegative credit, failed gates receive nonpositive credit. Nonnegative stage/candidate weights preserve $d_k\ge0$, so raw ascent gives $J(\theta+\eta d)\ge J(\theta)$ for $\eta\ge0$. Require on-policy scores and omit regularization/momentum.
+\item Interpret this as an exact benchmark explanation of the protection rule. Multiple actions per stage and shared neural parameters remove the sign guarantee; test those effects instead of claiming the theorem covers the robot unchanged.
+\end{outline}
+\subsection{Conditional Improvement for the Neural Controller}
+\begin{outline}
+\item \textbf{Proposition D (actual-update condition).} If expected success has an $L$-Lipschitz gradient on the update segment,
+\begin{equation}
+J(\theta+\Delta)-J(\theta)\ge
+\nabla J^\top\Delta-\tfrac{L}{2}\|\Delta\|^2.
+\end{equation}
+\item Proof sketch: integrate the gradient along the segment. Positive directional alignment and sufficiently small displacement imply improvement. Apply to the actual optimizer displacement; PPO clipping alone does not prove the premise~\cite{trpo}.
+\item For $d=c\nabla J+e$, $c>0$, $\|e\|\le\rho\|\nabla J\|$, $\rho<c$, a sufficient range is $0<\eta<2(c-\rho)/[L(c+\rho)^2]$. The current evidence does not bound $\rho$ or $L$.
+\item Measure $\nabla J^\top d$ using independent full-trajectory terminal-reward score estimates or paired finite differences. Report uncertainty, update scale, stage interference, and deployment performance; keep this audit independent of the batch choosing $d$.
+\item Factor $J=p_{\rm approach}p_{\rm pickup\mid approach}p_{\rm strict\mid pickup}$ without assuming independence. Use this to explain why later-stage progress can be offset by prefix loss.
+\item Full proofs, assumptions, counterexamples, and code correspondence are in the internal mathematical note. The main paper will retain only approved, page-budgeted results; no unproved convergence or physical-transfer guarantee.
+\end{outline}

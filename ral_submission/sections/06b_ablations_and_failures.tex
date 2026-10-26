@@ -1,0 +1,10 @@
+\subsection{Forgetting and Recovery with Balanced Self-Imitation}
+Figure~\ref{fig:retention} reports skill-level forgetting and recovery. In the forgetting measurements, reaching falls from a mean of 64.1\% to 5.3\% after placement RL, then to 1.8\% after placement-only imitation. In a separate consolidation measurement, balanced self-imitation increases reaching from 8.0\% to 31.1\%. Plate and bowl placement change from 50.0\% to 52.3\% and from 23.05\% to 27.65\%. The panels use the reported family protocols and are not joined into a continuous learning curve.
+
+\begin{figure*}[!t]
+\centering\includegraphics[width=\textwidth]{figures/skill_retention.pdf}
+\caption{Measured skill forgetting and recovery. Left: reaching after placement RL and placement-only imitation (three reported rounds per condition). Right: before and after balanced three-family self-imitation (three reaching rounds, two placement rounds). Small marks show reported rounds; bars show their means. The two panels describe separate measurements. Rounded source rates are used; raw evaluation denominators and paired episode records are unavailable.}
+\label{fig:retention}
+\end{figure*}
+
+The bank includes reaching experience from a retained policy and the placement policy's own successes. This supports consolidation from stored successful experience. It does not establish a causal effect of SIL on final full-task success: later full-task imitation attempts also failed to improve performance. Matched schedule and retention ablations remain necessary.

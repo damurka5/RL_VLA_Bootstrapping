@@ -1,0 +1,13 @@
+\section{Problem Formulation}\label{sec:problem}
+We consider a pretrained VLA model adapted to a target robot with action space $\mathcal A_e$, where $e$ identifies the embodiment. A policy maps camera observations, proprioception, and a language instruction to robot commands. Its action module must match the target controller; transferring a visual-language representation does not by itself provide a suitable action mapping.
+
+Let $o_t=(I_t^{1:V},q_t)$ contain the available camera images and proprioception, $\ell$ denote the language instruction, and $h_t$ collect the observations and controller history available at decision time. The policy generates an action chunk $A_t=(a_t,\ldots,a_{t+H-1})$ conditioned on $(h_t,\ell)$; the controller executes a prefix before replanning. The scene configuration $c$ specifies the episode initialization, including object and target poses. It indexes resets and evaluation groups, rather than an additional textual input to the policy. With binary full-task outcome $Y(\tau)$, the evaluation objective is
+\begin{equation}
+J(\theta)=\mathbb{E}_{(c,\ell)\sim\rho_{\rm full}}
+\mathbb{E}_{\tau\sim P_\theta(\cdot\mid c,\ell)}[Y(\tau)].
+\end{equation}
+We decompose the task into $K$ ordered skills with binary success predicates $Y_k$ and training reset distributions $\rho_k$. A skill such as approaching an object has its own instruction and success criterion; it is not equivalent to completing pick-and-place. In particular, placement training from a held-object start does not measure complete manipulation from an empty gripper. The composed task uses a single final instruction and its own reset distribution $\rho_{\rm full}$.
+
+Dense feedback is used to bootstrap individual skills. Binary predicates then define skill completion, successful experience for imitation, and milestones during full-task RL. Evaluation always measures the appropriate declared success event, independently of the training reward. We also distinguish the exploration policy from the deployment policy.
+
+For the CDPR evaluation, the action $a_t\in[-1,1]^5$ controls Cartesian translation, yaw, and the gripper. Strict full-task success requires grasp, held lift, intentional release, and native placement, without latched carry-slip or wrong-placement events. LIBERO uses its environment goal verifier~\cite{libero}. These task definitions and scene distributions are different, so their success rates are reported separately.

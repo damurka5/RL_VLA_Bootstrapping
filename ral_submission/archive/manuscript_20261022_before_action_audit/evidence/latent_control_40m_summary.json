@@ -1,0 +1,51 @@
+{
+  "source_file": "events.out.tfevents.1791835584.VLAPU.602323.0",
+  "source_sha256": "374f0a69b9f07c5ec6f9625ae03115035176bc187a9d89ef2b4c485257d5c545",
+  "review_date": "2026-10-19",
+  "run_path_supplied_by_user": "runs/latent_control_to40m_20261012_230538",
+  "start_step": 20068312,
+  "final_step": 40056193,
+  "new_selected_actions": 19987881,
+  "new_updates": 299,
+  "cumulative_updates": 560,
+  "new_episodes": 609792,
+  "updates_with_1536_episodes": [
+    22933704,
+    32935163,
+    34833080,
+    35934346,
+    37405649
+  ],
+  "new_optimizer_steps": 141277,
+  "elapsed_hours": 89.13811631944445,
+  "validation_rows": 81,
+  "final_strict_count": 627,
+  "peak_step": 39804332,
+  "peak_strict_count": 664,
+  "non_finite_live_episodes": 9881,
+  "non_finite_count_derived_rate": 0.01620388591519731,
+  "non_finite_reported_rate_mean": 0.016190034489966556,
+  "rank_mean_rate_caveat": "Rate is a mean across ranks; five smaller 1536-episode updates should not be converted to counts using a fixed 2048 denominator.",
+  "first20_nonfinite_mean": 0.015234375,
+  "last20_nonfinite_mean": 0.016650390625,
+  "first20_validation_strict_mean": 0.550537109375,
+  "last20_validation_strict_mean": 0.619091796875,
+  "finite_full_coverage_tags_checked": [
+    "loss_policy_mean",
+    "entropy_mean",
+    "approx_kl_mean",
+    "clip_fraction_mean",
+    "gradient_norm_mean",
+    "log_std_mean",
+    "optimizer_lr_mean",
+    "policy/lora_max_abs_change"
+  ],
+  "force_scalar_rows": 228,
+  "force_missing_rows": 71,
+  "limitations": [
+    "TensorBoard skips non-finite scalars; missing pad-force raw values are unavailable.",
+    "Exact checkpoint steps use Event.step; float32 scalar counters round odd integers.",
+    "No launch provenance, model bytes or checkpoint SHA were supplied; run path is user-provided.",
+    "These are repeated readings on the training validation panel, not a new matched standalone comparison."
+  ]
+}

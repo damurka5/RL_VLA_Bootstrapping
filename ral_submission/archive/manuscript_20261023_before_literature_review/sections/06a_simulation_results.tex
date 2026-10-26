@@ -1,0 +1,13 @@
+\subsection{Complete-Task Performance After Embodiment Adaptation}
+The selected SmolVLA-based controller performs the full manipulation instruction on the target embodiment. Its 40M endpoint completes 1,258 of 2,048 attempts (61.43\%), compared with 1,056 (51.56\%) at 20M under the same development protocol (Table~\ref{tab:cdpr}). The gain is 202 successes, or 9.86 percentage points, with a scene-paired 95\% interval of [7.37, 12.30] and Holm-adjusted $p=0.00010$. Counts are compared before rounding. This documents improvement with continued training, rather than an isolated causal effect of the likelihood change.
+\input{tables/cdpr_results}
+
+The panel-selected 39.8M checkpoint achieves 1,256/2,048 (61.33\%). Its direct difference from final40m is $-0.10$ points, with a paired interval of [$-2.05$, 1.81] and $p=0.9598$. Thus its higher in-run peak does not provide a demonstrated advantage on the separate development scenes; this is not an equivalence test. Figure~\ref{fig:training} shows the unsmoothed in-run trajectory separately from the matched endpoint comparison.
+
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{figures/cdpr_training.pdf}
+\caption{The 20M--40M continuation on the repeated in-run validation panel (1,024 episodes per reading). These correlated readings describe one training lineage; they are distinct from Table~\ref{tab:cdpr}'s 512-scene matched comparison. The horizontal axis counts selected actions since conversion, excluding inherited training.}
+\label{fig:training}
+\end{figure}
+
+The retained earlier 2M pilot provides additional development context: the bounded-residual continuation achieves 843/2,048 (41.16\%) versus 756/2,048 (36.91\%) for its source, a paired gain of 4.25 points [2.10, 6.40]. These earlier repeats are not combined with the 20M/40M comparison to infer a single paired learning curve.

@@ -1,0 +1,740 @@
+
+--- PAGE 1 ---
+1
+RLRC: Reinforcement Learning-based Recovery for Compressed
+Vision-Language-Action Models
+Yuxuan Chen1, Yixin Han 1, Yize Huang 1, and Xiao Li 1
+Abstract—Vision-Language-Action models (VLA) have demon-
+strated remarkable capabilities and strong potential in complex
+robotic manipulation. However, their large parameter sizes and
+high inference latency hinder real-world deployment, especially
+on resource-constrained platforms. To address this, we conduct
+a systematic empirical study of model compression for VLAs.
+Building on these insights, we presentRLRC, a three-stage com-
+pression and recovery pipeline consisting of structured pruning,
+performance recovery via SFT and RL, and subsequent quan-
+tization. The RL stage incorporates a critic warm-up strategy
+and BC loss regularization to stabilize training and preserve
+policy behavior. RLRC achieves up to an 8×memory reduction
+and 2.3×inference speedup while maintaining the original
+task success rate. Extensive experiments across multiple VLA
+backbones show that RLRC consistently outperforms existing
+compression baselines, highlighting its effectiveness for on-device
+deployment. Project website: rlrc-vla.github.io
+I. INTRODUCTION
+R
+ECENT advances in the field of robot learning have
+demonstrated new breakthroughs in both the accuracy
+and generalization of robotic policies for task execution. Since
+the introduction of RT-2 [1], Vision-Language-Action (VLA)
+models have attracted increasing attention. These models, built
+upon large foundation models, exhibit strong generalization
+capabilities. VLA models leverage the general knowledge em-
+bedded in pretrained Vision-Language Models (VLMs), while
+possessing the capability to comprehend language instructions,
+perceive the visual environment, and generate appropriate
+actions [2][3][4].
+While VLA models hold promise for enabling general-
+purpose robotic capabilities, they are often derived from
+VLMs, which significantly limits their practicality. These
+models typically possess an enormous number of parameters,
+resulting in high computational and memory demands. Conse-
+quently, they require powerful hardware to operate efficiently,
+posing challenges for deployment on resource-constrained
+robotic platforms. Moreover, the inference speed of such
+models is often inadequate for real-time applications, further
+restricting their usability in dynamic and time-sensitive robotic
+tasks.
+To address the limitations of current vision-language-action
+(VLA) models, prior research has explored several strategies
+aimed at improving efficiency without significantly compro-
+mising performance. One prominent direction involves replac-
+ing the original backbone with more lightweight and compu-
+tationally efficient architectures, thereby reducing both model
+1Yuxuan Chen, Yixin Han, Yize Huang, and Xiao Li are with the State Key
+Laboratory of Mechanical System and Vibration, and also with the Shanghai
+Key Laboratory of Intelligent Robotics, School of Mechanical Engineering,
+Shanghai Jiao Tong University, Shanghai 200240, China{chen_yuxuan;
+hanyixin; huangyize; sjtu_lixiao}@sjtu.edu.cn
+Fig. 1 :(a) RLRC achieves significant speedup for OpenVLA on
+both commonly used GPUs and Jetson edge computing platforms. (b)
+RLRC demonstrates notable effectiveness in preserving performance
+on ManiSkill tasks and reducing memory usage.
+size and inference latency [5] [6]. Traditional model com-
+pression techniques, such as quantization and pruning, have
+been employed to shrink model size and reduce computational
+overhead [7]. Another effective approach involves refining
+visual token processing by enhancing token selection methods
+and implementing adaptive pruning, which helps eliminate
+unnecessary visual details without compromising meaningful
+content [8] [9]. However, these methods still fall short in
+terms of acceleration and memory efficiency for deployment
+under resource-constrained settings, and they fail to adequately
+account for the inherent suitability of VLA for robotic control.
+In this paper, we revisit this problem from a deliberately
+narrower perspective, conducting a systematic analysis of
+post-training compression and recovery for LLM-centric VLA
+backbones. Our study covers three representative backbones,
+namely OpenVLA [2], OpenVLA-OFT [3], and GR00T N1.6
+[10]. Our goal is practical: given an already capable but heavy
+VLA, derive a lighter variant through a principled pipeline that
+preserves most of its manipulation ability and runs faster at
+deployment time.
+We first conduct a systematic analysis of pruning and
+quantization on OpenVLA. These experiments motivate a
+staged pipeline, RLRC, which integrates structured pruning for
+hardware-friendly compression, supervised fine-tuning (SFT)
+for initial recovery, PPO-based RL for further recovery, and
+optional 4-bit quantization for extreme memory reduction. It
+turns out that SFT repairs a large fraction of the post-pruning
+damage, but does not fully recover the compressed policy
+under the aggressive pruning regimes that deliver the largest
+deployment gains. In these regimes, the subsequent RL stage
+is not merely an extra refinement, but an empirically important
+arXiv:2506.17639v2  [cs.RO]  16 Jun 2026
+
+--- PAGE 2 ---
+2
+part of full recovery. We further show that lower precision does
+not automatically imply lower latency due to dequantization
+overhead. As shown in Fig. 1 , this staged approach leverages
+the strengths of each technique and offers a practical pathway
+for deploying VLA models on resource-constrained robotic
+platforms. Experimental results demonstrate that this pipeline
+achieves effective compression of VLA models, with minimal
+performance degradation, and in some cases, even surpassing
+the original model. The main findings and contributions of this
+paper are:
+•a staged recovery pipeline in which SFT restores the
+coarse behavior and PPO completes the performance
+recovery, together with critic warm-up and BC regular-
+ization to stabilize the SFT-to-RL transition;
+•a systematic empirical analysis of quantization, structured
+pruning, and post-pruning recovery for LLM-centric VLA
+backbones, validated across OpenVLA, OpenVLA-OFT,
+and GR00T N1.6;
+•deployment-oriented analysis covering latency–memory
+trade-offs, cross-backbone generalizability, and real-robot
+validation.
+II. RELATED WORK
+A. Model Compression for LLMs
+LLMs have attracted widespread attention, further ampli-
+fying the demand for reducing parameter scale and lowering
+inference latency. To compress LLMs, there are several classic
+approaches: Quantization reduces memory and compute by
+lowering weight and activation precision, often using fewer
+bits[11] [12]; pruning reduces the size and computational cost
+of a neural network by removing less important weights or
+neurons while attempting to preserve the model’s performance
+[13] [14]. These model compression techniques have achieved
+remarkable success in the domain of LLMs, and we try to ex-
+plore their application to VLA, aiming to efficiently compress
+VLA models while maximizing performance retention.
+B. Acceleration for VLAs
+Recent efforts have explored inference acceleration for
+VLAs. These methods differ in their reliance on additional
+training, as some operate in a training-free manner [8], [15],
+[16], [9] while others require fine-tuning to maintain perfor-
+mance [16]. A common strategy among them is to reduce
+computational overhead by pruning visual tokens. Although
+such designs improve efficiency in practice, they primarily
+target runtime optimization and do not fundamentally reduce
+the number of model parameters.
+C. VLA Fine-Tuning Using RL
+VLAs trained via SFT are limited by offline data, strug-
+gling with generalization due to compounding errors. To
+overcome this, Reinforcement Learning fine-tuning (RLFT)
+enables models to learn from direct environmental interaction.
+However, due to the inherent instability of reinforcement
+learning, some approaches, such as iRe-VLA [17], adopt
+alternating stages of RL and supervised learning to enhance
+training stability. Other works, like [18], introduce scalable
+frameworks to better handle sparse or delayed feedback. Liu
+et al. [19] show that RL can significantly improve both se-
+mantic understanding and execution generalization compared
+to supervised fine-tuning alone.
+III. EMPIRICALSTUDY: MODELCOMPRESSIONAPPLIED
+TOVLA
+We begin with a practical question: which compression tools
+remain effective after adapting a large VLA to a downstream
+robotic task? To answer this, we evaluate OpenVLA [2] on
+LIBERO [21], applying quantization and pruning exclusively
+to the LLM component. We use BitsAndBytes for quan-
+tization, and consider both unstructured pruning, including
+magnitude-based pruning and Wanda [20], and structured
+pruning, including LLM-Pruner [13] and FLAP [14]. The
+results, summarized in Table I and Fig. 2 , provide key insights
+that motivate RLRC.
+Quantization has minimal impact on performance, while
+significantly reducing memory requirements and slightly
+improving inference speed.As shown in Table I, both 8-bit
+and 4-bit quantization introduce minimal degradation in the
+task execution performance of VLAs, while significantly re-
+ducing memory consumption. However, it is important to em-
+phasize that quantization does not always yield improvements
+in inference speed. In particular, the employed LLM.int8() [22]
+method for 8-bit quantization can incur additional computa-
+tional overhead, leading to increased inference latency despite
+its memory efficiency.
+Unstructured pruning has a smaller performance im-
+pact, whereas structured pruning offers greater acceler-
+ation benefits.Table I presents results at a 20% sparsity
+ratio. Unstructured pruning has little effect on performance
+but provides negligible memory and inference speed gains
+unless combined with additional acceleration mechanisms,
+as it removes individual weights based on importance. In
+contrast, structured pruning removes entire components such
+as attention heads, neurons, or convolutional filters, producing
+regular sparsity patterns aligned with modern hardware accel-
+erators. However, this incurs greater functional disruption by
+eliminating units critical to representational capacity. Conse-
+quently, structured pruning causes more severe performance
+degradation than unstructured pruning, as shown in Fig. 2 ,
+motivating the RLRC pipeline.
+The speedup gains from quantization diminish as the
+sparsity ratio increases.As shown in Fig. 3 , when the
+sparsity ratio is relatively low, quantization can significantly
+accelerate the inference speed of VLA. However, as the spar-
+sity ratio increases and the model size becomes smaller, the
+benefits introduced by quantization are offset by the overhead
+of dequantization, potentially leading to slower inference. Con-
+sequently, for models with high sparsity ratios, the throughput
+of the full-precision version surpasses that of the quantized
+counterpart.
+IV. RLRC
+Our objective is to achieve substantial reductions in model
+size and inference cost while preserving the task execution
+
+--- PAGE 3 ---
+3
+TABLE I:Impact of quantization and pruning on VLA performance.
+Model spatial spatial(SFT) long long(SFT) Parameters (B) Memory (GB) Inference Time (ms) Throughput (samples/s)
+OpenVLA84.7–53.7– 7.54 14.858 169 5.9
+OpenVLA + 8bit 84.6 – 52.0 – 7.54 7.949 282.7 3.5
+OpenVLA + 4bit 81.0 – 49.8 – 7.544.971 134.1 7.5
+OpenVLA + Magnitude 83.4 80.4 51.850.67.54 14.826 162.5 6.2
+OpenVLA + Wanda [20] 84.084.649.850.67.54 14.824 167.7 6.0
+OpenVLA + LLM-Pruner [13] 23.4 84.0 1.0 46.06.2312.433 139 7.2
+OpenVLA + FLAP [14] 0.2 82.6 0.0 50.2 6.33 12.510 135.8 7.4
+Fig. 2 :The impact of LLM-Pruner and FLAP on OpenVLA performance under different sparsity ratios.
+Fig. 3 :The impact of sparsity ratio and 4-bit quantization on
+OpenVLA’s throughput.
+capabilities critical to VLA performance. To this end, we
+develop a three-stage pipeline, as shown in Fig. 4 : (1) we
+applystructured pruningto the VLA model, specifically
+targeting the LLM component, to remove redundant structures
+in a hardware-friendly manner (IV-A); (2) we employ a
+performance recoverystage that combines SFT with RL to
+restore the model’s effectiveness on downstream tasks (IV-B);
+(3) we introduceoptional quantizationto further reduce the
+memory footprint, enabling efficient deployment on resource-
+constrained robotic platforms (IV-C).
+A. Structured Pruning of VLAs
+In VLAs, the majority of parameters are concentrated
+within the LLM component, making it a natural target for
+compression to reduce overall computational complexity. We
+specifically adopt structured pruning techniques, as opposed to
+unstructured pruning, due to their inherent hardware efficiency
+advantages, thereby enabling more substantial and practical
+speedups during deployment.
+The first step in applying structured pruning to a VLA
+typically involves constructing the structural dependency graph
+within the LLM. Such coordinated pruning avoids introducing
+inconsistencies or functional degradation in the model.
+We next estimate the importance of each parameter group
+based on its influence on the training objective. Since the
+pruned model is expected to undergo a subsequent recovery
+phase, the criterion is designed to favor groups whose removal
+induces minimal disruption to the training dynamics. Specifi-
+cally, we incorporate the robotic expert datasets used for VLA
+supervised training and approximate this change in training
+loss using a first-order Taylor expansion. Following [13], the
+importance score is formally defined as follows:
+Ig =|∆L g|=|L(W g = 0)− L(W g)| ≈
+X
+W∈g
+
+∂L
+∂W W
+ (1)
+whereI g denotes the importance of groupg,∆L g represents
+the change in the training loss evaluated on the expert dataset
+when the parametersW g belonging to groupgare entirely
+removed, andLindicates the objective function.
+After the definition of group importance, the pruning of the
+unimportant groups is executed. Formally, for a given group
+g, we calculate its importance scoreI(g)and rank them based
+on the importance score. Then, we prune those with the lowest
+scores, under the assumption that they contribute least to task
+performance.
+Gpruned = Top-kmin
+g∈G {I(g)},G retained =G \ G pruned.(2)
+In all main experiments, we use a 90% pruning ratio and
+keep the outermost decoder layers unchanged to preserve inter-
+face stability. Fig. 5 illustrates the architectural transformation
+of the VLA before and after structured pruning, specifically
+focusing on the attention and MLP layers within the LLM
+component.
+B. Performance Recovery Based on SFT and RL
+Pruning alone creates a large performance gap, so RLRC
+adds two recovery stages with different roles.SFTis the first
+recovery step. We fine-tune the pruned model on the same
+task data using LoRA adapters and the supervised objective.
+This stage adapts the reduced architecture to the downstream
+task distribution and restores a strong initial policy. However,
+
+--- PAGE 4 ---
+4
+Fig. 4 : Overview of the RLRC pipeline.RLRC consists of three stages: (1) structured pruning of VLA: structured pruning is employed
+with a high sparsity ratio to aggressively compress the size of the VLA; (2) performance recovery: we successfully recover the performance
+of the pruned VLA to a level comparable to, or even surpassing, that of the dense VLA by applying a combination of SFT and RL; (3)
+4-bit quantization: we further apply 4-bit quantization to the pruned VLA, enabling deployment on resource-constrained devices at the cost
+of only a marginal performance degradation. The three colored curves below represent the changes in success rate, inference speed, and
+memory consumption throughout this process, respectively.
+Fig. 5 :The attention and MLP layers within VLA before and after
+pruning.
+we observe that SFT alone is insufficient to fully recover the
+performance of the pruned VLA, especially when it is further
+subjected to aggressive 4-bit quantization, which introduces
+additional degradation in accuracy. To address this, we turn
+to Reinforcement Learning as a complementary optimization
+strategy.
+RLis the second recovery step. We apply PPO [23] to the
+policy to recover the remaining performance gap, especially
+on harder out-of-distribution tasks. The PPO objective is:
+Lθ =E t
+h
+min
+
+rt(θ) ˆAt,clip(r t(θ),1−ϵ,1 +ϵ) ˆAt
+i
+(3)
+wherer t(θ) = πθ(at|st)
+πθold (at|st) is the probability ratio between
+the new and old policy, ˆAt is the estimated advantage function,
+ϵis a hyperparameter that controls the clipping range.
+For RL on VLA models, the pruned VLA serves as the
+actor, while a lightweight value head attached to the shared
+transformer backbone acts as the critic. For diffusion-based
+VLA models, noise is injected via Flow-SDE [24]. A sparse
+reward is used for all tasks: the agent incurs a constant time
+penalty at each step and receives a positive reward only upon
+task completion.
+During training, we consistently observe a sharp perfor-
+mance drop when transitioning from SFT to RL. In the
+Fig. 6 :(a)Early-phase training dynamics.Curves show mean±
+1 standard deviation of rollout advantages and KL divergence over 3
+runs. The shaded region marks unstable training steps; (b)Training
+curves in the RL stage, comparing configurations with critic warm-
+up and BC regularization versus without them. The shaded region
+shows the min–max range across three runs, and the solid line
+indicates the mean.
+early RL phase, performance almost always decreases before
+improving, as also reported in [25]. This slows training and
+introduces instability. As shown by the orange curve in Fig. 6
+(b), the effect is consistent across runs.
+We analyze this by inspecting advantage and KL curves
+(Fig. 6 (a)). Early training exhibits unstable critic estimates
+that propagate to policy updates, causing erratic dynamics.
+Advantage signals fluctuate heavily, reducing reliability, while
+KL divergence varies irregularly, indicating poor update con-
+trol. Comparing the SFT expert dataset with early RL rollouts
+(Fig. 7 ), expert trajectories are structured and consistent,
+whereas rollouts show higher variance and less coherence.
+This mismatch indicates that the SFT-initialized policy faces
+a shifted data distribution during RL, hindering learning.
+To address this, we modify training. First, to improve early
+value estimation, we introducecritic warm-up: freeze the
+VLA model and train only a randomly initialized value head,
+stabilizing advantage estimation and reducing policy noise.
+Second, to mitigate SFT–RL distribution mismatch, we add
+a BC loss on expert data as a regularizer, keeping the policy
+
+--- PAGE 5 ---
+5
+Fig. 7 : End-effector trajectory comparison: SFT vs. RL roll-
+outs. Top-left:3D Cartesian trajectories (X, Y , Z in meters); semi-
+transparent lines denote individual trajectories, solid lines denote
+means, and circles/diamonds mark start/end.Top-right:XY projec-
+tion with mean±1 std bands and 2σcovariance ellipses at 25%,
+50%, and 75% of trajectory length.Bottom-left:XZ projection.
+Bottom-right:YZ projection.
+close to expert behavior during RL. The overall loss is:
+Ltotal =L PPO +λ(t)· L BC (4)
+whereλ(t)linearly decays over training. This keeps the
+policy close to expert behavior early on while gradually
+shifting to RL optimization.
+These modifications significantly improve training. As
+shown in Fig. 6 (b), the early performance drop is largely
+reduced, enabling a smoother SFT-to-RL transition, more sta-
+ble optimization, and faster gains. Final mean performance is
+also higher, indicating improved efficiency and policy quality.
+C. Further Quantization of VLAs
+We further explore 4-bit quantization to achieve extreme
+memory compression. This additional step significantly re-
+duces the model’s memory footprint, enabling seamless de-
+ployment in resource-constrained environments. Naturally, ap-
+plying quantization to a VLA model pruned by 90% further
+reduces memory consumption but introduces noticeable im-
+pacts on other aspects of performance. Therefore, if the target
+deployment device has sufficient memory, quantization may
+not be necessary, so we call it optional quantization and regard
+the variants with quantization as RLRC-4bit.
+V. EXPERIMENTS
+In our experiments, we focus on the following questions:
+•Q1: Is RLRC competitive compared to other methods?
+•Q2: What is the training cost of RLRC, and how does
+it compare to training-free methods or inherently small
+policies?
+•Q3: What is the applicability of RLRC across different
+VLA models?
+•Q4: What is the impact of each component in RLRC on
+the overall performance?
+•Q5: How does RLRC perform in the real world?
+A. Setup
+Benchmark.We choose LIBERO[21] and ManiSkill3[26]
+as the benchmark simulation environments for evaluating the
+performance of VLAs. In ManiSkill3, we adopt the PutOn-
+PlateInScene25Main task suite introduced by Liu et al.[19].
+This benchmark is divided into two splits: an in-distribution
+(IND) set containing 16 tasks that are seen during training, and
+an out-of-distribution (OOD) set comprising 9 unseen tasks.
+Baselines.For baseline comparisons, we apply RLRC to
+three representative VLA models, including OpenVLA [2],
+OpenVLA-OFT [3], and GR00T N1.6 [10], and obtain their
+corresponding RLRC variants. This design demonstrates that
+RLRC is compatible with diverse architectural paradigms, in-
+cluding both autoregressive and diffusion-based formulations.
+In addition to these adapted models, we include several widely
+used VLA approaches as baselines, such asπ 0 [4],π 0-Fast
+[27], and SpatialVLA [28]. To further examine performance
+in the low-resource regime, we incorporate a set of native
+lightweight models, including SmolVLA [5], UniACT [29],
+and VLA-OS [30]. We also compare with recent acceleration
+methods for VLAs, including VLA-Cache [8], EfficientVLA
+[15], LightVLA [16], and SP-VLA [31]. Among these ap-
+proaches, VLA-Cache, EfficientVLA, and SP-VLA operate
+without additional training, while LightVLA requires further
+optimization.
+Metrics.To evaluate the model’s capability in solving
+robotic tasks, we choose tasksuccess rateas the primary
+metric. In addition to the hardware performance of VLAs, we
+report 3 key metrics:memory consumption,inference time per
+step, andaction throughput.
+Implementation Details.We implement three vari-
+ants, namely OpenVLA-RLRC, OpenVLA-OFT-RLRC, and
+GR00T-RLRC. RL training is performed within the RLinf
+[18] framework. The 4-bit quantization is implemented based
+on the bitsandbytes library using the nf4 format [32]. For
+LIBERO, success rates are computed over 500 runs per suite,
+and for ManiSkill, IND and OOD tasks are evaluated over
+128 runs each. Hardware performance is averaged over 5
+independent trials. Unless noted, all results are measured on
+an NVIDIA RTX 5880 Ada GPU.
+B. Main Results
+RLRC demonstrates competitive performance compared
+to other methods (Q1).Table II presents the overall com-
+parison across LIBERO, ManiSkill, and hardware metrics.
+RLRC consistently improves efficiency along multiple di-
+mensions while preserving strong task performance. First,
+RLRC variants consistently match the performance of baseline
+VLAs with substantially larger parameter counts. For instance,
+OpenVLA-OFT-RLRC attains an average LIBERO score of
+94.8, closely approaching OpenVLA-OFT’s 97.4, while reduc-
+ing model size from 7B to 2B parameters and latency from
+149.23 ms to 65.59 ms.
+
+--- PAGE 6 ---
+6
+Fig. 8 : Rollout examples from real-world experiments.Video frames are sampled at equal time intervals, with OpenVLA shown on the
+top and OpenVLA-RLRC on the bottom.
+TABLE II:Comparison of different methods on LIBERO, ManiSkill, and hardware performance.
+Methods LIBERO ManiSkill Hardware
+Spatial Object Goal Long Avg IND OOD Avg Model Size Latency (ms)
+Representative VLA
+OpenVLA [2] 84.7 88.4 79.2 53.7 76.5 89.06 57.81 73.44 7B 169
+OpenVLA-OFT [3] 97.6 98.4 97.9 94.5 97.1 90.63 64.84 77.74 7B 149.23
+GR00T N1.6 [10] 98.0 97.8 98.4 95.4 97.4 85.16 53.91 69.54 3B 75
+π0 [4] 96.8 98.8 95.8 85.2 94.1 - - - 3B -
+π0-Fast [27] 96.4 96.8 88.6 60.2 85.5 - - - 3B -
+SpatialVLA [28] 88.2 89.9 78.6 55.5 78.1 - - - 7B -
+Native Lightweight VLA
+SmolVLA [5] 93.0 94.0 91.0 77.0 88.8 - - - 2.25B -
+UniACT [29] 77.0 87.0 77.0 70.0 77.8 - - - 0.5B -
+VLA-OS [30] 87.0 96.5 92.7 66.0 85.6 - - - 0.5B -
+VLA Acceleration Methods
+VLA-Cache [8] (OpenVLA) 83.8 85.8 76.4 52.8 74.7 - - - 7B 125.18
+EfficientVLA [15] (OpenVLA-OFT) 96.5 91.1 96.0 72.1 88.9 - - - 7B 99.48
+SP-VLA [31] (OpenVLA) 75.4 85.6 84.4 54.2 74.9 - - - 7B 124.26
+LightVLA [16] (OpenVLA-OFT) 98.4 98.4 98.2 94.6 97.4 - - - 7B 91.56
+Ours
+OpenVLA-RLRC 85.2 88.0 79.6 52.8 76.4 92.19 62.50 77.35 2B 74.04
+OpenVLA-OFT-RLRC 97.8 99.6 98.2 94.8 97.6 93.75 68.75 81.25 2B 65.59
+GR00T-RLRC 98.2 98.0 97.8 93.4 96.9 92.19 66.41 79.3 2B 55.4
+Fig. 9 :(a) Real-world setup with Flexiv Rizon 4. (b) Camera
+observation image in the real world. (c) Camera observation image
+in the simulator.
+At the same time, RLRC achieves notable speedup in in-
+ference. The reduced model size leads to lower computational
+overhead, resulting in faster execution on hardware platforms.
+Across different base models, RLRC demonstrates consis-
+tent latency reduction while maintaining stable performance,
+achieving up to 2.3× inference speedup. In terms of parameter
+compression, RLRC achieves up to a3.5×reduction in model
+size compared to the original VLA models, which translates
+into a comparable decrease in memory usage and contributes
+to substantial acceleration. Compared with existing acceler-
+ation and lightweight VLA methods, RLRC also provides
+a more balanced trade-off among inference speed, memory
+footprint, and task performance.
+Training RLRC incurs extra cost, but its benefits exceed
+those of training-free acceleration methods and inherently
+small VLAs (Q2).RLRC cost is mainly driven by additional
+SFT and RL for task-specific refinement on pruned VLA
+models. During training, SFT converges quickly, requiring
+far fewer steps than training a dense VLA. The RL stage
+requires about 160 PPO epochs to converge, each with 128
+effective episodes. Although higher than SFT, this cost remains
+acceptable compared to [18]. Moreover, aggressive pruning
+speeds up training compared to a dense VLA.
+RLRC cost exceeds both training-free methods and in-
+herently small policies. For example, Training RLRC on
+OpenVLA-OFT requires approximately 320 GPU hours,
+whereas fine-tuning a 2B SmolVLA requires 80 GPU hours,
+
+--- PAGE 7 ---
+7
+indicating that RLRC incurs roughly 4 times the computational
+cost. Despite this, RLRC yields decent gains: it maintains
+competitive success rates across benchmarks and consistently
+outperforms similarly sized small models and training-free
+methods by preserving strong priors from large models, en-
+abling high-level task understanding while benefiting from
+parameter reduction. Compared to other methods requiring
+extra training, such as [16], RLRC shows clear advantages,
+achieving higher task success and better generalization with a
+smaller memory footprint and faster inference.
+RLRC generalizes across diverse architectures, includ-
+ing autoregressive and diffusion-based VLAs, but has
+structural limitations (Q3).Table II reports results for
+OpenVLA-RLRC, OpenVLA-OFT-RLRC, and GR00T-RLRC,
+showing applicability to different VLA designs. This arises be-
+cause RLRC operates only on the LLM, without constraining
+other modules. However, effectiveness varies with parameter
+distribution. For example, GR00T-RLRC achieves lower com-
+pression and limited acceleration, as GR00T N1.6 has fewer
+parameters and a smaller LLM fraction. Thus, RLRC is more
+advantageous for large-scale VLA models where the LLM
+dominates, as pruning it yields greater efficiency gains.
+Despite this, RLRC has structural limitations. We observed
+suboptimal performance on models such asπ 0 [4] andπ 0.5
+[33]. In these models, the LLM shares transformer layers
+with the action expert, with tightly coupled attention and
+KV cache interactions. Aggressive LLM pruning disrupts the
+action expert’s inference, causing severe degradation that is
+unrecoverable by SFT. Thus, RLRC suits architectures with
+clear separation between language and action components.
+C. Ablation Study
+Fig. 10 :Training curves comparing RL after SFT with directly
+applying RL to the pruned VLA.
+Each RLRC component plays a complementary role:
+SFT provides strong initialization for effective RL opti-
+mization, while critic warm-up and BC loss regularization
+stabilize training and improve performance (Q4).We
+analyze each component via ablations, focusing on SFT, RL,
+critic warm-up, and BC loss regularization.
+Figure 10 compares training dynamics of SFT+RL with
+directly applying RL to the pruned model. SFT+RL yields
+more efficient training, which is because SFT recovers much of
+the original VLA performance and provides a well-initialized
+policy for subsequent optimization. In contrast, directly apply-
+ing RL to the pruned VLA without SFT yields no meaningful
+gains.
+Table III reports success rates under different configurations,
+further illustrating each component’s impact. We can see that
+TABLE III:Ablation study on LIBERO.
+Configuration Spatial Long Memory (GB) Latency (ms)
+OpenVLA-OFT 97.6 94.5 14.98 149.23
+→+ Structured Pruning 0.0 0.0 4.0265.59
+→+ SFT 92.0 86.8 4.0265.59
+→+ RL97.8 94.84.0265.59
+,→RL w/o Critic
+Warm-up & BC Reg.
+97.6 94.2 4.02 65.59
+→+ 4-bit Quant 95.2 91.41.8686.58
+TABLE IV:Results of real-world experiments. The success rate is
+obtained from 30 repeated trials.
+Model Pick Stack Lift Memory Latency
+Place Cubes Peg (GB) (ms)
+OpenVLA [2] 36.7 20.0 0.0 14.858 169.0
+OpenVLA-RLRC33.3 20.0 0.03.85674.07
+OpenVLA-OFT [3]90.080.0 53.3 14.977 149.23
+OpenVLA-OFT-RLRC86.786.7 56.74.021 65.59
+GR00T N1.6 [10] 83.3 66.7 40.0 6.765 75.0
+GR00T-RLRC83.3 56.7 43.3 4.26955.4
+in LIBERO-Long, structured pruning reduces performance
+from 94.5% to 0.0%, and SFT recovers it to 86.8%, still
+significantly below the original model. In contrast, adding RL
+further improves performance to 94.8%. This gap becomes
+more pronounced in tasks requiring long-horizon reasoning
+and strong generalization. So SFT alone is insufficient, espe-
+cially for more complex and long-horizon tasks.
+Noteably, we observe increased inference latency after
+quantization, likely due to extra dequantization overhead at
+runtime. The impact depends on model scale. For large
+models, memory and bandwidth reduction often outweighs
+dequantization, yielding overall efficiency gains. In models
+already heavily compressed by RLRC, dequantization cost is
+more pronounced since baseline computation is lightweight,
+making latency increase more noticeable.
+D. Real-World Experiments
+Real-World Setup.We conduct sim2real experiments using
+a Flexiv Rizon 4 robot equipped with a GRA V gripper. The
+experiments are performed in a tabletop environment both in
+ManiSkill and the real world, as shown in Fig. 9 . Real-world
+tasks include pick and place, stacking cubes, and lifting a
+peg upright. Visual observations are provided by both a third-
+person camera and a wrist-mounted camera, both of which
+are RealSense D435i sensors. OpenVLA uses a single camera
+for observation, while OpenVLA-OFT and GR00T use dual-
+camera observations together with proprioceptive state.
+RLRC demonstrates strong performance and effective
+compression in real-world manipulation tasks(Q5).Due to
+the universal challenges of sim2real transfer, we observe that
+models trained in ManiSkill exhibit suboptimal real-world per-
+formance. We then collect 100 expert demonstrations through
+spacemouse teleoperation and use them to additionally fine-
+tune the models. The models are evaluated with 30 rollouts
+for each task. The results are summarized in Table IV. It can
+be observed that RLRC still proves effective in the real world,
+achieving significant improvements in inference throughput
+
+--- PAGE 8 ---
+8
+and substantial reductions in memory usage, while maintaining
+competitive task performance. The rollout from real-world
+experiments is shown in Fig. 8 .
+E. Limitations
+Despite its contributions, our approach presents several
+limitations that deserve further investigation. First, the RL
+component of RLRC depends on parallelized simulation en-
+vironments to enable efficient learning, resulting in relatively
+low training efficiency and substantial computational overhead.
+Second, the sim-to-real gap remains a significant challenge.
+Policies trained in simulation may suffer from performance
+degradation when transferred to real-world robotic platforms
+due to discrepancies in dynamics, sensing, and environmental
+conditions.
+VI. CONCLUSION
+In this work, we present RLRC, a systematic compression
+and recovery pipeline for VLAs that maintains task perfor-
+mance. Through a principled three-stage pipeline comprising
+structured pruning, performance recovery based on SFT and
+RL, and 4-bit quantization, we significantly reduce model
+size and boost inference speed while preserving, and in
+some cases surpassing, the original model’s ability to execute
+robotic tasks. Our experimental results demonstrate that RLRC
+achieves up to an 8× reduction in memory usage and a
+2.3× increase in inference throughput, while maintaining the
+original VLA’s task performance. Our systematic analysis
+across multiple VLA backbones confirms that RLRC provides
+a practical and effective pathway for deploying VLAs on
+resource-constrained devices, advancing the real-world appli-
+cability of VLA technologies.
+REFERENCES
+[1] A. Brohan, N. Brown, J. Carbajal et al., “Rt-2: Vision-language-action
+models transfer web knowledge to robotic control,” arXiv preprint
+arXiv:2307.15818, 2023.
+[2] M. J. Kim, K. Pertsch, S. Karamcheti et al., “Openvla: An open-source
+vision-language-action model,” arXiv preprint arXiv:2406.09246, 2024.
+[3] M. J. Kim, C. Finn, and P. Liang, “Fine-tuning vision-language-
+action models: Optimizing speed and success,” arXiv preprint
+arXiv:2502.19645, 2025.
+[4] K. Black, N. Brown, D. Driess et al., “π0: A vision-language-
+action flow model for general robot control, 2024,” arXiv preprint
+arXiv:2410.24164, 2024.
+[5] M. Shukor, D. Aubakirova, F. Capuano et al., “Smolvla: A vision-
+language-action model for affordable and efficient robotics,” arXiv
+preprint arXiv:2506.01844, 2025.
+[6] J. Wen, Y . Zhu, J. Li et al., “Tinyvla: Toward fast, data-efficient vision-
+language-action models for robotic manipulation,” IEEE Robotics and
+Automation Letters, vol. 10, pp. 3988–3995, 2024.
+[7] S. Park, H. Kim et al., “Quantization-aware imitation-learning for
+resource-efficient robotic control,” arXiv preprint arXiv:2412.01034,
+2024.
+[8] S. Xu, Y . Wang, C. Xia et al., “Vla-cache: Towards efficient vision-
+language-action model via adaptive token caching in robotic manipula-
+tion,” arXiv preprint arXiv:2502.02175, 2025.
+[9] X. Tan, Y . Yang, P. Ye et al., “Think twice, act once: Token-aware
+compression and action reuse for efficient inference in vision-language-
+action models,” arXiv preprint arXiv:2505.21200, 2025.
+[10] J. Bjorck, F. Casta ˜neda et al., “Gr00t n1: An open foundation model for
+generalist humanoid robots,” arXiv preprint arXiv:2503.14734, 2025.
+[11] E. Frantar, S. Ashkboos, T. Hoefler, and D.-A. Alistarh, “Gptq: Accurate
+post-training quantization for generative pre-trained transformers,” in
+11th International Conference on Learning Representations, 2023.
+[12] Z. Liu, B. Oguz, C. Zhao et al., “Llm-qat: Data-free quantization aware
+training for large language models,” arXiv preprint arXiv:2305.17888,
+2023.
+[13] X. Ma, G. Fang, and X. Wang, “Llm-pruner: On the structural pruning
+of large language models,” in Advances in neural information processing
+systems, vol. 36, 2023, pp. 21 702–21 720.
+[14] Y . An, X. Zhao, T. Yu, M. Tang, and J. Wang, “Fluctuation-based
+adaptive structured pruning for large language models,” in Proceedings
+of the AAAI Conference on Artificial Intelligence, vol. 38, no. 10, 2024,
+pp. 10 865–10 873.
+[15] Y . Yang, Y . Wang, Z. Wenet al., “Efficientvla: Training-free acceleration
+and compression for vision-language-action models,” arXiv preprint
+arXiv:2506.10100, 2025.
+[16] T. Jiang, X. Jiang, Y . Ma et al., “The better you learn, the smarter you
+prune: Towards efficient vision-language-action models via differentiable
+token pruning,” arXiv preprint arXiv:2509.12594, 2025.
+[17] Y . Guo, J. Zhang, X. Chen et al., “Improving vision-language-
+action model with online reinforcement learning,” arXiv preprint
+arXiv:2501.16664, 2025.
+[18] H. Zang, M. Wei et al., “Rlinf-vla: A unified and efficient framework
+for vla+ rl training,” arXiv preprint arXiv:2510.06710, 2025.
+[19] J. Liu, F. Gao, B. Wei et al., “What can rl bring to vla generalization?
+an empirical study,” arXiv preprint arXiv:2505.19789, 2025.
+[20] M. Sun, Z. Liu, A. Bair, and J. Z. Kolter, “A simple and effective pruning
+approach for large language models,” arXiv preprint arXiv:2306.11695,
+2023.
+[21] B. Liu, Y . Zhu, C. Gao et al., “Libero: Benchmarking knowledge
+transfer for lifelong robot learning,” in Advances in Neural Information
+Processing Systems, vol. 36, 2023, pp. 44 776–44 791.
+[22] T. Dettmers, M. Lewis, Y . Belkada, and L. Zettlemoyer, “Llm.int8():
+8-bit matrix multiplication for transformers at scale,” arXiv preprint
+arXiv:2208.07339, 2022.
+[23] J. Schulman, F. Wolski, P. Dhariwal, A. Radford, and O. Klimov, “Prox-
+imal policy optimization algorithms,” arXiv preprint arXiv:1707.06347,
+2017.
+[24] K. Chen, Z. Liu, T. Zhang et al., “πrl: Online rl fine-tuning for flow-
+based vision-language-action models,” arXiv preprint arXiv:2510.25889,
+2025.
+[25] Q. Xu, J. Liu, R. Zhou et al., “Twinrl-vla: Digital twin-driven rein-
+forcement learning for real-world robotic manipulation,” arXiv preprint
+arXiv:2602.09023, 2026.
+[26] S. Tao, F. Xiang, A. Shukla et al., “Maniskill3: Gpu parallelized robotics
+simulation and rendering for generalizable embodied ai,” arXiv preprint
+arXiv:2410.00425, 2024.
+[27] K. Pertsch, K. Stachowicz et al., “Fast: Efficient action tokenization for
+vision-language-action models,” arXiv preprint arXiv:2501.09747, 2025.
+[28] D. Qu, H. Song, Q. Chen et al., “Spatialvla: Exploring spa-
+tial representations for visual-language-action model,” arXiv preprint
+arXiv:2501.15830, 2025.
+[29] J. Zheng, J. Li, D. Liu et al., “Universal actions for enhanced embodied
+foundation models,” in Proceedings of the Computer Vision and Pattern
+Recognition Conference, 2025, pp. 22 508–22 519.
+[30] C. Gao, Z. Liu, Z. Chi et al., “VLA-OS: Structuring and dissecting
+planning representations and paradigms in vision-language-action mod-
+els,” in The Thirty-ninth Annual Conference on Neural Information
+Processing Systems, 2025.
+[31] Y . Li, Y . Meng, Z. Sun et al., “Sp-vla: A joint model scheduling and
+token pruning approach for vla model acceleration,” arXiv preprint
+arXiv:2506.12723, 2025.
+[32] T. Dettmers, A. Pagnoni, A. Holtzman, and L. Zettlemoyer, “QLoRA:
+Efficient finetuning of quantized llms,” in Advances in neural
+information processing systems, vol. 36, 2023, pp. 10 088–10 115.
+[33] K. Black, N. Brown et al., “π0.5: a vision-language-action model with
+open-world generalization,” in Proceedings of The 9th Conference on
+Robot Learning, vol. 305, 27–30 Sep 2025, pp. 17–40.

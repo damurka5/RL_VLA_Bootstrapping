@@ -1,0 +1,63 @@
+{
+  "source": "skill_retention_source_20261026.md",
+  "rates_are_rounded_in_source": true,
+  "raw_episode_denominators": null,
+  "forgetting": {
+    "Reaching reference": [
+      0.643,
+      0.619,
+      0.662
+    ],
+    "After placement RL": [
+      0.004,
+      0.053,
+      0.103
+    ],
+    "After placement-only SFT": [
+      0.0,
+      0.018,
+      0.035
+    ]
+  },
+  "recovery": {
+    "Reaching": {
+      "before": [
+        0.062,
+        0.06,
+        0.117
+      ],
+      "after": [
+        0.383,
+        0.256,
+        0.295
+      ]
+    },
+    "Plate placement": {
+      "before": [
+        0.508,
+        0.492
+      ],
+      "after": [
+        0.519,
+        0.527
+      ]
+    },
+    "Bowl placement": {
+      "before": [
+        0.23,
+        0.231
+      ],
+      "after": [
+        0.319,
+        0.234
+      ]
+    }
+  },
+  "protocol": "Source sections 1 and 3. Reaching cap 0.19; placement cap 0.20. Recovery after 60 residual epochs. Panels are separate measurements; no continuous matched path is asserted.",
+  "bank_rows": {
+    "reaching": 6009,
+    "plate": 6001,
+    "bowl": 5694
+  },
+  "bank_origin": "Retained reaching policy plus recent placement-policy successes; not exclusively on-policy imitation of the current student."
+}

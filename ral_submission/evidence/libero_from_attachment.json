@@ -1,0 +1,59 @@
+{
+  "source": "incoming/phase_aware_dense_rewards/source.pdf",
+  "sha256": "8eafe7c60088e2fe87034609dba4b74bd98f4fa14e4012cb11ac7b822809596d",
+  "evidence_status": "transcribed_from_user_supplied_draft_not_recomputed",
+  "initial_percent": 61.0,
+  "aggregate": [
+    {
+      "configuration": "primary_dense",
+      "success_percent": 65.3,
+      "episodes": null,
+      "training_seeds": null
+    },
+    {
+      "configuration": "filtered_dense",
+      "success_percent": 64.7,
+      "episodes": null,
+      "training_seeds": null
+    },
+    {
+      "configuration": "phase_only_lambda1",
+      "success_percent": 62.3,
+      "episodes": null,
+      "training_seeds": null
+    },
+    {
+      "configuration": "terminal_only_lambda5",
+      "success_percent": 61.7,
+      "episodes": null,
+      "training_seeds": null
+    },
+    {
+      "configuration": "dense_lambda1",
+      "success_percent": 61.0,
+      "episodes": null,
+      "training_seeds": null
+    }
+  ],
+  "low_success_task": {
+    "id": "task_1_canonical_name_pending",
+    "initial": [
+      10,
+      10
+    ],
+    "intermediate": [
+      8,
+      12
+    ],
+    "final": [
+      11,
+      18
+    ],
+    "column_order": [
+      "terminal_only",
+      "dense"
+    ],
+    "episodes": null
+  },
+  "throughput_status": "qualitative_source_claim_no_numeric_logs"
+}

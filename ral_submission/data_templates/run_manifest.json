@@ -1,0 +1,36 @@
+{
+  "status": "template_not_experiment_data",
+  "run_id": null,
+  "git_commit": null,
+  "resolved_config_path": null,
+  "launch_command": null,
+  "base_vla_checkpoint": null,
+  "checkpoint_path": null,
+  "checkpoint_sha256": null,
+  "parent_checkpoint_sha256": null,
+  "training_seed": null,
+  "selection_rule": null,
+  "scene_manifest_sha256": null,
+  "evaluation_split": null,
+  "success_definition": null,
+  "group_size": null,
+  "action_chunk_length": null,
+  "executed_slots_per_replan": null,
+  "control_hz": null,
+  "actor_input_schema": null,
+  "training_budget": {
+    "selected_actions": null,
+    "sampled_actions": null,
+    "executed_actions": null,
+    "inherited_actions": null,
+    "gpu_hours": null
+  },
+  "hardware": {
+    "transfer_condition": null,
+    "calibration": null,
+    "adaptation": null,
+    "trial_manifest": null,
+    "stopping_rule": null
+  },
+  "initialization_lineage": []
+}

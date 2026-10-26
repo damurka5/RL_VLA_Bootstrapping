@@ -1,0 +1,103 @@
+{
+  "scope": "Finite-model algebra checks, not CDPR policy verification",
+  "checks": {
+    "binary_group_enumeration": {
+      "passed": true,
+      "max_absolute_error": 1.1657341758564144e-15,
+      "group_sizes": [
+        2,
+        4,
+        8
+      ],
+      "probabilities_per_size": 7
+    },
+    "mixed_group_examples": {
+      "G": 8,
+      "p_0.03": 0.21625664056164795,
+      "p_0.30": 0.94228638
+    },
+    "protected_sequential_gate_model": {
+      "passed": true,
+      "enumerated_groups": 336,
+      "parameter_vectors": 3,
+      "step_sizes": [
+        0.01,
+        1.0,
+        10.0
+      ],
+      "minimum_success_gain": 0.0
+    },
+    "clipped_action_score": {
+      "passed": true,
+      "cases": [
+        {
+          "mean": -0.4,
+          "sigma": 0.7,
+          "exact_gradient": 0.2493758204020002,
+          "latent_score_integral": 0.24937582040199469,
+          "clipped_sample_gaussian_score": 0.23724624523509974
+        },
+        {
+          "mean": 0.2,
+          "sigma": 0.9,
+          "exact_gradient": 0.4193146974366591,
+          "latent_score_integral": 0.41931469743666216,
+          "clipped_sample_gaussian_score": 0.3054338870775988
+        },
+        {
+          "mean": 0.8,
+          "sigma": 0.6,
+          "exact_gradient": 0.5867755446071659,
+          "latent_score_integral": 0.5867755446071681,
+          "clipped_sample_gaussian_score": 0.16304868744204587
+        }
+      ]
+    },
+    "persistent_offset_score": {
+      "passed": true,
+      "cases": [
+        {
+          "theta": -0.3,
+          "exact_gradient": 0.3605179719110664,
+          "finite_difference": 0.3605179719035067,
+          "conditional_score_integral": 0.3605179719110618,
+          "independent_exact_marginal_score": 0.5530498026963225
+        },
+        {
+          "theta": 0.1,
+          "exact_gradient": 0.3170420638853797,
+          "finite_difference": 0.31704206389926437,
+          "conditional_score_integral": 0.3170420638853688,
+          "independent_exact_marginal_score": 0.6343636679197076
+        },
+        {
+          "theta": 0.5,
+          "exact_gradient": 0.3624861797165188,
+          "finite_difference": 0.36248617971135205,
+          "conditional_score_integral": 0.36248617971651964,
+          "independent_exact_marginal_score": 0.6578530213994244
+        }
+      ]
+    },
+    "shared_parameter_counterexample": {
+      "passed": true,
+      "scene_probabilities": [
+        0.01,
+        0.5
+      ],
+      "scene_success_derivatives": [
+        -0.8,
+        1.0
+      ],
+      "mean_success_derivative": 0.09999999999999998,
+      "expected_normalized_direction": -0.11571692260312139,
+      "directional_alignment": -0.011571692260312136
+    },
+    "prefix_tradeoff": {
+      "passed": true,
+      "before": 0.32000000000000006,
+      "after": 0.27999999999999997
+    }
+  },
+  "all_passed": true
+}

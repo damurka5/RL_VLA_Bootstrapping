@@ -1,0 +1,8 @@
+\section{Problem Formulation}\label{sec:problem}
+A policy receives camera images, proprioception, and instruction $\ell$, and predicts an action chunk. The controller executes a prefix before replanning. Let $h_t$ denote the available observation history and $c$ the scene initialization. We optimize binary complete-task success $Y(\tau)$:
+\begin{equation}
+J(\theta)=\mathbb E_{(c,\ell)\sim\rho_{\rm full},\,\tau\sim P_\theta(\cdot\mid c,\ell)}[Y(\tau)].
+\end{equation}
+Individual skills have their own instructions, success predicates, and reset distributions $\rho_k$. Placement from a held-object start is therefore a skill test, not full pick-and-place. A training stage is a step in the learning schedule; a task phase is progress within an episode.
+
+The CDPR action has five channels: Cartesian translation, yaw, and gripper control. Strict success requires grasp, held lift, intentional release, and native placement, without carry-slip or wrong-placement events. LIBERO uses its native goal verifier~\cite{libero}. We report these different evaluation settings separately.

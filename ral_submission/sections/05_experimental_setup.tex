@@ -1,0 +1,10 @@
+\section{Experimental Setup}\label{sec:setup}
+\subsection{SmolVLA on the CDPR}
+Simulation uses MuJoCo Warp/MJ-Lab, four object categories (apple, orange, potato, tomato), and plate/bowl destinations. Full-task evaluation covers 512 development scenes, excluding the 128-scene in-run panel, with four repeats per scene and a 128-decision horizon. It uses the residual mean, VLA prior noise scale 1, no settling decisions, and no teacher or yaw assistance. Every attempt, including numerical failures, remains in the denominator. The controller comes from one training lineage; evaluation repeats are not independent training seeds.
+
+The retention study uses the family-specific protocols in the campaign report. Each family retains its recorded reset protocol. Three-family consolidation uses 6,009 reaching, 6,001 plate, and 5,694 bowl decision rows. We report round-level observations separately from complete-task performance. The source report does not provide a complete episode-level statistical record.
+
+\input{sections/05b_libero_setup}
+
+\subsection{Additional Robot and Hardware Slots}
+Figure~\ref{fig:wx200} reserves illustrations for the five-DoF WX200 and its task sequence. Its action mapping, calibration, and evaluation protocol remain to be specified. Hardware success rates are left unfilled until the trial logs are available.

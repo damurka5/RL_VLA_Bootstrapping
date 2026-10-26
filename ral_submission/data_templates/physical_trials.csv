@@ -1,0 +1,1 @@
+trial_id,session_id,timestamp_with_timezone,policy_id,checkpoint_sha256,transfer_condition,layout_id,object_id,destination_id,instruction,trial_order,strict_success,grasped,held_lift,intentional_release,placed,carry_slip,wrong_place,intervention_count,abort,failure_category,elapsed_time_s,timeout_s,calibration_id,adaptation_id,video_path,notes

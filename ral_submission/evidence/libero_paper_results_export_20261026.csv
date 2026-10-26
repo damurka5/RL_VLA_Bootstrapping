@@ -1,0 +1,24 @@
+series,configuration,rl_update_step,evaluation_stage,benchmark,task_id,success,success_percent,common_initial_success,change_from_initial_pp,ci95_halfwidth,num_validation_rollouts,reward_and_filter,article_location,notes
+full_suite_reward_ablation,Common initial policy,0,initial,LIBERO-Spatial,all,0.610,61.0,0.610,0.0,,,common initialization,Experimental Setup,Shared initialization stated in the article
+full_suite_reward_ablation,Terminal only lambda=5,40,checkpoint,LIBERO-Spatial,all,0.610,61.0,0.610,0.0,0.055,300,dense disabled; verifier coefficient=5,Results and Figure 2,
+full_suite_reward_ablation,Terminal only lambda=5,80,checkpoint,LIBERO-Spatial,all,0.607,60.7,0.610,-0.3,0.055,300,dense disabled; verifier coefficient=5,Results and Figure 2,
+full_suite_reward_ablation,Terminal only lambda=5,110,checkpoint,LIBERO-Spatial,all,0.613,61.3,0.610,0.3,0.055,300,dense disabled; verifier coefficient=5,Results and Figure 2,
+full_suite_reward_ablation,Terminal only lambda=5,160,final,LIBERO-Spatial,all,0.617,61.7,0.610,0.7,0.055,300,dense disabled; verifier coefficient=5,Table I and Figure 2,
+full_suite_reward_ablation,Primary dense lambda=5,40,checkpoint,LIBERO-Spatial,all,0.623,62.3,0.610,1.3,0.055,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=5,Results and Figure 2,Configuration follows the current article text
+full_suite_reward_ablation,Primary dense lambda=5,80,checkpoint,LIBERO-Spatial,all,0.630,63.0,0.610,2.0,0.055,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=5,Results and Figure 2,Configuration follows the current article text
+full_suite_reward_ablation,Primary dense lambda=5,110,checkpoint,LIBERO-Spatial,all,0.637,63.7,0.610,2.7,0.054,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=5,Results and Figure 2,Configuration follows the current article text
+full_suite_reward_ablation,Primary dense lambda=5,160,final,LIBERO-Spatial,all,0.653,65.3,0.610,4.3,0.054,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=5,Table I and Figure 2,Best reported full-suite result
+full_suite_reward_ablation,Mixed-outcome filtered dense lambda=5,30,checkpoint,LIBERO-Spatial,all,0.627,62.7,0.610,1.7,0.055,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=5; group filter=[0.1;0.9],Results and Figure 2,Configuration follows the current article text
+full_suite_reward_ablation,Mixed-outcome filtered dense lambda=5,50,final,LIBERO-Spatial,all,0.647,64.7,0.610,3.7,0.054,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=5; group filter=[0.1;0.9],Table I and Figure 2,Configuration follows the current article text
+full_suite_reward_ablation,Dense shaping lambda=1,60,checkpoint,LIBERO-Spatial,all,0.597,59.7,0.610,-1.3,0.056,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=1,Results and Figure 2,
+full_suite_reward_ablation,Dense shaping lambda=1,110,final,LIBERO-Spatial,all,0.610,61.0,0.610,0.0,0.055,300,wp=0.05; wc=0.05; clip=0.05; verifier coefficient=1,Table I and Figure 2,
+full_suite_reward_ablation,Phase shaping lambda=1,30,checkpoint,LIBERO-Spatial,all,0.580,58.0,0.610,-3.0,0.056,300,wp=0; wc=0.20; clip=0.05; verifier coefficient=1,Results and Figure 2,
+full_suite_reward_ablation,Phase shaping lambda=1,60,checkpoint,LIBERO-Spatial,all,0.600,60.0,0.610,-1.0,0.055,300,wp=0; wc=0.20; clip=0.05; verifier coefficient=1,Results and Figure 2,
+full_suite_reward_ablation,Phase shaping lambda=1,90,checkpoint,LIBERO-Spatial,all,0.637,63.7,0.610,2.7,0.054,300,wp=0; wc=0.20; clip=0.05; verifier coefficient=1,Results and Figure 2,
+full_suite_reward_ablation,Phase shaping lambda=1,110,final,LIBERO-Spatial,all,0.623,62.3,0.610,1.3,0.055,300,wp=0; wc=0.20; clip=0.05; verifier coefficient=1,Table I and Figure 2,
+single_task_low_success,Terminal only,0,initial,LIBERO-Spatial,task_1,0.02,2.0,0.02,0.0,0.008677,1000,dense disabled; group filter=[0.1;1.0],Table II and new default-checkpoint validation,Baseline from default-libero-spatial-task1-1000-20261022_132129.log
+single_task_low_success,Terminal only,10,checkpoint,LIBERO-Spatial,task_1,0.08,8.0,0.02,6.0,,,dense disabled; group filter=[0.1;1.0],Table II,
+single_task_low_success,Terminal only,20,final,LIBERO-Spatial,task_1,0.11,11.0,0.02,9.0,,,dense disabled; group filter=[0.1;1.0],Table II,
+single_task_low_success,Dense reward,0,initial,LIBERO-Spatial,task_1,0.02,2.0,0.02,0.0,0.008677,1000,dense reward; group filter=[0.1;1.0],Table II and new default-checkpoint validation,Baseline from default-libero-spatial-task1-1000-20261022_132129.log
+single_task_low_success,Dense reward,10,checkpoint,LIBERO-Spatial,task_1,0.12,12.0,0.02,10.0,,,dense reward; group filter=[0.1;1.0],Table II,
+single_task_low_success,Dense reward,20,final,LIBERO-Spatial,task_1,0.18,18.0,0.02,16.0,,,dense reward; group filter=[0.1;1.0],Table II

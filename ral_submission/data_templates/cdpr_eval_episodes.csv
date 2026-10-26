@@ -1,0 +1,1 @@
+evaluation_id,run_id,checkpoint_sha256,training_seed,split,scene_id,repeat_id,rollout_seed,object_id,destination_id,target_x_m,target_y_m,strict_success,native_success,grasped,held_lift,intentional_release,carry_slip,wrong_place,non_finite,exclusive_failure_category,decisions,completion_time_s,video_path

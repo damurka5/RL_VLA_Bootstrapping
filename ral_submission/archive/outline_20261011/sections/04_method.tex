@@ -1,0 +1,24 @@
+\section{Method}\label{sec:method}
+\subsection{VLA-Conditioned Residual Policy}
+\begin{outline}
+\item Specify the mapped prior chunk $p$, residual input $x$, and bounded mean $\mu_\theta=\tanh\!\left(p+s_r\tanh f_\theta(x,p)\right)$. Preserve both nonlinearities and report the residual scale.
+\item Identify frozen backbone/action-expert weights, any inherited LoRA, trainable residual weights, and exploration parameters. The latest promoted branch retains the bounded residual; the frozen-reference correction network is a separate experimental arm.
+\item Explain visual features and language conditioning separately from the action prior. Near-constant prior commands and residual saturation in historical traces motivate prior/feature ablations, not a claim that pretrained action knowledge caused the gain.
+\end{outline}
+\subsection{Bootstrapping and Staged Credit}
+\begin{outline}
+\item Summarize skill acquisition, success-filtered residual SFT, and continuous teacher-chain initialization; provide a lineage diagram identifying policy-generated actions and scripted/oracle assistance.
+\item Train the complete task from empty starts using ordered approach, pickup, and strict-placement binary milestones; define each predicate and which executed records enter each group.
+\item Describe group normalization, zero-variance groups, validity masks, and candidate-length/stage weights. Invalid simulator episodes are excluded from learning statistics although counted as evaluation failures; this selection matters mathematically.
+\item Specify the protected full-task bonus: on achieved approach/pickup milestones, multiply negative terminal advantage by $\kappa$; otherwise preserve it. Local settings use bonus weight $\lambda=1$ and $\kappa=0$, pending confirmation from the latest run. Placement keeps the signed terminal advantage.
+\item State the weighted clipped surrogate, frozen-batch advantages, entropy/action penalties, and optimizer. Link each component to the assumptions and limits of Sec.~\ref{sec:theory}.
+\item Explain why prefix competence and complete success differ. Present SFT as an initialization/consolidation component whose benefits require evidence; historical full-task SFT alone did not reliably improve completion.
+\end{outline}
+\subsection{Likelihood Under Clipping and Persistent Exploration}
+\begin{outline}
+\item Record $u_t=\mu_\theta(x_t,p_t)+b_t+\sigma\epsilon_t$ before clipping and execute $a_t=\operatorname{clip}(u_t,-1,1)$; retain the realized episode-offset contribution $b_t$ and its gate per decision.
+\item Score $\log\mathcal{N}(u_t;\mu_\theta+b_t,\sigma^2)$ for old/new policy ratios. A parameter-independent offset density cancels when conditioned on its realized value; deterministic clipping belongs to the action-to-environment map.
+\item Explain the historical mismatch: Gaussian density evaluated at clipped boundaries and independent widened marginals for temporally shared offsets. Include a short derivation or estimator sanity check if space permits.
+\item Qualification: consistency of the latent score does not prove unbiasedness or convergence of the complete stage-selected, group-normalized, clipped GRPO surrogate.
+\item Algorithm 1 plan: collect chunks and offsets, observe milestones, form masked stage groups, compute advantages and latent ratios, update trainable parameters, then validate.
+\end{outline}

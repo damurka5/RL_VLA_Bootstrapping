@@ -1,0 +1,15 @@
+\subsection{Stage Retention and Remaining Failures}
+Continued CDPR training improves physical-grasp and held-lift rates from 85.84\% and 80.52\% to 89.65\% and 85.89\%. Strict completion conditional on held lift rises from 64.04\% to 71.52\% as a descriptive ratio. Carry-slip events decrease from 28.32\% to 23.83\%, and wrong-placement events from 25.00\% to 19.63\%. Their paired difference intervals are [$-6.79,-2.25$] and [$-7.62,-3.17$] points, respectively. Event flags may overlap and must not be stacked into an exclusive failure partition.
+
+Plate and bowl strict rates at 40M are 68.58\% and 54.22\%. The far-side target-$y$ quartile improves from 10.08\% to 29.07\%, but remains substantially weaker than the nearer quartiles (Fig.~\ref{fig:diagnostics}). Potato remains the weakest object category at 46.11\%. These exploratory breakdowns locate residual difficulty; they do not establish robustness to new objects or workspace distributions.
+\begin{figure}[t]
+\centering\includegraphics[width=\columnwidth]{figures/cdpr_diagnostics.pdf}
+\caption{Matched development diagnostics for 20M and 40M: (left) marginal grasp, held-lift, and strict outcomes over all 2,048 attempts; (right) strict outcome by target-$y$ quartile, with 130, 125, 128, and 129 scenes, each repeated four times. These are descriptive rates; confidence intervals for the main paired effect appear in the text.}
+\label{fig:diagnostics}
+\end{figure}
+
+Non-finite episodes occur in 1.32\% and 1.37\% of the 20M and 40M evaluations. The difference interval [$-0.73,0.83$] points does not establish equivalence or absence of numerical failures. In the earlier 2M pilot, adding a separate correction network yields 37.55\% strict success and 3.56\% non-finite episodes, with no demonstrated strict gain over its source: 0.63 points [$-1.76,3.03$]. This arm is not the architecture producing the 61.43\% result.
+
+The central schedule requires matched comparisons of dense versus binary rewards at skill initialization, binary refinement after dense learning, self-imitation with and without retained skill data, and staged versus terminal-only full-task training. These comparisons remain outstanding. Protected-credit, likelihood, and action-prior controls address secondary implementation choices; continuation results cannot substitute for either set of ablations.
+
+Skill consolidation must also be evaluated separately from full-task completion. Retained campaign reports document recovery of earlier instruction families with balanced self-imitation, but also unsuccessful SFT attempts on an already trained full-task policy. We therefore treat self-imitation as a consolidation step whose benefit depends on the experience bank, rather than assuming that every additional imitation pass improves the final task. \pending{Add matched per-skill before/after consolidation results and exact bank provenance.}

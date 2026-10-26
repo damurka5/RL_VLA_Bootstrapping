@@ -1,0 +1,15 @@
+\subsection{Phase-Aware Dense Feedback}\label{sec:dense_method}
+For LIBERO, a simulator-state tracker follows reach, grasp, lift, move, and place. It rewards only new progress beyond the best value $B_t$ reached in the active phase, $\Delta p_t^+=\max(p_t-B_t,0)$. The baseline resets at phase advancement. With $c_t$ newly completed phases and terminal verifier output $y_t$,
+\begin{equation}
+r_t=\lambda y_t+\operatorname{clip}(w_p\Delta p_t^++w_c c_t,-C,C).
+\label{eq:dense}
+\end{equation}
+Setting $w_p=0$ gives phase-boundary feedback; $w_p>0$ also rewards within-phase progress (Fig.~\ref{fig:dense_feedback}). The terminal reward remains unchanged outside the shaping clip. Exact phase predicates and progress functions remain \pending{reward implementation}.
+
+\begin{figure}[!t]
+\centering\includegraphics[width=\columnwidth]{figures/phase_feedback.pdf}
+\caption{Feedback resolution. Terminal-only reward distinguishes final success. Phase rewards also mark completed subgoals. Dense shaping credits new progress within a phase; revisiting an earlier maximum earns no further progress reward. This is a schematic, not a training curve.}
+\label{fig:dense_feedback}
+\end{figure}
+
+Group filtering is separate: a group is retained when its terminal success fraction lies in $[L,U]$. A lower bound above zero can reject all-failure groups even when their dense returns differ.

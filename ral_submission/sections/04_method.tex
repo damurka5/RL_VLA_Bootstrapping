@@ -1,0 +1,45 @@
+\section{Method}\label{sec:method}
+\subsection{Dense Acquisition, Binary Refinement, and Self-Imitation}
+We first train individual skills with dense rewards for approach, pickup, and transport/release. Distance reduction and intermediate manipulation events provide feedback before the policy can reliably complete a skill. We then use binary skill-success rewards to refine completion.
+
+Successful policy trajectories form instruction-specific banks $\mathcal D_k^+$. Self-imitation fits their executed actions with a balanced mixture:
+\begin{equation}
+\mathcal L_{\rm SI}=\sum_k\alpha_k\,
+\mathbb E_{(h,\ell,a)\sim\mathcal D_k^+}
+\left[\|\mu_\theta(h,\ell)-a\|^2\right].
+\end{equation}
+We balance valid decision rows across instructions and mask unused chunk slots and terminal tails. Stored images and executed actions are retained; policy-dependent priors and visual features are refreshed before fitting. Historical scripted or teacher-assisted data are identified separately from policy self-imitation. The exact acquisition budgets and dense-to-binary switches remain \pending{training manifest}.
+
+\subsection{SmolVLA with an Embodiment-Specific Residual}
+Figure~\ref{fig:architecture} shows the action path. We retain the pretrained SmolVLA expert and map its output to a target prior $p\in\mathbb R^{8\times5}$. A frozen 512-dimensional visual projection and six proprioceptive values form the 518-dimensional observation vector $x$. The residual also receives the flattened 40-dimensional prior:
+\begin{equation}
+\mu_\theta(x,p)=\tanh\!\left(p+s_r\tanh f_\theta([x,p])\right).
+\label{eq:actor}
+\end{equation}
+The MLP has widths $558\!\to\!1024\!\to\!1024\!\to\!40$, with $s_r=1$. It predicts eight action slots; four are executed before replanning. LoRA adapts the action expert in earlier phases. The evaluated full-task continuation freezes the inherited VLA and LoRA while training the residual and exploration parameters. These dimensions follow the inspected code and configuration; the historical resolved run configuration remains to be archived.
+
+\begin{figure*}[!t]
+\centering\includegraphics[width=\textwidth]{figures/smolvla_residual_lora.pdf}
+\caption{SmolVLA adaptation. The pretrained expert supplies a mapped action prior. The added residual receives 518 observation features plus the 40-value prior. LoRA modifies the expert in earlier phases; inherited VLA/LoRA weights are frozen during the evaluated full-task continuation. The residual feature branch uses a frozen projection. Dimensions refer to the CDPR implementation.}
+\label{fig:architecture}
+\end{figure*}
+
+\subsection{Milestone-Based Full-Task Composition}
+One policy learns the complete instruction from empty-gripper starts. It receives no external sequence of skill prompts at evaluation. Three binary milestones $M_{ik}$ mark approach, held pickup, and strict placement, with $M_{i3}=Y_i$. Within each scene group, milestone returns are centered and normalized to give advantages $A_{ik}$ and usability masks $U_{ik}$. Constant-return groups give no milestone contrast.
+
+For approach and pickup, we add terminal credit while suppressing a negative terminal bonus on an achieved milestone:
+\begin{align}
+\widetilde A_{ik}&=U_{ik}A_{ik}+\beta U_{i3}T_\kappa(A_{i3},M_{ik}),\label{eq:credit}\\
+T_\kappa(a,m)&=\begin{cases}\kappa a,&m=1,\ a<0,\\a,&\text{otherwise}.\end{cases}
+\end{align}
+We use $\beta=1$ and $\kappa=0$. Placement uses its terminal advantage once. Figure~\ref{fig:credit} illustrates the rule. Nonnegative stage weights, a clipped PPO-style surrogate, entropy and action penalties determine the update. Prefix protection applies to this credit component; shared neural parameters can still interfere across stages.
+
+\begin{figure}[!t]
+\centering\includegraphics[width=\columnwidth]{figures/milestone_credit.pdf}
+\caption{Usable-group example: credit for a rollout that reaches and lifts the object but fails placement. Local milestone credit is retained. The negative terminal bonus is suppressed on achieved prefix stages; the placement stage retains its own terminal credit. Colors show credit routing, not measured gradient magnitudes.}
+\label{fig:credit}
+\end{figure}
+
+Exploration samples $u_t=\mu_\theta+b_t+\sigma_\theta\odot\varepsilon_t$ and executes $a_t=\operatorname{clip}(u_t,-1,1)$. Likelihood ratios score the recorded unclipped sample under the Gaussian conditioned on the realized episode offset $b_t$. Scoring clipped actions as Gaussian samples would misrepresent mass at the action bounds~\cite{capg}.
+
+\input{sections/04c_libero_dense_rewards}

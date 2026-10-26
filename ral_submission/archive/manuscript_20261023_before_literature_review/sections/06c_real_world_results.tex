@@ -1,0 +1,25 @@
+\subsection{Real-World Manipulation}\label{sec:hardware_results}
+\assumed{This subsection is written under the author's assumption of successful completion. It is not a report of verified hardware outcomes.}
+The deployed controller completed the instructed pick-and-place sequence on the physical cable-driven robot, progressing from an empty-gripper start through acquisition, lift, transport, and deliberate release. Figure~\ref{fig:hardware} reserves the apparatus and time-ordered rollout panels. The demonstrated behavior establishes feasibility on the tested apparatus; its reliability is quantified by the complete trial inventory in Table~\ref{tab:hardware}.
+
+Across \pending{N} attempts, the selected policy achieved \pending{S} strict successes (\pending{rate and 95\% interval}). The baseline achieved \pending{successes/trials under the same conditions}. We observed \pending{interventions and aborts}, and successful trials required \pending{completion-time summary}. The dominant residual failure was \pending{measured category and count}; \pending{failure sequence/video} documents its manifestation. These quantities must come from the trial log, including unsuccessful attempts.
+
+\begin{table}[t]
+\caption{Physical evaluation slots. All measurements are pending; dashes are not zero outcomes. Transfer/adaptation condition and sample sizes must accompany the completed table.}
+\label{tab:hardware}\centering\small
+\begin{tabular}{@{}lccc@{}}\toprule
+Policy & Successes/trials & Interventions & Time (s)\\\midrule
+Selected controller & --- & --- & ---\\
+Matched baseline & --- & --- & ---\\\bottomrule
+\end{tabular}
+\end{table}
+\begin{figure}[t]
+\centering
+\IfFileExists{figures/hardware/setup.jpg}{\includegraphics[width=\columnwidth,height=0.95in,keepaspectratio]{figures/hardware/setup.jpg}}{\imageplaceholder{0.95in}{(a) Physical CDPR setup\\Insert \texttt{figures/hardware/setup.jpg}}}
+\par\vspace{4pt}
+\IfFileExists{figures/hardware/sequence.jpg}{\includegraphics[width=\columnwidth,height=0.85in,keepaspectratio]{figures/hardware/sequence.jpg}}{\imageplaceholder{0.85in}{(b) Recorded rollout: approach, grasp, lift, transport, release\\Insert \texttt{figures/hardware/sequence.jpg}}}
+\caption{Reserved physical experiment panels. Add actual photographs, frame timestamps, instruction, object/destination, trial ID, and deployment condition. The intended successful sequence is part of the success-assumption draft and remains unverified.}
+\label{fig:hardware}
+\end{figure}
+
+The simulation and hardware outcomes use corresponding task-completion criteria, but differ in sensing, contacts, actuation, and reset variability. The transfer description must specify calibration and any hardware adaptation. A successful sequence alone does not establish zero-shot transfer, a particular success percentage, or superiority to the baseline.

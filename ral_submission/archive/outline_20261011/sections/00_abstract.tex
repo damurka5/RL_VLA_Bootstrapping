@@ -1,0 +1,10 @@
+\begin{abstract}
+\begin{outline}
+\item Motivation: adapt a pretrained vision-language-action (VLA) system to cable-driven manipulation without collecting new human teleoperation demonstrations for the target robot.
+\item Approach: residual skill acquisition and self-generated initialization, followed by three-stage sparse group-relative reinforcement learning; score unclipped latent actions conditioned on persistent exploration offsets.
+\item Mathematical basis: derive the conditional latent score and binary-group signal probability; prove nondecreasing success in a separable stage model with protected credit; state and test the alignment condition needed by a shared neural controller.
+\item Main result slot: \reported{the latest run exceeds 50\% success.} Exact score, strict/native definition, checkpoint, and evaluation protocol remain pending; do not substitute the older 41.16\% result.
+\item Physical experiment slot: \pending{hardware results}. State tasks, trial count, and measured success only after completion.
+\item Takeaway to test: staged credit and a consistent action likelihood enable complete manipulation on the target embodiment; bound this claim by matched ablations and observed transfer.
+\end{outline}
+\end{abstract}

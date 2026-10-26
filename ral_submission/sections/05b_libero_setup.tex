@@ -1,0 +1,6 @@
+\subsection{OpenVLA-OFT on LIBERO}\label{sec:libero_setup}
+We use SimpleVLA-RL on ten LIBERO-Spatial tasks with two NVIDIA L40 GPUs, rollout batch 32, and LoRA rank/alpha 16. The implementation optimizes discrete action-token likelihoods. Aggregate experiments share a 61.0\% initialization and use 300 validation rollouts per reported endpoint.
+
+The supplied CSV specifies $w_p=w_c=C=0.05$ for dense shaping. The primary dense and terminal-only conditions use $\lambda=5$; the latter disables shaping. Filtered dense adds $[L,U]=[0.1,0.9]$. The $\lambda=1$ phase-only condition uses $w_p=0,w_c=0.20,C=0.05$. Endpoint update counts differ across configurations and are reported in Table~\ref{tab:libero}.
+
+The low-success study uses \texttt{task\_1} and filtering $[0.1,1.0]$. Its initialization is 2.0\%, measured over 1,000 rollouts. Final evaluation denominators, independent seeds, wall time, and the canonical task name remain to be supplied.

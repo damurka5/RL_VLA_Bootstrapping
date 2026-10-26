@@ -1,0 +1,591 @@
+{
+  "tool": "compare_put_into_repeats.py",
+  "scenes": 512,
+  "protocol": {
+    "scene_manifest_sha256": "30dc9d53027c7e7ba871379e1ec17f0f148a08517f03fc4fa531549a15ef9208",
+    "split": "student_validation",
+    "worlds": 64,
+    "rounds": 8,
+    "distinct_scene_rounds": true,
+    "decisions": 128,
+    "settle_decisions": 0,
+    "excluded_validation_panel": {
+      "groups_per_rank": 64,
+      "panel_scenes": 128,
+      "ranks": 2,
+      "rounds": 1,
+      "split_scenes_after": 1102,
+      "split_scenes_before": 1230,
+      "validation_seed": 2000000
+    },
+    "controller_z_max": null,
+    "prior_noise_scale": 1.0,
+    "stochastic_seed": null,
+    "arm": "unassisted"
+  },
+  "baseline": "reference",
+  "alpha": 0.05,
+  "checkpoints": {
+    "reference": {
+      "path": "runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006/smolvla_grpo_adapter.pt",
+      "sha256": "af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/reference/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/reference/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/reference/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/reference/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        189,
+        178,
+        188,
+        201
+      ],
+      "strict_repeat_discordance": 0.237,
+      "strict_scenes_always": 77,
+      "strict_scenes_never": 215,
+      "strict": 0.3691,
+      "native": 0.4526,
+      "grasped": 0.7529,
+      "lifted": 0.6553,
+      "released": 0.6533,
+      "carry_slip": 0.2744,
+      "wrong_place": 0.229,
+      "non_finite": 0.0098,
+      "lifted_given_grasped": 0.8703,
+      "strict_given_lifted": 0.5633
+    },
+    "candidate": {
+      "path": "runs/latent_2m_candidate_20261008_195832/rl/step_2007079/smolvla_grpo_adapter.pt",
+      "sha256": "6ab5d6fda2a76a78aeba5acf96a0b1d83fac2f9c446305da2be75300f5cafd5d",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/candidate/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/candidate/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/candidate/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/candidate/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        190,
+        185,
+        203,
+        191
+      ],
+      "strict_repeat_discordance": 0.2607,
+      "strict_scenes_always": 73,
+      "strict_scenes_never": 198,
+      "strict": 0.3755,
+      "native": 0.4424,
+      "grasped": 0.7236,
+      "lifted": 0.6519,
+      "released": 0.6382,
+      "carry_slip": 0.2686,
+      "wrong_place": 0.2344,
+      "non_finite": 0.0356,
+      "lifted_given_grasped": 0.9008,
+      "strict_given_lifted": 0.576
+    },
+    "control": {
+      "path": "runs/latent_2m_control_20261009_033534/rl/step_2052558/smolvla_grpo_adapter.pt",
+      "sha256": "91a5b74815a6868ec941069e9431ecf7eab31b15375c46be76fc9fe6c89be893",
+      "dirs": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/control/rep1",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/control/rep2",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/control/rep3",
+        "/root/repo/RL_VLA_Bootstrapping/runs/latent_2m_comparison_20261009_135414/control/rep4"
+      ],
+      "repeats": 4,
+      "episodes": 2048,
+      "strict_per_repeat": [
+        218,
+        211,
+        213,
+        201
+      ],
+      "strict_repeat_discordance": 0.2451,
+      "strict_scenes_always": 91,
+      "strict_scenes_never": 190,
+      "strict": 0.4116,
+      "native": 0.479,
+      "grasped": 0.7637,
+      "lifted": 0.688,
+      "released": 0.6733,
+      "carry_slip": 0.2622,
+      "wrong_place": 0.231,
+      "non_finite": 0.0112,
+      "lifted_given_grasped": 0.9009,
+      "strict_given_lifted": 0.5983
+    }
+  },
+  "comparisons": {
+    "candidate": {
+      "metrics": {
+        "strict": {
+          "scenes": 512,
+          "baseline": 0.3691,
+          "candidate": 0.3755,
+          "difference": 0.0063,
+          "ci95": [
+            -0.0176,
+            0.0303
+          ],
+          "permutation_p": 0.60432
+        },
+        "native": {
+          "scenes": 512,
+          "baseline": 0.4526,
+          "candidate": 0.4424,
+          "difference": -0.0103,
+          "ci95": [
+            -0.0337,
+            0.0127
+          ],
+          "permutation_p": 0.36273
+        },
+        "grasped": {
+          "scenes": 512,
+          "baseline": 0.7529,
+          "candidate": 0.7236,
+          "difference": -0.0293,
+          "ci95": [
+            -0.0508,
+            -0.0083
+          ],
+          "permutation_p": 0.00155
+        },
+        "lifted": {
+          "scenes": 512,
+          "baseline": 0.6553,
+          "candidate": 0.6519,
+          "difference": -0.0034,
+          "ci95": [
+            -0.0278,
+            0.021
+          ],
+          "permutation_p": 0.78926
+        },
+        "carry_slip": {
+          "scenes": 512,
+          "baseline": 0.2744,
+          "candidate": 0.2686,
+          "difference": -0.0059,
+          "ci95": [
+            -0.0288,
+            0.0171
+          ],
+          "permutation_p": 0.61632
+        },
+        "wrong_place": {
+          "scenes": 512,
+          "baseline": 0.229,
+          "candidate": 0.2344,
+          "difference": 0.0054,
+          "ci95": [
+            -0.0151,
+            0.0264
+          ],
+          "permutation_p": 0.62362
+        }
+      },
+      "strict_by_destination": {
+        "bowl": {
+          "scenes": 255,
+          "baseline": 0.3225,
+          "candidate": 0.3382,
+          "difference": 0.0157,
+          "ci95": [
+            -0.0177,
+            0.049
+          ],
+          "permutation_p": 0.34738
+        },
+        "plate": {
+          "scenes": 257,
+          "baseline": 0.4154,
+          "candidate": 0.4125,
+          "difference": -0.0029,
+          "ci95": [
+            -0.037,
+            0.0311
+          ],
+          "permutation_p": 0.90385
+        }
+      },
+      "strict_by_object": {
+        "robocasa_apple": {
+          "scenes": 138,
+          "baseline": 0.3496,
+          "candidate": 0.3188,
+          "difference": -0.0308,
+          "ci95": [
+            -0.0761,
+            0.0145
+          ]
+        },
+        "robocasa_orange": {
+          "scenes": 123,
+          "baseline": 0.3984,
+          "candidate": 0.4329,
+          "difference": 0.0346,
+          "ci95": [
+            -0.0081,
+            0.0793
+          ]
+        },
+        "robocasa_potato": {
+          "scenes": 122,
+          "baseline": 0.2623,
+          "candidate": 0.3197,
+          "difference": 0.0574,
+          "ci95": [
+            0.0123,
+            0.1025
+          ]
+        },
+        "robocasa_tomato": {
+          "scenes": 129,
+          "baseline": 0.4632,
+          "candidate": 0.4341,
+          "difference": -0.0291,
+          "ci95": [
+            -0.0833,
+            0.0252
+          ]
+        }
+      },
+      "strict_by_target_y_quartile": {
+        "Q1": {
+          "scenes": 130,
+          "baseline": 0.6346,
+          "candidate": 0.6308,
+          "difference": -0.0038,
+          "ci95": [
+            -0.0577,
+            0.0519
+          ],
+          "permutation_p": 0.94235
+        },
+        "Q2": {
+          "scenes": 125,
+          "baseline": 0.556,
+          "candidate": 0.524,
+          "difference": -0.032,
+          "ci95": [
+            -0.088,
+            0.024
+          ],
+          "permutation_p": 0.25729
+        },
+        "Q3": {
+          "scenes": 128,
+          "baseline": 0.2324,
+          "candidate": 0.2773,
+          "difference": 0.0449,
+          "ci95": [
+            0.002,
+            0.0879
+          ],
+          "permutation_p": 0.04435
+        },
+        "Q4": {
+          "scenes": 129,
+          "baseline": 0.0562,
+          "candidate": 0.0717,
+          "difference": 0.0155,
+          "ci95": [
+            -0.0136,
+            0.0446
+          ],
+          "permutation_p": 0.27549
+        }
+      },
+      "per_repeat_mcnemar": [
+        {
+          "baseline_successes": 189,
+          "candidate_successes": 190,
+          "baseline_only": 66,
+          "candidate_only": 67,
+          "p": 1.0
+        },
+        {
+          "baseline_successes": 178,
+          "candidate_successes": 185,
+          "baseline_only": 66,
+          "candidate_only": 73,
+          "p": 0.61097
+        },
+        {
+          "baseline_successes": 188,
+          "candidate_successes": 203,
+          "baseline_only": 54,
+          "candidate_only": 69,
+          "p": 0.20665
+        },
+        {
+          "baseline_successes": 201,
+          "candidate_successes": 191,
+          "baseline_only": 78,
+          "candidate_only": 68,
+          "p": 0.45648
+        }
+      ],
+      "strict_p_holm": 0.60432,
+      "verdict": "no_significant_difference; retention_loss:grasped",
+      "pilot_promotion": {
+        "margin": 0.03,
+        "strict_ci95_low": -0.0176,
+        "retention": {
+          "grasped": {
+            "difference": -0.0293,
+            "ci95_low": -0.0508,
+            "lower_bound_required": -0.03,
+            "pass": false
+          },
+          "lifted": {
+            "difference": -0.0034,
+            "ci95_low": -0.0278,
+            "lower_bound_required": -0.03,
+            "pass": true
+          }
+        },
+        "decision": "no_promotion:strict_interval_not_above_zero"
+      }
+    },
+    "control": {
+      "metrics": {
+        "strict": {
+          "scenes": 512,
+          "baseline": 0.3691,
+          "candidate": 0.4116,
+          "difference": 0.0425,
+          "ci95": [
+            0.021,
+            0.064
+          ],
+          "permutation_p": 0.00015
+        },
+        "native": {
+          "scenes": 512,
+          "baseline": 0.4526,
+          "candidate": 0.479,
+          "difference": 0.0264,
+          "ci95": [
+            0.0063,
+            0.0464
+          ],
+          "permutation_p": 0.01275
+        },
+        "grasped": {
+          "scenes": 512,
+          "baseline": 0.7529,
+          "candidate": 0.7637,
+          "difference": 0.0107,
+          "ci95": [
+            -0.0073,
+            0.0293
+          ],
+          "permutation_p": 0.23839
+        },
+        "lifted": {
+          "scenes": 512,
+          "baseline": 0.6553,
+          "candidate": 0.688,
+          "difference": 0.0327,
+          "ci95": [
+            0.0112,
+            0.0542
+          ],
+          "permutation_p": 0.0016
+        },
+        "carry_slip": {
+          "scenes": 512,
+          "baseline": 0.2744,
+          "candidate": 0.2622,
+          "difference": -0.0122,
+          "ci95": [
+            -0.0327,
+            0.0078
+          ],
+          "permutation_p": 0.26684
+        },
+        "wrong_place": {
+          "scenes": 512,
+          "baseline": 0.229,
+          "candidate": 0.231,
+          "difference": 0.002,
+          "ci95": [
+            -0.0171,
+            0.0215
+          ],
+          "permutation_p": 0.88081
+        }
+      },
+      "strict_by_destination": {
+        "bowl": {
+          "scenes": 255,
+          "baseline": 0.3225,
+          "candidate": 0.3686,
+          "difference": 0.0461,
+          "ci95": [
+            0.0147,
+            0.0765
+          ],
+          "permutation_p": 0.00375
+        },
+        "plate": {
+          "scenes": 257,
+          "baseline": 0.4154,
+          "candidate": 0.4543,
+          "difference": 0.0389,
+          "ci95": [
+            0.0097,
+            0.0681
+          ],
+          "permutation_p": 0.01235
+        }
+      },
+      "strict_by_object": {
+        "robocasa_apple": {
+          "scenes": 138,
+          "baseline": 0.3496,
+          "candidate": 0.4112,
+          "difference": 0.0616,
+          "ci95": [
+            0.0199,
+            0.1033
+          ]
+        },
+        "robocasa_orange": {
+          "scenes": 123,
+          "baseline": 0.3984,
+          "candidate": 0.4472,
+          "difference": 0.0488,
+          "ci95": [
+            0.0122,
+            0.0854
+          ]
+        },
+        "robocasa_potato": {
+          "scenes": 122,
+          "baseline": 0.2623,
+          "candidate": 0.3053,
+          "difference": 0.043,
+          "ci95": [
+            -0.0041,
+            0.0922
+          ]
+        },
+        "robocasa_tomato": {
+          "scenes": 129,
+          "baseline": 0.4632,
+          "candidate": 0.4787,
+          "difference": 0.0155,
+          "ci95": [
+            -0.0291,
+            0.0601
+          ]
+        }
+      },
+      "strict_by_target_y_quartile": {
+        "Q1": {
+          "scenes": 130,
+          "baseline": 0.6346,
+          "candidate": 0.6923,
+          "difference": 0.0577,
+          "ci95": [
+            0.0058,
+            0.1096
+          ],
+          "permutation_p": 0.0336
+        },
+        "Q2": {
+          "scenes": 125,
+          "baseline": 0.556,
+          "candidate": 0.616,
+          "difference": 0.06,
+          "ci95": [
+            0.008,
+            0.114
+          ],
+          "permutation_p": 0.02615
+        },
+        "Q3": {
+          "scenes": 128,
+          "baseline": 0.2324,
+          "candidate": 0.2656,
+          "difference": 0.0332,
+          "ci95": [
+            -0.002,
+            0.0684
+          ],
+          "permutation_p": 0.13629
+        },
+        "Q4": {
+          "scenes": 129,
+          "baseline": 0.0562,
+          "candidate": 0.0756,
+          "difference": 0.0194,
+          "ci95": [
+            0.0,
+            0.0407
+          ],
+          "permutation_p": 0.08885
+        }
+      },
+      "per_repeat_mcnemar": [
+        {
+          "baseline_successes": 189,
+          "candidate_successes": 218,
+          "baseline_only": 47,
+          "candidate_only": 76,
+          "p": 0.01128
+        },
+        {
+          "baseline_successes": 178,
+          "candidate_successes": 211,
+          "baseline_only": 46,
+          "candidate_only": 79,
+          "p": 0.00402
+        },
+        {
+          "baseline_successes": 188,
+          "candidate_successes": 213,
+          "baseline_only": 46,
+          "candidate_only": 71,
+          "p": 0.02608
+        },
+        {
+          "baseline_successes": 201,
+          "candidate_successes": 201,
+          "baseline_only": 59,
+          "candidate_only": 59,
+          "p": 1.0
+        }
+      ],
+      "strict_p_holm": 0.0003,
+      "verdict": "candidate_better",
+      "pilot_promotion": {
+        "margin": 0.03,
+        "strict_ci95_low": 0.021,
+        "retention": {
+          "grasped": {
+            "difference": 0.0107,
+            "ci95_low": -0.0073,
+            "lower_bound_required": -0.03,
+            "pass": true
+          },
+          "lifted": {
+            "difference": 0.0327,
+            "ci95_low": 0.0112,
+            "lower_bound_required": -0.03,
+            "pass": true
+          }
+        },
+        "decision": "promote"
+      }
+    }
+  }
+}

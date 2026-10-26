@@ -1,0 +1,12 @@
+% Integration slot for the supplied phase-aware dense-reward manuscript.
+\subsection{Phase-Aware Dense Feedback on LIBERO}\label{sec:dense_method}
+The complementary LIBERO branch represents supported pick-and-place behavior with five ordered phases: reach, grasp, lift, move, and place. Each environment maintains its own tracker. If $p_t\in[0,1]$ denotes active-phase progress and $B_t$ the best progress previously reached in that phase, the rewarded increment is $\Delta p_t^+=\max(p_t-B_t,0)$. The progress baseline resets on phase advancement. Within a phase, revisiting an already reached state earns no additional progress credit.
+
+Let $c_t$ count newly completed phases and $y_t$ denote terminal verifier success. The additive reward is
+\begin{equation}
+r_t=\lambda y_t+\operatorname{clip}(w_p\Delta p_t^++w_c c_t,-C,C).
+\label{eq:dense}
+\end{equation}
+Only shaping is clipped; the original terminal reward is retained without a second terminal term. Unlike CDPR's protected milestone advantages, this rule changes the rewards from which trajectory advantages are constructed. \pending{Insert exact phase predicates, progress functions, transition/reset logic, and chunk-to-reward aggregation from source code.}
+
+Rollout selection is a separate mechanism. A group of $n$ trajectories with terminal outcomes $Y_i$ is retained when $L\le n^{-1}\sum_iY_i\le U$. Bounds excluding zero reject all-failure groups even if dense returns differ. Dense feedback therefore does not automatically remove this filtering bottleneck. Both the reward law and the acceptance rule must be reported when interpreting update throughput.

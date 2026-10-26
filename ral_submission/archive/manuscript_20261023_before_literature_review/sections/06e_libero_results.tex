@@ -1,0 +1,7 @@
+% Editable integration slot: supplied PDF Tables I-II, Figure 1, and results.
+\subsection{Phase-Aware Feedback on LIBERO}\label{sec:libero_results}
+Table~\ref{tab:libero} transcribes the reward comparison from Table I of the supplied LIBERO manuscript. All rows belong to that study; they are not external benchmark scores or CDPR skill results. The supplied manuscript evaluates LIBERO goal completion, not the CDPR approach instruction. Primary dense feedback increases validation success from 61.0\% to 65.3\%, compared with 61.7\% for terminal-only reward: a 3.6-percentage-point endpoint difference. The filtered dense configuration reaches 64.7\%. The weaker-terminal configurations reach 62.3\% and 61.0\%, showing that intermediate feedback does not invariably improve the starting policy. Because shaping weights also change, this comparison does not isolate the effect of the terminal coefficient.
+\input{tables/libero_results}
+
+In the low-success task study, terminal-only and dense training reach 11\% and 18\%, respectively, from the same 10\% initialization (Table~\ref{tab:libero_low}). The supplied account also reports faster accepted-batch assembly and more optimizer updates for dense feedback during the observed interval. Without timestamps, attempt counts, and a common budget endpoint, this remains a qualitative throughput observation. It does not establish a numerical speedup or improvement per optimizer update.
+\input{tables/libero_low_success}

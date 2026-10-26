@@ -1,0 +1,28 @@
+\section{Mechanism Analysis}\label{sec:theory}
+\subsection{Latent Scores and Binary Contrast}
+Assume fixed dynamics, a frozen prior, an exogenous offset law, and regularity allowing differentiation under the expectation. The augmented trajectory density then factors into exogenous terms and conditional latent-policy terms. Consequently,
+\begin{equation}
+\nabla J=\mathbb E\!\left[Y\sum_t\nabla\log\pi_\theta(u_t\mid h_t,p_t,b_t)\right].
+\label{eq:score}
+\end{equation}
+To see this, differentiate the trajectory density: only the policy factors depend on $\theta$ at fixed recorded history, while clipping is a deterministic execution map. The offset density cancels in likelihood ratios. A learned covariance contributes its own Gaussian score. Equation~\eqref{eq:score} describes the full-trajectory score objective, not an unbiasedness guarantee for the stage-filtered PPO surrogate~\cite{capg}.
+
+For $G$ conditionally independent candidates of one scene with binary milestone probability $p$, the probability of a nonconstant group is
+\begin{equation}
+P_{\rm mixed}=1-p^G-(1-p)^G.
+\label{eq:mixed}
+\end{equation}
+This follows by excluding the all-success and all-failure outcomes. At $G=8$, changing $p$ from 0.03 to 0.30 increases this probability from 21.6\% to 94.2\%. Thus milestones can supply contrast when completion is rare, although an almost certain milestone also loses contrast. For heterogeneous scenes, average the scene-specific probabilities rather than inserting the overall success rate. These observations agree with binary-group analyses~\cite{mroueh2026,bay2026}. Our feedback implementations expose contrast at different resolutions: milestones distinguish achievement levels, while dense progress can distinguish trajectories within one level. Neither guarantees useful updates: progress must vary, and rollout filtering must retain the group. In particular, a terminal-accuracy filter can discard an all-failure group even when its dense returns differ.
+
+\subsection{What Prefix Protection Guarantees}
+Consider a benchmark of three sequential Bernoulli gates with separate logits, $q_k=\operatorname{sigmoid}(\theta_k)$ and $J=q_1q_2q_3$. A reached gate produces one decision $X_k$, with score $X_k-q_k$. Use sign-preserving binary group normalization, nonnegative weights, on-policy raw ascent, $\beta\ge0$, and $\kappa=0$, without regularization or optimizer momentum. Then every realized batch direction has $d_k\ge0$, and
+\begin{equation}
+J(\theta+\eta d)\ge J(\theta),\qquad\eta\ge0.
+\end{equation}
+Indeed, an achieved gate receives nonnegative milestone credit and no negative completion bonus; a failed gate receives nonpositive credit. In either case credit and score have the same sign. Their weighted product is nonnegative, so every gate logit can only increase. This is a sufficient explanation of the protection rule, not evidence that symmetric credit must fail in this model.
+
+The neural controller shares parameters across stages and assigns many actions to each stage, so the sign argument no longer applies. For an objective with an $L$-Lipschitz gradient on the actual update segment,
+\begin{equation}
+J(\theta+\Delta)-J(\theta)\ge\nabla J^\top\Delta-\tfrac L2\|\Delta\|^2.
+\end{equation}
+The inequality follows by integrating the gradient along that segment. Positive alignment and a sufficiently small update would imply improvement, but neither an alignment bound nor $L$ has been measured for the CDPR policy. PPO clipping alone does not establish this condition~\cite{trpo}. The analysis also gives no automatic guarantee for hardware transfer or for deployment with a different exploration law.

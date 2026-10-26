@@ -1,0 +1,10 @@
+\section{Problem Formulation}\label{sec:problem}
+Let $c$ specify a scene and instruction, $h_t$ the observation and controller history, and $Y(\tau)\in\{0,1\}$ the complete-task outcome of trajectory $\tau$. The evaluation objective is
+\begin{equation}
+J(\theta)=\mathbb{E}_{c,\tau\sim P_\theta(\cdot\mid c)}[Y(\tau)].
+\end{equation}
+Training may use simulator-derived intermediate predicates, but final evaluation uses the declared task verifier. We distinguish the exploration policy used for training from the deployment policy used for evaluation.
+
+The CDPR action $a_t\in[-1,1]^5$ controls Cartesian translation, yaw, and the gripper. The policy receives camera observations, proprioception, and an instruction; simulator object geometry is used to calculate rewards and evaluation events. Episodes begin with an empty gripper and require the entire manipulation sequence. Strict success requires a physical grasp and held lift, intentional release, and native placement, without latched carry-slip or wrong-placement events. Native placement alone is therefore an insufficient endpoint. The exact event predicates, temporal latches, and abort handling are part of the evaluation contract.
+
+LIBERO success is the environment's binary goal-verification outcome~\cite{libero}. Its phase tracker uses simulator state during training. This endpoint and the CDPR strict endpoint are reported separately; their percentages cannot be pooled into a common success rate. Similarly, repeated development scenes measure performance on a declared distribution rather than unseen-task generalization.

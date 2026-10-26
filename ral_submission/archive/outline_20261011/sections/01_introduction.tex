@@ -1,0 +1,10 @@
+\section{Introduction}\label{sec:introduction}
+\begin{outline}
+\item Problem: pretrained VLA action spaces and training embodiments do not directly match the five control channels of a cable-driven parallel robot (CDPR); complete placement also requires preserving early skills while learning later stages.
+\item Research question: can a SmolVLA-based residual controller learn empty-gripper pick-and-place through staged reinforcement learning and robot-generated experience, and how much of that behavior survives physical deployment?
+\item Proposed contribution 1: a documented adaptation pipeline from skill acquisition and consolidation to a single policy executing approach, grasp, lift, carry, and release under one instruction.
+\item Proposed contribution 2: a mathematical account of conditional latent-action scoring, stage-level signal availability, and achieved-stage credit protection; a sequential-gate improvement proposition and an explicit alignment condition for the shared neural controller. Attribute established ingredients and test the assumptions.
+\item Proposed contribution 3: matched evaluations, stage/failure analysis, and a physical-robot study \pending{completion}; position the newer $>50\%$ run using its eventual verified protocol.
+\item Scope: no newly collected target-robot teleoperation dataset; disclose pretrained data, scripted bridges, oracle-derived historical banks, and human-designed rewards.
+\item Figure 1 plan: simulation and physical CDPR beside a concise pipeline schematic; hardware images and outcomes remain pending.
+\end{outline}

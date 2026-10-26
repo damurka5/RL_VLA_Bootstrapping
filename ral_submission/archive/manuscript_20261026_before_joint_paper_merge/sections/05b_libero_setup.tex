@@ -1,0 +1,11 @@
+% Editable integration slot: source PDF Sections IV and V-B.
+\subsection{Stage-Aware Feedback on an Already Trained Manipulator}\label{sec:libero_setup}
+This component study tests whether task-progress feedback benefits a trained policy when complete-task outcomes provide limited contrast. It starts on LIBERO-Spatial without the CDPR adaptation interface, so it evaluates the intermediate-feedback rationale rather than the full dense-to-binary skill curriculum.
+
+The supplied study uses OpenVLA-OFT in SimpleVLA-RL on the ten LIBERO-Spatial tasks, two NVIDIA L40 GPUs, and an aggregate rollout batch of 32. LoRA rank and alpha are both 16, applied to the language-model projector; gradient checkpointing and FSDP offloading reduce memory demand. These updates optimize discrete action-token likelihoods, despite the continuous-action supervised formulation associated with OFT. \pending{Confirm implementation commit, tokenizer/action decoding, adapted modules, group size, and optimization schedule.}
+
+All aggregate reward configurations start from 61.0\% validation success. The primary dense condition uses $(w_p,w_c,C,\lambda)=(0.2,0.3,0.05,5)$; its terminal-only control disables shaping and retains $\lambda=5$. The filtered dense condition additionally uses $[L,U]=[0.1,0.9]$. With $\lambda=1$, dense shaping uses $w_p=w_c=0.05$, while phase-only shaping uses $w_p=0,w_c=0.2$; both use $C=0.05$.
+
+The source reports final recorded evaluations, balanced across the ten tasks. A separate low-success study restricts training and validation to \texttt{task\_1}, starting at 10\%, with $[L,U]=[0.1,1.0]$ in both conditions. Exact evaluation counts, seeds, task identity, elapsed budgets, and accepted-update counts are absent from the supplied PDF. Until these records are available, its percentages are descriptive results, without inferred confidence intervals or equal-interaction claims.
+
+\input{sections/04c_libero_dense_rewards}

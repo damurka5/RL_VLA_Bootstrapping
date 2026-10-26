@@ -1,0 +1,9 @@
+\section{Related Work}\label{sec:related}
+\begin{outline}
+\item VLA adaptation: introduce SmolVLA as the backbone~\cite{smolvla}; review embodiment/action adaptation and separate frozen-backbone residual training from full VLA fine-tuning.
+\item Residual learning and autonomous data generation: compare directly with Probe, Learn, Distill (PLD)~\cite{pld}. Explain differences in learning objective, data lineage, embodiment, and consolidation target; the shared residual-RL/SFT pattern is prior art.
+\item Group-relative optimization: cite GRPO's origin~\cite{deepseekmath}; add a focused, updated review of robotic VLA RL, sparse sequential credit, and stage-conditioned sampling before final prose.
+\item Self-imitation and retention: distinguish success-filtered behavior cloning used here from other algorithms called self-imitation learning; retain only the literature needed to explain initialization and interference.
+\item CDPR learning and sim-to-real: add primary references on cable dynamics, calibration, observation mismatch, and manipulation transfer once the physical setup is fixed.
+\item Literature comparison plan: supervision source, actor inputs, trainable parameters, full-task resets, and physical evidence. No cross-paper numerical ranking across different task distributions.
+\end{outline}

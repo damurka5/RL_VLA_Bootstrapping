@@ -1,0 +1,6 @@
+\section{Related Work}\label{sec:related}
+\textbf{VLA adaptation.} OpenVLA~\cite{openvla}, SmolVLA~\cite{smolvla}, and OpenVLA-OFT~\cite{openvlaoft} provide pretrained policies and adaptation methods. We retain SmolVLA's pretrained expert and learn a separate residual. Our LIBERO implementation instead updates discrete action-token likelihoods in an OpenVLA-OFT-based policy.
+
+\textbf{Residual learning and consolidation.} Probe, Learn, Distill combines residual RL, autonomous data collection, and distillation~\cite{pld}. These ingredients are established; our focus is their use in a schedule that links skill acquisition, retention, and composition. Here self-imitation means supervised fitting of successful policy-generated experience, including experience retained from earlier policies.
+
+\textbf{Intermediate feedback and RL.} SimpleVLA-RL applies group-relative optimization to VLA rollouts~\cite{simplevlarl}, following GRPO~\cite{deepseekmath}. Binary group rewards provide no contrast when all candidates have the same outcome~\cite{mroueh2026,bay2026}. Intermediate progress can create contrast earlier. Our shaping rule is task-specific and does not claim the policy-invariance guarantees of potential-based shaping~\cite{ng1999}. We also distinguish latent samples from clipped executed actions when computing likelihoods~\cite{capg}.

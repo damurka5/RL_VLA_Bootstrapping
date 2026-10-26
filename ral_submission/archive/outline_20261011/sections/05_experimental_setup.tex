@@ -1,0 +1,25 @@
+\section{Experimental Setup}\label{sec:setup}
+\subsection{Simulation, Protocol, and Baselines}
+\begin{outline}
+\item Describe the five-channel CDPR, MuJoCo Warp/MJ-Lab simulator, cameras, four object categories (apple, orange, potato, tomato), and plate/bowl destinations. Freeze the exact configuration for the selected run.
+\item Historical matched protocol: 512 development scenes excluding the 128-scene in-run panel, four repeats per checkpoint, 128 decisions, zero settling decisions, no teacher/yaw assistance, deterministic residual mean with prior noise scale 1.
+\item Use identical scene manifests, horizons, termination rules, and deployment stochasticity across comparison arms. Keep non-finite simulation episodes in denominators and report their rate.
+\item Core baselines to run or recover: mapped frozen VLA; bootstrapped pre-full-task-RL initializer; same architecture with terminal-only credit; matched continued training with historical versus latent likelihood; latest complete method.
+\item Prioritize a fixed-prior/no-prior residual control with matched observations and budget to test the VLA action prior's contribution. Feature or language ablations are separate tests; do not interpret prior removal as removal of all VLA information.
+\item Report successes/trials and scene-paired uncertainty; cluster repeated rollouts by scene. Add independent training seeds when feasible and distinguish rollout variability from training-seed variability.
+\item Report selected actions, all sampled/executed actions, updates, GPU-hours, and inherited training cost. A 2M pilot continuation is not a 2M-from-scratch method.
+\end{outline}
+\subsection{Tests of the Mathematical Mechanism}
+\begin{outline}
+\item \planned{compare latent, clipped-sample and independent-marginal scores with exact/finite-difference gradients in controlled processes; then validate recorded robot likelihoods.}
+\item \planned{compare empirical mixed-group frequency with the per-scene binary prediction; measure losses from stage masks, invalid episodes, and post-selection weighting.}
+\item \planned{compare protected ($\kappa=0$) and symmetric ($\kappa=1$) terminal credit; audit stage-gradient interference, independent full-task directional alignment, and actual update displacement.}
+\item Separate analytic-model verification, stochastic training-policy diagnostics, and deterministic-mean deployment results. Match interaction budgets and report uncertainty for robot comparisons.
+\end{outline}
+\subsection{Physical Robot Protocol (Pending)}
+\begin{outline}
+\item \pending{robot configuration, cameras, objects/receptacles, state estimation, control frequency, calibration, and checkpoint}. Verify every actor input is available on hardware.
+\item \planned{evaluate unassisted empty-start pick-and-place with a fixed trial list, randomized execution order, explicit outcome rubric, video records, and baseline under the same hardware conditions.}
+\item \planned{provisional feasibility design: four objects $\times$ two receptacles $\times$ ten trials = 80 trials per policy, if supported by the actual apparatus. Final sample size follows a precision/power and resource decision before outcomes are reviewed.}
+\item Record every intervention/reset, abort, failure, and adaptation step. Distinguish direct transfer from hardware fine-tuning or recalibration; use an observable physical counterpart of the strict simulator rubric.
+\end{outline}

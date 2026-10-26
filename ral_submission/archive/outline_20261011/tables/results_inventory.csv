@@ -1,0 +1,6 @@
+result_id,status,strict_successes,episodes,distinct_scenes,repeats,strict_percent,checkpoint,sha256,source
+reference,recorded_development,756,2048,512,4,36.91,runs/three_stage_sparse_grpo_20260925_105132/rl/step_56072006/smolvla_grpo_adapter.pt,af8e31f654e7cafed47356260c15d197f4b15a4deb70fc08e88fda373378dbcb,evidence/latent_2m_comparison_20261009.json
+candidate,recorded_development,769,2048,512,4,37.55,runs/latent_2m_candidate_20261008_195832/rl/step_2007079/smolvla_grpo_adapter.pt,6ab5d6fda2a76a78aeba5acf96a0b1d83fac2f9c446305da2be75300f5cafd5d,evidence/latent_2m_comparison_20261009.json
+control,recorded_development,843,2048,512,4,41.16,runs/latent_2m_control_20261009_033534/rl/step_2052558/smolvla_grpo_adapter.pt,91a5b74815a6868ec941069e9431ecf7eab31b15375c46be76fc9fe6c89be893,evidence/latent_2m_comparison_20261009.json
+latest_over_50,author_reported_exact_result_pending,,,,,,,,"Author statement, 2026-10-11"
+real_world,experiment_pending,,,,,,,,"Author statement, 2026-10-11"

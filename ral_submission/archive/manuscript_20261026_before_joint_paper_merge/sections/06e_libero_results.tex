@@ -1,0 +1,9 @@
+% Editable integration slot: supplied PDF Tables I-II, Figure 1, and results.
+\subsection{Phase-Aware Feedback on LIBERO}\label{sec:libero_results}
+Table~\ref{tab:libero} reports the supplied study's LIBERO goal-completion results. Primary phase-aware dense feedback increases validation success from 61.0\% to 65.3\%, compared with 61.7\% for terminal-only reward: a 3.6-percentage-point endpoint difference. Filtered dense reaches 64.7\%. Phase-only shaping reaches 62.3\%, whereas weaker-terminal dense remains at 61.0\%. The primary dense and phase-only rows differ in terminal coefficient and shaping weights; their 3.0-point gap does not isolate within-phase progress. Likewise, the table does not isolate terminal scaling. The observed ordering supports structured intermediate feedback under the tested settings, rather than a general claim that denser reward is better.
+\input{tables/libero_results}
+
+In the low-success task study, terminal-only and dense training reach 11\% and 18\%, respectively, from the same 10\% initialization (Table~\ref{tab:libero_low}). The supplied account also reports faster accepted-batch assembly and more optimizer updates for dense feedback during the observed interval. Without timestamps, attempt counts, and a common budget endpoint, this remains a qualitative throughput observation. It does not establish a numerical speedup or improvement per optimizer update.
+\input{tables/libero_low_success}
+
+These results support using intermediate feedback even after basic skills exist, as in CDPR task composition. They do not determine whether dense shaping or milestone credit is preferable on the CDPR, nor establish the benefit of binary refinement or self-imitation. Those are separate comparisons within the adaptation schedule.

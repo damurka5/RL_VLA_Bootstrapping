@@ -1,0 +1,92 @@
+<?xml version='1.0' encoding='utf-8'?>
+<mxfile host="app.diagrams.net" type="device" compressed="false">
+  <diagram id="wx200_slots" name="06 WX200 illustration slots">
+    <mxGraphModel dx="1000" dy="287" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1000" pageHeight="287" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+        <mxCell id="n2" value="WX200: five-DoF embodiment extension" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=22;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="10" y="4" width="980" height="26" />
+        </mxCell>
+        <mxCell id="n3" value="" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=18;fontColor=#243447;fontStyle=0;fillColor=#F7F9FC;strokeColor=#526377;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="10" y="44" width="303" height="224" />
+        </mxCell>
+        <mxCell id="n4" value="(a) Apparatus + control axes" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="20" y="53" width="283" height="28" />
+        </mxCell>
+        <mxCell id="n5" value="Insert actual robot photograph&#10;or verified CAD illustration&#10;&#10;Label 5 joints, workspace,&#10;camera views, object and target" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="22" y="95" width="279" height="120" />
+        </mxCell>
+        <mxCell id="n6" value="No experiment image supplied" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="24" y="223" width="275" height="27" />
+        </mxCell>
+        <mxCell id="n7" value="(b) Full-task rollout: one instruction, empty-gripper start" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=19;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="334" y="49" width="650" height="27" />
+        </mxCell>
+        <mxCell id="n8" value="" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=18;fontColor=#243447;fontStyle=0;fillColor=#F7F9FC;strokeColor=#526377;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="334" y="93" width="122" height="132" />
+        </mxCell>
+        <mxCell id="n9" value="Frame&#10;placeholder" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="339" y="107" width="112" height="40" />
+        </mxCell>
+        <mxCell id="n10" value="Reach" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="339" y="174" width="112" height="22" />
+        </mxCell>
+        <mxCell id="n11" value="t = ___ s" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="339" y="199" width="112" height="21" />
+        </mxCell>
+        <mxCell id="n12" value="" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=18;fontColor=#243447;fontStyle=0;fillColor=#F7F9FC;strokeColor=#526377;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="466" y="93" width="122" height="132" />
+        </mxCell>
+        <mxCell id="n13" value="Frame&#10;placeholder" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="471" y="107" width="112" height="40" />
+        </mxCell>
+        <mxCell id="n14" value="Grasp" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="471" y="174" width="112" height="22" />
+        </mxCell>
+        <mxCell id="n15" value="t = ___ s" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="471" y="199" width="112" height="21" />
+        </mxCell>
+        <mxCell id="n16" value="" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=18;fontColor=#243447;fontStyle=0;fillColor=#F7F9FC;strokeColor=#526377;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="598" y="93" width="122" height="132" />
+        </mxCell>
+        <mxCell id="n17" value="Frame&#10;placeholder" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="603" y="107" width="112" height="40" />
+        </mxCell>
+        <mxCell id="n18" value="Lift" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="603" y="174" width="112" height="22" />
+        </mxCell>
+        <mxCell id="n19" value="t = ___ s" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="603" y="199" width="112" height="21" />
+        </mxCell>
+        <mxCell id="n20" value="" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=18;fontColor=#243447;fontStyle=0;fillColor=#F7F9FC;strokeColor=#526377;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="730" y="93" width="122" height="132" />
+        </mxCell>
+        <mxCell id="n21" value="Frame&#10;placeholder" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="735" y="107" width="112" height="40" />
+        </mxCell>
+        <mxCell id="n22" value="Transport" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="735" y="174" width="112" height="22" />
+        </mxCell>
+        <mxCell id="n23" value="t = ___ s" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="735" y="199" width="112" height="21" />
+        </mxCell>
+        <mxCell id="n24" value="" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=18;fontColor=#243447;fontStyle=0;fillColor=#F7F9FC;strokeColor=#526377;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;dashed=1;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="862" y="93" width="122" height="132" />
+        </mxCell>
+        <mxCell id="n25" value="Frame&#10;placeholder" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="867" y="107" width="112" height="40" />
+        </mxCell>
+        <mxCell id="n26" value="Release" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="867" y="174" width="112" height="22" />
+        </mxCell>
+        <mxCell id="n27" value="t = ___ s" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="867" y="199" width="112" height="21" />
+        </mxCell>
+        <mxCell id="n28" value="Add instruction, trial ID and deployment condition with the real images." style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=17;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+          <mxGeometry as="geometry" x="334" y="238" width="650" height="29" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
