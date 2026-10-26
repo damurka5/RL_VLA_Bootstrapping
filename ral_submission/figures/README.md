@@ -27,7 +27,7 @@ Each figure has PDF, SVG and PNG exports. Keep the PDF basename when replacing i
 
 Figure 5 uses evidence/skill_retention_rounds.json (relative to the paper folder). Bars are means of rounded reported rates; dots show individual rounds. No confidence intervals are invented. Forgetting and balanced-SIL recovery are separate measurements. The reaching bank includes an earlier policy's experience.
 
-Figure 4 is a schematic reward sequence, not empirical telemetry. Figure 3 assumes usable groups, a negative terminal advantage and kappa = 0.
+Figure 4 is a schematic reward sequence, not empirical telemetry. Figure 3 assumes informative milestone groups and a failed placement. Its plain-language labels show positive local prefix credit and a blocked negative completion bonus.
 
 ## WX200 insertion
 

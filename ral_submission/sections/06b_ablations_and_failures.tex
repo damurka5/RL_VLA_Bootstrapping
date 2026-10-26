@@ -1,10 +1,12 @@
-\subsection{Forgetting and Recovery with Balanced Self-Imitation}
-Figure~\ref{fig:retention} reports skill-level forgetting and recovery. In the forgetting measurements, reaching falls from a mean of 64.1\% to 5.3\% after placement RL, then to 1.8\% after placement-only imitation. In a separate consolidation measurement, balanced self-imitation increases reaching from 8.0\% to 31.1\%. Plate and bowl placement change from 50.0\% to 52.3\% and from 23.05\% to 27.65\%. The panels use the reported family protocols and are not joined into a continuous learning curve.
+\subsection{Skill Forgetting and Recovery}
+Sequential training strongly affects earlier instructions (Fig.~\ref{fig:retention}). Reaching success falls from a mean of 64.1\% to 5.3\% after placement RL, and to 1.8\% after placement-only imitation.
+
+In a separate retention experiment, balanced self-imitation raises reaching from 8.0\% to 31.1\%. Plate placement changes from 50.0\% to 52.3\%, and bowl placement from 23.05\% to 27.65\%. The bank combines earlier reaching successes with current placement successes. Each skill is evaluated under its own fixed reset protocol; placement skill tests can begin with a held object.
 
 \begin{figure*}[!t]
 \centering\includegraphics[width=\textwidth]{figures/skill_retention.pdf}
-\caption{Measured skill forgetting and recovery. Left: reaching after placement RL and placement-only imitation (three reported rounds per condition). Right: before and after balanced three-family self-imitation (three reaching rounds, two placement rounds). Small marks show reported rounds; bars show their means. The two panels describe separate measurements. Rounded source rates are used; raw evaluation denominators and paired episode records are unavailable.}
+\caption{Forgetting and recovery across instructions. Left: reaching after placement RL and placement-only imitation, with three evaluation rounds per condition. Right: before and after balanced self-imitation, with three reaching rounds and two placement rounds. Bars show means; marks show individual rounds. The panels are separate experiments.}
 \label{fig:retention}
 \end{figure*}
 
-The bank includes reaching experience from a retained policy and the placement policy's own successes. This supports consolidation from stored successful experience. It does not establish a causal effect of SIL on final full-task success: later full-task imitation attempts also failed to improve performance. Matched schedule and retention ablations remain necessary.
+Recovery is partial, but it preserves placement while improving reaching. Placement-only imitation does not provide this balance. These skill-level results do not isolate the contribution of self-imitation to final full-task success.

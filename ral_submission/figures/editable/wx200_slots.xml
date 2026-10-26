@@ -17,7 +17,7 @@
         <mxCell id="n5" value="Insert actual robot photograph&#10;or verified CAD illustration&#10;&#10;Label 5 joints, workspace,&#10;camera views, object and target" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
           <mxGeometry as="geometry" x="22" y="95" width="279" height="120" />
         </mxCell>
-        <mxCell id="n6" value="No experiment image supplied" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+        <mxCell id="n6" value="Setup illustration to be added" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=16;fontColor=#526377;fontStyle=0;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
           <mxGeometry as="geometry" x="24" y="223" width="275" height="27" />
         </mxCell>
         <mxCell id="n7" value="(b) Full-task rollout: one instruction, empty-gripper start" style="rounded=0;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=19;fontColor=#243447;fontStyle=1;fillColor=none;strokeColor=none;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">

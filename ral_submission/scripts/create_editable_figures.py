@@ -105,7 +105,7 @@ def architecture():
  d.line([(817,108),(891,108),(891,242)],BLUE,arrow=True,source=prior,target=add)
  output=d.box(848,325,137,49,'tanh: 8 x 5\nexecute 4 slots',fill=PT,stroke=TEAL,fs=17)
  d.line([(891,291),(891,325)],arrow=True,source=add,target=output)
- d.text(192,343,624,29,'mean = tanh(prior + bounded residual)',19,True)
+ d.text(192,343,624,29,'Pretrained action prior + bounded correction',19,True)
  d.line([(12,389),(988,389)],'#CAD3DD'); d.text(12,398,976,25,'Earlier phases: expert LoRA + residual    |    Full-task continuation: VLA / LoRA frozen; residual trained',17); d.save()
 def phase():
  d=D('phase_feedback','04 Feedback resolution',490,307); d.text(8,4,474,24,'Feedback at different resolutions',20,True)
@@ -120,18 +120,18 @@ def phase():
   d.box(180+i*68,190,10,10,fill=PURPLE,stroke=PURPLE,rounded=False)
   for j in range(3):
    x=140+i*68+j*15; d.line([(x,196),(x,187-j*4)],TEAL,width=2)
- d.box(8,230,474,62,'Phase progress (B0 = 0):  0.4 -> 0.7 -> 0.5 -> 0.7 -> 0.8\nNew progress credit:  +0.4   +0.3      0        0      +0.1',fill=PT,stroke=TEAL,fs=15); d.save()
+ d.box(8,230,474,62,'Progress from zero:  0.4 -> 0.7 -> 0.5 -> 0.7 -> 0.8\nNew progress credit:  +0.4   +0.3      0        0      +0.1',fill=PT,stroke=TEAL,fs=15); d.save()
 def credit():
- d=D('milestone_credit','03 Milestone credit',490,307); d.text(8,4,474,25,'Example: prefix achieved, placement failed',19,True)
+ d=D('milestone_credit','03 Milestone credit',490,307); d.text(8,4,474,25,'Successful prefix, failed placement',19,True)
  xs=[125,247,369]
  for i,(label,ok) in enumerate([('Approach',True),('Held pickup',True),('Placement',False)]):
-  x=xs[i]; d.box(x,48,108,45,label,fill=PT if ok else '#FCEEEF',stroke=TEAL if ok else RED,fs=16); d.text(x,98,108,24,'M = 1' if ok else 'Y = 0',17,True,TEAL if ok else RED)
- for y,lab in [(148,'Local credit'),(196,'Terminal bonus'),(244,'Used credit')]: d.text(7,y-3,117,29,lab,13,True,align='left')
+  x=xs[i]; d.box(x,48,108,45,label,fill=PT if ok else '#FCEEEF',stroke=TEAL if ok else RED,fs=16); d.text(x,98,108,24,'achieved' if ok else 'failed',17,True,TEAL if ok else RED)
+ for y,lab in [(148,'Local credit'),(196,'Failure bonus'),(244,'Used credit')]: d.text(7,y-3,117,29,lab,13,True,align='left')
  for i,x in enumerate(xs):
-  label=f'A{i+1}'; d.box(x,145,108,29,label,fill=LIGHT,stroke='#CAD3DD',fs=17)
-  d.box(x,193,108,29,'0 (suppressed)' if i<2 else 'no duplicate',fill=PO if i<2 else LIGHT,stroke=ORANGE if i<2 else '#CAD3DD',fs=13)
+  label='positive' if i<2 else 'negative'; d.box(x,145,108,29,label,fill=LIGHT,stroke='#CAD3DD',fs=17)
+  d.box(x,193,108,29,'blocked' if i<2 else 'no duplicate',fill=PO if i<2 else LIGHT,stroke=ORANGE if i<2 else '#CAD3DD',fs=13)
   d.box(x,241,108,29,label,fill=PT if i<2 else '#FCEEEF',stroke=TEAL if i<2 else RED,fs=17)
- d.text(8,277,474,22,'Usable groups; A3 < 0; kappa = 0. Local credit can vary.',14,color=MUTED); d.save()
+ d.text(8,277,474,22,'Example with mixed outcomes in each milestone group.',14,color=MUTED); d.save()
 def retention():
  data=json.loads((R/'evidence/skill_retention_rounds.json').read_text()); d=D('skill_retention','05 Skill forgetting and recovery',1000,353)
  d.text(8,4,474,25,'(a) Reaching lost during placement training',18,True); d.text(511,4,481,25,'(b) Balanced SIL recovers earlier behavior',20,True)
@@ -151,17 +151,17 @@ def retention():
   center=616+j*139
   for k,(_,rates) in enumerate(conditions.items()):
    val=sum(rates)/len(rates)*100; x=center-45+k*41; c=GRAY if k==0 else TEAL
-   d.box(x,y0-val*scale,34,val*scale,fill=c,stroke=MUTED if k==0 else TEAL,rounded=False); d.text(x-13,y0-max(rates)*100*scale-27,60,22,f'{val:.1f}',16,True)
+   d.box(x,y0-val*scale,34,val*scale,fill=c,stroke=MUTED if k==0 else TEAL,rounded=False); d.text(x-13+(-5 if k==0 else 5),y0-max(rates)*100*scale-27,60,22,f'{val:.1f}',16,True)
    for n,v in enumerate(rates): d.box(x+7+n*8,y0-v*100*scale-2,4,4,stroke=INK,ellipse=True)
   d.text(center-61,276,122,40,skill.replace(' ','\n'),15)
  d.box(665,66,14,13,fill=GRAY,stroke=MUTED,rounded=False); d.text(684,60,92,25,'Before SIL',15,align='left')
  d.box(786,66,14,13,fill=TEAL,stroke=TEAL,rounded=False); d.text(805,60,130,25,'After SIL',15,align='left')
- d.line([(495,41),(495,320)],'#CAD3DD',dash=True); d.text(8,326,984,22,'Bars: means of reported rounds. Marks: individual rounds. Panels are separate measurements; no continuous curve is implied.',15,color=MUTED); d.save()
+ d.line([(495,41),(495,320)],'#CAD3DD',dash=True); d.text(8,326,984,22,'Bars: mean success. Marks: evaluation rounds. Forgetting and recovery are separate experiments.',15,color=MUTED); d.save()
 def wx200():
  d=D('wx200_slots','06 WX200 illustration slots',1000,287); d.text(10,4,980,26,'WX200: five-DoF embodiment extension',22,True)
  d.box(10,44,303,224,fill=LIGHT,stroke=MUTED,dash=True); d.text(20,53,283,28,'(a) Apparatus + control axes',17,True)
  d.text(22,95,279,120,'Insert actual robot photograph\nor verified CAD illustration\n\nLabel 5 joints, workspace,\ncamera views, object and target',16,color=MUTED)
- d.text(24,223,275,27,'No experiment image supplied',16,color=MUTED)
+ d.text(24,223,275,27,'Setup illustration to be added',16,color=MUTED)
  d.text(334,49,650,27,'(b) Full-task rollout: one instruction, empty-gripper start',19,True)
  for j,label in enumerate(['Reach','Grasp','Lift','Transport','Release']):
   x=334+j*132; d.box(x,93,122,132,fill=LIGHT,stroke=MUTED,dash=True); d.text(x+5,107,112,40,'Frame\nplaceholder',17,color=MUTED); d.text(x+5,174,112,22,label,17,True); d.text(x+5,199,112,21,'t = ___ s',16,color=MUTED)
@@ -174,6 +174,7 @@ def styles(s):
   elif entry: result[entry]='1'
  return result
 def render(path):
+ plt.rcParams.update({'pdf.fonttype':42,'ps.fonttype':42,'svg.fonttype':'none'})
  root=E.parse(path).getroot(); model=root.find('diagram/mxGraphModel'); w,h=float(model.get('pageWidth')),float(model.get('pageHeight'))
  fig=plt.figure(figsize=(w/100,h/100),facecolor='white'); ax=fig.add_axes([0,0,1,1]); ax.set(xlim=(0,w),ylim=(h,0)); ax.axis('off'); issues=[]
  for idx,cell in enumerate(model.findall('root/mxCell')):
@@ -204,6 +205,8 @@ def render(path):
     if length>bw-5: issues.append(f'{cell.get("id")}: text width {length:.0f} > {bw}')
   if len(value.splitlines())*fs*1.2/.72>bh+2: issues.append(cell.get('id')+': text taller than box')
  for ext in ['pdf','svg','png']: fig.savefig(OUT/f'{path.stem}.{ext}',dpi=180)
+ svg=OUT/f'{path.stem}.svg'
+ svg.write_text('\n'.join(line.rstrip() for line in svg.read_text().splitlines())+'\n')
  plt.close(fig)
  if issues: raise ValueError(f'{path.name}: '+', '.join(issues))
  return len(model.findall('root/mxCell'))-2
@@ -215,9 +218,9 @@ def combine():
 def table():
  rows=list(csv.DictReader((R/'evidence/libero_paper_results_export_20261026.csv').open())); final=[r for r in rows if r['evaluation_stage']=='final']
  labels={'Terminal only lambda=5':r'Terminal only, $\lambda=5$','Primary dense lambda=5':r'Dense, $\lambda=5$','Mixed-outcome filtered dense lambda=5':r'Filtered dense, $\lambda=5$','Dense shaping lambda=1':r'Dense, $\lambda=1$','Phase shaping lambda=1':r'Phase only, $\lambda=1$','Terminal only':'Terminal only','Dense reward':'Dense'}
- lines=[r'\begin{table}[t]',r'\caption{LIBERO reward comparison and low-success task. Success and $\Delta$ are percentages and percentage points. Aggregate endpoints use 300 validation rollouts; final task\_1 denominators are unreported. Different update budgets are shown explicitly.}',r'\label{tab:libero}\centering\small',r'\begin{tabular}{@{}lrrr@{}}\toprule',r'Configuration & Updates & Success & $\Delta$\\\midrule',r'\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\']
+ lines=[r'\begin{table}[t]',r'\caption{LIBERO reward comparison. $\lambda$ is the terminal reward weight; success and $\Delta$ are percentages and percentage-point gains. Aggregate endpoints use 300 validation rollouts. Update budgets are shown for each condition.}',r'\label{tab:libero}\centering\small',r'\begin{tabular}{@{}lrrr@{}}\toprule',r'Configuration & Updates & Success & $\Delta$\\\midrule',r'\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\']
  for series in ['full_suite_reward_ablation','single_task_low_success']:
-  if series=='single_task_low_success': lines.extend([r'\midrule',r'\multicolumn{4}{@{}l}{task\_1: initial 2.0\% (1,000 rollouts)}\\'])
+  if series=='single_task_low_success': lines.extend([r'\midrule',r'\multicolumn{4}{@{}l}{Low-success task: initial 2.0\% (1,000 rollouts)}\\'])
   for row in final:
    if row['series']==series: lines.append(f"{labels[row['configuration']]} & {row['rl_update_step']} & {float(row['success_percent']):.1f} & {float(row['change_from_initial_pp']):+.1f}"+r'\\')
  lines.extend([r'\bottomrule',r'\end{tabular}',r'\end{table}']); (R/'tables/libero_results.tex').write_text('\n'.join(lines)+'\n')

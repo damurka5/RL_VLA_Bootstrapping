@@ -197,7 +197,7 @@
             <mxPoint as="targetPoint" x="442" y="179" />
           </mxGeometry>
         </mxCell>
-        <mxCell id="n44" value="Phase progress (B0 = 0):  0.4 -&gt; 0.7 -&gt; 0.5 -&gt; 0.7 -&gt; 0.8&#10;New progress credit:  +0.4   +0.3      0        0      +0.1" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=15;fontColor=#243447;fontStyle=0;fillColor=#E8F5F1;strokeColor=#147D77;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
+        <mxCell id="n44" value="Progress from zero:  0.4 -&gt; 0.7 -&gt; 0.5 -&gt; 0.7 -&gt; 0.8&#10;New progress credit:  +0.4   +0.3      0        0      +0.1" style="rounded=1;whiteSpace=wrap;html=0;fontFamily=Helvetica;fontSize=15;fontColor=#243447;fontStyle=0;fillColor=#E8F5F1;strokeColor=#147D77;strokeWidth=1.3;align=center;verticalAlign=middle;spacing=3;" vertex="1" parent="1">
           <mxGeometry as="geometry" x="8" y="230" width="474" height="62" />
         </mxCell>
       </root>

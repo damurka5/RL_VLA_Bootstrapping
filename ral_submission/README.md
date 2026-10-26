@@ -2,29 +2,42 @@
 
 Updated 26 October 2026.
 
-main.pdf is the current reading copy; main.tex is the entry point. This revision reduces the draft from eight to six pages and roughly halves the text. Training-snapshot comparisons and generic training curves are removed.
+main.pdf is the current reading copy; main.tex is the entry point.
+
+## Current structure
+
+1. Introduction
+2. Related Work
+3. Methods
+4. Experiments (setup and results together)
+5. Conclusion
+6. Future Work
+
+The article centers on the adaptation pipeline. CDPR simulation, OpenVLA-OFT on LIBERO-Spatial, and the ongoing WX200 study are evaluation settings. Problem motivation is integrated into Methods. The manuscript contains four displayed expressions: self-imitation loss, the 40d action prior, the compact clipped RL loss with entropy regularization, and mixed-outcome group probability.
+
+Algorithm 1 is sourced from algorithms/staged_pipeline_paper.tex. It preserves the order of all dense skill stages before all binary stages, then full-task composition. The text gives qualitative transition criteria and distinguishes automated stopping from historical CDPR manual transitions. Exact configuration values and implementation provenance remain in supporting audit notes.
 
 ## Editable figures
 
-Open figures/editable/ral_figures.xml in diagrams.net: File → Open from → Device. It contains six pages of native editable shapes, labels, arrows, bars and evaluation marks. Individual XML files are in the same folder.
+Open figures/editable/ral_figures.xml in diagrams.net: File → Open from → Device. It contains six pages of native editable shapes, labels, arrows, bars, and evaluation marks. Individual XML files are in the same folder.
 
 1. Pipeline overview on the first manuscript page.
-2. SmolVLA, LoRA, 518d observation features and the residual action path.
+2. SmolVLA, LoRA, 518d observation features, and the residual action path.
 3. Milestone credit after an achieved prefix and failed placement.
-4. Terminal, phase and within-phase feedback.
+4. Terminal, phase, and within-phase feedback.
 5. Measured forgetting and balanced-SIL recovery.
 6. WX200 apparatus and five-frame rollout slots.
 
-PDF exports are included in the paper; SVG and PNG exports are alongside them. See figures/README.md for editing instructions.
+PDF exports are included in the paper; SVG and PNG exports are alongside them. See figures/README.md for editing instructions. The combined XML and individual diagrams are packaged in figures/editable/ral_figures.zip.
 
 ## Evidence
 
-- evidence/libero_paper_results_export_20261026.csv: exact copy of the new author-supplied export found in Downloads. Table II uses its final rows. It corrects task_1 initialization to 2% and primary dense weights to w_p = w_c = 0.05.
-- evidence/skill_retention_rounds.json and skill_retention_source_20261026.md: reported round rates for Figure 5. Its panels are separate measurements.
-- evidence/latent_control_40m_comparison_20261019.json: only the final controller's evaluation is included.
-- evidence/ACTION_MODULE_AUDIT_20261022.md: architecture and LoRA evidence.
+- evidence/libero_paper_results_export_20261026.csv supplies the exact endpoint values for Table II.
+- evidence/skill_retention_rounds.json contains the round rates for Figure 5. The panels are separate experiments.
+- evidence/latent_control_40m_comparison_20261019.json supports the final controller evaluation.
+- evidence/ACTION_MODULE_AUDIT_20261022.md documents the architecture and LoRA implementation.
 
-The paper reports development evaluation. WX200 and physical results remain unfilled. Two explicit method placeholders remain: the training manifest and exact phase-reward implementation.
+The manuscript reports development evaluation and descriptive LIBERO endpoints. WX200 illustrations and quantitative results remain reserved for the ongoing evaluation. Source data and detailed mathematical audits stay outside the reader-facing text.
 
 ## Build
 
@@ -38,4 +51,4 @@ Python needs matplotlib. Vector PDFs are already included, so LaTeX can compile 
 
 The local renderer supports the original draft's basic shapes/styles. After adding new diagrams.net features, export a vector PDF directly from the editor using the same basename.
 
-VISUAL_REVISION_20261026.md records changes and evidence limits. Earlier active sources and PDF are preserved in archive/manuscript_20261026_before_visual_revision/. Other dated notes are historical and are superseded where they conflict with this revision.
+STRUCTURE_REVISION_20261026.md records the current editorial revision. Earlier dated integration notes are historical where they conflict with this version. The manuscript preceding the visual revision is preserved in archive/manuscript_20261026_before_visual_revision/.

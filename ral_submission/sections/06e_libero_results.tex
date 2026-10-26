@@ -1,5 +1,6 @@
-\subsection{Phase-Aware Feedback on LIBERO}\label{sec:libero_results}
-At 160 updates, primary dense feedback reaches 65.3\% success versus 61.7\% for terminal-only reward, an observed difference of 3.6 percentage points (Table~\ref{tab:libero}). Filtered dense reaches 64.7\% at 50 updates. Different budgets prevent a direct efficiency claim across all rows.
+At 160 updates, dense feedback reaches 65.3\% success versus 61.7\% with terminal-only reward, a difference of 3.6 percentage points. Filtered dense feedback reaches 64.7\% at 50 updates.
 \input{tables/libero_results}
 
-At $\lambda=1$, phase-only feedback reaches 62.3\% and dense shaping 61.0\%. Their phase weights also differ, so this comparison does not isolate within-phase progress. On \texttt{task\_1}, dense and terminal-only training reach 18\% and 11\% after 20 updates, from the 2\% initialization. These descriptive results support intermediate feedback under the tested settings. They do not establish a statistically resolved advantage, a throughput gain, or the benefit of the complete adaptation schedule.
+With the lower terminal reward weight, phase-only and dense feedback reach 62.3\% and 61.0\%, respectively. Their phase weights also differ, so this comparison does not isolate within-phase progress. On the low-success task, dense and terminal-only training reach 18\% and 11\% after 20 updates, from the same 2\% initialization.
+
+The matched-budget comparisons support intermediate feedback in these settings. Different budgets across the other conditions prevent a general efficiency claim.

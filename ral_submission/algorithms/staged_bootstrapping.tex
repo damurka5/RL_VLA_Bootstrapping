@@ -1,0 +1,52 @@
+% Requires: \usepackage{algorithm,algpseudocode,amsmath,amssymb}
+% Scope: current automated WX200 driver, not a retrospective CDPR run log.
+\begin{algorithm}[t]
+\caption{Staged VLA adaptation with conditional skill consolidation}
+\label{alg:staged_bootstrapping}
+\begin{algorithmic}[1]
+\Require Pretrained VLA; residual policy $\theta$; ordered stage specifications $\mathcal S$
+\Require Fixed evaluation protocols; targets $\tau_s$, budgets $B_s$, minimum steps $m_s$, windows $W_s$
+\State $\mathcal S \gets [(R,D),(G,D),(P,D),(R,B),(G,B),(P,B),(\mathrm{joint},M)]$
+\State Skill banks $\mathcal D\gets\varnothing$; reference rates $b\gets\varnothing$
+\For{stage $s\in\mathcal S$}
+    \State Inherit current policy weights; initialize fresh RL optimizer and curriculum
+    \If{$s$ uses binary or staged rewards}
+        \State Reset exploration log standard deviation to its configured initial value
+    \EndIf
+    \State Set stage reward, reset distribution, curriculum and trainable parameters
+    \Repeat
+        \State Collect same-scene trajectory groups and compute group-relative advantages
+        \State Apply the stage's clipped RL update and configured LoRA update
+        \State Update instruction-specific curriculum from training outcomes
+        \If{fixed-distance validation is due}
+            \State Evaluate stage metric $v_s$; update target streak and validation history
+        \EndIf
+    \Until{$B_s$ reached \textbf{or} $\operatorname{Stop}(s)$}
+    \State Retain the policy with the best valid fixed-distance stage evaluation
+    \If{$s$ is not the joint stage}
+        \State Harvest successful replay trajectories and their frames
+        \State Update the retained skill bank and per-instruction reference rates
+        \If{at least two skills are known and experience banks are available}
+            \State Evaluate all known instructions; find degraded set
+            \State $\mathcal F\gets\{i:b_i-J_i>\max(0.08,0.20b_i)\}$
+            \For{$c=1,\ldots,2$ while $\mathcal F\ne\varnothing$}
+                \State Build a balanced bank; refresh priors/features on stored frames
+                \State $\theta'\gets\operatorname{MaskedActionRegression}(\theta,\mathcal D,20\text{ epochs})$
+                \State Evaluate gains $\Delta_i=J_i(\theta')-J_i(\theta)$
+                \If{a candidate exists, $\operatorname{mean}_{i\in\mathcal F}\Delta_i\ge0.02$, and $\Delta_j\ge-0.05$ for all $j\notin\mathcal F$}
+                    \State $\theta\gets\theta'$; update reference rates and $\mathcal F$
+                \Else
+                    \State \textbf{break}
+                \EndIf
+            \EndFor
+        \EndIf
+    \EndIf
+\EndFor
+\State \Return Current policy and evaluation record
+\Statex $\operatorname{Stop}(s)$ requires $t_s\ge m_s$ and either:
+\Statex \quad (i) $v_s\ge\tau_s$ for two consecutive validations, or
+\Statex \quad (ii) $n>W_s$ and $\max_{n-W_s<j\le n}v_j-\max_{j\le n-W_s}v_j\le0.02$.
+\Statex $R$: reaching; $G$: pickup; $P$: placement; $D$: dense; $B$: binary; $M$: staged.
+\Statex Target success is one stop condition; plateau or budget also permits the next stage.
+\end{algorithmic}
+\end{algorithm}

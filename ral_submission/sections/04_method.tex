@@ -1,45 +1,60 @@
-\section{Method}\label{sec:method}
-\subsection{Dense Acquisition, Binary Refinement, and Self-Imitation}
-We first train individual skills with dense rewards for approach, pickup, and transport/release. Distance reduction and intermediate manipulation events provide feedback before the policy can reliably complete a skill. We then use binary skill-success rewards to refine completion.
+\section{Methods}\label{sec:method}
+\input{sections/03_problem_formulation}
 
-Successful policy trajectories form instruction-specific banks $\mathcal D_k^+$. Self-imitation fits their executed actions with a balanced mixture:
+\subsection{Dense Acquisition, Binary Refinement, and Self-Imitation}
+We first train approach, pickup, and placement skills with dense rewards. Distance reduction and manipulation events guide exploration before skill success becomes common. After dense acquisition, we refine the skills using binary success rewards.
+
+Successful trajectories are retained by instruction. When later training degrades earlier skills, self-imitation fits a balanced mixture of earlier and current successes:
 \begin{equation}
-\mathcal L_{\rm SI}=\sum_k\alpha_k\,
-\mathbb E_{(h,\ell,a)\sim\mathcal D_k^+}
-\left[\|\mu_\theta(h,\ell)-a\|^2\right].
+\mathcal L_{\rm SI}=\mathbb E_{\rm success}
+\left[\|\hat a-a\|^2\right].
+\label{eq:si_loss}
 \end{equation}
-We balance valid decision rows across instructions and mask unused chunk slots and terminal tails. Stored images and executed actions are retained; policy-dependent priors and visual features are refreshed before fitting. Historical scripted or teacher-assisted data are identified separately from policy self-imitation. The exact acquisition budgets and dense-to-binary switches remain \pending{training manifest}.
+Here $\hat a$ is the predicted action and $a$ is the recorded executed action. The average balances instructions and excludes unused action slots. Policy-dependent features are refreshed before fitting. Balancing matters because imitating only the newest skill can reinforce forgetting.
+
+Algorithm~\ref{alg:paper_pipeline} summarizes the schedule. Progress is checked with fixed skill evaluations. After an initial training period, automated stages can end at a success target or a plateau; budget exhaustion also ends a stage. The CDPR sequence used validation-guided manual transitions. After consolidation, all learned skills are evaluated again. Automated runs retain the consolidation update only when recovery improves the degraded skills on average and keeps other skills within tolerance.
+\input{algorithms/staged_pipeline_paper}
 
 \subsection{SmolVLA with an Embodiment-Specific Residual}
-Figure~\ref{fig:architecture} shows the action path. We retain the pretrained SmolVLA expert and map its output to a target prior $p\in\mathbb R^{8\times5}$. A frozen 512-dimensional visual projection and six proprioceptive values form the 518-dimensional observation vector $x$. The residual also receives the flattened 40-dimensional prior:
+Figure~\ref{fig:architecture} shows one implementation of the pipeline. The pretrained SmolVLA expert supplies an action prior, mapped to the target control interface. In our five-channel controller, eight action slots give
 \begin{equation}
-\mu_\theta(x,p)=\tanh\!\left(p+s_r\tanh f_\theta([x,p])\right).
-\label{eq:actor}
+p\in\mathbb R^{40}
+\qquad
+(8\text{ slots}\times5\text{ channels}).
+\label{eq:prior}
 \end{equation}
-The MLP has widths $558\!\to\!1024\!\to\!1024\!\to\!40$, with $s_r=1$. It predicts eight action slots; four are executed before replanning. LoRA adapts the action expert in earlier phases. The evaluated full-task continuation freezes the inherited VLA and LoRA while training the residual and exploration parameters. These dimensions follow the inspected code and configuration; the historical resolved run configuration remains to be archived.
+A frozen visual projection supplies 512 features; six proprioceptive values complete the 518-dimensional observation. The residual receives this observation and the 40-dimensional prior, and predicts a bounded correction. The combined action is bounded before execution.
+
+LoRA adapts the action expert during earlier training. In the evaluated full-task continuation, the inherited VLA and LoRA weights are frozen while the residual and exploration parameters are trained. The backbone, action mapping, and feature dimensions can change with the embodiment; the training schedule remains the same.
 
 \begin{figure*}[!t]
 \centering\includegraphics[width=\textwidth]{figures/smolvla_residual_lora.pdf}
-\caption{SmolVLA adaptation. The pretrained expert supplies a mapped action prior. The added residual receives 518 observation features plus the 40-value prior. LoRA modifies the expert in earlier phases; inherited VLA/LoRA weights are frozen during the evaluated full-task continuation. The residual feature branch uses a frozen projection. Dimensions refer to the CDPR implementation.}
+\caption{SmolVLA implementation of the pipeline. The added residual combines 518 observation features with a 40-dimensional action prior. LoRA adapts the pretrained expert during earlier training; the evaluated full-task continuation freezes the VLA and LoRA weights. Feature and action dimensions refer to the five-channel controller.}
 \label{fig:architecture}
 \end{figure*}
 
 \subsection{Milestone-Based Full-Task Composition}
-One policy learns the complete instruction from empty-gripper starts. It receives no external sequence of skill prompts at evaluation. Three binary milestones $M_{ik}$ mark approach, held pickup, and strict placement, with $M_{i3}=Y_i$. Within each scene group, milestone returns are centered and normalized to give advantages $A_{ik}$ and usability masks $U_{ik}$. Constant-return groups give no milestone contrast.
+After skill consolidation, one policy learns the complete instruction from empty-gripper starts. No external controller switches between specialist policies. Approach, held pickup, and final placement serve as milestones for assigning credit within a rollout.
 
-For approach and pickup, we add terminal credit while suppressing a negative terminal bonus on an achieved milestone:
-\begin{align}
-\widetilde A_{ik}&=U_{ik}A_{ik}+\beta U_{i3}T_\kappa(A_{i3},M_{ik}),\label{eq:credit}\\
-T_\kappa(a,m)&=\begin{cases}\kappa a,&m=1,\ a<0,\\a,&\text{otherwise}.\end{cases}
-\end{align}
-We use $\beta=1$ and $\kappa=0$. Placement uses its terminal advantage once. Figure~\ref{fig:credit} illustrates the rule. Nonnegative stage weights, a clipped PPO-style surrogate, entropy and action penalties determine the update. Prefix protection applies to this credit component; shared neural parameters can still interfere across stages.
+The main rule is simple: a later placement failure should not remove the local credit for a successful approach or pickup. We compare milestone outcomes within groups of rollouts from the same scene. Actions receive credit for the milestone they contribute to, while full-task success provides an additional preference for completing the chain. A negative completion bonus is suppressed on already achieved approach and pickup milestones. Placement receives its completion credit once (Fig.~\ref{fig:credit}).
+
+This rule preserves useful partial behavior while training the remaining task. It controls the assigned credit; it does not prevent interference through shared network parameters.
 
 \begin{figure}[!t]
 \centering\includegraphics[width=\columnwidth]{figures/milestone_credit.pdf}
-\caption{Usable-group example: credit for a rollout that reaches and lifts the object but fails placement. Local milestone credit is retained. The negative terminal bonus is suppressed on achieved prefix stages; the placement stage retains its own terminal credit. Colors show credit routing, not measured gradient magnitudes.}
+\caption{Credit assignment when approach and pickup succeed but placement fails. Local credit remains available for the achieved skills. The negative completion bonus is blocked on these skills, while placement is trained from its own outcome. The diagram assumes groups with informative milestone comparisons.}
 \label{fig:credit}
 \end{figure}
 
-Exploration samples $u_t=\mu_\theta+b_t+\sigma_\theta\odot\varepsilon_t$ and executes $a_t=\operatorname{clip}(u_t,-1,1)$. Likelihood ratios score the recorded unclipped sample under the Gaussian conditioned on the realized episode offset $b_t$. Scoring clipped actions as Gaussian samples would misrepresent mass at the action bounds~\cite{capg}.
+\subsection{Stabilized Policy Updates}\label{sec:rl_loss}
+We use a clipped group-relative policy loss with entropy regularization:
+\begin{equation}
+\mathcal L_{\rm RL}=\mathcal L_{\rm clip}-\eta\mathcal H.
+\label{eq:rl_loss}
+\end{equation}
+The clipped loss compares rollouts within each scene group and limits the incentive for large changes in action likelihood. We use separate upper and lower clipping bounds. The entropy term $\mathcal H$, weighted by $\eta$, maintains exploration during manipulation and composition. Together, these choices help keep early updates conservative while successful behavior is still rare.
+
+For bounded continuous actions, likelihoods are computed from the sampled Gaussian commands before clipping, while the robot executes the clipped commands. This keeps the loss consistent with the sampling process at action limits~\cite{capg}. Self-imitation uses the simpler regression loss in Eq.~\eqref{eq:si_loss}.
 
 \input{sections/04c_libero_dense_rewards}
+\input{sections/04b_mathematical_analysis}

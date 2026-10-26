@@ -1,0 +1,31 @@
+% Method-level schedule. Automatic stopping is implemented for WX200;
+% the historical CDPR sequence used validation-guided manual transitions.
+\begin{algorithm}[!t]
+\caption{Staged VLA adaptation}
+\label{alg:paper_pipeline}
+\small
+\begin{algorithmic}[1]
+\Require Pretrained VLA, skill instructions, fixed evaluations
+\State Initialize the target action controller and success banks
+\For{reward mode: dense acquisition, then binary refinement}
+    \For{skill: approach, pickup, placement}
+        \Repeat
+            \State Collect same-scene rollout groups for the skill
+            \State Update with $\mathcal L_{\rm RL}$; retain successful trajectories
+            \State Evaluate skill success
+        \Until{target, plateau, or stage budget ends training}
+        \State Evaluate retention of all learned skills
+        \If{earlier skills have degraded}
+            \State Balance earlier and current successful experience
+            \State Fit $\mathcal L_{\rm SI}$; validate recovery and retention
+        \EndIf
+    \EndFor
+\EndFor
+\Repeat
+    \State Collect full-task rollouts from empty-gripper starts
+    \State Assign milestone credit; protect achieved prefix skills
+    \State Update with $\mathcal L_{\rm RL}$; evaluate complete-task success
+\Until{target, plateau, or full-task budget ends training}
+\State \Return One policy for the complete instruction
+\end{algorithmic}
+\end{algorithm}
