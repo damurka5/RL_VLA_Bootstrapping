@@ -12,7 +12,7 @@ import numpy as np
 
 from tests.test_sil_record_reporting import _synthetic, _with_observations
 from tools.audit import sil_record
-from tools.audit.sil_artifacts import atomic_savez, completed_replay, mark_replay_complete, valid_npz
+from tools.audit.sil_artifacts import atomic_savez, completed_recording, completed_replay, mark_replay_complete, valid_npz
 from tools.audit.sil_sft import load_frame_meta, materialize_frames, resolve_frame_rows
 from tools.train.run_widowx200_pipeline import ChildFailed, Pipeline, parse_args, select_best_checkpoint
 
@@ -207,6 +207,99 @@ class InterruptedArtifactsTests(unittest.TestCase):
         state.instruction_ids.fill_(INSTRUCTION_TO_ID["move_left_of_object"])
         with self.assertRaisesRegex(ValueError, "refusing zero-action demonstrations"):
             source.begin(reset, world)
+
+
+class RecordingResumeTests(unittest.TestCase):
+    def write_rounds(self, directory, indices, suffix=""):
+        directory.mkdir(parents=True, exist_ok=True)
+        summary = {"mode": "record"}
+        for index in indices:
+            rec = _synthetic()
+            rec.round_index = index
+            path = directory / f"record_{index:02d}.npz"
+            rec.to_npz(path)
+            summary[f"run_{index:02d}"] = {
+                "npz": str(path), "by_instruction": {"move_to_object": {
+                    "episodes": 6, "successes": 3, "source_success_rate": .5,
+                }},
+            }
+        (directory / f"summary{suffix}.json").write_text(json.dumps(summary))
+
+    def write_parent(self, directory, *, failed=None):
+        (directory / "summary.json").write_text(json.dumps({
+            "mode": "record", "sharded": True, "round_index": 0, "rounds": 4,
+            "shard_summaries": ["summary_cuda0.json", "summary_cuda1.json"],
+            "failed_shards": failed or [],
+        }))
+
+    def test_failed_shard_summary_restarts_harvest_and_complete_cache_is_reused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            p = pipeline(root)
+            output = root / "record"
+            self.write_rounds(output, (2, 3), "_cuda1")
+            self.write_parent(output, failed=["cuda:0 (exit 1)"])
+
+            def finish(command, **kwargs):
+                self.write_rounds(output, (0, 1), "_cuda0")
+                self.write_parent(output)
+
+            args = dict(checkpoint=root / "policy.pt", config=root / "eval.yaml", cap=.3,
+                        rounds=4, output=output, log_name="harvest")
+            with patch("tools.train.run_widowx200_pipeline.run_command", side_effect=finish) as run:
+                rates = p.record(**args)
+                self.assertEqual(rates["move_to_object"], {"rate": .5, "episodes": 24, "successes": 12})
+                self.assertEqual(p.record(**args), rates)
+                self.assertEqual(run.call_count, 1)
+
+    def test_missing_round_summary_or_truncated_archive_is_not_complete(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            self.write_rounds(output, (0, 1), "_cuda0")
+            self.write_rounds(output, (2, 3), "_cuda1")
+            self.write_parent(output)
+            self.assertTrue(completed_recording(output, first_round=0, rounds=4))
+            shard = output / "summary_cuda0.json"
+            payload = json.loads(shard.read_text())
+            del payload["run_01"]
+            shard.write_text(json.dumps(payload))
+            self.assertFalse(completed_recording(output, first_round=0, rounds=4))
+            self.write_rounds(output, (0, 1), "_cuda0")
+            (output / "record_01.npz").write_bytes(b"interrupted zip")
+            self.assertFalse(completed_recording(output, first_round=0, rounds=4))
+
+    def test_serial_recording_requires_the_requested_round_range(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            output = Path(tmp)
+            self.write_rounds(output, (10, 11))
+            self.assertTrue(completed_recording(output, first_round=10, rounds=2))
+            self.assertFalse(completed_recording(output, first_round=0, rounds=2))
+            (output / "summary.json").write_text("{unfinished")
+            self.assertFalse(completed_recording(output, first_round=10, rounds=2))
+
+    def test_zero_exit_without_all_rounds_cannot_advance_the_pipeline(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pipeline(tmp)
+            output = Path(tmp) / "record"
+            self.write_rounds(output, (0,))
+            with patch("tools.train.run_widowx200_pipeline.run_command"), \
+                 self.assertRaisesRegex(ChildFailed, "Incomplete recording"):
+                p.record(checkpoint=Path(tmp) / "policy.pt", config=Path(tmp) / "eval.yaml", cap=.3,
+                         rounds=4, output=output, log_name="harvest")
+
+    def test_trained_stage_resumes_at_harvest_without_training_again(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pipeline(tmp)
+            policy = Path(tmp) / "best.pt"
+            record = {"status": "trained", "policy": str(policy)}
+            with patch.object(p, "write_config", return_value=Path(tmp) / "stage.yaml"), \
+                 patch.object(p, "train", side_effect=AssertionError("training must not repeat")), \
+                 patch.object(p, "harvest") as harvest, \
+                 patch.object(p, "retention", return_value=policy):
+                p.run_stage(0, p.spec["stages"][0], record)
+            harvest.assert_called_once()
+            self.assertEqual(record["status"], "done")
+            self.assertEqual(p.state["current_policy"], str(policy))
 
 
 class FixedValidationTests(unittest.TestCase):

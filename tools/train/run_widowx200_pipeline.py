@@ -418,8 +418,9 @@ class Pipeline:
     ) -> dict[str, dict[str, float]]:
         """Deterministic record-mode rollouts; returns per-instruction rates."""
 
-        summary = output / "summary.json"
-        if not summary.is_file() or self.dry_run:
+        from tools.audit.sil_artifacts import completed_recording
+
+        if self.dry_run or not completed_recording(output, first_round=int(first_round), rounds=int(rounds)):
             command = [
                 self.python, str(ROOT / "tools" / "audit" / "sil_record.py"),
                 "--mode", "record",
@@ -442,6 +443,8 @@ class Pipeline:
             run_command(command, log_path=self.dir / "logs" / f"{log_name}.log", env=self.child_env(), dry_run=self.dry_run)
         if self.dry_run:
             return {}
+        if not completed_recording(output, first_round=int(first_round), rounds=int(rounds)):
+            raise ChildFailed(f"Incomplete recording under {output}: expected {rounds} rounds starting at {first_round}")
         return read_record_rates(output)
 
     # -- training --------------------------------------------------------------

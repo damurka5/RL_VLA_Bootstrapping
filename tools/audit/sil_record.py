@@ -48,8 +48,8 @@ already contains a second, independent implementation of these predicates
 collector never builds, and this campaign has paid for that class of
 duplication more than once.
 
-The two paths report ``active`` independently, so they cross-check each other;
-a disagreement is raised rather than averaged away.
+The two paths report ``active`` independently. The success mask excludes worlds
+that went non-finite inside the plant step; all other disagreement is raised.
 
 
 Replay is a seeded re-run, not a state restore
@@ -605,9 +605,12 @@ class _RoundRecorder:
         self._original_reset: Any = None
         self._original_predicate: Any = None
         self._original_action: Any = None
+        self._original_pop_nonfinite: Any = None
+        self._nonfinite_events = 0
         self._owned_step = False
         self._owned_reset = False
         self._owned_action = False
+        self._owned_pop_nonfinite = False
         self._collector_module: Any = None
 
     # -- installation ---------------------------------------------------
@@ -625,11 +628,22 @@ class _RoundRecorder:
         self._original_reset = resetter.reset
         self._original_predicate = module.evaluate_active_sparse_tasks
         self._original_action = trainer.deterministic_action_chunks_tensor
+        self._original_pop_nonfinite = backend.pop_nonfinite_world_events
         self._owned_step = "step" in vars(backend)
         self._owned_reset = "reset" in vars(resetter)
         self._owned_action = (
             "deterministic_action_chunks_tensor" in vars(trainer)
         )
+        self._owned_pop_nonfinite = "pop_nonfinite_world_events" in vars(backend)
+        peek_nonfinite = getattr(backend, "nonfinite_world_mask", None)
+
+        def patched_pop_nonfinite() -> int:
+            count = int(self._original_pop_nonfinite())
+            # The collector consumes the report before validate_round returns.
+            # Tee its count, excluding startup/reset pops before any plant step.
+            if self._rows_step:
+                self._nonfinite_events += count
+            return count
 
         def patched_reset(**kwargs: Any) -> Any:
             reset = self._original_reset(**kwargs)
@@ -658,6 +672,7 @@ class _RoundRecorder:
             self._rows_step.clear()
             self._rows_eval.clear()
             self._rows_decision.clear()
+            self._nonfinite_events = 0
             # Cable-singularity blowups are a real outcome here, not an
             # exception: a diverged world is neither a success nor a usable
             # demonstration, and its count belongs next to the survival rate.
@@ -696,6 +711,11 @@ class _RoundRecorder:
             )
             self.env_step += 1
             result = self._original_step(actions, active_mask)
+            if peek_nonfinite is not None:
+                # Capture before the collector's guard clears the report at
+                # round end. The returned observation already contains the
+                # containment reset, so it must never become a demonstration.
+                self._rows_step[-1]["nonfinite"] = _host_bool(peek_nonfinite())
             self._last_low_dim = result
             return result
 
@@ -739,6 +759,7 @@ class _RoundRecorder:
         resetter.reset = patched_reset
         module.evaluate_active_sparse_tasks = patched_predicate
         trainer.deterministic_action_chunks_tensor = patched_action
+        backend.pop_nonfinite_world_events = patched_pop_nonfinite
         return self
 
     def __exit__(self, *exc: Any) -> None:
@@ -757,6 +778,10 @@ class _RoundRecorder:
             trainer.deterministic_action_chunks_tensor = self._original_action
         else:
             vars(trainer).pop("deterministic_action_chunks_tensor", None)
+        if self._owned_pop_nonfinite:
+            backend.pop_nonfinite_world_events = self._original_pop_nonfinite
+        else:
+            vars(backend).pop("pop_nonfinite_world_events", None)
         self._collector_module.evaluate_active_sparse_tasks = (
             self._original_predicate
         )
@@ -781,7 +806,7 @@ class _RoundRecorder:
         # finished rollout over a missing accessor.
         report = getattr(self.world.backend, "pop_nonfinite_world_report", None)
         if report is None:
-            diverged = int(self.world.backend.pop_nonfinite_world_events())
+            diverged = int(self._original_pop_nonfinite())
             diverged_mask = None
         else:
             diverged, raw_mask = report()
@@ -789,6 +814,7 @@ class _RoundRecorder:
             diverged_mask = (
                 None if raw_mask is None else np.asarray(raw_mask, dtype=bool)
             )
+        diverged += self._nonfinite_events
 
         if len(self._rows_step) != len(self._rows_eval):
             raise RuntimeError(
@@ -806,14 +832,20 @@ class _RoundRecorder:
 
         active_from_step = stack(self._rows_step, "active")
         active_from_eval = stack(self._rows_eval, "active")
-        # Independent readings of the same mask, from the two ends of one env
-        # step. Equal by construction in production; unequal means one of the
-        # two interception points is not where this file claims it is, which
-        # would make every per-step array here misindexed.
-        if not np.array_equal(active_from_step, active_from_eval):
+        expected_eval_active = active_from_step
+        if "nonfinite" in self._rows_step[0]:
+            nonfinite = stack(self._rows_step, "nonfinite")
+            # NonFiniteEpisodeGuard removes diverged worlds between the plant
+            # and predicate. Keep the plant's mask as execution ground truth,
+            # but require the predicate to apply exactly this known exclusion.
+            expected_eval_active = active_from_step & ~nonfinite
+            seen = nonfinite.any(axis=0)
+            diverged_mask = seen if diverged_mask is None else seen | diverged_mask
+        if not np.array_equal(expected_eval_active, active_from_eval):
             raise RuntimeError(
                 "The active mask handed to the plant and the one handed to the "
-                "success predicate disagree. The recording is misaligned."
+                "success predicate disagree beyond non-finite world exclusions. "
+                "The recording is misaligned."
             )
 
         task_state = self.reset.task_state

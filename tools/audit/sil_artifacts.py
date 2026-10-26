@@ -73,3 +73,41 @@ def completed_replay(replay: Path, frames: Path) -> dict[str, Any] | None:
         return marker
     except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
         return None
+
+
+def completed_recording(directory: Path, *, first_round: int, rounds: int) -> bool:
+    """A pooled summary alone may describe a failed, partial harvest.
+
+    Require all requested rounds in the owning summaries and their atomic npz
+    outputs. Inspect zip headers without loading the large observation arrays.
+    Legacy serial/sharded summaries remain resumable when they are complete.
+    """
+
+    try:
+        summary = json.loads((directory / "summary.json").read_text(encoding="utf-8"))
+        if not isinstance(summary, dict) or summary.get("mode") != "record" or summary.get("failed_shards"):
+            return False
+        if summary.get("sharded"):
+            if summary.get("round_index") != first_round or summary.get("rounds") != rounds:
+                return False
+            paths = summary["shard_summaries"]
+            if not paths or any(Path(name).name != name for name in paths):
+                return False
+            summaries = [json.loads((directory / name).read_text(encoding="utf-8")) for name in paths]
+        else:
+            summaries = [summary]
+        recorded = []
+        for payload in summaries:
+            if not isinstance(payload, dict) or payload.get("mode") != "record" or payload.get("failed_shards"):
+                return False
+            recorded.extend(key for key, value in payload.items() if key.startswith("run_") and isinstance(value, dict))
+        expected = [f"run_{index:02d}" for index in range(first_round, first_round + rounds)]
+        if sorted(recorded) != sorted(expected):
+            return False
+        for index in range(first_round, first_round + rounds):
+            with zipfile.ZipFile(directory / f"record_{index:02d}.npz") as archive:
+                if not {"actions.npy", "active.npy", "success.npy", "round_index.npy"} <= set(archive.namelist()):
+                    return False
+        return True
+    except (OSError, ValueError, KeyError, TypeError, zipfile.BadZipFile):
+        return False
