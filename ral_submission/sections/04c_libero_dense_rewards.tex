@@ -1,10 +1,6 @@
-\subsection{Intermediate Feedback and Rollout Groups}\label{sec:dense_method}
-Feedback can resolve progress at different levels (Fig.~\ref{fig:dense_feedback}). In the LIBERO implementation, a tracker follows reach, grasp, lift, move, and place. Phase rewards mark completed subgoals. Dense rewards also credit progress within the active phase, but only when it exceeds the best value reached so far. Returning to the same position earns no repeated progress reward. The progress baseline resets when the next phase begins.
+\subsection{Intermediate Feedback for LIBERO Composition}\label{sec:dense_method}
+The LIBERO study asks whether intermediate feedback remains useful when a pretrained policy already performs manipulation skills. We fine-tune an OpenVLA-OFT-based policy with SimpleVLA-RL and LoRA on complete LIBERO-Spatial instructions~\cite{openvlaoft,simplevlarl,libero}. This tests the feedback component of the approach when a conventional robot action interface is already available.
 
-Shaping is bounded and added to the terminal reward; the task's success verifier remains unchanged. Optional group filtering selects groups by their fraction of terminal successes, separately from dense reward construction.
+We compare terminal-only reward, phase rewards for completed subgoals, and dense feedback that also resolves progress within a phase. A tracker follows reach, grasp, lift, move, and place. Within the active phase, dense credit is given only when progress exceeds its previous maximum; revisiting the same position earns no repeated credit. The progress baseline resets at each phase transition.
 
-\begin{figure}[!t]
-\centering\includegraphics[width=\columnwidth]{figures/phase_feedback.pdf}
-\caption{Feedback resolution. Terminal-only reward distinguishes final success. Phase rewards mark subgoals, and dense feedback also credits new progress within each phase. Revisiting an earlier maximum gives no additional progress reward.}
-\label{fig:dense_feedback}
-\end{figure}
+Shaping is bounded and added to the terminal reward, while the native task-success verifier remains unchanged. Optional filtering selects rollout groups by their fraction of terminal successes, independently of shaping. We evaluate both the full suite and a separate low-success task (Section~\ref{sec:libero_results}). These comparisons test whether progress feedback helps compose available skills under one instruction, as well as supporting learning when terminal success is rare.

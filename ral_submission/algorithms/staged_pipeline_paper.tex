@@ -26,6 +26,18 @@
     \State Assign milestone credit; protect achieved prefix skills
     \State Update with $\mathcal L_{\rm RL}$; evaluate complete-task success
 \Until{target, plateau, or full-task budget ends training}
+\If{composition plateaus and budget remains}
+    \State Freeze VLA/LoRA; retain the bounded residual
+    \State Reset optimizer; keep milestone rewards unchanged
+    \Repeat
+        \State Collect full-task groups; execute clipped commands
+        \State Store pre-clipping samples and episode offsets
+        \State Score samples conditional on their stored offsets
+        \State Assign milestone credit; protect achieved prefix skills
+        \State Update residual and exploration with $\mathcal L_{\rm RL}$
+        \State Evaluate complete-task success
+    \Until{target, renewed plateau, or budget exhaustion}
+\EndIf
 \State \Return One policy for the complete instruction
 \end{algorithmic}
 \end{algorithm}

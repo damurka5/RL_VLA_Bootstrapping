@@ -4,7 +4,7 @@ We evaluate three aspects of the approach: full-task composition, retention duri
 \subsection{SmolVLA: Complete-Task Adaptation}\label{sec:cdpr_results}
 The CDPR simulation uses MuJoCo Warp/MJ-Lab, four object categories (apple, orange, potato, and tomato), and plate or bowl destinations. The action interface controls Cartesian translation, yaw, and the gripper. Strict success requires grasp, held lift, intentional release, and correct placement, without carry slip or wrong-placement events.
 
-The reported 60.03M-action endpoint is assessed over 1,024 full-task episodes: 512 plate and 512 bowl attempts. Each attempt starts with an empty gripper and uses one full-task instruction, without teacher assistance. All attempts, including numerical failures, remain in the denominator.
+The reported endpoint is an in-run development validation reading after 60.03M selected actions since the likelihood change, in addition to inherited training. It contains 1,024 full-task episodes: 512 plate and 512 bowl attempts. Each attempt starts with an empty gripper and uses one full-task instruction, without teacher assistance. All attempts, including numerical failures, remain in the denominator.
 \input{sections/06a_simulation_results}
 \input{sections/06b_ablations_and_failures}
 

@@ -1,6 +1,2 @@
-At 160 updates, dense feedback reaches 65.3\% success versus 61.7\% with terminal-only reward, a difference of 3.6 percentage points. Filtered dense feedback reaches 64.7\% at 50 updates.
+At matched budgets, dense feedback exceeds terminal-only reward by 3.6 percentage points on the suite and 7 points on the low-success task (Table~\ref{tab:libero}). This supports intermediate feedback both when success is rare and when a policy already performs many tasks, consistent with its role throughout skill learning and composition. The remaining conditions use different budgets or shaping weights and do not establish a general efficiency advantage.
 \input{tables/libero_results}
-
-With the lower terminal reward weight, phase-only and dense feedback reach 62.3\% and 61.0\%, respectively. Their phase weights also differ, so this comparison does not isolate within-phase progress. On the low-success task, dense and terminal-only training reach 18\% and 11\% after 20 updates, from the same 2\% initialization.
-
-The matched-budget comparisons support intermediate feedback in these settings. Different budgets across the other conditions prevent a general efficiency claim.

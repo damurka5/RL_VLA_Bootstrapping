@@ -3,7 +3,7 @@ Use --rebuild-layouts to regenerate initial layouts. Export arbitrary new editor
 shapes in diagrams.net; this renderer supports the original draft's subset.
 """
 from pathlib import Path
-import argparse, copy, csv, json, os
+import argparse, copy, csv, json, os, subprocess
 import xml.etree.ElementTree as E
 os.environ.setdefault('MPLCONFIGDIR','/tmp/ral-matplotlib')
 import matplotlib
@@ -215,10 +215,17 @@ def combine():
  pages=[E.parse(p).getroot().find('diagram') for p in EDIT.glob('*.xml') if p.name!='ral_figures.xml']
  for page in sorted(pages,key=lambda p:p.get('name')): combined.append(copy.deepcopy(page))
  E.indent(combined); E.ElementTree(combined).write(EDIT/'ral_figures.xml',encoding='utf-8',xml_declaration=True)
+def render_supplied_svg(name):
+ # The author's replacement SVG is authoritative; do not overwrite it from XML.
+ source=OUT/f'{name}.svg'
+ for ext in ['pdf','png']:
+  args=['rsvg-convert','--format',ext,'--output',str(OUT/f'{name}.{ext}')]
+  if ext=='png': args.extend(['--zoom','2'])
+  subprocess.run([*args,str(source)],check=True)
 def table():
  rows=list(csv.DictReader((R/'evidence/libero_paper_results_export_20261026.csv').open())); final=[r for r in rows if r['evaluation_stage']=='final']
  labels={'Terminal only lambda=5':r'Terminal only, $\lambda=5$','Primary dense lambda=5':r'Dense, $\lambda=5$','Mixed-outcome filtered dense lambda=5':r'Filtered dense, $\lambda=5$','Dense shaping lambda=1':r'Dense, $\lambda=1$','Phase shaping lambda=1':r'Phase only, $\lambda=1$','Terminal only':'Terminal only','Dense reward':'Dense'}
- lines=[r'\begin{table}[t]',r'\caption{LIBERO reward comparison. $\lambda$ is the terminal reward weight; success and $\Delta$ are percentages and percentage-point gains. Aggregate endpoints use 300 validation rollouts. Update budgets are shown for each condition.}',r'\label{tab:libero}\centering\small',r'\begin{tabular}{@{}lrrr@{}}\toprule',r'Configuration & Updates & Success & $\Delta$\\\midrule',r'\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\']
+ lines=[r'\begin{table}[t]',r'\caption{LIBERO reward comparison. $\lambda$ is the terminal reward weight; success and $\Delta$ are percentages and percentage-point gains.}',r'\label{tab:libero}\centering\small',r'\begin{tabular}{@{}lrrr@{}}\toprule',r'Configuration & Updates & Success & $\Delta$\\\midrule',r'\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\']
  for series in ['full_suite_reward_ablation','single_task_low_success']:
   if series=='single_task_low_success': lines.extend([r'\midrule',r'\multicolumn{4}{@{}l}{Low-success task: initial 2.0\% (1,000 rollouts)}\\'])
   for row in final:
@@ -231,6 +238,9 @@ def main():
   for fn in [overview,architecture,phase,credit,retention,wx200]: fn()
  paths=[p for p in sorted(EDIT.glob('*.xml')) if p.name!='ral_figures.xml']
  if len(paths)!=6: raise ValueError(f'Expected six diagrams, got {len(paths)}')
- for p in paths: print(f'{p.name}: rendered {render(p)} editable objects')
- combine(); table(); print('Rendered six native XML figures; Table II uses exact CSV endpoint rows.')
+ for p in paths:
+  if p.stem=='skill_retention':
+   render_supplied_svg(p.stem); print(f'{p.stem}.svg: exported supplied figure to PDF and PNG')
+  else: print(f'{p.name}: rendered {render(p)} editable objects')
+ combine(); table(); print('Rendered five native XML figures and the supplied retention SVG; Table II uses exact CSV endpoint rows.')
 if __name__=='__main__': main()

@@ -1,33 +1,35 @@
 # Editable manuscript figures
 
-The combined file is editable/ral_figures.xml. Each page is also saved separately.
+The graphical abstract is the author-supplied abstract_overview.png. The retention chart uses the author-supplied skill_retention.svg as its source, with PDF and PNG exports. The original diagrams remain in editable/ral_figures.xml and individual XML files.
 
-| Paper | Individual XML | Purpose |
+| Paper | Current source | Purpose |
 |---|---|---|
-| Fig. 1 | pipeline_overview.xml | Dense acquisition → binary refinement and balanced SIL → milestone composition |
+| Fig. 1 | abstract_overview.png | Author-supplied pipeline and SmolVLA graphical abstract |
 | Fig. 2 | smolvla_residual_lora.xml | Retained expert, LoRA, 512 + 6 = 518d observation, 40d prior and residual |
-| Fig. 3 | milestone_credit.xml | Local and terminal credit after failed placement |
-| Fig. 4 | phase_feedback.xml | Terminal / phase / within-phase feedback |
-| Fig. 5 | skill_retention.xml | Observed forgetting and recovery with reported rounds |
-| Fig. 6 | wx200_slots.xml | Apparatus and actual task images to insert later |
+| Fig. 3 | skill_retention.svg | Author-supplied forgetting and recovery chart with mean bars |
+| Fig. 4 | wx200_slots.xml | Apparatus and actual task images to insert later |
+| Omitted | milestone_credit.xml | Former Fig. 3; explained in Methods C |
+| Omitted | phase_feedback.xml | Former Fig. 4; replaced by LIBERO methods prose |
+
+The six original XML diagrams remain editable. Their page names are asset identifiers, not current manuscript figure numbers. The pipeline_overview and skill_retention XML designs are earlier versions, superseded by the supplied PNG and SVG.
 
 ## Editing
 
 Open an XML file in diagrams.net using File → Open from → Device. Blocks, chart bars, marks, labels and arrows are individual objects; no screenshots are embedded.
 
-Use individual XML files as the source of truth. After editing the combined file, save the edited page back into its individual XML before running the local renderer. Otherwise the combined file is regenerated from the unchanged individual sources.
+Use individual XML files as the source of truth for XML-based figures, and skill_retention.svg for the retention chart. After editing the combined file, save the edited page back into its individual XML before running the local renderer. Otherwise the combined file is regenerated from the unchanged individual sources.
 
-Run python3 scripts/create_editable_figures.py from ral_submission/ to render existing XML and rebuild the combined file and CSV-based Table II. This preserves individual XML edits. The renderer supports the draft's basic shapes and styles; use diagrams.net's vector PDF export for added shape types/effects.
+Run python3 scripts/create_editable_figures.py from ral_submission/ to render existing XML, export the supplied retention SVG with rsvg-convert, and rebuild the combined file and CSV-based Table II. This preserves individual XML edits and the supplied SVG. The renderer supports the draft's basic shapes and styles; use diagrams.net's vector PDF export for added shape types/effects.
 
 The --rebuild-layouts flag resets all initial layouts. Do not use it after manual design work unless you intend to reset them.
 
-Each figure has PDF, SVG and PNG exports. Keep the PDF basename when replacing it.
+XML-based figures and the retention chart have PDF, SVG and PNG exports. Keep the PDF basename when replacing them. The graphical abstract is included directly from its PNG.
 
 ## Numerical integrity
 
-Figure 5 uses evidence/skill_retention_rounds.json (relative to the paper folder). Bars are means of rounded reported rates; dots show individual rounds. No confidence intervals are invented. Forgetting and balanced-SIL recovery are separate measurements. The reaching bank includes an earlier policy's experience.
+Figure 3's mean values agree with evidence/skill_retention_rounds.json (relative to the paper folder). Bars are means of rounded reported rates; individual rounds are not plotted in the supplied SVG. Forgetting and balanced-SIL recovery are separate measurements. The reaching bank includes an earlier policy's experience.
 
-Figure 4 is a schematic reward sequence, not empirical telemetry. Figure 3 assumes informative milestone groups and a failed placement. Its plain-language labels show positive local prefix credit and a blocked negative completion bonus.
+The omitted phase-feedback asset is a schematic reward sequence, not empirical telemetry. The omitted milestone-credit asset assumes informative milestone groups and a failed placement. Its plain-language labels show positive local prefix credit and a blocked negative completion bonus.
 
 ## WX200 insertion
 

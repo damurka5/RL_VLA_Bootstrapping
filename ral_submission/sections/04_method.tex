@@ -16,7 +16,7 @@ Algorithm~\ref{alg:paper_pipeline} summarizes the schedule. Progress is checked 
 \input{algorithms/staged_pipeline_paper}
 
 \subsection{SmolVLA with an Embodiment-Specific Residual}
-Figure~\ref{fig:architecture} shows one implementation of the pipeline. The pretrained SmolVLA expert supplies an action prior, mapped to the target control interface. In our five-channel controller, eight action slots give
+Figure~\ref{fig:architecture} shows one implementation of the pipeline. Following the residual-learning ingredient of Probe, Learn, Distill (PLD)~\cite{pld}, we retain a pretrained expert and adapt its actions with a lightweight residual. The SmolVLA expert supplies an action prior, mapped to the target control interface. In our five-channel controller, eight action slots give
 \begin{equation}
 p\in\mathbb R^{40}
 \qquad
@@ -36,17 +36,11 @@ LoRA adapts the action expert during earlier training. In the evaluated full-tas
 \subsection{Milestone-Based Full-Task Composition}
 After skill consolidation, one policy learns the complete instruction from empty-gripper starts. No external controller switches between specialist policies. Approach, held pickup, and final placement serve as milestones for assigning credit within a rollout.
 
-The main rule is simple: a later placement failure should not remove the local credit for a successful approach or pickup. We compare milestone outcomes within groups of rollouts from the same scene. Actions receive credit for the milestone they contribute to, while full-task success provides an additional preference for completing the chain. A negative completion bonus is suppressed on already achieved approach and pickup milestones. Placement receives its completion credit once (Fig.~\ref{fig:credit}).
+The main rule is simple: a later placement failure should not remove the local credit for a successful approach or pickup. We compare milestone outcomes within groups of rollouts from the same scene. Actions receive credit for the milestone they contribute to, while full-task success provides an additional preference for completing the chain. A negative completion bonus is suppressed on already achieved approach and pickup milestones. Placement receives its completion credit once.
 
 This rule preserves useful partial behavior while training the remaining task. It controls the assigned credit; it does not prevent interference through shared network parameters.
 
-\begin{figure}[!t]
-\centering\includegraphics[width=\columnwidth]{figures/milestone_credit.pdf}
-\caption{Credit assignment when approach and pickup succeed but placement fails. Local credit remains available for the achieved skills. The negative completion bonus is blocked on these skills, while placement is trained from its own outcome. The diagram assumes groups with informative milestone comparisons.}
-\label{fig:credit}
-\end{figure}
-
-\subsection{Stabilized Policy Updates}\label{sec:rl_loss}
+\subsection{Stabilized Updates and Full-Task Continuation}\label{sec:rl_loss}
 We use a clipped group-relative policy loss with entropy regularization:
 \begin{equation}
 \mathcal L_{\rm RL}=\mathcal L_{\rm clip}-\eta\mathcal H.
@@ -54,7 +48,13 @@ We use a clipped group-relative policy loss with entropy regularization:
 \end{equation}
 The clipped loss compares rollouts within each scene group and limits the incentive for large changes in action likelihood. We use separate upper and lower clipping bounds. The entropy term $\mathcal H$, weighted by $\eta$, maintains exploration during manipulation and composition. Together, these choices help keep early updates conservative while successful behavior is still rare.
 
-For bounded continuous actions, likelihoods are computed from the sampled Gaussian commands before clipping, while the robot executes the clipped commands. This keeps the loss consistent with the sampling process at action limits~\cite{capg}. Self-imitation uses the simpler regression loss in Eq.~\eqref{eq:si_loss}.
+Milestone rewards alone need not resolve a full-task plateau. Our CDPR continuation retains the learned bounded residual, freezes the inherited VLA and LoRA, and starts a fresh optimizer while preserving the milestone rewards. The key change is to compute likelihoods from the Gaussian commands sampled before clipping, conditioned on the realized exploration offset. For an episode offset $B$ and its phase gate $g_t$, we store $b_t=g_tB$ and sample
+\begin{equation}
+u_t\sim\mathcal N(\mu_\theta(x_t,p_t)+b_t,\operatorname{diag}\sigma_\theta^2),
+\quad a_t=\operatorname{clip}(u_t,-1,1).
+\label{eq:latent_action}
+\end{equation}
+The robot executes $a_t$, while old and new policy likelihoods score the stored $u_t$ conditional on the same $b_t$. This avoids evaluating a Gaussian density at a clipped boundary~\cite{capg}. Conditioning also accounts for the offset persisting across decisions, instead of treating it as independent extra noise at every step. The residual and exploration scale remain trainable. Algorithm~\ref{alg:paper_pipeline} includes this continuation after a composition plateau; Section~\ref{sec:cdpr_results} reports its measured progression. Self-imitation uses the regression loss in Eq.~\eqref{eq:si_loss}.
 
 \input{sections/04c_libero_dense_rewards}
 \input{sections/04b_mathematical_analysis}
