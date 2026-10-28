@@ -39,8 +39,9 @@ No human demonstrations are recorded for this robot at any stage.
 one instruction, and must approach, grasp, lift, carry and release the object
 inside the receptacle. Left half: overview camera; right half: wrist camera.
 The clips are strict successes of checkpoint `step_28309431` (2026-09-17,
-22.3% strict). The current development checkpoint reaches 61.43% on the
-separate repeated evaluation described below; these clips are historical. See
+22.3% strict). The separately evaluated development checkpoint reaches 61.43%;
+the later continuation logs 70.61% in-run validation, pending separate
+evaluation. These clips are historical. See
 [Results](#results). Original MP4s and per-episode records are in
 [`docs/media/put_into/`](docs/media/put_into/).</sub>
 
@@ -137,13 +138,39 @@ flowchart TD
 | 4–5 | Aug 21 – 31 | Retention bank; one adapter for all four instructions |
 | 6–7 | Aug 30 – Sep 9 | Composed pick-and-place; one sparse reward for all instructions |
 | 8 | Sep 10 – 28 | Three-stage chains → staged-sparse GRPO on the full empty-start task |
-| 9 | Oct 3 – 19 | Latent-likelihood control; 40M control promoted on repeated development evaluation |
+| 9 | Oct 3 – 23 | Latent-likelihood control; 40M promoted on repeated development evaluation; 60M continuation reaches 70.61% in-run validation |
 
 ## Results
 
 ### Full task: empty gripper → object in the receptacle
 
-**Latest status, 2026-10-19:** promoted bounded-residual control:
+**Latest training result, reviewed 2026-10-28:** the supplied TensorBoard log
+covers **40,056,193 → 60,025,885 selected actions** (recorded October 19–23).
+The endpoint logs **723/1024 = 70.61% strict success** on the in-run validation
+panel; the peak is **728/1024 = 71.09%** at step `59268127`, selected from
+81 readings. The final 20 readings average **69.13%**.
+
+| In-run validation | Strict success | Physical grasp | Held lift | Non-finite episodes |
+|---|---:|---:|---:|---:|
+| Resume, step `40056193` | 647/1024 = 63.18% | 89.84% | 86.04% | 0.68% |
+| Peak, step `59268127` | 728/1024 = 71.09% | 92.68% | 88.67% | 0.68% |
+| **Endpoint, step `60025885`** | **723/1024 = 70.61%** | **92.48%** | **88.28%** | **0.88%** |
+
+Endpoint plate/bowl strict success is **76.76% / 64.45%** (393/512 and
+330/512); carry slips are 16.70% and wrong placements 14.16%.
+**These are correlated in-run panel measurements used during training.
+Separate evaluation of the new endpoint is unavailable.** They do not establish
+a gain over the off-panel result below, and do not promote a new development
+checkpoint. The event file supplies no checkpoint bytes, hash or run directory.
+`final_test` has not been run as part of this update.
+
+[Training-log review and protocol limits](docs/reports/campaign/CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md)
+· [Extracted metrics and source hash](docs/artifacts/latent_control_60m_20261028/summary.json)
+· [All 81 validation readings](docs/artifacts/latent_control_60m_20261028/validation.csv)
+
+#### Latest separate repeated development evaluation · 2026-10-19
+
+The promoted bounded-residual control remains:
 `runs/latent_control_to40m_20261012_230538/rl/step_40056193`.
 Its 40.06M selected actions are counted since latent-likelihood conversion;
 it inherits the historical 56M source and was not trained from scratch in 40M.
@@ -165,11 +192,10 @@ negative paired intervals. Non-finite rates show no detected increase.
 The panel peak has no demonstrated advantage over final: peak minus final
 −0.10 pp, CI [−2.05, +1.81], p=0.9598.
 
-The training-panel final 61.23% and peak 64.84% are distinct measurements.
+That earlier run's training-panel final 61.23% and peak 64.84% are distinct measurements.
 Use this comparison's 51.56% baseline rather than the prior 53.47% from separate
-repeats. Next: **resume final with unchanged parameters to 60M total actions**,
-about 19.94M more (LR 1e-5, one PPO epoch, frozen LoRA, same task/rewards).
-No further pilot is needed; additional gains are not guaranteed.
+repeats. The later log now records the continuation to 60.03M actions;
+its separate checkpoint evaluation remains pending.
 
 [Full analysis and resume command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md#next-training-unchanged-control-to-60m-total-actions)
 · [Matched evidence](docs/artifacts/latent_control_40m_comparison_20261019/comparison.json)
@@ -219,7 +245,8 @@ verdicts between runs, so differences below about 5 points need pooled repeats.
 5. **Staged sparse rewards train the complete task once each milestone is
    reachable.** Historical evaluations rose from 3.9% for the SFT seed to
    41.8%. The repaired-likelihood control later reached 61.43% on the separate
-   repeated development protocol above; these are not one matched comparison.
+   repeated development protocol above. The 60M continuation logs 70.61% on
+   the in-run panel, pending separate evaluation; these are distinct protocols.
 6. **Measure before steering.** Evaluation noise comes mostly from closed-loop
    physics chaos, not from the VLA's sampling. Seven SFT fits on the policy's
    own successes never beat their initializer.
@@ -230,10 +257,11 @@ The full evidence, protocols, and negative results are in the
 
 ## What is not solved yet
 
-- **Completing placement after pickup.** The latest control improves grasp,
-  held lift, carry slips and wrong placements. Bowl strict remains 54.22%,
+- **Completing placement after pickup.** The separately evaluated 40M control
+  improves grasp, held lift, carry slips and wrong placements. Bowl strict is 54.22%,
   potato 46.11%, and the highest target-y quartile 29.07%; these subgroup
-  results are exploratory.
+  results are exploratory. The newer endpoint's 64.45% bowl success comes
+  from the in-run panel and still needs separate evaluation.
 - **Retention and composition together.** RL on the composed task and SFT on
   the retention bank still pull against each other.
 - **Localization resolution.** The frozen encoder's pooled feature feeds the

@@ -176,10 +176,11 @@
       <a class="btn" href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/CDPR_CONSOLIDATED_PROGRESS_REPORT.md">Full results record</a>
     </div>
     <div class="stats">
-      <div class="stat"><div class="v">61.43%</div><div class="k">strict full-task success: 512 development scenes × four repeats, 1,258/2,048 episodes</div></div>
+      <div class="stat"><div class="v">70.61%</div><div class="k">latest in-run strict validation: 723/1,024 episodes; separate evaluation pending</div></div>
+      <div class="stat"><div class="v">61.43%</div><div class="k">latest separate development evaluation: 512 scenes × four repeats, 1,258/2,048 episodes</div></div>
       <div class="stat"><div class="v">0</div><div class="k">human demonstrations collected for this robot</div></div>
       <div class="stat"><div class="v">63.0%</div><div class="k"><code>move_to_object</code> at a 2 cm tolerance, from RL alone</div></div>
-      <div class="stat"><div class="v">40.06M</div><div class="k">selected actions since latent-likelihood conversion; inherits the historical 56M source, on 2× A40</div></div>
+      <div class="stat"><div class="v">60.03M</div><div class="k">logged selected actions since latent-likelihood conversion; inherits the historical 56M source, on 2× A40</div></div>
     </div>
   </div>
 </header>
@@ -198,7 +199,7 @@
       <figure class="clip"><video src="media/put_into/tomato_into_plate.mp4" poster="media/put_into/tomato_into_plate.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put tomato into plate</span><span class="meta">9.9 s</span></figcaption></figure>
       <figure class="clip"><video src="media/put_into/tomato_into_bowl.mp4" poster="media/put_into/tomato_into_bowl.jpg" muted loop playsinline preload="none"></video><figcaption><span class="instr">put tomato into bowl</span><span class="meta">6.7 s</span></figcaption></figure>
     </div>
-    <p class="note">These are strict successes of checkpoint <code>step_28309431</code> (22.3% strict), evaluated on 2026-09-17 on held-out scenes. The promoted development checkpoint, <code>step_40056193</code>, scores 61.43% on a separate repeated evaluation. These historical clips do not depict the promoted checkpoint.</p>
+    <p class="note">These are strict successes of checkpoint <code>step_28309431</code> (22.3% strict), evaluated on 2026-09-17 on held-out scenes. The promoted development checkpoint, <code>step_40056193</code>, scores 61.43% on a separate repeated evaluation. The later continuation logs 70.61% in-run validation, pending separate evaluation. These historical clips depict neither later result.</p>
   </div>
 </section>
 
@@ -256,9 +257,24 @@
 <section id="results">
   <div class="wrap">
     <h2>Results</h2>
-    <p class="sub">Standalone evaluator: held-out scenes, one instruction from the first action, no assistance. <em>Strict</em> success requires that the episode began empty and outside the goal, then grasped, lifted, carried without a slip and released intentionally inside the receptacle.</p>
+    <p class="sub"><em>Strict</em> success requires that the episode began empty and outside the goal, then grasped, lifted, carried without a slip and released intentionally inside the receptacle. In-run validation and separate development evaluation are reported with their own protocols below.</p>
 
-    <h3>Latest matched development evaluation · 2026-10-19</h3>
+    <h3>Latest training log · reviewed 2026-10-28</h3>
+    <p>The supplied TensorBoard log records a <b>40.06M → 60.03M selected-action continuation</b> on October 19–23. Each in-run validation reading contains 1,024 episodes.</p>
+    <div class="table-wrap"><table>
+      <thead><tr><th>In-run reading</th><th class="num">Strict</th><th class="num">Grasp</th><th class="num">Held lift</th><th class="num">Non-finite</th></tr></thead>
+      <tbody>
+        <tr><td>Resume · step 40056193</td><td class="num">647/1024 · 63.18%</td><td class="num">89.84%</td><td class="num">86.04%</td><td class="num">0.68%</td></tr>
+        <tr><td>Panel peak · step 59268127</td><td class="num">728/1024 · 71.09%</td><td class="num">92.68%</td><td class="num">88.67%</td><td class="num">0.68%</td></tr>
+        <tr class="best"><td>Endpoint · step 60025885</td><td class="num">723/1024 · 70.61%</td><td class="num">92.48%</td><td class="num">88.28%</td><td class="num">0.88%</td></tr>
+      </tbody>
+    </table></div>
+    <p>Endpoint strict success is <b>76.76% for plates</b> (393/512) and <b>64.45% for bowls</b> (330/512). Carry slip is 16.70% and wrong placement 14.16%. The final 20 readings average 69.13% strict.</p>
+    <p class="callout"><strong>Separate evaluation pending.</strong> These are correlated in-run panel measurements used during training; the peak was selected from 81 readings. They do not establish a gain over the separate evaluation below or promote a new checkpoint. The event file supplies no checkpoint bytes, hash or run directory. No final-test evaluation was run for this update.</p>
+    <figure style="margin:24px 0"><img src="artifacts/latent_control_60m_20261028/training_review.png" alt="81 in-run validation readings over the 40M to 60M continuation; final strict success 70.61%, peak 71.09%, with grasp, lift and failure rates" style="width:100%;height:auto;border-radius:12px"><figcaption class="note">Repeated in-run panel readings, without smoothing; these are distinct from the separate development protocol.</figcaption></figure>
+    <p><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md">Training-log review</a> · <a href="artifacts/latent_control_60m_20261028/summary.json">Metrics and source hash</a> · <a href="artifacts/latent_control_60m_20261028/validation.csv">All validation readings</a></p>
+
+    <h3>Latest separate repeated development evaluation · 2026-10-19</h3>
     <p>512 student-validation scenes × four repeats (2,048 episodes per checkpoint), excluding the fixed 128-scene training validation panel. <code>final_test</code> remains untouched.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Checkpoint</th><th class="num">Strict</th><th class="num">Grasp</th><th class="num">Held lift</th><th class="num">Non-finite</th></tr></thead>
@@ -270,7 +286,7 @@
     </table></div>
     <p><b>Final gains 9.86 percentage points strict over 20M</b>, paired 95% CI [+7.37, +12.30], Holm p=0.00010. Grasp/lift retention passes. Carry slip decreases from 28.32% to 23.83% and wrong placement from 25.00% to 19.63%, with negative paired intervals. Non-finite rates show no detected increase.</p>
     <p class="note">Promoted checkpoint: <code>latent_control_to40m_20261012_230538/rl/step_40056193</code>. The panel peak <code>step_39804332</code> has no demonstrated advantage over final: peak minus final −0.10 pp, CI [−2.05, +1.81], p=0.9598. The in-run final 61.23% and peak 64.84% are separate measurements. Use the contemporaneous 51.56% baseline, not 53.47% from earlier repeats, for the matched gain.</p>
-    <p>Next: unchanged continuation to <b>60M total selected actions</b>, about 19.94M more, with LR 1e-5, one PPO epoch and frozen LoRA. No further pilot is needed; continued gains are not guaranteed.</p>
+    <p>The later training log now records the continuation to <b>60.03M selected actions</b>. Its separate checkpoint evaluation remains pending; the 40M checkpoint remains the promoted development result.</p>
     <p><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md">Analysis and full resume command</a> · <a href="artifacts/latent_control_40m_comparison_20261019/comparison.json">Matched evidence</a> · <a href="artifacts/latent_control_40m_comparison_20261019/peak_vs_final.json">Peak versus final</a></p>
 
     <h3>Historical evaluations · different panels and repeat counts</h3>
@@ -312,7 +328,7 @@
       <div class="card"><h3>RL alone grounds a pretrained VLA</h3><p>A frozen prior plus a residual learned reaching and placement on a new embodiment from reward only.</p></div>
       <div class="card"><h3>Tolerance decides if vision is enough</h3><p>The VLA's 3–5 cm localization is too coarse for a ~2 cm grasp and sufficient for 5.7–9.1 cm placement radii.</p></div>
       <div class="card"><h3>Self-generated data prevents forgetting</h3><p>Balanced SFT on the policy's own successes rebuilt a forgotten skill 3.9×. A 4.3× larger slice broke the retention ceiling where more epochs did not.</p></div>
-      <div class="card"><h3>Staged sparse rewards train the whole task</h3><p>Historical evaluations rose from 3.9% to 41.8%; the later latent-likelihood control reaches 61.43% on the separate repeated development protocol above.</p></div>
+      <div class="card"><h3>Staged sparse rewards train the whole task</h3><p>Historical evaluations rose from 3.9% to 41.8%; the later latent-likelihood control reaches 61.43% on the separate repeated development protocol. The 60M continuation logs 70.61% in-run validation, pending separate evaluation.</p></div>
     </div>
   </div>
 </section>
@@ -329,7 +345,8 @@
       <li><div class="when">Aug 17 – 31</div><div class="what"><b>Phases 3–5: self-imitation and retention</b><span>a bank of frames and actions; one adapter for all four instructions</span></div></li>
       <li><div class="when">Aug 30 – Sep 9</div><div class="what"><b>Phases 6–7: composition</b><span>composed pick-and-place with one sparse reward; retention SFT found to erase it</span></div></li>
       <li><div class="when">Sep 10 – 28</div><div class="what"><b>Phase 8: full task from an empty gripper</b><span>three-stage chains → staged-sparse GRPO: 3.9% → 41.8% strict</span></div></li>
-      <li><div class="when">Oct 3 – 19</div><div class="what"><b>Latent-likelihood control promoted</b><span>40M final promoted: 61.43% versus 51.56% for matched 20M baseline; next, unchanged continuation to 60M</span></div></li>
+      <li><div class="when">Oct 3 – 19</div><div class="what"><b>Latent-likelihood control promoted</b><span>40M final promoted: 61.43% versus 51.56% for matched 20M baseline</span></div></li>
+      <li><div class="when">Oct 19 – 23</div><div class="what"><b>60M continuation logged</b><span>70.61% endpoint strict success, 71.09% peak on the in-run panel; reviewed October 28, separate evaluation pending</span></div></li>
     </ol>
   </div>
 </section>
@@ -338,7 +355,7 @@
   <div class="wrap">
     <h2>Still open</h2>
     <ul class="open">
-      <li><b>Completing placement after pickup.</b> Grasp, held lift, carry slips and wrong placements improve. Bowl strict remains 54.22%, potato 46.11%, and the highest target-y quartile 29.07% (exploratory subgroup results).</li>
+      <li><b>Completing placement after pickup.</b> In the separate 40M evaluation, bowl strict is 54.22%, potato 46.11%, and the highest target-y quartile 29.07% (exploratory subgroup results). The newer endpoint's 64.45% bowl success comes from the in-run panel and needs separate evaluation.</li>
       <li><b>Retention and composition together.</b> RL on the composed task and SFT on the retention bank still pull against each other.</li>
       <li><b>Localization resolution.</b> The frozen encoder's pooled feature reaches the residual without gradient.</li>
       <li><b>Scope.</b> One simulated embodiment. A WidowX-200 port keeps the action contract, but batched training on it is not wired yet.</li>
