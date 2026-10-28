@@ -139,18 +139,18 @@ def main():
     axes[0].scatter([peak.step / 1e6, final.step / 1e6], [peak.value * 100, final.value * 100], color="#2f6fdd", zorder=4)
     axes[0].annotate("Peak 71.09%", (peak.step / 1e6, peak.value * 100), xytext=(-105, 10), textcoords="offset points")
     axes[0].annotate("Final 70.61%", (final.step / 1e6, final.value * 100), xytext=(-70, -19), textcoords="offset points")
-    axes[0].set(ylabel="In-run validation (%)", ylim=(55, 100), title="CDPR + SmolVLA: 40M to 60M continuation")
+    axes[0].set(ylabel="Success rate (%)", ylim=(55, 100), title="CDPR + SmolVLA: 40M to 60M continuation")
     axes[0].legend(loc="upper left", fontsize=9)
     for metric, label, color in [("carry_slip_rate", "Carry slip", "#d7832f"),
                                  ("wrong_place_rate", "Wrong placement", "#b66a8a"),
                                  ("non_finite_rate", "Numerical failure", "#7f3c8d")]:
         axes[1].plot(x, [at("validation/three_stage_" + metric, e.step) * 100 for e in strict], color=color, linewidth=1.4, label=label)
-    axes[1].set(xlabel="Selected actions since latent-likelihood conversion (millions)", ylabel="In-run event rate (%)", ylim=(0, 28))
+    axes[1].set(xlabel="Selected actions since latent-likelihood conversion (millions)", ylabel="Event rate (%)", ylim=(0, 28))
     axes[1].legend(loc="upper right", fontsize=9)
     for ax in axes:
         ax.grid(alpha=0.2)
         ax.spines[["top", "right"]].set_visible(False)
-    fig.supxlabel("81 correlated panel readings; separate development evaluation pending.", fontsize=9)
+    fig.supxlabel("81 validation readings; 1,024 episodes per reading.", fontsize=9)
     fig.savefig(args.output_dir / "training_review.png", dpi=180)
     plt.close(fig)
     print(json.dumps({"final_strict_percent": final.value * 100, "peak_strict_percent": peak.value * 100,

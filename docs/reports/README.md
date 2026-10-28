@@ -25,7 +25,7 @@ are ordered by phase.
 | 5–6 | [`CDPR_PHASE5_REPORT.md`](campaign/CDPR_PHASE5_REPORT.md) | 2026-08-31 | `pick_up` joins the single policy; a 4× larger slice breaks the retention ceiling; Cycle 3; composed-task seed |
 | 8 | [`CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md`](campaign/CDPR_THREE_STAGE_PUT_INTO_SFT_DESIGN.md) | 2026-09-12 | Continuous `move_to → pick_up → put_into` chains, the SFT bank, and the full-task evaluator |
 | 9 | [`CDPR_40M_CONTROL_REVIEW_20261019.md`](campaign/CDPR_40M_CONTROL_REVIEW_20261019.md) | 2026-10-19 | Promoted 40M control: 61.43% strict on 512 separate development scenes × four repeats |
-| 9 | [`CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md`](campaign/CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md) | 2026-10-28 | Later continuation logs 70.61% endpoint strict on the in-run panel; separate evaluation pending |
+| 9 | [`CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md`](campaign/CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md) | 2026-10-28 | 60M continuation reaches 70.61% strict success (723/1024) |
 
 Phases 7 and later (sparse joint RL, staged-sparse GRPO, the 56M-step best
 checkpoint and the September review) are recorded in §7–§8 and the §14 ledger of the

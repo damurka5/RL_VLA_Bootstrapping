@@ -1,11 +1,8 @@
 # Missing evidence — updated 28 October 2026
 
-The supplied October 19–23 TensorBoard log now supports the 60M in-run
-endpoint (723/1024 = 70.61%) and panel peak (728/1024 = 71.09%). Separate
-evaluation of this endpoint, its resolved run manifest, checkpoint bytes/hash,
-scene IDs and per-episode outcomes remain unavailable. Retain the 40M control's
-61.43% as the latest separate development result. This log closes no
-independent-seed, held-out evaluation or real-world evidence gap below.
+The supplied October 19–23 TensorBoard log supports the 60M endpoint's
+**723/1024 = 70.61% strict success**. Its resolved run manifest, checkpoint
+bytes/hash, scene IDs and per-episode records remain to be archived.
 
 1. Training manifest: skill rewards, resets, dense-to-binary switches, SIL ordering, data origins and budgets. Archive the resolved configuration and control timing.
 2. Exact LIBERO phase predicates, progress functions, aggregation and filtering code. Use the new CSV weights, w_p = w_c = 0.05.

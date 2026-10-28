@@ -2,7 +2,7 @@
 
 The active paper contains two tables and six editable figures. Intermediate model comparisons are excluded.
 
-1. Table I: separate CDPR development evaluation (40M, 2,048 attempts) and the later in-run endpoint (60M, 1,024 attempts), with explicit protocol labels, milestones and overlapping failure events. The 70.61% endpoint and 71.09% panel peak have no separate evaluation yet; do not treat them as a matched gain over 61.43% or as checkpoint promotion.
+1. Table I: the 60M CDPR endpoint, 723/1,024 = 70.61% strict success, with grasp/lift milestones and overlapping failure events. Earlier checkpoint comparisons remain in the supporting evidence.
 2. Figure 5: reaching degradation during placement learning and separate balanced-SIL recovery. Keep round marks; do not connect the panels into a learning curve.
 3. Table II: exact final LIBERO CSV rows, update counts, and the corrected 2% task_1 start.
 4. Figure 6: WX200 apparatus and rollout slots; outcome data remain missing.

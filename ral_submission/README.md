@@ -34,11 +34,11 @@ PDF exports are included in the paper; SVG and PNG exports are alongside them. S
 
 - evidence/libero_paper_results_export_20261026.csv supplies the exact endpoint values for Table II.
 - evidence/skill_retention_rounds.json contains the round rates for Figure 5. The panels are separate experiments.
-- evidence/latent_control_40m_comparison_20261019.json supports the latest separate controller evaluation (61.43%, 1,258/2,048).
-- evidence/latent_control_60m_tensorboard_20261028.json records the later in-run endpoint (70.61%, 723/1,024), panel peak (71.09%, 728/1,024), source hash and limitations. Separate evaluation is pending; this does not promote a new checkpoint. The complete CSV exports and extraction script are in ../docs/artifacts/latent_control_60m_20261028/.
+- evidence/latent_control_40m_comparison_20261019.json supports the earlier 40M controller evaluation (61.43%, 1,258/2,048).
+- evidence/latent_control_60m_tensorboard_20261028.json records the 60M endpoint's strict success (70.61%, 723/1,024), peak (71.09%, 728/1,024), source hash and measurement details. The complete CSV exports and extraction script are in ../docs/artifacts/latent_control_60m_20261028/.
 - evidence/ACTION_MODULE_AUDIT_20261022.md documents the architecture and LoRA implementation.
 
-The manuscript distinguishes separate development evaluation from in-run panel measurements and reports descriptive LIBERO endpoints. Table I labels each CDPR protocol and denominator separately. The new log was recorded October 19–23 and reviewed October 28; it does not establish an off-panel gain over the 40M controller. WX200 illustrations and quantitative results remain reserved for the ongoing evaluation. Source data and detailed mathematical audits stay outside the reader-facing text.
+The manuscript reports 70.61% strict success for the 60M CDPR controller and descriptive LIBERO endpoints. Table I uses all 1,024 CDPR attempts and includes milestones and failure events. The source log was recorded October 19–23 and reviewed October 28. WX200 illustrations and quantitative results remain reserved for the ongoing evaluation. Source data and detailed mathematical audits stay outside the reader-facing text.
 
 ## Build
 

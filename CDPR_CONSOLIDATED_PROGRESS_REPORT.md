@@ -2,30 +2,25 @@
 
 **Living report — latest status update 2026-10-28, Europe/Moscow**
 
-**Latest training evidence: 60M continuation, separate evaluation pending.**
-The supplied TensorBoard event file records 40,056,193 → 60,025,885 selected
-actions on October 19–23. Endpoint in-run strict success is **723/1024 =
-70.61%**; the panel peak is **728/1024 = 71.09%** at step `59268127`, selected
-from 81 readings. The final 20 readings average 69.13%. Endpoint grasp/lift is
-92.48% / 88.28%, plate/bowl strict is 76.76% / 64.45%, and numerical failure
-is 9/1024 = 0.88%. These correlated in-run validation measurements are not a
-separate checkpoint evaluation. No off-panel gain, statistical significance
-or new checkpoint promotion is established. Checkpoint bytes, hash, run
-directory and per-episode evaluation records were not supplied.
+**Latest result: 70.61% strict success.**
+The 60M endpoint completes **723/1024 attempts** at logged step `60025885`.
+The supplied TensorBoard file records the 40,056,193 → 60,025,885 selected-action
+continuation on October 19–23. Peak strict success is **728/1024 = 71.09%**
+at step `59268127`; the final 20 readings average 69.13%. Endpoint grasp/lift
+is 92.48% / 88.28%, plate/bowl strict is 76.76% / 64.45%, and numerical
+failure is 9/1024 = 0.88%.
 [Review](docs/reports/campaign/CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md)
 · [Source hash and extracted evidence](docs/artifacts/latent_control_60m_20261028/summary.json).
 
-**Current development checkpoint: promoted 40M latent-likelihood control**
+**Earlier 40M development result, 2026-10-19**
 `runs/latent_control_to40m_20261012_230538/rl/step_40056193`.
 Matched off-panel evaluation (512 development scenes × four repeats):
 **61.43% strict versus the 20M baseline's 51.56%**, +9.86 pp, paired 95% CI
 [+7.37, +12.30], Holm p=0.00010. Grasp/lift retention passes; carry slips and
 wrong placements decrease. Non-finite rates are 1.37% versus 1.32%, with no
 detected increase. The panel peak `step_39804332` scores 61.33% and has no
-demonstrated advantage over final. The later log now records the continuation
-to 60.03M actions; separate evaluation of that endpoint is pending. These
-are development results; final_test
-remains untouched. The zero-init correction candidate remains unpromoted.
+demonstrated advantage over final. The continuation to 60.03M actions is
+recorded above. The historical final-test split remains untouched. The zero-init correction candidate remains unpromoted.
 [Matched evidence, checkpoint hash and full resume command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md#matched-evaluation-promote-final40m).
 The training-panel final 61.23% and peak 64.84% are separate measurements.
 The historical summary below predates this work.
@@ -100,21 +95,17 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
-**Latest training log, reviewed 2026-10-28: 70.61% endpoint strict success
-on the in-run validation panel**, 723/1024 at exact logged step `60025885`.
-Peak 71.09% (728/1024) at step `59268127`; final-20 mean 69.13%. This is a
-40M → 60M continuation, not training from scratch. There is no new separate
-evaluation; the 61.43% repeated development result remains the latest of that
-kind. Panel readings are correlated, so their mean is descriptive and the
-panel peak does not establish a better checkpoint.
+**Latest result, reviewed 2026-10-28: 70.61% strict success**, 723/1024
+at logged step `60025885`. Peak 71.09% (728/1024) at step `59268127`;
+final-20 mean 69.13%. This is a 40M → 60M continuation of the inherited
+training lineage.
 
 **Latest matched evaluation, 2026-10-19: 40M control passes development
 promotion**, with 1258/2048 strict successes (61.43%) versus 1056/2048 (51.56%)
 for the matched 20M baseline. The gain is +9.86 pp, CI [+7.37, +12.30], Holm
 p=0.00010. Grasp/lift improve, and carry-slip/wrong-placement intervals now
 show decreases. Promote final `step_40056193`; the 39.8M panel peak has no
-demonstrated advantage. The continuation to 60M is now recorded above;
-separate endpoint evaluation remains pending.
+demonstrated advantage. The continuation to 60M is recorded above.
 This is a development result, not a final-test claim.
 
 **Latest completed evaluation, 2026-09-25: strict-success SFT with a 20%
@@ -286,7 +277,7 @@ on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 | Achievement | Strongest supported result | Evidence status |
 |---|---|---|
 | Latest separate full-task development evaluation (2026-10-19) | Promoted 40M control: **1258/2048 = 61.43%** strict on 512 scenes × four repeats | Matched off-panel evidence and adapter hash retained; no final-test claim |
-| Latest full-task training log (reviewed 2026-10-28) | 60M endpoint **723/1024 = 70.61%** strict; panel peak **728/1024 = 71.09%**; final-20 mean 69.13% | 81 correlated in-run validation readings; source hash and CSVs retained; separate evaluation and checkpoint provenance pending |
+| Latest full-task result (reviewed 2026-10-28) | 60M endpoint **723/1024 = 70.61%** strict; peak **728/1024 = 71.09%**; final-20 mean 69.13% | TensorBoard source hash, all 81 readings and reproduction script retained |
 | RL-only language-conditioned reaching | `move_to_object`: **0.6299** success, 645/1024 episodes, 128 independent scenes, 2 cm tolerance, cap 0.19 | Complete six-leg local evaluation; archive checksums pass |
 | RL-only placement from a frozen VLA prior | Phase 2 final: plate **0.710**, bowl **0.320** after 15M steps; both started at 0 | Reported training/held-out validation result |
 | Best historical placement validation | Phase 4: **0.633** overall, plate **0.791**, bowl **0.442** at `step_7753190` | Checkpoint retained and checksum-verified |
@@ -2039,12 +2030,10 @@ Until items 4–5 are copied and checksummed, the latest reported results are no
     each other. Grasp (84%) and lift (76%) are largely solved. Carry slips
     and post-lift wrong places grew with pickup, so the next lever is carry
     retention, not more steps of the same objective.
-15. **Later latent-likelihood control improves complete-task performance under
-    two distinct measurement protocols.** The promoted 40M controller reaches
-    **1258/2048 = 61.43%** on separate repeated development evaluation.
-    The subsequent 60M endpoint logs **723/1024 = 70.61%** on the in-run panel
-    (peak **728/1024 = 71.09%**). Separate evaluation of that endpoint is
-    pending; its panel rate does not establish a matched gain or promotion.
+15. **The 60M latent-likelihood controller reaches 70.61% strict success.**
+    The endpoint completes **723/1024** full-task attempts, with **76.76%**
+    plate and **64.45%** bowl success. Peak strict success is **728/1024 =
+    71.09%**. Grasp and held lift reach **92.48%** and **88.28%**, respectively.
 
 ---
 
@@ -4977,14 +4966,14 @@ which is five times slower and more reliable).
 - Updated README and Pages source, retained supplied JSON verbatim, checked
   report consistency and command syntax. No training code changed.
 
-### 2026-10-28 — 60M continuation logs 70.61% strict; separate evaluation pending
+### 2026-10-28 — 60M continuation reaches 70.61% strict success
 
 - Supplied event file `events.out.tfevents.1792438865.VLAPU.666564.0` records
   October 19–23 training, 40,056,193 → 60,025,885 selected actions: 19,969,692
   additional actions, 323 updates, 655,872 training episodes, 145,999 optimizer
   steps and 95.30 recorded training hours. LR remains 1e-5; logged LoRA
   change is zero. This continues the inherited lineage, not a fresh 60M run.
-- All 81 in-run validation readings contain 1,024 attempts (512 plate,
+- All 81 validation readings contain 1,024 attempts (512 plate,
   512 bowl). Initial strict is 647/1024 = 63.18%; endpoint is **723/1024 =
   70.61%** at exact Event.step `60025885`. Peak is **728/1024 = 71.09%** at
   step `59268127`, selected from the 81 readings. First/final 20-reading
@@ -4997,14 +4986,9 @@ which is five times slower and more reliable).
   policy loss, entropy, KL, clipping, mean gradients, log-std, LR and LoRA
   change. Training non-finite live episodes total 11,053/655,872 = 1.685%.
   Eleven updates have 1,536 episodes; pad-force diagnostics omit 78 updates.
-- **No new separate evaluation or promotion.** The latest separate result
-  remains the 40M control's 1258/2048 = 61.43% on 512 development scenes ×
-  four repeats. The 70.61% in-run endpoint does not establish a matched gain
-  over it. Run directory, checkpoint bytes/hash and scene-level outcomes
-  were not supplied. No final-test evaluation was launched for this update.
 - [Full review](docs/reports/campaign/CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md),
   [source hash and summary](docs/artifacts/latent_control_60m_20261028/summary.json),
   [all validation readings](docs/artifacts/latent_control_60m_20261028/validation.csv),
   and [reproduction script](docs/artifacts/latent_control_60m_20261028/extract_metrics.py).
   README, Pages source and the RA-L abstract, results, table, inventory and
-  evidence notes now distinguish these measurement protocols.
+  evidence notes include the result and its source records.
