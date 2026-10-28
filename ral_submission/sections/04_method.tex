@@ -54,7 +54,7 @@ u_t\sim\mathcal N(\mu_\theta(x_t,p_t)+b_t,\operatorname{diag}\sigma_\theta^2),
 \quad a_t=\operatorname{clip}(u_t,-1,1).
 \label{eq:latent_action}
 \end{equation}
-The robot executes $a_t$, while old and new policy likelihoods score the stored $u_t$ conditional on the same $b_t$. This avoids evaluating a Gaussian density at a clipped boundary~\cite{capg}. Conditioning also accounts for the offset persisting across decisions, instead of treating it as independent extra noise at every step. The residual and exploration scale remain trainable. Algorithm~\ref{alg:paper_pipeline} includes this continuation after a composition plateau; Section~\ref{sec:cdpr_results} reports its measured progression. Self-imitation uses the regression loss in Eq.~\eqref{eq:si_loss}.
+The robot executes $a_t$, while old and new policy likelihoods score the stored $u_t$ conditional on the same $b_t$. This avoids evaluating a Gaussian density at a clipped boundary~\cite{capg}. Conditioning also accounts for the offset persisting across decisions, instead of treating it as independent extra noise at every step. The residual and exploration scale remain trainable. Algorithm~\ref{alg:paper_pipeline} includes this continuation after a composition plateau; Section~\ref{sec:cdpr_results} reports complete-task performance. Self-imitation uses the regression loss in Eq.~\eqref{eq:si_loss}.
 
 \input{sections/04c_libero_dense_rewards}
 \input{sections/04b_mathematical_analysis}

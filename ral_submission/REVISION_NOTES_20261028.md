@@ -43,3 +43,9 @@ Rebuilt with `latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=build
 ## Author-supplied figure replacements
 
 Replaced the first-page graphical abstract with the supplied `ChatGPT Image 28 Oct 2026, 15_57_43.png`, stored unchanged as `figures/abstract_overview.png`. The supplied `skill_retention.svg` already matched the SVG in the working folder; refreshed the PDF used by LaTeX and the PNG preview from that SVG. Removed the caption's reference to individual round marks, which are absent from the supplied chart. The figure-generation script now preserves that SVG and exports it through `rsvg-convert`, rather than overwriting it from the older XML design.
+
+## Reader-facing results revision
+
+Removed training-step counters, references to particular checkpoints, intermediate checkpoint scores, and the narrative of logged candidate/control runs from the manuscript. CDPR results now state the 70.61% strict success and task outcomes directly. Methods and Algorithm 1 retain the training procedure. The scope paragraph states that the development validation panel is used during training. Historical details above remain provenance notes rather than manuscript text.
+
+The graphical abstract now uses the subsequently supplied `ChatGPT Image 28 Oct 2026, 22_21_45.png`, copied unchanged to `figures/abstract_overview.png`. The rebuilt six-page paper preserves its text and page dimensions; the new first-page image was visually checked.
