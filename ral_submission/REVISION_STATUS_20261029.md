@@ -1,7 +1,5 @@
 # Status of the 29 October 2026 revision checklist
 
-> **Reverted, 29 October 2026.** At the author's request, the manuscript, tables, algorithm and figures were restored to the pre-revision snapshot in `archive/manuscript_20261029_before_checklist_revision/`; the restored PDF renders identically to it. The revised version remains in commit `f376d16`. The lineage audit (`evidence/DATA_LINEAGE_AUDIT_20261029.md`) and this note are kept as reference for the author's own edits.
-
 This note maps each item in `REVISION_CHECKLIST_20261029.md` to what changed in the manuscript and what still needs data, author confirmation, or experiments. No training or evaluation was run for this revision. The pre-revision manuscript and figures are archived in `archive/manuscript_20261029_before_checklist_revision/`.
 
 Evidence added: `evidence/DATA_LINEAGE_AUDIT_20261029.md`, which contains the lineage, data categories, module table, and action interface.

@@ -8,7 +8,7 @@ We use dense rewards only at the beginning of adaptation to learn a base policy 
 \item \textbf{Pickup:} \emph{pick up \textless object\textgreater}. Learn to grasp and lift the named object.
 \item \textbf{Placement:} \emph{put \textless object\textgreater\ into bowl} or \emph{put \textless object\textgreater\ on the plate}. Start with the object already grasped and learn transport and release at the named destination.
 \end{itemize}
-The object placeholder is replaced by its name. These instructions condition the policy on the requested skill and target; the instruction remains attached to each retained trajectory. Distance reduction and manipulation events guide initial acquisition. We then refine the skills with binary success rewards and consolidate them through self-imitation. The resulting base policy must retain all component skills before full-task learning.
+The object placeholder is replaced by its name. These instructions condition the policy on the requested skill and target; the instruction remains attached to each retained trajectory. Distance reduction and manipulation events guide initial acquisition. We then refine the skills with binary success rewards and consolidate them through self-imitation.
 
 Successful trajectories are retained by instruction. When later training degrades earlier skills, self-imitation fits a balanced mixture of earlier and current successes:
 \begin{equation}
@@ -16,35 +16,51 @@ Successful trajectories are retained by instruction. When later training degrade
 \left[\|\hat a-a\|^2\right].
 \label{eq:si_loss}
 \end{equation}
-Here $\hat a$ is the predicted action and $a$ is the recorded executed action. The average balances instructions and excludes unused action slots. Policy-dependent features are refreshed before fitting. Balancing matters because imitating only the newest skill can reinforce forgetting.
+Here $\hat a$ is the predicted action and $a$ is the recorded executed action. The average balances instructions and excludes unused action slots. Policy-dependent features are refreshed before fitting. Balancing is intended to keep the newest skill from dominating the fit. We have not compared it with unbalanced replay.
+
+Full-task success requires each stage in turn, so its probability is the product of conditional stage success rates. Low but nonzero stage rates therefore permit occasional complete successes, which milestone credit can then reinforce. We treat skill-success targets as practical transition criteria, not necessary conditions. Isolated skill tests also differ from the full task in prompt and start distribution.
 
 Algorithm~\ref{alg:paper_pipeline} summarizes the schedule. Progress is checked with fixed skill evaluations. After an initial training period, automated stages can end at a success target or a plateau; budget exhaustion also ends a stage. The CDPR sequence used validation-guided manual transitions. After consolidation, all learned skills are evaluated again. Automated runs retain the consolidation update only when recovery improves the degraded skills on average and keeps other skills within tolerance.
+
+When the consolidated policy has no measurable full-task success, the schedule allows an optional seeding stage that fits $\mathcal L_{\rm SI}$ to automatically generated full-task trajectories. The CDPR lineage used two such stages, described in Section~\ref{sec:lineage}: scripted-oracle demonstrations, and chains of earlier learned skill policies with scripted controller assistance.
 \input{algorithms/staged_pipeline_paper}
 
-\subsection{SmolVLA with an Embodiment-Specific Residual}
+\subsection{SmolVLA with a Newly Initialized Residual}\label{sec:architecture}
 \begin{figure*}[!t]
 \centering\includegraphics[width=\textwidth]{figures/smolvla_residual_lora.pdf}
-\caption{SmolVLA implementation of the pipeline. The added residual combines 518 observation features with a 40-dimensional action prior. LoRA adapts the pretrained expert during earlier training; the evaluated full-task continuation freezes the VLA and LoRA weights. Feature and action dimensions refer to the five-channel controller.}
+\caption{SmolVLA implementation. The pretrained VLM and action expert are retained and frozen. A newly initialized residual combines 518 observation features with a 40-dimensional action prior. LoRA adapts the expert in supervised stages; the evaluated full-task continuation freezes the VLA and LoRA weights. Feature and action dimensions refer to the five-channel controller.}
 \label{fig:architecture}
 \end{figure*}
 
-Figure~\ref{fig:architecture} shows one implementation of the pipeline. Following the residual-learning ingredient of Probe, Learn, Distill (PLD)~\cite{pld}, we retain a pretrained expert and adapt its actions with a lightweight residual. The SmolVLA expert supplies an action prior, mapped to the target control interface. In our five-channel controller, eight action slots form a 40-dimensional prior.
-A frozen visual projection supplies 512 features; six proprioceptive values complete the 518-dimensional observation. The residual receives this observation and the 40-dimensional prior, and predicts a bounded correction. The combined action is bounded before execution.
+Figure~\ref{fig:architecture} and Table~\ref{tab:modules} describe the evaluated controller. The SmolVLA vision-language model and action expert are loaded from pretrained weights and are never reset or directly trained. Their action chunk is mapped to the five target channels; eight action slots form a 40-dimensional prior. Following the residual principle of PLD~\cite{pld}, a residual MLP is created with default initialization at the start of adaptation and is the component trained from scratch. It receives a 518-dimensional observation and the prior, and predicts a bounded correction; the combined action is bounded before execution. The observation consists of six proprioceptive values and a 512-dimensional visual feature. This feature is a fixed random projection of SmolVLA's connector tokens from both cameras. It is neither pretrained nor learned.
 
-LoRA adapts the action expert during earlier training. In the evaluated full-task continuation, the inherited VLA and LoRA weights are frozen while the residual and exploration parameters are trained. The backbone, action mapping, and feature dimensions can change with the embodiment; the training schedule remains the same.
+LoRA adapters on the action expert start with zero contribution. They are updated only in supervised stages, including the seeding stage, and are frozen during all full-task RL. During full-task training, only the residual and the exploration parameters change. The backbone, action mapping, and feature dimensions can change with the embodiment; the training schedule remains the same.
 
+\begin{table}[!t]
+\caption{Modules of the evaluated controller.}
+\label{tab:modules}\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lllr@{}}\toprule
+Module & Initialization & Trained & Params\\\midrule
+SmolVLA VLM & Pretrained & Never & $\approx$350M$^a$\\
+SmolVLA action expert & Pretrained, not reset & Never & $\approx$100M$^a$\\
+Expert LoRA (r\,=\,16, $\alpha$\,=\,32) & Zero update & SFT stages & 3.42M\\
+Visual projection & Fixed random & Never & ---$^b$\\
+Residual MLP & New (default) & All stages & 1.66M\\
+Exploration $\log\sigma$ & Constant $-1.2$ & RL stages & 40\\\bottomrule
+\end{tabular}\\[2pt]
+\raggedright\footnotesize$^a$As documented for the 450M SmolVLA~\cite{smolvla}. $^b$Fixed $30{,}720\times512$ map.
+\end{table}
 
 \subsection{Milestone-Based Full-Task Composition}\label{sec:composition}
-After skill consolidation, the base policy learns the complete task from empty-gripper starts using binary milestone rewards. The full-task prompt is \emph{put \textless object\textgreater\ into \textless destination\textgreater}, where the destination is plate or bowl. This includes the plate wording \emph{into plate}, whereas the isolated plate-placement skill uses \emph{on the plate}. The full-task instruction stays fixed throughout approach, pickup, and placement. Each milestone marks completion of part of this sequence. Continuous dense shaping is confined to the initial simple-skill acquisition in Section~\ref{sec:skill_acquisition}. The LIBERO reward comparison examines how intermediate feedback can support execution of a complete instruction.
+After skill consolidation, the base policy learns the complete task from empty-gripper starts using binary milestone rewards. The full-task prompt is \emph{put \textless object\textgreater\ into \textless destination\textgreater}, where the destination is plate or bowl. This includes the plate wording \emph{into plate}, whereas the isolated plate-placement skill uses \emph{on the plate}. The full-task instruction stays fixed throughout approach, pickup, and placement. Continuous dense shaping is confined to the initial simple-skill acquisition in Section~\ref{sec:skill_acquisition}. The LIBERO reward comparison examines how intermediate feedback can support execution of a complete instruction.
 
 \input{sections/04c_libero_dense_rewards}
 \input{sections/04b_mathematical_analysis}
 
-In the adapted CDPR controller, approach, held pickup, and final placement serve as milestones for assigning credit within a rollout. The policy executes the complete instruction without an external controller switching between specialists.
+Three ordered, irreversible milestones are defined by predicates on the simulator state. Approach ($M_1$) requires entering a 3\,cm neighborhood of the grasp point with the gripper open and the object undisplaced. Pickup ($M_2$) requires a persistent physical grasp and a lift of at least 5\,cm while held. Placement ($M_3$) requires the strict destination contract: correct receptacle, intentional release, settled geometry, and no carry slip or wrong placement. Each milestone pays $+1$ once.
 
-The main rule is simple: a later placement failure should not remove the local credit for a successful approach or pickup. We compare milestone outcomes within groups of rollouts from the same scene. Actions receive credit for the milestone they contribute to, while full-task success provides an additional preference for completing the chain. A negative completion bonus is suppressed on already achieved approach and pickup milestones. Placement receives its completion credit once.
-
-The rule retains the assigned credit for completed milestones while training the remaining task.
+The rule is simple: a later placement failure should not remove local credit for a successful approach or pickup. Actions up to the one that triggers $M_1$ form the approach segment, actions up to $M_2$ form the pickup segment, and later actions form the placement segment. Each segment receives its own group-relative advantage, computed among the eight rollouts of the same scene. Groups without variation in a segment are dropped from that segment, and the three segment losses receive equal weight. Full-task completion adds a bonus of 1 to the return. A negative completion advantage is suppressed on segments whose milestone was achieved. The policy still executes the complete instruction without an external controller switching between specialists.
 
 \subsection{Stabilized Updates and Full-Task Continuation}\label{sec:rl_loss}
 We use a clipped group-relative policy loss with entropy regularization:
@@ -52,7 +68,7 @@ We use a clipped group-relative policy loss with entropy regularization:
 \mathcal L_{\rm RL}=\mathcal L_{\rm clip}-\eta\mathcal H.
 \label{eq:rl_loss}
 \end{equation}
-The clipped loss compares rollouts within each scene group and limits the incentive for large changes in action likelihood. We use separate upper and lower clipping bounds. The entropy term $\mathcal H$, weighted by $\eta$, maintains exploration during manipulation and composition. Together, these choices help keep early updates conservative while successful behavior is still rare.
+$\mathcal L_{\rm clip}$ is the PPO surrogate on the likelihood ratio of each rollout's actions, with the group-normalized advantage of its segment. It uses separate lower and upper clipping bounds, 0.20 and 0.28. The entropy term $\mathcal H$, weighted by $\eta=2\times10^{-4}$, maintains exploration during manipulation and composition. Together, these choices keep early updates conservative while successful behavior is still rare.
 
 During skill learning, DAPO-style dynamic sampling filters uninformative groups and collects additional rollout groups within the configured collection budget~\cite{dapo}. With binary rewards, uniform outcomes provide no group-relative contrast. During dense acquisition, filtering instead checks within-group return variation, so partial progress can provide a learning signal before a group contains a successful skill execution.
 

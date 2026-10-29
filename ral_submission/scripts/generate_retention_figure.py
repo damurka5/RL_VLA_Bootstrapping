@@ -48,10 +48,18 @@ def main():
         ("before", -width / 2, GRAY, MUTED, "Before SIL"),
         ("after", width / 2, TEAL, TEAL, "After SIL"),
     ):
-        bars = ax.bar(x + offset, means[condition], width, color=color,
-                      edgecolor=edge, linewidth=0.8, label=label, zorder=3)
-        ax.bar_label(bars, labels=[f"{v:.1f}" for v in means[condition]],
-                     padding=4, fontsize=10, fontweight="bold", color=INK)
+        ax.bar(x + offset, means[condition], width, color=color,
+               edgecolor=edge, linewidth=0.8, label=label, zorder=3)
+        # Individual evaluation rounds, so the spread behind each mean is visible.
+        for index, name in enumerate(names):
+            rounds = [100 * v for v in recovery[name][condition]]
+            jitter = np.linspace(-width / 5, width / 5, len(rounds))
+            ax.scatter(x[index] + offset + jitter, rounds, s=14, color=INK,
+                       edgecolor="white", linewidth=0.5, zorder=4,
+                       label="Evaluation round" if (condition, index) == ("after", 0) else None)
+            ax.text(x[index] + offset, max(max(rounds), means[condition][index]) + 2.5,
+                    f"{means[condition][index]:.1f}", ha="center", va="bottom",
+                    fontsize=10, fontweight="bold", color=INK)
     ax.set_xticks(x, names)
     ax.set_ylim(0, 80)
     ax.set_yticks(np.arange(0, 81, 20))
