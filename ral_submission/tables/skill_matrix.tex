@@ -1,23 +1,14 @@
-% Source: CDPR_CONSOLIDATED_PROGRESS_REPORT.md, "Instruction success by phase and
-% retention cycle" and ledger entries; stage labels follow tables/lineage.tex.
-\begin{table*}[!t]
-\caption{Skill success by stage, in percent, with successes/attempts where recorded. Rows use different protocols (column P) and must not be read as one learning curve. ---: not measured, not zero.}
-\label{tab:skill_matrix}\centering\scriptsize
-\setlength{\tabcolsep}{2.5pt}
-\begin{tabular}{@{}llcccccc@{}}\toprule
-Stage & P & Reach & Pickup & Plate, held & Bowl, held & Plate, full task & Bowl, full task\\\midrule
-S1 approach reference & D & 63.0 (645/1024) & --- & --- & --- & --- & ---\\
-S2 pickup reference & D & --- & 26.0 & --- & --- & --- & ---\\
-S3 placement, 15M & D & --- & --- & 71.0 & 32.0 & --- & ---\\
-S4 before cycle 1 & B & 8.0 & --- & 50.0 & 23.1 & --- & ---\\
-S4 after cycle 1 & B & 31.1 & --- & 52.3 & 27.7 & --- & ---\\
-S4 after cycle 2 & B & 43.2 & 17.4 & 34.6 & 17.0 & --- & ---\\
-S4 after cycle 3 & B & 47.8 (734/1536) & 11.9 (183/1536) & 73.8 (632/856) & 53.5 (364/680) & 0.5 (10/2168)$^\dagger$ & 1.1 (22/1928)$^\dagger$\\
-S5 composition seed & B & 48.0 (737/1536) & 14.9 (229/1536) & 71.5 (612/856) & 47.9 (326/680) & 9.3 (80/856)$^\dagger$ & 2.6 (18/680)$^\dagger$\\
-S7 joint sparse RL & B & 42.0 (168/400) & 14.7 (225/1536) & --- & --- & 50.0 (228/456)$^\dagger$ & 21.6 (76/352)$^\dagger$\\\midrule
-S10 start (after S9) & V & --- & --- & --- & --- & 1.4 (7/512) & 3.9 (20/512)\\
-S10, best separate eval. & E & --- & --- & --- & --- & 37.4 (46/123) & 33.8 (45/133)\\
-S11 endpoint & V & --- & --- & --- & --- & 76.8 (393/512) & 64.5 (330/512)\\\bottomrule
-\end{tabular}\\[2pt]
-\raggedright\footnotesize P: D, dedicated skill reference; B, bank-harvest evaluation at registered caps; V, in-run strict full-task validation panel; E, separate strict evaluation on 256 distinct scenes. Full-task entries below the rule use an empty-gripper start and the strict criterion. $^\dagger$Earlier composed protocol: object on the desk 0.06--0.10\,m from the receptacle, scored by the earlier composed predicate. This differs from the strict full task.
-\end{table*}
+% Reaching reference: evidence/skill_retention_rounds.json, forgetting comparison.
+% Other rows: ../CDPR_CONSOLIDATED_PROGRESS_REPORT.md, instruction success table;
+% consolidation is the Cycle 3 shared policy, evaluated before composition.
+\begin{table}[!ht]
+\caption{Skill success (\%) by training stage. Placement starts with the object held; --- denotes an unreported result.}
+\label{tab:skill_matrix}\centering\small
+\begin{tabular}{@{}lrrrr@{}}\toprule
+Training stage & Reach & Pickup & Plate & Bowl\\\midrule
+Reaching RL & 64.1 & --- & --- & ---\\
+Pickup RL & --- & 26.0 & --- & ---\\
+Placement RL & --- & --- & 71.0 & 32.0\\
+After consolidation & 47.8 & 11.9 & 73.8 & 53.5\\\bottomrule
+\end{tabular}
+\end{table}

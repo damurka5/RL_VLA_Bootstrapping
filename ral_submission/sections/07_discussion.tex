@@ -1,20 +1,2 @@
-\subsection{Context and Scope of the Evidence}
-Table~\ref{tab:context} places the CDPR result next to related pick-and-place and adaptation results. It is contextual, not a benchmark. Robots, objects, resets, horizons, and success criteria differ across rows, and similar task names do not imply the same task distribution. SmolVLA's score gives half credit each for grasp and placement~\cite{smolvla}; the CDPR score counts only complete strict successes. No row supports a claim of superior performance or sample efficiency.
-
-\begin{table}[!t]
-\caption{Contextual results across different settings; not a controlled comparison.}
-\label{tab:context}\centering\footnotesize
-\setlength{\tabcolsep}{2.5pt}
-\begin{tabular}{@{}P{1.75cm}P{2.45cm}P{1.45cm}P{1.35cm}r@{}}\toprule
-Work & Robot, task & Human target demos & Metric & Result\\\midrule
-SmolVLA~\cite{smolvla} & SO100 (real), cube pick-place & 50/task, multitask & Partial credit & 75\%\\
-SimpleVLA-RL~\cite{simplevlarl} & LIBERO-Spatial (sim.) & 1/task & Binary & 98.2\%\\
-RL boot.~\cite{nurtdinov2026rlboot} & CDPR (sim.), move to object & 0 & Strict binary & 9.75\%\\
-Ours & CDPR (sim.), put into plate/bowl & 0$^a$ & Strict binary & 70.61\%$^b$\\\bottomrule
-\end{tabular}\\[2pt]
-\raggedright\footnotesize$^a$Automatically generated supervised data in the lineage (Table~\ref{tab:lineage}). $^b$Development panel; off-panel 61.43\% at 40M continuation actions.
-\end{table}
-
-The evidence supports a feasibility claim: a pretrained VLA with a newly initialized residual reached 70.61\% strict full-task success on a simulated CDPR, with no human demonstrations collected on that robot. It does not attribute that result to any single stage. Three controls are still missing. The first is direct full-task RL from the same pretrained initialization and residual architecture, with the same information, evaluation, and total interaction budget, including the schedule's acquisition, consolidation-data, and composition interactions and its oracle and assisted data. The second compares protected with unprotected milestone credit from the same consolidated checkpoint. The third compares instruction-balanced with ordinary successful replay under the same data and optimization budget.
-
-The result comes from one training lineage, so no training-seed variation is measured. The development panel was inspected during training, and a frozen evaluation on untouched scenes, with per-episode outcomes, is pending. We also have not tested whether the controller selects objects and destinations from language within a fixed scene. The LIBERO study shares neither the backbone nor the full schedule with the CDPR pipeline. Avoiding human demonstrations does not remove the engineering of simulator, rewards, resets, success predicates, oracle, and assisted controllers, nor the RL compute.
+\subsection{Scope of the Evidence}
+The LIBERO comparison concerns reward configurations, whereas the CDPR experiment evaluates the full adaptation procedure. The phase-only LIBERO condition differs in reward weights and training budget, so it does not isolate the effect of removing continuous progress feedback. The CDPR result comes from one training lineage and a development validation panel used during training. Retention measurements cover a small number of rounds. These results establish complete-task execution in the evaluated setting; matched comparisons are needed to quantify the contribution of each training stage.

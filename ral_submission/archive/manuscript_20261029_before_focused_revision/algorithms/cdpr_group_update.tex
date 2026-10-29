@@ -1,0 +1,43 @@
+% Requires: \usepackage{algorithm,algpseudocode,amsmath,amssymb}
+% Scope: bounded residual + conditional latent likelihood + three-stage CDPR credit.
+% The current default WX200 staged reward is a different implementation.
+\begin{algorithm}[t]
+\caption{CDPR full-task RL with latent-action likelihood and protected stage credit}
+\label{alg:cdpr_group_update}
+\begin{algorithmic}[1]
+\Require Frozen SmolVLA/LoRA, residual $\theta$, exploration scale $\sigma$, group size $G=8$
+\For{each full-task RL update}
+    \State Freeze behavior parameters $\theta_{\mathrm{old}}$; initialize rollout buffer
+    \For{each scene group and candidate $i=1,\ldots,G$}
+        \State Reset from the same group scene; sample an exogenous episode offset $B_i$
+        \For{each executed action slot $t$}
+            \State Compute prior $p_t$, observation $x_t$ and $\mu_t=\tanh(p_t+s_r\tanh f_{\theta_{\mathrm{old}}}([x_t,p_t]))$
+            \State Set offset $b_t=g_tB_i$; gripper-offset gate opens after held lift
+            \State Sample $u_t\sim\mathcal N(\mu_t+b_t,\operatorname{diag}\sigma^2)$
+            \State Execute $a_t=\operatorname{clip}(u_t,-1,1)$; update milestone latches
+            \State Store $u_t,b_t,x_t,p_t$, slot, pre-action credit stage and old conditional log-density
+        \EndFor
+        \State Record approach, held-pickup and strict-placement outcomes $M_{i1:3}$
+    \EndFor
+    \State Exclude invalid episodes from learning statistics; retain them as evaluation failures
+    \State Compute independent normalized advantages $A_{ik}$ and usable masks $U_{ik}$
+    \For{each valid record from candidate $i$, stage $k$}
+        \If{$k<3$}
+            \State $\widetilde A_{ik}\gets U_{ik}A_{ik}+\beta U_{i3}T_\kappa(A_{i3},M_{ik})$
+        \Else
+            \State $\widetilde A_{i3}\gets U_{i3}A_{i3}$
+        \EndIf
+    \EndFor
+    \State Compute per-record candidate/stage weights over the collected update
+    \For{each configured optimization epoch and minibatch}
+        \State Score the recorded latent $u_t$ conditional on its recorded $b_t$
+        \State Compute per-slot ratio $\rho_t$ and asymmetric clipped surrogate
+        \State Apply the precomputed candidate/stage weights and minibatch scaling
+        \State Minimize negative surrogate minus Gaussian entropy bonus
+        \State Clip gradient norm; apply Adam; project raw $\log\sigma$ onto its allowed interval
+    \EndFor
+\EndFor
+\Statex $T_\kappa(a,m)=\kappa a$ if $m=1$ and $a<0$; otherwise $T_\kappa(a,m)=a$.
+\Statex The inspected full-task setting uses $\beta=1$, $\kappa=0$, and equal stage mass.
+\end{algorithmic}
+\end{algorithm}
