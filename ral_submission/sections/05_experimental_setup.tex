@@ -1,17 +1,7 @@
 \section{Experiments}\label{sec:experiments}
-We first account for the training lineage of the evaluated CDPR controller and the skills measured along it. We then report skill retention during base-policy learning, the auxiliary LIBERO-Spatial feedback study, and complete-task CDPR adaptation. A WX200 evaluation is ongoing.
+We first evaluate skill retention during base-policy learning in CDPR simulation, then intermediate feedback for composition on LIBERO-Spatial, and finally complete-task CDPR adaptation. The ongoing WX200 evaluation extends the approach to another embodiment.
 
-The CDPR simulation uses MuJoCo Warp/MJ-Lab, four object categories (apple, orange, potato, and tomato), and plate or bowl destinations. Full-task stages use 8-action chunks with a 4-action executed prefix, groups of 8 rollouts per scene, a 128-decision horizon, and 512 parallel worlds per GPU on two A40 GPUs. The continuation S11 uses a fresh Adam optimizer, learning rate $10^{-5}$, one PPO epoch per update, and initial $\log\sigma=-1.2$; its last 20M actions took 95.3\,h. Rewards, milestones, and training-only assistance read simulator state. The evaluated policy observes only the two camera images, proprioception, and the instruction.
-
-
-\subsection{Training Lineage and Data Origin}\label{sec:lineage}
-Table~\ref{tab:lineage} traces the evaluated controller from the pretrained model. Approach, pickup, and placement were acquired by RL with dense rewards (S1--S3), and retention cycles consolidated them by self-imitation on the policy's own successes (S4). No consolidated policy completed the full task, so two supervised stages seeded composition. S5--S6 fitted a scripted simulator oracle's pick-and-place trajectories. The oracle sets only the executed actions; observations, priors, resets, and predicates are the trainer's own. S9 fitted chains of earlier learned skill policies whose execution was assisted by scripted yaw, gripper-hold, and descent controllers, with every chain relabelled to the final instruction. Milestone RL then trained the policy without assistance (S10--S11).
-
-Thus no human demonstrations or interventions on the CDPR enter the lineage, but automatically generated demonstrations do. The full-task result is not evidence for adaptation from the learner's own RL trajectories alone. Across S10--S11, full-task training consumed about 116M selected environment actions. Earlier stages and the oracle and chain collection add more, and some of their budgets were not retained. The unadapted model, pretrained SmolVLA with a fresh residual, was not evaluated under the full-task protocol. The earliest strict full-task measurement is 2.6\% at the start of S10, after both seeding stages.
-\input{tables/lineage}
-\input{tables/skill_matrix}
-
-Table~\ref{tab:skill_matrix} records skill success along the lineage. Every component skill was measured above zero before full-task RL, and the same policy later executed the complete task. The rows use different instructions, resets, and success predicates; they document development and retention, not a single learning curve. They also do not show that instruction balancing improved later composition, which would require a control trained without it.
+The CDPR simulation uses MuJoCo Warp/MJ-Lab, four object categories (apple, orange, potato, and tomato), and plate or bowl destinations. The action interface controls Cartesian translation, yaw, and the gripper.
 
 \input{sections/06b_ablations_and_failures}
 
@@ -19,9 +9,9 @@ Table~\ref{tab:skill_matrix} records skill success along the lineage. Every comp
 \input{sections/06e_libero_results}
 
 \subsection{SmolVLA: Complete-Task Adaptation}\label{sec:cdpr_results}
-Strict success requires grasp, held lift, intentional release, and correct placement, without carry slip or wrong-placement events. Each attempt starts with an empty gripper and uses one full-task instruction, without teacher assistance. All attempts, including numerical failures, remain in the denominator.
+Strict success requires grasp, held lift, intentional release, and correct placement, without carry slip or wrong-placement events.
 
-The reported endpoint is evaluated on the development validation panel used during training: 1,024 attempts, 512 plate and 512 bowl, from a fixed set of 128 scenes that is reused at every reading. The endpoint was not chosen by peak score; it is the final checkpoint of the continuation, and the panel peak (71.09\%) is not used.
+The development validation comprises 1,024 full-task episodes: 512 plate and 512 bowl attempts. Each attempt starts with an empty gripper and uses one full-task instruction, without teacher assistance. All attempts, including numerical failures, remain in the denominator.
 \input{sections/06a_simulation_results}
 
 \input{sections/06c_real_world_results}

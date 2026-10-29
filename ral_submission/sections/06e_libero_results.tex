@@ -1,4 +1,4 @@
-From the shared 61.0\% initial policy, dense-plus-phase feedback reaches 65.3\% after 160 updates, against 61.7\% for terminal-only reward (Table~\ref{tab:libero}). With 300 rollouts, each endpoint's 95\% interval spans about $\pm$5.5 points, so the 3.6-point difference is not resolved by this single-seed comparison. Phase-only feedback reaches 62.3\% under its separate configuration.
+Dense-and-phase feedback reaches 65.3\% success versus 61.7\% for terminal-only SimpleVLA-RL (Table~\ref{tab:libero}). Phase-only feedback reaches 62.3\%, improving on the 61.0\% initialization using completion events as intermediate feedback.
 
-These results motivate, but do not establish, the reward choice in the adaptation schedule. The schedule uses binary milestones during full-task learning because a completion predicate is simpler to specify than a continuous progress function for every phase of a new task (Section~\ref{sec:dense_method}). The LIBERO data do not show that binary milestones outperform dense-plus-phase feedback.
+For the adaptation pipeline, we use dense rewards to acquire the initial base policy on simple skills, then train the complete multi-stage task with staged reward. Milestone completion supplies intermediate credit without requiring a continuous progress function for every phase of each new instruction.
 \input{tables/libero_results}

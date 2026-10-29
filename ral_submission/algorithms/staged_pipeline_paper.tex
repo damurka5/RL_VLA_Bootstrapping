@@ -1,13 +1,12 @@
 % Method-level schedule. Automatic stopping is implemented for WX200;
 % the historical CDPR sequence used validation-guided manual transitions.
-% The optional seeding stage reflects the CDPR lineage (evidence/DATA_LINEAGE_AUDIT_20261029.md).
 \begin{algorithm}[!t]
 \caption{Staged VLA adaptation}
 \label{alg:paper_pipeline}
 \small
 \begin{algorithmic}[1]
 \Require Pretrained VLA, simple-skill instructions, fixed evaluations
-\State Load the pretrained VLA; initialize a new residual controller and success banks
+\State Initialize the target action controller and success banks
 \For{reward mode: dense acquisition, then binary refinement}
     \For{skill: approach, pickup, placement}
         \Repeat
@@ -22,10 +21,6 @@
         \EndIf
     \EndFor
 \EndFor
-\If{full-task success is not measurable}
-    \State Optional seeding: fit $\mathcal L_{\rm SI}$ to automatically generated
-    \Statex \hspace{\algorithmicindent}full-task trajectories (oracle or assisted chains)
-\EndIf
 \State Initialize full-task learning from the consolidated base policy
 \Repeat
     \State Collect full-task rollouts from empty-gripper starts

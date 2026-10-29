@@ -6,7 +6,7 @@
   <rdf:RDF xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:cc="http://creativecommons.org/ns#" xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
    <cc:Work>
     <dc:type rdf:resource="http://purl.org/dc/dcmitype/StillImage"/>
-    <dc:date>2026-10-29T17:40:27.262797</dc:date>
+    <dc:date>2026-10-29T18:44:26.055512</dc:date>
     <dc:format>image/svg+xml</dc:format>
     <dc:creator>
      <cc:Agent>
@@ -36,7 +36,7 @@ L 712.8 21.6
 L 7.2 21.6
 L 7.2 2.88
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_1">
     <text style="fill: #243447; font: 700 15.84px 'DejaVu Sans'; text-anchor: middle" x="360" y="16.61085" transform="rotate(-0 360 16.61085)">WX200: five-DoF embodiment extension</text>
@@ -52,7 +52,7 @@ Q 7.2 192.96 7.2 188.64
 L 7.2 36
 Q 7.2 31.68 11.52 31.68
 z
-" clip-path="url(#p450887968c)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
+" clip-path="url(#p1d33bc787b)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
    </g>
    <g id="patch_4">
     <path d="M 14.4 38.16
@@ -61,7 +61,7 @@ L 218.16 58.32
 L 14.4 58.32
 L 14.4 38.16
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_2">
     <text style="fill: #243447; font: 700 12.24px 'DejaVu Sans'; text-anchor: middle" x="116.28" y="51.617475" transform="rotate(-0 116.28 51.617475)">(a) Apparatus + control axes</text>
@@ -73,7 +73,7 @@ L 216.72 154.8
 L 15.84 154.8
 L 15.84 68.4
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_3">
     <text style="fill: #526377; font: 11.52px 'DejaVu Sans'" transform="translate(27.855 88.97904)">Insert actual robot photograph</text>
@@ -89,7 +89,7 @@ L 215.28 180
 L 17.28 180
 L 17.28 160.56
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_4">
     <text style="fill: #526377; font: 11.52px 'DejaVu Sans'; text-anchor: middle" x="116.28" y="173.4588" transform="rotate(-0 116.28 173.4588)">Setup illustration to be added</text>
@@ -101,7 +101,7 @@ L 708.48 54.72
 L 240.48 54.72
 L 240.48 35.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_5">
     <text style="fill: #243447; font: 700 13.68px 'DejaVu Sans'; text-anchor: middle" x="474.48" y="48.721387" transform="rotate(-0 474.48 48.721387)">(b) Full-task rollout: one instruction, empty-gripper start</text>
@@ -117,7 +117,7 @@ Q 240.48 162 240.48 157.68
 L 240.48 71.28
 Q 240.48 66.96 244.8 66.96
 z
-" clip-path="url(#p450887968c)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
+" clip-path="url(#p1d33bc787b)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
    </g>
    <g id="patch_9">
     <path d="M 244.08 77.04
@@ -126,7 +126,7 @@ L 324.72 105.84
 L 244.08 105.84
 L 244.08 77.04
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_6">
     <text style="fill: #526377; font: 12.24px 'DejaVu Sans'" transform="translate(265.330462 87.964414)">Frame</text>
@@ -139,7 +139,7 @@ L 324.72 141.12
 L 244.08 141.12
 L 244.08 125.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_7">
     <text style="fill: #243447; font: 700 12.24px 'DejaVu Sans'; text-anchor: middle" x="284.4" y="136.577475" transform="rotate(-0 284.4 136.577475)">Reach</text>
@@ -151,7 +151,7 @@ L 324.72 158.4
 L 244.08 158.4
 L 244.08 143.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_8">
     <text style="fill: #526377; font: 11.52px 'DejaVu Sans'; text-anchor: middle" x="284.4" y="153.6984" transform="rotate(-0 284.4 153.6984)">t = ___ s</text>
@@ -167,7 +167,7 @@ Q 335.52 162 335.52 157.68
 L 335.52 71.28
 Q 335.52 66.96 339.84 66.96
 z
-" clip-path="url(#p450887968c)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
+" clip-path="url(#p1d33bc787b)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
    </g>
    <g id="patch_13">
     <path d="M 339.12 77.04
@@ -176,7 +176,7 @@ L 419.76 105.84
 L 339.12 105.84
 L 339.12 77.04
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_9">
     <text style="fill: #526377; font: 12.24px 'DejaVu Sans'" transform="translate(360.370462 87.964414)">Frame</text>
@@ -189,7 +189,7 @@ L 419.76 141.12
 L 339.12 141.12
 L 339.12 125.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_10">
     <text style="fill: #243447; font: 700 12.24px 'DejaVu Sans'; text-anchor: middle" x="379.44" y="136.577475" transform="rotate(-0 379.44 136.577475)">Grasp</text>
@@ -201,7 +201,7 @@ L 419.76 158.4
 L 339.12 158.4
 L 339.12 143.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_11">
     <text style="fill: #526377; font: 11.52px 'DejaVu Sans'; text-anchor: middle" x="379.44" y="153.6984" transform="rotate(-0 379.44 153.6984)">t = ___ s</text>
@@ -217,7 +217,7 @@ Q 430.56 162 430.56 157.68
 L 430.56 71.28
 Q 430.56 66.96 434.88 66.96
 z
-" clip-path="url(#p450887968c)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
+" clip-path="url(#p1d33bc787b)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
    </g>
    <g id="patch_17">
     <path d="M 434.16 77.04
@@ -226,7 +226,7 @@ L 514.8 105.84
 L 434.16 105.84
 L 434.16 77.04
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_12">
     <text style="fill: #526377; font: 12.24px 'DejaVu Sans'" transform="translate(455.410462 87.964414)">Frame</text>
@@ -239,7 +239,7 @@ L 514.8 141.12
 L 434.16 141.12
 L 434.16 125.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_13">
     <text style="fill: #243447; font: 700 12.24px 'DejaVu Sans'; text-anchor: middle" x="474.48" y="136.577475" transform="rotate(-0 474.48 136.577475)">Lift</text>
@@ -251,7 +251,7 @@ L 514.8 158.4
 L 434.16 158.4
 L 434.16 143.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_14">
     <text style="fill: #526377; font: 11.52px 'DejaVu Sans'; text-anchor: middle" x="474.48" y="153.6984" transform="rotate(-0 474.48 153.6984)">t = ___ s</text>
@@ -267,7 +267,7 @@ Q 525.6 162 525.6 157.68
 L 525.6 71.28
 Q 525.6 66.96 529.92 66.96
 z
-" clip-path="url(#p450887968c)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
+" clip-path="url(#p1d33bc787b)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
    </g>
    <g id="patch_21">
     <path d="M 529.2 77.04
@@ -276,7 +276,7 @@ L 609.84 105.84
 L 529.2 105.84
 L 529.2 77.04
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_15">
     <text style="fill: #526377; font: 12.24px 'DejaVu Sans'" transform="translate(550.450462 87.964414)">Frame</text>
@@ -289,7 +289,7 @@ L 609.84 141.12
 L 529.2 141.12
 L 529.2 125.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_16">
     <text style="fill: #243447; font: 700 12.24px 'DejaVu Sans'; text-anchor: middle" x="569.52" y="136.577475" transform="rotate(-0 569.52 136.577475)">Transport</text>
@@ -301,7 +301,7 @@ L 609.84 158.4
 L 529.2 158.4
 L 529.2 143.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_17">
     <text style="fill: #526377; font: 11.52px 'DejaVu Sans'; text-anchor: middle" x="569.52" y="153.6984" transform="rotate(-0 569.52 153.6984)">t = ___ s</text>
@@ -317,7 +317,7 @@ Q 620.64 162 620.64 157.68
 L 620.64 71.28
 Q 620.64 66.96 624.96 66.96
 z
-" clip-path="url(#p450887968c)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
+" clip-path="url(#p1d33bc787b)" style="fill: #f7f9fc; stroke-dasharray: 3.4632,1.4976; stroke-dashoffset: 0; stroke: #526377; stroke-width: 0.936; stroke-linejoin: miter"/>
    </g>
    <g id="patch_25">
     <path d="M 624.24 77.04
@@ -326,7 +326,7 @@ L 704.88 105.84
 L 624.24 105.84
 L 624.24 77.04
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_18">
     <text style="fill: #526377; font: 12.24px 'DejaVu Sans'" transform="translate(645.490462 87.964414)">Frame</text>
@@ -339,7 +339,7 @@ L 704.88 141.12
 L 624.24 141.12
 L 624.24 125.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_19">
     <text style="fill: #243447; font: 700 12.24px 'DejaVu Sans'; text-anchor: middle" x="664.56" y="136.577475" transform="rotate(-0 664.56 136.577475)">Release</text>
@@ -351,7 +351,7 @@ L 704.88 158.4
 L 624.24 158.4
 L 624.24 143.28
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_20">
     <text style="fill: #526377; font: 11.52px 'DejaVu Sans'; text-anchor: middle" x="664.56" y="153.6984" transform="rotate(-0 664.56 153.6984)">t = ___ s</text>
@@ -363,7 +363,7 @@ L 708.48 192.24
 L 240.48 192.24
 L 240.48 171.36
 z
-" clip-path="url(#p450887968c)" style="fill: none"/>
+" clip-path="url(#p1d33bc787b)" style="fill: none"/>
    </g>
    <g id="text_21">
     <text style="fill: #526377; font: 12.24px 'DejaVu Sans'; text-anchor: middle" x="474.48" y="185.177475" transform="rotate(-0 474.48 185.177475)">Add instruction, trial ID and deployment condition with the real images.</text>
@@ -371,7 +371,7 @@ z
   </g>
  </g>
  <defs>
-  <clipPath id="p450887968c">
+  <clipPath id="p1d33bc787b">
    <rect x="0" y="0" width="720" height="206.64"/>
   </clipPath>
  </defs>

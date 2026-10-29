@@ -5,4 +5,4 @@ At each simulator step, the tracker uses object and gripper state to compute pro
 
 In the phase-only condition, the continuous progress weight is zero, leaving phase-completion bonuses and terminal feedback.
 
-This construction needs a progress function, normalization, and state variables for every phase of each new task. Our adaptation pipeline therefore uses dense feedback only for simple skills, and full-task training uses binary milestones defined by completion predicates.
+The dense construction requires a progress function, normalization, and relevant state variables for every phase. Extending it to a new multi-stage task therefore requires further task-specific reward design. Our adaptation pipeline uses this detailed feedback only to obtain the initial base policy on simple skills. Full-task training uses binary milestones and their completion predicates, so the composition stage does not require a continuous progress function for every part of the instruction.
