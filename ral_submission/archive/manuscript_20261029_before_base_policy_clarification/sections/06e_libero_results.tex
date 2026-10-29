@@ -1,0 +1,6 @@
+On the suite, dense-and-phase feedback reaches 65.3\% versus 61.7\% for terminal-only feedback. With terminal coefficient 1 and 110 updates, phase-only shaping reaches 62.3\%, while dense-and-phase shaping reaches 61.0\% (Table~\ref{tab:libero}). Their phase weights differ, so this is a comparison of reward configurations rather than an isolated test of reward density. The results show that intermediate events can support full-task learning, without establishing a universally best reward configuration.
+
+On the low-success diagnostic, dense feedback reaches 18.0\% versus 11.0\% for terminal-only feedback from the same 2.0\% start. This comparison supports the use of dense feedback during initial acquisition. It does not select the final composition reward because no phase-only condition is reported for this task.
+
+We select binary milestone feedback for composition on the design grounds in Section~\ref{sec:composition}: it retains intermediate credit while avoiding a separate continuous progress function for every phase of a new long-horizon instruction. Dense feedback remains part of initial skill acquisition. The low-success diagnostic and the full-suite phase comparison address these different roles within the pipeline.
+\input{tables/libero_results}

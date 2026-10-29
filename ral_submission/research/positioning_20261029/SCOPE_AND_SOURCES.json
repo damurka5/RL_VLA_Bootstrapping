@@ -1,0 +1,55 @@
+{
+  "date": "2026-10-29",
+  "analysis_only": true,
+  "manuscript_snapshot": [
+    {
+      "path": "/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/ral_submission/sections/00_abstract.tex",
+      "sha256": "655cf62f2128eda2e32aa5da0f4116dc4521a2affe25329b9ee84553d57d77de",
+      "unchanged_during_analysis": true
+    },
+    {
+      "path": "/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/ral_submission/sections/01_introduction.tex",
+      "sha256": "d194617f1f906433163be9fcce0a861233ffdebdbab1ab8002a45f8fb57fc30d",
+      "unchanged_during_analysis": true
+    },
+    {
+      "path": "/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/ral_submission/sections/02_related_work.tex",
+      "sha256": "c6c09ca94e4725a6d9315a1ad8bce79761c9ed5c7d983df6f9dff1c06bdc2345",
+      "unchanged_during_analysis": true
+    },
+    {
+      "path": "/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/ral_submission/sections/04_method.tex",
+      "sha256": "e7af058895803785d79eae02174f185c3b1718fa2273da7229f3a23bd4507a69",
+      "unchanged_during_analysis": true
+    },
+    {
+      "path": "/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/ral_submission/sections/06a_simulation_results.tex",
+      "sha256": "0e5dee1bcd93d4d3469d861483a21d15715679d08637b187634ddeab66e4db36",
+      "unchanged_during_analysis": true
+    },
+    {
+      "path": "/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/ral_submission/sections/06b_ablations_and_failures.tex",
+      "sha256": "4e5a6c6d29cc569a97f9d710f89b08f1727159402f277d28b97399aaedbf24c4",
+      "unchanged_during_analysis": true
+    },
+    {
+      "path": "/Users/damirnurtdinov/Desktop/My Courses/Диплом/RL_VLA_Bootstrapping/RL_VLA_Bootstrapping/ral_submission/sections/07_discussion.tex",
+      "sha256": "8b60f89f0b0d0386492de7f7aa2c7031dea644037db5cdbc769d6b0f6aa085fe",
+      "unchanged_during_analysis": true
+    }
+  ],
+  "six_reviewed_versions": [
+    "2503.07511v1",
+    "2507.17294v2",
+    "2506.17639v2",
+    "2512.09927v1",
+    "2601.17885v2",
+    "2603.25044v1"
+  ],
+  "additional_prior_art": [
+    "2501.16664v1",
+    "2511.00091v1",
+    "2505.19767"
+  ],
+  "priority_of_proposed_schedule_and_credit_rule": "not established by this review"
+}

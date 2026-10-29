@@ -1,0 +1,3334 @@
+{
+  "sha": "44ed954482e1a23795c0c65f2fcc52496290e0d4",
+  "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/44ed954482e1a23795c0c65f2fcc52496290e0d4",
+  "tree": [
+    {
+      "path": ".gitignore",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a77a549b4ee8818dbebb4f3872cb1223347e480d",
+      "size": 1620,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a77a549b4ee8818dbebb4f3872cb1223347e480d"
+    },
+    {
+      "path": "DENSE_REWARD_STUDY_README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "66747c1aef0209dd060b3b17bb1accf67f541470",
+      "size": 18193,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/66747c1aef0209dd060b3b17bb1accf67f541470"
+    },
+    {
+      "path": "LICENSE",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f293f639657334dd567c9c41b48e727ede06456e",
+      "size": 1065,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f293f639657334dd567c9c41b48e727ede06456e"
+    },
+    {
+      "path": "README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "56e3970c92e680a0a88b45a6454fae8cdc485fa6",
+      "size": 10817,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/56e3970c92e680a0a88b45a6454fae8cdc485fa6"
+    },
+    {
+      "path": "SETUP.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7fe12fb91905e6a166a7beb1c71018f010831266",
+      "size": 5039,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7fe12fb91905e6a166a7beb1c71018f010831266"
+    },
+    {
+      "path": "VLA Demo.mp4",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "406d524cda89ca71297616d57b6e9c6d0d3ec49b",
+      "size": 12819345,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/406d524cda89ca71297616d57b6e9c6d0d3ec49b"
+    },
+    {
+      "path": "align.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a283575fb12beb7e46d9110c8089f54d6fc20efe",
+      "size": 284,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a283575fb12beb7e46d9110c8089f54d6fc20efe"
+    },
+    {
+      "path": "copy_overwrite_robotwin2.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "8ad8f1b754d510869f0599bef9f3422ade727d5a",
+      "size": 4390,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8ad8f1b754d510869f0599bef9f3422ade727d5a"
+    },
+    {
+      "path": "dense-0.2-phase-0.3-gradclip-0.5-training.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "38cf2fc085e50518ba9aaa6791e17b02f369bc78",
+      "size": 304370,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/38cf2fc085e50518ba9aaa6791e17b02f369bc78"
+    },
+    {
+      "path": "dense_reward_training.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4a92effeae036b51cd796869e2a2b701ab909e17",
+      "size": 335432,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4a92effeae036b51cd796869e2a2b701ab909e17"
+    },
+    {
+      "path": "docker",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "8b46bb61bbffb5f167cd3bf19cdf00c6655b12a9",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/8b46bb61bbffb5f167cd3bf19cdf00c6655b12a9"
+    },
+    {
+      "path": "docker/simplevla",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "3fa283d46d5ab46feafc290884c0dde323c82408",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/3fa283d46d5ab46feafc290884c0dde323c82408"
+    },
+    {
+      "path": "docker/simplevla/Dockerfile",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "506ebb11a16521d51294446f7f3be165a8c3d5e1",
+      "size": 5527,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/506ebb11a16521d51294446f7f3be165a8c3d5e1"
+    },
+    {
+      "path": "docker/simplevla/build.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7c61637680526edda936ce037a6835554a3863ec",
+      "size": 288,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7c61637680526edda936ce037a6835554a3863ec"
+    },
+    {
+      "path": "docker/simplevla/entrypoint.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f6bbe3467271cdcdaaee9dce8f5b0a6d22159561",
+      "size": 4613,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f6bbe3467271cdcdaaee9dce8f5b0a6d22159561"
+    },
+    {
+      "path": "docker/simplevla/preflight.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9e6eb7253e34b164dbf77377d7337054a56f3d98",
+      "size": 10102,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9e6eb7253e34b164dbf77377d7337054a56f3d98"
+    },
+    {
+      "path": "docker/simplevla/run_rootless.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d3d83f42fc139ee92b04f1df28e51d7b7090d332",
+      "size": 1812,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d3d83f42fc139ee92b04f1df28e51d7b7090d332"
+    },
+    {
+      "path": "docker/simplevla/simplevla_docker_2l40.slurm",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dc46dcc72ab11ee57467bffbeec572861ed88e16",
+      "size": 2258,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/dc46dcc72ab11ee57467bffbeec572861ed88e16"
+    },
+    {
+      "path": "docs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "f82f5ce7488c3e563a0dc9d5cfd41c9885894f40",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/f82f5ce7488c3e563a0dc9d5cfd41c9885894f40"
+    },
+    {
+      "path": "docs/L40_OPTIMIZATION_AND_CHANGES.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "44175c58b2c739b8db00b71d9967ef193f8e1830",
+      "size": 5902,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/44175c58b2c739b8db00b71d9967ef193f8e1830"
+    },
+    {
+      "path": "examples",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "976bc56acf8f860e1cc31ba22e8684a88507758e",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/976bc56acf8f860e1cc31ba22e8684a88507758e"
+    },
+    {
+      "path": "examples/overwrite_vla_ckpt_utils.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dd01cdbf388ed7d949bb8aacd254e03f028708ff",
+      "size": 1305,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/dd01cdbf388ed7d949bb8aacd254e03f028708ff"
+    },
+    {
+      "path": "examples/robotwin2_tasks_info.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b421e5968babefa3decc831a553d8244435e850b",
+      "size": 921,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b421e5968babefa3decc831a553d8244435e850b"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "03cbfe6b466b9b6810127f3ef638ce0ef22f9778",
+      "size": 4246,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/03cbfe6b466b9b6810127f3ef638ce0ef22f9778"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero_cube_place.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e9e2866416507ffa7ae5e09a763601fe69af5533",
+      "size": 160,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e9e2866416507ffa7ae5e09a763601fe69af5533"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero_cube_place_common.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4da4d85b61dc0c63d10e095b2edc12cf9b37b477",
+      "size": 5196,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4da4d85b61dc0c63d10e095b2edc12cf9b37b477"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero_cube_place_dense.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fce8c968762c0f1326e09a78f2be3eb7eda9e630",
+      "size": 159,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/fce8c968762c0f1326e09a78f2be3eb7eda9e630"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero_lora.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "92808d93149ec63f2016f02b864c82b581bfb703",
+      "size": 5339,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/92808d93149ec63f2016f02b864c82b581bfb703"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero_lora_dense.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "8070988495b3643734796adfb3f2c82fcecbbb9d",
+      "size": 19753,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8070988495b3643734796adfb3f2c82fcecbbb9d"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero_lora_dense_test.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "9608122eeb47139239da10733f8d041def0932e5",
+      "size": 1377,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9608122eeb47139239da10733f8d041def0932e5"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_libero_lora_smoke.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "d033dd30498b2963e9f50459b3ef2ced0453b4c1",
+      "size": 4322,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d033dd30498b2963e9f50459b3ef2ced0453b4c1"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_twin2.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "706f9c50ed1704abecbdb86c2f63b1b95b6947ed",
+      "size": 4563,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/706f9c50ed1704abecbdb86c2f63b1b95b6947ed"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_twin2_lora_pushcut.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "bbbfa5c4feb2aba9a4e3a9382cbadbbc36907522",
+      "size": 7140,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bbbfa5c4feb2aba9a4e3a9382cbadbbc36907522"
+    },
+    {
+      "path": "examples/run_openvla_oft_rl_twin2_lora_pushcut_smoke.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "37bc463afc39835462dbeb216d95d8b5f4a463a0",
+      "size": 3243,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/37bc463afc39835462dbeb216d95d8b5f4a463a0"
+    },
+    {
+      "path": "examples/run_openvla_oft_sft_cube_place.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f74829e0609fb49365cb4bd44b27f777e4db4b62",
+      "size": 1517,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f74829e0609fb49365cb4bd44b27f777e4db4b62"
+    },
+    {
+      "path": "examples/validate_multiple_openvla_oft_lora_checkpoints.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "9106a4de399e624b7a53958203a2d4f44c817a12",
+      "size": 8267,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9106a4de399e624b7a53958203a2d4f44c817a12"
+    },
+    {
+      "path": "examples/validate_openvla_oft_rl_libero_lora_checkpoint.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "1783ec3b1d1d57e67ae99900b082926de6ba85ae",
+      "size": 5911,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1783ec3b1d1d57e67ae99900b082926de6ba85ae"
+    },
+    {
+      "path": "examples/validate_openvla_oft_rl_libero_lora_checkpoint_flexible.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "2a466e6323a0c518c0481ddc9aca199e2eb1aa2c",
+      "size": 5913,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2a466e6323a0c518c0481ddc9aca199e2eb1aa2c"
+    },
+    {
+      "path": "figs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "75e950451114c7fd6206ac7d7d7bd970e2fed877",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/75e950451114c7fd6206ac7d7d7bd970e2fed877"
+    },
+    {
+      "path": "figs/logo.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "00215baee4d1f156bd92f94f7790b3f5f74b61d5",
+      "size": 52475,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/00215baee4d1f156bd92f94f7790b3f5f74b61d5"
+    },
+    {
+      "path": "figs/main.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "056d963dc4d95c987ec5f20500b011123ae7f6ea",
+      "size": 1754347,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/056d963dc4d95c987ec5f20500b011123ae7f6ea"
+    },
+    {
+      "path": "figs/simplevla-rl.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a65a02bafc86df4e015608b5d0dff99a94c9036d",
+      "size": 429159,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a65a02bafc86df4e015608b5d0dff99a94c9036d"
+    },
+    {
+      "path": "figs/teaser.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "11fbc4ad6774577f75dbb97eb18cbacbbe946b82",
+      "size": 1500117,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/11fbc4ad6774577f75dbb97eb18cbacbbe946b82"
+    },
+    {
+      "path": "figs/wechat-group.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e2c981813b51fb9607d07a1a76d97859271a6572",
+      "size": 187004,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e2c981813b51fb9607d07a1a76d97859271a6572"
+    },
+    {
+      "path": "modified_codes",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "1e333c84213bc162345a39488ea093aed7ded893",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/1e333c84213bc162345a39488ea093aed7ded893"
+    },
+    {
+      "path": "modified_codes/robotwin2",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "e24feb5550e91db984c7ad516fce7ec627b17989",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/e24feb5550e91db984c7ad516fce7ec627b17989"
+    },
+    {
+      "path": "modified_codes/robotwin2/assets",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "7cfdbaf53fc254f0eb80c731dd4cd60dd5804f01",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/7cfdbaf53fc254f0eb80c731dd4cd60dd5804f01"
+    },
+    {
+      "path": "modified_codes/robotwin2/assets/objects",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "bf4e136877796d6970a9ec1d451de88d0bb29ea3",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/bf4e136877796d6970a9ec1d451de88d0bb29ea3"
+    },
+    {
+      "path": "modified_codes/robotwin2/assets/objects/objaverse",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "2172b0cbb213e88251e1d2e81ed1682cb32fdba1",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/2172b0cbb213e88251e1d2e81ed1682cb32fdba1"
+    },
+    {
+      "path": "modified_codes/robotwin2/assets/objects/objaverse/list.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "475524191a6bc6d12e47fc1b0bedb0d85d6a4cdd",
+      "size": 22531,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/475524191a6bc6d12e47fc1b0bedb0d85d6a4cdd"
+    },
+    {
+      "path": "modified_codes/robotwin2/description",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "e0bae1c9a0cac2e1dbd6bc71ce166b0b7f009119",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/e0bae1c9a0cac2e1dbd6bc71ce166b0b7f009119"
+    },
+    {
+      "path": "modified_codes/robotwin2/description/utils",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "353fd1749821df57855d8642e89d16235698c88e",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/353fd1749821df57855d8642e89d16235698c88e"
+    },
+    {
+      "path": "modified_codes/robotwin2/description/utils/generate_episode_instructions.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e41554610fd3c0b55b9891d93042dbf2822ee0b8",
+      "size": 13897,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e41554610fd3c0b55b9891d93042dbf2822ee0b8"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "c6ee023afac500580dcfd22a0e42b6a6b69f8193",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/c6ee023afac500580dcfd22a0e42b6a6b69f8193"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/_base_task.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "68501efac358415bd0e43c80bad2be2f3738b1f7",
+      "size": 76855,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/68501efac358415bd0e43c80bad2be2f3738b1f7"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/beat_block_hammer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b63c9f229415b1e5bf6f71e8244375b81b028c65",
+      "size": 3258,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b63c9f229415b1e5bf6f71e8244375b81b028c65"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/blocks_ranking_rgb.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "39f7f4c20b498a984af4221c22cbff798f77b9ce",
+      "size": 6535,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/39f7f4c20b498a984af4221c22cbff798f77b9ce"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/click_bell.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1fbd91dfffcc23ce5ffe5b8fc6e0183d4c39eddf",
+      "size": 3240,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1fbd91dfffcc23ce5ffe5b8fc6e0183d4c39eddf"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/handover_block.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9bfd312e29b257ee437c92af894750f439dda74d",
+      "size": 3860,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9bfd312e29b257ee437c92af894750f439dda74d"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/handover_mic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c7e05c9dabf463425dd7d628d974ed7a9abde6f4",
+      "size": 4972,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c7e05c9dabf463425dd7d628d974ed7a9abde6f4"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/lift_pot.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f599d7334c78d5160749ae4e560d8d936256e935",
+      "size": 2469,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f599d7334c78d5160749ae4e560d8d936256e935"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/move_can_pot.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4f1a4d9a9f70bed1047eb5a38ac5be2738313f19",
+      "size": 4294,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4f1a4d9a9f70bed1047eb5a38ac5be2738313f19"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/move_pillbottle_pad.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d0631fd618b024afa4d8787d32b539ba210f2d37",
+      "size": 3815,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d0631fd618b024afa4d8787d32b539ba210f2d37"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/move_stapler_pad.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6f9a513a69dd4e11dd77994255a726749d23b0f4",
+      "size": 4341,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6f9a513a69dd4e11dd77994255a726749d23b0f4"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/pick_dual_bottles.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "793696c32a794c63a0cdd807b9717650636e37c6",
+      "size": 3718,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/793696c32a794c63a0cdd807b9717650636e37c6"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/place_a2b_left.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4265e815b3aef452c984f1de351ce347446adb6e",
+      "size": 6301,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4265e815b3aef452c984f1de351ce347446adb6e"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/place_a2b_right.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fd3f1b432372ff0c114da366e2e009f07d0e804b",
+      "size": 6448,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/fd3f1b432372ff0c114da366e2e009f07d0e804b"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/place_container_plate.py",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "a937a8e80aaf1b28b406615bb559f44302bccdcf",
+      "size": 3837,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a937a8e80aaf1b28b406615bb559f44302bccdcf"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/place_empty_cup.py",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "9076c8c6f4f8ce6ef846a6d4297e2f4a7ac8f448",
+      "size": 3482,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9076c8c6f4f8ce6ef846a6d4297e2f4a7ac8f448"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/place_mouse_pad.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "abb8cae85e1ff25589654e7075156f67bc35e986",
+      "size": 4574,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/abb8cae85e1ff25589654e7075156f67bc35e986"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/place_phone_stand.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1825752735d6d60bd20e413c8ed99c09cbce39a5",
+      "size": 3730,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1825752735d6d60bd20e413c8ed99c09cbce39a5"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/place_shoe.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8832f6a374484210bd32ecf8ae4b20fe2320697c",
+      "size": 3766,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8832f6a374484210bd32ecf8ae4b20fe2320697c"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/put_bottles_dustbin.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "77cc959aa4243551cf8165d22af82927e84f43dd",
+      "size": 6243,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/77cc959aa4243551cf8165d22af82927e84f43dd"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/robot",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "db6b5a05f6bdf230ed8641d733a1a87fb5ee8728",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/db6b5a05f6bdf230ed8641d733a1a87fb5ee8728"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/robot/planner.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7c3e90ee79c868a34455ee92f40ca3b92b435813",
+      "size": 22995,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7c3e90ee79c868a34455ee92f40ca3b92b435813"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/robot/planner_curobo.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "21ae43267859777734248561e405f5b9643a7462",
+      "size": 17282,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/21ae43267859777734248561e405f5b9643a7462"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/robot/robot.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e6d2342f94677ec2ee650ada41cd9ab96ecf146c",
+      "size": 32675,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e6d2342f94677ec2ee650ada41cd9ab96ecf146c"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/robot/robot_curobo.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9dfc08f5485d659abe65b0f6c7045457fafef788",
+      "size": 31721,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9dfc08f5485d659abe65b0f6c7045457fafef788"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/shake_bottle.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f7bba172c5773f01cd134049f379c113b20ea022",
+      "size": 3397,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f7bba172c5773f01cd134049f379c113b20ea022"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/stack_blocks_two.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "98bb16a2ea6f20b39919aa17402023708676eea6",
+      "size": 5120,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/98bb16a2ea6f20b39919aa17402023708676eea6"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/stack_bowls_two.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7e4d087b31899f4ec3de7967da5604ba0c591005",
+      "size": 5163,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7e4d087b31899f4ec3de7967da5604ba0c591005"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/utils",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "515a8dc27cc63be828cc60461b8af5b56799335b",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/515a8dc27cc63be828cc60461b8af5b56799335b"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/utils/create_actor.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "59987df921f15cff5534a8616eaeec71a899e14b",
+      "size": 21198,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/59987df921f15cff5534a8616eaeec71a899e14b"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/utils/rand_create_cluttered_actor.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5cce678aabdaf4758793b621eff5e87d7512d932",
+      "size": 9453,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5cce678aabdaf4758793b621eff5e87d7512d932"
+    },
+    {
+      "path": "modified_codes/robotwin2/envs/utils/transforms.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ff2c024ea9d9c13718a48a94e9dde090c37d15f9",
+      "size": 19315,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/ff2c024ea9d9c13718a48a94e9dde090c37d15f9"
+    },
+    {
+      "path": "modified_codes/robotwin2/script",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "67dc9a694ac622fa5c8028de3bbe8f447e0899d6",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/67dc9a694ac622fa5c8028de3bbe8f447e0899d6"
+    },
+    {
+      "path": "modified_codes/robotwin2/script/update_embodiment_config_path.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c8e12d38f7a3f15003212cd9668eec8ed62c824e",
+      "size": 5535,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c8e12d38f7a3f15003212cd9668eec8ed62c824e"
+    },
+    {
+      "path": "modified_codes/robotwin2/task_config",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "5db29dc94b611f73e67c1774b3c889b422924828",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/5db29dc94b611f73e67c1774b3c889b422924828"
+    },
+    {
+      "path": "modified_codes/robotwin2/task_config/_embodiment_config.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8d242407b5e8df71e1f3e9a6410d239a3e73012b",
+      "size": 350,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8d242407b5e8df71e1f3e9a6410d239a3e73012b"
+    },
+    {
+      "path": "modified_codes/robotwin2/task_config/demo_clean.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5d0657c22197b680811965c36498d71625a28bdd",
+      "size": 734,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5d0657c22197b680811965c36498d71625a28bdd"
+    },
+    {
+      "path": "modified_codes/robotwin2/task_config/demo_randomized.yml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5a7f38769de5f55d6bb14c77fcb55800f7343eba",
+      "size": 740,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5a7f38769de5f55d6bb14c77fcb55800f7343eba"
+    },
+    {
+      "path": "pre_collect_robotwin2_seed.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "6e9263096dd9cd52f2d2c129f12b25f7886e8f0b",
+      "size": 2828,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6e9263096dd9cd52f2d2c129f12b25f7886e8f0b"
+    },
+    {
+      "path": "reports",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "fa221d25d77aabf9488fc435c1ff33b098a879de",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/fa221d25d77aabf9488fc435c1ff33b098a879de"
+    },
+    {
+      "path": "reports/analyze_validation_results.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "df7b8fa2b86ad2c30d6010d18b9bf7f7936979af",
+      "size": 9152,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/df7b8fa2b86ad2c30d6010d18b9bf7f7936979af"
+    },
+    {
+      "path": "reports/build_dense_reward_validation_report.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "606c5e8f8d62cf21fb674f22d9e0161b11d4954a",
+      "size": 16959,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/606c5e8f8d62cf21fb674f22d9e0161b11d4954a"
+    },
+    {
+      "path": "reports/dense_reward_small_batch_study_prism.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a36f7945d1b49151d211a0e23d97ae99d870f1ee",
+      "size": 31786,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a36f7945d1b49151d211a0e23d97ae99d870f1ee"
+    },
+    {
+      "path": "reports/dense_reward_validation_report.docx",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e948904a93d5d4e916bcfb14432476f088ccc7ca",
+      "size": 222246,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e948904a93d5d4e916bcfb14432476f088ccc7ca"
+    },
+    {
+      "path": "reports/dense_reward_validation_report.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e3952510443f43c1d47e74b392e477ec706177e6",
+      "size": 6890,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e3952510443f43c1d47e74b392e477ec706177e6"
+    },
+    {
+      "path": "reports/figures",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "1902d1604c5b948ffd578fc4eb324313cf83afbb",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/1902d1604c5b948ffd578fc4eb324313cf83afbb"
+    },
+    {
+      "path": "reports/figures/README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f52c1b046a69402a7e671637266be8749ad85f24",
+      "size": 4062,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f52c1b046a69402a7e671637266be8749ad85f24"
+    },
+    {
+      "path": "reports/figures/generate_paper_figures.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a0c28201fe6740f853c2276992f6cc409f427cdc",
+      "size": 23354,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a0c28201fe6740f853c2276992f6cc409f427cdc"
+    },
+    {
+      "path": "reports/figures/paper",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "77f5471311f364c7da3719a23f042fbe9f54fbeb",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/77f5471311f364c7da3719a23f042fbe9f54fbeb"
+    },
+    {
+      "path": "reports/figures/paper/fig1_primary_reward_comparison.pdf",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3613e3190c2b34adf8568c34b306b3c8506aae55",
+      "size": 117261,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3613e3190c2b34adf8568c34b306b3c8506aae55"
+    },
+    {
+      "path": "reports/figures/paper/fig1_primary_reward_comparison.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "72b8276f85197a9096b6786177cb1a16e14b9064",
+      "size": 154408,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/72b8276f85197a9096b6786177cb1a16e14b9064"
+    },
+    {
+      "path": "reports/figures/paper/fig1_primary_reward_comparison.svg",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a044160423a52acfd5dc92c02a9c8ff3dbafd373",
+      "size": 11256,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a044160423a52acfd5dc92c02a9c8ff3dbafd373"
+    },
+    {
+      "path": "reports/figures/paper/fig2_all_reward_ablations.pdf",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "885d3d4fdd52dad7a1edde72e54221faf28d62ee",
+      "size": 136594,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/885d3d4fdd52dad7a1edde72e54221faf28d62ee"
+    },
+    {
+      "path": "reports/figures/paper/fig2_all_reward_ablations.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fc8cfff620322c95adcae29878e92accee48c3d5",
+      "size": 199911,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/fc8cfff620322c95adcae29878e92accee48c3d5"
+    },
+    {
+      "path": "reports/figures/paper/fig2_all_reward_ablations.svg",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "43be91fdc22a989130d268dd60d37c3b993efd34",
+      "size": 16385,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/43be91fdc22a989130d268dd60d37c3b993efd34"
+    },
+    {
+      "path": "reports/figures/paper/fig3_best_checkpoint_intervals.pdf",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "dc3d3fba01ca59416d2c2a67ab454e461d15f6cc",
+      "size": 103189,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/dc3d3fba01ca59416d2c2a67ab454e461d15f6cc"
+    },
+    {
+      "path": "reports/figures/paper/fig3_best_checkpoint_intervals.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "788b673ae1093b1e05e396f4a6f4fb3ce9124d3a",
+      "size": 182561,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/788b673ae1093b1e05e396f4a6f4fb3ce9124d3a"
+    },
+    {
+      "path": "reports/figures/paper/fig3_best_checkpoint_intervals.svg",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "66b9315cfaf29f72d961a6befde6fe814c4513e7",
+      "size": 7979,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/66b9315cfaf29f72d961a6befde6fe814c4513e7"
+    },
+    {
+      "path": "reports/figures/paper/fig4_per_task_comparison.pdf",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "523a832212f7d4d26cc452483642df2d1a4885b0",
+      "size": 70456,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/523a832212f7d4d26cc452483642df2d1a4885b0"
+    },
+    {
+      "path": "reports/figures/paper/fig4_per_task_comparison.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "367a196ca26bad905dcf6e1789cf83a817400f77",
+      "size": 170616,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/367a196ca26bad905dcf6e1789cf83a817400f77"
+    },
+    {
+      "path": "reports/figures/paper/fig4_per_task_comparison.svg",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "831915ced256454ff1a495631096e4eea961334f",
+      "size": 10685,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/831915ced256454ff1a495631096e4eea961334f"
+    },
+    {
+      "path": "reports/figures/paper/figS1_auxiliary_dynamic_runs.pdf",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "32c98d4fa4585d7c8a576e763dc20a8442659dac",
+      "size": 95272,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/32c98d4fa4585d7c8a576e763dc20a8442659dac"
+    },
+    {
+      "path": "reports/figures/paper/figS1_auxiliary_dynamic_runs.png",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2d9cc30822a4b5c5ee8a73913460d3c20e7fecd4",
+      "size": 162605,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2d9cc30822a4b5c5ee8a73913460d3c20e7fecd4"
+    },
+    {
+      "path": "reports/figures/paper/figS1_auxiliary_dynamic_runs.svg",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e39a8e376bcd6b948aa84b0d402b12971ceb3b16",
+      "size": 9378,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e39a8e376bcd6b948aa84b0d402b12971ceb3b16"
+    },
+    {
+      "path": "reports/figures/paper_figure_data.csv",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "44e6f7523fdf5271b79b5c6fcfbfa5ab7eb88e65",
+      "size": 1800,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/44e6f7523fdf5271b79b5c6fcfbfa5ab7eb88e65"
+    },
+    {
+      "path": "reports/validation_audit.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3f1fefa80c0631d5ed8804a420007d75191cc4c4",
+      "size": 11561,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3f1fefa80c0631d5ed8804a420007d75191cc4c4"
+    },
+    {
+      "path": "results.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4e228dc882c0ec7270bcdbed1e3f75c16c8ff465",
+      "size": 16227,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4e228dc882c0ec7270bcdbed1e3f75c16c8ff465"
+    },
+    {
+      "path": "reward_training_comparison.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "598b5c0c5197b62108f589b13de3262ed3317d15",
+      "size": 10379,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/598b5c0c5197b62108f589b13de3262ed3317d15"
+    },
+    {
+      "path": "rlds",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "39366b5b711146f1e6aaa2456837db9deba06be0",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/39366b5b711146f1e6aaa2456837db9deba06be0"
+    },
+    {
+      "path": "rlds/libero_cube_place_no_noops",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "6ce6773805aeef64cd4117173ad45eb422d6b824",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/6ce6773805aeef64cd4117173ad45eb422d6b824"
+    },
+    {
+      "path": "rlds/libero_cube_place_no_noops/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "03c03c0d25fb9c44896ec264893b5da085a4cf47",
+      "size": 59,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/03c03c0d25fb9c44896ec264893b5da085a4cf47"
+    },
+    {
+      "path": "rlds/libero_cube_place_no_noops/libero_cube_place_no_noops_dataset_builder.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a320dd9ccf65f44ead267bfe8348a5c651ec1945",
+      "size": 7339,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a320dd9ccf65f44ead267bfe8348a5c651ec1945"
+    },
+    {
+      "path": "sparse_phase_transfer_05_training.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "47d72d5c57f4e47b0e7a76700042f6f0b21f3e60",
+      "size": 254819,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/47d72d5c57f4e47b0e7a76700042f6f0b21f3e60"
+    },
+    {
+      "path": "terminal_reward_training.txt",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f6643f8df8e435e782a27344bc7b22b9a8593c87",
+      "size": 173271,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f6643f8df8e435e782a27344bc7b22b9a8593c87"
+    },
+    {
+      "path": "test_training",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "300fccdb7977fb4fae8d121cd57258d2b544b3c8",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/300fccdb7977fb4fae8d121cd57258d2b544b3c8"
+    },
+    {
+      "path": "test_training/align.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a283575fb12beb7e46d9110c8089f54d6fc20efe",
+      "size": 284,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a283575fb12beb7e46d9110c8089f54d6fc20efe"
+    },
+    {
+      "path": "test_training/fsasf.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "da67724241d18e318a10fcb05ebe5283c7107e61",
+      "size": 4266,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/da67724241d18e318a10fcb05ebe5283c7107e61"
+    },
+    {
+      "path": "test_training/last_conf3a100.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bcd65959b88e185be1a32dcab17a4c129cb2dd9e",
+      "size": 4237,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bcd65959b88e185be1a32dcab17a4c129cb2dd9e"
+    },
+    {
+      "path": "test_training/run_openvla_oft_rl_libero copy 2.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "23345c3fc55bfb5ab85f6d56bed80d83a3921e19",
+      "size": 4290,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/23345c3fc55bfb5ab85f6d56bed80d83a3921e19"
+    },
+    {
+      "path": "test_training/run_openvla_oft_rl_libero copy 3.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "91f9ef65aeaadc3dc04de18096062ad42032c497",
+      "size": 4290,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/91f9ef65aeaadc3dc04de18096062ad42032c497"
+    },
+    {
+      "path": "test_training/run_openvla_oft_rl_libero copy.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2cfc34808d3df4f506d7cc678159fce688b0d404",
+      "size": 4245,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2cfc34808d3df4f506d7cc678159fce688b0d404"
+    },
+    {
+      "path": "test_training/run_openvla_oft_rl_libero(low).sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b3793616f4090c9d7dbac11d809a015cc66904e3",
+      "size": 4143,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b3793616f4090c9d7dbac11d809a015cc66904e3"
+    },
+    {
+      "path": "test_training/run_openvla_oft_rl_libero.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3f97ca6015bb7d860a626cb50ceb5520bbf5f017",
+      "size": 4145,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3f97ca6015bb7d860a626cb50ceb5520bbf5f017"
+    },
+    {
+      "path": "test_training/sdksd.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "64cb5cca3508c44900991dc1373e98432532e72e",
+      "size": 4242,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/64cb5cca3508c44900991dc1373e98432532e72e"
+    },
+    {
+      "path": "test_training/simplevla_rl copy.ipynb",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8c4d5d179333840c2fb6ebd537179858de21328e",
+      "size": 449556,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8c4d5d179333840c2fb6ebd537179858de21328e"
+    },
+    {
+      "path": "test_training/simplevla_rl.ipynb",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4b3b57cca557e27f5b54e2327a5b3d6025537ab9",
+      "size": 471153,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4b3b57cca557e27f5b54e2327a5b3d6025537ab9"
+    },
+    {
+      "path": "test_training/simplevla_rl_2xA100.ipynb",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "668d2b7ac235f64a905c42da20d1987a97a663c5",
+      "size": 468827,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/668d2b7ac235f64a905c42da20d1987a97a663c5"
+    },
+    {
+      "path": "test_training/working_conf_2xA100.sh",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "tests",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "704aa9d524befd133b8b7594620840e1bd1bd9b0",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/704aa9d524befd133b8b7594620840e1bd1bd9b0"
+    },
+    {
+      "path": "tests/sweep_l40_max_batch.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "d8d0fff0be6f8a745ed24ddbbe8d9e1af7c8aa07",
+      "size": 4605,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d8d0fff0be6f8a745ed24ddbbe8d9e1af7c8aa07"
+    },
+    {
+      "path": "tests/test_accuracy_distribution.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ac68b511be6b897be94f10638462b784dbb73541",
+      "size": 1514,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/ac68b511be6b897be94f10638462b784dbb73541"
+    },
+    {
+      "path": "tests/test_libero_lora_smoke.sh",
+      "mode": "100755",
+      "type": "blob",
+      "sha": "34ed7f3015251b473ddf1d7bd78e044504ab9190",
+      "size": 531,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/34ed7f3015251b473ddf1d7bd78e044504ab9190"
+    },
+    {
+      "path": "tests/test_libero_task_filtering.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "556d64ac562013fdfba97d5c36e317f4097e9621",
+      "size": 1857,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/556d64ac562013fdfba97d5c36e317f4097e9621"
+    },
+    {
+      "path": "tests/test_lora_checkpoint.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "debf1bbee8e7ead6368ac7481ada82a66ea9d552",
+      "size": 1559,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/debf1bbee8e7ead6368ac7481ada82a66ea9d552"
+    },
+    {
+      "path": "tests/test_robotwin2_subgoal_reward.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e1cdc7108a3e5ec3d498538f3a7f7ebf9265a4fb",
+      "size": 10823,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e1cdc7108a3e5ec3d498538f3a7f7ebf9265a4fb"
+    },
+    {
+      "path": "tests/test_subgoal_reward.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "babfc91c5d0ae6834ced69dd3b237e21acb72f2d",
+      "size": 17446,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/babfc91c5d0ae6834ced69dd3b237e21acb72f2d"
+    },
+    {
+      "path": "tests/test_task_balanced_sampler.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5ec87d63d8a545439b340afd3ad5f09a80140e66",
+      "size": 3475,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5ec87d63d8a545439b340afd3ad5f09a80140e66"
+    },
+    {
+      "path": "tests/test_task_sampling_trainer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "781b479a65bb3c7aa77485983cf5a5038a8e6aba",
+      "size": 7857,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/781b479a65bb3c7aa77485983cf5a5038a8e6aba"
+    },
+    {
+      "path": "tests/test_task_sampling_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7553f824c792f8aab0d63a3e6c1d641b30d9c6b8",
+      "size": 1907,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7553f824c792f8aab0d63a3e6c1d641b30d9c6b8"
+    },
+    {
+      "path": "verl",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "2379eddfcc909b0d72d3613cda0cbfa5e447abd9",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/2379eddfcc909b0d72d3613cda0cbfa5e447abd9"
+    },
+    {
+      "path": "verl/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fc903ad2cb4257adc77a8283c3dd009ad8bb6277",
+      "size": 1088,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/fc903ad2cb4257adc77a8283c3dd009ad8bb6277"
+    },
+    {
+      "path": "verl/models",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "786028f228f836464b84e51245bcff84feb5c593",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/786028f228f836464b84e51245bcff84feb5c593"
+    },
+    {
+      "path": "verl/models/README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "677b92f3871aa2f76a7f5bd8c07d1050bab14564",
+      "size": 1744,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/677b92f3871aa2f76a7f5bd8c07d1050bab14564"
+    },
+    {
+      "path": "verl/models/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/models/llama",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "b8c41751210920d2076ced167eb7b08dbdebc5eb",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/b8c41751210920d2076ced167eb7b08dbdebc5eb"
+    },
+    {
+      "path": "verl/models/llama/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "verl/models/llama/megatron",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "103f7d93aeb91f8f17a6e13e06466858e5f9feab",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/103f7d93aeb91f8f17a6e13e06466858e5f9feab"
+    },
+    {
+      "path": "verl/models/llama/megatron/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b188b3ee62cdfb978fc482984b423ce12e40a962",
+      "size": 944,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b188b3ee62cdfb978fc482984b423ce12e40a962"
+    },
+    {
+      "path": "verl/models/llama/megatron/checkpoint_utils",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "e3ab9b4fd0c139d4bfb3e456d3ef69e919a81012",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/e3ab9b4fd0c139d4bfb3e456d3ef69e919a81012"
+    },
+    {
+      "path": "verl/models/llama/megatron/checkpoint_utils/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/models/llama/megatron/checkpoint_utils/llama_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "00fb0a9c668be28b4e13abb9a24e42bd7498d088",
+      "size": 19665,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/00fb0a9c668be28b4e13abb9a24e42bd7498d088"
+    },
+    {
+      "path": "verl/models/llama/megatron/checkpoint_utils/llama_saver.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0764b6fe5020dc8ab3f69d57af9910e267aab52d",
+      "size": 18189,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0764b6fe5020dc8ab3f69d57af9910e267aab52d"
+    },
+    {
+      "path": "verl/models/llama/megatron/layers",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "826fc42479545cbbbe2d2ccbf893b23deb98bf5d",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/826fc42479545cbbbe2d2ccbf893b23deb98bf5d"
+    },
+    {
+      "path": "verl/models/llama/megatron/layers/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3761bae7db33c29c66534b9ae4f1d8ec8f63b829",
+      "size": 838,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3761bae7db33c29c66534b9ae4f1d8ec8f63b829"
+    },
+    {
+      "path": "verl/models/llama/megatron/layers/parallel_attention.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f14653fca4ade888f5ee08e32aa57711c1cf5e73",
+      "size": 20129,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f14653fca4ade888f5ee08e32aa57711c1cf5e73"
+    },
+    {
+      "path": "verl/models/llama/megatron/layers/parallel_decoder.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "93050a37fefb35d8377a1593f0ea3a4e23938a27",
+      "size": 6036,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/93050a37fefb35d8377a1593f0ea3a4e23938a27"
+    },
+    {
+      "path": "verl/models/llama/megatron/layers/parallel_linear.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bfe5cf4e65e4bdd02ebc64ed8f85943b2f6f3a5f",
+      "size": 2787,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bfe5cf4e65e4bdd02ebc64ed8f85943b2f6f3a5f"
+    },
+    {
+      "path": "verl/models/llama/megatron/layers/parallel_mlp.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "21ad9b16a642655dd593ce4d1e5fafb31d81c435",
+      "size": 3394,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/21ad9b16a642655dd593ce4d1e5fafb31d81c435"
+    },
+    {
+      "path": "verl/models/llama/megatron/layers/parallel_rmsnorm.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7027036bf48d47a7f983226e9308336f85ad0461",
+      "size": 1860,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7027036bf48d47a7f983226e9308336f85ad0461"
+    },
+    {
+      "path": "verl/models/llama/megatron/modeling_llama_megatron.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c3563286faa4bc44b9b82961075d447ab3c6adac",
+      "size": 30410,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c3563286faa4bc44b9b82961075d447ab3c6adac"
+    },
+    {
+      "path": "verl/models/registry.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7860afd8a2531edc818ba563fa04c98ac91edfa4",
+      "size": 2494,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7860afd8a2531edc818ba563fa04c98ac91edfa4"
+    },
+    {
+      "path": "verl/models/weight_loader_registry.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "17f0c5cae957d6bd665fd0f9dcdc84c1206adfa8",
+      "size": 1137,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/17f0c5cae957d6bd665fd0f9dcdc84c1206adfa8"
+    },
+    {
+      "path": "verl/protocol.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "197344748ee18d6ef3e450340fa6f47704f1513d",
+      "size": 19880,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/197344748ee18d6ef3e450340fa6f47704f1513d"
+    },
+    {
+      "path": "verl/single_controller",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "0c6fc8ae1c529f1da0e3606597da0bd6b1310c9f",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/0c6fc8ae1c529f1da0e3606597da0bd6b1310c9f"
+    },
+    {
+      "path": "verl/single_controller/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bd850b790c7ef7ea88515b58e629cad45c0c84e2",
+      "size": 787,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bd850b790c7ef7ea88515b58e629cad45c0c84e2"
+    },
+    {
+      "path": "verl/single_controller/base",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "66ef4a7c6c0d8ee163bea98d43a1a7eb28888296",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/66ef4a7c6c0d8ee163bea98d43a1a7eb28888296"
+    },
+    {
+      "path": "verl/single_controller/base/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "75846436cd1285259d2bae6d4a7f190aebed1a80",
+      "size": 699,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/75846436cd1285259d2bae6d4a7f190aebed1a80"
+    },
+    {
+      "path": "verl/single_controller/base/decorator.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6fdacb6d97bc5897be837863236f6f057a024739",
+      "size": 15531,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6fdacb6d97bc5897be837863236f6f057a024739"
+    },
+    {
+      "path": "verl/single_controller/base/dp.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2d19188f9409125578c6da8fc12924bf0ed06ee1",
+      "size": 1797,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2d19188f9409125578c6da8fc12924bf0ed06ee1"
+    },
+    {
+      "path": "verl/single_controller/base/megatron",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "18359816b3e5464129ac6c8baa505a94b19ff76a",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/18359816b3e5464129ac6c8baa505a94b19ff76a"
+    },
+    {
+      "path": "verl/single_controller/base/megatron/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/single_controller/base/megatron/worker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2d84d29f16420a5cf976d64f45ecbb599125c43c",
+      "size": 1595,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2d84d29f16420a5cf976d64f45ecbb599125c43c"
+    },
+    {
+      "path": "verl/single_controller/base/megatron/worker_group.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "67c21d309b75f1fc7e76b87c9436efc103570f50",
+      "size": 2080,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/67c21d309b75f1fc7e76b87c9436efc103570f50"
+    },
+    {
+      "path": "verl/single_controller/base/register_center",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "8999e8c40f4885d3717d539a1da13efc83dff49d",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/8999e8c40f4885d3717d539a1da13efc83dff49d"
+    },
+    {
+      "path": "verl/single_controller/base/register_center/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/single_controller/base/register_center/ray.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "430290cf2683d882d35a83256aa363d959265a05",
+      "size": 939,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/430290cf2683d882d35a83256aa363d959265a05"
+    },
+    {
+      "path": "verl/single_controller/base/worker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2ca961d574841c9a36c49e73cd260c405800f1a8",
+      "size": 6204,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2ca961d574841c9a36c49e73cd260c405800f1a8"
+    },
+    {
+      "path": "verl/single_controller/base/worker_group.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bd584580c5c7223309e41ac39a865bd48c58c7d4",
+      "size": 7494,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bd584580c5c7223309e41ac39a865bd48c58c7d4"
+    },
+    {
+      "path": "verl/single_controller/ray",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "652f03dec9995d8d24d53fc75aef9c1b0e59902d",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/652f03dec9995d8d24d53fc75aef9c1b0e59902d"
+    },
+    {
+      "path": "verl/single_controller/ray/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4d5783448e68e7207e45303aaec3894e8ea838d1",
+      "size": 778,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4d5783448e68e7207e45303aaec3894e8ea838d1"
+    },
+    {
+      "path": "verl/single_controller/ray/base.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a9970ed106473e381c8202217492d1c079bf0bd8",
+      "size": 19005,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a9970ed106473e381c8202217492d1c079bf0bd8"
+    },
+    {
+      "path": "verl/single_controller/ray/decorator.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1de452ff74dfd85797e80ecdbe2763f9aa50e28e",
+      "size": 2198,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1de452ff74dfd85797e80ecdbe2763f9aa50e28e"
+    },
+    {
+      "path": "verl/single_controller/ray/dist_data_pass_protocol.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "59202b139ec8b001dbf3997ab08d73cd3f76120e",
+      "size": 795,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/59202b139ec8b001dbf3997ab08d73cd3f76120e"
+    },
+    {
+      "path": "verl/single_controller/ray/dp.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b53d4b9b073a0c6230ee36c9f06fe4de20733698",
+      "size": 3287,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b53d4b9b073a0c6230ee36c9f06fe4de20733698"
+    },
+    {
+      "path": "verl/single_controller/ray/megatron.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2cdb49f95a77dca20c6a8f67ee1b61cfd4a1e8fc",
+      "size": 3035,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2cdb49f95a77dca20c6a8f67ee1b61cfd4a1e8fc"
+    },
+    {
+      "path": "verl/single_controller/version",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "bfdf49f4f44d5ef2ca38df3ca0aeafcd8231f0b3",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/bfdf49f4f44d5ef2ca38df3ca0aeafcd8231f0b3"
+    },
+    {
+      "path": "verl/single_controller/version/version",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7bcd0e3612da7c517106f9b581a8beb53d4b0a97",
+      "size": 5,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7bcd0e3612da7c517106f9b581a8beb53d4b0a97"
+    },
+    {
+      "path": "verl/third_party",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "82f7201f3f4c975dd6f6c1c10ffe0f49ef137908",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/82f7201f3f4c975dd6f6c1c10ffe0f49ef137908"
+    },
+    {
+      "path": "verl/third_party/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/third_party/vllm",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "02a6b0860ca417c7a5d2da0561069e37e2be6a13",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/02a6b0860ca417c7a5d2da0561069e37e2be6a13"
+    },
+    {
+      "path": "verl/third_party/vllm/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "290c83781e45d91cfae4643ea72166be65879bf4",
+      "size": 1746,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/290c83781e45d91cfae4643ea72166be65879bf4"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "7f07da68d9cc5be19291a15e1f3fc7532218106a",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/7f07da68d9cc5be19291a15e1f3fc7532218106a"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/arg_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ae8f3b8f62fb62a909f4dfe66ede389b64e61b9",
+      "size": 11957,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ae8f3b8f62fb62a909f4dfe66ede389b64e61b9"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/config.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1e1fead86283e1c9594b7556555158a6dc72e6f0",
+      "size": 25666,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1e1fead86283e1c9594b7556555158a6dc72e6f0"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/llm.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8d2475998ca2658b14d4a572e10cbfc96cfc3d35",
+      "size": 13604,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8d2475998ca2658b14d4a572e10cbfc96cfc3d35"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/llm_engine_sp.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e264a8585bc2bb8c5b64efe339af7c9d02475614",
+      "size": 35525,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e264a8585bc2bb8c5b64efe339af7c9d02475614"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/model_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "450e2f4b49c22b86b5ce424a303c535fb1596a99",
+      "size": 12265,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/450e2f4b49c22b86b5ce424a303c535fb1596a99"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/model_runner.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4acf3422d43c16091977f598111926d636cc3e29",
+      "size": 13381,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4acf3422d43c16091977f598111926d636cc3e29"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/parallel_state.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c3b7a45c8d6b8a62efd5100f27a00c399ec4e9e6",
+      "size": 6075,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c3b7a45c8d6b8a62efd5100f27a00c399ec4e9e6"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/tokenizer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b8de24afb834af4e5c8d60b006e0696206519315",
+      "size": 3047,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b8de24afb834af4e5c8d60b006e0696206519315"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/weight_loaders.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "72aa26d06013f5bf29e67bedfcb77fc0af80e1c7",
+      "size": 4215,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/72aa26d06013f5bf29e67bedfcb77fc0af80e1c7"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_3_1/worker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "50eebd70b86c1160896ded81deeb7e6eedd6d605",
+      "size": 13214,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/50eebd70b86c1160896ded81deeb7e6eedd6d605"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "29c895a1aeba5e752910bf4594d19470f8b622de",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/29c895a1aeba5e752910bf4594d19470f8b622de"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/arg_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "089bbd748b202ccceb524f91271e7bf91dc9bdfe",
+      "size": 16002,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/089bbd748b202ccceb524f91271e7bf91dc9bdfe"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/config.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6af04417b43a2d3672298fcf887b71fc230bb8ae",
+      "size": 9527,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6af04417b43a2d3672298fcf887b71fc230bb8ae"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/dtensor_weight_loaders.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6668b7509161e7d19d4b37f13318a80d59147448",
+      "size": 12378,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6668b7509161e7d19d4b37f13318a80d59147448"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/hf_weight_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0d562e596b8b75ac0a3e81ae651c77cfdc58f3a1",
+      "size": 4032,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0d562e596b8b75ac0a3e81ae651c77cfdc58f3a1"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/llm.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "94623a41423e841ae8e388a1d508da5b624a559a",
+      "size": 15147,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/94623a41423e841ae8e388a1d508da5b624a559a"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/llm_engine_sp.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "75bf11ab319a623daf9d6d57668e17c46c2cc4ec",
+      "size": 12403,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/75bf11ab319a623daf9d6d57668e17c46c2cc4ec"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/megatron_weight_loaders.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1a7c2e2cfe57f1bd3a4b49b61d1085a76b0a9b0a",
+      "size": 15726,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1a7c2e2cfe57f1bd3a4b49b61d1085a76b0a9b0a"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/model_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5f4013451ff7e4e4612719251f48d5849fdc15d5",
+      "size": 13600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5f4013451ff7e4e4612719251f48d5849fdc15d5"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/model_runner.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1604b03630456a8adc44b31cec767f69f709899e",
+      "size": 12581,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1604b03630456a8adc44b31cec767f69f709899e"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/parallel_state.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "be7464a2a50e3a968f8d0636e7a40f2d6cf57f56",
+      "size": 12798,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/be7464a2a50e3a968f8d0636e7a40f2d6cf57f56"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/spmd_gpu_executor.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b97bb600ac318cc4b769805a5dcedc24b296f4b3",
+      "size": 8647,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b97bb600ac318cc4b769805a5dcedc24b296f4b3"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/tokenizer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "aa625a0338686d61816e838ef802cde327fc95c4",
+      "size": 3310,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/aa625a0338686d61816e838ef802cde327fc95c4"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_4_2/worker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1fab3e41fe87ea599f251f5da2ebb67b54f84b81",
+      "size": 13310,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1fab3e41fe87ea599f251f5da2ebb67b54f84b81"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "87cacec6910c227ac6894e252ad3efa3ec5e2790",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/87cacec6910c227ac6894e252ad3efa3ec5e2790"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/arg_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6c577277b8621421cb5e1c3dbb713dcb34519215",
+      "size": 23746,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6c577277b8621421cb5e1c3dbb713dcb34519215"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/config.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5fc61e6fe60661d7b5c4bfc77b5c1d3843997e46",
+      "size": 11948,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5fc61e6fe60661d7b5c4bfc77b5c1d3843997e46"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/dtensor_weight_loaders.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "732b543db6347d2f22db22745a3a7c037636737e",
+      "size": 15827,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/732b543db6347d2f22db22745a3a7c037636737e"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/hf_weight_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7af4953f35e7107c9e7e6cd4f597b4a2715d441d",
+      "size": 1895,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7af4953f35e7107c9e7e6cd4f597b4a2715d441d"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/llm.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5f56f1e07af01e646e3a096e8a3b931a43dc3747",
+      "size": 12271,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5f56f1e07af01e646e3a096e8a3b931a43dc3747"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/llm_engine_sp.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8d161e747066ece4b19984dac4aecfa32cecf6e5",
+      "size": 14689,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8d161e747066ece4b19984dac4aecfa32cecf6e5"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/megatron_weight_loaders.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4f2b19a904e77a9c2d10e259d061f797da67ddd8",
+      "size": 13939,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4f2b19a904e77a9c2d10e259d061f797da67ddd8"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/model_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1b675bb79df378b187d856136905104f7aca1146",
+      "size": 14974,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1b675bb79df378b187d856136905104f7aca1146"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/model_runner.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d6ab232558a4bcdce568cae6e24f658c28628a4e",
+      "size": 6857,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d6ab232558a4bcdce568cae6e24f658c28628a4e"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/parallel_state.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0830093bca658fa4fdb4adc1d449b2dd678b73d5",
+      "size": 13091,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0830093bca658fa4fdb4adc1d449b2dd678b73d5"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/spmd_gpu_executor.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e9040d52b57558ced35cc37dcbb96014255ccf95",
+      "size": 10184,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e9040d52b57558ced35cc37dcbb96014255ccf95"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/tokenizer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "aa625a0338686d61816e838ef802cde327fc95c4",
+      "size": 3310,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/aa625a0338686d61816e838ef802cde327fc95c4"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_5_4/worker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a5deb675a1180fc9a575ca0898be27f21c173151",
+      "size": 15305,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a5deb675a1180fc9a575ca0898be27f21c173151"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "38d040cccd9e2c7b952d6d5c67ec1d9bfd36a052",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/38d040cccd9e2c7b952d6d5c67ec1d9bfd36a052"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/arg_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bc4685c5f7968e827491f2bc02fdbd59bfac220c",
+      "size": 3142,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bc4685c5f7968e827491f2bc02fdbd59bfac220c"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/config.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d7cee451416eb1d7d6c9b4b83fc53dc25a336ccf",
+      "size": 4167,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d7cee451416eb1d7d6c9b4b83fc53dc25a336ccf"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/dtensor_weight_loaders.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a3042cabcc4112472b4bbf70a540471eae9e4073",
+      "size": 17356,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a3042cabcc4112472b4bbf70a540471eae9e4073"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/hf_weight_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a3e5b22b2fed3b17f22f66c7acef8094c1c7871a",
+      "size": 1773,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a3e5b22b2fed3b17f22f66c7acef8094c1c7871a"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/llm.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cd3d646db46e0b6085a94a49da695d5a6feb1403",
+      "size": 10236,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/cd3d646db46e0b6085a94a49da695d5a6feb1403"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/llm_engine_sp.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "10b112b2595d83514698589bba472efb07dea562",
+      "size": 17823,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/10b112b2595d83514698589bba472efb07dea562"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/megatron_weight_loaders.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7fd6c0e624f7f51f9a16b7d5e8059aa1dbef905b",
+      "size": 13909,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7fd6c0e624f7f51f9a16b7d5e8059aa1dbef905b"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/model_loader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2f32a91325747da27a5253e247345876a6778194",
+      "size": 14235,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2f32a91325747da27a5253e247345876a6778194"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/model_runner.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b0cceffb52fd29ae02466b3eec51faaf0bda2bfb",
+      "size": 7587,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b0cceffb52fd29ae02466b3eec51faaf0bda2bfb"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/parallel_state.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0150c1c678e43dc5a6cb3f4426b5854ab45d8e4a",
+      "size": 12915,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0150c1c678e43dc5a6cb3f4426b5854ab45d8e4a"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/spmd_gpu_executor.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "229a424c840226e2f6c148418d7c69a97807afa1",
+      "size": 10115,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/229a424c840226e2f6c148418d7c69a97807afa1"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/tokenizer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b0b4d0e27c84fc0358411d7bf29e0702aac929b9",
+      "size": 1649,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b0b4d0e27c84fc0358411d7bf29e0702aac929b9"
+    },
+    {
+      "path": "verl/third_party/vllm/vllm_v_0_6_3/worker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cb1a7ab80c7526177cc0e53963f0e2e85d683334",
+      "size": 15138,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/cb1a7ab80c7526177cc0e53963f0e2e85d683334"
+    },
+    {
+      "path": "verl/trainer",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "ff7654152666a84b772700e8b856e5999a556010",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/ff7654152666a84b772700e8b856e5999a556010"
+    },
+    {
+      "path": "verl/trainer/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/trainer/config",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "f177389f60ac85c0ee2b5dea969543639d7e9eb5",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/f177389f60ac85c0ee2b5dea969543639d7e9eb5"
+    },
+    {
+      "path": "verl/trainer/config/evaluation.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0d8ccff888f65e831ec702291b904a4a8a6f8a22",
+      "size": 160,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0d8ccff888f65e831ec702291b904a4a8a6f8a22"
+    },
+    {
+      "path": "verl/trainer/config/generation.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ed805a8c04949ff02d0a7de67a2cf78788217ced",
+      "size": 779,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/ed805a8c04949ff02d0a7de67a2cf78788217ced"
+    },
+    {
+      "path": "verl/trainer/config/ppo_megatron_trainer.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "364452afac17214bb8d3d5e3ec9bb85f48d0b1c6",
+      "size": 4379,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/364452afac17214bb8d3d5e3ec9bb85f48d0b1c6"
+    },
+    {
+      "path": "verl/trainer/config/ppo_trainer.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3155e3cc7ebb0712482edd8cf9e8b5f969c16722",
+      "size": 11164,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3155e3cc7ebb0712482edd8cf9e8b5f969c16722"
+    },
+    {
+      "path": "verl/trainer/config/ppo_trainer_org.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "65d49438198d84c9ccf1134759af27628ca15d57",
+      "size": 8075,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/65d49438198d84c9ccf1134759af27628ca15d57"
+    },
+    {
+      "path": "verl/trainer/config/sft_trainer.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1bf7b6ec0f9695e41cef7934b447011399dd4f34",
+      "size": 906,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1bf7b6ec0f9695e41cef7934b447011399dd4f34"
+    },
+    {
+      "path": "verl/trainer/fsdp_sft_trainer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "292d2a44e03c04ebfb8745de927aeda8960d6f58",
+      "size": 15917,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/292d2a44e03c04ebfb8745de927aeda8960d6f58"
+    },
+    {
+      "path": "verl/trainer/main_eval.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "018bdd8fdbe01dddda5da009694246021320ab44",
+      "size": 2204,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/018bdd8fdbe01dddda5da009694246021320ab44"
+    },
+    {
+      "path": "verl/trainer/main_generation.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8c3bd923fc30b20b07ff831b75657a1e949b6e43",
+      "size": 5760,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8c3bd923fc30b20b07ff831b75657a1e949b6e43"
+    },
+    {
+      "path": "verl/trainer/main_ppo.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "00c6ac237a3a0bd9522aa99e584f5d8d2b9ef441",
+      "size": 13467,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/00c6ac237a3a0bd9522aa99e584f5d8d2b9ef441"
+    },
+    {
+      "path": "verl/trainer/ppo",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "c89b4468076a70c00e6640c00a01d9d8ad340e1f",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/c89b4468076a70c00e6640c00a01d9d8ad340e1f"
+    },
+    {
+      "path": "verl/trainer/ppo/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/trainer/ppo/core_algos.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "32e8b80c46198f66ce205ebff1efced534a38e1d",
+      "size": 16170,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/32e8b80c46198f66ce205ebff1efced534a38e1d"
+    },
+    {
+      "path": "verl/trainer/ppo/ray_trainer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b4c5244e945c509d341451b8f5606407f06d97a5",
+      "size": 70470,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b4c5244e945c509d341451b8f5606407f06d97a5"
+    },
+    {
+      "path": "verl/trainer/runtime_env.yaml",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "87bd05a9aabbc5db602626895518bb19add408d1",
+      "size": 122,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/87bd05a9aabbc5db602626895518bb19add408d1"
+    },
+    {
+      "path": "verl/utils",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "eba5b44a39adfe570fa74d343f9f289e3b3d72a1",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/eba5b44a39adfe570fa74d343f9f289e3b3d72a1"
+    },
+    {
+      "path": "verl/utils/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e453070a16370cd7006e0a7700c8550a56f19051",
+      "size": 678,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e453070a16370cd7006e0a7700c8550a56f19051"
+    },
+    {
+      "path": "verl/utils/accuracy_distribution.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2a6b45c978e4be89c3197bc14d2c6f14308918fc",
+      "size": 919,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2a6b45c978e4be89c3197bc14d2c6f14308918fc"
+    },
+    {
+      "path": "verl/utils/config.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5c9298c42adf89467d047a3d0fdf8919bf772a5a",
+      "size": 839,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5c9298c42adf89467d047a3d0fdf8919bf772a5a"
+    },
+    {
+      "path": "verl/utils/dataset",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "13fc236159af1d905d2c841ad002bb196835adb7",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/13fc236159af1d905d2c841ad002bb196835adb7"
+    },
+    {
+      "path": "verl/utils/dataset/README.md",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f886a70aabf443fb167453d667529b62f3311765",
+      "size": 797,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f886a70aabf443fb167453d667529b62f3311765"
+    },
+    {
+      "path": "verl/utils/dataset/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b833e441e7733bfa1b1f956d22ff17dc872faaf1",
+      "size": 707,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b833e441e7733bfa1b1f956d22ff17dc872faaf1"
+    },
+    {
+      "path": "verl/utils/dataset/rl_dataset.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "61fb668ef539b6b1fd2c891228011a46d2d51410",
+      "size": 8461,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/61fb668ef539b6b1fd2c891228011a46d2d51410"
+    },
+    {
+      "path": "verl/utils/dataset/rm_dataset.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cba178db3d816b5291d836cbc4b30fed5b817944",
+      "size": 5494,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/cba178db3d816b5291d836cbc4b30fed5b817944"
+    },
+    {
+      "path": "verl/utils/dataset/rob_dataset.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b27044d821fb75a6b1b6492f411ac2542d59df11",
+      "size": 20576,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b27044d821fb75a6b1b6492f411ac2542d59df11"
+    },
+    {
+      "path": "verl/utils/dataset/sft_dataset.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9c7a2966dfb2c5a46e87988c50ac90477c302ce3",
+      "size": 6917,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9c7a2966dfb2c5a46e87988c50ac90477c302ce3"
+    },
+    {
+      "path": "verl/utils/debug",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "307b15a7fbb9768ecb313fe08dcbcb97219b7c79",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/307b15a7fbb9768ecb313fe08dcbcb97219b7c79"
+    },
+    {
+      "path": "verl/utils/debug/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0d0b3432eb4d6200ed84da0f735afa46735ef58e",
+      "size": 646,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0d0b3432eb4d6200ed84da0f735afa46735ef58e"
+    },
+    {
+      "path": "verl/utils/debug/performance.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "615475a66a5e45853540df2efd09c25991b43e12",
+      "size": 1214,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/615475a66a5e45853540df2efd09c25991b43e12"
+    },
+    {
+      "path": "verl/utils/debug/trajectory_tracker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "33b254685221a86b03f120b57659cd55b29ea0a2",
+      "size": 3174,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/33b254685221a86b03f120b57659cd55b29ea0a2"
+    },
+    {
+      "path": "verl/utils/distributed.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6fea5a29cd943ef91c8f27f44db2a69e40702cf7",
+      "size": 1124,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6fea5a29cd943ef91c8f27f44db2a69e40702cf7"
+    },
+    {
+      "path": "verl/utils/envs",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "58958fd94f419f64eadc6fc056ef260237d9a4f7",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/58958fd94f419f64eadc6fc056ef260237d9a4f7"
+    },
+    {
+      "path": "verl/utils/envs/robotwin2",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "e19ce3948e747d46a8f4c1b66f1afc63adc43248",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/e19ce3948e747d46a8f4c1b66f1afc63adc43248"
+    },
+    {
+      "path": "verl/utils/envs/robotwin2/seeds",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "0a84380a20a049ed1254e53751e46a88440b6286",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/0a84380a20a049ed1254e53751e46a88440b6286"
+    },
+    {
+      "path": "verl/utils/envs/robotwin2/seeds/robotwin2_eval_seeds.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "54ceaa4eb78c51ed536f7e08299e80b37d210388",
+      "size": 263924,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/54ceaa4eb78c51ed536f7e08299e80b37d210388"
+    },
+    {
+      "path": "verl/utils/envs/robotwin2/seeds/robotwin2_train_seeds.json",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bf0e283162eb5373e68401e20ec748b5d40a9b9e",
+      "size": 882401,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bf0e283162eb5373e68401e20ec748b5d40a9b9e"
+    },
+    {
+      "path": "verl/utils/flops_counter.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3c5ac1a91160fc3265589fb6e93e93c8c1efb53e",
+      "size": 4887,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3c5ac1a91160fc3265589fb6e93e93c8c1efb53e"
+    },
+    {
+      "path": "verl/utils/fs.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "80c1889be3582fffcdef5267f5e9ac55e1d7e059",
+      "size": 2821,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/80c1889be3582fffcdef5267f5e9ac55e1d7e059"
+    },
+    {
+      "path": "verl/utils/fsdp_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b3af4b6b3276c68df7610b37bf324cc383cc758e",
+      "size": 8668,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b3af4b6b3276c68df7610b37bf324cc383cc758e"
+    },
+    {
+      "path": "verl/utils/hdfs_io.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "08c4ecb9a5956865ce35651d6eaaf6844ba87f41",
+      "size": 4562,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/08c4ecb9a5956865ce35651d6eaaf6844ba87f41"
+    },
+    {
+      "path": "verl/utils/import_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7ed8332b3943c72ba82937a496119582963b0b05",
+      "size": 1481,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7ed8332b3943c72ba82937a496119582963b0b05"
+    },
+    {
+      "path": "verl/utils/libero_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0f0bc02c6d07e05fe56dbc54223a9a8c56370cab",
+      "size": 10054,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0f0bc02c6d07e05fe56dbc54223a9a8c56370cab"
+    },
+    {
+      "path": "verl/utils/logger",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "5966bb1dd15a2eb46e5d03b51a2d009e5bf28181",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/5966bb1dd15a2eb46e5d03b51a2d009e5bf28181"
+    },
+    {
+      "path": "verl/utils/logger/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/utils/logger/aggregate_logger.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3bc896c48f27564468440e74add334f5604f42f3",
+      "size": 3937,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3bc896c48f27564468440e74add334f5604f42f3"
+    },
+    {
+      "path": "verl/utils/logging_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1bf6e1f0fa70784edb6a7e6efecdba07f0c399b3",
+      "size": 843,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1bf6e1f0fa70784edb6a7e6efecdba07f0c399b3"
+    },
+    {
+      "path": "verl/utils/lora_checkpoint.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d3015be4feee7bea134e0f89faac4e794ff4c096",
+      "size": 759,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d3015be4feee7bea134e0f89faac4e794ff4c096"
+    },
+    {
+      "path": "verl/utils/megatron",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "1d40f5ecbfdae6dd843ca068f30da22b98779af7",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/1d40f5ecbfdae6dd843ca068f30da22b98779af7"
+    },
+    {
+      "path": "verl/utils/megatron/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/utils/megatron/memory.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5e8570ed495d83e74a1d0c7b1d17181271ce92a6",
+      "size": 1534,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5e8570ed495d83e74a1d0c7b1d17181271ce92a6"
+    },
+    {
+      "path": "verl/utils/megatron/optimizer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9ae70b0876d5255ffd24e132ca4d60faab883582",
+      "size": 4349,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9ae70b0876d5255ffd24e132ca4d60faab883582"
+    },
+    {
+      "path": "verl/utils/megatron/optimizer_config.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3401de4163aadcad7f3a586587da38989ee19d3d",
+      "size": 4051,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3401de4163aadcad7f3a586587da38989ee19d3d"
+    },
+    {
+      "path": "verl/utils/megatron/pipeline_parallel.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3a3790bb1a0fe0340390b7c9083f94d9d56b9383",
+      "size": 2119,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3a3790bb1a0fe0340390b7c9083f94d9d56b9383"
+    },
+    {
+      "path": "verl/utils/megatron/sequence_parallel.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4b76cb295ef681e30b22d45404d4d5c26493f051",
+      "size": 1810,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4b76cb295ef681e30b22d45404d4d5c26493f051"
+    },
+    {
+      "path": "verl/utils/megatron/tensor_parallel.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "073da4f24a76f57febd82687320eb45e103b892c",
+      "size": 7362,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/073da4f24a76f57febd82687320eb45e103b892c"
+    },
+    {
+      "path": "verl/utils/megatron_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fcb6b65a79ea302e3f7eaccd5145e29adbb9edd6",
+      "size": 11812,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/fcb6b65a79ea302e3f7eaccd5145e29adbb9edd6"
+    },
+    {
+      "path": "verl/utils/memory_buffer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2e07e42f7bc4648d3376dba404ae122e07ccb0d0",
+      "size": 7964,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2e07e42f7bc4648d3376dba404ae122e07ccb0d0"
+    },
+    {
+      "path": "verl/utils/model.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "38d23774bfa711ae1280ed7b2c0841a493545f7d",
+      "size": 12246,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/38d23774bfa711ae1280ed7b2c0841a493545f7d"
+    },
+    {
+      "path": "verl/utils/openvla_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "70d1c476eb812ef54b1338218809302162362d3d",
+      "size": 7997,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/70d1c476eb812ef54b1338218809302162362d3d"
+    },
+    {
+      "path": "verl/utils/py_functional.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8f5a0e176779cc19d3035a3af77a1bdf1f39349a",
+      "size": 1656,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8f5a0e176779cc19d3035a3af77a1bdf1f39349a"
+    },
+    {
+      "path": "verl/utils/ray_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9a75df6c37bc5a295aaa192b2a56cca2423e94b9",
+      "size": 1401,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9a75df6c37bc5a295aaa192b2a56cca2423e94b9"
+    },
+    {
+      "path": "verl/utils/rendezvous",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "bd86df75ba52e1b93d84fee9cff881b6c8e36547",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/bd86df75ba52e1b93d84fee9cff881b6c8e36547"
+    },
+    {
+      "path": "verl/utils/rendezvous/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/utils/rendezvous/ray_backend.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c0d2bd906fe14584896627143dea2d3ec032d912",
+      "size": 2720,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c0d2bd906fe14584896627143dea2d3ec032d912"
+    },
+    {
+      "path": "verl/utils/reward_score",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "0d5732c396bcbbf3bc1533fecc3a7666a0d868c6",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/0d5732c396bcbbf3bc1533fecc3a7666a0d868c6"
+    },
+    {
+      "path": "verl/utils/reward_score/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/utils/reward_score/countdown.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5c3843b1a7f825b1743c923d224e6efdd9500bb2",
+      "size": 4206,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5c3843b1a7f825b1743c923d224e6efdd9500bb2"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "6bf49dcbadac707d0aec633febcaa3f52b32f34d",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/6bf49dcbadac707d0aec633febcaa3f52b32f34d"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/code_util",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "68631d07337a28201e8f2d4d81401f236520ae4c",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/68631d07337a28201e8f2d4d81401f236520ae4c"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/code_util/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "40402e48f6d29618d9e5d20942e1b6739af45224",
+      "size": 2820,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/40402e48f6d29618d9e5d20942e1b6739af45224"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/code_util/testing_util.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "88047a4f04aadfa612113e55ecd0ed65f2571f6a",
+      "size": 33146,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/88047a4f04aadfa612113e55ecd0ed65f2571f6a"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/code_util/testing_util_org.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "99b3b92da978a412b3abd136dae9d04a9c936bd0",
+      "size": 28757,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/99b3b92da978a412b3abd136dae9d04a9c936bd0"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/code_util/testing_utils_org.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "99b3b92da978a412b3abd136dae9d04a9c936bd0",
+      "size": 28757,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/99b3b92da978a412b3abd136dae9d04a9c936bd0"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/code_util/utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3e37d0bf4edd3fc002db31851a2ed2f457157b51",
+      "size": 1723,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3e37d0bf4edd3fc002db31851a2ed2f457157b51"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/libero_util",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "7558808c98a02a83caf0d57e32ad4a86511aa31a",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/7558808c98a02a83caf0d57e32ad4a86511aa31a"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/libero_util/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3b32ed5046b93c1e9e983212d5d2ac4726a9a915",
+      "size": 79,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3b32ed5046b93c1e9e983212d5d2ac4726a9a915"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/math_util",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "6b087bfc9bfc3fc18856420c660dda0c6776dea0",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/6b087bfc9bfc3fc18856420c660dda0c6776dea0"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/math_util/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b1ed82b8632eca99790c198556cd736e127beb35",
+      "size": 29583,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b1ed82b8632eca99790c198556cd736e127beb35"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/math_util/grader.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3fe89b4ec47b544f115e68be25412abec9edcb47",
+      "size": 14022,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3fe89b4ec47b544f115e68be25412abec9edcb47"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/math_util/math_normalize.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6d30af347c60b48b9fef50c81cc77cbc31f337f0",
+      "size": 4682,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6d30af347c60b48b9fef50c81cc77cbc31f337f0"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/test.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b57316899b17471d34a01c5f896e514886c517af",
+      "size": 14188,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b57316899b17471d34a01c5f896e514886c517af"
+    },
+    {
+      "path": "verl/utils/reward_score/evaluation_utils/test2.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1f083cd3bcf90d8802e45e0a1f6909912ed648bc",
+      "size": 7694,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1f083cd3bcf90d8802e45e0a1f6909912ed648bc"
+    },
+    {
+      "path": "verl/utils/reward_score/gsm8k.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7091037643bc656f93c5c1a6acefb643d58421fe",
+      "size": 2385,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7091037643bc656f93c5c1a6acefb643d58421fe"
+    },
+    {
+      "path": "verl/utils/reward_score/logic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9aac676482fd8ebd96c09463b78864c342747445",
+      "size": 7881,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9aac676482fd8ebd96c09463b78864c342747445"
+    },
+    {
+      "path": "verl/utils/reward_score/math.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "50792aa6edd082091a786f4d4fa29d0a601702cf",
+      "size": 6717,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/50792aa6edd082091a786f4d4fa29d0a601702cf"
+    },
+    {
+      "path": "verl/utils/reward_score/multiply.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "aed6981aa30c41be6a2558bbae071b9124ad663e",
+      "size": 2253,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/aed6981aa30c41be6a2558bbae071b9124ad663e"
+    },
+    {
+      "path": "verl/utils/reward_score/prime.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "83a75a014771ae50ad23fd1a542ea027b5db13af",
+      "size": 11758,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/83a75a014771ae50ad23fd1a542ea027b5db13af"
+    },
+    {
+      "path": "verl/utils/reward_score/test3.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d7044a657804f23dc60acb04f931b9336ffb95a8",
+      "size": 1930,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d7044a657804f23dc60acb04f931b9336ffb95a8"
+    },
+    {
+      "path": "verl/utils/seqlen_balancing.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fee45da0d33264ea40591f95a98bdf35ef0ea4ad",
+      "size": 10327,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/fee45da0d33264ea40591f95a98bdf35ef0ea4ad"
+    },
+    {
+      "path": "verl/utils/subgoal_reward",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "c23b988e07a29d97195e9e4e402d81e809f97b8b",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/c23b988e07a29d97195e9e4e402d81e809f97b8b"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "983d8ef72eead4a1bd5da44f2c0fee452ed5a680",
+      "size": 359,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/983d8ef72eead4a1bd5da44f2c0fee452ed5a680"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/dense_reward.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f595c422e3aae73c58e93a21d093e8d9bcef5abe",
+      "size": 2182,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f595c422e3aae73c58e93a21d093e8d9bcef5abe"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/engine.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "99b6f77cd824afdc3b18a9d78a0aacf2d9ed2646",
+      "size": 8075,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/99b6f77cd824afdc3b18a9d78a0aacf2d9ed2646"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/libero_state.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "699382494fe1a78dcbb6b2ba18f7f8de995989d6",
+      "size": 9701,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/699382494fe1a78dcbb6b2ba18f7f8de995989d6"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/phases.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a4bfb81a6b4718b88fe55997732e1b74b184fb2b",
+      "size": 4100,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a4bfb81a6b4718b88fe55997732e1b74b184fb2b"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/robotwin2.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "36bc26b4c748bfaf4b87391376679459cfe7fff7",
+      "size": 10484,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/36bc26b4c748bfaf4b87391376679459cfe7fff7"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/task_specs.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "5fa39e5037b84850ab5dc079980100e56d7bea19",
+      "size": 1278,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/5fa39e5037b84850ab5dc079980100e56d7bea19"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/tracker.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "cab90619d06a4e762f33e78d2567878fa9b4052d",
+      "size": 4375,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/cab90619d06a4e762f33e78d2567878fa9b4052d"
+    },
+    {
+      "path": "verl/utils/task_sampling.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0b133f93a08da5326552334b83ca167f03f23a8b",
+      "size": 1280,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0b133f93a08da5326552334b83ca167f03f23a8b"
+    },
+    {
+      "path": "verl/utils/tokenizer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "7c6ce8fc2ecdd322475f5f75c411df0d05f9dd16",
+      "size": 3561,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/7c6ce8fc2ecdd322475f5f75c411df0d05f9dd16"
+    },
+    {
+      "path": "verl/utils/torch_dtypes.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bb63df13b9c26802dff23c92ae8e36f5c23ae4fd",
+      "size": 2217,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bb63df13b9c26802dff23c92ae8e36f5c23ae4fd"
+    },
+    {
+      "path": "verl/utils/torch_functional.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "09033bd53bc0492b1c20e4b995f3be20593df881",
+      "size": 20183,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/09033bd53bc0492b1c20e4b995f3be20593df881"
+    },
+    {
+      "path": "verl/utils/tracking.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "76430394bfa489d27b6de8df130abb3155173cad",
+      "size": 2156,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/76430394bfa489d27b6de8df130abb3155173cad"
+    },
+    {
+      "path": "verl/utils/ulysses.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c085becc591d29a9517966cdee601843bdf24371",
+      "size": 10619,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c085becc591d29a9517966cdee601843bdf24371"
+    },
+    {
+      "path": "verl/utils/validation_video.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ff6242695829f74bc40e0c7e6a86c0b3a243e1a8",
+      "size": 1134,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/ff6242695829f74bc40e0c7e6a86c0b3a243e1a8"
+    },
+    {
+      "path": "verl/utils/vla_utils",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "b4d9ad5f7c1467d06a7812b084ac531f03737f8d",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/b4d9ad5f7c1467d06a7812b084ac531f03737f8d"
+    },
+    {
+      "path": "verl/utils/vla_utils/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "05bbc7192604b0394cd29d2cd056756ed4f7cae3",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/05bbc7192604b0394cd29d2cd056756ed4f7cae3"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla/configuration_prismatic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c2625753c4da1a6ef274a02645d4086bc7a7fb2b",
+      "size": 5865,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c2625753c4da1a6ef274a02645d4086bc7a7fb2b"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla/modeling_prismatic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "59710eb9d1cab982234283140099ebc19e9150ea",
+      "size": 26071,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/59710eb9d1cab982234283140099ebc19e9150ea"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla/processing_prismatic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3f2daaf82c3b8946fe57596f656f14a031eaef93",
+      "size": 12718,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3f2daaf82c3b8946fe57596f656f14a031eaef93"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla_oft",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "7f4b2123bee2f46b6a7d54698963ab2afdf4066e",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/7f4b2123bee2f46b6a7d54698963ab2afdf4066e"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla_oft/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e69de29bb2d1d6434b8b29ae775ad8c2e48c5391",
+      "size": 0,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e69de29bb2d1d6434b8b29ae775ad8c2e48c5391"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla_oft/configuration_prismatic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c2625753c4da1a6ef274a02645d4086bc7a7fb2b",
+      "size": 5865,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c2625753c4da1a6ef274a02645d4086bc7a7fb2b"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla_oft/constants.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "fc5065898ebc2a2014b3409b2ed09f5fd3ddfe8f",
+      "size": 4303,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/fc5065898ebc2a2014b3409b2ed09f5fd3ddfe8f"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla_oft/modeling_prismatic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2b3d45d9cecc0e6258e5dc93091e04cc30548b51",
+      "size": 89776,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2b3d45d9cecc0e6258e5dc93091e04cc30548b51"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla_oft/processing_prismatic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c7ae121b87a8aa76ee63ea2cde9a033d264f4d06",
+      "size": 12713,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c7ae121b87a8aa76ee63ea2cde9a033d264f4d06"
+    },
+    {
+      "path": "verl/utils/vla_utils/openvla_oft/train_utils.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "820af795acbb95eff0561dc709763540c6438530",
+      "size": 3547,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/820af795acbb95eff0561dc709763540c6438530"
+    },
+    {
+      "path": "verl/version",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "929f32db81c7519834113fbc0b6b1670446fb2ce",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/929f32db81c7519834113fbc0b6b1670446fb2ce"
+    },
+    {
+      "path": "verl/version/version",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ceab6e11ece0bcec917c12e11d350946f085d549",
+      "size": 3,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/ceab6e11ece0bcec917c12e11d350946f085d549"
+    },
+    {
+      "path": "verl/workers",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "56b439476a4b7ea8e894ca4804f28c8571c8d997",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/56b439476a4b7ea8e894ca4804f28c8571c8d997"
+    },
+    {
+      "path": "verl/workers/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1ce90c5eb352d85c59105c0dc85b5f1dd576f095",
+      "size": 600,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1ce90c5eb352d85c59105c0dc85b5f1dd576f095"
+    },
+    {
+      "path": "verl/workers/actor",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "3c0e6b4222817036c02411c285157da52db7fca0",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/3c0e6b4222817036c02411c285157da52db7fca0"
+    },
+    {
+      "path": "verl/workers/actor/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "33596dac62557fd9d53772a0ae770737de15c25c",
+      "size": 981,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/33596dac62557fd9d53772a0ae770737de15c25c"
+    },
+    {
+      "path": "verl/workers/actor/base.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "144f0b90ef1efa77e5f1d4d26a07291ea89990cf",
+      "size": 2071,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/144f0b90ef1efa77e5f1d4d26a07291ea89990cf"
+    },
+    {
+      "path": "verl/workers/actor/dp_actor.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1eed9e50e82e84ce2a23d653f4c07c324251e761",
+      "size": 21262,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1eed9e50e82e84ce2a23d653f4c07c324251e761"
+    },
+    {
+      "path": "verl/workers/actor/dp_prime.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0c0e9d756284ce22b80db96ca7493e469b13213f",
+      "size": 15079,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0c0e9d756284ce22b80db96ca7493e469b13213f"
+    },
+    {
+      "path": "verl/workers/actor/dp_rob.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "02f1a8935224b074ab630280094ae04159818f73",
+      "size": 30942,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/02f1a8935224b074ab630280094ae04159818f73"
+    },
+    {
+      "path": "verl/workers/actor/megatron_actor.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "e674a28f6bbafabbfdb7b3c84e6d92833d1d8166",
+      "size": 18814,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/e674a28f6bbafabbfdb7b3c84e6d92833d1d8166"
+    },
+    {
+      "path": "verl/workers/critic",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "181ffb686dd38b76bbc58e8a1ab326b0a30431cd",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/181ffb686dd38b76bbc58e8a1ab326b0a30431cd"
+    },
+    {
+      "path": "verl/workers/critic/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "80808f10634b74ee3be94e3dc19e86855f884cc8",
+      "size": 732,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/80808f10634b74ee3be94e3dc19e86855f884cc8"
+    },
+    {
+      "path": "verl/workers/critic/base.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "9d1055df4e04d80624d2ca28afcf6f6df3642b91",
+      "size": 1094,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/9d1055df4e04d80624d2ca28afcf6f6df3642b91"
+    },
+    {
+      "path": "verl/workers/critic/dp_critic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "8e845f008d20f947f93397434a7221efa7a522b7",
+      "size": 6050,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/8e845f008d20f947f93397434a7221efa7a522b7"
+    },
+    {
+      "path": "verl/workers/critic/megatron_critic.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a39ad4b460e609373f0283f7171f39127f813189",
+      "size": 10641,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a39ad4b460e609373f0283f7171f39127f813189"
+    },
+    {
+      "path": "verl/workers/fsdp_workers.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "0a0cea15a32e196cfefb7b3a7767ee7fe5afab7b",
+      "size": 100046,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/0a0cea15a32e196cfefb7b3a7767ee7fe5afab7b"
+    },
+    {
+      "path": "verl/workers/hybrid_engine",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "7a2b81eb961de63845ce580ec22609f4dd326000",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/7a2b81eb961de63845ce580ec22609f4dd326000"
+    },
+    {
+      "path": "verl/workers/hybrid_engine/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "3713733f85b523a62f03ae952e996100973a2971",
+      "size": 1116,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/3713733f85b523a62f03ae952e996100973a2971"
+    },
+    {
+      "path": "verl/workers/hybrid_engine/base.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "d8717890f2e2cf4d2c5e7683398e32fa8ebf3765",
+      "size": 982,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/d8717890f2e2cf4d2c5e7683398e32fa8ebf3765"
+    },
+    {
+      "path": "verl/workers/hybrid_engine/fsdp_vllm.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "ab65448df8c6b58b9d7455daa63edab3b9f17a6e",
+      "size": 4950,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/ab65448df8c6b58b9d7455daa63edab3b9f17a6e"
+    },
+    {
+      "path": "verl/workers/hybrid_engine/megatron_vllm.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "bc07a5a656445f4ea442440b8634422e1b836ce0",
+      "size": 18595,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/bc07a5a656445f4ea442440b8634422e1b836ce0"
+    },
+    {
+      "path": "verl/workers/megatron_workers.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "f3a56f4f12b334d9102da15d47cd78757575c019",
+      "size": 36066,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/f3a56f4f12b334d9102da15d47cd78757575c019"
+    },
+    {
+      "path": "verl/workers/reward_model",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "d1af7b3438e27c5d79dfdfc176194e9c5dd453ea",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/d1af7b3438e27c5d79dfdfc176194e9c5dd453ea"
+    },
+    {
+      "path": "verl/workers/reward_model/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a0b48a750841888b1e220b72422659d8073c22a0",
+      "size": 638,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a0b48a750841888b1e220b72422659d8073c22a0"
+    },
+    {
+      "path": "verl/workers/reward_model/base.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c02487db3846d0fcec76c1c216fbbb52d15c64bd",
+      "size": 1710,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c02487db3846d0fcec76c1c216fbbb52d15c64bd"
+    },
+    {
+      "path": "verl/workers/reward_model/megatron",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "96405bf4fe4e80c3151a7837c86c2bb5c9e9c2f8",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/96405bf4fe4e80c3151a7837c86c2bb5c9e9c2f8"
+    },
+    {
+      "path": "verl/workers/reward_model/megatron/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "b0956b4cc53b81bf4c675c235968e1fc577a49f9",
+      "size": 647,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/b0956b4cc53b81bf4c675c235968e1fc577a49f9"
+    },
+    {
+      "path": "verl/workers/reward_model/megatron/reward_model.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "2c4c1b601c97927acf6f45cb36c39dea93998dd8",
+      "size": 13237,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/2c4c1b601c97927acf6f45cb36c39dea93998dd8"
+    },
+    {
+      "path": "verl/workers/rollout",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "95082b5eadeda26efee424c5f9a69c222f8db08d",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/95082b5eadeda26efee424c5f9a69c222f8db08d"
+    },
+    {
+      "path": "verl/workers/rollout/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a2e67775a890cd47ddeaf62d6a245117e7182f79",
+      "size": 806,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a2e67775a890cd47ddeaf62d6a245117e7182f79"
+    },
+    {
+      "path": "verl/workers/rollout/base.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "32afe9ecb01698ecb827cbb011cf90d121d2caf1",
+      "size": 1118,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/32afe9ecb01698ecb827cbb011cf90d121d2caf1"
+    },
+    {
+      "path": "verl/workers/rollout/hf_rollout.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1d929e5dd439a5c1a3b92b73bd6cb134cbb29f09",
+      "size": 5867,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1d929e5dd439a5c1a3b92b73bd6cb134cbb29f09"
+    },
+    {
+      "path": "verl/workers/rollout/naive",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "dd78603480142a71c6cfadeeec28ba1177f738bc",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/dd78603480142a71c6cfadeeec28ba1177f738bc"
+    },
+    {
+      "path": "verl/workers/rollout/naive/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "df81c8603fc41731b2ec2cf007a06f5976e43c06",
+      "size": 641,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/df81c8603fc41731b2ec2cf007a06f5976e43c06"
+    },
+    {
+      "path": "verl/workers/rollout/naive/naive_rollout.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "6f2e8d59b9c664912f9ce81e5410f667985f0726",
+      "size": 4821,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/6f2e8d59b9c664912f9ce81e5410f667985f0726"
+    },
+    {
+      "path": "verl/workers/rollout/pre_collect_twin2_seed.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "787b77735b3a56d138844ab50529a0e502def529",
+      "size": 20415,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/787b77735b3a56d138844ab50529a0e502def529"
+    },
+    {
+      "path": "verl/workers/rollout/rob_rollout.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "a9319ebe33701e5c7195c0a82a3bc660e58d7edd",
+      "size": 67280,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/a9319ebe33701e5c7195c0a82a3bc660e58d7edd"
+    },
+    {
+      "path": "verl/workers/rollout/tokenizer.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "c0dfa3a530329605d7af48a2186d304198774e09",
+      "size": 5747,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/c0dfa3a530329605d7af48a2186d304198774e09"
+    },
+    {
+      "path": "verl/workers/rollout/vllm_rollout",
+      "mode": "040000",
+      "type": "tree",
+      "sha": "4fcd20aab67e9665a007a4a6353ef4412b92e516",
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/trees/4fcd20aab67e9665a007a4a6353ef4412b92e516"
+    },
+    {
+      "path": "verl/workers/rollout/vllm_rollout/__init__.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "4f06d209f9d7d58c5aa41efad7cd237164a9fb8b",
+      "size": 638,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/4f06d209f9d7d58c5aa41efad7cd237164a9fb8b"
+    },
+    {
+      "path": "verl/workers/rollout/vllm_rollout/vllm_rollout.py",
+      "mode": "100644",
+      "type": "blob",
+      "sha": "1489286faa9702d7d044f4a0c2a97b885959e4d2",
+      "size": 10006,
+      "url": "https://api.github.com/repos/StarlightProg/SimpleVLA-RL-DenseReward/git/blobs/1489286faa9702d7d044f4a0c2a97b885959e4d2"
+    }
+  ],
+  "truncated": false
+}

@@ -1,0 +1,10 @@
+\section{Introduction}\label{sec:introduction}
+Vision-language-action (VLA) models provide useful visual and language representations for robot control. Transferring these representations to a new robot still requires learning how its actions affect the scene. If the initial policy rarely completes the task, binary success provides little guidance for reinforcement learning.
+
+Consider \emph{put the apple on the plate}. A failed rollout may contain a correct approach and grasp followed by a poor release. Treating the entire attempt as a failure discards this distinction. Training the parts separately helps exploration, but a policy can forget earlier skills while learning later ones. It must then connect the retained skills into a complete behavior.
+
+We address these problems through the pipeline in Fig.~\ref{fig:hero}. Dense rewards first guide skill acquisition. Binary refinement then targets completion, while balanced self-imitation retains successful behavior across instructions. Finally, milestone-based RL trains one policy to execute the full task from an empty-gripper start.
+
+The pipeline separates feedback design and skill consolidation from the robot-specific action mapping. We use OpenVLA-OFT~\cite{openvlaoft} on LIBERO-Spatial to evaluate intermediate feedback for full-task composition. We then assess skill retention and complete-task adaptation in cable-driven parallel robot (CDPR) simulation using SmolVLA~\cite{smolvla}, LoRA, and a residual action controller. These experiments examine connected parts of the same adaptation procedure. The ongoing WX200 evaluation extends the approach to a 5-DoF serial manipulator.
+
+We contribute a training schedule that combines dense skill acquisition, binary refinement with instruction-balanced self-imitation, and full-task learning under one instruction. We specify milestone credit that retains local credit for achieved approach and pickup stages when later placement fails. Our experiments compare intermediate and terminal feedback for composition, measure skill recovery after sequential training, and report complete-task performance after action-interface adaptation.

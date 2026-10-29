@@ -225,13 +225,11 @@ def render_supplied_svg(name):
   if ext=='png': args.extend(['--zoom','2'])
   subprocess.run([*args,str(source)],check=True)
 def table():
- rows=list(csv.DictReader((R/'evidence/libero_paper_results_export_20261026.csv').open())); final=[r for r in rows if r['evaluation_stage']=='final']
- labels={'Terminal only lambda=5':r'Terminal only, $\lambda=5$','Primary dense lambda=5':r'Dense, $\lambda=5$','Mixed-outcome filtered dense lambda=5':r'Filtered dense, $\lambda=5$','Dense shaping lambda=1':r'Dense, $\lambda=1$','Phase shaping lambda=1':r'Phase only, $\lambda=1$','Terminal only':'Terminal only','Dense reward':'Dense'}
- lines=[r'\begin{table}[t]',r'\caption{LIBERO reward comparison. $\lambda$ is the terminal reward weight; success and $\Delta$ are percentages and percentage-point gains.}',r'\label{tab:libero}\centering\small',r'\begin{tabular}{@{}lrrr@{}}\toprule',r'Configuration & Updates & Success & $\Delta$\\\midrule',r'\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\']
- for series in ['full_suite_reward_ablation','single_task_low_success']:
-  if series=='single_task_low_success': lines.extend([r'\midrule',r'\multicolumn{4}{@{}l}{Low-success task: initial 2.0\% (1,000 rollouts)}\\'])
-  for row in final:
-   if row['series']==series: lines.append(f"{labels[row['configuration']]} & {row['rl_update_step']} & {float(row['success_percent']):.1f} & {float(row['change_from_initial_pp']):+.1f}"+r'\\')
+ rows=list(csv.DictReader((R/'evidence/libero_paper_results_export_20261026.csv').open())); final=[r for r in rows if r['evaluation_stage']=='final' and r['series']=='full_suite_reward_ablation']
+ labels={'Terminal only lambda=5':r'Terminal only, $\lambda=5$','Primary dense lambda=5':r'Dense + phase, $\lambda=5$','Mixed-outcome filtered dense lambda=5':r'Filtered dense + phase, $\lambda=5$','Dense shaping lambda=1':r'Dense + phase, $\lambda=1$','Phase shaping lambda=1':r'Phase-only shaping, $\lambda=1$'}
+ lines=[r'\begin{table}[t]',r'\caption{LIBERO-Spatial reward comparison. $\lambda$ is the terminal verifier coefficient; success and $\Delta$ are percentages and percentage-point gains.}',r'\label{tab:libero}\centering\small',r'\begin{tabular}{@{}lrrr@{}}\toprule',r'Configuration & Updates & Success & $\Delta$\\\midrule',r'\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\']
+ for row in final:
+  lines.append(f"{labels[row['configuration']]} & {row['rl_update_step']} & {float(row['success_percent']):.1f} & {float(row['change_from_initial_pp']):+.1f}"+r'\\')
  lines.extend([r'\bottomrule',r'\end{tabular}',r'\end{table}']); (R/'tables/libero_results.tex').write_text('\n'.join(lines)+'\n')
 def main():
  parser=argparse.ArgumentParser(description=__doc__); parser.add_argument('--rebuild-layouts',action='store_true'); args=parser.parse_args(); EDIT.mkdir(parents=True,exist_ok=True)

@@ -1,18 +1,14 @@
-\begin{table}[t]
-\caption{LIBERO reward comparison. $\lambda$ is the terminal reward weight; success and $\Delta$ are percentages and percentage-point gains.}
+\begin{table}[!ht]
+\caption{LIBERO-Spatial feedback study (our runs, one seed each). All runs start from a shared 61.0\% policy; endpoints use 300 validation rollouts. CI: Wilson 95\% interval.}
 \label{tab:libero}\centering\small
-\begin{tabular}{@{}lrrr@{}}\toprule
-Configuration & Updates & Success & $\Delta$\\\midrule
-\multicolumn{4}{@{}l}{LIBERO-Spatial: initial 61.0\%}\\
-Terminal only, $\lambda=5$ & 160 & 61.7 & +0.7\\
-Dense, $\lambda=5$ & 160 & 65.3 & +4.3\\
-Filtered dense, $\lambda=5$ & 50 & 64.7 & +3.7\\
-Dense, $\lambda=1$ & 110 & 61.0 & +0.0\\
-Phase only, $\lambda=1$ & 110 & 62.3 & +1.3\\
-\midrule
-\multicolumn{4}{@{}l}{Low-success task: initial 2.0\% (1,000 rollouts)}\\
-Terminal only & 20 & 11.0 & +9.0\\
-Dense & 20 & 18.0 & +16.0\\
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lrrrr@{}}\toprule
+Configuration & Upd. & Final & CI & $\Delta$\\\midrule
+Initial policy & 0 & 61.0 & n.r.$^c$ & ---\\
+Terminal only$^a$ & 160 & 61.7 & 56.1--67.0 & +0.7\\
+Dense + phase & 160 & 65.3 & 59.8--70.5 & +4.3\\
+Phase-only$^b$ & 110 & 62.3 & 56.7--67.6 & +1.3\\
 \bottomrule
-\end{tabular}
+\end{tabular}\\[2pt]
+\raggedright\footnotesize$^a$Our implementation of SimpleVLA-RL~\cite{simplevlarl}. $^b$Terminal coefficient 1 instead of 5; not a matched ablation. $^c$Rollout count not recorded. $\Delta$: change from the initial policy, in points.
 \end{table}

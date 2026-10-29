@@ -1,0 +1,10 @@
+\section{Introduction}\label{sec:introduction}
+Vision-language-action (VLA) models provide useful visual and language representations for robot control. Transferring these representations to a new robot still requires learning how its actions affect the scene. If the initial policy rarely completes the task, binary success provides little guidance for reinforcement learning.
+
+Consider \emph{put the apple on the plate}. A failed rollout may contain a correct approach and grasp followed by a poor release. Treating the entire attempt as a failure discards this distinction. Training the parts separately helps exploration, but a policy can forget earlier skills while learning later ones. It must then connect the retained skills into a complete behavior.
+
+We address these problems through the pipeline in Fig.~\ref{fig:hero}. Dense rewards first guide skill acquisition. Binary refinement then targets completion, while balanced self-imitation retains successful behavior across instructions. Finally, milestone-based RL trains one policy to execute the full task from an empty-gripper start.
+
+The pipeline separates feedback design and skill consolidation from the robot-specific action mapping. We implement it with SmolVLA, LoRA, and a residual action controller. Experiments examine complete-task learning and skill retention in cable-driven parallel robot (CDPR) simulation, and intermediate feedback with OpenVLA-OFT on LIBERO-Spatial. An ongoing WX200 study extends the evaluation to a five-DoF serial manipulator.
+
+Our contributions are a staged adaptation pipeline, a practical mechanism for retaining and composing skills, and empirical results on forgetting, recovery, and reward design. The LIBERO study evaluates the feedback component; it does not test the full adaptation schedule.

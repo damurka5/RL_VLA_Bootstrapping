@@ -1,3 +1,7 @@
+# Dense/phase implementation audit - 29 October 2026
+
+`DENSE_REWARD_CODE_AUDIT_20261029.md` records the pinned remote implementation, the combined dense-plus-phase reward, the phase-only comparison and the role of the low-success acquisition diagnostic. Current numerical reporting continues to follow the author-corrected 26 October CSV; repository defaults and its older archive summary are not substituted for those reported settings.
+
 # Visual revision — 26 October 2026 (current)
 
 The active paper uses one final CDPR controller, separate forgetting/recovery measurements, and the exact new LIBERO CSV. Earlier entries below are historical where superseded.

@@ -1,0 +1,4 @@
+Dense-and-phase feedback reaches 65.3\% success versus 61.7\% for terminal-only SimpleVLA-RL (Table~\ref{tab:libero}). Phase-only feedback reaches 62.3\%, improving on the 61.0\% initialization using completion events as intermediate feedback.
+
+For the adaptation pipeline, we use dense rewards to acquire the initial base policy on simple skills, then train the complete multi-stage task with staged reward. Milestone completion supplies intermediate credit without requiring a continuous progress function for every phase of each new instruction.
+\input{tables/libero_results}

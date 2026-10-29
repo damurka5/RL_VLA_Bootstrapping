@@ -1,0 +1,6 @@
+\subsection{Intermediate Feedback for LIBERO Composition}\label{sec:dense_method}
+The LIBERO study asks whether intermediate feedback remains useful when a pretrained policy already performs manipulation skills. We fine-tune an OpenVLA-OFT-based policy with SimpleVLA-RL and LoRA on complete LIBERO-Spatial instructions~\cite{openvlaoft,simplevlarl,libero}. This tests the feedback component of the approach when a conventional robot action interface is already available.
+
+We compare terminal-only reward, phase rewards for completed subgoals, and dense feedback that also resolves progress within a phase. A tracker follows reach, grasp, lift, move, and place. Within the active phase, dense credit is given only when progress exceeds its previous maximum; revisiting the same position earns no repeated credit. The progress baseline resets at each phase transition.
+
+Shaping is bounded and added to the terminal reward, while the native task-success verifier remains unchanged. Optional filtering selects rollout groups by their fraction of terminal successes, independently of shaping. We evaluate both the full suite and a separate low-success task (Section~\ref{sec:libero_results}). These comparisons test whether progress feedback helps compose available skills under one instruction, as well as supporting learning when terminal success is rare.

@@ -1,8 +1,10 @@
 # RA-L visual draft
 
-Updated 28 October 2026.
+Updated 29 October 2026.
 
 main.pdf is the current reading copy; main.tex is the entry point.
+
+The 29 October revision makes the Introduction contribution paragraph concrete and centers Related Work on GRPO/DAPO, SimpleVLA-RL, iRe-VLA, and PLD. DAPO-style filtering and bounded resampling are described in Methods, including the distinction between binary outcomes and dense-return dispersion; provenance is recorded in evidence/DAPO_SAMPLING_AUDIT_20261029.md.
 
 ## Current structure
 
@@ -13,7 +15,7 @@ main.pdf is the current reading copy; main.tex is the entry point.
 5. Conclusion
 6. Future Work
 
-The article centers on the adaptation pipeline. CDPR simulation, OpenVLA-OFT on LIBERO-Spatial, and the ongoing WX200 study are evaluation settings. Problem motivation is integrated into Methods. The manuscript contains five displayed expressions: self-imitation loss, the 40d action prior, the compact clipped RL loss with entropy regularization, the latent-action sampling rule, and mixed-outcome group probability.
+The article centers on one adaptation pipeline. Dense reward is used only at the beginning of adaptation to learn the base policy on simple, separately reset skills. Binary refinement and balanced self-imitation consolidate that policy; complete multi-stage tasks are trained with staged binary milestone reward. The LIBERO comparison includes manually defined dense-and-phase feedback as a reward variant, rather than as the reward used for full-task training in the adaptation pipeline. Table I contains three full-suite reward configurations: Terminal only (SimpleVLA-RL), Dense + phase, and Phase-only, without lambda notation. Reward definitions remain in Methods; the LIBERO training setup and measured success rates appear in Experiments. Floats cannot precede their source location, keeping the LIBERO results table after the start of Experiments. Numerical provenance follows the author-corrected 26 October CSV; implementation details are audited at remote commit 44ed954. There is no separate Methods E for LIBERO. Experiments present CDPR base-policy skill learning and retention first (A), the LIBERO reward comparison second (B), complete-task CDPR adaptation third (C), and then the ongoing WX200 evaluation. Methods A lists the exact skill prompts and held-object placement resets; Methods C distinguishes the full-task prompt. The plate skill uses "on the plate", while full-task training uses "into plate", following the recorded instruction templates. The task is described as multi-stage pick-and-place throughout. The forgetting comparison and the balanced-SIL recovery panel are separate measurements, as recorded in evidence/skill_retention_rounds.json and sections 1 and 3 of evidence/skill_retention_source_20261026.md. The manuscript contains four displayed expressions: self-imitation loss, mixed-outcome group probability, the compact clipped RL loss with entropy regularization, and the latent-action sampling rule. The 40-dimensional action prior is described in prose. Methods D describes current sampling and likelihood evaluation without historical implementation comparisons or clipping examples.
 
 Algorithm 1 is sourced from algorithms/staged_pipeline_paper.tex. It preserves the order of all dense skill stages before all binary stages, then full-task composition. After a composition plateau, it includes the CDPR continuation with a retained bounded residual, frozen VLA/LoRA, fresh optimizer, and offset-conditioned pre-clipping likelihoods. The text gives qualitative transition criteria and distinguishes automated stopping from historical CDPR manual transitions. Exact configuration values and implementation provenance remain in supporting audit notes.
 
@@ -23,7 +25,7 @@ Four figures are included in the current paper:
 
 1. Author-supplied graphical abstract, figures/abstract_overview.png, on the first manuscript page.
 2. SmolVLA, LoRA, 518d observation features, and the residual action path.
-3. Measured forgetting and balanced-SIL recovery, using the author-supplied figures/skill_retention.svg and its PDF export.
+3. Skill success before and after balanced SIL, using only the recovery comparison. Generate SVG/PDF/PNG exports with scripts/generate_retention_figure.py from evidence/skill_retention_rounds.json.
 4. WX200 apparatus and five-frame rollout slots.
 
 Open figures/editable/ral_figures.xml in diagrams.net: File → Open from → Device. It retains six original source diagrams; individual XML files are in the same folder. The graphical abstract PNG and retention SVG supersede the corresponding XML designs. The former milestone-credit and feedback-resolution figures are omitted from the manuscript; their editable assets remain available.
@@ -32,13 +34,13 @@ The graphical abstract is included directly as PNG; other figures use PDF export
 
 ## Evidence
 
-- evidence/libero_paper_results_export_20261026.csv supplies the exact endpoint values for Table II.
-- evidence/skill_retention_rounds.json contains the round rates for Figure 5. The panels are separate experiments.
+- evidence/libero_paper_results_export_20261026.csv supplies the exact endpoint values for the LIBERO reward-comparison table.
+- evidence/skill_retention_rounds.json contains the round rates for Figure 3. The figure uses the balanced-SIL recovery comparison.
 - evidence/latent_control_40m_comparison_20261019.json supports the earlier 40M controller evaluation (61.43%, 1,258/2,048).
 - evidence/latent_control_60m_tensorboard_20261028.json records the 60M endpoint's strict success (70.61%, 723/1,024), peak (71.09%, 728/1,024), source hash and measurement details. The complete CSV exports and extraction script are in ../docs/artifacts/latent_control_60m_20261028/.
 - evidence/ACTION_MODULE_AUDIT_20261022.md documents the architecture and LoRA implementation.
 
-The manuscript reports 70.61% strict success for the CDPR controller on development validation used during training, and descriptive LIBERO comparisons. Table I uses all 1,024 CDPR attempts and includes milestones, carry slip, and wrong placement. Numerical failures remain in the denominator but have no separate table row. Training-step counters, checkpoint identifiers, intermediate checkpoint scores, and the history of logged runs are omitted from the reader-facing text. WX200 illustrations and quantitative results remain reserved for the ongoing evaluation. Source data, training history, and detailed mathematical audits remain in the supporting records.
+The manuscript reports 70.61% strict success for the CDPR controller on development validation used during training, and descriptive LIBERO comparisons. Table II uses all 1,024 CDPR attempts and includes milestones, carry slip, and wrong placement. Numerical failures remain in the denominator but have no separate table row. Training-step counters, checkpoint identifiers, intermediate checkpoint scores, and the history of logged runs are omitted from the reader-facing text. WX200 illustrations and quantitative results remain reserved for the ongoing evaluation. Source data, training history, and detailed mathematical audits remain in the supporting records.
 
 ## Build
 

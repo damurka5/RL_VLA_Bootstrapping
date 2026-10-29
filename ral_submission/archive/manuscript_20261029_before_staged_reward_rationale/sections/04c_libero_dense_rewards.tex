@@ -1,0 +1,6 @@
+\label{sec:dense_method}
+We fine-tune an OpenVLA-OFT-based policy with SimpleVLA-RL and LoRA on complete LIBERO-Spatial instructions~\cite{openvlaoft,simplevlarl,libero}. We compare terminal-only reward, phase rewards for completed subgoals, and dense feedback that also resolves progress within a phase. This comparison examines how intermediate credit supports execution of the complete instruction when the underlying manipulation skills are already available.
+
+A tracker follows reach, grasp, lift, move, and place. Within the active phase, dense credit is given only when progress exceeds its previous maximum; revisiting the same position earns no repeated credit. The progress baseline resets at each phase transition.
+
+Shaping is bounded and added to the terminal reward, while the native task-success verifier remains unchanged. Optional filtering selects rollout groups by their fraction of terminal successes, independently of shaping. At the same 160-update budget, dense feedback reaches 65.3\% success versus 61.7\% for terminal-only reward (Table~\ref{tab:libero}). This result motivates providing intermediate progress credit during full-task composition. Section~\ref{sec:libero_results} gives the evaluation protocol and the additional low-success task comparison.

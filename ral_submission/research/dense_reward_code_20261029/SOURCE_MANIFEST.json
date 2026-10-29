@@ -1,0 +1,66 @@
+{
+  "repository": "StarlightProg/SimpleVLA-RL-DenseReward",
+  "commit": "44ed954482e1a23795c0c65f2fcc52496290e0d4",
+  "files": [
+    {
+      "path": "DENSE_REWARD_STUDY_README.md",
+      "bytes": 18193,
+      "sha256": "3e7af370b3aaabfdd341289ae0d10ac35052e97623a4cc93933d918293e6c126"
+    },
+    {
+      "path": "reward_training_comparison.md",
+      "bytes": 10379,
+      "sha256": "ff16f95e59a3e10183a4e9a664a14730bf84d3048d79da5ed026ecbedbbb3c7d"
+    },
+    {
+      "path": "results.md",
+      "bytes": 16227,
+      "sha256": "3d6c3cecc34c63d266155949c4f6016bd419ee5b70d217748260cda39b988b80"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/dense_reward.py",
+      "bytes": 2182,
+      "sha256": "a9fc2e15808ac3cbee7bab30ab805efa88659ec66ebe01d43583b86d22c6f891"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/engine.py",
+      "bytes": 8075,
+      "sha256": "69d09bb986717214de72566c273fc0065c6e5a3490e71931656fc11f76cbfb24"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/tracker.py",
+      "bytes": 4375,
+      "sha256": "ccefb27b1740d436de9109696a073a46c9ca8214089eef14728b4a770563f40e"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/phases.py",
+      "bytes": 4100,
+      "sha256": "a4e496f8f72b9a8ca1402090b84feb1eec1439d71ebe3e78dca6388fe901682c"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/task_specs.py",
+      "bytes": 1278,
+      "sha256": "5c9f764a8a33d0868202ea2c3c04d572708d1c5967af686e6f470eafd9c3e467"
+    },
+    {
+      "path": "verl/utils/subgoal_reward/libero_state.py",
+      "bytes": 9701,
+      "sha256": "5ada738857de5428630809e6a8978f79e060bea85d19e377924f182e8df332f5"
+    },
+    {
+      "path": "verl/workers/rollout/rob_rollout.py",
+      "bytes": 67280,
+      "sha256": "c1ba247bc1af6cd56df6b685196228f0335cdbc9cd48d2d2a0d75b0c9026b184"
+    },
+    {
+      "path": "verl/trainer/main_ppo.py",
+      "bytes": 13467,
+      "sha256": "52516957c6efc8846ba903f624b476a347056d47bbdec0b1a8f03ce3e6a36985"
+    },
+    {
+      "path": "verl/trainer/config/ppo_trainer.yaml",
+      "bytes": 11164,
+      "sha256": "f710147eb4ce82a3d3404e2e3c763ecb5279f2dbcba466b248ebd4cab6917b2c"
+    }
+  ]
+}

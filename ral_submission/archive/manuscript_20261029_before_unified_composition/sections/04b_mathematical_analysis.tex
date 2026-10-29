@@ -1,0 +1,6 @@
+The motivation follows from a simple group calculation. For $G$ independent rollouts from one scene, each with success probability $p$, the probability of observing both success and failure is
+\begin{equation}
+P_{\rm mixed}=1-p^G-(1-p)^G.
+\label{eq:mixed}
+\end{equation}
+With eight rollouts, this probability is only 21.6\% at 3\% success, but 94.2\% at 30\% success. Milestones can therefore provide informative comparisons before complete-task success becomes common. Dense feedback can also distinguish all-failure rollouts. A filter that removes such groups discards this potential signal.

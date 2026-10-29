@@ -1,0 +1,64 @@
+\section{Methods}\label{sec:method}
+\input{sections/03_problem_formulation}
+
+\subsection{Dense Acquisition, Binary Refinement, and Self-Imitation}
+We first train approach, pickup, and placement skills with dense rewards. Distance reduction and manipulation events guide exploration before skill success becomes common. After dense acquisition, we refine the skills using binary success rewards.
+
+Successful trajectories are retained by instruction. When later training degrades earlier skills, self-imitation fits a balanced mixture of earlier and current successes:
+\begin{equation}
+\mathcal L_{\rm SI}=\mathbb E_{\rm success}
+\left[\|\hat a-a\|^2\right].
+\label{eq:si_loss}
+\end{equation}
+Here $\hat a$ is the predicted action and $a$ is the recorded executed action. The average balances instructions and excludes unused action slots. Policy-dependent features are refreshed before fitting. Balancing matters because imitating only the newest skill can reinforce forgetting.
+
+Algorithm~\ref{alg:paper_pipeline} summarizes the schedule. Progress is checked with fixed skill evaluations. After an initial training period, automated stages can end at a success target or a plateau; budget exhaustion also ends a stage. The CDPR sequence used validation-guided manual transitions. After consolidation, all learned skills are evaluated again. Automated runs retain the consolidation update only when recovery improves the degraded skills on average and keeps other skills within tolerance.
+\input{algorithms/staged_pipeline_paper}
+
+\subsection{SmolVLA with an Embodiment-Specific Residual}
+Figure~\ref{fig:architecture} shows one implementation of the pipeline. Following the residual-learning ingredient of Probe, Learn, Distill (PLD)~\cite{pld}, we retain a pretrained expert and adapt its actions with a lightweight residual. The SmolVLA expert supplies an action prior, mapped to the target control interface. In our five-channel controller, eight action slots form a 40-dimensional prior.
+A frozen visual projection supplies 512 features; six proprioceptive values complete the 518-dimensional observation. The residual receives this observation and the 40-dimensional prior, and predicts a bounded correction. The combined action is bounded before execution.
+
+LoRA adapts the action expert during earlier training. In the evaluated full-task continuation, the inherited VLA and LoRA weights are frozen while the residual and exploration parameters are trained. The backbone, action mapping, and feature dimensions can change with the embodiment; the training schedule remains the same.
+
+\begin{figure*}[!t]
+\centering\includegraphics[width=\textwidth]{figures/smolvla_residual_lora.pdf}
+\caption{SmolVLA implementation of the pipeline. The added residual combines 518 observation features with a 40-dimensional action prior. LoRA adapts the pretrained expert during earlier training; the evaluated full-task continuation freezes the VLA and LoRA weights. Feature and action dimensions refer to the five-channel controller.}
+\label{fig:architecture}
+\end{figure*}
+
+\subsection{Milestone-Based Full-Task Composition}
+After skill consolidation, one policy learns the complete instruction from empty-gripper starts. No external controller switches between specialist policies. Approach, held pickup, and final placement serve as milestones for assigning credit within a rollout.
+
+The main rule is simple: a later placement failure should not remove the local credit for a successful approach or pickup. We compare milestone outcomes within groups of rollouts from the same scene. Actions receive credit for the milestone they contribute to, while full-task success provides an additional preference for completing the chain. A negative completion bonus is suppressed on already achieved approach and pickup milestones. Placement receives its completion credit once.
+
+This rule preserves useful partial behavior while training the remaining task. It controls the assigned credit; it does not prevent interference through shared network parameters.
+
+\subsection{Stabilized Updates and Full-Task Continuation}\label{sec:rl_loss}
+We use a clipped group-relative policy loss with entropy regularization:
+\begin{equation}
+\mathcal L_{\rm RL}=\mathcal L_{\rm clip}-\eta\mathcal H.
+\label{eq:rl_loss}
+\end{equation}
+The clipped loss compares rollouts within each scene group and limits the incentive for large changes in action likelihood. We use separate upper and lower clipping bounds. The entropy term $\mathcal H$, weighted by $\eta$, maintains exploration during manipulation and composition. Together, these choices help keep early updates conservative while successful behavior is still rare.
+
+During skill learning, DAPO-style dynamic sampling filters uninformative groups and collects additional rollout groups within the configured collection budget~\cite{dapo}. With binary rewards, uniform outcomes provide no group-relative contrast. During dense acquisition, filtering instead checks within-group return variation, so partial progress can provide a learning signal before a group contains a successful skill execution.
+
+The CDPR continuation starts from a full-task plateau. It retains the learned residual, freezes the inherited VLA and LoRA, and starts a fresh optimizer with the same milestone rewards. It also corrects how sampled actions are scored during policy updates.
+
+Policy-gradient updates compare how likely a recorded sample is under the old and new policies. For a Gaussian policy followed by clipping, an established approach uses the original sample for this calculation~\cite{capg}. For example, sampled commands of 1.2 and 1.8 both become 1.0 after clipping; retaining the original value identifies which sample was drawn.
+
+Our earlier CDPR implementation evaluated the clipped command under a Gaussian density. It also treated an exploration offset shared across an episode as independent additional noise at each decision. The continuation stores both the original sample and the applied offset. Old and new policy likelihoods then score that same sample with the same recorded offset. This makes the likelihood calculation consistent with the sampling process.
+
+Concretely, let $\mu_{\theta,t}$ be the bounded residual controller's predicted mean and $\sigma_\theta$ its learned exploration scale. An offset is sampled once per episode and applied during selected phases; $b_t$ records its applied value at decision $t$. Sampling and execution are
+\begin{equation}
+\begin{aligned}
+u_t&\sim\mathcal N(\mu_{\theta,t}+b_t,\operatorname{diag}(\sigma_\theta^2)),\\
+a_t&=\operatorname{clip}(u_t,-1,1).
+\end{aligned}
+\label{eq:latent_action}
+\end{equation}
+The robot executes $a_t$; the likelihood ratio uses the stored $u_t$ conditional on $b_t$. The residual and exploration scale remain trainable. Section~\ref{sec:cdpr_results} reports the resulting full-task continuation, whose endpoint does not isolate the effect of this likelihood correction.
+
+\input{sections/04c_libero_dense_rewards}
+\input{sections/04b_mathematical_analysis}

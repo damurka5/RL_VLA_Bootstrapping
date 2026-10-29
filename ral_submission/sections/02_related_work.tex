@@ -1,6 +1,22 @@
 \section{Related Work}\label{sec:related}
-\textbf{VLA adaptation.} OpenVLA~\cite{openvla}, SmolVLA~\cite{smolvla}, and OpenVLA-OFT~\cite{openvlaoft} provide pretrained policies and adaptation methods. We retain a pretrained action expert and learn a residual for the target interface. Our LIBERO study instead fine-tunes an OpenVLA-OFT-based policy through discrete action-token likelihoods.
+\textbf{Group-relative RL and dynamic sampling.} GRPO estimates policy advantages by comparing returns within groups of sampled trajectories~\cite{deepseekmath}. DAPO filters groups with uniform binary outcomes and collects additional samples to keep the training batch informative~\cite{dapo}. SimpleVLA-RL adapts group-relative optimization to interactive VLA rollouts~\cite{simplevlarl}. It starts from a supervised OpenVLA-OFT checkpoint trained on LIBERO demonstrations, either all of them or one per task. We use DAPO-style group filtering and resampling during skill learning.
 
-\textbf{Residual learning and consolidation.} Probe, Learn, Distill combines residual RL, autonomous data collection, and distillation~\cite{pld}. We build on these ingredients to link skill acquisition, retention, and full-task composition. Self-imitation here means fitting successful policy-generated experience, including trajectories retained from earlier training.
+\textbf{RL with supervised consolidation.} iRe-VLA alternates RL on the action head, with a frozen vision-language backbone, and supervised updates on expert data together with successful online trajectories~\cite{irevla}. Probe, Learn, Distill (PLD) trains residual actors over a frozen VLA, seeds their buffers with successful base-policy rollouts, and distills hybrid trajectories into the generalist~\cite{pld}. Our self-imitation step similarly fits successful experience. Its instruction-balanced bank retains earlier skills during sequential training. We adopt PLD's residual principle for the new action interface.
 
-\textbf{Feedback for reinforcement learning.} SimpleVLA-RL applies group-relative optimization to VLA rollouts~\cite{simplevlarl}, following GRPO~\cite{deepseekmath}. Binary rewards provide no within-group contrast when all rollouts share the same outcome~\cite{mroueh2026,bay2026}. Intermediate feedback can distinguish partial progress. Unlike potential-based shaping~\cite{ng1999}, our task-specific rewards do not carry a policy-invariance guarantee.
+\textbf{Adaptation data.} Table~\ref{tab:related} compares close methods by the data they need on the target robot. iRe-VLA and PLD begin from policies fine-tuned on human target-robot demonstrations. ET-VLA reduces the need for real demonstrations through synthetic continued pretraining, then fine-tunes on target-embodiment data~\cite{etvla}. Our earlier preprint used RL alone on the CDPR, but stopped at reaching~\cite{nurtdinov2026rlboot}. The present work keeps the no-human-demonstration setting and reaches complete pick-and-place. However, it uses automatically generated supervised data, which the preprint did not.
+
+\begin{table*}[!t]
+\caption{Data and training attributes of close methods, from the cited papers. ``n.s.'': not stated in the source. ``Before RL'' is target-task competence at the start of RL.}
+\label{tab:related}\centering\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lP{3.0cm}P{3.1cm}P{2.0cm}P{2.5cm}P{1.6cm}P{1.4cm}@{}}\toprule
+Method & Human target demos & Other adaptation data & Before RL & RL-trained module & Embodiment change & Full-task eval.\\\midrule
+iRe-VLA~\cite{irevla} & 50/task (MetaWorld); 2,000 (Panda) & Online successes & SFT policy & Action head; VLM frozen & n.s. & Yes\\
+PLD~\cite{pld} & Benchmark SFT (n.s.); 200 ($\pi_0$, real) & Base-policy successes; hybrid rollouts & SFT policy & Residual; base frozen & n.s. & Yes\\
+SimpleVLA-RL~\cite{simplevlarl} & 1/task or full LIBERO set & --- & 63.6\% (1 demo, Spatial) & Full parameters & No & Yes\\
+ET-VLA~\cite{etvla} & Target-embodiment fine-tuning data & Synthetic continued pretraining & --- (SFT) & --- & Yes (bimanual) & Yes\\
+RL bootstrapping~\cite{nurtdinov2026rlboot} & 0 & --- & n.s. & OpenVLA-OFT (PPO, GRPO) & Yes (CDPR) & Reaching only\\
+Ours & 0 & Policy successes; scripted oracle; controller-assisted rollouts & 2.6\%$^\dagger$ & Residual; LoRA in SFT & Yes (CDPR) & Yes\\\bottomrule
+\end{tabular}\\[2pt]
+\footnotesize$^\dagger$Strict full-task success at the start of milestone RL, after the inherited supervised seeding stages (Table~\ref{tab:lineage}).
+\end{table*}
