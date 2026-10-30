@@ -180,6 +180,45 @@ class PipelineConfigTest(unittest.TestCase):
         finally:
             path.unlink(missing_ok=True)
 
+    def test_perturbed_spawns_stay_inside_the_arms_reach(self) -> None:
+        """Cells plus the worst-case scene shift and jitter, not the cells alone.
+
+        The layout tests check the nominal lattice; the pipeline spawns up to
+        `sqrt(2) * (shift + jitter) / 2` off it. At an inner radius of 0.16 that
+        put 1.3% of evaluated targets inside the waist keep-out.
+        """
+
+        from robots.widowx200.widowx200_mujoco import workspace as W
+
+        layout = W.DEFAULT_LAYOUT
+        pipeline = self._pipeline()
+        stages = [pipeline.stage_config(s) for s in pipeline.spec["stages"]]
+        for config in stages:
+            meta = config["task"]["metadata"]
+            cells = [tuple(cell) for cell in meta["scene_object_cells"]]
+            self.assertEqual(
+                sorted(cells),
+                sorted(tuple(round(v, 4) for v in cell) for cell in W.sector_lattice()),
+                "config cells drifted from sector_lattice(DEFAULT_LAYOUT)",
+            )
+            spread = math.sqrt(2.0) * 0.5 * (
+                float(meta["scene_object_scene_shift_m"]) + float(meta["scene_object_jitter_m"])
+            )
+            # Highest point a task commands above an object: the move_to hover
+            # the reward pulls toward, the lift, and the release over a
+            # receptacle. (The move_to window top, 0.245, is 1 mm past the 2 cm
+            # reach margin for the outermost perturbed spawn -- inside the
+            # margin, not past the arm -- and success needs only some z in it.)
+            top = max(
+                float(meta["move_to_object_approach_z"]),
+                layout.base_position[2] + 0.03 + float(meta["pick_lift_success_height"]),
+                layout.base_position[2] + 0.02 + float(meta["put_plate_release_height"]),
+            )
+            for x, y in cells:
+                radius = math.hypot(x - layout.base_position[0], y - layout.base_position[1])
+                self.assertGreaterEqual(radius - spread, layout.min_reach_radius, (x, y))
+                self.assertLessEqual(radius + spread, W.usable_radius(top), (x, y))
+
     def test_eval_config_turns_training_aids_off(self) -> None:
         pipeline = self._pipeline()
         pick = pipeline.eval_config("pick_up")["task"]["metadata"]

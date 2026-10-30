@@ -133,15 +133,23 @@ class WidowX200SceneLayout:
 # reach at GRASP height (0.38 m at the desk) rather than at the ceiling, and the
 # ceiling is lowered to 0.27 m instead -- at which height 0.350 m is still
 # reachable, so every lattice cell stays reachable through a lift and a carry.
-# `sector_lattice` below achieves 0.180 m of separation on this sector, above
+# `sector_lattice` below achieves 0.165 m of separation on this sector, above
 # the 0.16 m the collector needs.
+#
+# The inner radius is 0.175, not the 0.16 it was first set to, because the
+# pipeline does not spawn ON the cells: a common scene shift (+-1 cm per axis)
+# and a per-object jitter (+-0.5 cm) move an object up to 0.021 m radially. At
+# 0.16 that put 1.3% of evaluated scenes' targets inside the 0.15 m waist
+# keep-out, where the controller pushes the tool back out and it stops 4-7 mm
+# short of the object (tools/audit/widowx200_scene_coverage.py). 0.175 - 0.021
+# clears the keep-out with 4 mm to spare.
 #
 # The base sits 0.24 m behind the sector centroid, which keeps the objects
 # straddling the world origin and the desk unchanged.
 DEFAULT_LAYOUT = WidowX200SceneLayout(
     base_position=(0.0, 0.24, DESK_SURFACE_Z),
     base_yaw=-0.5 * math.pi,
-    spawn_radius=(0.16, 0.34),
+    spawn_radius=(0.175, 0.34),
     spawn_half_angle=math.radians(50.0),
     workspace_x=(-0.30, 0.30),
     workspace_y=(-0.12, 0.22),
@@ -170,7 +178,7 @@ def sector_lattice(
     rectangular lattice inscribed in a sector wastes most of it.
 
     A two-ring polar lattice fits the shape instead. With the shipped layout it
-    yields six cells with a minimum pairwise separation of 0.180 m -- above the
+    yields six cells with a minimum pairwise separation of 0.165 m -- above the
     0.16 m the collector needs (set by the widest realistic object pair) -- so
     a group can still take a random four-cell subset and never place two
     objects in contact.

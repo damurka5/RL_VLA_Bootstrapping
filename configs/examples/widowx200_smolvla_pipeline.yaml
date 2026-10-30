@@ -129,13 +129,15 @@ task:
     scene_object_curriculum_steps: [0]
 
     # --- the arm's workspace (robots/widowx200/widowx200_mujoco/workspace.py)
-    # sector_lattice(DEFAULT_LAYOUT): rings at 0.16 and 0.34 m around the base
-    # at (0, 0.24), 0.18 m apart. Shift/jitter are kept to 1-2 cm so the outer
-    # ring stays inside the 0.358 m reach the arm has at the 0.25 m carry
-    # height (0.02 m reach margin included).
+    # sector_lattice(DEFAULT_LAYOUT): rings at 0.175 and 0.34 m around the base
+    # at (0, 0.24), >= 0.165 m apart. Shift/jitter (up to 0.021 m radially) are
+    # kept small so the outer ring stays inside the 0.358 m reach the arm has at
+    # the 0.25 m carry height (0.02 m reach margin included) and the inner ring
+    # outside the 0.15 m waist keep-out; tests/test_widowx200_pipeline.py checks
+    # both, tools/audit/widowx200_scene_coverage.py measures them per scene.
     scene_object_cells:
-      - [-0.1226, 0.1372]
-      - [0.1226, 0.1372]
+      - [-0.1341, 0.1275]
+      - [0.1341, 0.1275]
       - [-0.2605, 0.0215]
       - [-0.0975, -0.0857]
       - [0.0975, -0.0857]
