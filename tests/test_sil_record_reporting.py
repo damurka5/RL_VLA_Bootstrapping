@@ -32,7 +32,9 @@ from tools.audit.sil_record import (
     record_file_index,
     strip_argv_flags,
     _build_dataset,
+    _frame_world_order,
     _row_quota_mask,
+    _scene_group_size,
     _determinism_report,
     _divergence,
     _episode_rows,
@@ -1170,3 +1172,52 @@ class DivergedWorldMaskPersistenceTest(unittest.TestCase):
             loaded = _Recording.from_npz(path)
         self.assertIsNone(loaded.diverged_world_mask)
 
+
+
+def _grouped(recording: _Recording, copies: int) -> _Recording:
+    """Every world repeated ``copies`` times in a row, as GRPO validation lays
+    out one scene per group; each source world gets its own target start."""
+
+    recording = copy.deepcopy(recording)
+    recording.initial_target_xyz = recording.initial_target_xyz.copy()
+    recording.initial_target_xyz[:, 0] = 0.05 * np.arange(recording.worlds)
+    per_step = ("actions", "active", "success", "terminated", "caught_target",
+                "ee_xyz", "gripper_opening", "object_xyz", "states", "priors")
+    for name in per_step:
+        value = getattr(recording, name)
+        if value is not None:
+            setattr(recording, name, np.repeat(value, copies, axis=1))
+    for name in ("instruction_ids", "target_slots", "reference_slots",
+                 "second_reference_slots", "horizons", "initial_target_xyz",
+                 "support_surface_z", "release_threshold", "target_rest_height",
+                 "physical_grasp_at_reset", "instructions"):
+        setattr(recording, name, np.repeat(getattr(recording, name), copies, axis=0))
+    return recording
+
+
+class SceneGroupingTests(unittest.TestCase):
+    def test_group_size_is_read_back_from_the_reset(self) -> None:
+        self.assertEqual(_scene_group_size(_grouped(_synthetic(), 4)), 4)
+        self.assertEqual(_scene_group_size(_grouped(_synthetic(), 1)), 1)
+
+    def test_frame_budget_covers_every_scene_before_a_second_copy(self) -> None:
+        # Successes are source worlds 0 (plate), 2 (bowl) and 4 (plate), four
+        # copies each. World order would spend a 3-world budget on scene 0.
+        recording = _grouped(_synthetic(), 4)
+        order = _frame_world_order(recording)
+        self.assertEqual(sorted(order.tolist()), [0, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19])
+        self.assertEqual(sorted((order[:3] // 4).tolist()), [0, 2, 4])
+        # Instructions alternate within a pass: bowl's only scene is not last.
+        self.assertEqual(
+            recording.instruction_ids[order[:2]].tolist(), [BOWL, PLATE]
+        )
+
+    def test_dataset_rows_carry_the_scene_their_copies_share(self) -> None:
+        dataset, stats = _build_dataset(
+            [_with_observations(_grouped(_synthetic(), 4))], ["rung"], ["src"]
+        )
+        self.assertEqual(stats["episodes_kept"], 12)
+        self.assertEqual(stats["scenes_kept"], 3)
+        self.assertEqual(stats["by_instruction"]["put_into_plate"]["scenes_kept"], 2)
+        copies = dataset["episode_uid"] == "src/r0w9"
+        self.assertEqual(set(dataset["scene_uid"][copies]), {"src/r0s2"})

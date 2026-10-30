@@ -140,6 +140,47 @@ class InterruptedArtifactsTests(unittest.TestCase):
             self.assertTrue(record["empty_harvest"])
             self.assertEqual(p.state["banks"]["move_to"]["checkpoint"], "previous.pt")
 
+    def test_bank_filmed_in_world_order_is_refilmed_once(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pipeline(tmp)
+            p.state["banks"]["move_to"] = {"stage": "s4", "checkpoint": "best.pt", "cap": .2,
+                                           "replays": ["old.npz"], "frames": ["old_f.npz"], "provenance": "policy"}
+            with patch.object(p, "write_config", return_value=Path(tmp) / "eval.yaml"), \
+                 patch.object(p, "harvest_replays", return_value=(["new.npz"], ["new_f.npz"])) as replay:
+                p.refilm_bank("move_to")
+                p.refilm_bank("move_to")
+            self.assertEqual(replay.call_count, 1)
+            args = replay.call_args.args
+            self.assertEqual((args[0], args[3], args[4]), (Path("best.pt"), p.dir / "banks/move_to/s4/record",
+                                                           p.dir / "banks/move_to/s4/replay_scenes"))
+            self.assertEqual(p.state["banks"]["move_to"]["replays"], ["new.npz"])
+            self.assertEqual(p.state["banks"]["move_to"]["frame_selection"], "scene_spread")
+
+    def test_failed_refilm_and_smoke_fixtures_keep_their_bank(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pipeline(tmp)
+            p.state["banks"]["move_to"] = {"stage": "s4", "checkpoint": "best.pt", "cap": .2,
+                                           "replays": ["old.npz"], "frames": ["old_f.npz"], "provenance": "policy"}
+            p.state["banks"]["pick_up"] = {"stage": "s2", "provenance": "oracle_smoke_fixture", "replays": ["o.npz"]}
+            with patch.object(p, "write_config", return_value=Path(tmp) / "eval.yaml"), \
+                 patch.object(p, "harvest_replays", return_value=([], [])) as replay:
+                p.refilm_bank("move_to")
+                p.refilm_bank("pick_up")
+            self.assertEqual(replay.call_count, 1)
+            self.assertEqual(p.state["banks"]["move_to"]["replays"], ["old.npz"])
+            self.assertNotIn("frame_selection", p.state["banks"]["move_to"])
+
+    def test_sil_sft_holds_out_scenes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pipeline(tmp)
+            p.dry_run = True
+            p.state["banks"]["move_to"] = {"stage": "s4", "replays": ["r.npz"], "frames": ["f.npz"],
+                                           "provenance": "policy", "frame_selection": "scene_spread"}
+            with patch("tools.train.run_widowx200_pipeline.run_command") as run:
+                p.sil_cycle("s5_sil1", Path("policy.pt"), {}, ["move_to_object"])
+            sft = next(call.args[0] for call in run.call_args_list if str(call.args[0][1]).endswith("sil_sft.py"))
+            self.assertEqual(sft[sft.index("--split-by") + 1], "scene")
+
     def test_smoke_uses_a_labelled_oracle_fixture_when_learning_has_no_successes(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = pipeline(tmp, "--smoke")

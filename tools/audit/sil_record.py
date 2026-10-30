@@ -1092,6 +1092,69 @@ def _object_mix(
     return mix
 
 
+def _scene_group_size(
+    recording: _Recording, *, candidates: Sequence[int] = (8, 4, 2),
+    tolerance_m: float = 1e-3,
+) -> int:
+    """How many consecutive worlds replay ONE scene, inferred from the reset.
+
+    Validation rounds are GRPO-shaped: the resetter draws one scene per group
+    and broadcasts it to ``group_size`` candidates, so a 512-world round holds
+    64 scenes, eight copies each. The recordings never stored the group size,
+    so it is read back from the episodes: the largest block width over which
+    every block shares its instruction and its target's start position. A real
+    scene boundary changes the target position, so blocks never merge two
+    scenes; worlds that share nothing come back as 1.
+    """
+
+    worlds = recording.worlds
+    instruction_ids = np.asarray(recording.instruction_ids)
+    target_xyz = np.asarray(recording.initial_target_xyz, dtype=np.float64)
+    for size in candidates:
+        if size <= 1 or worlds % size:
+            continue
+        ids = instruction_ids.reshape(-1, size)
+        xyz = target_xyz.reshape(-1, size, 3)
+        if (ids == ids[:, :1]).all() and (
+            np.abs(xyz - xyz[:, :1]).max() <= float(tolerance_m)
+        ):
+            return int(size)
+    return 1
+
+
+def _scene_index(recording: _Recording) -> np.ndarray:
+    """Per-world scene number within the round, [W]."""
+
+    return np.arange(recording.worlds, dtype=np.int64) // _scene_group_size(
+        recording
+    )
+
+
+def _frame_world_order(recording: _Recording) -> np.ndarray:
+    """Successful worlds in the order the frame budget should spend on them.
+
+    Every successful scene's first copy before any scene's second, and the
+    instructions interleaved within each pass. Taking successes in world-index
+    order instead filled a 96-world budget with the first ~12 groups -- eight
+    near-identical copies of each -- and, on a two-instruction family, with
+    whichever instruction the first groups happened to draw.
+    """
+
+    candidates = np.flatnonzero(recording.episode_success)
+    if not candidates.size:
+        return candidates
+    scenes = _scene_index(recording)[candidates]
+    instructions = np.asarray(recording.instruction_ids)[candidates]
+    # Candidates ascend, so a scene's successes are contiguous and the first
+    # index of its value is where its run starts.
+    copy_rank = np.arange(candidates.size) - np.searchsorted(scenes, scenes)
+    scene_rank = np.zeros(candidates.size, dtype=np.int64)
+    for instruction in np.unique(instructions):
+        mask = instructions == instruction
+        scene_rank[mask] = np.searchsorted(np.unique(scenes[mask]), scenes[mask])
+    return candidates[np.lexsort((instructions, scene_rank, copy_rank))]
+
+
 def _episode_rows(recording: _Recording) -> list[dict[str, Any]]:
     """One row per world. The unit the dataset is selected on."""
 
@@ -2035,6 +2098,7 @@ def _build_dataset(
     instruction_ids: list[int] = []
     instruction_texts: list[str] = []
     episode_uids: list[str] = []
+    scene_uids: list[str] = []
     decision_indices: list[int] = []
     groups: list[str] = []
     starts_grasped: list[bool] = []
@@ -2051,6 +2115,7 @@ def _build_dataset(
         per_decision = int(rec.actions_per_decision)
         success = rec.episode_success
         first = rec.first_success_step
+        scene_of = _scene_index(rec)
         for world in range(rec.worlds):
             if not success[world]:
                 continue
@@ -2061,6 +2126,9 @@ def _build_dataset(
             # and a colliding uid silently merges two real episodes into one,
             # which puts half of each on both sides of the episode split.
             uid = f"{key}/r{int(rec.round_index)}w{world}"
+            # The GRPO copies of one start share this, and differ by prior
+            # noise alone; a split that ignores it validates on training scenes.
+            scene_uid = f"{key}/r{int(rec.round_index)}s{int(scene_of[world])}"
             if frame_meta is not None:
                 frame_rows_before += last_decision + 1
                 frame_episodes_before += 1
@@ -2083,6 +2151,7 @@ def _build_dataset(
                 instruction_ids.append(int(rec.instruction_ids[world]))
                 instruction_texts.append(str(rec.instructions[world]))
                 episode_uids.append(uid)
+                scene_uids.append(scene_uid)
                 decision_indices.append(decision)
                 groups.append(group)
                 starts_grasped.append(bool(rec.starts_grasped[world]))
@@ -2100,6 +2169,7 @@ def _build_dataset(
         "instruction_id": np.asarray(instruction_ids, dtype=np.int64),
         "instruction_text": np.asarray(instruction_texts, dtype="U256"),
         "episode_uid": np.asarray(episode_uids, dtype="U128"),
+        "scene_uid": np.asarray(scene_uids, dtype="U128"),
         "decision_index": np.asarray(decision_indices, dtype=np.int64),
         # Carried per row so a consumer can filter or reweight by rung without
         # re-reading the recordings. The near rungs are cheap and easy; the far
@@ -2253,6 +2323,11 @@ def _build_dataset(
         entry["episodes_kept"] = int(
             len(np.unique(dataset["episode_uid"][rows_for_name]))
         )
+        # Distinct starts. Eight GRPO copies of a scene count as eight
+        # episodes above and as one here, and this is the diversity that binds.
+        entry["scenes_kept"] = int(
+            len(np.unique(dataset["scene_uid"][rows_for_name]))
+        )
         entry["pool_strata"] = pool_strata.get(name)
         entry["decisions_per_episode"] = (
             round(entry["decisions"] / entry["episodes_kept"], 2)
@@ -2301,6 +2376,7 @@ def _build_dataset(
         "recordings": len(usable),
         "recordings_without_observations": len(recordings) - len(usable),
         "episodes_kept": episodes_kept,
+        "scenes_kept": int(np.unique(dataset["scene_uid"]).size),
         "quota": quota,
         "decisions": int(dataset["state"].shape[0]),
         "state_dim": int(dataset["state"].shape[-1]),
@@ -3505,14 +3581,23 @@ def main(argv: Sequence[str] | None = None) -> int:
         # The worlds whose FRAMES are kept for the dataset: the source's
         # successes, capped. A world that failed before smoothing cannot
         # survive it, so anything outside this set is guaranteed waste; the
-        # survivors are a subset and are filtered again at dataset build.
+        # survivors are a subset and are filtered again at dataset build. The
+        # cap is spent across scenes and instructions, not in world order.
         frame_worlds: list[int] = []
         if bool(args.record_frames):
-            candidates = np.flatnonzero(source.episode_success)
+            candidates = _frame_world_order(source)
             limit = int(args.frame_worlds)
-            frame_worlds = [
+            frame_worlds = sorted(
                 int(w) for w in (candidates[:limit] if limit > 0 else candidates)
-            ]
+            )
+            summary["frame_selection"] = {
+                "policy": "scene_spread",
+                "scene_group_size": _scene_group_size(source),
+                "successful_worlds": int(candidates.size),
+                "successful_scenes": int(np.unique(_scene_index(source)[candidates]).size),
+                "filmed_worlds": len(frame_worlds),
+                "filmed_scenes": int(np.unique(_scene_index(source)[frame_worlds]).size),
+            }
             if not frame_worlds:
                 raise SystemExit(
                     "--record-frames was asked for but the source recording "

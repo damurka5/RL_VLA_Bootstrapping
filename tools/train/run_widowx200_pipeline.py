@@ -19,6 +19,10 @@ stage this driver
    one has degraded, runs self-imitation cycles: the pooled bank, re-primed
    under the current policy, is fitted by residual SFT, and the candidate is
    kept only if it repairs the degraded instructions without new damage.
+Before joint RL, an enabled composition_sft transition pools successful skill
+samples under final plate/bowl prompts, keeps original-label retention, refreshes
+network inputs, and fits the residual/action-expert LoRA. Joint RL starts fresh
+from that adapter. Independent skill samples are not claimed as continuous chains.
 
 All state lives in ``<pipeline-dir>/pipeline_state.json``. Re-running the same
 command on the same ``--pipeline-dir`` resumes: finished stages are skipped and
@@ -42,6 +46,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import hashlib
 import datetime as _dt
 import json
 import math
@@ -62,6 +67,9 @@ from tools.audit.sil_artifacts import completed_replay, valid_npz
 PIPELINE_KEY = "widowx200_pipeline"
 GENERATED_CONFIG_DIR = ROOT / "configs" / "widowx200_pipeline"
 EMBODIMENT = "widowx200"
+# How a bank's frame budget was spent. Banks without this mark filmed the first
+# successful worlds in index order -- eight GRPO copies of a dozen scenes.
+FRAME_SELECTION = "scene_spread"
 
 
 # --------------------------------------------------------------------------
@@ -197,6 +205,7 @@ class Pipeline:
             name.strip() for name in str(args.devices).split(",") if name.strip()
         ]
         self.sil = dict(self.spec.get("sil") or {})
+        self.composition = dict(self.spec.get("composition_sft") or {})
         if self.smoke:
             self.sil.update(
                 harvest_rounds=1,
@@ -553,7 +562,13 @@ class Pipeline:
             if only and name not in only:
                 continue
             record = self.state["stages"].setdefault(name, {"status": "pending"})
+            if name == getattr(self.args, "stop_before_stage", None):
+                self.save_state()
+                log(f"Stopped before {name} as requested; resume without --stop-before-stage to continue")
+                return
             if record.get("status") == "done":
+                if stage["skill"] == "joint" and getattr(self.args, "restart_joint_from_sft", False) and not record.get("composition_sft_id"):
+                    raise ChildFailed("The old joint stage is already done; preserve it as a completed experiment rather than restarting it in place")
                 log(f"{name}: done already, skipping")
                 continue
             self.run_stage(index, stage, record)
@@ -575,6 +590,12 @@ class Pipeline:
                     "stage has produced one. Run the earlier stages first."
                 )
             init = Path(current)
+        if skill_name == "joint" and self.composition.get("enabled", False):
+            previous = self.state["stages"].get(str(self.spec["stages"][index - 1]["name"]), {}) if index else {}
+            if not self.dry_run and previous.get("status") != "done":
+                raise ChildFailed("Composition SFT requires the preceding skill stage, including harvest and retention, to finish")
+            init = self.prepare_composition(stage, record, Path(previous.get("policy") or init or "<previous policy>"))
+            record["init"] = str(init)
         record.setdefault("init", None if init is None else str(init))
 
         if record.get("status") in (None, "pending", "training"):
@@ -623,6 +644,185 @@ class Pipeline:
 
     # -- harvest and references ------------------------------------------------
 
+    def composition_banks(self) -> dict[str, Any]:
+        """Retained banks name best stage checkpoints; repair missing replay/frame pairs."""
+
+        def usable(bank: Mapping[str, Any]) -> bool:
+            replays, frames = bank.get("replays", []), bank.get("frames", [])
+            return bool(replays) and len(replays) == len(frames) and all(
+                (completed_replay(Path(replay), Path(frame)) or {}).get("frame_successes", 0) > 0
+                for replay, frame in zip(replays, frames)
+            ) and (self.smoke or bank.get("provenance") != "oracle_smoke_fixture")
+
+        banks = self.state["banks"]
+        for skill in ("move_to", "pick_up", "put_into"):
+            self.refilm_bank(skill)
+            if usable(banks.get(skill, {})):
+                continue
+            candidates = [s for s in self.spec["stages"] if s["skill"] == skill
+                          and self.state["stages"].get(str(s["name"]), {}).get("status") == "done"]
+            candidates.sort(key=lambda s: (s["name"] == banks.get(skill, {}).get("stage"),
+                            float(self.state["stages"][s["name"]].get("best_value") or 0)), reverse=True)
+            for source in candidates:
+                entry = self.state["stages"][source["name"]]
+                checkpoint = entry.get("best_checkpoint")
+                if not checkpoint or not Path(checkpoint).is_file():
+                    continue
+                # A broken previous bank must not win the harvest's rate gate.
+                broken = banks.pop(skill, None)
+                try:
+                    self.harvest(source, skill, Path(checkpoint), entry)
+                except BaseException:
+                    if broken is not None:
+                        banks[skill] = broken
+                    raise
+                if usable(banks.get(skill, {})):
+                    self.event("composition_bank_recovered", skill=skill, stage=source["name"])
+                    break
+                if broken is not None:
+                    banks[skill] = broken
+            if not usable(banks.get(skill, {})):
+                raise ChildFailed(f"No complete filmed success bank for {skill}; inspect/rebuild that skill before composition SFT")
+        return {skill: banks[skill] for skill in ("move_to", "pick_up", "put_into")}
+
+    def restart_joint_for_composition(self, stage: Mapping[str, Any], record: dict[str, Any], fingerprint: str) -> None:
+        """Preserve an old joint attempt and durably reset only that stage.
+
+        The intent is saved before the atomic directory rename, so interruption
+        between rename and state update can be reconciled on the next launch.
+        """
+
+        name = str(stage["name"])
+        pending = next((item for item in self.state.get("joint_restarts", [])
+                        if item["stage"] == name and item["status"] == "pending"), None)
+        if pending is None and record.get("composition_sft_id") == fingerprint:
+            return
+        run = ROOT / "runs" / f"{self.name}__{name}"
+        if pending is None and not run.exists() and record.get("status") in (None, "pending"):
+            return
+        if pending is None:
+            if not getattr(self.args, "restart_joint_from_sft", False):
+                raise ChildFailed(f"{name} already started without this composition SFT. Stop its workers and resume with --restart-joint-from-sft to preserve the old attempt and initialize fresh RL from SFT")
+            if record.get("status") == "done":
+                raise ChildFailed("Cannot replace a completed joint experiment in place")
+            stamp = _dt.datetime.now().strftime("%Y%m%d_%H%M%S_%f")
+            pending = {"stage": name, "status": "pending", "run": str(run),
+                       "archive": str(run) + f"__before_composition_sft_{stamp}",
+                       "previous_composition_sft": copy.deepcopy(self.state.get("composition_sft")),
+                       "previous_stage_record": copy.deepcopy(record)}
+            self.state.setdefault("joint_restarts", []).append(pending)
+            self.save_state()
+        source, archive = Path(pending["run"]), Path(pending["archive"])
+        if source.exists():
+            if archive.exists():
+                raise ChildFailed(f"Both joint restart source and archive exist; inspect {source} and {archive}")
+            if not self.dry_run:
+                source.rename(archive)
+        record.clear()
+        record.update(status="pending")
+        pending["status"] = "archived"
+        self.save_state()
+        log(f"{'Would preserve' if self.dry_run else 'Preserved'} pre-SFT joint attempt at {archive}; stages 1–6 remain complete")
+
+    def prepare_composition(self, stage: Mapping[str, Any], record: dict[str, Any], initializer: Path) -> Path:
+        settings = dict(self.composition)
+        if self.smoke:
+            settings.update(epochs=1, lora_epochs=1, rows_per_cell=64, lora_rows=256)
+        saved = self.state.get("composition_sft", {})
+        if (saved.get("status") == "done" and saved.get("id") == record.get("composition_sft_id")
+                and saved.get("settings") == settings and saved.get("initializer") == str(initializer)):
+            policy = Path(saved["policy"])
+            if not policy.is_file() and not self.dry_run:
+                raise ChildFailed(f"Completed composition SFT checkpoint is missing: {policy}")
+            return policy
+        if self.dry_run:
+            banks = self.state["banks"] or {skill: {"replays": [f"<best {skill} replay>"], "frames": [f"<best {skill} frames>"]}
+                                             for skill in ("move_to", "pick_up", "put_into")}
+        else:
+            banks = self.composition_banks()
+        identity = {"schema": "widowx200_composition_sft/v2_scene_split", "initializer": str(initializer),
+                    "settings": settings, "banks": banks}
+        fingerprint = hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:16]
+        self.restart_joint_for_composition(stage, record, fingerprint)
+        saved = self.state.get("composition_sft", {})
+        if saved.get("id") == fingerprint and saved.get("status") == "done":
+            policy = Path(saved["policy"])
+            if not policy.is_file() and not self.dry_run:
+                raise ChildFailed(f"Completed composition SFT checkpoint is missing: {policy}")
+            record["composition_sft_id"] = fingerprint
+            return policy
+        base = self.dir / "composition_sft" / fingerprint
+        replays = [path for bank in banks.values() for path in bank["replays"]]
+        frames = [path for bank in banks.values() for path in bank["frames"]]
+        prep = {"id": fingerprint, "status": "preparing", "initializer": str(initializer),
+                "sources": copy.deepcopy(banks), "settings": settings, "directory": str(base), "git_commit": git_commit()}
+        self.state["composition_sft"] = prep
+        self.save_state()
+        log(f"Composition SFT {fingerprint}: final-prompt skill samples plus original-label retention, before {stage['name']}")
+        env = self.child_env()
+        device = self.devices[0] if self.devices else "cuda:0"
+
+        def execute(label: str, command: list[str]) -> None:
+            prep["phase"] = label
+            self.save_state()
+            run_command(command, log_path=self.dir / "logs" / f"composition_{fingerprint}_{label}.log",
+                        env=env, dry_run=self.dry_run)
+
+        raw = base / "original" / "demonstrations.npz"
+        if self.dry_run or not (valid_npz(raw, ("state", "prior", "action", "episode_uid", "scene_uid")) and (raw.parent / "dataset.json").is_file()):
+            execute("pool", [self.python, str(ROOT / "tools/audit/sil_record.py"), "--mode", "dataset",
+                             "--inputs", *replays, "--require-frames", *frames, "--output", str(raw.parent)])
+        modified = base / "modified" / "demonstrations.npz"
+        if self.dry_run or not (valid_npz(modified, ("state", "action", "teacher_instruction_text", "sft_validation")) and (modified.parent / "dataset.json").is_file()):
+            execute("relabel", [self.python, str(ROOT / "tools/audit/build_widowx200_composition_sft.py"),
+                    "--dataset", str(raw), "--output", str(modified.parent),
+                    "--require-scene-ids",
+                    "--rows-per-cell", str(int(settings.get("rows_per_cell", 2000))),
+                    "--retention-fraction", str(float(settings.get("retention_fraction", .2))),
+                    "--seed", str(int(settings.get("seed", 0)))])
+        refreshed = base / "refreshed" / "demonstrations.npz"
+        try:
+            refresh_report = json.loads((refreshed.parent / "refresh.json").read_text())
+            refreshed_metadata = json.loads((refreshed.parent / "dataset.json").read_text())
+            refresh_complete = refresh_report.get("checkpoint") == str(initializer) and refreshed_metadata.get("priors_stale") is False
+        except (OSError, ValueError):
+            refresh_complete = False
+        if self.dry_run or not (refresh_complete and valid_npz(refreshed, ("state", "prior", "action", "sft_validation"))):
+            execute("refresh", [self.python, str(ROOT / "tools/audit/sil_refresh_priors.py"),
+                    "--dataset", str(modified), "--frames", *frames, "--checkpoint", str(initializer),
+                    "--final-prompt-prefix", "", "--min-resolved-fraction", "1.0",
+                    "--device", device, "--output", str(refreshed.parent)])
+        adapter = base / "sft" / "sil_sft_adapter.pt"
+        report = base / "sft" / "sft_report.json"
+        if self.dry_run or not report.is_file():
+            execute("sft", [self.python, str(ROOT / "tools/audit/sil_sft.py"),
+                    "--dataset", str(refreshed), "--frames", *frames, "--checkpoint", str(initializer),
+                    "--epochs", str(int(settings.get("epochs", 20))),
+                    "--lora-epochs", str(int(settings.get("lora_epochs", 4))),
+                    "--lora-rows", str(int(settings.get("lora_rows", 8192))),
+                    "--lora-microbatch", str(int(settings.get("lora_microbatch", 4))),
+                    "--split-by", "provided", "--sampler", "balanced",
+                    "--seed", str(int(settings.get("seed", 0))), "--device", device, "--output", str(adapter.parent)])
+        if not self.dry_run and not adapter.is_file():
+            raise ChildFailed(f"Composition SFT wrote no improved adapter; joint RL has not started. Inspect {report}")
+        if not self.dry_run:
+            prep["dataset_report"] = json.loads((modified.parent / "dataset.json").read_text())
+            prep["sft_report"] = str(report)
+            prep["phase"] = "evaluation"
+            self.save_state()
+            for label, checkpoint in (("before", initializer), ("after", adapter)):
+                prep[f"{label}_skill_rates"] = self.evaluate_all(checkpoint, f"composition_{fingerprint}_{label}")
+                config = self.write_config(f"composition_{label}_composed", self.eval_config("put_into", composed=True))
+                prep[f"{label}_composed_rates"] = self.record(checkpoint=checkpoint, config=config,
+                    cap=float(self.skill("put_into").get("eval_cap", .18)), rounds=int(self.sil.get("eval_rounds", 2)),
+                    output=base / "eval" / label / "put_into_composed", log_name=f"composition_{fingerprint}_{label}_composed")
+        prep.update(status="done", phase="complete", policy=str(adapter))
+        record["composition_sft_id"] = fingerprint
+        self.state["current_policy"] = str(adapter)
+        self.save_state()
+        log(f"Composition SFT complete: {adapter}; starting fresh staged-reward joint RL")
+        return adapter
+
     def harvest(self, stage: Mapping[str, Any], skill_name: str, policy: Path, record: dict[str, Any]) -> None:
         """Record + smoothed replay with frames; sets the skill's references."""
 
@@ -643,7 +843,7 @@ class Pipeline:
         log(f"{name}: harvest rates {format_rates(rates)}")
 
         replays, frames = self.harvest_replays(
-            policy, eval_config, cap, base / "record", base / "replay", name,
+            policy, eval_config, cap, base / "record", base / "replay_scenes", name,
         )
         provenance = "policy"
         if self.smoke and not replays:
@@ -676,6 +876,7 @@ class Pipeline:
                 "stage": name, "checkpoint": str(policy), "cap": cap,
                 "replays": replays, "frames": frames, "mean_rate": mean_rate,
                 "rates": rates, "provenance": provenance,
+                "frame_selection": FRAME_SELECTION,
             }
             log(f"{name}: bank for {skill_name} now from this stage ({provenance}, mean rate {mean_rate:.3f})")
         elif not replays:
@@ -736,6 +937,34 @@ class Pipeline:
                 replays.append(str(replay_path))
                 frames.append(str(frames_path))
         return replays, frames
+
+    def refilm_bank(self, skill_name: str) -> None:
+        """Re-film a bank whose frame budget went to the first worlds by index.
+
+        Replays the bank's own recorded actions into ``replay_scenes``; the
+        source rounds, checkpoint and cap are unchanged, only which successful
+        worlds keep pictures. A bank that cannot be re-filmed is kept as it is.
+        """
+
+        bank = self.state["banks"].get(skill_name)
+        if not bank or bank.get("frame_selection") == FRAME_SELECTION or bank.get("provenance") != "policy":
+            return
+        stage = str(bank["stage"])
+        base = self.dir / "banks" / skill_name / stage
+        eval_config = self.write_config(f"eval_{skill_name}", self.eval_config(skill_name))
+        replays, frames = self.harvest_replays(
+            Path(bank["checkpoint"]), eval_config, float(bank["cap"]),
+            base / "record", base / "replay_scenes", f"{stage}_refilm",
+        )
+        if self.dry_run:
+            return
+        if not replays:
+            log(f"{stage}: WARNING re-filming the {skill_name} bank produced no frames; keeping the old one")
+            return
+        bank.update(replays=replays, frames=frames, frame_selection=FRAME_SELECTION)
+        self.event("bank_refilmed", skill=skill_name, stage=stage, replays=len(replays))
+        log(f"{stage}: {skill_name} bank re-filmed across scenes ({len(replays)} replays)")
+        self.save_state()
 
     def raise_references(self, rates: Mapping[str, Mapping[str, float]], policy: Path, source: str) -> None:
         """A reference is the best rate any accepted policy has shown."""
@@ -839,6 +1068,8 @@ class Pipeline:
         degraded: Sequence[str],
     ) -> dict[str, Any]:
         base = self.dir / "sil" / label
+        for skill_name in list(self.state["banks"]):
+            self.refilm_bank(skill_name)
         banks = list(self.state["banks"].values())
         if not self.smoke and any(bank.get("provenance") == "oracle_smoke_fixture" for bank in banks):
             raise ChildFailed("Production SIL cannot consume scripted smoke fixtures")
@@ -850,7 +1081,8 @@ class Pipeline:
         logs = self.dir / "logs"
 
         dataset = base / "dataset" / "demonstrations.npz"
-        if not valid_npz(dataset, ("state", "prior", "action", "episode_uid")):
+        columns = ("state", "prior", "action", "episode_uid", "scene_uid")
+        if not valid_npz(dataset, columns):
             run_command(
                 [
                     self.python, str(ROOT / "tools" / "audit" / "sil_record.py"),
@@ -863,7 +1095,7 @@ class Pipeline:
                 log_path=logs / f"{label}_dataset.log", env=env, dry_run=self.dry_run,
             )
         refreshed = base / "refreshed" / "demonstrations.npz"
-        if not valid_npz(refreshed, ("state", "prior", "action", "episode_uid")):
+        if not valid_npz(refreshed, columns):
             run_command(
                 [
                     self.python, str(ROOT / "tools" / "audit" / "sil_refresh_priors.py"),
@@ -887,6 +1119,9 @@ class Pipeline:
                     "--dataset", str(refreshed),
                     "--checkpoint", str(policy),
                     "--epochs", str(int(self.sil.get("sft_epochs", 20))),
+                    # Hold out scenes: GRPO copies of one start on both sides
+                    # made validation, and so epoch selection, memorization.
+                    "--split-by", "scene",
                     "--device", device,
                     "--output", str(adapter.parent),
                 ],
@@ -1092,6 +1327,9 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--memory-check", action="store_true", help="Two production-size updates at the maximum horizon and refill budget, with per-rank memory reports.")
     parser.add_argument("--dry-run", action="store_true", help="Write the stage configs and print the commands only.")
     parser.add_argument("--only-stage", action="append", default=[], help="Run only these stages (repeatable).")
+    parser.add_argument("--stop-before-stage", help="Finish preceding stages, then exit cleanly before this stage.")
+    parser.add_argument("--restart-joint-from-sft", action="store_true",
+                        help="Preserve an interrupted pre-SFT joint run and restart only joint RL after composition SFT.")
     return parser.parse_args(argv)
 
 

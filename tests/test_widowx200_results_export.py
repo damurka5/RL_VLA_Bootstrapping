@@ -152,6 +152,24 @@ class ResultsExportTests(unittest.TestCase):
         with self.assertRaises(FileExistsError):
             export(self.pipeline, self.output)
 
+    def test_composition_scores_and_archived_old_joint_remain_separate_evidence(self):
+        self.fixture()
+        old = self.root / "old_joint/rl"
+        old.mkdir(parents=True)
+        (old / "metrics.jsonl").write_text('{"global_step": 100}\n')
+        self.state["joint_restarts"] = [{"archive": str(old.parent)}]
+        self.state["composition_sft"] = {"id": "new_sft", "status": "done",
+            "initializer": "stage6.pt", "policy": "sft.pt",
+            "after_composed_rates": {"put_into_bowl": {"successes": 32, "episodes": 512, "rate": .0625}}}
+        self.write(self.pipeline / "pipeline_state.json", self.state)
+        archive = export(self.pipeline, self.output)
+        report = (self.output / "report.md").read_text()
+        self.assertIn("identifier: new_sft", report)
+        self.assertIn("after | composed | put_into_bowl | 32/512", report)
+        self.assertEqual(len(self.table("training")), 1)
+        with zipfile.ZipFile(archive) as bundle:
+            self.assertIn("snapshot/raw/archived_joint/0/metrics.jsonl", bundle.namelist())
+
 
 if __name__ == "__main__":
     unittest.main()

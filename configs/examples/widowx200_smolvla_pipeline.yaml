@@ -595,12 +595,27 @@ widowx200_pipeline:
       phase: binary
       budget_steps: 6000000
       early_stop: {metric: min_by_instruction, target: 0.80, patience: 2, plateau: 8, min_delta: 0.02, min_steps: 1000000}
+    # A final-prompt SFT transition (configured below) precedes joint RL.
     - name: s7_joint_staged
       skill: joint
       phase: staged
       budget_steps: 30000000
       sil: false
       early_stop: {metric: min_by_instruction_composed, target: 0.60, patience: 2, plateau: 16, min_delta: 0.02, min_steps: 5000000}
+
+  # Cold start for composition: pool real successful skill samples, relabel
+  # reach/pick prefixes to plate/bowl prompts, refresh priors/features, fit the
+  # residual and action-expert LoRA, then initialize fresh joint staged RL.
+  # An original-instruction slice remains in BOTH SFT training passes.
+  composition_sft:
+    enabled: true
+    rows_per_cell: 2000
+    retention_fraction: 0.20
+    epochs: 20
+    lora_epochs: 4
+    lora_rows: 8192
+    lora_microbatch: 4
+    seed: 0
 
   # Self-imitation retention. After every stage the new policy is evaluated on
   # every instruction learned so far; an instruction "degrades" when it falls

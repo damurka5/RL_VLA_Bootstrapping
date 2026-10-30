@@ -10,6 +10,7 @@
 #        s1 move_to dense -> s2 pick_up dense -> s3 put_into dense
 #        s4 move_to binary -> s5 pick_up binary -> s6 put_into binary
 #           (binary = shaping off, fresh GRPO state, log_std re-initialized)
+#        final-prompt composition SFT on retained skill samples, then
 #        s7 all four instructions jointly, staged milestone reward
 #      each stage stopping itself on its validation, each handing its best
 #      checkpoint to the next weights-only, with SIL retention cycles whenever
@@ -24,6 +25,9 @@
 # Knobs: MODE=full|smoke|preflight (default full), SMOKE_FIRST=0 to skip the
 # smoke pass, DRY_RUN=1 to write stage configs and print commands only,
 # MEMORY_CHECK_FIRST=0 to skip the production-size memory stress check,
+# STOP_BEFORE_STAGE=s7_joint_staged to finish the skills and exit cleanly,
+# RESTART_JOINT_FROM_SFT=1 to preserve an interrupted old joint attempt and
+# restart only joint RL after the new final-prompt composition SFT,
 # RLVLA_HF_OFFLINE=1 to use the local Hugging Face cache only.
 set -euo pipefail
 
@@ -122,5 +126,12 @@ fi
 [[ "$MODE" == "smoke" ]] && exit 0
 
 # 4. The pipeline.
-"${driver[@]}" --pipeline-dir "$PIPELINE_DIR"
-printf '[widowx200] pipeline complete: %s/final_report.md\n' "$PIPELINE_DIR"
+production_args=()
+[[ -n "${STOP_BEFORE_STAGE:-}" ]] && production_args+=(--stop-before-stage "$STOP_BEFORE_STAGE")
+[[ "${RESTART_JOINT_FROM_SFT:-0}" == "1" ]] && production_args+=(--restart-joint-from-sft)
+"${driver[@]}" --pipeline-dir "$PIPELINE_DIR" "${production_args[@]}"
+if [[ -n "${STOP_BEFORE_STAGE:-}" ]]; then
+  printf '[widowx200] stopped before %s; state: %s/pipeline_state.json\n' "$STOP_BEFORE_STAGE" "$PIPELINE_DIR"
+else
+  printf '[widowx200] pipeline complete: %s/final_report.md\n' "$PIPELINE_DIR"
+fi

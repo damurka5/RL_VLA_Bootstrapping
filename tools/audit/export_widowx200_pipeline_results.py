@@ -161,7 +161,7 @@ class Snapshot:
         tables: dict[str, list[dict[str, Any]]] = {"record_rounds": [], "replay_survival": []}
         # No NPZs/checkpoints/images are read. Keep episode CSVs for scene/object analysis.
         reports: dict[Path, dict[str, Any]] = {}
-        for folder in ("banks", "eval", "sil"):
+        for folder in ("banks", "eval", "sil", "composition_sft"):
             for path in sorted((self.pipeline / folder).rglob("*")):
                 if not path.is_file() or path.suffix not in (".json", ".jsonl", ".csv"):
                     continue
@@ -251,8 +251,20 @@ def markdown(state: dict[str, Any], tables: dict[str, list[dict[str, Any]]]) -> 
               "- `replay_survival.csv` reports survivors among source successes. `banks.csv` inventories the banks retained by the controller. Marker sums cover all instructions in a bank and are not instruction-specific demo counts.",
               "- `raw/` preserves source JSON/JSONL/CSV and configs. `manifest.json` records their paths, SHA-256 digests, capture time and warnings. No checkpoints, images or trajectory arrays are included.",
               "- Successive validations reuse evaluation seeds. Do not pool them as independent tests or treat stages as independent training seeds. Perform a separate fixed-checkpoint evaluation for final reported performance.",
-              "- Current automated pipeline: original-label skill retention SFT, then joint staged RL. No automatic relabelled full-task SFT before stage 7.",
+              "- Composition SFT is reported separately below when recorded; its relabelled skill samples are stage supervision, not certified continuous full-task trajectories.",
               "", f"Controller final report recorded: {state.get('final_report') or 'not yet'}", ""]
+    prep = state.get("composition_sft", {})
+    lines += ["## Pre-joint composition SFT", "",
+              f"Recorded status: {prep.get('status', 'not recorded')}; identifier: {prep.get('id', '-')}",
+              f"Initializer: {prep.get('initializer', '-')}", f"SFT policy: {prep.get('policy', '-')}", "",
+              "| Evaluation | Protocol | Instruction | Successes/episodes | Rate |",
+              "|---|---|---|---:|---:|"]
+    for label in ("before", "after"):
+        for protocol in ("skill", "composed"):
+            for instruction, stats in prep.get(f"{label}_{protocol}_rates", {}).items():
+                lines.append(f"| {label} | {protocol} | {instruction} | "
+                             f"{stats.get('successes', '-')}/{stats.get('episodes', '-')} | {percent(stats.get('rate'))} |")
+    lines.append("")
     return "\n".join(lines)
 
 
@@ -268,6 +280,11 @@ def export(pipeline: Path, output: Path) -> Path:
     tables = snapshot.stage_tables(state)
     tables.update(snapshot.report_tables())
     tables["banks"] = snapshot.bank_table(state)
+    for index, item in enumerate(state.get("joint_restarts", [])):
+        rl = Path(item["archive"]) / "rl"
+        for filename in ("config.json", "validation.jsonl", "metrics.jsonl", "early_stop.json"):
+            if (rl / filename).is_file():
+                snapshot.capture(rl / filename, Path("archived_joint") / str(index) / filename)
     for name in ("final_report.json", "final_report.md"):
         if (pipeline / name).is_file():
             snapshot.capture(pipeline / name, Path("pipeline") / name)

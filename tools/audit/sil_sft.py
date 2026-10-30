@@ -308,13 +308,33 @@ def _scene_split(
     return ~is_val, is_val
 
 
+def provided_split(dataset: Mapping[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
+    """Use a builder's stratified holdout, rejecting source-episode leakage."""
+
+    if "sft_validation" not in dataset:
+        raise ValueError("--split-by provided requires the sft_validation column")
+    mask = np.asarray(dataset["sft_validation"])
+    if mask.dtype != np.bool_ or mask.shape != (len(dataset["state"]),):
+        raise ValueError("sft_validation must be a one-dimensional boolean row mask")
+    if not mask.any() or mask.all():
+        raise ValueError("The provided split must contain training and validation rows")
+    for column in ("episode_uid", "source_episode_uid", "scene_uid"):
+        if column in dataset and set(dataset[column][mask]) & set(dataset[column][~mask]):
+            raise ValueError(f"Provided split leaks {column} across training and validation")
+    return ~mask, mask
+
+
 class BalancedRowSampler:
-    """Equal exposure by destination, then stage, then object -- not by length.
+    """Balance destination/stage/object, with optional declared cell exposure.
 
     The user's intuition, made precise: draw the destination uniformly, then the
     semantic stage uniformly, then the object with bounded imbalance, then a
     valid decision inside that cell. With replacement, so a stratum with fewer
     rows is revisited instead of padded.
+
+    A mixed final-prompt/retention bank can supply sampling_destination and
+    sampling_cell_weight. These choose its declared exposure in both SFT
+    passes while preserving the actual destination in a separate column.
 
     What this deliberately does NOT do is change the recorded data. The design's
     rule is that a chain with 12 move, 9 pickup and 25 placement decisions keeps
@@ -338,6 +358,9 @@ class BalancedRowSampler:
         destination_column: str = "destination",
         object_column: str = "target_catalog",
     ) -> None:
+        if destination_column == "destination" and "sampling_destination" in dataset:
+            destination_column = "sampling_destination"
+        self.destination_column = destination_column
         missing = [
             name
             for name in (stage_column, destination_column, object_column)
@@ -359,6 +382,7 @@ class BalancedRowSampler:
         self.cells: list[tuple[str, str, list[np.ndarray]]] = []
         self.census: dict[str, int] = {}
         empty: list[str] = []
+        weights: list[float] = []
         for destination in destinations:
             for stage in stages:
                 mask = (dataset[destination_column][index] == destination) & (
@@ -375,6 +399,11 @@ class BalancedRowSampler:
                     for value in np.unique(dataset[object_column][cell])
                 ]
                 self.cells.append((str(destination), str(stage), objects))
+                if "sampling_cell_weight" in dataset:
+                    values = dataset["sampling_cell_weight"][cell]
+                    if not np.isfinite(values).all() or (values <= 0).any() or not np.allclose(values, values[0]):
+                        raise ValueError(f"Invalid or inconsistent sampling_cell_weight in {name}")
+                    weights.append(float(values[0]))
         if empty:
             raise SystemExit(
                 f"Empty strata {empty}. A balanced sampler cannot draw from a "
@@ -383,10 +412,15 @@ class BalancedRowSampler:
                 "material or narrow --sampler-destinations / --sampler-stages."
             )
         self.rows = index
+        self.cell_probabilities = np.asarray(weights) / sum(weights) if weights else None
         self.draw_counts = np.zeros((len(self.cells),), dtype=np.int64)
 
     def draw(self, count: int) -> np.ndarray:
-        cell_choice = self.generator.integers(len(self.cells), size=int(count))
+        cell_choice = (
+            self.generator.integers(len(self.cells), size=int(count))
+            if self.cell_probabilities is None else
+            self.generator.choice(len(self.cells), size=int(count), p=self.cell_probabilities)
+        )
         self.draw_counts += np.bincount(
             cell_choice, minlength=len(self.cells)
         ).astype(np.int64)
@@ -428,6 +462,8 @@ class BalancedRowSampler:
             "draws_by_cell": dict(sorted(draws_by_cell.items())),
             "draws_by_stage": dict(sorted(draws_by_stage.items())),
             "draws_by_destination": dict(sorted(draws_by_destination.items())),
+            "destination_column": self.destination_column,
+            "cell_probabilities": None if self.cell_probabilities is None else self.cell_probabilities.tolist(),
         }
 
 
@@ -1126,7 +1162,7 @@ def materialize_frames(
 
 
 def select_frame_budget(
-    found: np.ndarray, *, budget: int, seed: int
+    found: np.ndarray, *, budget: int, seed: int, strata: np.ndarray | None = None
 ) -> np.ndarray:
     """Which resolved rows the LoRA stage will actually see, chosen once.
 
@@ -1145,6 +1181,16 @@ def select_frame_budget(
     if budget <= 0 or resolved.size <= int(budget):
         return resolved
     generator = np.random.default_rng(int(seed))
+    if strata is not None:
+        if len(strata) != len(found):
+            raise ValueError("Frame-budget strata must align with dataset rows")
+        groups = [resolved[strata[resolved] == name] for name in np.unique(strata[resolved])]
+        if len(groups) > budget:
+            raise ValueError(f"LoRA frame budget {budget} cannot cover {len(groups)} train/validation strata")
+        required = np.array([generator.choice(group) for group in groups], dtype=np.int64)
+        rest = np.setdiff1d(resolved, required)
+        extra = generator.choice(rest, size=int(budget) - len(required), replace=False)
+        return np.sort(np.concatenate((required, extra)))
     return np.sort(generator.choice(resolved, size=int(budget), replace=False))
 
 
@@ -1702,14 +1748,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--seed", type=int, default=20260815)
     parser.add_argument(
         "--split-by",
-        choices=("episode", "scene"),
+        choices=("episode", "scene", "provided"),
         default="episode",
         help=(
             "What the held-out unit is. 'episode' is right when each episode "
             "is an independent start. 'scene' is REQUIRED for a bank whose "
             "episodes share starts -- retries, extra rollout seeds, relabelled "
             "views -- because two rollouts of one scene differ by sampling "
-            "noise and splitting between them measures memorization."
+            "noise and splitting between them measures memorization. "
+            "'provided' enforces a builder's sft_validation mask and rejects source-episode leakage."
         ),
     )
     parser.add_argument(
@@ -1931,7 +1978,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         residual_scale=residual_scale,
     )
 
-    if str(args.split_by) == "scene":
+    if str(args.split_by) == "provided":
+        train_rows, val_rows = provided_split(dataset)
+    elif str(args.split_by) == "scene":
         if "scene_uid" not in dataset:
             raise SystemExit(
                 "--split-by scene needs a scene_uid column. It is written by "
@@ -1955,7 +2004,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         shared = set(dataset["scene_uid"][train_rows].tolist()) & set(
             dataset["scene_uid"][val_rows].tolist()
         )
-        if shared and str(args.split_by) == "scene":
+        if shared and str(args.split_by) in ("scene", "provided"):
             raise SystemExit(
                 f"{len(shared)} scenes appear on both sides of a scene split."
             )
@@ -2465,8 +2514,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         base.load_state_dict(lora_start_state, strict=True)
         # The bounded set of rows this stage will see, and the only pictures
         # that are ever held. Chosen before anything is read.
+        frame_strata = None
+        if "sft_validation" in dataset and "sampling_destination" in dataset:
+            frame_strata = np.array([
+                f"{bool(held)}|{destination}|{stage}"
+                for held, destination, stage in zip(dataset["sft_validation"],
+                    dataset["sampling_destination"], dataset["stage_name"])
+            ])
         budget_rows = select_frame_budget(
-            found, budget=int(args.lora_rows), seed=int(args.seed)
+            found, budget=int(args.lora_rows), seed=int(args.seed), strata=frame_strata
         )
         held = budget_rows.size * 2 * 240 * 320 * 3 / 1e9
         print(

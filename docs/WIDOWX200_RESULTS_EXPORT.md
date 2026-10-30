@@ -60,9 +60,22 @@ camera frames. Conditional retention SFT pools the retained banks with their
 before fitting the residual. Its candidate is evaluated and accepted/rejected
 by the retention gate.
 
-There is no automatic relabelled full-task SFT transition before stage 7.
-Stage 7 inherits the previous stage's selected policy weights and starts joint
-staged-reward RL. Merely pooling independent skill trajectories does not certify
-a continuous successful grasp-carry-release episode. Any new final-prompt bank
-must preserve object/destination scene context and recompute its network inputs
-under the new instructions; full-task success still requires rollout evaluation.
+The updated configuration enables a separate **composition SFT** transition
+before stage 7. It pools verified filmed skill samples from the retained banks,
+assigns final plate/bowl prompts to reach/pick prefixes, preserves actual
+placement destinations, and keeps an original-instruction retention slice.
+Priors and features are refreshed under the stage-6 initializer before residual
+and action-expert LoRA fitting. Before/after skill and composed evaluations are
+recorded; stage 7 then starts fresh joint staged-reward RL from the SFT adapter.
+Earlier runs may not have this transition; the exported state says whether it
+actually ran, rather than inferring it from the current source configuration.
+
+Merely pooling independent skill trajectories does not certify a continuous
+successful grasp-carry-release episode. Prefix scenes stay as originally
+recorded, and destination visibility is not certified for reach/pick samples.
+The builder reports these as stage supervision, not complete-task successes.
+
+See [WIDOWX200_COMPOSITION_SFT.md](WIDOWX200_COMPOSITION_SFT.md) for the stop/resume
+procedure and interrupted-joint-run preservation. The export includes the
+composition reports and before/after evaluations. Preserved old joint logs are
+stored under `raw/archived_joint/`, separate from the corrected joint curves.
