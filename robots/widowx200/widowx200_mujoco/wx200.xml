@@ -207,7 +207,7 @@
                       fingertips sit along the bottom edge with the gap still
                       legible, the object stays whole between them at the
                       grasp, the bar drops from 12% to 2% of the frame, and the
-                      area ahead of the gripper -- where the next target is --
+                      area ahead of the gripper (where the next target is)
                       fills the rest. Measured with
                       tools/audit/widowx200_scene_coverage.py: past -25 deg the
                       object being grasped starts leaving the frame.
