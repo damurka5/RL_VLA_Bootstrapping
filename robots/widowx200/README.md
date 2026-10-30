@@ -109,7 +109,8 @@ RoboCasa catalog's minimum grasp width:
 | bell pepper | 74 mm | no |
 
 Nothing in the catalog is comfortably graspable. The fix is to rescale the
-graspable objects to a 34–50 mm minor width rather than to drop them — a 7 cm
+graspable objects to a ~42 mm minor width (shipped; 35 mm at first, which
+rendered as specks next to the arm) rather than to drop them — a 7 cm
 apple is out of scale for a 200 g-payload arm in the first place, so this is
 the physically correct correction, not a workaround. Rescaling also invalidates
 each variant's `rest_height`, `inertia`, and `fitted_gripper_opening`; the last

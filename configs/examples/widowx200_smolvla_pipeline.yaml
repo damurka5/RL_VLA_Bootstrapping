@@ -19,7 +19,7 @@
 #   control period   hold_steps 6 -> 24 (14 ms -> 50 ms, the arm's 20 Hz)
 #   scene            wx200_mjwarp_scene.xml; objects on the arm's annular
 #                    sector lattice instead of the CDPR's 3x3 grid
-#   objects          graspables shrunk to ~35 mm for the 8-52 mm gripper
+#   objects          graspables shrunk to ~42 mm for the 8-52 mm gripper
 #                    (RLVLA_EMBODIMENT=widowx200, cdpr_object_catalog);
 #                    banana and carrot dropped; mug never a grasp target
 #   heights          desk unchanged at 0.1502; the arm's top-down ceiling is

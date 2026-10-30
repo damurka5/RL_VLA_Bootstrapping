@@ -81,18 +81,19 @@ class CatalogSwitchTest(unittest.TestCase):
     def test_widowx_catalog_is_scaled_and_measured(self) -> None:
         probe = _catalog_probe("widowx200")
         self.assertEqual(probe["embodiment"], "widowx200")
-        # ~35 mm minor width: inside the 30-56 mm band the gripper lifts.
-        self.assertAlmostEqual(2.0 * probe["apple_radius"], 0.0345, places=4)
-        self.assertAlmostEqual(probe["apple_rest"], 0.03456 * 0.5)
-        self.assertAlmostEqual(probe["apple_mesh_scale"], 0.5)
+        # ~42 mm minor width: inside the 30-56 mm band the gripper lifts, with
+        # ~5 mm of pad clearance per side at the 52 mm full opening.
+        self.assertAlmostEqual(2.0 * probe["apple_radius"], 0.0345 * 1.22, places=3)
+        self.assertAlmostEqual(probe["apple_rest"], 0.03456 * 0.61)
+        self.assertAlmostEqual(probe["apple_mesh_scale"], 0.61)
         self.assertAlmostEqual(probe["plate_radius"], 0.091 * 0.8)
         self.assertAlmostEqual(probe["bowl_wall_x"], 0.055 * 0.85)
         self.assertGreaterEqual(probe["mug_mass"], 0.04)
         self.assertAlmostEqual(probe["squeeze"], 0.20)
         for name, fitted in probe["graspable_fitted"].items():
             # Measured, never left at the 0.0 placeholder.
-            self.assertGreater(fitted, 0.6, name)
-            self.assertLess(fitted, 0.8, name)
+            self.assertGreater(fitted, 0.75, name)
+            self.assertLess(fitted, 0.9, name)
 
     def test_unknown_embodiment_is_refused(self) -> None:
         with self.assertRaises(subprocess.CalledProcessError):

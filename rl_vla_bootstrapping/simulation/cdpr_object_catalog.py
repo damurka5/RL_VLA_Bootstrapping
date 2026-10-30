@@ -361,12 +361,20 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
 # The WidowX gripper spans 8-52 mm between its pads (0.0 -> 1.0 normalized),
 # against the CDPR's 35-95 mm, and nothing in the CDPR catalog fits it (see
 # robots/widowx200/README.md). The graspable objects are therefore shrunk
-# UNIFORMLY to a ~35 mm minor width -- the bottom of the measured 30-56 mm
-# graspable band, chosen there rather than mid-band because the pads only open
-# to 52 mm: a 35 mm object leaves ~8.5 mm of lateral tolerance per side, close
-# to the CDPR's grasp tolerance relative to its own localization error. A 7 cm
-# apple is out of scale for a 200 g-payload arm anyway; this is the physically
-# sensible correction, not a workaround.
+# UNIFORMLY to a ~42 mm minor width across the pads (collider width; apple
+# 0.61, bell pepper 0.57, tomato/orange/potato 0.72). The first cut was ~35 mm
+# -- the bottom of the measured 30-56 mm graspable band, for ~8.5 mm of lateral
+# tolerance per side -- but at that size every object rendered as a speck next
+# to the arm: 120-340 px in the overview against a 0.55 m robot. 42 mm keeps
+# ~5 mm per side at the 52 mm full opening, grows the overview footprint
+# 30-50% (tools/audit/widowx200_scene_coverage.py), and still clears the
+# gripper body by 14 mm when centred. A 7 cm apple is out of scale for a
+# 200 g-payload arm anyway; this is the physically sensible correction, not a
+# workaround.
+#
+# The mug stays at 0.46 (35 mm across the body). It is never a grasp target,
+# and at 0.55 its 50 mm height meets the gripper before the pads close, so its
+# opening could not be measured.
 #
 # Banana and carrot are long and thin: scaling their 28 mm minor width up to
 # the band makes them 20 cm long, longer than the 18 cm lattice spacing. They
@@ -375,13 +383,13 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
 # The receptacles shrink a little (plate 0.8, bowl 0.85) so a plate and a bowl
 # fit side by side in the arm's annular workspace with room for the carry.
 WIDOWX200_OBJECT_SCALE: dict[str, float] = {
-    "robocasa_apple": 0.50,
+    "robocasa_apple": 0.61,
     "robocasa_banana": 1.0,
     "robocasa_carrot": 1.0,
-    "robocasa_bell_pepper": 0.47,
-    "robocasa_tomato": 0.60,
-    "robocasa_orange": 0.60,
-    "robocasa_potato": 0.60,
+    "robocasa_bell_pepper": 0.57,
+    "robocasa_tomato": 0.72,
+    "robocasa_orange": 0.72,
+    "robocasa_potato": 0.72,
     "robocasa_mug": 0.46,
     "robocasa_plate": 0.80,
     "robocasa_bowl": 0.85,
@@ -393,14 +401,14 @@ WIDOWX200_OBJECT_SCALE: dict[str, float] = {
 # not derived from widths. Receptacles are never grasped and stay 0.0; banana
 # and carrot are out of the WidowX pools and are not measured.
 WIDOWX200_FITTED_GRIPPER_OPENING: dict[str, float] = {
-    "robocasa_apple": 0.685,
+    "robocasa_apple": 0.814,
     "robocasa_banana": 0.0,
     "robocasa_carrot": 0.0,
-    "robocasa_bell_pepper": 0.691,
-    "robocasa_tomato": 0.692,
-    "robocasa_orange": 0.692,
-    "robocasa_potato": 0.692,
-    "robocasa_mug": 0.698,
+    "robocasa_bell_pepper": 0.821,
+    "robocasa_tomato": 0.809,
+    "robocasa_orange": 0.811,
+    "robocasa_potato": 0.805,
+    "robocasa_mug": 0.640,
     "robocasa_plate": 0.0,
     "robocasa_bowl": 0.0,
 }
