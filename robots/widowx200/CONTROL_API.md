@@ -104,14 +104,14 @@ pads**, not at the arm flange 5 cm above them. That is why every
 | slot | camera | what it sees |
 |---|---|---|
 | 0 | `overview` | three-quarter view, 0.42 m out; robot covers ~14% of frame, all spawn cells visible |
-| 1 | `ee_camera` | wrist, 7.5 cm standoff, aimed at the grasp point |
+| 1 | `ee_camera` | wrist, 7.5 cm standoff, tilted 15° past the grasp point, fingertips at the bottom edge |
 | 2 | — | the wrist tensor again, or a masked empty slot |
 
 Both were re-sited against what they actually resolve rather than where they
-point; the wrist camera in particular sees 15% finger per side and 13% object,
-against 1% and 0.1% before. Gripper state is readable from the image because
-both fingers sit symmetric about the optical axis, so the gap between them is
-legible.
+point; the wrist camera in particular sees 10% finger per side, 2% gripper bar
+and 17% object, against 1% finger and 0.1% object on the first mount. Gripper
+state is readable from the image because both fingertips sit symmetric along
+the bottom edge, so the gap between them is legible.
 
 ---
 

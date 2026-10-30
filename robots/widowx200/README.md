@@ -159,11 +159,13 @@ All from `tests/test_widowx200_embodiment.py` against the compiled model:
 - Settling error after a move: **1.6 mm**.
 - Top-down reach: **0.381 m** at the grasp floor, **0.362 m** while carrying a
   lifted object at z = 0.24, nothing above z = 0.41.
-- Object lattice: 6 cells, **0.180 m** minimum separation, all reachable.
+- Object lattice: 6 cells, **0.165 m** minimum separation, all reachable
+  (inner ring 0.175 m so jittered spawns clear the 0.15 m waist keep-out).
 - Scripted grasp success across the spawn sector: **29/30**.
-- Wrist camera: 7.5 cm standoff, grasp point on the optical axis to 0.000°.
-  With the fingers at 70% open and an object between them, each finger covers
-  15.2% of the frame, the gripper bar 12.1%, the object 13.0%.
+- Wrist camera: 7.5 cm standoff, tilted 15° out of the fingers from the grasp
+  point (fingertips along the bottom edge, the scene ahead above them). With
+  the fingers at 70% open and an object between them, each finger covers 9.8%
+  of the frame, the gripper bar 1.9%, the object 17.2%.
 - Overview camera: 0.42 m from the working volume, robot covers 13.7% of the
   frame, all four spawn cells fully visible across three arm poses.
 

@@ -199,13 +199,25 @@
                       wrist view is half the policy's input and a warm start
                       from a CDPR checkpoint depends on its image statistics;
                       a wider lens would buy ~4 cm of context and cost that.
+
+                      TILTED 15 deg OUT OF THE FINGERS (pitch -0.7435 ->
+                      -1.0053). Aimed exactly at the grasp point, the fingers
+                      and bar filled 43% of every frame and the scene beyond
+                      them was a sliver. Swung 15 deg away from the bar, the
+                      fingertips sit along the bottom edge with the gap still
+                      legible, the object stays whole between them at the
+                      grasp, the bar drops from 12% to 2% of the frame, and the
+                      area ahead of the gripper -- where the next target is --
+                      fills the rest. Measured with
+                      tools/audit/widowx200_scene_coverage.py: past -25 deg the
+                      object being grasped starts leaving the frame.
                     -->
                     <body name="wrist_camera_body" pos="0.0 0 0.055"
                           euler="0 0 0">
                       <site name="wrist_camera_marker" type="sphere"
                             size="0.004" rgba="0 1 0 1"/>
                       <camera name="ee_camera" mode="fixed" fovy="60"
-                              euler="0 -0.7435095 -1.5707963"/>
+                              euler="0 -1.0053089 -1.5707963"/>
                     </body>
 
                     <body name="fingers_link" pos="0.023 0 0">

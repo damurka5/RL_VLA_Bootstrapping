@@ -865,8 +865,10 @@ class CameraFramingTests(unittest.TestCase):
             (segment == mj.mj_name2id(model, mj.mjtObj.mjOBJ_GEOM, "objg1")).sum()
         ) / segment.size
 
-        # Measured 15.2% / 15.2% / 12.1% / 13.0%. The floors are what separates
-        # the shipped mount from the original, which scored 1.0% and 0.1%.
+        # Measured 9.8% / 9.8% / 1.9% / 17.2% with the camera tilted 15 deg out
+        # of the fingers (15.2 / 15.2 / 12.1 / 13.0 aimed at the grasp point).
+        # The floors are what separates the shipped mount from the original,
+        # which scored 1.0% and 0.1%.
         self.assertGreater(left, 0.08, "left finger is not resolvable")
         self.assertGreater(right, 0.08, "right finger is not resolvable")
         self.assertGreater(obj, 0.05, "the object being grasped is not visible")
