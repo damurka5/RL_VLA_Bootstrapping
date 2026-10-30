@@ -26,6 +26,8 @@
 # smoke pass, DRY_RUN=1 to write stage configs and print commands only,
 # MEMORY_CHECK_FIRST=0 to skip the production-size memory stress check,
 # STOP_BEFORE_STAGE=s7_joint_staged to finish the skills and exit cleanly,
+# FINISH_STAGE_AT_CHECKPOINT=s6_put_into_binary=latest to end skill RL at a
+# saved checkpoint, then finish its harvest/retention and continue the pipeline,
 # RESTART_JOINT_FROM_SFT=1 to preserve an interrupted old joint attempt and
 # restart only joint RL after the new final-prompt composition SFT,
 # RLVLA_HF_OFFLINE=1 to use the local Hugging Face cache only.
@@ -129,6 +131,7 @@ fi
 production_args=()
 [[ -n "${STOP_BEFORE_STAGE:-}" ]] && production_args+=(--stop-before-stage "$STOP_BEFORE_STAGE")
 [[ "${RESTART_JOINT_FROM_SFT:-0}" == "1" ]] && production_args+=(--restart-joint-from-sft)
+[[ -n "${FINISH_STAGE_AT_CHECKPOINT:-}" ]] && production_args+=(--finish-stage-at-checkpoint "$FINISH_STAGE_AT_CHECKPOINT")
 "${driver[@]}" --pipeline-dir "$PIPELINE_DIR" "${production_args[@]}"
 if [[ -n "${STOP_BEFORE_STAGE:-}" ]]; then
   printf '[widowx200] stopped before %s; state: %s/pipeline_state.json\n' "$STOP_BEFORE_STAGE" "$PIPELINE_DIR"

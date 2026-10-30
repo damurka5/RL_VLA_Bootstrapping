@@ -19,7 +19,7 @@ checkpoints, NPZ trajectory/image arrays, videos and TensorBoard event files.
 | File | Evidence |
 |---|---|
 | `report.md` | Stage selection scores, retained banks, retention evaluations |
-| `stages.csv` | Best RL checkpoint, handed-off policy, stop rule/reason, SIL attempts/acceptances |
+| `stages.csv` | Best and selected RL checkpoints, handed-off policy, stop rule/reason, SIL attempts/acceptances |
 | `validation.csv` | All logged validation metrics and steps |
 | `validation_slices.csv` | Instruction/object curves, episode counts, fixed-distance flags, composed validation legs |
 | `training.csv` | Logged training/curriculum/throughput diagnostics |
@@ -41,6 +41,9 @@ for the actual stage protocol.
 
 - A stage's `best_rl_value` is its validation selection metric. It may be the
   minimum across instructions, rather than overall success.
+- `selected_rl_*` records an explicit user checkpoint choice when
+  `checkpoint_selection=user_checkpoint`. `best_rl_*` still records the actual
+  validation maximum; the two choices need not match.
 - The policy handed to the next stage may be an accepted SIL candidate. Its
   evaluation belongs to the retention/candidate results, not the preceding RL
   checkpoint's validation row.

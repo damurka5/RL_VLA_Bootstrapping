@@ -216,6 +216,31 @@ class Pipeline:
                 max_cycles=1,
             )
         self.state = self._load_state()
+        self.finish_request: tuple[str, str] | None = None
+        requested = getattr(args, "finish_stage_at_checkpoint", None)
+        if requested:
+            name, separator, checkpoint = requested.partition("=")
+            stage = next((s for s in self.spec["stages"] if s["name"] == name), None)
+            if not separator or not checkpoint or stage is None or stage["skill"] == "joint":
+                raise ChildFailed("--finish-stage-at-checkpoint requires SKILL_STAGE=CHECKPOINT (or SKILL_STAGE=latest)")
+            if args.only_stage and name not in args.only_stage:
+                raise ChildFailed("The stage to finish is excluded by --only-stage")
+            if getattr(args, "stop_before_stage", None) == name:
+                raise ChildFailed("Cannot both stop before a stage and finish it at a checkpoint")
+            self.finish_request = (name, checkpoint)
+            record = self.state["stages"].get(name, {})
+            if not record.get("manual_finish"):
+                index = self.spec["stages"].index(stage)
+                if any(self.state["stages"].get(s["name"], {}).get("status") != "done"
+                       for s in self.spec["stages"][:index]):
+                    raise ChildFailed("Finish the preceding stages before selecting a manual checkpoint")
+                if any(self.state["stages"].get(s["name"], {}).get("status", "pending") != "pending"
+                       for s in self.spec["stages"][index + 1:]):
+                    raise ChildFailed("Cannot change a skill checkpoint after a later stage has started")
+            if record.get("status") not in (None, "pending", "training") and not record.get("manual_finish"):
+                raise ChildFailed(f"{name} already finished training; cannot replace its checkpoint in place")
+            if record.get("manual_finish") and record["manual_finish"]["requested_checkpoint"] != checkpoint:
+                raise ChildFailed(f"{name} already has a different manual checkpoint selection")
 
     # -- state -------------------------------------------------------------
 
@@ -598,6 +623,11 @@ class Pipeline:
             record["init"] = str(init)
         record.setdefault("init", None if init is None else str(init))
 
+        if self.finish_request and self.finish_request[0] == name and not record.get("manual_finish"):
+            self.finish_skill_training(stage, record, self.finish_request[1])
+            if self.dry_run:
+                return
+
         if record.get("status") in (None, "pending", "training"):
             record["status"] = "training"
             record["started"] = record.get("started") or _dt.datetime.now().isoformat()
@@ -614,6 +644,8 @@ class Pipeline:
                 validation_caps=self.validation_caps(skill_name),
             )
             record.update(best)
+            record.update(selected_checkpoint=best["best_checkpoint"], selected_step=best["best_step"],
+                          selected_value=best["best_value"], checkpoint_selection="best_validation")
             early = rl_dir / "early_stop.json"
             record["early_stop"] = json.loads(early.read_text()) if early.is_file() else None
             record["status"] = "trained"
@@ -642,10 +674,33 @@ class Pipeline:
             self.event("stage_done", stage=name, policy=str(policy))
             log(f"{name}: done; current policy {policy}")
 
+    def finish_skill_training(self, stage: Mapping[str, Any], record: dict[str, Any], requested: str) -> None:
+        """End only RL at a saved checkpoint; harvest and retention still run."""
+
+        name = str(stage["name"])
+        rl = ROOT / "runs" / f"{self.name}__{name}" / "rl"
+        metric = str((stage.get("early_stop") or {}).get("metric", "validation/success_rate"))
+        caps = self.validation_caps(str(stage["skill"]))
+        chosen = select_requested_checkpoint(rl, requested, metric, validation_caps=caps)
+        best = select_best_checkpoint(rl, metric, validation_caps=caps)
+        if self.dry_run:
+            log(f"Would finish {name} RL at {chosen['checkpoint']} and run harvest/retention")
+            return
+        decision = {**chosen, "requested_checkpoint": requested, "reason": "user_checkpoint",
+                    "previous_status": record.get("status"), "time": _dt.datetime.now().isoformat()}
+        record.update(best)
+        record.update(status="trained", rl_dir=str(rl), policy=chosen["checkpoint"],
+                      selected_checkpoint=chosen["checkpoint"], selected_step=chosen["global_step"],
+                      selected_value=chosen["value"], checkpoint_selection="user_checkpoint",
+                      manual_finish=decision, early_stop={"reason": "user_checkpoint",
+                          "global_step": chosen["global_step"], "metric": metric})
+        self.event("stage_rl_finished_by_user", stage=name, **decision)
+        log(f"{name}: RL stopped by user at {chosen['checkpoint']} ({metric}={chosen['value']}); proceeding to harvest and retention")
+
     # -- harvest and references ------------------------------------------------
 
     def composition_banks(self) -> dict[str, Any]:
-        """Retained banks name best stage checkpoints; repair missing replay/frame pairs."""
+        """Retained banks name selected stage checkpoints; repair missing replay/frame pairs."""
 
         def usable(bank: Mapping[str, Any]) -> bool:
             replays, frames = bank.get("replays", []), bank.get("frames", [])
@@ -665,7 +720,7 @@ class Pipeline:
                             float(self.state["stages"][s["name"]].get("best_value") or 0)), reverse=True)
             for source in candidates:
                 entry = self.state["stages"][source["name"]]
-                checkpoint = entry.get("best_checkpoint")
+                checkpoint = entry.get("selected_checkpoint") or entry.get("best_checkpoint")
                 if not checkpoint or not Path(checkpoint).is_file():
                     continue
                 # A broken previous bank must not win the harvest's rate gate.
@@ -1315,7 +1370,10 @@ def select_best_checkpoint(
         for line in path.read_text(encoding="utf-8").splitlines():
             if not line.strip():
                 continue
-            row = json.loads(line)
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
             if validation_caps is not None and not validation_matches_caps(row, validation_caps):
                 continue
             value = early_stop_metric_value(row, metric)
@@ -1346,6 +1404,42 @@ def select_best_checkpoint(
     }
 
 
+def select_requested_checkpoint(
+    rl_dir: Path, requested: str, metric: str, *, validation_caps: Mapping[str, float],
+) -> dict[str, Any]:
+    """Require an immutable checkpoint and its matching fixed-distance validation."""
+
+    from rl_vla_bootstrapping.policy.early_stopping import early_stop_metric_value, validation_matches_caps
+
+    rl_dir = rl_dir.resolve()
+    if requested == "latest":
+        saved = [p for p in rl_dir.glob("step_*/smolvla_grpo_adapter.pt")
+                 if p.parent.name.removeprefix("step_").isdigit()]
+        if not saved:
+            raise ChildFailed(f"No saved checkpoints under {rl_dir}")
+        checkpoint = max(saved, key=lambda p: int(p.parent.name.split("_", 1)[1])).resolve()
+    else:
+        checkpoint = Path(requested).expanduser().resolve()
+    if (checkpoint.parent.parent != rl_dir or checkpoint.name != "smolvla_grpo_adapter.pt"
+            or not checkpoint.parent.name.startswith("step_")
+            or not checkpoint.parent.name[5:].isdigit() or not checkpoint.is_file()
+            or checkpoint.stat().st_size == 0):
+        raise ChildFailed(f"Choose an existing step_*/smolvla_grpo_adapter.pt from {rl_dir}; got {checkpoint}")
+    step = int(checkpoint.parent.name[5:])
+    validation = rl_dir / "validation.jsonl"
+    for line in reversed(validation.read_text().splitlines() if validation.is_file() else []):
+        try:
+            row = json.loads(line)
+        except ValueError:
+            continue
+        if int(row.get("global_step", -1)) != step or not validation_matches_caps(row, validation_caps):
+            continue
+        value = early_stop_metric_value(row, metric)
+        if math.isfinite(value):
+            return {"checkpoint": str(checkpoint), "global_step": step, "metric": metric, "value": value}
+    raise ChildFailed(f"{checkpoint} has no matching finite fixed-distance validation for {metric}; choose a validated checkpoint")
+
+
 # --------------------------------------------------------------------------
 
 
@@ -1361,6 +1455,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--stop-before-stage", help="Finish preceding stages, then exit cleanly before this stage.")
     parser.add_argument("--restart-joint-from-sft", action="store_true",
                         help="Preserve an interrupted pre-SFT joint run and restart only joint RL after composition SFT.")
+    parser.add_argument("--finish-stage-at-checkpoint", metavar="STAGE=CHECKPOINT",
+                        help="End an interrupted skill stage's RL at this saved checkpoint (or latest); still run its harvest and retention.")
     return parser.parse_args(argv)
 
 
@@ -1369,16 +1465,19 @@ def main(argv: Sequence[str] | None = None) -> int:
     signal.signal(signal.SIGTERM, _forward_signal)
     signal.signal(signal.SIGINT, _forward_signal)
     os.environ["RLVLA_EMBODIMENT"] = EMBODIMENT
-    pipeline = Pipeline(args)
+    pipeline = None
     try:
+        pipeline = Pipeline(args)
         if args.memory_check:
             pipeline.run_memory_check()
         else:
             pipeline.run()
     except ChildFailed as error:
-        pipeline.event("failed", error=str(error))
+        if pipeline is not None:
+            pipeline.event("failed", error=str(error))
         log(f"FAILED: {error}")
-        log(f"Re-run the same command to resume from {pipeline.state_path}.")
+        if pipeline is not None:
+            log(f"Re-run the same command to resume from {pipeline.state_path}.")
         return 1
     return 0
 

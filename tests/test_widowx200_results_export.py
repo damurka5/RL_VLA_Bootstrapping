@@ -86,6 +86,23 @@ class ResultsExportTests(unittest.TestCase):
         self.assertEqual(composed["success_rate"], "0.25")
         self.assertEqual(next(r for r in rows if r["slice"] == "object")["episodes"], "128")
 
+    def test_manual_checkpoint_selection_does_not_replace_validation_best(self):
+        self.fixture()
+        self.state["stages"][self.stage].update(
+            checkpoint_selection="user_checkpoint", selected_step=750000,
+            selected_checkpoint="chosen_by_user.pt", selected_value=.1,
+            early_stop={"reason": "user_checkpoint"})
+        self.write(self.pipeline / "pipeline_state.json", self.state)
+        export(self.pipeline, self.output)
+        row = next(row for row in self.table("stages") if row["stage"] == self.stage)
+        self.assertEqual(row["best_rl_checkpoint"], "rl_before_sil.pt")
+        self.assertEqual(row["selected_rl_checkpoint"], "chosen_by_user.pt")
+        self.assertEqual(row["handed_off_policy"], "accepted_sil.pt")
+        self.assertEqual(row["checkpoint_selection"], "user_checkpoint")
+        self.assertEqual(row["stop_reason"], "user_checkpoint")
+        self.assertEqual(self.table("validation")[0]["selected_best_rl"], "True")
+        self.assertEqual(self.table("validation")[0]["selected_rl"], "False")
+
     def test_failed_pooled_summary_does_not_double_count_or_hide_partial_request(self):
         self.fixture()
         folder = self.pipeline / "banks/pick_up/test/record"

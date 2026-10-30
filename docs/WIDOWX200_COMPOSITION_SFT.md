@@ -34,10 +34,42 @@ For future launches, `STOP_BEFORE_STAGE=s7_joint_staged` exits cleanly after the
 skill stages, before composition SFT/joint RL. These production controls do not
 short-circuit the launcher's separate smoke pass.
 
+### Ending skill RL early at a saved checkpoint
+
+Interrupt the launcher with Ctrl+C and wait until it exits. To finish stage 6
+without more RL updates, then harvest, check retention, prepare composition SFT
+and continue to joint RL:
+
+```bash
+PIPELINE_DIR=/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201 \
+MEMORY_CHECK_FIRST=0 SMOKE_FIRST=0 RESTART_JOINT_FROM_SFT=1 \
+FINISH_STAGE_AT_CHECKPOINT=s6_put_into_binary=latest \
+bash scripts/train_widowx200_pipeline_remote.sh
+```
+
+`latest` chooses the highest numbered saved `step_*/smolvla_grpo_adapter.pt`,
+not an in-memory update or the mutable `latest.pt`. It requires the matching
+fixed-distance validation for the stage metric. An explicit absolute path to
+one of that stage's saved adapters can replace `latest`. The option refuses to
+replace an already harvested stage or change an earlier stage after a later
+one has started. Keep the same option when resuming interrupted harvest/SFT;
+the initial checkpoint choice is saved and is not selected again on resume.
+
+The state records a `user_checkpoint` stop, the selected RL checkpoint and its
+validation score separately from the actual best validated checkpoint. Harvest
+uses the selected checkpoint; retention may subsequently select an SFT policy.
+The exporter preserves all three identities. Stages 1–5 are reused, and stage 6
+still completes its data and retention work before stage 7.
+
+Changing object geometry does not certify old scores or banks under the new
+setup. The new harvest uses the current simulator. Existing banks may retain
+earlier scene settings; inspect source provenance when comparing results.
+
 ## Data and training contract
 
-- The retained bank for each skill names a best validated checkpoint from a
-  skill stage. A weaker or empty later harvest can leave an earlier bank in
+- The retained bank for each skill normally names a best validated checkpoint
+  from a skill stage; an explicit manual finish uses the chosen checkpoint.
+  A weaker or empty later harvest can leave an earlier bank in
   place. The controller records exact source stages/checkpoints/paths.
 - Missing replay/frame pairs are repaired through the existing harvest/replay
   path using available best skill checkpoints. No production oracle fallback

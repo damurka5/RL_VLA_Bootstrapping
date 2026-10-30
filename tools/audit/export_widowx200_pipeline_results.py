@@ -118,6 +118,10 @@ class Snapshot:
                 "started": record.get("started"), "finished": record.get("finished"),
                 "best_rl_metric": record.get("metric"), "best_rl_value": record.get("best_value"),
                 "best_rl_step": record.get("best_step"), "best_rl_checkpoint": record.get("best_checkpoint"),
+                "checkpoint_selection": record.get("checkpoint_selection", "best_validation"),
+                "selected_rl_checkpoint": record.get("selected_checkpoint", record.get("best_checkpoint")),
+                "selected_rl_step": record.get("selected_step", record.get("best_step")),
+                "selected_rl_value": record.get("selected_value", record.get("best_value")),
                 "handed_off_policy": record.get("policy"),
                 "stop_reason": (record.get("early_stop") or stop).get("reason"),
                 "last_step": last.get("global_step"), "last_update": last.get("update_index"),
@@ -131,6 +135,7 @@ class Snapshot:
             for index, row in enumerate(validations):
                 identity = {"stage": name, "validation_index": index, "global_step": row.get("global_step"),
                             "selected_best_rl": row.get("global_step") == record.get("best_step"),
+                            "selected_rl": row.get("global_step") == record.get("selected_step", record.get("best_step")),
                             "fixed_start_distance": row.get("validation/fixed_start_distance")}
                 tables["validation"].append({**identity, **row})
                 for key, value in row.items():
@@ -244,7 +249,7 @@ def markdown(state: dict[str, Any], tables: dict[str, list[dict[str, Any]]]) -> 
         lines.append(f"| {row['stage']} | {row['phase']} | {accepted} | {row['instruction']} | "
                      f"{row.get('successes', '-')}/{row.get('episodes', '-')} | {percent(row.get('rate'))} |")
     lines += ["", "## Interpretation and files", "",
-              "- `stages.csv` separates the best RL checkpoint from the policy handed to the next stage after any accepted SIL.",
+              "- `stages.csv` separates the best RL checkpoint, the selected RL checkpoint (including a user override), and the policy handed to the next stage after any accepted SIL. `checkpoint_selection` identifies user choices; `best_rl_*` remain validation maxima.",
               "- `validation.csv` and `validation_slices.csv` contain learning curves, instruction/object slices, episode denominators, and composed legs when available.",
               "- `training.csv` holds the logged rollout/curriculum/throughput diagnostics; training success is not fixed-distance validation success.",
               "- `record_rounds.csv` contains per-round harvest and retention evaluations. Pooled sharded wrappers are not counted again. A false completeness flag identifies a partial request; blank means no sharded-completeness claim.",
