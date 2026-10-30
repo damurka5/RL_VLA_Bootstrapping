@@ -140,42 +140,62 @@ class InterruptedArtifactsTests(unittest.TestCase):
             self.assertTrue(record["empty_harvest"])
             self.assertEqual(p.state["banks"]["move_to"]["checkpoint"], "previous.pt")
 
-    def test_bank_filmed_in_world_order_is_refilmed_once(self):
+    def test_bank_recorded_on_evaluation_rounds_is_reharvested_once(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = pipeline(tmp)
             p.state["banks"]["move_to"] = {"stage": "s4", "checkpoint": "best.pt", "cap": .2,
-                                           "replays": ["old.npz"], "frames": ["old_f.npz"], "provenance": "policy"}
+                                           "replays": ["old.npz"], "frames": ["old_f.npz"], "provenance": "policy",
+                                           "frame_selection": "scene_spread"}
+            rates = {"move_to_object": {"rate": .4, "episodes": 2048}}
             with patch.object(p, "write_config", return_value=Path(tmp) / "eval.yaml"), \
+                 patch.object(p, "record", return_value=rates) as record, \
                  patch.object(p, "harvest_replays", return_value=(["new.npz"], ["new_f.npz"])) as replay:
                 p.refilm_bank("move_to")
                 p.refilm_bank("move_to")
-            self.assertEqual(replay.call_count, 1)
+            self.assertEqual(record.call_count, 1)
+            self.assertEqual(record.call_args.kwargs["first_round"], 100)
+            self.assertEqual(record.call_args.kwargs["checkpoint"], Path("best.pt"))
             args = replay.call_args.args
-            self.assertEqual((args[0], args[3], args[4]), (Path("best.pt"), p.dir / "banks/move_to/s4/record",
-                                                           p.dir / "banks/move_to/s4/replay_scenes"))
-            self.assertEqual(p.state["banks"]["move_to"]["replays"], ["new.npz"])
-            self.assertEqual(p.state["banks"]["move_to"]["frame_selection"], "scene_spread")
+            self.assertEqual((args[3], args[4]), (p.dir / "banks/move_to/s4/record_r100",
+                                                  p.dir / "banks/move_to/s4/replay_r100"))
+            bank = p.state["banks"]["move_to"]
+            self.assertEqual((bank["replays"], bank["mean_rate"], bank["harvest_first_round"]), (["new.npz"], .4, 100))
 
-    def test_failed_refilm_and_smoke_fixtures_keep_their_bank(self):
+    def test_failed_reharvest_and_smoke_fixtures_keep_their_bank(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = pipeline(tmp)
             p.state["banks"]["move_to"] = {"stage": "s4", "checkpoint": "best.pt", "cap": .2,
                                            "replays": ["old.npz"], "frames": ["old_f.npz"], "provenance": "policy"}
             p.state["banks"]["pick_up"] = {"stage": "s2", "provenance": "oracle_smoke_fixture", "replays": ["o.npz"]}
             with patch.object(p, "write_config", return_value=Path(tmp) / "eval.yaml"), \
+                 patch.object(p, "record", return_value={}), \
                  patch.object(p, "harvest_replays", return_value=([], [])) as replay:
                 p.refilm_bank("move_to")
                 p.refilm_bank("pick_up")
             self.assertEqual(replay.call_count, 1)
             self.assertEqual(p.state["banks"]["move_to"]["replays"], ["old.npz"])
-            self.assertNotIn("frame_selection", p.state["banks"]["move_to"])
+            self.assertNotIn("harvest_first_round", p.state["banks"]["move_to"])
+
+    def test_new_harvest_records_past_the_evaluation_rounds(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            p = pipeline(tmp)
+            with patch.object(p, "record", return_value={"move_to_object": {"rate": .5, "episodes": 2048}}) as record, \
+                 patch.object(p, "write_config", return_value=Path(tmp) / "eval.yaml"), \
+                 patch.object(p, "harvest_replays", return_value=(["r.npz"], ["f.npz"])):
+                p.harvest(p.spec["stages"][0], "move_to", Path("policy.pt"), {})
+            self.assertGreaterEqual(record.call_args.kwargs["first_round"], int(p.sil.get("eval_rounds", 2)))
+            self.assertEqual(p.state["banks"]["move_to"]["harvest_first_round"], record.call_args.kwargs["first_round"])
+            p.sil["harvest_first_round"] = 1
+            with self.assertRaisesRegex(ChildFailed, "overlaps evaluation rounds"):
+                p.harvest_first_round()
 
     def test_sil_sft_holds_out_scenes(self):
         with tempfile.TemporaryDirectory() as tmp:
             p = pipeline(tmp)
             p.dry_run = True
             p.state["banks"]["move_to"] = {"stage": "s4", "replays": ["r.npz"], "frames": ["f.npz"],
-                                           "provenance": "policy", "frame_selection": "scene_spread"}
+                                           "provenance": "policy", "frame_selection": "scene_spread",
+                                           "harvest_first_round": 100}
             with patch("tools.train.run_widowx200_pipeline.run_command") as run:
                 p.sil_cycle("s5_sil1", Path("policy.pt"), {}, ["move_to_object"])
             sft = next(call.args[0] for call in run.call_args_list if str(call.args[0][1]).endswith("sil_sft.py"))

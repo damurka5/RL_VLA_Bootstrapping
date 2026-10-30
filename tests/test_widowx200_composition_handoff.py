@@ -32,7 +32,7 @@ class CompositionHandoffTests(unittest.TestCase):
             replay, frames = write_pair(self.root / skill)
             self.p.state["banks"][skill] = {"stage": f"best_{skill}", "checkpoint": f"best_{skill}.pt",
                 "provenance": "policy", "replays": [str(replay)], "frames": [str(frames)], "mean_rate": .5,
-                "cap": .2, "frame_selection": "scene_spread"}
+                "cap": .2, "frame_selection": "scene_spread", "harvest_first_round": 100}
         self.commands = []
         self.root_patch = patch.object(module, "ROOT", self.root)
         self.root_patch.start()

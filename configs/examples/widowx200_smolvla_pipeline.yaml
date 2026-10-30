@@ -634,6 +634,9 @@ widowx200_pipeline:
     accept_min_gain: 0.02
     max_collateral: 0.05
     harvest_rounds: 4
+    # Banks are recorded from this round on; evaluations use rounds from 0, so
+    # SIL candidates are never accepted on scenes that are in their own bank.
+    harvest_first_round: 100
     eval_rounds: 2
     frame_worlds: 96
     smooth_window: 5

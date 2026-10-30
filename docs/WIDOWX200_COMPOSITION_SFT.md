@@ -46,6 +46,10 @@ short-circuit the launcher's separate smoke pass.
   pooling. GRPO copies of one reset carry a shared `scene_uid`; the source pool
   must contain that column. The earlier frame budget can otherwise be consumed
   by eight near-identical candidates from only a few scenes.
+- Banks are recorded from `sil.harvest_first_round` (100), past every
+  evaluation round. Legacy banks recorded from round 0 shared scenes with the
+  retention and candidate evaluations, so they are re-recorded from their own
+  checkpoint at the held-out rounds before pooling.
 - The source pool is built with `--require-frames`, keeping complete filmed
   episodes and executed-action masks. Non-graspable reach targets are excluded
   from composition supervision.

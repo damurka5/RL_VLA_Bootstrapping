@@ -831,20 +831,10 @@ class Pipeline:
         cap = float(skill.get("eval_cap", 0.2))
         eval_config = self.write_config(f"eval_{skill_name}", self.eval_config(skill_name))
         base = self.dir / "banks" / skill_name / name
-        rates = self.record(
-            checkpoint=policy,
-            config=eval_config,
-            cap=cap,
-            rounds=int(self.sil.get("harvest_rounds", 4)),
-            output=base / "record",
-            log_name=f"{name}_harvest_record",
-        )
+        first_round = self.harvest_first_round()
+        rates, replays, frames = self.record_bank(skill_name, name, policy, cap)
         record["harvest_rates"] = rates
-        log(f"{name}: harvest rates {format_rates(rates)}")
-
-        replays, frames = self.harvest_replays(
-            policy, eval_config, cap, base / "record", base / "replay_scenes", name,
-        )
+        log(f"{name}: harvest rates {format_rates(rates)} (rounds from {first_round})")
         provenance = "policy"
         if self.smoke and not replays:
             # Two updates need not teach a skill. Exercise the data plumbing
@@ -876,7 +866,7 @@ class Pipeline:
                 "stage": name, "checkpoint": str(policy), "cap": cap,
                 "replays": replays, "frames": frames, "mean_rate": mean_rate,
                 "rates": rates, "provenance": provenance,
-                "frame_selection": FRAME_SELECTION,
+                "frame_selection": FRAME_SELECTION, "harvest_first_round": first_round,
             }
             log(f"{name}: bank for {skill_name} now from this stage ({provenance}, mean rate {mean_rate:.3f})")
         elif not replays:
@@ -938,32 +928,73 @@ class Pipeline:
                 frames.append(str(frames_path))
         return replays, frames
 
-    def refilm_bank(self, skill_name: str) -> None:
-        """Re-film a bank whose frame budget went to the first worlds by index.
+    def harvest_first_round(self) -> int:
+        """First round a bank is recorded at: past every evaluation round.
 
-        Replays the bank's own recorded actions into ``replay_scenes``; the
-        source rounds, checkpoint and cap are unchanged, only which successful
-        worlds keep pictures. A bank that cannot be re-filmed is kept as it is.
+        Evaluations (retention, SIL candidates, final) record rounds from 0 with
+        the same eval config, so a bank harvested from round 0 holds the very
+        scenes its SIL candidate is then accepted on.
+        """
+
+        first = int(self.sil.get("harvest_first_round", 100))
+        evaluated = max(2, int(self.sil.get("eval_rounds", 2)))
+        if first < evaluated:
+            raise ChildFailed(
+                f"sil.harvest_first_round {first} overlaps evaluation rounds 0-{evaluated - 1}"
+            )
+        return first
+
+    def record_bank(
+        self, skill_name: str, stage_name: str, policy: Path, cap: float,
+    ) -> tuple[dict[str, dict[str, float]], list[str], list[str]]:
+        """Record held-out rounds from ``policy`` and film their successes."""
+
+        first = self.harvest_first_round()
+        base = self.dir / "banks" / skill_name / stage_name
+        eval_config = self.write_config(f"eval_{skill_name}", self.eval_config(skill_name))
+        rates = self.record(
+            checkpoint=policy,
+            config=eval_config,
+            cap=cap,
+            rounds=int(self.sil.get("harvest_rounds", 4)),
+            output=base / f"record_r{first}",
+            log_name=f"{stage_name}_harvest_record",
+            first_round=first,
+        )
+        replays, frames = self.harvest_replays(
+            policy, eval_config, cap, base / f"record_r{first}", base / f"replay_r{first}", stage_name,
+        )
+        return rates, replays, frames
+
+    def refilm_bank(self, skill_name: str) -> None:
+        """Rebuild a bank recorded on evaluation rounds or filmed in world order.
+
+        Re-records the bank's own checkpoint at the held-out rounds and films
+        one copy per successful scene first. A bank that cannot be rebuilt is
+        kept as it is.
         """
 
         bank = self.state["banks"].get(skill_name)
-        if not bank or bank.get("frame_selection") == FRAME_SELECTION or bank.get("provenance") != "policy":
+        if not bank or bank.get("provenance") != "policy":
+            return
+        first = self.harvest_first_round()
+        if bank.get("frame_selection") == FRAME_SELECTION and bank.get("harvest_first_round") == first:
             return
         stage = str(bank["stage"])
-        base = self.dir / "banks" / skill_name / stage
-        eval_config = self.write_config(f"eval_{skill_name}", self.eval_config(skill_name))
-        replays, frames = self.harvest_replays(
-            Path(bank["checkpoint"]), eval_config, float(bank["cap"]),
-            base / "record", base / "replay_scenes", f"{stage}_refilm",
-        )
+        rates, replays, frames = self.record_bank(skill_name, stage, Path(bank["checkpoint"]), float(bank["cap"]))
         if self.dry_run:
             return
         if not replays:
-            log(f"{stage}: WARNING re-filming the {skill_name} bank produced no frames; keeping the old one")
+            log(f"{stage}: WARNING re-harvesting the {skill_name} bank produced no frames; keeping the old one")
             return
-        bank.update(replays=replays, frames=frames, frame_selection=FRAME_SELECTION)
-        self.event("bank_refilmed", skill=skill_name, stage=stage, replays=len(replays))
-        log(f"{stage}: {skill_name} bank re-filmed across scenes ({len(replays)} replays)")
+        instructions = self.skill(skill_name)["instructions"]
+        bank.update(
+            replays=replays, frames=frames, rates=rates,
+            mean_rate=_mean([rates[i]["rate"] for i in instructions if i in rates]),
+            frame_selection=FRAME_SELECTION, harvest_first_round=first,
+        )
+        self.event("bank_refilmed", skill=skill_name, stage=stage, replays=len(replays), first_round=first)
+        log(f"{stage}: {skill_name} bank re-harvested at rounds from {first} ({format_rates(rates)})")
         self.save_state()
 
     def raise_references(self, rates: Mapping[str, Mapping[str, float]], policy: Path, source: str) -> None:
