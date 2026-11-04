@@ -5,6 +5,12 @@ SmolVLA base and a fresh residual at stage 1, with empty pipeline state and
 new SIL banks. The completed October 24--November 1 run remains evidence.
 Its checkpoints and datasets are not reused by this launch.
 
+Startup update: the fresh server attempt stopped on a real bowl-rim
+intersection in a caught placement reset. The
+[reset-clearance fix](WIDOWX200_RESET_CLEARANCE_FIX_20261104.md) adds an
+object-centre height floor for caught placement only and provides a command
+to continue the existing directory into full production training.
+
 ## What changed
 
 The training schedule and configured hyperparameters remain the existing
@@ -68,7 +74,9 @@ patches on top of the repaired source. The stash is a recoverable backup.
 Generated `runs/` data are left in place.
 
 ```bash
-set -e
+set +e
+(
+set -euo pipefail
 cd /root/repo/RL_VLA_Bootstrapping
 git stash push -m "widowx-before-fresh-$(date +%Y%m%d_%H%M%S)" -- \
   robots/widowx200/widowx200_mujoco/wx200.xml \
@@ -86,6 +94,9 @@ env -u STOP_BEFORE_STAGE -u FINISH_STAGE_AT_CHECKPOINT \
   MODE=full DRY_RUN=0 SMOKE_FIRST=1 MEMORY_CHECK_FIRST=0 \
   CUDA_VISIBLE_DEVICES=0,1 PIPELINE_DIR="$RUN_DIR" \
   bash scripts/train_widowx200_pipeline_remote.sh
+)
+WIDOWX_LAUNCH_STATUS=$?
+printf 'WidowX launcher exited with status %s\n' "$WIDOWX_LAUNCH_STATUS"
 ```
 
 Calibration uses the server's installed MuJoCo version. The launcher then
@@ -93,6 +104,10 @@ runs the repaired GPU geometry/grip/camera preflight, a small smoke run, and
 all seven production stages. **The production-size memory stress pass is
 skipped.** A unique directory name prevents automatic reuse of any prior
 stage checkpoint, completion marker or bank.
+
+The strict error settings are confined to a child shell. A failing calibration
+or preflight therefore returns to the interactive tmux shell instead of
+closing its last pane.
 
 Keep the printed `pipeline dir` path. To resume an interruption, use that same
 path with `MEMORY_CHECK_FIRST=0 PIPELINE_DIR=...`; omit the `mktemp` step.

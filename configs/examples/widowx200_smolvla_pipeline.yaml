@@ -439,6 +439,9 @@ widowx200_pipeline:
             caught_object_start_release_opening_margin: 0.04
             placement_start_with_caught_object: true
             placement_caught_object_fraction: 1.0
+            # Bowl rim <= 0.186 m; the carried colliders extend <= 0.0211 m
+            # below their centres. Keep > 7 mm of initial vertical clearance.
+            placement_caught_object_min_height: 0.215
             placement_distance_window: 0.02
             placement_release_success_bonus: 2.0
             placement_wrong_drop_penalty: 0.25
@@ -485,6 +488,7 @@ widowx200_pipeline:
             # this often, and the caught curriculum anneals it toward 0 as
             # composed success rises -- ending at the full task, empty hand.
             placement_caught_object_fraction: 0.5
+            placement_caught_object_min_height: 0.215
             placement_caught_curriculum_enabled: true
             placement_caught_fraction_min: 0.0
             placement_caught_fraction_step: 0.1

@@ -1484,6 +1484,12 @@ class BatchedReverseFrontierResetter:
         self.placement_far_rung_min_cap = max(
             number("placement_far_rung_min_cap", float("inf")), 0.0
         )
+        # A caught placement object travels with the sampled gripper. Its
+        # centre must clear receptacle rims even on the low carry rungs.
+        # Opt-in per embodiment; desk-level pickup/uncaught starts are separate.
+        self.placement_caught_object_min_height = number(
+            "placement_caught_object_min_height", float("-inf")
+        )
         self.random_start_min_goal_distance = max(
             number("random_workspace_min_goal_xy_distance", 0.10), 0.0
         )
@@ -2680,6 +2686,18 @@ class BatchedReverseFrontierResetter:
                 ee_group[:, 2] = torch.where(
                     curriculum_active, confined, ee_group[:, 2]
                 )
+
+        if self.random_workspace_gripper_start and math.isfinite(
+            self.placement_caught_object_min_height
+        ):
+            ee_group[:, 2] = torch.where(
+                held_group & is_container,
+                ee_group[:, 2].clamp_min(
+                    self.placement_caught_object_min_height
+                    + self.pick_grasp_height_offset
+                ),
+                ee_group[:, 2],
+            )
 
         if self.reach_annulus is not None:
             ee_group[:, :2] = self._project_into_reach(ee_group[:, :2])
