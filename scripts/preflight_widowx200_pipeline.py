@@ -320,6 +320,8 @@ def main() -> int:
     check(report["capacity"]["contact_overflow"] == 0 and report["capacity"]["constraint_overflow"] == 0, "MJWarp contact/constraint capacity overflow")
     report["passed"] = not report["failures"]
     (args.output / "preflight.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
+    for message in report["failures"]:
+        print(f"[preflight] failure summary: {message}", flush=True)
     print(f"[preflight] {'PASSED' if report['passed'] else 'FAILED'}; report {args.output / 'preflight.json'}", flush=True)
     backend.close()
     return 0 if report["passed"] else 1
