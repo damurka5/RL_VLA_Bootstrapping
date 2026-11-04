@@ -1,0 +1,935 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Теория RL-бутстрэппинга VLA</title>
+<meta name="description" content="Презентация черновика теоретической главы диссертации: почему исполнительную часть VLA-политики можно обучить только консервативным обучением с подкреплением.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+<style>
+  :root {
+    --bg: #fbfaf8;
+    --surface: #ffffff;
+    --surface-2: #f3f1ec;
+    --text: #1d1d1f;
+    --muted: #5d5d63;
+    --line: #e4e1da;
+    --accent: #2f6fdd;
+    --accent-soft: #e6eefc;
+    --good: #2e8b57;
+    --bad: #c2412f;
+    --shadow: 0 1px 2px rgba(0,0,0,.04), 0 4px 16px rgba(0,0,0,.05);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #111214;
+      --surface: #1a1b1e;
+      --surface-2: #222328;
+      --text: #ececef;
+      --muted: #a2a2aa;
+      --line: #2e2f35;
+      --accent: #7aa7ff;
+      --accent-soft: #1e2a42;
+      --good: #5cc28b;
+      --bad: #ff8a73;
+      --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #111214;
+    --surface: #1a1b1e;
+    --surface-2: #222328;
+    --text: #ececef;
+    --muted: #a2a2aa;
+    --line: #2e2f35;
+    --accent: #7aa7ff;
+    --accent-soft: #1e2a42;
+    --good: #5cc28b;
+    --bad: #ff8a73;
+    --shadow: 0 1px 2px rgba(0,0,0,.3), 0 4px 16px rgba(0,0,0,.25);
+  }
+
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
+    -webkit-font-smoothing: antialiased;
+    overflow: hidden;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  code, .mono { font-family: "JetBrains Mono", ui-monospace, monospace; font-size: .88em; }
+
+  /* ---------- stage: one 1280x720 slide scaled to the window ---------- */
+  .stage {
+    position: absolute; left: 50%; top: calc(50% - 22px);
+    width: 1280px; height: 720px;
+    transform: translate(-50%, -50%) scale(var(--s, 1));
+    transform-origin: center center;
+  }
+  .slide {
+    position: absolute; inset: 0;
+    display: none; flex-direction: column;
+    padding: 50px 72px 62px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 18px;
+    box-shadow: var(--shadow);
+    font-size: 20px; line-height: 1.45;
+    overflow: hidden;
+  }
+  .slide.active { display: flex; }
+  .slide > .foot {
+    position: absolute; left: 72px; right: 72px; bottom: 22px;
+    display: flex; justify-content: space-between;
+    font-size: 13px; color: var(--muted);
+  }
+
+  .kicker { font-size: 14px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--accent); margin: 0 0 6px; }
+  h1 { font-size: 46px; line-height: 1.12; margin: 0 0 18px; font-weight: 700; letter-spacing: -.01em; }
+  h2 { font-size: 34px; line-height: 1.18; margin: 0 0 20px; font-weight: 650; letter-spacing: -.005em; }
+  h3 { font-size: 20px; margin: 0 0 8px; font-weight: 650; }
+  p { margin: 0 0 12px; }
+  ul, ol { margin: 0 0 10px; padding-left: 24px; }
+  li { margin: 0 0 7px; }
+  li::marker { color: var(--muted); }
+  .muted { color: var(--muted); }
+  .small { font-size: 16px; line-height: 1.45; }
+  .tiny { font-size: 14px; line-height: 1.4; }
+  .grow { flex: 1; min-height: 0; }
+  .spacer { flex: 1; }
+
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; align-items: start; }
+  .cols.wide-left { grid-template-columns: 1.25fr 1fr; }
+  .cols.wide-right { grid-template-columns: 1fr 1.2fr; }
+  .grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
+
+  .card {
+    background: var(--surface-2); border: 1px solid var(--line);
+    border-radius: 12px; padding: 16px 18px;
+  }
+  .card h3 { font-size: 18px; }
+  .card p, .card li { font-size: 16.5px; line-height: 1.42; }
+  .card .tag { display: inline-block; font-size: 13px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 1px 8px; margin-bottom: 8px; }
+
+  .thm {
+    background: var(--surface); border: 1px solid var(--line);
+    border-left: 4px solid var(--accent);
+    border-radius: 10px; padding: 14px 20px; margin: 0 0 14px;
+  }
+  .thm .label { font-weight: 650; margin-right: 6px; }
+  .thm .label .name { font-weight: 500; color: var(--muted); }
+  .thm p:last-child { margin-bottom: 0; }
+  .note {
+    border-left: 3px solid var(--line); padding: 2px 0 2px 14px;
+    color: var(--muted); font-size: 16px; line-height: 1.45;
+  }
+  .lead { font-size: 22px; line-height: 1.45; }
+  .quote {
+    font-size: 25px; line-height: 1.4; font-weight: 500;
+    border-left: 4px solid var(--accent); padding: 4px 0 4px 22px; margin: 0 0 24px;
+  }
+  .pill { display: inline-block; font-size: 14px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; margin: 0 6px 6px 0; color: var(--muted); background: var(--surface-2); }
+  .ok { color: var(--good); font-weight: 600; }
+  .bad { color: var(--bad); font-weight: 600; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 15.5px; line-height: 1.38; }
+  th { text-align: left; font-weight: 600; color: var(--muted); border-bottom: 1.5px solid var(--text); padding: 6px 10px 6px 0; }
+  td { border-bottom: 1px solid var(--line); padding: 7px 10px 7px 0; vertical-align: top; }
+  tr:last-child td { border-bottom: none; }
+
+  .katex { font-size: 1.04em; }
+  .katex-display { margin: .45em 0; }
+  .thm .katex-display { margin: .35em 0; }
+
+  /* chain diagram */
+  .chain { display: flex; align-items: stretch; gap: 0; margin: 6px 0 14px; }
+  .chain .node { flex: 1; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 15px; line-height: 1.35; }
+  .chain .node b { display: block; font-size: 16px; margin-bottom: 4px; }
+  .chain .node.goal { border-color: var(--accent); background: var(--accent-soft); }
+  .chain .arrow { display: flex; flex-direction: column; justify-content: center; align-items: center; width: 74px; font-size: 13px; color: var(--muted); text-align: center; line-height: 1.25; }
+  .chain .arrow::before { content: "→"; font-size: 24px; color: var(--accent); line-height: 1; margin-bottom: 2px; }
+
+  /* charts */
+  .chart { width: 100%; height: auto; display: block; }
+  .chart text { font-family: Inter, system-ui, sans-serif; }
+  .chart .grid { stroke: var(--line); stroke-width: 1; }
+  .chart .axis { stroke: var(--muted); stroke-width: 1; }
+  .chart .tick { fill: var(--muted); font-size: 12px; }
+  .chart .curve { fill: none; stroke: var(--accent); stroke-width: 2.25; stroke-linejoin: round; }
+  .chart .mark { fill: var(--accent); stroke: var(--surface); stroke-width: 2; }
+  .chart .mlabel { fill: var(--text); font-size: 12.5px; font-weight: 500; }
+  .chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
+  .chart .tip-bg { fill: var(--surface); stroke: var(--line); }
+  .chart .tip { fill: var(--text); font-size: 12.5px; }
+  .chart-caption { font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+  /* title slide */
+  .title-slide { justify-content: center; }
+  .title-slide h1 { max-width: 1040px; }
+  .title-slide .sub { font-size: 25px; color: var(--muted); margin-bottom: 34px; }
+
+  /* chrome */
+  .progress { position: fixed; left: 0; top: 0; height: 3px; background: var(--accent); width: 0; transition: width .2s ease; z-index: 5; }
+  .controls { position: fixed; right: 16px; bottom: 14px; display: flex; gap: 6px; align-items: center; z-index: 5; }
+  .controls button {
+    border: 1px solid var(--line); background: var(--surface); color: var(--text);
+    border-radius: 8px; min-width: 36px; height: 34px; padding: 0 10px; font: inherit; font-size: 15px; cursor: pointer;
+  }
+  .controls button:hover { border-color: var(--accent); }
+  .controls .count { font-size: 13px; color: var(--muted); min-width: 52px; text-align: center; font-variant-numeric: tabular-nums; }
+
+  /* ---------- narrow screens and print: a scrolling document ---------- */
+  @media (max-width: 860px), print {
+    body { overflow: auto; }
+    .stage { position: static; transform: none; width: auto; height: auto; padding: 16px; }
+    .slide { position: relative; display: flex; inset: auto; margin: 0 0 16px; padding: 24px 20px 44px; font-size: 16.5px; border-radius: 14px; overflow-x: auto; }
+    .slide code { overflow-wrap: anywhere; }
+    .slide > .foot { left: 20px; right: 20px; bottom: 14px; font-size: 12px; }
+    h1 { font-size: 30px; }
+    h2 { font-size: 24px; margin-bottom: 14px; }
+    .lead { font-size: 18px; }
+    .quote { font-size: 19px; }
+    .title-slide .sub { font-size: 19px; }
+    .cols, .cols.wide-left, .cols.wide-right, .grid-2x2, .grid-3, .grid-4 { grid-template-columns: 1fr; gap: 14px; }
+    .chain { flex-direction: column; }
+    .chain .arrow { width: auto; flex-direction: row; gap: 8px; padding: 4px 0; }
+    .chain .arrow::before { content: "↓"; margin: 0; }
+    .katex-display { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
+    table { font-size: 14px; display: block; overflow-x: auto; }
+    .progress, .controls .nav, .controls .count, .controls .fs { display: none; }
+  }
+  @media print {
+    body { background: #fff; }
+    .controls { display: none; }
+    .slide { break-inside: avoid; page-break-after: always; box-shadow: none; }
+  }
+</style>
+</head>
+<body>
+<div class="progress" id="progress"></div>
+
+<main class="stage" id="stage">
+
+<!-- 1 -->
+<section class="slide title-slide">
+  <p class="kicker">Черновик теоретической главы диссертации</p>
+  <h1>Почему исполнительную часть VLA‑политики можно обучить только обучением с подкреплением</h1>
+  <p class="sub">Математическое обоснование поэтапного бутстрэппинга</p>
+  <p class="lead" style="margin-bottom:22px">Д. Нуртдинов · ноябрь 2026</p>
+  <div>
+    <span class="pill">SmolVLA</span><span class="pill">тросовый робот CDPR</span><span class="pill">WidowX-200</span><span class="pill">PPO / GRPO с усечением</span><span class="pill">бинарная награда успеха</span>
+  </div>
+  <p class="tiny muted" style="margin-top:26px">Навигация: ← → или пробел · F — полный экран · T — тема · <a href="../">сайт проекта</a> · <a href="https://github.com/damurka5/RL_VLA_Bootstrapping">репозиторий</a></p>
+</section>
+
+<!-- 2 -->
+<section class="slide">
+  <p class="kicker">Постановка</p>
+  <h2>Вопрос</h2>
+  <p class="quote">Почему исполнительную часть VLA-политики (action expert / action head) можно обучить только консервативным RL — PPO и GRPO с усечением — и почему это приводит к успеху на инструкциях манипуляции?</p>
+  <div class="grid-4">
+    <div class="card"><h3>Разреженность</h3><p>Награда бинарна. Пока успехов нет, градиент политики тождественно равен нулю.</p></div>
+    <div class="card"><h3>Длинный горизонт</h3><p>Подход, захват, подъём, перенос, отпускание: случайный успех экспоненциально мал по длине цепочки.</p></div>
+    <div class="card"><h3>Одна политика</h3><p>Много инструкций и общие параметры: улучшение одного навыка может разрушать другой.</p></div>
+    <div class="card"><h3>Новая кинематика</h3><p>На CDPR приор SmolVLA — почти постоянное смещение: переносится представление, а не поведение.</p></div>
+  </div>
+  <div class="spacer"></div>
+  <p class="small muted">Эмпирическая основа. CDPR: 69,14 % строгого успеха полной задачи (1416 из 2048 попыток), старт с пустым захватом, без учителя и без демонстраций человека. WidowX-200: та же схема «навыки → композиция» на другой кинематике.</p>
+</section>
+
+<!-- 3 -->
+<section class="slide">
+  <p class="kicker">Постановка</p>
+  <h2>Что именно означает «только RL»</h2>
+  <div class="cols">
+    <div class="card">
+      <h3>Доступно обучающемуся</h3>
+      <ul>
+        <li>замороженное отображение признаков $\varphi$: бэкбон VLM, проекция, приор действий;</li>
+        <li>симулятор со сбросом в стартовые распределения навыков;</li>
+        <li>предикаты успеха навыков.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Недоступно</h3>
+      <ul>
+        <li>целевые действия из внешнего источника: человек, скриптовый оракул, контроллер-помощник.</li>
+      </ul>
+      <p class="small muted" style="margin-top:10px">Допустимо: самоимитация на собственных успехах и переразметка инструкций — действия выбраны самой политикой, а отобраны предикатом успеха.</p>
+    </div>
+  </div>
+  <div class="thm" style="margin-top:22px">
+    <p><span class="label">Навык</span> — тройка «инструкция, стартовое распределение, событие успеха»:</p>
+    \[ \mathcal T=(\ell,\mu,E,H),\qquad J_{\mathcal T}(\pi)=\PP^{\pi}_{\mu}\bigl(z_H\in E\bigr). \]
+  </div>
+  <p class="lead">«Описать простейший навык» = задать $\ell$, $\mu$ и $E$. Через эти объекты и замороженное представление выражаются все величины в оценках сходимости.</p>
+</section>
+
+<!-- 4 -->
+<section class="slide">
+  <p class="kicker">Структура ответа</p>
+  <h2>Ответ — четыре условия</h2>
+  <div class="grid-2x2">
+    <div class="card"><span class="tag">У1 · теорема 4.1</span><h3>Что оптимизирует GRPO?</h3><p>Монотонное преобразование $2\arcsin\sqrt p$ вероятности успеха. Оптимумы Парето-оптимальны по контекстам.</p></div>
+    <div class="card"><span class="tag">У2 · теоремы 5.1, 5.4</span><h3>Почему консервативный шаг не вредит?</h3><p>Граница улучшения в доверительной области и граница сохранения навыка через среднюю вариацию политики.</p></div>
+    <div class="card"><span class="tag">У3 · теоремы 6.2, 6.4</span><h3>Почему шаги приходят к успеху?</h3><p>Неточный зеркальный спуск: разрыв $\le\sqrt{HD/2K}$ плюс невязка и покрытие. Потолок задаёт представление.</p></div>
+    <div class="card"><span class="tag">У4 · лемма 7.1, теоремы 7.4, 7.5</span><h3>Откуда сигнал и зачем навыки?</h3><p>Без успехов шага нет; для составной задачи успех экспоненциально мал. Навыки, лестница стартов и композиция поднимают его выше нуля.</p></div>
+  </div>
+  <div class="spacer"></div>
+  <p class="small muted">Сводная теорема 8.1 объединяет условия; предложение 8.2 показывает, что сигнал необходим.</p>
+</section>
+
+<!-- 5 -->
+<section class="slide">
+  <p class="kicker">Модель</p>
+  <h2>Процесс, класс политик и алгоритм</h2>
+  <div class="cols">
+    <div>
+      <p class="small"><b>Расширенное состояние</b> хранит всю историю, поэтому процесс марковский при любой политике:</p>
+      \[ z_h=(c,\ s_{0:h},\ o_{0:h},\ p_{0:h},\ u_{0:h-1}). \]
+      <p class="small"><b>Класс политик</b> над замороженными признаками $x_h=\varphi_h(z_h)$: сравнительная политика тоже из $\Pi_\varphi$, без привилегий.</p>
+      <p class="small"><b>Параметризация</b> (остаточная голова над приором $p$):</p>
+      \[ \mu_\theta(x)=\tanh\bigl(p+s_r\tanh f_\theta(x)\bigr), \]
+      \[ u_h\sim\mathcal N(\mu_\theta(x_h)+b_h,\ \sigma^2_\theta),\qquad a_h=\operatorname{clip}(u_h,-1,1). \]
+      <p class="tiny muted">Действие в теории — латентное $u_h$; усечение отнесено к окружению. $H$ — число решений (кусков действий), в CDPR 40–128.</p>
+    </div>
+    <div>
+      <p class="small"><b>Групповое преимущество</b> по $G$ эпизодам из одного старта:</p>
+      \[ A_i=\frac{Y_i-\bar Y}{\max(\hat\sigma,\epsilon)},\qquad Y_i\in\{0,1\}. \]
+      <p class="small"><b>Усечённый суррогат</b>:</p>
+      \[ \mathcal L^{\rm clip}=\frac1N\sum_{i,h}\min\bigl(r_{ih}A_i,\ \bar r_{ih}A_i\bigr),\quad \bar r=\operatorname{clip}(r,1-\varepsilon_-,1+\varepsilon_+). \]
+      <div class="card" style="margin-top:8px">
+        <p class="small" style="margin:0">Конфигурация WidowX: $G=8$, $\varepsilon_-=0{,}2$, $\varepsilon_+=0{,}28$, 4 эпохи, энтропия $2\cdot10^{-4}$, фильтр групп по std $0{,}05$ (DAPO).</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 6 -->
+<section class="slide">
+  <p class="kicker">У1 · Что оптимизирует GRPO</p>
+  <h2>GRPO поднимается по $2\arcsin\sqrt{p}$</h2>
+  <div class="cols wide-left">
+    <div>
+      <div class="thm">
+        <p><span class="label">Теорема 4.1</span>При бинарной награде направление обновления в точке поведения в среднем равно</p>
+        \[ \E g=\frac{\nabla_\theta p_c}{\sqrt{p_c(1-p_c)}}=\nabla_\theta\bigl[2\arcsin\sqrt{p_c(\theta)}\bigr]. \]
+        <p class="small">При групповой нормировке — $c_{G,\epsilon}(p)\,\nabla p$, и $c_{G,\epsilon}\to1/\sqrt{p(1-p)}$ при $G\to\infty$.</p>
+      </div>
+      <ul class="small">
+        <li>Вырожденные группы дают $A_i\equiv0$ <i>точно</i>.</li>
+        <li>Трудные контексты усиливаются как $p^{-1/2}$.</li>
+        <li>Оптимумы $\E_cF_G(p_c)$ Парето-оптимальны по вектору $(p_c)_c$.</li>
+        <li>Константы: $|A_i|\le\sqrt7\approx2{,}65\lt 6$ — усечение преимуществ не срабатывает; минимальное ненулевое std $\approx0{,}33\gt0{,}05$ — фильтр удаляет ровно вырожденные группы.</li>
+      </ul>
+    </div>
+    <div>
+      <svg class="chart" id="chartWeight" viewBox="0 0 520 330" role="img" aria-label="Вес контекста 1/√(p(1−p)) в зависимости от вероятности успеха p"></svg>
+      <p class="chart-caption">Вес контекста относительно обычного градиента политики, $1/\sqrt{p(1-p)}$. Наведите курсор, чтобы увидеть значения.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 7 -->
+<section class="slide">
+  <p class="kicker">У2 · Устойчивость</p>
+  <h2>Улучшение в доверительной области</h2>
+  <div class="thm">
+    <p><span class="label">Теорема 5.1</span><span class="name">для вероятности успеха на горизонте $H$</span></p>
+    \[ J(\pi')\ \ge\ J(\pi)+L_\pi(\pi')-H(H-1)\,\alpha_\infty^2\ \ge\ J(\pi)+L_\pi(\pi')-\tfrac12H(H-1)\,\delta, \]
+    <p class="small">где $L_\pi(\pi')=\sum_h\E_{d^\pi_h}\bar A_h$, $\alpha_\infty=\sup\TV(\pi'_h,\pi_h)$, $\delta=\sup\KL(\pi_h\|\pi'_h)$. Следствие 5.2: шаг миноризации–максимизации не уменьшает $J$.</p>
+  </div>
+  <div class="grid-3">
+    <div class="card"><h3>Усечение ≠ доверительная область</h3><p>Оно убирает стимул выходить за полосу только на выборочных действиях. Условие теоремы — свойство реализованного шага: контролировать по <code>approx_kl</code>, доле усечений, отбраковке шагов.</p></div>
+    <div class="card"><h3>Шаг $\propto H^{-2}$</h3><p>Улучшение гарантировано при $\delta\lt2L/(H(H-1))$. Отсюда довод в пользу кусков действий (они уменьшают число решений $H$) и малых шагов на длинных задачах.</p></div>
+    <div class="card"><h3>Константы худшего случая</h3><p>При $H=40$ и $\delta=0{,}009$ штраф $\approx7\gt1$: оценка численно бессодержательна. Её роль структурная — как шаг должен зависеть от горизонта.</p></div>
+  </div>
+</section>
+
+<!-- 8 -->
+<section class="slide">
+  <p class="kicker">У2 · Устойчивость</p>
+  <h2>Сохранение навыков</h2>
+  <div class="thm">
+    <p><span class="label">Теорема 5.4</span>Для любой задачи $\mathcal T$ и любых $\pi,\pi'$</p>
+    \[ \bigl|J_{\mathcal T}(\pi')-J_{\mathcal T}(\pi)\bigr|\le\sum_{h=0}^{H-1}\E_{z\sim d^{\pi,\mathcal T}_h}\TV\bigl(\pi'_h(\cdot|z),\pi_h(\cdot|z)\bigr)\le\sum_h\sqrt{\tfrac12\,\E\,\KL(\pi_h\|\pi'_h)}. \]
+    <p class="small">Ожидание — по состояниям <i>этой</i> задачи при старой политике. На случайных конечных МППР оценка почти точна: максимум $|\Delta J|/\Delta=0{,}987$.</p>
+  </div>
+  <div class="grid-3">
+    <div class="card"><span class="tag">следствие 5.5</span><h3>Смесь задач</h3><p>$|\Delta J_{\mathcal T}|\le\bar\Delta/w_{\mathcal T}$. При $w_{\mathcal T}=0$ гарантии нет: изменение задаёт обобщение общей сети.</p></div>
+    <div class="card"><span class="tag">следствие 5.6</span><h3>Накопление дрейфа</h3><p>Оценка растёт линейно по числу шагов $K$. CDPR: KL $0{,}009$ на обновление, за 113 обновлений потеряно удержание подъёма.</p></div>
+    <div class="card"><span class="tag">следствия 5.7, 5.8</span><h3>Якорь к эталону</h3><p>$|J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le\sqrt{H D_{\rm ref}/2}$ — равномерно по $K$. Для гауссиан это член $(\mu-\mu_{\rm ref})^2/2\sigma^2$.</p></div>
+  </div>
+</section>
+
+<!-- 9 -->
+<section class="slide">
+  <p class="kicker">У3 · Сходимость</p>
+  <h2>Консервативные шаги как зеркальный спуск</h2>
+  <div class="cols wide-left">
+    <div>
+      <p class="small"><b>KL-проксимальный шаг</b> (вариационный принцип Гиббса); усечённый суррогат — его приближение первого порядка:</p>
+      \[ \pi_{k+1}(\cdot|z)=\arg\max_q\Bigl\{\E_q\hat Q_k-\tfrac1\eta\KL(q\|\pi_k)\Bigr\}\ \propto\ \pi_k\,e^{\eta\hat Q_k}. \]
+      <div class="thm">
+        <p><span class="label">Теорема 6.2</span>Для любой сравнительной политики $\tilde\pi$ при точных $Q$ и $\eta=\sqrt{8D/HK}$</p>
+        \[ \min_{k\lt K}\bigl[J(\tilde\pi)-J(\pi_k)\bigr]\le\sqrt{\frac{H\,D(\tilde\pi\|\pi_0)}{2K}},\qquad D=\sum_h\E_{d^{\tilde\pi}_h}\KL\bigl(\tilde\pi_h\|\pi_{0,h}\bigr). \]
+      </div>
+    </div>
+    <div>
+      <div class="card">
+        <h3>Идея доказательства</h3>
+        <ol class="small" style="margin-bottom:0">
+          <li>Шаг Гиббса и лемма Хёфдинга дают неравенство трёх точек в каждом $z$.</li>
+          <li>Лемма о разности производительностей берётся по распределению $d^{\tilde\pi}$ сравнительной политики.</li>
+          <li>$d^{\tilde\pi}$ не зависит от $k$, поэтому KL-члены телескопируются.</li>
+        </ol>
+      </div>
+      <p class="lead" style="margin-top:20px">Размер шага $\eta$ задаёт только скорость. Вся трудность задачи сосредоточена в одном числе $D$.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 10 -->
+<section class="slide">
+  <p class="kicker">У3 · Сходимость</p>
+  <h2>Что определяет $D$ и что ещё входит в ошибку</h2>
+  <div class="cols">
+    <div>
+      <p class="small"><b>Следствие 6.3.</b> Для гауссовских $\pi_0=\mathcal N(\mu_0,\sigma_0^2)$ и $\tilde\pi=\mathcal N(\tilde\mu,\tilde\sigma^2)$</p>
+      \[ D=\sum_h\E_{d^{\tilde\pi}_h}\frac{\|\tilde\mu-\mu_0\|^2}{2\sigma_0^2}+Hm\Bigl[\log\frac{\sigma_0}{\tilde\sigma}+\frac{\tilde\sigma^2}{2\sigma_0^2}-\frac12\Bigr]. \]
+      <ul class="small">
+        <li>При $\sigma_0=e^{-1{,}2}\approx0{,}30$ рассогласование $0{,}1$ стоит $0{,}055$ нат на шаг, а $0{,}5$ — $1{,}38$ нат: в 25 раз больше обновлений.</li>
+        <li>Точность $\tilde\sigma\ll\sigma_0$ обходится лишь логарифмически.</li>
+        <li>Если приор — постоянное смещение вдали от нужных действий, $D$ велико, а остаток работает в насыщении $\tanh$.</li>
+      </ul>
+    </div>
+    <div>
+      <p class="small"><b>Теорема 6.4</b> (неточный шаг): средний разрыв не больше суммы трёх членов.</p>
+      <div class="card" style="margin-bottom:10px"><span class="tag">оптимизация</span><p style="margin:0">$D/(\eta K)+H\eta/8$ — консервативный шаг сходится.</p></div>
+      <div class="card" style="margin-bottom:10px"><span class="tag">невязка шага $e_k$</span><p style="margin:0">Оценка $Q$ по $G$ исходам (на вырожденной группе — полная ошибка), представление на признаках $\varphi$, приближение усечением.</p></div>
+      <div class="card"><span class="tag">покрытие $\sqrt{C_h}$</span><p style="margin:0">$C_h=1+\chi^2(d^{\tilde\pi}_h\|\nu_h)$: покрывают ли состояния обучения состояния успеха. Старты «в захвате», лестница, рестарты.</p></div>
+    </div>
+  </div>
+</section>
+
+<!-- 11 -->
+<section class="slide">
+  <p class="kicker">У3 · Сходимость</p>
+  <h2>Потолок задаёт представление, а не RL</h2>
+  <div class="cols">
+    <div>
+      <div class="thm">
+        <p><span class="label">Предложение 6.6</span>Если на решающем шаге успех требует $\|g(\xi)-u\|\le r$ и $\sup_a\PP(\|g-a\|\le r\mid x)\le\beta$, то</p>
+        \[ J(\pi)\le\beta\quad\text{для любой }\pi\in\Pi_\varphi. \]
+      </div>
+      <p class="small">RL сходится к $J^*_\varphi=\sup_{\Pi_\varphi}J$, а не к $\sup J$. Разрыв устраняется улучшением признаков (адаптация зрения, камера на запястье), а не бюджетом RL.</p>
+      <p class="small muted">CDPR: локализация 3–5 см при допуске захвата около 2 см ограничивает захват. Размещение с допуском 5,7 и 9,1 см устойчиво.</p>
+    </div>
+    <div>
+      <div class="card" style="margin-bottom:12px">
+        <h3>Случайная проекция признаков</h3>
+        <p>Токены проецируются фиксированной гауссовской матрицей в $\mathbb R^{512}$. По лемме Джонсона–Линденштраусса расстояния сохраняются с искажением $\epsilon$, поэтому потолок задают сами токены VLM.</p>
+      </div>
+      <div class="card">
+        <h3>Почему обучается только голова</h3>
+        <ol style="margin:0">
+          <li>Класс $\Pi_\varphi$ фиксирован — сравнительная политика не движется.</li>
+          <li>Входы $(x,p)$ стационарны — банки SIL и якоря остаются корректными.</li>
+          <li>Геометрия доверительной области — в пространстве действий; голова — самый дешёвый способ в ней двигаться.</li>
+        </ol>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- 12 -->
+<section class="slide">
+  <p class="kicker">У4 · Сигнал</p>
+  <h2>Без успеха нет шага</h2>
+  <div class="cols wide-left">
+    <div>
+      <div class="thm">
+        <p><span class="label">Лемма 7.1</span>Если все группы вырождены, то $A_i\equiv0$ и вклад градиента политики равен нулю. Ожидаемое число эпизодов до первого ненулевого шага не меньше $1/\E_cp_c$, так как</p>
+        \[ P_{\rm mix}(p,G)=1-p^G-(1-p)^G\le Gp. \]
+      </div>
+      <div class="thm">
+        <p><span class="label">Предложение 7.2</span>Если каждая из $m$ вех проходится с вероятностью не больше $q$, то $J_c(\pi_0)\le q^m$.</p>
+      </div>
+      <p class="small">Иллюстрация: попадание в шар 2 см при разбросе 20 см в $\mathbb R^3$ — $10^{-3}$; цепочка из четырёх таких событий — $10^{-12}$. Декомпозиция на навыки — способ обойти этот барьер.</p>
+    </div>
+    <div>
+      <svg class="chart" id="chartMix" viewBox="0 0 520 330" role="img" aria-label="Доля смешанных групп P_mix(p, 8) в зависимости от вероятности успеха p"></svg>
+      <p class="chart-caption">Доля информативных групп при $G=8$: $P_{\rm mix}(p,8)$.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 13 -->
+<section class="slide">
+  <p class="kicker">У4 · Сигнал</p>
+  <h2>Плотная награда — сигнал; бинарная — правильная цель</h2>
+  <div class="thm">
+    <p><span class="label">Предложение 7.3</span></p>
+    <ol style="margin-bottom:4px">
+      <li>Если плотная отдача не имеет атомов, $P_{\rm mix}=1$: каждая группа информативна.</li>
+      <li>Мост Маркова: если плотная стадия добилась $\E\bigl[\tfrac1H\sum_hg(d(s_h))\bigr]\le\bar g$, то $J\ge1-\bar g/g(r)$.</li>
+      <li>Максимум плотной цели может иметь нулевую вероятность успеха.</li>
+    </ol>
+  </div>
+  <div class="cols">
+    <div class="card">
+      <h3>Контрпример к п. 3</h3>
+      <p>Успех — $d(s_H)\le r$, награда $-d(s_H)$.</p>
+      <p>A всегда заканчивает на $r+\epsilon$: плотная цель $-(r+\epsilon)$, успех $0$.<br>B с вероятностью ½ попадает точно, иначе на $3r$: плотная цель $-1{,}5r$, успех ½.</p>
+      <p style="margin:0">Плотная цель предпочитает A.</p>
+    </div>
+    <div>
+      <p class="lead">Отсюда порядок «плотная → бинарная».</p>
+      <p class="small">Плотная награда даёт сигнал при нулевой стартовой вероятности успеха. Доведя расстояние ниже радиуса успеха, она обеспечивает $p_0\gt0$, после чего бинарная стадия оптимизирует саму $J$.</p>
+      <p class="small muted">Требование «окно плотной награды шире радиуса успеха» — это требование, чтобы $g$ различала состояния вне успеха.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 14 -->
+<section class="slide">
+  <p class="kicker">У4 · Лестница стартов</p>
+  <h2>Условие храповика $P-\Delta\ge D$</h2>
+  <div class="cols wide-right">
+    <div>
+      <div class="thm">
+        <p><span class="label">Теорема 7.4</span>Переход на ступень $j+1$ при успехе $P$, возврат при успехе ниже $D$. Если в момент перехода $J_{\mu_{j+1}}\ge J_{\mu_j}-\Delta$ и</p>
+        \[ P-\Delta\ge D, \]
+        <p class="small">то немедленного возврата нет, а доля смешанных групп не меньше $\min\{P_{\rm mix}(P-\Delta),P_{\rm mix}(P)\}$. Достаточно $\Delta\ge\TV(\mu_j,\mu_{j+1})$ или $\Delta\ge L_VW_1(\mu_j,\mu_{j+1})$.</p>
+      </div>
+      <p class="small">С учётом оценивания по $n$ эпизодам: $P-\Delta-2\zeta_n\ge D$, где $\zeta_n=\sqrt{\log(2/\delta)/2n}$.</p>
+    </div>
+    <div>
+      <svg class="chart" id="chartLadder" viewBox="0 0 560 290" role="img" aria-label="Пороги лестницы CDPR: где оказывается успех после перехода относительно порога возврата"></svg>
+      <p class="chart-caption">CDPR, $\Delta_{p90}=0{,}129$ за 12 переходов. При $0{,}45/0{,}30$: ноль возвратов, захват выведен из нуля, $P_{\rm mix}(0{,}321;8)\approx0{,}955$.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 15 -->
+<section class="slide">
+  <p class="kicker">У4 · Композиция</p>
+  <h2>Навыки под одной инструкцией</h2>
+  <div class="thm">
+    <p><span class="label">Теорема 7.5</span><span class="name">реактивная политика, этапы с моментами остановки $\tau_j$</span></p>
+    \[ J_{\mathcal T_c}(\pi)=\prod_{j=1}^m\E_{\rho_{j-1}}V^{\ell_c}_j\ \ge\ \prod_{j=1}^m\Bigl(p_j-\Gamma_j-\TV(\rho_{j-1},\mu_j)\Bigr)^{+}. \]
+  </div>
+  <div class="chain">
+    <div class="node"><b>Старт $\mu_c$</b>пустой захват, одна итоговая инструкция $\ell_c$</div>
+    <div class="arrow">этап 1</div>
+    <div class="node"><b>Захват: $p_1$, $\Gamma_1$</b>навык обучен под «pick up», исполняется под $\ell_c$</div>
+    <div class="arrow">передача<br>$\TV(\rho_1,\mu_2)$</div>
+    <div class="node"><b>Размещение: $p_2$, $\Gamma_2$</b>обучено со стартов «в захвате» под $\ell_c$, поэтому $\Gamma_2=0$</div>
+    <div class="arrow">этап 2</div>
+    <div class="node goal"><b>Строгий успех</b>подход, захват, подъём, отпускание в цели</div>
+  </div>
+  <div class="grid-3">
+    <div class="card"><h3>$p_j$ — качество навыка</h3><p>Обеспечивают стадии RL навыков.</p></div>
+    <div class="card"><h3>$\Gamma_j$ — перенос инструкции</h3><p>Считается по записанным состояниям: KL между средними головы при $\ell_c$ и $\ell_j$. Переразметка успехов под $\ell_c$ минимизирует $\Gamma_j$.</p></div>
+    <div class="card"><h3>$\TV(\rho,\mu)$ — передача</h3><p>Покрывают ли старты «в захвате» реальные состояния после захвата. Оценка двухвыборочным классификатором.</p></div>
+  </div>
+  <p class="small muted" style="margin-top:12px">Пример: $(0{,}5-0{,}1)(0{,}7-0{,}3)=0{,}16$, $P_{\rm mix}\approx0{,}75$ — против $q^m$ без декомпозиции.</p>
+</section>
+
+<!-- 16 -->
+<section class="slide">
+  <p class="kicker">У4 · Самоимитация</p>
+  <h2>Самоимитация на собственных успехах — тоже шаг RL</h2>
+  <div class="thm">
+    <p><span class="label">Предложение 7.6</span>Пусть $q^+_\beta$ — закон траекторий политики $\beta$ при условии успеха. Тогда</p>
+    \[ \log\frac{J_{\mathcal T}(\pi_\theta)}{J_{\mathcal T}(\pi_\beta)}\ \ge\ G_{\mathcal T}(\theta)=\E_{q^+_\beta}\sum_h\log\frac{\pi_\theta(u_h|x_h)}{\pi_\beta(u_h|x_h)}. \]
+    <p class="small">Неравенство EM-типа (Dayan–Hinton, RWR): если подгонка не уменьшила популяционное правдоподобие собственных успехов, успех не падает.</p>
+  </div>
+  <div class="thm">
+    <p><span class="label">Следствие 7.7</span><span class="name">сбалансированная смесь банков, $\sum_{\mathcal T}w_{\mathcal T}G_{\mathcal T}\ge0$</span></p>
+    \[ J_{\theta,\mathcal T}\ \ge\ J_{\beta,\mathcal T}\prod_{\mathcal T'\ne\mathcal T}J_{\beta,\mathcal T'}^{\,w_{\mathcal T'}/w_{\mathcal T}}. \]
+  </div>
+  <div class="cols">
+    <p class="small">Сбалансированная самоимитация поднимает $\prod_{\mathcal T}J_{\mathcal T}^{w_{\mathcal T}}$ — логарифмический барьер против забывания. Задача с $w_{\mathcal T}=0$ нижней границы не имеет: на CDPR захват стёрт до нуля, когда отсутствовал в смеси.</p>
+    <p class="small muted">Для гауссовской головы правдоподобие — взвешенная MSE на латентном $u$. Подгонка к усечённым или сглаженным действиям этой гарантии формально не наследует.</p>
+  </div>
+</section>
+
+<!-- 17 -->
+<section class="slide">
+  <p class="kicker">Сводная теорема</p>
+  <h2>Теорема 8.1 о бутстрэппинге исполнительной части</h2>
+  <div class="cols">
+    <div class="card">
+      <h3>Условия</h3>
+      <ul class="small" style="margin:0">
+        <li><b>A1. Представимость:</b> есть $\tilde\pi\in\Pi_\varphi$ с $\bar D=D(\tilde\pi\|\pi^{\rm III}_0)\lt\infty$.</li>
+        <li><b>A2. Сигнал:</b> $p_0=\prod_j\bigl(p_j-\Gamma_j-\TV(\rho_{j-1},\mu_j)\bigr)^+\gt0$.</li>
+        <li><b>A3. Неточность шага:</b> $\sum_h\sqrt{C_h}\,\|e^+_{k,h}\|\le\varepsilon_{\rm upd}$.</li>
+      </ul>
+    </div>
+    <div class="card">
+      <h3>Выводы</h3>
+      <ul class="small" style="margin:0">
+        <li>(а) группа содержит успех с вероятностью $\ge p_0$;</li>
+        <li>(б) $\displaystyle\max_{k\lt K}J_{\mathcal T_c}(\pi_k)\ge J_{\mathcal T_c}(\tilde\pi)-\sqrt{\tfrac{H\bar D}{2K}}-\varepsilon_{\rm upd}$;</li>
+        <li>(в) навык в смеси меняется на $\le\bar\Delta_k/w_{\mathcal T}$ за шаг; с якорём — на $\le\sqrt{HD_{\rm ref}/2}$ всегда;</li>
+        <li>(г) $J_{\mathcal T_c}(\tilde\pi)\le J^*_\varphi$ — потолок представления.</li>
+      </ul>
+    </div>
+  </div>
+  <div class="thm" style="margin-top:18px">
+    <p><span class="label">Предложение 8.2</span><span class="name">необходимость сигнала</span></p>
+    <p class="small">Если $p_c(\pi^{\rm III}_0)=0$ почти для всех контекстов и регуляризации нет, то $\pi_k=\pi^{\rm III}_0$ при всех $k$, и условие A3 нарушается. Сигнал A2 необходим, а простые навыки — конструктивный способ его обеспечить.</p>
+  </div>
+</section>
+
+<!-- 18 -->
+<section class="slide">
+  <p class="kicker">Ответ</p>
+  <h2>Почему достаточно консервативного RL</h2>
+  <div class="grid-2x2">
+    <div class="card"><span class="tag">У1</span><p>При бинарной награде GRPO оптимизирует монотонное преобразование вероятности успеха — саму метрику задачи.</p></div>
+    <div class="card"><span class="tag">У2</span><p>Шаг в доверительной области почти монотонен и меняет успех каждого навыка, на состояниях которого он ограничен, не больше суммы средних вариаций.</p></div>
+    <div class="card"><span class="tag">У3</span><p>Последовательность шагов — неточный зеркальный спуск к любому успешному поведению на замороженных признаках. Цена — $D$, покрытие и невязка.</p></div>
+    <div class="card"><span class="tag">У4</span><p>Сигнал есть, только если $p_0\gt0$. Тройки навыков, плотная награда, лестница стартов и композиция делают $p_0$ отделённой от нуля за полиномиальную цену.</p></div>
+  </div>
+</section>
+
+<!-- 19 -->
+<section class="slide">
+  <p class="kicker">Ответ</p>
+  <h2>Что дали бы демонстрации и чем пайплайн их заменяет</h2>
+  <p class="lead">В сводной оценке демонстрации входят лишь через две величины.</p>
+  <table style="font-size:18px">
+    <thead><tr><th style="width:22%">Величина</th><th style="width:39%">Демонстрации</th><th>Пайплайн без датасета</th></tr></thead>
+    <tbody>
+      <tr><td>$\bar D$ — KL до успешной политики</td><td>клонирование поведения приближает $\pi_0$ к $\tilde\pi$</td><td>RL навыков и самоимитация на собственных успехах (предложение 7.6)</td></tr>
+      <tr><td>$C_h$ — покрытие</td><td>рестарты из состояний демонстраций</td><td>стартовые распределения навыков в симуляторе: «в захвате», выровненный захват, лестница</td></tr>
+    </tbody>
+  </table>
+  <div class="spacer"></div>
+  <p class="quote" style="margin-bottom:10px">Обе величины управляемы без демонстраций — в этом точный математический смысл утверждения «датасет для новой структуры не обязателен».</p>
+  <p class="small muted">При развёртывании привилегированные старты не используются: итоговая оценка проводится из целевого распределения $\mu_c$.</p>
+</section>
+
+<!-- 20 -->
+<section class="slide">
+  <p class="kicker">Эксперимент</p>
+  <h2>Связь с наблюдениями</h2>
+  <table>
+    <thead><tr><th style="width:27%">Величина теории</th><th style="width:30%">Механизм и диагностика</th><th>Наблюдение</th></tr></thead>
+    <tbody>
+      <tr><td>$\bar\alpha\le\sqrt{\overline{\KL}/2}$ (лемма 3.3)</td><td>усечение $0{,}2/0{,}28$; <code>approx_kl_mean</code></td><td>CDPR, LR $10^{-5}$: $\overline{\KL}=0{,}009$, $\bar\alpha\le0{,}067$</td></tr>
+      <tr><td>Накопление дрейфа (сл. 5.6)</td><td>$\sum_k\sqrt{\overline{\KL}_k/2}$ по запуску</td><td>CDPR: за 113 обновлений потеряно удержание подъёма; «обмен» plate/bowl</td></tr>
+      <tr><td>Якорь (сл. 5.7, 5.8)</td><td><code>reference_anchor</code> на банке успехов</td><td>ущерб plate/lift вдвое меньше, эрозия lift|grasp остаётся</td></tr>
+      <tr><td>$w_{\mathcal T}=0$ (сл. 5.5, 7.7)</td><td>стадии RL по отдельным инструкциям</td><td>WidowX: подход и захват потеряны на стадии размещения; CDPR: захват стёрт, когда отсутствовал в смеси</td></tr>
+      <tr><td>$D(\tilde\pi\|\pi_0)$ (сл. 6.3)</td><td>остаток над приором; насыщение $\tanh$</td><td>CDPR: приор — постоянное смещение, остаток насыщен</td></tr>
+      <tr><td>Потолок $J^*_\varphi$ (пр. 6.6)</td><td>ошибка локализации против допуска</td><td>CDPR: 3–5 см против 2 см на захвате; размещение устойчиво</td></tr>
+      <tr><td>Храповик (т. 7.4)</td><td>пороги лестницы, $\Delta_{p90}$</td><td>$0{,}30/0{,}20$: три из четырёх семейств застряли; $0{,}45/0{,}30$: ноль возвратов</td></tr>
+      <tr><td>$\Gamma_j$, $\TV(\rho,\mu)$ (т. 7.5)</td><td>переразметка под итоговую инструкцию; старты «в захвате»</td><td>CDPR: отказы на передаче захват → отпускание; WidowX: composition SFT неэффективен</td></tr>
+    </tbody>
+  </table>
+</section>
+
+<!-- 21 -->
+<section class="slide">
+  <p class="kicker">Эксперимент</p>
+  <h2>Проверяемые предсказания для WidowX-200</h2>
+  <ol class="lead" style="padding-left:30px">
+    <li><b>Сигнал.</b> Совместное RL стартует, только когда $J_c(\pi^{\rm III}_0)$ заметно больше нуля; доля смешанных групп согласуется с $\E_cP_{\rm mix}(p_c,8)$.</li>
+    <li><b>Перенос инструкции.</b> Посчитать $\hat\Gamma_1$ до и после composition SFT. Если оно не уменьшилось, переход не поднимет $J_c$.</li>
+    <li><b>Передача.</b> Оценить $\TV(\rho_1,\mu_2)$ между состояниями после захвата и стартами «в захвате».</li>
+    <li><b>Сохранение.</b> Держать каждую инструкцию в смеси с $w_{\mathcal T}\ge w_{\min}$ или под якорём; сообщать бюджет $\sum_k\sqrt{\overline{\KL}_k/2}$.</li>
+    <li><b>Храповик.</b> Проверять $P-\Delta_{p90}-2\zeta_n\ge D$ для каждой лестницы до запуска.</li>
+  </ol>
+  <div class="spacer"></div>
+  <p class="small muted">Пункты 2 и 3 считаются по уже записанным состояниям, без новых эпизодов.</p>
+</section>
+
+<!-- 22 -->
+<section class="slide">
+  <p class="kicker">Честность утверждений</p>
+  <h2>Границы применимости</h2>
+  <div class="cols">
+    <ul class="small">
+      <li><b>Усечение не является доверительной областью.</b> Теоремы относятся к реализованным шагам; их условия измеряются, а не выводятся из $\varepsilon_\pm$.</li>
+      <li><b>Константы худшего случая.</b> При $H\sim40$–$128$ оценки улучшения численно бессодержательны; граница сохранения почти точна.</li>
+      <li><b>Сходимость для нейросети — разложение, а не гарантия.</b> Невязка $e_k$ теорией не ограничивается.</li>
+      <li><b>Обучение против развёртывания.</b> $J$ — для стохастической обучающей политики; оценка использует детерминированное среднее остатка, поэтому $J_{\rm explore}$ и $J_{\rm deploy}$ измеряются отдельно.</li>
+      <li><b>Реактивность.</b> Композиция и рестарты используют реактивную политику; память кусков действий включается в состояние.</li>
+      <li><b>Происхождение данных.</b> Теорема требует, чтобы все целевые действия порождала сама политика; для каждого эксперимента это подтверждается аудитом происхождения.</li>
+    </ul>
+    <div class="card">
+      <h3>Атрибуция</h3>
+      <p class="small"><b>Известное:</b> лемма о разности производительностей (Kakade–Langford), граница TRPO/CPO, зеркальный спуск в пространстве политик (Shani, Lan, Xiao, Agarwal), эффективная цель GRPO (Mroueh), неравенство EM-типа (Dayan–Hinton, RWR), «кодовый замок» (Kakade).</p>
+      <p class="small" style="margin:0"><b>Собственное:</b> формулировки для вероятности успеха с явными константами; следствия о смеси, накоплении и якоре; теоремы о храповике, композиции и сводная; нижняя граница при сбалансированной самоимитации; связь с измеримыми величинами.</p>
+    </div>
+  </div>
+</section>
+
+<!-- 23 -->
+<section class="slide">
+  <p class="kicker">Проект</p>
+  <h2>Положения, выносимые на защиту</h2>
+  <ol class="small" style="font-size:17.5px; padding-left:28px">
+    <li>Для эпизодических задач манипуляции с бинарным предикатом успеха групповой GRPO в точке поведения — несмещённый подъём по строго возрастающему преобразованию вероятности успеха контекста; его стационарные точки Парето-оптимальны.</li>
+    <li>Для вероятности успеха на горизонте $H$ получены граница улучшения в доверительной области с константой $H(H-1)/2$ и граница сохранения навыка; из них — условия сохранения в смеси инструкций, линейное накопление дрейфа и равномерная граница для якоря.</li>
+    <li>Консервативная итерация политики с групповыми оценками — неточный зеркальный спуск с разрывом $O(\sqrt{HD/K})$ до любой сравнимой политики над замороженными признаками плюс члены покрытия и невязки.</li>
+    <li>При разреженной награде начальная вероятность успеха необходима для сигнала и экспоненциально мала для составной задачи; спецификация навыков, плотная награда, храповик $P-\Delta\ge D$ и композиция дают её нижнюю границу через $p_j$, $\Gamma_j$ и рассогласование передачи.</li>
+    <li>Демонстрации участвуют в оценке только через $\bar D$ и $C_h$; обе величины управляемы без демонстраций — обоснование адаптации VLA к новым кинематическим структурам без ручного сбора данных.</li>
+  </ol>
+</section>
+
+<!-- 24 -->
+<section class="slide">
+  <p class="kicker">Приложение</p>
+  <h2>Численная проверка утверждений</h2>
+  <p class="small">Случайные конечные МППР с терминальной наградой успеха; $J$, $Q$, $A$, $d_h$ вычисляются точно динамическим программированием. Проверка ловит ошибки в алгебре и константах, но не сертифицирует нейросетевую политику.</p>
+  <table style="font-size:17px">
+    <thead><tr><th>Утверждение</th><th>Случаев</th><th>Результат</th></tr></thead>
+    <tbody>
+      <tr><td>Лемма 3.1 (тождество)</td><td>4000</td><td class="ok">✓ ошибка ≤ 6·10⁻¹⁶</td></tr>
+      <tr><td>Лемма 3.2, теорема 5.1 (три формы)</td><td>4000</td><td class="ok">✓ наибольшее отношение нарушения к штрафу 0,56</td></tr>
+      <tr><td>Теорема 5.4, следствие 5.7</td><td>4000</td><td class="ok">✓ отношение $|\Delta J|/\Delta$ до 0,987 — почти точна</td></tr>
+      <tr><td>Теорема 6.2 (точный шаг Гиббса)</td><td>600</td><td class="ok">✓ отношение разрыва к оценке до 0,71</td></tr>
+      <tr><td>Теорема 4.1(б), $p\in[0{,}03;0{,}8]$, $G\in\{2,8,32\}$</td><td>$4\cdot10^5$ групп</td><td class="ok">✓ $|z|\le2{,}26$, Монте-Карло против формулы</td></tr>
+      <tr><td>Теорема 7.5 (шаг передачи)</td><td>20000</td><td class="ok">✓</td></tr>
+    </tbody>
+  </table>
+  <div class="spacer"></div>
+  <p class="small muted">Скрипт: <code>ral_submission/theory/rl_only_justification_ru/verify_theorems.py</code></p>
+</section>
+
+</main>
+
+<div class="controls">
+  <button class="nav" id="prev" type="button" aria-label="Предыдущий слайд">‹</button>
+  <span class="count" id="count">1 / 1</span>
+  <button class="nav" id="next" type="button" aria-label="Следующий слайд">›</button>
+  <button class="fs" id="fs" type="button" aria-label="Полный экран">⛶</button>
+  <button id="themeToggle" type="button" aria-label="Переключить тему">◐</button>
+</div>
+
+<script>
+(function () {
+  var root = document.documentElement;
+  var stage = document.getElementById("stage");
+  var slides = Array.prototype.slice.call(document.querySelectorAll(".slide"));
+  var progress = document.getElementById("progress");
+  var count = document.getElementById("count");
+  var cur = 0;
+  var TITLE = "Теория RL-бутстрэппинга VLA";
+
+  slides.forEach(function (el, i) {
+    if (i === 0) return;
+    var foot = document.createElement("div");
+    foot.className = "foot";
+    foot.innerHTML = "<span>" + TITLE + "</span><span>" + (i + 1) + " / " + slides.length + "</span>";
+    el.appendChild(foot);
+  });
+
+  function fit() {
+    var s = Math.min((window.innerWidth - 24) / 1280, (window.innerHeight - 76) / 720);
+    root.style.setProperty("--s", Math.max(s, 0.2));
+  }
+  function show(i) {
+    cur = Math.max(0, Math.min(slides.length - 1, i));
+    slides.forEach(function (el, k) { el.classList.toggle("active", k === cur); });
+    progress.style.width = ((cur + 1) / slides.length * 100) + "%";
+    count.textContent = (cur + 1) + " / " + slides.length;
+    try { history.replaceState(null, "", "#" + (cur + 1)); } catch (e) {}
+  }
+  function fromHash() {
+    var n = parseInt((location.hash || "").replace("#", ""), 10);
+    return isNaN(n) ? 0 : n - 1;
+  }
+  function toggleTheme() {
+    var dark = root.getAttribute("data-theme") === "dark" ||
+      (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark";
+    root.setAttribute("data-theme", next);
+    try { localStorage.setItem("theme", next); } catch (e) {}
+  }
+  function toggleFullscreen() {
+    if (!document.fullscreenElement) { (document.documentElement.requestFullscreen || function () {}).call(document.documentElement); }
+    else if (document.exitFullscreen) { document.exitFullscreen(); }
+  }
+
+  try {
+    var saved = localStorage.getItem("theme");
+    if (saved === "light" || saved === "dark") root.setAttribute("data-theme", saved);
+  } catch (e) {}
+
+  document.getElementById("prev").addEventListener("click", function () { show(cur - 1); });
+  document.getElementById("next").addEventListener("click", function () { show(cur + 1); });
+  document.getElementById("fs").addEventListener("click", toggleFullscreen);
+  document.getElementById("themeToggle").addEventListener("click", toggleTheme);
+  document.addEventListener("keydown", function (e) {
+    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    var k = e.key;
+    if (k === "ArrowRight" || k === "PageDown" || k === " " || k === "Enter") { e.preventDefault(); show(cur + 1); }
+    else if (k === "ArrowLeft" || k === "PageUp" || k === "Backspace") { e.preventDefault(); show(cur - 1); }
+    else if (k === "Home") { show(0); }
+    else if (k === "End") { show(slides.length - 1); }
+    else if (k === "f" || k === "F" || k === "а" || k === "А") { toggleFullscreen(); }
+    else if (k === "t" || k === "T" || k === "е" || k === "Е") { toggleTheme(); }
+  });
+  var touchX = null;
+  stage.addEventListener("touchstart", function (e) { touchX = e.touches[0].clientX; }, { passive: true });
+  stage.addEventListener("touchend", function (e) {
+    if (touchX === null || window.innerWidth <= 860) return;
+    var dx = e.changedTouches[0].clientX - touchX;
+    if (Math.abs(dx) > 50) show(cur + (dx < 0 ? 1 : -1));
+    touchX = null;
+  });
+  window.addEventListener("resize", fit);
+  window.addEventListener("hashchange", function () { show(fromHash()); });
+  fit();
+  show(fromHash());
+
+  // ---------------- charts ----------------
+  var NS = "http://www.w3.org/2000/svg";
+  function el(tag, attrs, parent, text) {
+    var n = document.createElementNS(NS, tag);
+    for (var a in attrs) n.setAttribute(a, attrs[a]);
+    if (text !== undefined) n.textContent = text;
+    if (parent) parent.appendChild(n);
+    return n;
+  }
+  function fmt(v, d) { return v.toFixed(d).replace(".", ","); }
+
+  function lineChart(svg, o) {
+    var W = 520, H = 330, L = 52, R = 18, T = 18, B = 46;
+    var x = function (v) { return L + (v - o.x0) / (o.x1 - o.x0) * (W - L - R); };
+    var y = function (v) { return T + (1 - (v - o.y0) / (o.y1 - o.y0)) * (H - T - B); };
+    o.yticks.forEach(function (t) {
+      el("line", { x1: L, x2: W - R, y1: y(t), y2: y(t), "class": "grid" }, svg);
+      el("text", { x: L - 8, y: y(t) + 4, "text-anchor": "end", "class": "tick" }, svg, fmt(t, o.yd));
+    });
+    o.xticks.forEach(function (t) {
+      el("text", { x: x(t), y: H - B + 18, "text-anchor": "middle", "class": "tick" }, svg, fmt(t, 2));
+    });
+    el("line", { x1: L, x2: W - R, y1: y(o.y0), y2: y(o.y0), "class": "axis" }, svg);
+    el("text", { x: (L + W - R) / 2, y: H - 8, "text-anchor": "middle", "class": "tick" }, svg, o.xlabel);
+    var pts = [];
+    for (var i = 0; i <= 240; i++) {
+      var v = o.x0 + (o.x1 - o.x0) * i / 240;
+      pts.push(x(v).toFixed(1) + "," + y(Math.min(o.f(v), o.y1)).toFixed(1));
+    }
+    el("polyline", { points: pts.join(" "), "class": "curve" }, svg);
+    o.marks.forEach(function (m) {
+      var mx = x(m[0]), my = y(o.f(m[0]));
+      el("circle", { cx: mx, cy: my, r: 5, "class": "mark" }, svg);
+      el("text", { x: mx + (m[2] || 10), y: my + (m[3] || -10), "text-anchor": m[4] || "start", "class": "mlabel" }, svg, m[1]);
+    });
+    // hover: crosshair + value readout
+    var g = el("g", { visibility: "hidden" }, svg);
+    var vline = el("line", { y1: T, y2: H - B, "class": "cross" }, g);
+    var dot = el("circle", { r: 4.5, "class": "mark" }, g);
+    var bg = el("rect", { width: 150, height: 24, rx: 6, "class": "tip-bg" }, g);
+    var tip = el("text", { "class": "tip" }, g);
+    var hit = el("rect", { x: L, y: T, width: W - L - R, height: H - T - B, fill: "transparent" }, svg);
+    function move(evt) {
+      var p = svg.createSVGPoint();
+      var src = evt.touches ? evt.touches[0] : evt;
+      p.x = src.clientX; p.y = src.clientY;
+      var q = p.matrixTransform(svg.getScreenCTM().inverse());
+      var v = o.x0 + (q.x - L) / (W - L - R) * (o.x1 - o.x0);
+      v = Math.max(o.x0, Math.min(o.x1, v));
+      var fv = o.f(v), px = x(v), py = y(Math.min(fv, o.y1));
+      vline.setAttribute("x1", px); vline.setAttribute("x2", px);
+      dot.setAttribute("cx", px); dot.setAttribute("cy", py);
+      var label = "p = " + fmt(v, 2) + " · " + o.name + " = " + fmt(fv, 3);
+      tip.textContent = label;
+      var tw = Math.max(120, label.length * 6.9 + 16);
+      var tx = px + 12 + tw > W - R ? px - 12 - tw : px + 12;
+      var ty = Math.max(T, Math.min(py - 30, H - B - 26));
+      bg.setAttribute("x", tx); bg.setAttribute("y", ty); bg.setAttribute("width", tw);
+      tip.setAttribute("x", tx + 8); tip.setAttribute("y", ty + 16);
+      g.setAttribute("visibility", "visible");
+    }
+    hit.addEventListener("mousemove", move);
+    hit.addEventListener("touchmove", move, { passive: true });
+    hit.addEventListener("mouseleave", function () { g.setAttribute("visibility", "hidden"); });
+  }
+
+  lineChart(document.getElementById("chartWeight"), {
+    f: function (p) { return 1 / Math.sqrt(p * (1 - p)); },
+    x0: 0.02, x1: 0.98, y0: 0, y1: 8, yd: 0,
+    yticks: [0, 2, 4, 6, 8], xticks: [0.02, 0.25, 0.5, 0.75, 0.98],
+    xlabel: "вероятность успеха контекста p", name: "вес",
+    marks: [[0.03, "p = 0,03: вес 5,86", 10, 4], [0.5, "p = 0,5: вес 2 (минимум)", 0, -14, "middle"]]
+  });
+  lineChart(document.getElementById("chartMix"), {
+    f: function (p) { return 1 - Math.pow(p, 8) - Math.pow(1 - p, 8); },
+    x0: 0, x1: 1, y0: 0, y1: 1, yd: 2,
+    yticks: [0, 0.25, 0.5, 0.75, 1], xticks: [0, 0.25, 0.5, 0.75, 1],
+    xlabel: "вероятность успеха p", name: "P_mix",
+    marks: [[0.03, "0,03 → 0,216", 10, 4], [0.16, "0,16 → 0,75", 10, 14], [0.3, "0,30 → 0,942", 8, 20]]
+  });
+
+  // ladder: where success lands after a promotion, against the demote gate
+  (function () {
+    var svg = document.getElementById("chartLadder");
+    var W = 560, L = 30, R = 30;
+    var x = function (v) { return L + v / 0.6 * (W - L - R); };
+    [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6].forEach(function (t) {
+      el("line", { x1: x(t), x2: x(t), y1: 26, y2: 252, "class": "grid" }, svg);
+      el("text", { x: x(t), y: 274, "text-anchor": "middle", "class": "tick" }, svg, fmt(t, 1));
+    });
+    var rows = [
+      { y: 78, P: 0.30, D: 0.20, title: "старые пороги P = 0,30, D = 0,20" },
+      { y: 192, P: 0.45, D: 0.30, title: "новые пороги P = 0,45, D = 0,30" }
+    ];
+    rows.forEach(function (r) {
+      var land = r.P - 0.129, ok = land >= r.D;
+      el("text", { x: L, y: r.y - 40, "class": "mlabel", "font-weight": "600" }, svg, r.title);
+      el("line", { x1: x(0), x2: x(0.6), y1: r.y, y2: r.y, "class": "axis" }, svg);
+      el("rect", { x: x(r.D), y: r.y - 9, width: x(r.P) - x(r.D), height: 18, rx: 4, fill: "var(--accent-soft)", stroke: "var(--accent)", "stroke-width": 1 }, svg);
+      el("text", { x: x(r.D), y: r.y + 26, "text-anchor": "middle", "class": "tick" }, svg, "D");
+      el("text", { x: x(r.P), y: r.y + 26, "text-anchor": "middle", "class": "tick" }, svg, "P");
+      el("line", { x1: x(land), x2: x(r.P), y1: r.y - 18, y2: r.y - 18, stroke: "var(--muted)", "stroke-width": 1.5 }, svg);
+      el("text", { x: (x(land) + x(r.P)) / 2, y: r.y - 23, "text-anchor": "middle", "class": "tick" }, svg, "Δ = 0,129");
+      el("circle", { cx: x(land), cy: r.y, r: 6, fill: ok ? "var(--good)" : "var(--bad)", stroke: "var(--surface)", "stroke-width": 2 }, svg);
+      el("text", { x: L, y: r.y + 48, fill: ok ? "var(--good)" : "var(--bad)", "font-size": "13", "font-weight": "600" }, svg,
+        ok ? "✓ после перехода P − Δ = 0,321 ≥ D: возврата нет"
+           : "✕ после перехода P − Δ = 0,171 < D: семейство застревает");
+    });
+  })();
+
+  // ---------------- math ----------------
+  function renderMath() {
+    if (!window.renderMathInElement) return false;
+    window.renderMathInElement(document.body, {
+      delimiters: [
+        { left: "\\[", right: "\\]", display: true },
+        { left: "$", right: "$", display: false }
+      ],
+      macros: { "\\E": "\\mathbb{E}", "\\PP": "\\mathbb{P}", "\\TV": "\\operatorname{TV}", "\\KL": "\\operatorname{KL}" },
+      ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code", "svg"],
+      throwOnError: false
+    });
+    return true;
+  }
+  // The KaTeX scripts are deferred, so they run after this inline script but
+  // before DOMContentLoaded.
+  if (!renderMath()) {
+    document.addEventListener("DOMContentLoaded", function () {
+      if (!renderMath()) window.addEventListener("load", renderMath);
+    });
+  }
+})();
+</script>
+</body>
+</html>
