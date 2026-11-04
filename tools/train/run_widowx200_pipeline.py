@@ -1281,22 +1281,59 @@ class Pipeline:
             except OSError:
                 pass
         report["references"] = self.state["references"]
+        # Compare references only against their matching skill protocol. The
+        # empty-hand composed leg is a different task from caught placement.
+        skill_rates = {instruction: entry for label in ("move_to", "pick_up", "put_into")
+                       for instruction, entry in report[label].items()}
+        degraded = self.degraded(skill_rates)
+        missing = sorted(set(self.state["references"]) - set(skill_rates))
+        report["retention"] = {
+            "status": "failed" if degraded else "incomplete" if missing else
+                      "passed" if self.state["references"] else "not_evaluated",
+            "degraded_instructions": degraded,
+            "missing_instructions": missing,
+            "degrade_abs": float(self.sil.get("degrade_abs", 0.08)),
+            "degrade_rel": float(self.sil.get("degrade_rel", 0.20)),
+        }
+        report["stages"] = []
+        for stage in stages:
+            entry = self.state["stages"][str(stage["name"])]
+            report["stages"].append({
+                "name": stage["name"],
+                **{key: entry.get(key) for key in (
+                    "metric", "best_value", "best_step", "best_checkpoint",
+                    "checkpoint_selection", "selected_checkpoint", "selected_step",
+                    "selected_value", "early_stop", "policy",
+                )},
+                "sil_cycles_attempted": len(entry.get("sil_cycles") or []),
+                "sil_cycles_accepted": sum(bool(c.get("accepted")) for c in entry.get("sil_cycles") or []),
+            })
         (self.dir / "final_report.json").write_text(json.dumps(report, indent=2, sort_keys=True), encoding="utf-8")
         self.state["final_report"] = str(self.dir / "final_report.json")
         self.save_state()
         lines = [f"# WidowX-200 pipeline {self.name}", "", f"Final policy: `{policy}`", ""]
-        lines.append("| evaluation | instruction | success | episodes |")
+        lines += ["`put_into` starts holding the object. `put_into_composed` starts empty-handed, "
+                  "aligned over the object; it does not measure a full approach from a distant start.", "",
+                  f"**Retention check: {report['retention']['status']}.** "
+                  + ("Degraded: " + ", ".join(degraded) + ". " if degraded else "")
+                  + "Pipeline completion does not imply that the stage success targets were met.", ""]
+        if missing:
+            lines += ["Missing skill evaluations: " + ", ".join(missing) + ".", ""]
+        lines.append("| evaluation | instruction | successes / episodes | success rate |")
         lines.append("|---|---|---:|---:|")
         for label in ("move_to", "pick_up", "put_into", "put_into_composed"):
             for instruction, entry in sorted((report.get(label) or {}).items()):
-                lines.append(f"| {label} | {instruction} | {entry['rate']:.3f} | {entry['episodes']} |")
+                lines.append(f"| {label} | {instruction} | {entry['successes']}/{entry['episodes']} | {entry['rate']:.3f} |")
         lines += ["", "## Stages", ""]
-        for stage in stages:
-            entry = self.state["stages"].get(str(stage["name"]), {})
+        for entry in report["stages"]:
             lines.append(
-                f"- **{stage['name']}**: best {entry.get('metric')}={entry.get('best_value')} at step "
+                f"- **{entry['name']}**: best RL {entry.get('metric')}={entry.get('best_value')} at step "
                 f"{entry.get('best_step')}; early stop {(entry.get('early_stop') or {}).get('reason')}; "
-                f"SIL cycles {len(entry.get('sil_cycles') or [])}; policy `{entry.get('policy')}`"
+                f"selected RL ({entry.get('checkpoint_selection') or 'best_validation'}) "
+                f"`{entry.get('selected_checkpoint') or entry.get('best_checkpoint')}` "
+                f"at step {entry.get('selected_step') if entry.get('selected_step') is not None else entry.get('best_step')}; "
+                f"SIL accepted/attempted {entry['sil_cycles_accepted']}/{entry['sil_cycles_attempted']}; "
+                f"handoff policy `{entry.get('policy')}`"
             )
         (self.dir / "final_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         log(f"final report: {self.dir / 'final_report.md'}")

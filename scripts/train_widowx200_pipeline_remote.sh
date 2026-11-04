@@ -20,6 +20,7 @@
 # skipped and an interrupted training stage continues from its latest.pt.
 #
 #   bash scripts/train_widowx200_pipeline_remote.sh
+#   MEMORY_CHECK_FIRST=0 bash scripts/train_widowx200_pipeline_remote.sh
 #   PIPELINE_DIR=runs/widowx200_pipeline_<ts> bash scripts/train_widowx200_pipeline_remote.sh
 #
 # Knobs: MODE=full|smoke|preflight (default full), SMOKE_FIRST=0 to skip the
@@ -128,11 +129,13 @@ fi
 [[ "$MODE" == "smoke" ]] && exit 0
 
 # 4. The pipeline.
-production_args=()
+# Keep a required argument in the array: Bash 3.2 treats an empty array as
+# unset under nounset, even when it was explicitly initialized.
+production_args=(--pipeline-dir "$PIPELINE_DIR")
 [[ -n "${STOP_BEFORE_STAGE:-}" ]] && production_args+=(--stop-before-stage "$STOP_BEFORE_STAGE")
 [[ "${RESTART_JOINT_FROM_SFT:-0}" == "1" ]] && production_args+=(--restart-joint-from-sft)
 [[ -n "${FINISH_STAGE_AT_CHECKPOINT:-}" ]] && production_args+=(--finish-stage-at-checkpoint "$FINISH_STAGE_AT_CHECKPOINT")
-"${driver[@]}" --pipeline-dir "$PIPELINE_DIR" "${production_args[@]}"
+"${driver[@]}" "${production_args[@]}"
 if [[ -n "${STOP_BEFORE_STAGE:-}" ]]; then
   printf '[widowx200] stopped before %s; state: %s/pipeline_state.json\n' "$STOP_BEFORE_STAGE" "$PIPELINE_DIR"
 else

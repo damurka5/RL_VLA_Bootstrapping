@@ -1,0 +1,1290 @@
+{
+  "banks": {
+    "move_to": {
+      "cap": 0.3,
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+      "frame_selection": "scene_spread",
+      "frames": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_100.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_101.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_102.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_103.npz"
+      ],
+      "harvest_first_round": 100,
+      "mean_rate": 0.05419921875,
+      "provenance": "policy",
+      "rates": {
+        "move_to_object": {
+          "episodes": 2048,
+          "rate": 0.05419921875,
+          "successes": 111
+        }
+      },
+      "replays": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_100.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_101.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_102.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_103.npz"
+      ],
+      "stage": "s4_move_to_binary"
+    },
+    "pick_up": {
+      "cap": 0.2,
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+      "frames": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_00.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_01.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_02.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_03.npz"
+      ],
+      "mean_rate": 0.09765625,
+      "provenance": "policy",
+      "rates": {
+        "pick_up": {
+          "episodes": 2048,
+          "rate": 0.09765625,
+          "successes": 200
+        }
+      },
+      "replays": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_00.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_01.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_02.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_03.npz"
+      ],
+      "stage": "s2_pick_up_dense"
+    },
+    "put_into": {
+      "cap": 0.18,
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "frame_selection": "scene_spread",
+      "frames": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_100.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_101.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_102.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_103.npz"
+      ],
+      "harvest_first_round": 100,
+      "mean_rate": 0.4161015395894428,
+      "provenance": "policy",
+      "rates": {
+        "put_into_bowl": {
+          "episodes": 992,
+          "rate": 0.3719758064516129,
+          "successes": 369
+        },
+        "put_into_plate": {
+          "episodes": 1056,
+          "rate": 0.4602272727272727,
+          "successes": 486
+        }
+      },
+      "replays": [
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_100.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_101.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_102.npz",
+        "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_103.npz"
+      ],
+      "stage": "s3_put_into_dense"
+    }
+  },
+  "composition_sft": {
+    "after_composed_rates": {
+      "put_into_bowl": {
+        "episodes": 520,
+        "rate": 0.0,
+        "successes": 0
+      },
+      "put_into_plate": {
+        "episodes": 504,
+        "rate": 0.015873015873015872,
+        "successes": 8
+      }
+    },
+    "after_skill_rates": {
+      "move_to_object": {
+        "episodes": 1024,
+        "rate": 0.025390625,
+        "successes": 26
+      },
+      "pick_up": {
+        "episodes": 1024,
+        "rate": 0.0,
+        "successes": 0
+      },
+      "put_into_bowl": {
+        "episodes": 520,
+        "rate": 0.36730769230769234,
+        "successes": 191
+      },
+      "put_into_plate": {
+        "episodes": 504,
+        "rate": 0.5119047619047619,
+        "successes": 258
+      }
+    },
+    "before_composed_rates": {
+      "put_into_bowl": {
+        "episodes": 520,
+        "rate": 0.0,
+        "successes": 0
+      },
+      "put_into_plate": {
+        "episodes": 504,
+        "rate": 0.021825396825396824,
+        "successes": 11
+      }
+    },
+    "before_skill_rates": {
+      "move_to_object": {
+        "episodes": 1024,
+        "rate": 0.005859375,
+        "successes": 6
+      },
+      "pick_up": {
+        "episodes": 1024,
+        "rate": 0.0,
+        "successes": 0
+      },
+      "put_into_bowl": {
+        "episodes": 520,
+        "rate": 0.33076923076923076,
+        "successes": 172
+      },
+      "put_into_plate": {
+        "episodes": 504,
+        "rate": 0.5238095238095238,
+        "successes": 264
+      }
+    },
+    "dataset_report": {
+      "cells": {
+        "bowl/move_to": {
+          "decisions": 165,
+          "objects": {
+            "apple": 28,
+            "bell pepper": 59,
+            "orange": 66,
+            "potato": 12
+          },
+          "source_episodes": 18,
+          "source_groups": 7,
+          "train_decisions": 133,
+          "validation_decisions": 32
+        },
+        "bowl/pick_up": {
+          "decisions": 680,
+          "objects": {
+            "apple": 31,
+            "bell pepper": 176,
+            "orange": 171,
+            "potato": 116,
+            "tomato": 186
+          },
+          "source_episodes": 35,
+          "source_groups": 18,
+          "train_decisions": 642,
+          "validation_decisions": 38
+        },
+        "bowl/placement": {
+          "decisions": 2047,
+          "objects": {
+            "apple": 371,
+            "bell pepper": 376,
+            "orange": 617,
+            "potato": 393,
+            "tomato": 290
+          },
+          "source_episodes": 118,
+          "source_groups": 51,
+          "train_decisions": 1811,
+          "validation_decisions": 236
+        },
+        "original_labels/move_to": {
+          "decisions": 79,
+          "objects": {
+            "apple": 19,
+            "orange": 20,
+            "tomato": 40
+          },
+          "source_episodes": 5,
+          "source_groups": 4,
+          "train_decisions": 70,
+          "validation_decisions": 9
+        },
+        "original_labels/pick_up": {
+          "decisions": 351,
+          "objects": {
+            "apple": 105,
+            "orange": 58,
+            "potato": 113,
+            "tomato": 75
+          },
+          "source_episodes": 20,
+          "source_groups": 9,
+          "train_decisions": 313,
+          "validation_decisions": 38
+        },
+        "original_labels/placement": {
+          "decisions": 1259,
+          "objects": {
+            "apple": 178,
+            "bell pepper": 315,
+            "orange": 84,
+            "potato": 514,
+            "tomato": 168
+          },
+          "source_episodes": 79,
+          "source_groups": 32,
+          "train_decisions": 1191,
+          "validation_decisions": 68
+        },
+        "plate/move_to": {
+          "decisions": 149,
+          "objects": {
+            "apple": 20,
+            "bell pepper": 51,
+            "orange": 14,
+            "potato": 23,
+            "tomato": 41
+          },
+          "source_episodes": 12,
+          "source_groups": 7,
+          "train_decisions": 129,
+          "validation_decisions": 20
+        },
+        "plate/pick_up": {
+          "decisions": 675,
+          "objects": {
+            "bell pepper": 74,
+            "orange": 370,
+            "potato": 28,
+            "tomato": 203
+          },
+          "source_episodes": 43,
+          "source_groups": 19,
+          "train_decisions": 608,
+          "validation_decisions": 67
+        },
+        "plate/placement": {
+          "decisions": 2012,
+          "objects": {
+            "apple": 456,
+            "bell pepper": 400,
+            "orange": 373,
+            "potato": 378,
+            "tomato": 405
+          },
+          "source_episodes": 122,
+          "source_groups": 51,
+          "train_decisions": 1850,
+          "validation_decisions": 162
+        }
+      },
+      "continuous_full_task_demonstrations": false,
+      "cross_teacher_scene_deduplication": false,
+      "decisions": 7417,
+      "dropped_non_graspable_target_episodes": {
+        "bowl": 13,
+        "mug": 10,
+        "plate": 8
+      },
+      "full_chain_successes": 0,
+      "prefix_destination_scene_context": "as recorded; destination presence is not certified for reach/pick skill scenes",
+      "priors_stale": true,
+      "priors_stale_reason": "Teacher prompts/adapters differ from the student final prompts and initializer",
+      "prompts": [
+        "move to apple",
+        "move to orange",
+        "move to tomato",
+        "pick up apple",
+        "pick up orange",
+        "pick up potato",
+        "pick up tomato",
+        "put apple into bowl",
+        "put apple into plate",
+        "put apple on the plate",
+        "put bell pepper into bowl",
+        "put bell pepper into plate",
+        "put bell pepper on the plate",
+        "put orange into bowl",
+        "put orange into plate",
+        "put orange on the plate",
+        "put potato into bowl",
+        "put potato into plate",
+        "put potato on the plate",
+        "put tomato into bowl",
+        "put tomato into plate",
+        "put tomato on the plate"
+      ],
+      "retention_exposure": 0.2,
+      "rows_per_stage_sampling_destination": 2000,
+      "sampler": "balanced by sampling_destination/stage/object with sampling_cell_weight",
+      "schema": "widowx200_final_prompt_skill_samples/v2",
+      "seed": 0,
+      "source_dataset": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/original/demonstrations.npz",
+      "source_dataset_sha256": "120ff3547b5bca2041fe49e9910da659de2ac7b9356276308b8a0d362a3cb096",
+      "source_decisions": 8780,
+      "source_episodes": 452,
+      "split_group": "recorded scene_uid",
+      "val_fraction": 0.1
+    },
+    "directory": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52",
+    "git_commit": "3c6486dbd9fe69bc8897a5fc84f64286e6f16ba5",
+    "id": "5af896659773bb52",
+    "initializer": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/step_1764679/smolvla_grpo_adapter.pt",
+    "phase": "complete",
+    "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/sft/sil_sft_adapter.pt",
+    "settings": {
+      "enabled": true,
+      "epochs": 20,
+      "lora_epochs": 4,
+      "lora_microbatch": 4,
+      "lora_rows": 8192,
+      "retention_fraction": 0.2,
+      "rows_per_cell": 2000,
+      "seed": 0
+    },
+    "sft_report": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/sft/sft_report.json",
+    "sources": {
+      "move_to": {
+        "cap": 0.3,
+        "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+        "frame_selection": "scene_spread",
+        "frames": [
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_100.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_101.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_102.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/frames_record_r100_record_103.npz"
+        ],
+        "harvest_first_round": 100,
+        "mean_rate": 0.05419921875,
+        "provenance": "policy",
+        "rates": {
+          "move_to_object": {
+            "episodes": 2048,
+            "rate": 0.05419921875,
+            "successes": 111
+          }
+        },
+        "replays": [
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_100.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_101.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_102.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_103.npz"
+        ],
+        "stage": "s4_move_to_binary"
+      },
+      "pick_up": {
+        "cap": 0.2,
+        "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+        "frames": [
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_00.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_01.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_02.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/frames_record_record_03.npz"
+        ],
+        "mean_rate": 0.09765625,
+        "provenance": "policy",
+        "rates": {
+          "pick_up": {
+            "episodes": 2048,
+            "rate": 0.09765625,
+            "successes": 200
+          }
+        },
+        "replays": [
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_00.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_01.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_02.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_03.npz"
+        ],
+        "stage": "s2_pick_up_dense"
+      },
+      "put_into": {
+        "cap": 0.18,
+        "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+        "frame_selection": "scene_spread",
+        "frames": [
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_100.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_101.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_102.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/frames_record_r100_record_103.npz"
+        ],
+        "harvest_first_round": 100,
+        "mean_rate": 0.4161015395894428,
+        "provenance": "policy",
+        "rates": {
+          "put_into_bowl": {
+            "episodes": 992,
+            "rate": 0.3719758064516129,
+            "successes": 369
+          },
+          "put_into_plate": {
+            "episodes": 1056,
+            "rate": 0.4602272727272727,
+            "successes": 486
+          }
+        },
+        "replays": [
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_100.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_101.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_102.npz",
+          "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_103.npz"
+        ],
+        "stage": "s3_put_into_dense"
+      }
+    },
+    "status": "done"
+  },
+  "config": "/root/repo/RL_VLA_Bootstrapping/configs/examples/widowx200_smolvla_pipeline.yaml",
+  "created": "2026-10-24T16:20:38.890011",
+  "current_policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt",
+  "events": [
+    {
+      "error": "exit code 1: /root/anaconda3/envs/cdpr-mjlab/bin/python3 /root/repo/RL_VLA_Bootstrapping/tools/audit/sil_record.py --mode record --controller-workspace-from-config --checkpoint /root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/step_7757735/smolvla_grpo_adapter.pt --config /root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__eval_move_to.yaml --start-distance-cap 0.3000 --rounds 4 --round-index 0 --output /root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record --seed-torch 0 --devices cuda:0,cuda:1 (see /root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/logs/s1_move_to_dense_harvest_record.log)",
+      "kind": "failed",
+      "time": "2026-10-25T22:44:52.836796"
+    },
+    {
+      "kind": "stage_done",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/step_7757735/smolvla_grpo_adapter.pt",
+      "stage": "s1_move_to_dense",
+      "time": "2026-10-26T15:20:18.666140"
+    },
+    {
+      "kind": "stage_done",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+      "stage": "s2_pick_up_dense",
+      "time": "2026-10-27T05:03:06.173825"
+    },
+    {
+      "cycle": 1,
+      "kind": "sil_rejected",
+      "reason": "degraded mean gain +0.042; collateral losses {'put_into_bowl': 0.2615384615384615, 'put_into_plate': 0.18055555555555558}",
+      "stage": "s3_put_into_dense",
+      "time": "2026-10-28T22:57:22.869141"
+    },
+    {
+      "kind": "stage_done",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "stage": "s3_put_into_dense",
+      "time": "2026-10-28T22:57:22.869688"
+    },
+    {
+      "cycle": 1,
+      "kind": "sil_rejected",
+      "reason": "degraded mean gain +0.117; collateral losses {'move_to_object': 0.173828125}",
+      "stage": "s4_move_to_binary",
+      "time": "2026-10-29T17:45:13.452519"
+    },
+    {
+      "kind": "stage_done",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+      "stage": "s4_move_to_binary",
+      "time": "2026-10-29T17:45:13.453115"
+    },
+    {
+      "kind": "empty_harvest",
+      "skill": "pick_up",
+      "stage": "s5_pick_up_binary",
+      "time": "2026-10-30T01:53:48.690170"
+    },
+    {
+      "candidate": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil1/sft/sil_sft_adapter.pt",
+      "cycle": 1,
+      "kind": "sil_accepted",
+      "stage": "s5_pick_up_binary",
+      "time": "2026-10-30T02:18:46.142573"
+    },
+    {
+      "candidate": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/sft/sil_sft_adapter.pt",
+      "cycle": 2,
+      "kind": "sil_accepted",
+      "stage": "s5_pick_up_binary",
+      "time": "2026-10-30T02:32:56.351709"
+    },
+    {
+      "kind": "stage_done",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/sft/sil_sft_adapter.pt",
+      "stage": "s5_pick_up_binary",
+      "time": "2026-10-30T02:32:56.352334"
+    },
+    {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/step_1764679/smolvla_grpo_adapter.pt",
+      "global_step": 1764679,
+      "kind": "stage_rl_finished_by_user",
+      "metric": "min_by_instruction",
+      "previous_status": "training",
+      "reason": "user_checkpoint",
+      "requested_checkpoint": "latest",
+      "stage": "s6_put_into_binary",
+      "time": "2026-10-30T18:35:07.884849",
+      "value": 0.640625
+    },
+    {
+      "first_round": 100,
+      "kind": "bank_refilmed",
+      "replays": 4,
+      "skill": "move_to",
+      "stage": "s4_move_to_binary",
+      "time": "2026-10-30T19:30:00.089138"
+    },
+    {
+      "first_round": 100,
+      "kind": "bank_refilmed",
+      "replays": 4,
+      "skill": "put_into",
+      "stage": "s3_put_into_dense",
+      "time": "2026-10-30T20:01:42.867098"
+    },
+    {
+      "cycle": 1,
+      "kind": "sil_rejected",
+      "reason": "degraded mean gain -0.007; collateral losses none",
+      "stage": "s6_put_into_binary",
+      "time": "2026-10-30T20:15:09.293819"
+    },
+    {
+      "kind": "stage_done",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/step_1764679/smolvla_grpo_adapter.pt",
+      "stage": "s6_put_into_binary",
+      "time": "2026-10-30T20:15:09.294597"
+    },
+    {
+      "kind": "stage_done",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt",
+      "stage": "s7_joint_staged",
+      "time": "2026-11-01T16:44:01.931569"
+    }
+  ],
+  "final_report": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/final_report.json",
+  "git_commit_at_start": "dbcb5c241dab259bb520ad2d936b79e776ff96d0",
+  "references": {
+    "move_to_object": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+      "rate": 0.5419921875,
+      "skill": "move_to",
+      "stage": "s4_move_to_binary"
+    },
+    "pick_up": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+      "rate": 0.09765625,
+      "skill": "pick_up",
+      "stage": "s2_pick_up_dense"
+    },
+    "put_into_bowl": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "rate": 0.5487132352941176,
+      "skill": "put_into",
+      "stage": "s3_put_into_dense"
+    },
+    "put_into_plate": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "rate": 0.74375,
+      "skill": "put_into",
+      "stage": "s3_put_into_dense"
+    }
+  },
+  "smoke": false,
+  "stages": {
+    "s1_move_to_dense": {
+      "best_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/step_7757735/smolvla_grpo_adapter.pt",
+      "best_step": 7757735,
+      "best_value": 0.48535,
+      "config": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s1_move_to_dense.yaml",
+      "early_stop": {
+        "best_before_window": 0.4853515625,
+        "best_in_window": 0.4775390625,
+        "global_step": 10258025,
+        "metric": "validation/success_rate",
+        "min_delta": 0.02,
+        "reason": "plateau",
+        "window_validations": 10
+      },
+      "finished": "2026-10-26T15:20:18.666131",
+      "harvest_rates": {
+        "move_to_object": {
+          "episodes": 2048,
+          "rate": 0.4013671875,
+          "successes": 822
+        }
+      },
+      "init": null,
+      "metric": "validation/success_rate",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/step_7757735/smolvla_grpo_adapter.pt",
+      "rl_dir": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl",
+      "started": "2026-10-24T16:20:38.897372",
+      "status": "done"
+    },
+    "s2_pick_up_dense": {
+      "best_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+      "best_step": 501004,
+      "best_value": 0.12109,
+      "config": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s2_pick_up_dense.yaml",
+      "early_stop": {
+        "best_before_window": 0.12109375,
+        "best_in_window": 0.1015625,
+        "global_step": 3503697,
+        "metric": "validation/success_rate",
+        "min_delta": 0.02,
+        "reason": "plateau",
+        "window_validations": 12
+      },
+      "finished": "2026-10-27T05:03:06.173812",
+      "harvest_rates": {
+        "pick_up": {
+          "episodes": 2048,
+          "rate": 0.09765625,
+          "successes": 200
+        }
+      },
+      "init": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/step_7757735/smolvla_grpo_adapter.pt",
+      "metric": "validation/success_rate",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+      "retention_rates": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.3955078125,
+          "successes": 405
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.13671875,
+          "successes": 140
+        }
+      },
+      "rl_dir": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl",
+      "started": "2026-10-26T15:20:18.674793",
+      "status": "done"
+    },
+    "s3_put_into_dense": {
+      "best_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "best_step": 7505414,
+      "best_value": 0.71875,
+      "config": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s3_put_into_dense.yaml",
+      "early_stop": {
+        "best_before_window": 0.705078125,
+        "best_in_window": 0.71875,
+        "global_step": 9507415,
+        "metric": "min_by_instruction",
+        "min_delta": 0.02,
+        "reason": "plateau",
+        "window_validations": 10
+      },
+      "finished": "2026-10-28T22:57:22.869682",
+      "harvest_rates": {
+        "put_into_bowl": {
+          "episodes": 1088,
+          "rate": 0.5487132352941176,
+          "successes": 597
+        },
+        "put_into_plate": {
+          "episodes": 960,
+          "rate": 0.74375,
+          "successes": 714
+        }
+      },
+      "init": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+      "metric": "min_by_instruction",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "retention_rates": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.0537109375,
+          "successes": 55
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.6076923076923076,
+          "successes": 316
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.7380952380952381,
+          "successes": 372
+        }
+      },
+      "retention_rates_after_sil": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.0537109375,
+          "successes": 55
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.6076923076923076,
+          "successes": 316
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.7380952380952381,
+          "successes": 372
+        }
+      },
+      "rl_dir": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl",
+      "sil_cycles": [
+        {
+          "accepted": false,
+          "candidate": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s3_put_into_dense_sil1/sft/sil_sft_adapter.pt",
+          "candidate_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.1357421875,
+              "successes": 139
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.001953125,
+              "successes": 2
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.34615384615384615,
+              "successes": 180
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.5575396825396826,
+              "successes": 281
+            }
+          },
+          "gains": {
+            "move_to_object": 0.08203125,
+            "pick_up": 0.001953125,
+            "put_into_bowl": -0.2615384615384615,
+            "put_into_plate": -0.18055555555555558
+          },
+          "label": "s3_put_into_dense_sil1",
+          "policy_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.0537109375,
+              "successes": 55
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.6076923076923076,
+              "successes": 316
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.7380952380952381,
+              "successes": 372
+            }
+          },
+          "reason": "degraded mean gain +0.042; collateral losses {'put_into_bowl': 0.2615384615384615, 'put_into_plate': 0.18055555555555558}"
+        }
+      ],
+      "started": "2026-10-27T05:03:06.182553",
+      "status": "done"
+    },
+    "s4_move_to_binary": {
+      "best_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+      "best_step": 4510257,
+      "best_value": 0.56934,
+      "config": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s4_move_to_binary.yaml",
+      "early_stop": {
+        "best_before_window": 0.5498046875,
+        "best_in_window": 0.5693359375,
+        "global_step": 5009701,
+        "metric": "validation/success_rate",
+        "min_delta": 0.02,
+        "reason": "plateau",
+        "window_validations": 8
+      },
+      "finished": "2026-10-29T17:45:13.453109",
+      "harvest_rates": {
+        "move_to_object": {
+          "episodes": 2048,
+          "rate": 0.5419921875,
+          "successes": 1110
+        }
+      },
+      "init": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "metric": "validation/success_rate",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+      "retention_rates": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.5380859375,
+          "successes": 551
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.19807692307692307,
+          "successes": 103
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.4305555555555556,
+          "successes": 217
+        }
+      },
+      "retention_rates_after_sil": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.5380859375,
+          "successes": 551
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.19807692307692307,
+          "successes": 103
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.4305555555555556,
+          "successes": 217
+        }
+      },
+      "rl_dir": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl",
+      "sil_cycles": [
+        {
+          "accepted": false,
+          "candidate": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s4_move_to_binary_sil1/sft/sil_sft_adapter.pt",
+          "candidate_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.3642578125,
+              "successes": 373
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0009765625,
+              "successes": 1
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.40192307692307694,
+              "successes": 209
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.5773809523809523,
+              "successes": 291
+            }
+          },
+          "gains": {
+            "move_to_object": -0.173828125,
+            "pick_up": 0.0009765625,
+            "put_into_bowl": 0.20384615384615387,
+            "put_into_plate": 0.14682539682539675
+          },
+          "label": "s4_move_to_binary_sil1",
+          "policy_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.5380859375,
+              "successes": 551
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.19807692307692307,
+              "successes": 103
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.4305555555555556,
+              "successes": 217
+            }
+          },
+          "reason": "degraded mean gain +0.117; collateral losses {'move_to_object': 0.173828125}"
+        }
+      ],
+      "started": "2026-10-28T22:57:22.877528",
+      "status": "done"
+    },
+    "s5_pick_up_binary": {
+      "best_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/rl/step_2258951/smolvla_grpo_adapter.pt",
+      "best_step": 2258951,
+      "best_value": 0.0,
+      "config": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s5_pick_up_binary.yaml",
+      "early_stop": {
+        "best_before_window": 0.0,
+        "best_in_window": 0.0,
+        "global_step": 2258951,
+        "metric": "validation/success_rate",
+        "min_delta": 0.02,
+        "reason": "plateau",
+        "window_validations": 8
+      },
+      "empty_harvest": true,
+      "finished": "2026-10-30T02:32:56.352328",
+      "harvest_rates": {
+        "pick_up": {
+          "episodes": 2048,
+          "rate": 0.0,
+          "successes": 0
+        }
+      },
+      "init": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+      "metric": "validation/success_rate",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/sft/sil_sft_adapter.pt",
+      "retention_rates": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.11923076923076924,
+          "successes": 62
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.24206349206349206,
+          "successes": 122
+        }
+      },
+      "retention_rates_after_sil": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.36328125,
+          "successes": 372
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0009765625,
+          "successes": 1
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.3923076923076923,
+          "successes": 204
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.6527777777777778,
+          "successes": 329
+        }
+      },
+      "rl_dir": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/rl",
+      "sil_cycles": [
+        {
+          "accepted": true,
+          "candidate": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil1/sft/sil_sft_adapter.pt",
+          "candidate_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.3037109375,
+              "successes": 311
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.38076923076923075,
+              "successes": 198
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.5833333333333334,
+              "successes": 294
+            }
+          },
+          "gains": {
+            "move_to_object": 0.3037109375,
+            "pick_up": 0.0,
+            "put_into_bowl": 0.2615384615384615,
+            "put_into_plate": 0.3412698412698413
+          },
+          "label": "s5_pick_up_binary_sil1",
+          "policy_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.11923076923076924,
+              "successes": 62
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.24206349206349206,
+              "successes": 122
+            }
+          },
+          "reason": "degraded mean gain +0.227; collateral losses none"
+        },
+        {
+          "accepted": true,
+          "candidate": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/sft/sil_sft_adapter.pt",
+          "candidate_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.36328125,
+              "successes": 372
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0009765625,
+              "successes": 1
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.3923076923076923,
+              "successes": 204
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.6527777777777778,
+              "successes": 329
+            }
+          },
+          "gains": {
+            "move_to_object": 0.0595703125,
+            "pick_up": 0.0009765625,
+            "put_into_bowl": 0.011538461538461553,
+            "put_into_plate": 0.06944444444444442
+          },
+          "label": "s5_pick_up_binary_sil2",
+          "policy_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.3037109375,
+              "successes": 311
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.38076923076923075,
+              "successes": 198
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.5833333333333334,
+              "successes": 294
+            }
+          },
+          "reason": "degraded mean gain +0.035; collateral losses none"
+        }
+      ],
+      "started": "2026-10-29T17:45:13.461707",
+      "status": "done"
+    },
+    "s6_put_into_binary": {
+      "best_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/step_1016667/smolvla_grpo_adapter.pt",
+      "best_step": 1016667,
+      "best_value": 0.6582,
+      "checkpoint_selection": "user_checkpoint",
+      "config": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s6_put_into_binary.yaml",
+      "early_stop": {
+        "global_step": 1764679,
+        "metric": "min_by_instruction",
+        "reason": "user_checkpoint"
+      },
+      "finished": "2026-10-30T20:15:09.294590",
+      "harvest_rates": {
+        "put_into_bowl": {
+          "episodes": 992,
+          "rate": 0.31955645161290325,
+          "successes": 317
+        },
+        "put_into_plate": {
+          "episodes": 1056,
+          "rate": 0.6363636363636364,
+          "successes": 672
+        }
+      },
+      "init": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/sft/sil_sft_adapter.pt",
+      "manual_finish": {
+        "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/step_1764679/smolvla_grpo_adapter.pt",
+        "global_step": 1764679,
+        "metric": "min_by_instruction",
+        "previous_status": "training",
+        "reason": "user_checkpoint",
+        "requested_checkpoint": "latest",
+        "time": "2026-10-30T18:35:07.884849",
+        "value": 0.640625
+      },
+      "metric": "min_by_instruction",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/step_1764679/smolvla_grpo_adapter.pt",
+      "retention_rates": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.0087890625,
+          "successes": 9
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.3173076923076923,
+          "successes": 165
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.5297619047619048,
+          "successes": 267
+        }
+      },
+      "retention_rates_after_sil": {
+        "move_to_object": {
+          "episodes": 1024,
+          "rate": 0.0087890625,
+          "successes": 9
+        },
+        "pick_up": {
+          "episodes": 1024,
+          "rate": 0.0,
+          "successes": 0
+        },
+        "put_into_bowl": {
+          "episodes": 520,
+          "rate": 0.3173076923076923,
+          "successes": 165
+        },
+        "put_into_plate": {
+          "episodes": 504,
+          "rate": 0.5297619047619048,
+          "successes": 267
+        }
+      },
+      "rl_dir": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl",
+      "selected_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/step_1764679/smolvla_grpo_adapter.pt",
+      "selected_step": 1764679,
+      "selected_value": 0.640625,
+      "sil_cycles": [
+        {
+          "accepted": false,
+          "candidate": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s6_put_into_binary_sil1/sft/sil_sft_adapter.pt",
+          "candidate_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.01171875,
+              "successes": 12
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.3173076923076923,
+              "successes": 165
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.498015873015873,
+              "successes": 251
+            }
+          },
+          "gains": {
+            "move_to_object": 0.0029296875,
+            "pick_up": 0.0,
+            "put_into_bowl": 0.0,
+            "put_into_plate": -0.031746031746031744
+          },
+          "label": "s6_put_into_binary_sil1",
+          "policy_rates": {
+            "move_to_object": {
+              "episodes": 1024,
+              "rate": 0.0087890625,
+              "successes": 9
+            },
+            "pick_up": {
+              "episodes": 1024,
+              "rate": 0.0,
+              "successes": 0
+            },
+            "put_into_bowl": {
+              "episodes": 520,
+              "rate": 0.3173076923076923,
+              "successes": 165
+            },
+            "put_into_plate": {
+              "episodes": 504,
+              "rate": 0.5297619047619048,
+              "successes": 267
+            }
+          },
+          "reason": "degraded mean gain -0.007; collateral losses none"
+        }
+      ],
+      "started": "2026-10-30T02:32:56.361362",
+      "status": "done"
+    },
+    "s7_joint_staged": {
+      "best_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt",
+      "best_step": 7504473,
+      "best_value": 0.06696,
+      "checkpoint_selection": "best_validation",
+      "composition_sft_id": "5af896659773bb52",
+      "config": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s7_joint_staged.yaml",
+      "early_stop": {
+        "best_before_window": 0.05592105263157895,
+        "best_in_window": 0.06696428571428571,
+        "global_step": 8002114,
+        "metric": "min_by_instruction_composed",
+        "min_delta": 0.02,
+        "reason": "plateau",
+        "window_validations": 16
+      },
+      "finished": "2026-11-01T16:44:01.931562",
+      "init": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/sft/sil_sft_adapter.pt",
+      "metric": "min_by_instruction_composed",
+      "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt",
+      "rl_dir": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl",
+      "selected_checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt",
+      "selected_step": 7504473,
+      "selected_value": 0.06696,
+      "started": "2026-10-30T22:20:47.915722",
+      "status": "done"
+    }
+  }
+}

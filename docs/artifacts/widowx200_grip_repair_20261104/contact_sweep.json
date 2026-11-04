@@ -1,0 +1,812 @@
+[
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_apple",
+    "seconds": 5.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09138,
+    "slip_from_postlift_m": 0.07961
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_apple",
+    "seconds": 10.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09138,
+    "slip_from_postlift_m": 0.07961
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_apple",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09138,
+    "slip_from_postlift_m": 0.07961
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_tomato",
+    "seconds": 5.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09158,
+    "slip_from_postlift_m": 0.07984
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_tomato",
+    "seconds": 10.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09158,
+    "slip_from_postlift_m": 0.07984
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_tomato",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09158,
+    "slip_from_postlift_m": 0.07984
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_orange",
+    "seconds": 5.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09177,
+    "slip_from_postlift_m": 0.0788
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_orange",
+    "seconds": 10.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09177,
+    "slip_from_postlift_m": 0.0788
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_orange",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09177,
+    "slip_from_postlift_m": 0.0788
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_potato",
+    "seconds": 5.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09171,
+    "slip_from_postlift_m": 0.08017
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_potato",
+    "seconds": 10.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09171,
+    "slip_from_postlift_m": 0.08017
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_potato",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09171,
+    "slip_from_postlift_m": 0.08017
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 5.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.0771,
+    "slip_from_postlift_m": 0.07164
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 10.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.0771,
+    "slip_from_postlift_m": 0.07164
+  },
+  {
+    "cone": 0,
+    "impratio": 1,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.0771,
+    "slip_from_postlift_m": 0.07164
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_apple",
+    "seconds": 5.0,
+    "lift_m": 0.06344,
+    "max_gap_m": 0.01139,
+    "slip_from_postlift_m": 0.01227
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_apple",
+    "seconds": 10.0,
+    "lift_m": 0.05206,
+    "max_gap_m": 0.02273,
+    "slip_from_postlift_m": 0.02365
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_apple",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.07499,
+    "slip_from_postlift_m": 0.07571
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_tomato",
+    "seconds": 5.0,
+    "lift_m": 0.08061,
+    "max_gap_m": 0.01063,
+    "slip_from_postlift_m": 0.00334
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_tomato",
+    "seconds": 10.0,
+    "lift_m": 0.06958,
+    "max_gap_m": 0.02162,
+    "slip_from_postlift_m": 0.01437
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_tomato",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09142,
+    "slip_from_postlift_m": 0.08395
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_orange",
+    "seconds": 5.0,
+    "lift_m": 0.07949,
+    "max_gap_m": 0.01177,
+    "slip_from_postlift_m": 0.00425
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_orange",
+    "seconds": 10.0,
+    "lift_m": 0.03773,
+    "max_gap_m": 0.05356,
+    "slip_from_postlift_m": 0.04601
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_orange",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09397,
+    "slip_from_postlift_m": 0.08374
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_potato",
+    "seconds": 5.0,
+    "lift_m": 0.08489,
+    "max_gap_m": 0.00643,
+    "slip_from_postlift_m": -0.00082
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_potato",
+    "seconds": 10.0,
+    "lift_m": 0.07881,
+    "max_gap_m": 0.01245,
+    "slip_from_postlift_m": 0.00526
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_potato",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09173,
+    "slip_from_postlift_m": 0.08407
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 5.0,
+    "lift_m": 0.06905,
+    "max_gap_m": 0.00583,
+    "slip_from_postlift_m": 0.00731
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 10.0,
+    "lift_m": 0.06383,
+    "max_gap_m": 0.01097,
+    "slip_from_postlift_m": 0.01254
+  },
+  {
+    "cone": 0,
+    "impratio": 10,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 20.0,
+    "lift_m": 0.05231,
+    "max_gap_m": 0.02245,
+    "slip_from_postlift_m": 0.02406
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_apple",
+    "seconds": 5.0,
+    "lift_m": 0.08024,
+    "max_gap_m": 0.01092,
+    "slip_from_postlift_m": 0.00359
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_apple",
+    "seconds": 10.0,
+    "lift_m": 0.06867,
+    "max_gap_m": 0.02246,
+    "slip_from_postlift_m": 0.01516
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_apple",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09274,
+    "slip_from_postlift_m": 0.08383
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_tomato",
+    "seconds": 5.0,
+    "lift_m": 0.08066,
+    "max_gap_m": 0.01077,
+    "slip_from_postlift_m": 0.00343
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_tomato",
+    "seconds": 10.0,
+    "lift_m": 0.06915,
+    "max_gap_m": 0.02225,
+    "slip_from_postlift_m": 0.01494
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_tomato",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09191,
+    "slip_from_postlift_m": 0.0841
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_orange",
+    "seconds": 5.0,
+    "lift_m": 0.07962,
+    "max_gap_m": 0.01182,
+    "slip_from_postlift_m": 0.00431
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_orange",
+    "seconds": 10.0,
+    "lift_m": 0.06689,
+    "max_gap_m": 0.02453,
+    "slip_from_postlift_m": 0.01705
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_orange",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09304,
+    "slip_from_postlift_m": 0.08394
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_potato",
+    "seconds": 5.0,
+    "lift_m": 0.08515,
+    "max_gap_m": 0.00629,
+    "slip_from_postlift_m": -0.00092
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_potato",
+    "seconds": 10.0,
+    "lift_m": 0.07903,
+    "max_gap_m": 0.01235,
+    "slip_from_postlift_m": 0.0052
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_potato",
+    "seconds": 20.0,
+    "lift_m": 0.0,
+    "max_gap_m": 0.09363,
+    "slip_from_postlift_m": 0.08423
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 5.0,
+    "lift_m": 0.06909,
+    "max_gap_m": 0.00575,
+    "slip_from_postlift_m": 0.00739
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 10.0,
+    "lift_m": 0.06383,
+    "max_gap_m": 0.01096,
+    "slip_from_postlift_m": 0.01266
+  },
+  {
+    "cone": 1,
+    "impratio": 1,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 20.0,
+    "lift_m": 0.05222,
+    "max_gap_m": 0.02254,
+    "slip_from_postlift_m": 0.02427
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_apple",
+    "seconds": 5.0,
+    "lift_m": 0.09034,
+    "max_gap_m": 0.00144,
+    "slip_from_postlift_m": -0.00584
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_apple",
+    "seconds": 10.0,
+    "lift_m": 0.08929,
+    "max_gap_m": 0.00219,
+    "slip_from_postlift_m": -0.00479
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_apple",
+    "seconds": 20.0,
+    "lift_m": 0.08719,
+    "max_gap_m": 0.0041,
+    "slip_from_postlift_m": -0.00269
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_tomato",
+    "seconds": 5.0,
+    "lift_m": 0.09079,
+    "max_gap_m": 0.0013,
+    "slip_from_postlift_m": -0.00599
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_tomato",
+    "seconds": 10.0,
+    "lift_m": 0.08974,
+    "max_gap_m": 0.002,
+    "slip_from_postlift_m": -0.00494
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_tomato",
+    "seconds": 20.0,
+    "lift_m": 0.08764,
+    "max_gap_m": 0.00391,
+    "slip_from_postlift_m": -0.00284
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_orange",
+    "seconds": 5.0,
+    "lift_m": 0.09066,
+    "max_gap_m": 0.00138,
+    "slip_from_postlift_m": -0.00594
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_orange",
+    "seconds": 10.0,
+    "lift_m": 0.08952,
+    "max_gap_m": 0.0022,
+    "slip_from_postlift_m": -0.00479
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_orange",
+    "seconds": 20.0,
+    "lift_m": 0.08723,
+    "max_gap_m": 0.00431,
+    "slip_from_postlift_m": -0.00251
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_potato",
+    "seconds": 5.0,
+    "lift_m": 0.09093,
+    "max_gap_m": 0.00105,
+    "slip_from_postlift_m": -0.00643
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_potato",
+    "seconds": 10.0,
+    "lift_m": 0.09032,
+    "max_gap_m": 0.0014,
+    "slip_from_postlift_m": -0.00582
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_potato",
+    "seconds": 20.0,
+    "lift_m": 0.0891,
+    "max_gap_m": 0.00242,
+    "slip_from_postlift_m": -0.00459
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 5.0,
+    "lift_m": 0.07417,
+    "max_gap_m": 0.00132,
+    "slip_from_postlift_m": 0.00265
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 10.0,
+    "lift_m": 0.07364,
+    "max_gap_m": 0.00161,
+    "slip_from_postlift_m": 0.00317
+  },
+  {
+    "cone": 1,
+    "impratio": 10,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 20.0,
+    "lift_m": 0.07259,
+    "max_gap_m": 0.00245,
+    "slip_from_postlift_m": 0.00423
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_apple",
+    "seconds": 5.0,
+    "lift_m": 0.09089,
+    "max_gap_m": 0.00123,
+    "slip_from_postlift_m": -0.00636
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_apple",
+    "seconds": 10.0,
+    "lift_m": 0.09036,
+    "max_gap_m": 0.0014,
+    "slip_from_postlift_m": -0.00583
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_apple",
+    "seconds": 20.0,
+    "lift_m": 0.08931,
+    "max_gap_m": 0.00215,
+    "slip_from_postlift_m": -0.00478
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_tomato",
+    "seconds": 5.0,
+    "lift_m": 0.09131,
+    "max_gap_m": 0.00123,
+    "slip_from_postlift_m": -0.00652
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_tomato",
+    "seconds": 10.0,
+    "lift_m": 0.09079,
+    "max_gap_m": 0.00127,
+    "slip_from_postlift_m": -0.00599
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_tomato",
+    "seconds": 20.0,
+    "lift_m": 0.08974,
+    "max_gap_m": 0.00199,
+    "slip_from_postlift_m": -0.00494
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_orange",
+    "seconds": 5.0,
+    "lift_m": 0.09123,
+    "max_gap_m": 0.00123,
+    "slip_from_postlift_m": -0.00651
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_orange",
+    "seconds": 10.0,
+    "lift_m": 0.09066,
+    "max_gap_m": 0.00136,
+    "slip_from_postlift_m": -0.00594
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_orange",
+    "seconds": 20.0,
+    "lift_m": 0.08952,
+    "max_gap_m": 0.0022,
+    "slip_from_postlift_m": -0.00479
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_potato",
+    "seconds": 5.0,
+    "lift_m": 0.09117,
+    "max_gap_m": 0.00083,
+    "slip_from_postlift_m": -0.00673
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_potato",
+    "seconds": 10.0,
+    "lift_m": 0.09087,
+    "max_gap_m": 0.00093,
+    "slip_from_postlift_m": -0.00643
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_potato",
+    "seconds": 20.0,
+    "lift_m": 0.09025,
+    "max_gap_m": 0.00134,
+    "slip_from_postlift_m": -0.00582
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 5.0,
+    "lift_m": 0.07442,
+    "max_gap_m": 0.00115,
+    "slip_from_postlift_m": 0.00238
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 10.0,
+    "lift_m": 0.07416,
+    "max_gap_m": 0.00125,
+    "slip_from_postlift_m": 0.00265
+  },
+  {
+    "cone": 1,
+    "impratio": 20,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 20.0,
+    "lift_m": 0.07363,
+    "max_gap_m": 0.00156,
+    "slip_from_postlift_m": 0.00317
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_apple",
+    "seconds": 5.0,
+    "lift_m": 0.09119,
+    "max_gap_m": 0.00118,
+    "slip_from_postlift_m": -0.00668
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_apple",
+    "seconds": 10.0,
+    "lift_m": 0.09098,
+    "max_gap_m": 0.00118,
+    "slip_from_postlift_m": -0.00647
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_apple",
+    "seconds": 20.0,
+    "lift_m": 0.09056,
+    "max_gap_m": 0.00126,
+    "slip_from_postlift_m": -0.00605
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_tomato",
+    "seconds": 5.0,
+    "lift_m": 0.09165,
+    "max_gap_m": 0.00119,
+    "slip_from_postlift_m": -0.00683
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_tomato",
+    "seconds": 10.0,
+    "lift_m": 0.09144,
+    "max_gap_m": 0.00119,
+    "slip_from_postlift_m": -0.00662
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_tomato",
+    "seconds": 20.0,
+    "lift_m": 0.09102,
+    "max_gap_m": 0.00119,
+    "slip_from_postlift_m": -0.0062
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_orange",
+    "seconds": 5.0,
+    "lift_m": 0.09159,
+    "max_gap_m": 0.00119,
+    "slip_from_postlift_m": -0.00685
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_orange",
+    "seconds": 10.0,
+    "lift_m": 0.09136,
+    "max_gap_m": 0.00119,
+    "slip_from_postlift_m": -0.00662
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_orange",
+    "seconds": 20.0,
+    "lift_m": 0.0909,
+    "max_gap_m": 0.0012,
+    "slip_from_postlift_m": -0.00617
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_potato",
+    "seconds": 5.0,
+    "lift_m": 0.09139,
+    "max_gap_m": 0.00067,
+    "slip_from_postlift_m": -0.00694
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_potato",
+    "seconds": 10.0,
+    "lift_m": 0.09127,
+    "max_gap_m": 0.00067,
+    "slip_from_postlift_m": -0.00682
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_potato",
+    "seconds": 20.0,
+    "lift_m": 0.09102,
+    "max_gap_m": 0.00071,
+    "slip_from_postlift_m": -0.00657
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 5.0,
+    "lift_m": 0.07458,
+    "max_gap_m": 0.00104,
+    "slip_from_postlift_m": 0.00223
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 10.0,
+    "lift_m": 0.07448,
+    "max_gap_m": 0.00106,
+    "slip_from_postlift_m": 0.00233
+  },
+  {
+    "cone": 1,
+    "impratio": 50,
+    "catalog": "robocasa_bell_pepper",
+    "seconds": 20.0,
+    "lift_m": 0.07426,
+    "max_gap_m": 0.00113,
+    "slip_from_postlift_m": 0.00254
+  }
+]

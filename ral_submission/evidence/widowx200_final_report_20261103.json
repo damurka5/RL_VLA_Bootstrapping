@@ -1,0 +1,67 @@
+{
+  "move_to": {
+    "move_to_object": {
+      "episodes": 1024,
+      "rate": 0.3330078125,
+      "successes": 341
+    }
+  },
+  "pick_up": {
+    "pick_up": {
+      "episodes": 1024,
+      "rate": 0.240234375,
+      "successes": 246
+    }
+  },
+  "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt",
+  "put_into": {
+    "put_into_bowl": {
+      "episodes": 520,
+      "rate": 0.13846153846153847,
+      "successes": 72
+    },
+    "put_into_plate": {
+      "episodes": 504,
+      "rate": 0.5813492063492064,
+      "successes": 293
+    }
+  },
+  "put_into_composed": {
+    "put_into_bowl": {
+      "episodes": 520,
+      "rate": 0.06153846153846154,
+      "successes": 32
+    },
+    "put_into_plate": {
+      "episodes": 504,
+      "rate": 0.08134920634920635,
+      "successes": 41
+    }
+  },
+  "references": {
+    "move_to_object": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt",
+      "rate": 0.5419921875,
+      "skill": "move_to",
+      "stage": "s4_move_to_binary"
+    },
+    "pick_up": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt",
+      "rate": 0.09765625,
+      "skill": "pick_up",
+      "stage": "s2_pick_up_dense"
+    },
+    "put_into_bowl": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "rate": 0.5487132352941176,
+      "skill": "put_into",
+      "stage": "s3_put_into_dense"
+    },
+    "put_into_plate": {
+      "checkpoint": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt",
+      "rate": 0.74375,
+      "skill": "put_into",
+      "stage": "s3_put_into_dense"
+    }
+  }
+}

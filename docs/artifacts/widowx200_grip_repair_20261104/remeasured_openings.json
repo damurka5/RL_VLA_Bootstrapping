@@ -1,0 +1,98 @@
+{
+  "cell": [
+    -0.13405777754582113,
+    0.1275121683048556
+  ],
+  "objects": [
+    {
+      "catalog": "robocasa_apple",
+      "scale": 0.61,
+      "rest_height_m": 0.02108,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0421,
+      "fitted_gripper_opening": 0.809,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0971,
+          "object_to_ee_m": 0.0006,
+          "held": true
+        }
+      }
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "scale": 0.57,
+      "rest_height_m": 0.02058,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0422,
+      "fitted_gripper_opening": 0.822,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.097,
+          "object_to_ee_m": 0.0005,
+          "held": true
+        }
+      }
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "scale": 0.72,
+      "rest_height_m": 0.02026,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0418,
+      "fitted_gripper_opening": 0.807,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0976,
+          "object_to_ee_m": 0.0005,
+          "held": true
+        }
+      }
+    },
+    {
+      "catalog": "robocasa_orange",
+      "scale": 0.72,
+      "rest_height_m": 0.02004,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0418,
+      "fitted_gripper_opening": 0.811,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0972,
+          "object_to_ee_m": 0.0005,
+          "held": true
+        }
+      }
+    },
+    {
+      "catalog": "robocasa_potato",
+      "scale": 0.72,
+      "rest_height_m": 0.0231,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0418,
+      "fitted_gripper_opening": 0.797,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0956,
+          "object_to_ee_m": 0.0009,
+          "held": true
+        }
+      }
+    },
+    {
+      "catalog": "robocasa_mug",
+      "scale": 0.46,
+      "rest_height_m": 0.02079,
+      "grasp_yaw_rad": 1.5708,
+      "first_primitive_width_m": 0.035,
+      "fitted_gripper_opening": 0.627,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0977,
+          "object_to_ee_m": 0.0006,
+          "held": true
+        }
+      }
+    }
+  ]
+}

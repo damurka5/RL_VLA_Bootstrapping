@@ -39,7 +39,8 @@ No human demonstrations are recorded for this robot at any stage.
 one instruction, and must approach, grasp, lift, carry and release the object
 inside the receptacle. Left half: overview camera; right half: wrist camera.
 The clips are strict successes of checkpoint `step_28309431` (2026-09-17,
-22.3% strict). The latest controller reaches **70.61% strict success**.
+22.3% strict). The latest controller reaches **69.14% strict success on
+off-panel development evaluation** (1,416/2,048 attempts).
 These clips are historical. See
 [Results](#results). Original MP4s and per-episode records are in
 [`docs/media/put_into/`](docs/media/put_into/).</sub>
@@ -137,30 +138,38 @@ flowchart TD
 | 4–5 | Aug 21 – 31 | Retention bank; one adapter for all four instructions |
 | 6–7 | Aug 30 – Sep 9 | Composed pick-and-place; one sparse reward for all instructions |
 | 8 | Sep 10 – 28 | Three-stage chains → staged-sparse GRPO on the full empty-start task |
-| 9 | Oct 3 – 23 | Latent-likelihood control; 60M continuation reaches 70.61% strict success |
+| 9 | Oct 3 – Nov 4 | Latent-likelihood control; 60M endpoint confirmed at 69.14% strict off-panel development success |
 
 ## Results
 
 ### Full task: empty gripper → object in the receptacle
 
-**Latest result, reviewed 2026-10-28: 70.61% strict success.** The TensorBoard log
-covers **40,056,193 → 60,025,885 selected actions** (recorded October 19–23).
-The endpoint completes **723/1024 attempts**; the peak is
-**728/1024 = 71.09%** at step `59268127`, selected from
-81 readings. The final 20 readings average **69.13%**.
+**Latest matched result, reviewed 2026-11-04: 69.14% strict success.** The
+60M endpoint completes **1,416/2,048 attempts**, versus the contemporaneous
+40M controller's **1,245/2,048 = 60.79%**. Both use **512 off-panel development
+scenes × four repeats**, excluding the 128-scene training validation panel.
 
-| Checkpoint reading | Strict success | Physical grasp | Held lift | Non-finite episodes |
+| Checkpoint | Strict success | Physical grasp | Held lift | Non-finite episodes |
 |---|---:|---:|---:|---:|
-| Resume, step `40056193` | 647/1024 = 63.18% | 89.84% | 86.04% | 0.68% |
-| Peak, step `59268127` | 728/1024 = 71.09% | 92.68% | 88.67% | 0.68% |
-| **Endpoint, step `60025885`** | **723/1024 = 70.61%** | **92.48%** | **88.28%** | **0.88%** |
+| 40M control baseline | 1245/2048 = 60.79% | 89.45% | 86.13% | 0.98% |
+| **60M endpoint (promoted)** | **1416/2048 = 69.14%** | **92.14%** | **89.45%** | **1.17%** |
 
-Endpoint plate/bowl strict success is **76.76% / 64.45%** (393/512 and
-330/512); carry slips are 16.70% and wrong placements 14.16%.
+The gain is **171 successes / +8.35 percentage points**, scene-clustered paired
+95% CI **[+6.05, +10.69]**, Holm p=0.00005. Every repeat improves. Plate is
+**774/1028 = 75.29%**, bowl **642/1020 = 62.94%**. Carry slips fall from
+24.51% to 19.43%, and wrong placements from 20.56% to 14.89%. Grasp/lift
+retention passes; non-finite outcomes show no detected increase (+0.20 pp,
+CI [−0.44, +0.83]). These are development model-selection results;
+`final_test` remains untouched. The panel-selected peak was not compared.
 
-[Training-log review](docs/reports/campaign/CDPR_60M_CONTROL_TENSORBOARD_REVIEW_20261028.md)
-· [Extracted metrics and source hash](docs/artifacts/latent_control_60m_20261028/summary.json)
-· [All 81 validation readings](docs/artifacts/latent_control_60m_20261028/validation.csv)
+Promoted checkpoint:
+`runs/latent_control_to60m_20261019_224018/rl/step_60025885`.
+The evidence supports an unchanged continuation to 80M total selected actions,
+followed by another matched comparison.
+
+[Matched review and resume command](docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md)
+· [Supplied comparison](docs/artifacts/latent_control_60m_comparison_20261104/comparison.json)
+· [Verified counts and recorded checkpoint hashes](docs/artifacts/latent_control_60m_comparison_20261104/review_summary.json)
 
 #### Earlier 40M development evaluation · 2026-10-19
 
@@ -176,7 +185,7 @@ per checkpoint)**, excluding the fixed 128-scene training validation panel.
 | Checkpoint | Strict success | Physical grasp | Held lift | Non-finite episodes |
 |---|---:|---:|---:|---:|
 | 20M control baseline | 1056/2048 = 51.56% | 85.84% | 80.52% | 1.32% |
-| **40M final control (promoted)** | **1258/2048 = 61.43%** | **89.65%** | **85.89%** | **1.37%** |
+| **40M final control (promoted at that time)** | **1258/2048 = 61.43%** | **89.65%** | **85.89%** | **1.37%** |
 | 39.8M in-run panel peak | 1256/2048 = 61.33% | 89.65% | 86.57% | 1.76% |
 
 Final versus 20M: **+9.86 percentage points strict**, scene-paired 95% CI
@@ -188,7 +197,8 @@ The panel peak has no demonstrated advantage over final: peak minus final
 
 That earlier run's training-panel final 61.23% and peak 64.84% are distinct measurements.
 Use this comparison's 51.56% baseline rather than the prior 53.47% from separate
-repeats. The later continuation to 60.03M actions reaches 70.61% strict success.
+repeats. The later continuation reaches 69.14% on the matched off-panel
+evaluation above.
 
 [Full analysis and resume command](docs/reports/campaign/CDPR_40M_CONTROL_REVIEW_20261019.md#next-training-unchanged-control-to-60m-total-actions)
 · [Matched evidence](docs/artifacts/latent_control_40m_comparison_20261019/comparison.json)
@@ -222,6 +232,36 @@ verdicts between runs, so differences below about 5 points need pooled repeats.
 | One adapter, four instructions (Cycle 3) | move-to 47.8%, pick-up 11.9%, plate 73.8%, bowl 53.5% |
 | Retention SFT on a self-generated bank (Cycle 1) | rebuilt forgotten `move_to` 3.9× (8.0% → 31.1%) while both placement tasks also improved |
 
+### WidowX-200 simulation port · reviewed 2026-11-04
+
+The seven-stage pipeline completed on the five-DoF arm, with weak composition
+and incomplete retention:
+
+| Final-policy evaluation | Successes / attempts | Success |
+|---|---:|---:|
+| Reaching | 341/1024 | 33.30% |
+| Pickup | 246/1024 | 24.02% |
+| Already-held placement, bowl / plate pooled | 365/1024 | 35.64% |
+| Empty-hand aligned composition, bowl / plate pooled | 73/1024 | 7.13% |
+
+The composed reset starts above the object and omits a distant approach; its
+scores are not directly comparable with the CDPR full-task evaluation. Reach
+and pickup had already collapsed before composition SFT, which changed
+composed success from 11/1024 to 8/1024 despite lower imitation loss. Joint RL
+then produced 73/1024. Binary pickup had zero actual-approach successes in
+55/57 updates, while assisted starts dominated the reported training successes.
+New-round teacher harvests also fell far below their historical references.
+All 435 archived source hashes verified. The subsequent contact repair passed
+the five-second CUDA grasp/hold preflight. A fresh run applies the repaired
+physics and SIL data handling from stage 1; teacher/reset generalization and
+learned-policy retention remain measurements for the new run.
+
+[Diagnostic review](docs/reports/campaign/WIDOWX200_SNAPSHOT_REVIEW_20261104.md)
+· [Original snapshot and audit](docs/artifacts/widowx200_snapshot_20261104/)
+· [Object-scale and sustained-grip checks](docs/reports/campaign/WIDOWX200_OBJECT_SCALE_AUDIT_20261103.md)
+· [Passed grip repair](docs/reports/campaign/WIDOWX200_GRIP_REPAIR_20261104.md)
+· [Fresh-run changes and remote command without memory stress](docs/reports/campaign/WIDOWX200_FRESH_RUN_20261104.md)
+
 ### Main findings
 
 1. **RL alone grounds a pretrained VLA on a new embodiment.** A frozen prior
@@ -237,7 +277,8 @@ verdicts between runs, so differences below about 5 points need pooled repeats.
    have to be reconciled.
 5. **Staged sparse rewards train the complete task once each milestone is
    reachable.** Historical evaluations rose from 3.9% for the SFT seed to
-   41.8%. The 60M latent-likelihood control reaches **70.61% strict success**.
+   41.8%. The 60M latent-likelihood control reaches **69.14% strict success
+   in matched off-panel development evaluation**.
 6. **Measure before steering.** Evaluation noise comes mostly from closed-loop
    physics chaos, not from the VLA's sampling. Seven SFT fits on the policy's
    own successes never beat their initializer.
@@ -248,17 +289,19 @@ The full evidence, protocols, and negative results are in the
 
 ## What is not solved yet
 
-- **Completing placement after pickup.** The latest endpoint reaches 92.48%
-  grasp and 88.28% held lift, while strict completion is 70.61%. Bowl strict
-  is 64.45%; carry slips (16.70%) and wrong placements (14.16%) remain the
+- **Completing placement after pickup.** Off-panel evaluation reaches 92.14%
+  grasp and 89.45% held lift, while strict completion is 69.14%. Bowl strict
+  is 62.94%; carry slips (19.43%) and wrong placements (14.89%) remain the
   main failure modes.
 - **Retention and composition together.** RL on the composed task and SFT on
   the retention bank still pull against each other.
 - **Localization resolution.** The frozen encoder's pooled feature feeds the
   residual without gradient.
-- **Scope.** One simulated embodiment. A port to a WidowX-200 arm keeps the
-  action contract, but batched training on it is not wired yet
-  ([report](docs/reports/side_tracks/WIDOWX200_MIGRATION_REPORT.md)).
+- **Cross-embodiment reliability.** The WidowX-200 simulation pipeline is
+  implemented and has completed a run, but aligned composition is only 7.13%
+  and retention is incomplete. The repaired model passes sustained GPU grip
+  checks; a fresh pipeline run and teacher-bank audits remain to be evaluated.
+  No hardware result is established by either simulation.
 
 ## Repository layout
 

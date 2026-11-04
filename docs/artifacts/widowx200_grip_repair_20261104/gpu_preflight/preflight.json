@@ -1,0 +1,449 @@
+{
+  "device": "cuda:0",
+  "worlds": 512,
+  "skills": {
+    "move_to": [
+      {
+        "caps": {
+          "move_to_object": 0.03
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 0,
+        "caught_held_fraction": null,
+        "min_object_gap_m": 0.1606,
+        "target_z_mean": 0.1702,
+        "horizon_decisions": [
+          8,
+          8
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.03
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 0,
+        "caught_held_fraction": null,
+        "min_object_gap_m": 0.1577,
+        "target_z_mean": 0.1698,
+        "horizon_decisions": [
+          8,
+          8
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.14
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 0,
+        "caught_held_fraction": null,
+        "min_object_gap_m": 0.1605,
+        "target_z_mean": 0.1702,
+        "horizon_decisions": [
+          15,
+          15
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.14
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 0,
+        "caught_held_fraction": null,
+        "min_object_gap_m": 0.1577,
+        "target_z_mean": 0.1698,
+        "horizon_decisions": [
+          15,
+          15
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.3
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 0,
+        "caught_held_fraction": null,
+        "min_object_gap_m": 0.1605,
+        "target_z_mean": 0.1702,
+        "horizon_decisions": [
+          24,
+          24
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.3
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 0,
+        "caught_held_fraction": null,
+        "min_object_gap_m": 0.1577,
+        "target_z_mean": 0.1698,
+        "horizon_decisions": [
+          24,
+          24
+        ]
+      }
+    ],
+    "pick_up": [
+      {
+        "caps": {
+          "pick_up": 0.03
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 176,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.1518,
+        "target_z_mean": 0.171,
+        "horizon_decisions": [
+          28,
+          28
+        ]
+      },
+      {
+        "caps": {
+          "pick_up": 0.03
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 168,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.1487,
+        "target_z_mean": 0.1712,
+        "horizon_decisions": [
+          28,
+          28
+        ]
+      },
+      {
+        "caps": {
+          "pick_up": 0.08
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 176,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.1635,
+        "target_z_mean": 0.171,
+        "horizon_decisions": [
+          28,
+          28
+        ]
+      },
+      {
+        "caps": {
+          "pick_up": 0.08
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 168,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.158,
+        "target_z_mean": 0.1712,
+        "horizon_decisions": [
+          28,
+          28
+        ]
+      },
+      {
+        "caps": {
+          "pick_up": 0.2
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 176,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.1635,
+        "target_z_mean": 0.171,
+        "horizon_decisions": [
+          28,
+          28
+        ]
+      },
+      {
+        "caps": {
+          "pick_up": 0.2
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 168,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.158,
+        "target_z_mean": 0.1712,
+        "horizon_decisions": [
+          28,
+          28
+        ]
+      }
+    ],
+    "put_into": [
+      {
+        "caps": {
+          "put_into_plate": 0.01,
+          "put_into_bowl": 0.01
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 512,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0566,
+        "target_z_mean": 0.2346,
+        "horizon_decisions": [
+          16,
+          16
+        ]
+      },
+      {
+        "caps": {
+          "put_into_plate": 0.01,
+          "put_into_bowl": 0.01
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 512,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0571,
+        "target_z_mean": 0.2308,
+        "horizon_decisions": [
+          16,
+          16
+        ]
+      },
+      {
+        "caps": {
+          "put_into_plate": 0.1,
+          "put_into_bowl": 0.08
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 512,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0452,
+        "target_z_mean": 0.2289,
+        "horizon_decisions": [
+          21,
+          23
+        ]
+      },
+      {
+        "caps": {
+          "put_into_plate": 0.1,
+          "put_into_bowl": 0.08
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 512,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.053,
+        "target_z_mean": 0.2268,
+        "horizon_decisions": [
+          21,
+          23
+        ]
+      },
+      {
+        "caps": {
+          "put_into_plate": 0.18,
+          "put_into_bowl": 0.18
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 512,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0675,
+        "target_z_mean": 0.2288,
+        "horizon_decisions": [
+          32,
+          32
+        ]
+      },
+      {
+        "caps": {
+          "put_into_plate": 0.18,
+          "put_into_bowl": 0.18
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 512,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0501,
+        "target_z_mean": 0.2268,
+        "horizon_decisions": [
+          32,
+          32
+        ]
+      }
+    ],
+    "joint": [
+      {
+        "caps": {
+          "move_to_object": 0.03,
+          "pick_up": 0.06,
+          "put_into_plate": 0.02,
+          "put_into_bowl": 0.02
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 136,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0506,
+        "target_z_mean": 0.1848,
+        "horizon_decisions": [
+          16,
+          40
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.03,
+          "pick_up": 0.06,
+          "put_into_plate": 0.02,
+          "put_into_bowl": 0.02
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 136,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0508,
+        "target_z_mean": 0.1834,
+        "horizon_decisions": [
+          16,
+          40
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.2,
+          "pick_up": 0.14,
+          "put_into_plate": 0.1,
+          "put_into_bowl": 0.12
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 136,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0832,
+        "target_z_mean": 0.184,
+        "horizon_decisions": [
+          20,
+          40
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.2,
+          "pick_up": 0.14,
+          "put_into_plate": 0.1,
+          "put_into_bowl": 0.12
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 136,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0738,
+        "target_z_mean": 0.1823,
+        "horizon_decisions": [
+          20,
+          40
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.3,
+          "pick_up": 0.2,
+          "put_into_plate": 0.18,
+          "put_into_bowl": 0.18
+        },
+        "round": 0,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 136,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.0912,
+        "target_z_mean": 0.184,
+        "horizon_decisions": [
+          25,
+          40
+        ]
+      },
+      {
+        "caps": {
+          "move_to_object": 0.3,
+          "pick_up": 0.2,
+          "put_into_plate": 0.18,
+          "put_into_bowl": 0.18
+        },
+        "round": 1,
+        "reachable_fraction": 1.0,
+        "finite": true,
+        "caught_worlds": 136,
+        "caught_held_fraction": 1.0,
+        "min_object_gap_m": 0.1141,
+        "target_z_mean": 0.1823,
+        "horizon_decisions": [
+          25,
+          40
+        ]
+      }
+    ]
+  },
+  "failures": [],
+  "hold_actions": 100,
+  "hold_seconds": 5.0,
+  "scripted_lift_rate": 1.0,
+  "cameras_png": "runs/widowx200_geometry_preflight_contact_fix_20261104/cameras.png",
+  "backend_metadata": {
+    "versions": {
+      "mjlab": "1.5.0",
+      "mujoco": "3.10.0",
+      "mujoco_warp": "3.10.0.1",
+      "warp": "1.14.0",
+      "torch": "2.7.1+cu128"
+    },
+    "physics_substeps_per_action": 25,
+    "simulated_seconds_per_action": 0.05,
+    "controller_implementation": "batched_torch_widowx200_top_down_ik_v1",
+    "embodiment": "widowx200"
+  },
+  "capacity": {
+    "contacts": 1615,
+    "max_constraints_per_world": 28,
+    "contact_capacity": 131072,
+    "constraint_capacity_per_world": 1024,
+    "contact_overflow": 0,
+    "constraint_overflow": 0
+  },
+  "passed": true
+}

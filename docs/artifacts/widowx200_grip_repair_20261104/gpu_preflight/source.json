@@ -1,0 +1,15 @@
+{
+  "files": {
+    "preflight.json": {
+      "source_path": "/Users/damirnurtdinov/Downloads/widowx200_geometry_preflight_contact_fix_20261104/preflight.json",
+      "sha256": "9a2c6e7953113284c231766465f479c205876e74a5e3571eeff14ccaccc5c814",
+      "bytes": 10311
+    },
+    "cameras.png": {
+      "source_path": "/Users/damirnurtdinov/Downloads/widowx200_geometry_preflight_contact_fix_20261104/cameras.png",
+      "sha256": "c30f1f7d88833ab818e8c9b177665afa63a73f2307cb7c93a0dd0287e755eebf",
+      "bytes": 237693
+    }
+  },
+  "preservation": "Raw report and image copied byte-for-byte from the user-supplied folder."
+}

@@ -1,0 +1,10 @@
+metric,value,status,evidence
+env_step_time_s,,not_measured,No runtime profiler was executed by this static audit.
+render_time_s,,not_measured,HeadlessCDPRSimulation.capture_frame uses mjr_readPixels CPU readback.
+reward_time_s,,not_measured,Reward code is pure Python predicate logic in rl_instruction_tasks.py.
+image_preprocessing_time_s,,not_measured,OpenVLA wrapper batches PIL/processor inputs after local patching.
+policy_forward_time_s,,not_measured,OpenVLA forward pass is external to this repo under openvla-oft.
+optimizer_time_s,,not_measured,"External GRPO/PPO trainer script is generated/patched, not stored here."
+cpu_ram_mb,,not_measured,Run-time RSS requires psutil/profiler around rollout workers.
+gpu_vram_mb,,not_measured,Requires nvidia-smi sampling during actual rollout/training.
+gpu_utilization_pct,,not_measured,Requires nvidia-smi dmon or pynvml during actual rollout/training.

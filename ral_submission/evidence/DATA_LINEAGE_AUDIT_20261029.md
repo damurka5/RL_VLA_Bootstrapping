@@ -1,6 +1,6 @@
 # Data-lineage audit of the reported CDPR controller — 29 October 2026
 
-This audit answers checklist items 1 and 2 of `../REVISION_CHECKLIST_20261029.md`: what the 70.61% controller is made of, and what target-embodiment data its training ancestry used. It is a reading of local reports, launchers, configurations, and code. No model bytes were downloaded and no training or evaluation was run.
+This audit answers checklist items 1 and 2 of `../REVISION_CHECKLIST_20261029.md`: what the reported CDPR controller is made of, and what target-embodiment data its training ancestry used. It is a reading of local reports, launchers, configurations, and code. No model bytes were downloaded and no training or evaluation was run.
 
 Primary source: `../../CDPR_CONSOLIDATED_PROGRESS_REPORT.md` (cited as **CPR** with line numbers at the time of reading), plus the launchers and configurations named in each row.
 
@@ -39,7 +39,7 @@ Read top to bottom, from the pretrained model to the reported endpoint. "Supervi
 | 12 | `three_stage_sparse_grpo_20260925_105132/rl/step_56072006` | 11 | Same, grasp-preservation continuation | Learner's own rollouts | None | ~3.3M | CPR l.2595–2605 |
 | 13 | `latent_2m_control_20261009_033534/rl/step_2052558` | 12 | Bounded-residual GRPO with offset-conditioned pre-clipping likelihood; fresh optimizer; VLA/LoRA frozen | Learner's own rollouts | None | 2.05M (new counter) | CPR l.4799–4830 |
 | 14 | `latent_control_long_20261009_160735` → final20m → `latent_control_to40m_20261012_230538/rl/step_40056193` | 13 | Same | Learner's own rollouts | None | to 40.06M | CPR l.4830–4968 |
-| 15 | **Reported endpoint**, step `60025885` (70.61%) | 14 | Same, LR 1e-5 | Learner's own rollouts | None | +19.97M → 60.03M since conversion | CPR l.4969–4994; `latent_control_60m_tensorboard_20261028.json` |
+| 15 | **Reported endpoint**, step `60025885` | 14 | Same, LR 1e-5 | Learner's own rollouts | None | +19.97M → 60.03M since conversion | CPR l.4969–4994; `latent_control_60m_tensorboard_20261028.json` |
 
 Rejected branches that are **not** ancestors: the step_52791642 strict-success SFT arms (with and without retention), the zero-initialized correction candidate, the Phase 7 SFT sweep arms, the demonstration-start GRPO pilot, and the z-offset pilot.
 

@@ -1,8 +1,34 @@
 # CDPR + SmolVLA: consolidated progress and achievement report
 
-**Living report — latest status update 2026-10-28, Europe/Moscow**
+**Living report — latest status update 2026-11-04, Europe/Moscow**
 
-**Latest result: 70.61% strict success.**
+**Latest matched CDPR result: promote the 60M endpoint.** On 512 off-panel
+development scenes × four repeats, `step_60025885` completes **1,416/2,048 =
+69.14% strict**, versus the contemporaneous 40M baseline's **1,245/2,048 =
+60.79%**. Gain **+8.35 pp**, paired 95% CI **[+6.05, +10.69]**, Holm
+p=0.00005; grasp/lift improve and carry slips/wrong placements decrease.
+The checkpoint is `runs/latent_control_to60m_20261019_224018/rl/step_60025885`.
+This is development model selection; `final_test` remains unused.
+[Matched review, checkpoint hash and proposed 80M continuation](docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md).
+
+**Latest cross-embodiment result: WidowX-200 pipeline completed, but composition
+and retention remain weak.** The November 1 final policy scores reaching
+341/1024 = 33.30%, pickup 246/1024 = 24.02%, caught placement 365/1024 =
+35.64%, and aligned empty-hand composed placement **73/1024 = 7.13%**
+(bowl 32/520, plate 41/504). Reaching and both caught placement instructions
+fall below their supplied references by more than the current retention
+tolerances. This is a separate embodiment/protocol, not a replacement for the
+CDPR results below. The November 4 archive now establishes that reach/pickup
+were already lost before composition SFT; s5 had almost no actual-approach
+signal, and composition SFT changed composed success 11/1024→8/1024.
+All 435 source-file hashes pass. A subsequent contact repair now passes the
+five-second CUDA grip preflight. A fresh pipeline run is prepared to apply
+the implementation and contact fixes from stage 1 with new SIL banks;
+reharvest/reference discrepancies remain part of the new-run evaluation.
+[Fresh-run changes and command](docs/reports/campaign/WIDOWX200_FRESH_RUN_20261104.md).
+[Snapshot review and next diagnostics](docs/reports/campaign/WIDOWX200_SNAPSHOT_REVIEW_20261104.md).
+
+**Training-panel result: 70.61% strict success.**
 The 60M endpoint completes **723/1024 attempts** at logged step `60025885`.
 The supplied TensorBoard file records the 40,056,193 → 60,025,885 selected-action
 continuation on October 19–23. Peak strict success is **728/1024 = 71.09%**
@@ -30,7 +56,7 @@ pilot, the 2026-09-14 10M-step run, its full resume to 28,309,431 steps, and
 the standalone evaluation of `step_28309431` with episode videos (four newest
 §14 entries). The training run itself is still in progress past 28.3M steps.
 
-**Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention.
+**Scope:** simulated 5-DoF cable-driven parallel robot (CDPR), SmolVLA-conditioned control, GRPO reinforcement learning, self-imitation learning (SIL), and multi-instruction retention. The November 3–4 entries separately record the WidowX-200 port without pooling its measurements with CDPR.
 
 **Active user direction, 2026-09-10:** complete the entire `put_into` task:
 empty gripper approaches an object, grasps it, carries it to a plate/bowl and
@@ -95,12 +121,23 @@ The central idea is now demonstrated end to end:
 
 ### Current headline achievements
 
-**Latest result, reviewed 2026-10-28: 70.61% strict success**, 723/1024
+**Training-panel result, reviewed 2026-10-28: 70.61% strict success**, 723/1024
 at logged step `60025885`. Peak 71.09% (728/1024) at step `59268127`;
 final-20 mean 69.13%. This is a 40M → 60M continuation of the inherited
 training lineage.
 
-**Latest matched evaluation, 2026-10-19: 40M control passes development
+**Latest matched evaluation, 2026-11-04: 60M control passes development
+promotion**, **1,416/2,048 = 69.14% strict**, against the same comparison's
+40M **1,245/2,048 = 60.79%**. The gain is **+171 successes / +8.35 pp**,
+paired CI **[+6.05, +10.69]**, Holm p=0.00005. Grasp/lift retention passes;
+carry slip decreases 5.08 pp and wrong placement 5.66 pp. Non-finite outcomes
+are 24 versus 20, +0.20 pp, CI [−0.44, +0.83], with no detected increase.
+Promote `runs/latent_control_to60m_20261019_224018/rl/step_60025885` and retain
+40M as evidence. This supports an unchanged continuation to 80M total actions,
+followed by another matched development comparison. The 59.27M panel peak was
+not separately evaluated. [Evidence and command](docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md).
+
+**Earlier matched evaluation, 2026-10-19: 40M control passes development
 promotion**, with 1258/2048 strict successes (61.43%) versus 1056/2048 (51.56%)
 for the matched 20M baseline. The gain is +9.86 pp, CI [+7.37, +12.30], Holm
 p=0.00010. Grasp/lift improve, and carry-slip/wrong-placement intervals now
@@ -276,8 +313,10 @@ on matched baseline/final evaluation settings. Move-to reached **0.7125 at cap
 
 | Achievement | Strongest supported result | Evidence status |
 |---|---|---|
-| Latest separate full-task development evaluation (2026-10-19) | Promoted 40M control: **1258/2048 = 61.43%** strict on 512 scenes × four repeats | Matched off-panel evidence and adapter hash retained; no final-test claim |
-| Latest full-task result (reviewed 2026-10-28) | 60M endpoint **723/1024 = 70.61%** strict; peak **728/1024 = 71.09%**; final-20 mean 69.13% | TensorBoard source hash, all 81 readings and reproduction script retained |
+| WidowX-200 port, completed pipeline (reviewed 2026-11-03) | Final reaching **33.30%**, pickup **24.02%**; caught placement **365/1024 = 35.64%**, aligned empty-hand composition **73/1024 = 7.13%** | Supplied Markdown/JSON retained with hashes; weak composition and three reference regressions; no promotion or CDPR comparability claim |
+| Latest separate full-task development evaluation (2026-11-04) | Promoted 60M control: **1416/2048 = 69.14%** strict versus 40M **1245/2048 = 60.79%**; +8.35 pp, CI [+6.05, +10.69] | Matched off-panel comparison and adapter hashes retained; grasp/lift gate passes; no final-test claim |
+| Earlier separate full-task development evaluation (2026-10-19) | 40M control: **1258/2048 = 61.43%** strict on 512 scenes × four repeats | Historical promotion; 60M now selected |
+| Training-panel full-task result (reviewed 2026-10-28) | 60M endpoint **723/1024 = 70.61%** strict; peak **728/1024 = 71.09%**; final-20 mean 69.13% | TensorBoard source hash, all 81 readings and reproduction script retained |
 | RL-only language-conditioned reaching | `move_to_object`: **0.6299** success, 645/1024 episodes, 128 independent scenes, 2 cm tolerance, cap 0.19 | Complete six-leg local evaluation; archive checksums pass |
 | RL-only placement from a frozen VLA prior | Phase 2 final: plate **0.710**, bowl **0.320** after 15M steps; both started at 0 | Reported training/held-out validation result |
 | Best historical placement validation | Phase 4: **0.633** overall, plate **0.791**, bowl **0.442** at `step_7753190` | Checkpoint retained and checksum-verified |
@@ -2030,10 +2069,14 @@ Until items 4–5 are copied and checksummed, the latest reported results are no
     each other. Grasp (84%) and lift (76%) are largely solved. Carry slips
     and post-lift wrong places grew with pickup, so the next lever is carry
     retention, not more steps of the same objective.
-15. **The 60M latent-likelihood controller reaches 70.61% strict success.**
+15. **The 60M latent-likelihood controller reaches 70.61% training-panel strict success.**
     The endpoint completes **723/1024** full-task attempts, with **76.76%**
     plate and **64.45%** bowl success. Peak strict success is **728/1024 =
     71.09%**. Grasp and held lift reach **92.48%** and **88.28%**, respectively.
+16. **Separate development evaluation promotes the 60M endpoint at 69.14%.**
+    It adds 171 successes over the matched 40M controller, +8.35 pp,
+    CI [+6.05, +10.69], with improved grasp, lift and carry/release outcomes.
+    These 512 off-panel scenes × four repeats remain development evidence.
 
 ---
 
@@ -4992,3 +5035,148 @@ which is five times slower and more reliable).
   and [reproduction script](docs/artifacts/latent_control_60m_20261028/extract_metrics.py).
   README, Pages source and the RA-L abstract, results, table, inventory and
   evidence notes include the result and its source records.
+
+### 2026-11-03 — WidowX-200 pipeline completes; composition and retention fail the intended targets
+
+- Run `widowx200_pipeline_20261024_131201` completed November 1 at logged
+  17:00:09 (server timezone unspecified). Final adapter is
+  `runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt`.
+  Supplied [Markdown](docs/artifacts/widowx200_pipeline_20261103/final_report.md)
+  and [JSON](docs/artifacts/widowx200_pipeline_20261103/final_report.json) are
+  retained verbatim; [derived counts and hashes](docs/artifacts/widowx200_pipeline_20261103/review_summary.json).
+- Final reaching **341/1024 = 33.30%**, pickup **246/1024 = 24.02%**.
+  Caught placement: bowl **72/520 = 13.85%**, plate **293/504 = 58.13%**;
+  pooled **365/1024 = 35.64%**. Empty-hand aligned composition: bowl
+  **32/520 = 6.15%**, plate **41/504 = 8.13%**; pooled **73/1024 = 7.13%**.
+  The composed reset omits a distant approach; these are not CDPR strict
+  full-task scores. Unequal destination denominators are preserved.
+- Relative to supplied skill references, reaching loses **20.90 pp**, caught
+  bowl **41.03 pp**, caught plate **16.24 pp**, each exceeding the current
+  `max(8 pp, 20% of reference)` degradation threshold. Pickup gains 14.26 pp
+  over its weak 9.77% reference. These are descriptive, not paired tests.
+- `s5`'s zero best RL validation does not describe its SIL handoff or final
+  pickup. `s6`'s selected step 1,764,679 differs from best step 1,016,667 by
+  explicit `user_checkpoint` override. A plateau stop does not establish that
+  a target was met. `s7` has `sil: false` in the current configuration and
+  skips retention repair; its 6.696% selected metric misses the 60% target.
+- Local report generation now exposes final retention status, reset protocols,
+  success counts, separate best/selected RL and handed-off policies, and
+  accepted/attempted SIL cycles. No training recipe or weights changed.
+  Preserve the run and export its existing state/configs/metrics/SFT reports
+  before choosing a bounded repair. Do not repeat the full pipeline unchanged
+  or assume that enabling skill-only SIL will preserve composition.
+  Audit the legacy clipped-action likelihood and active LoRA/four-epoch setup
+  against the CDPR continuation's latent likelihood, frozen LoRA and one PPO
+  epoch in a controlled arm-specific pilot; the supplied scores alone do not
+  identify the cause. All 61 local report/pipeline regression checks pass.
+  [Full analysis and export command](docs/reports/campaign/WIDOWX200_PIPELINE_REVIEW_20261103.md).
+
+### 2026-11-03 — CDPR 60M endpoint evaluation prepared; promotion remains pending
+
+- Exact endpoint `step_60025885` and optional peak `step_59268127` come from
+  integer TensorBoard event steps; their server directories and adapter bytes
+  are not yet inspected. The comparison launcher resolves unique bare step
+  names or accepts explicit paths.
+- Compare with promoted 40M `step_40056193`, contemporaneously, over
+  **512 off-panel student_validation scenes × four repeats**, 2,048 episodes
+  per checkpoint (4,096 total; 6,144 if including the peak). Keep the
+  128-scene training panel excluded and `final_test` unused. Compare paired
+  strict success with grasp/lift retention and numerical-failure diagnostics.
+- Added a remote convenience wrapper with the known 40M adapter hash check,
+  explicit CDPR geometry and cleared evaluation interventions. The runbook
+  also provides commands using the existing remote launcher, without needing
+  that wrapper synced. Return `comparison.json`, and `peak_vs_final.json`
+  when the peak is included. Reuse the same output directory only for the
+  same protocol and checkpoint set.
+- No remote job was launched. The separate 40M result remains the promoted
+  controller; the 60M 70.61% panel score is not separate evaluation evidence.
+  [Evaluation runbook](docs/reports/campaign/CDPR_60M_CONTROL_EVALUATION_20261103.md).
+
+### 2026-11-04 — Matched CDPR comparison promotes final60m at 69.14% strict
+
+- Supplied [comparison.json](docs/artifacts/latent_control_60m_comparison_20261104/comparison.json)
+  comes from `latent_control_60m_comparison_20261103_183216`. Two fixed
+  checkpoints, 512 off-panel `student_validation` scenes × four repeats,
+  2,048 episodes each; the 128-scene training panel is excluded. Baseline
+  hash agrees with the promoted 40M controller. No `final_test` is used.
+- 40M **1,245/2,048 = 60.79%** versus 60M **1,416/2,048 = 69.14%**,
+  **+171 / +8.35 pp**, scene-clustered paired CI **[+6.05, +10.69]**,
+  Holm p=0.00005. Each repeat improves (+35, +48, +31, +57). Counts and
+  rate/destination sums were checked; inferential statistics are retained as
+  supplied because per-episode evaluation files were not included.
+- Grasp **89.45%→92.14%**, held lift **86.13%→89.45%**; both pass the
+  3 pp retention criterion. Carry slip **24.51%→19.43%**, wrong placement
+  **20.56%→14.89%**, native **66.02%→74.95%**. Non-finite **20→24/2048**,
+  difference +0.20 pp, CI [−0.44, +0.83], p=0.63292; no detected increase,
+  without an equivalence claim.
+- Plate strict **774/1,028 = 75.29%**, bowl **642/1,020 = 62.94%**.
+  Q4 target-y rises 26.94%→43.02%; potato remains weakest at 51.84%, with
+  an improvement interval that includes zero. Subgroups are exploratory.
+- Promote `runs/latent_control_to60m_20261019_224018/rl/step_60025885`,
+  adapter SHA-256 `f69360d4a7afeac36b147c6f3a335a7199c9a385f871c568587c85d9d3d86711`.
+  The former 60M pending-promotion status is superseded. The 59.27M panel
+  peak is not evaluated by this two-checkpoint comparison.
+- Recommend unchanged full-state continuation to **80M total selected
+  actions**, approximately 19.97M additional, then compare against 60M before
+  further promotion. [Full review and command](docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md).
+  No new remote job was launched during this review.
+
+### 2026-11-04 — WidowX snapshot identifies failures before composition SFT
+
+- Preserved the [supplied ZIP](docs/artifacts/widowx200_snapshot_20261104/results_snapshot.zip)
+  and verified bytes/SHA-256 for **435 source files**. The archive contains
+  3,544 training and 161 validation readings; start commit `dbcb5c2`, exporter
+  and composition commit `3c6486d`. It is a non-atomic snapshot spanning
+  revisions, with no checkpoint/frame/trajectory bytes.
+- By s3, ordinary reach/pickup had fallen to **55/1024 and 0/1024**.
+  Both accepted s5 SIL cycles recover other families but leave pickup at
+  **0 then 1/1024**. S6 again hands off almost no reach or pickup. A mean
+  repair gain can hide an unrecovered family; rejected repairs do not stop
+  the current pipeline from advancing.
+- S5 config already has **split_credit_at_grasp=false**. Actual-approach
+  pickup success is zero in **55/57 updates**, while median overall pass
+  is 34.38%, mostly assisted suffixes. Median informative groups **14**,
+  usable fraction **2.73%**; numerical failure median zero. All stages use
+  legacy clipped likelihood, active LoRA, LR 1e-4 and four PPO epochs.
+- Composition SFT fits **7,417 rows** and improves residual held-out MSE
+  **0.201123→0.095522**, but pickup stays **0/1024** and composed success
+  changes **11/1024→8/1024**. There are **zero continuous full-task chains**;
+  reach prefixes have only seven source groups per destination. Joint RL
+  subsequently produces **73/1024**, recovering ordinary reach/pickup.
+- New-round reharvest of the same s4 reach teacher scores **111/2048 =
+  5.42%** against its old 54.20% reference; caught bowl/plate are
+  **37.20%/46.02%** against 54.87%/74.38%. Different reset rounds and
+  spanning code revisions prevent attributing the gap to one cause. The
+  new bank rates must not be presented as the old reference performance.
+- Resolve sustained-grip MJWarp parity and teacher/reset provenance, use
+  scene-disjoint retention/composition gates, and obtain ordinary pickup and
+  continuous final-prompt chains before another full pipeline. The earlier
+  object-scale audit's CPU delayed-slip finding is relevant but does not
+  establish the GPU cause. [Full diagnostic review](docs/reports/campaign/WIDOWX200_SNAPSHOT_REVIEW_20261104.md),
+  [reproduction script and summary](docs/artifacts/widowx200_snapshot_20261104/audit_summary.json).
+
+### 2026-11-04 — WidowX contact repair passes CUDA preflight; fresh pipeline prepared
+
+- The supplied post-repair CUDA preflight passes all **24 reset batches**,
+  with finite/reachable states, 100% logged placement/joint caught holds and
+  **100% scripted grasp/lift/five-second hold**. No contact or constraint
+  overflow is reported. This is physical feasibility evidence, not a learned
+  policy success-rate result. [Repair details](docs/reports/campaign/WIDOWX200_GRIP_REPAIR_20261104.md).
+- Source changes repair tangential contact impedance and finger travel stops,
+  remeasure WidowX contact openings, check sustained holding and actual signed
+  object/object penetration, and record simulator provenance. The fresh run
+  also applies the existing SIL recorder, frame identity/selection,
+  scene-splitting and non-overlapping harvest fixes from stage 1.
+- The user requests a new run from the pretrained base and fresh residual,
+  rather than continuation of the old policy/banks. The dense/binary/SIL/
+  composition/joint schedule and configured hyperparameters are unchanged.
+  Mean-gain SIL acceptance and disabled joint SIL remain the existing choices.
+- Added a fresh-directory remote handoff with **MEMORY_CHECK_FIRST=0**.
+  Geometry/grip preflight and the small smoke run remain enabled. The launcher
+  also handles the fresh production argument list on Bash 3.2.
+- Pre-publication verification: **208 CPU checks passed, three camera checks
+  skipped** for lack of a local graphics context; no memory/stress tests run.
+  A launcher dry run confirms smoke plus production calls and no memory-check
+  invocation. The supplied GPU hold preflight is kept as separate evidence.
+  [Changes, validation and command](docs/reports/campaign/WIDOWX200_FRESH_RUN_20261104.md).
+  No new policy training was launched during this publication task.

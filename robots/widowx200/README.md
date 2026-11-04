@@ -110,9 +110,10 @@ RoboCasa catalog's minimum grasp width:
 
 Nothing in the catalog is comfortably graspable. The fix is to rescale the
 graspable objects to a ~42 mm minor width (shipped; 35 mm at first, which
-rendered as specks next to the arm) rather than to drop them — a 7 cm
-apple is out of scale for a 200 g-payload arm in the first place, so this is
-the physically correct correction, not a workaround. Rescaling also invalidates
+rendered as specks next to the arm). These are small props chosen to fit this
+simulated gripper. Payload alone does not establish the appropriate fruit size,
+and fitting the colliders does not establish natural-looking or stable grasps.
+Rescaling also invalidates
 each variant's `rest_height`, `inertia`, and `fitted_gripper_opening`; the last
 of those is embodiment-specific and has to be re-measured on this gripper
 regardless (its docstring in `cdpr_object_catalog` says exactly why deriving it
@@ -179,11 +180,20 @@ RL pipeline exist (2026-10-22):
 |---|---|
 | MJWarp backend | `rl_vla_bootstrapping/simulation/widowx200_mjwarp_backend.py`, selected by `RLVLA_EMBODIMENT=widowx200` |
 | MJWarp scene | `widowx200_mujoco/wx200_mjwarp_scene.xml` (this arm + the shared object slots) |
-| object catalog | `cdpr_object_catalog.widowx200_object_variants`: graspables at ~35 mm, first-contact openings measured by `tools/audit/measure_widowx200_fitted_openings.py` |
+| object catalog | `cdpr_object_catalog.widowx200_object_variants`: graspables at ~42 mm collider width, first-contact openings measured by `tools/audit/measure_widowx200_fitted_openings.py` |
 | stage configs | `configs/examples/widowx200_smolvla_pipeline.yaml` (base config + every stage) |
 | driver | `tools/train/run_widowx200_pipeline.py` |
 | one command | `scripts/train_widowx200_pipeline_remote.sh` |
 | plant preflight | `scripts/preflight_widowx200_pipeline.py` |
+| scale and physical placement audit | `tools/audit/audit_widowx200_object_scale.py` (CPU; optional real RGB previews, five-second holds, both receptacles at all six cells) |
+
+The contact model uses elliptic cones with `impratio=10`, plus stiffer finger
+travel stops. The original defaults passed short lifts but lost every tested
+five-second scripted GPU hold. The [2026-11-04 repair report](../../docs/reports/campaign/WIDOWX200_GRIP_REPAIR_20261104.md)
+records local long-hold/carry verification and the returned CUDA preflight:
+all logged reset and five-second hold checks pass, with scripted
+grasp/lift/hold at 100%. It preserves that evidence separately from
+learned-policy placement results.
 
 Stages: move_to, pick_up, put_into with dense reward; the same three with a
 binary reward and re-initialized GRPO state; then all four instructions
@@ -192,6 +202,13 @@ validation and hands its best checkpoint to the next weights-only; when an
 earlier instruction degrades, self-imitation cycles (bank harvested from each
 skill's best checkpoint, re-primed under the current policy, residual SFT,
 paired re-evaluation) repair it before the next stage.
+
+The implementation/data-handling and contact repairs are summarized in the
+[fresh-run handoff](../../docs/reports/campaign/WIDOWX200_FRESH_RUN_20261104.md).
+It includes a clean stage-1 launch with `MEMORY_CHECK_FIRST=0`, retaining the
+geometry/grip preflight and small smoke run. SIL acceptance uses mean gain and
+a collateral-loss check; an accepted cycle does not guarantee recovery of
+every degraded instruction.
 
 The launcher runs a production-size memory stress pass before the small smoke
 pass: two updates on both GPUs, with compilation, 512 worlds per rank, the

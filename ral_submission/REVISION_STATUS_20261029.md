@@ -1,5 +1,12 @@
 # Status of the 29 October 2026 revision checklist
 
+**Update 4 November:** [the current revision](REVISION_NOTES_20261104.md)
+adds the 69.14% off-panel endpoint evaluation, its recorded checkpoint hash,
+and the completed preliminary WidowX simulation result. Per-episode CDPR
+records, independent training seeds and reserved final-test evaluation remain
+pending. The status table and layout description below preserve the October
+29 audit rather than the current manuscript's page/figure count.
+
 This note maps each item in `REVISION_CHECKLIST_20261029.md` to what changed in the manuscript and what still needs data, author confirmation, or experiments. No training or evaluation was run for this revision. The pre-revision manuscript and figures are archived in `archive/manuscript_20261029_before_checklist_revision/`.
 
 Evidence added: `evidence/DATA_LINEAGE_AUDIT_20261029.md`, which contains the lineage, data categories, module table, and action interface.
@@ -15,7 +22,7 @@ Evidence added: `evidence/DATA_LINEAGE_AUDIT_20261029.md`, which contains the li
 | 7 | Literature context table | **Partial** | Table VI covers SmolVLA (partial credit, 50/task multitask), SimpleVLA-RL, the preprint, and ours, labeled contextual. **Remaining:** add more embodiment-adaptation rows from primary papers, e.g. PLD real-robot tasks and iRe-VLA Panda numbers with trial counts. |
 | 8 | Skill-by-stage matrix | **Done** | Table IV gives protocol codes, counts, "---" for unmeasured cells, composed vs strict full task split, and no causal claim. The "must exceed a threshold" claim is replaced by the product-of-conditionals argument (§III-A). **Remaining:** uncertainty per cell, and evaluation rounds for S1–S4. |
 | 9 | Controlled comparison | **Not done (needs GPU runs)** | The paper names the missing controls: budget-matched direct full-task RL, protected vs unprotected credit, and balanced vs ordinary replay. |
-| 10 | Final evaluation | **Text done; experiment pending** | 70.61% is kept as development validation (128-scene panel, 8 attempts/scene, optimistic CI). The off-panel 40M result (61.43%) is reported. **Remaining:** frozen evaluation of the endpoint on untouched scenes with per-episode outcomes; seeds; same-scene instruction swaps. |
+| 10 | Final evaluation | **Updated 4 November: matched development result available** | The endpoint scores 69.14% over 512 off-panel scenes repeated four times. **Remaining:** reserved final-test evaluation, raw per-episode outcomes, independent training seeds and same-scene instruction swaps. |
 | 11 | Reproducibility | **Partial** | Milestone predicates, segment assignment, per-segment group advantages, bonus, protection, clip bounds, entropy, LoRA rank, chunk/prefix, group size, LR, PPO epochs, and horizon are now stated. **Remaining:** acquisition rewards and resets per skill, transition thresholds and manual decisions, replay quotas, total interactions and compute across inherited stages. |
 | 12 | Hardware / presentation | **Partial** | WX200 is described as the same schedule run from a fresh residual in simulation, not controller transfer. The placeholder figure is withheld until real images exist. The retention figure shows individual rounds. The abstract and conclusion are rewritten to the demonstrated scope. **Remaining:** WX200 results. |
 

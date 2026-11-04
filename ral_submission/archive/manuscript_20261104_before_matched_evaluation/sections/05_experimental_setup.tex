@@ -1,0 +1,19 @@
+\section{Experiments}\label{sec:experiments}
+We evaluate skill retention and complete-task adaptation in CDPR simulation, and study intermediate feedback separately on LIBERO-Spatial.
+
+The CDPR simulation uses MuJoCo Warp/MJ-Lab, four object categories (apple, orange, potato, and tomato), and plate or bowl destinations. The action interface controls Cartesian translation, yaw, and the gripper; a fixed inverse-kinematics controller converts Cartesian targets to cable lengths.
+
+No human demonstrations are collected on the CDPR. Skill consolidation uses successful policy rollouts. Before full-task RL, the policy is additionally fitted to automatically generated complete-task trajectories from a scripted oracle and assisted rollouts of learned skills. Full-task RL and evaluation use unassisted empty-gripper starts.
+
+\input{sections/06b_ablations_and_failures}
+
+\input{sections/05b_libero_setup}
+\input{sections/06e_libero_results}
+
+\subsection{SmolVLA: Complete-Task Adaptation}\label{sec:cdpr_results}
+Strict success requires grasp, held lift, intentional release, and correct placement, without carry slip or wrong-placement events.
+
+The development validation comprises 1,024 full-task episodes: 512 plate and 512 bowl attempts. Each attempt starts with an empty gripper and uses one full-task instruction, without teacher assistance. All attempts, including numerical failures, remain in the denominator.
+\input{sections/06a_simulation_results}
+
+\input{sections/07_discussion}

@@ -1,0 +1,62 @@
+{
+  "completion_time_as_logged": "2026-11-01 17:00:09",
+  "completion_timezone": "not supplied",
+  "policy": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/step_7504473/smolvla_grpo_adapter.pt",
+  "pooled": {
+    "put_into": {
+      "episodes": 1024,
+      "rate": 0.3564453125,
+      "successes": 365
+    },
+    "put_into_composed": {
+      "episodes": 1024,
+      "rate": 0.0712890625,
+      "successes": 73
+    }
+  },
+  "reference_comparison": {
+    "move_to_object": {
+      "degraded_under_current_config": true,
+      "delta_percentage_points": -20.8984375,
+      "rate": 0.3330078125,
+      "reference_rate": 0.5419921875,
+      "tolerance_percentage_points": 10.83984375
+    },
+    "pick_up": {
+      "degraded_under_current_config": false,
+      "delta_percentage_points": 14.2578125,
+      "rate": 0.240234375,
+      "reference_rate": 0.09765625,
+      "tolerance_percentage_points": 8.0
+    },
+    "put_into_bowl": {
+      "degraded_under_current_config": true,
+      "delta_percentage_points": -41.025169683257914,
+      "rate": 0.13846153846153847,
+      "reference_rate": 0.5487132352941176,
+      "tolerance_percentage_points": 10.974264705882353
+    },
+    "put_into_plate": {
+      "degraded_under_current_config": true,
+      "delta_percentage_points": -16.240079365079364,
+      "rate": 0.5813492063492064,
+      "reference_rate": 0.74375,
+      "tolerance_percentage_points": 14.875000000000002
+    }
+  },
+  "remote_checkpoint_inspected": false,
+  "review_date": "2026-11-03",
+  "sources": [
+    {
+      "file": "final_report.md",
+      "sha256": "25ce5d48c3d7dba4db2a8ba9a63f03053a7ab506b708707a5ed270e2ba9cb22d",
+      "supplied_path": "/Users/damirnurtdinov/Downloads/final_report.md"
+    },
+    {
+      "file": "final_report.json",
+      "sha256": "512277e0466fafa1e6a05bcb3777b70422370f892878aa3e8f43848d2bc8f7ee",
+      "supplied_path": "/Users/damirnurtdinov/Downloads/final_report.json"
+    }
+  ],
+  "supplied_stage_state": false
+}

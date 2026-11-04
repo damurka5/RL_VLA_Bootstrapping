@@ -368,9 +368,11 @@ OBJECT_VARIANTS: dict[str, ObjectVariant] = {
 # to the arm: 120-340 px in the overview against a 0.55 m robot. 42 mm keeps
 # ~5 mm per side at the 52 mm full opening, grows the overview footprint
 # 30-50% (tools/audit/widowx200_scene_coverage.py), and still clears the
-# gripper body by 14 mm when centred. A 7 cm apple is out of scale for a
-# 200 g-payload arm anyway; this is the physically sensible correction, not a
-# workaround.
+# gripper body by 14 mm when centred. These are miniature props sized for this
+# simulated gripper; payload alone does not determine whether a full-size fruit
+# is appropriate. Collider fit does not guarantee a visually matching grip or
+# sustained holding: tools/audit/audit_widowx200_object_scale.py checks those
+# separately from the short lift measurement.
 #
 # The mug stays at 0.46 (35 mm across the body). It is never a grasp target,
 # and at 0.55 its 50 mm height meets the gripper before the pads close, so its
@@ -401,14 +403,14 @@ WIDOWX200_OBJECT_SCALE: dict[str, float] = {
 # not derived from widths. Receptacles are never grasped and stay 0.0; banana
 # and carrot are out of the WidowX pools and are not measured.
 WIDOWX200_FITTED_GRIPPER_OPENING: dict[str, float] = {
-    "robocasa_apple": 0.814,
+    "robocasa_apple": 0.809,
     "robocasa_banana": 0.0,
     "robocasa_carrot": 0.0,
-    "robocasa_bell_pepper": 0.821,
-    "robocasa_tomato": 0.809,
+    "robocasa_bell_pepper": 0.822,
+    "robocasa_tomato": 0.807,
     "robocasa_orange": 0.811,
-    "robocasa_potato": 0.805,
-    "robocasa_mug": 0.640,
+    "robocasa_potato": 0.797,
+    "robocasa_mug": 0.627,
     "robocasa_plate": 0.0,
     "robocasa_bowl": 0.0,
 }

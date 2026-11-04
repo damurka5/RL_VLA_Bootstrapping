@@ -1,0 +1,9 @@
+{
+  "robots/widowx200/widowx200_mujoco/wx200.xml": "0c5a15b20d7e7ec5ea7bf97e25a45ef879d725b2ceef3081e2e0d46e95fc2af4",
+  "scripts/preflight_widowx200_pipeline.py": "e9bbd63dce43af55033ebf439d17be168f789d33afe6dd7758b959c0b80c31d7",
+  "rl_vla_bootstrapping/simulation/cdpr_object_catalog.py": "c8a83f4bcc66dd1d1c63975b90e3588a171eee7f5a85d178fb8c27b53134380f",
+  "tools/audit/audit_widowx200_object_scale.py": "972182363fbb45a7557d017b10f0bbbd16864cb5023af9e04f75f811e3b60d91",
+  "tests/test_widowx200_sustained_grip.py": "baeca0c83808c2d161d617e372923b93bd3ded2b347325b76fc0c3df16490189",
+  "tests/test_widowx200_preflight_contacts.py": "db8d7dfd74f4fd9341fd234cebc031e996f5928771a5029d1e8a4061be2ef4c2",
+  "tests/test_widowx200_embodiment.py": "58d3cbc0b3f0ae401a1bf7319aba8352ab38e5b4b8240ac1c977fb367907b9de"
+}

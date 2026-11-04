@@ -1,0 +1,3461 @@
+{
+  "scope": "CPU MuJoCo sampled placement reset poses, validation sampler balanced catalogs, seed 12345, not CUDA preflight",
+  "rows": [
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 0,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 1,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 2,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 3,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 4,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 5,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 6,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 7,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 8,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 9,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 10,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 11,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 12,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 13,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 14,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 15,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 16,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 17,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 18,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 19,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 20,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 21,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 22,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 23,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 24,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 25,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 26,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 27,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 28,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 29,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 30,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 31,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 32,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 33,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 34,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 35,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 36,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 37,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 38,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 39,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 40,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 41,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 42,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 43,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 44,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 45,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 46,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 47,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 48,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 49,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 50,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 51,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 52,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 53,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 54,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 55,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 56,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 57,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 58,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 59,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 60,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 61,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 62,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 0,
+      "scene": 63,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 0,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 1,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 2,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 3,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 4,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 5,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 6,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 7,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 8,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 9,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 10,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 11,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 12,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 13,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 14,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 15,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 16,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 17,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 18,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 19,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 20,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 21,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 22,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 23,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 24,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 25,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 26,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 27,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 28,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 29,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 30,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 31,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 32,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 33,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 34,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 35,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 36,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 37,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 38,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 39,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 40,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 41,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 42,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 43,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 44,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 45,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 46,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 47,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 48,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 49,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 50,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 51,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 52,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 53,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 54,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 55,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 56,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 57,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 58,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 59,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 60,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 61,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 62,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.01,
+      "round": 1,
+      "scene": 63,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 0,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 1,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 2,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 3,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 4,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 5,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 6,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 7,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 8,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 9,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 10,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 11,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 12,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 13,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 14,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 15,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 16,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 17,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 18,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 19,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 20,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 21,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 22,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 23,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00098,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 24,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00049,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 25,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 26,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 27,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 28,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 29,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00133,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 30,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 31,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 32,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 33,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 34,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 35,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 36,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00143,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 37,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 38,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 39,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 40,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 41,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 42,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 43,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 44,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 45,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 46,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 47,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00145,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 48,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 49,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 50,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 51,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 52,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 53,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 54,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 55,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 56,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 57,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 58,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 59,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 60,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 61,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 62,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 0,
+      "scene": 63,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 0,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 1,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 2,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 3,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00619,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 4,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 5,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 6,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 7,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 8,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 9,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 10,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 11,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 12,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 13,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 14,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 15,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 16,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 17,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 18,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 19,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 20,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 21,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 22,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 23,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 24,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 25,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 26,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 27,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 28,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 29,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 30,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 31,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 32,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 33,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 34,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 35,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 36,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 37,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 38,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 39,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 40,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 41,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 42,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 43,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 44,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 45,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 46,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 47,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 48,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 49,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 50,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 51,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 52,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 53,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 54,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 55,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 56,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 57,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 58,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 59,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00176,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 60,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 61,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 62,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.1,
+      "round": 1,
+      "scene": 63,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 0,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 1,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 2,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 3,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 4,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 5,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 6,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 7,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 8,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 9,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 10,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 11,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 12,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 13,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 14,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 15,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 16,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 17,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 18,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 19,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 20,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 21,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 22,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 23,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 24,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 25,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 26,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 27,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 28,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 29,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 30,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 31,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 32,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 33,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 34,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 35,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 36,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 37,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 38,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 39,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 40,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 41,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 42,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 43,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 44,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 45,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 46,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 47,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 48,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 49,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 50,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 51,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 52,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 53,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 54,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 55,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 56,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 57,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 58,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 59,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 60,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 61,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 62,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 0,
+      "scene": 63,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 0,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 1,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 2,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 3,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 4,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 5,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 6,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 7,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 8,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 9,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 10,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 11,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 12,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 13,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 14,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 15,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 16,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 17,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 18,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 19,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 20,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 21,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 22,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 23,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 24,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 25,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 26,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 27,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 28,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 29,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 30,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 31,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 32,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 33,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 34,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 35,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 36,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 37,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 38,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 39,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 40,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 41,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 42,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 43,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 44,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 45,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 46,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 47,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 48,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 49,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 50,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 51,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 52,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 53,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 54,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 55,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 56,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 57,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 58,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00121,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 59,
+      "catalog": "robocasa_potato",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00075,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 60,
+      "catalog": "robocasa_bell_pepper",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00067,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 61,
+      "catalog": "robocasa_apple",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 62,
+      "catalog": "robocasa_tomato",
+      "instruction": "put_into_plate",
+      "gap_m": 0.00113,
+      "held": true
+    },
+    {
+      "cap": 0.18,
+      "round": 1,
+      "scene": 63,
+      "catalog": "robocasa_orange",
+      "instruction": "put_into_bowl",
+      "gap_m": 0.00121,
+      "held": true
+    }
+  ]
+}

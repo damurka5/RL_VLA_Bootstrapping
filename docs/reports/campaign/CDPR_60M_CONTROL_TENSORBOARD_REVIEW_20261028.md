@@ -1,5 +1,10 @@
 # 60M CDPR + SmolVLA continuation: TensorBoard results
 
+**Update 2026-11-04:** the separate matched evaluation is now available and
+promotes the endpoint at **69.14% strict**, +8.35 pp over contemporaneous 40M.
+[Matched review](CDPR_60M_CONTROL_REVIEW_20261104.md). The following records the
+October 28 panel-only review and its evidence limits at that time.
+
 Reviewed **2026-10-28**, Europe/Moscow. The supplied event file records
 training and in-run validation on **October 19–23, 2026**. Separate validation
 of the new endpoint is currently unavailable. This update reports the logged

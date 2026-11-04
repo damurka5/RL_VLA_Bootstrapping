@@ -1,0 +1,5 @@
+skill,instruction,stage,checkpoint,provenance,start_distance_cap,replay_files,frame_files,replay_files_present,frame_files_present,replay_markers_present,filmed_successes_marker_sum_all_instructions,source_harvest_rate,source_harvest_successes,source_harvest_episodes
+move_to,move_to_object,s4_move_to_binary,/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/step_4510257/smolvla_grpo_adapter.pt,policy,0.3,4,4,4,4,4,66,0.05419921875,111,2048
+pick_up,pick_up,s2_pick_up_dense,/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/step_0501004/smolvla_grpo_adapter.pt,policy,0.2,4,4,4,4,4,98,0.09765625,200,2048
+put_into,put_into_bowl,s3_put_into_dense,/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt,policy,0.18,4,4,4,4,4,376,0.3719758064516129,369,992
+put_into,put_into_plate,s3_put_into_dense,/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/step_7505414/smolvla_grpo_adapter.pt,policy,0.18,4,4,4,4,4,376,0.4602272727272727,486,1056

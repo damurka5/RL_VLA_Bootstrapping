@@ -1,0 +1,2923 @@
+{
+  "scope": "CPU MuJoCo deterministic geometry/physics diagnostic; no policy or CUDA evaluation",
+  "mujoco_version": "3.3.7",
+  "visual_assets_sha256": "77fe61193d0c869dc4e7f2c392d7ed77a4b0e1775784c693eda2ccbb706fa637",
+  "git_head": "3c6486dbd9fe69bc8897a5fc84f64286e6f16ba5",
+  "source_sha256": {
+    "configs/examples/widowx200_smolvla_pipeline.yaml": "a803ca443cbb5a0cdbae4f8ef9d6fd47709a4948d4cdb55673afa417352e16be",
+    "rl_vla_bootstrapping/simulation/cdpr_object_catalog.py": "c8a83f4bcc66dd1d1c63975b90e3588a171eee7f5a85d178fb8c27b53134380f",
+    "robots/widowx200/widowx200_mujoco/wx200_mjwarp_scene.xml": "11005e9aa5aab4c9775cb0459dea2b4a5ac1ff0261e340a3568f14c5bf6adbd8",
+    "tools/audit/audit_widowx200_object_scale.py": "972182363fbb45a7557d017b10f0bbbd16864cb5023af9e04f75f811e3b60d91",
+    "robots/widowx200/widowx200_mujoco/wx200.xml": "0c5a15b20d7e7ec5ea7bf97e25a45ef879d725b2ceef3081e2e0d46e95fc2af4",
+    "robots/widowx200/widowx200_mujoco/wx200_scene.xml": "d792419357c777bb1f5782ce7ab5ee8003916ba18102dda9fb862fd9280e8ce9",
+    "robots/widowx200/widowx200_mujoco/controller.py": "14c3ea07125326030cd2585e862dbc5b7f2eb4a402785ecc9e8100986b63a37b",
+    "robots/widowx200/widowx200_mujoco/workspace.py": "572a2f521421b4e00dc367e9faa984d236508908c04f1dc5260eafc3a315bd2b",
+    "robots/cdpr/cdpr_mujoco/cdpr_mjwarp_object_slots.xml": "de795576603c5945d4a737a1f29c94ca13dd57682bae68e26f501b8cdfb5f886"
+  },
+  "object_scales": {
+    "robocasa_apple": 0.61,
+    "robocasa_banana": 1.0,
+    "robocasa_carrot": 1.0,
+    "robocasa_bell_pepper": 0.57,
+    "robocasa_tomato": 0.72,
+    "robocasa_orange": 0.72,
+    "robocasa_potato": 0.72,
+    "robocasa_mug": 0.46,
+    "robocasa_plate": 0.8,
+    "robocasa_bowl": 0.85
+  },
+  "cells": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5
+  ],
+  "script_grip_mode": "fitted",
+  "settle_seconds": 5.0,
+  "geometry": [
+    {
+      "catalog": "robocasa_apple",
+      "visual_dimensions_mm": [
+        37.31,
+        36.96,
+        42.7
+      ],
+      "settled_visual_bottom_above_desk_mm": 0.43,
+      "mass_g": 40.0
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "visual_dimensions_mm": [
+        43.2,
+        43.19,
+        40.51
+      ],
+      "settled_visual_bottom_above_desk_mm": 1.36,
+      "mass_g": 40.0
+    },
+    {
+      "catalog": "robocasa_orange",
+      "visual_dimensions_mm": [
+        50.4,
+        50.4,
+        40.06
+      ],
+      "settled_visual_bottom_above_desk_mm": 1.58,
+      "mass_g": 48.52
+    },
+    {
+      "catalog": "robocasa_potato",
+      "visual_dimensions_mm": [
+        42.6,
+        82.8,
+        45.03
+      ],
+      "settled_visual_bottom_above_desk_mm": -0.87,
+      "mass_g": 55.99
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "visual_dimensions_mm": [
+        47.89,
+        62.7,
+        42.25
+      ],
+      "settled_visual_bottom_above_desk_mm": 0.73,
+      "mass_g": 40.0
+    },
+    {
+      "catalog": "robocasa_mug",
+      "visual_dimensions_mm": [
+        36.15,
+        52.9,
+        41.59
+      ],
+      "settled_visual_bottom_above_desk_mm": 0.38,
+      "mass_g": 40.0
+    },
+    {
+      "catalog": "robocasa_plate",
+      "visual_dimensions_mm": [
+        148.0,
+        148.0,
+        15.99
+      ],
+      "settled_visual_bottom_above_desk_mm": -0.45,
+      "mass_g": 112.64
+    },
+    {
+      "catalog": "robocasa_bowl",
+      "visual_dimensions_mm": [
+        102.0,
+        102.0,
+        44.73
+      ],
+      "settled_visual_bottom_above_desk_mm": -0.18,
+      "mass_g": 122.82
+    }
+  ],
+  "grips": [
+    {
+      "catalog": "robocasa_apple",
+      "scale": 0.61,
+      "rest_height_m": 0.02108,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0421,
+      "fitted_gripper_opening": 0.809,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0971,
+          "object_to_ee_m": 0.0006,
+          "held": true
+        }
+      },
+      "configured_opening": 0.809
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "scale": 0.72,
+      "rest_height_m": 0.02026,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0418,
+      "fitted_gripper_opening": 0.807,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0976,
+          "object_to_ee_m": 0.0005,
+          "held": true
+        }
+      },
+      "configured_opening": 0.807
+    },
+    {
+      "catalog": "robocasa_orange",
+      "scale": 0.72,
+      "rest_height_m": 0.02004,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0418,
+      "fitted_gripper_opening": 0.811,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0972,
+          "object_to_ee_m": 0.0005,
+          "held": true
+        }
+      },
+      "configured_opening": 0.811
+    },
+    {
+      "catalog": "robocasa_potato",
+      "scale": 0.72,
+      "rest_height_m": 0.0231,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0418,
+      "fitted_gripper_opening": 0.797,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.0956,
+          "object_to_ee_m": 0.0009,
+          "held": true
+        }
+      },
+      "configured_opening": 0.797
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "scale": 0.57,
+      "rest_height_m": 0.02058,
+      "grasp_yaw_rad": 0.0,
+      "first_primitive_width_m": 0.0422,
+      "fitted_gripper_opening": 0.822,
+      "holds_after_lift": {
+        "0.200": {
+          "object_lift_m": 0.097,
+          "object_to_ee_m": 0.0005,
+          "held": true
+        }
+      },
+      "configured_opening": 0.822
+    }
+  ],
+  "stationary_holds": [
+    {
+      "catalog": "robocasa_apple",
+      "trace": [
+        {
+          "seconds_after_lift": 0.0,
+          "object_lift_m": 0.08452,
+          "object_to_ee_m": 0.00125
+        },
+        {
+          "seconds_after_lift": 1.0,
+          "object_lift_m": 0.09117,
+          "object_to_ee_m": 0.0012
+        },
+        {
+          "seconds_after_lift": 2.0,
+          "object_lift_m": 0.09098,
+          "object_to_ee_m": 0.0012
+        },
+        {
+          "seconds_after_lift": 3.0,
+          "object_lift_m": 0.09077,
+          "object_to_ee_m": 0.00124
+        },
+        {
+          "seconds_after_lift": 4.0,
+          "object_lift_m": 0.09056,
+          "object_to_ee_m": 0.00131
+        },
+        {
+          "seconds_after_lift": 5.0,
+          "object_lift_m": 0.09035,
+          "object_to_ee_m": 0.00141
+        }
+      ],
+      "held_after_5s": true
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "trace": [
+        {
+          "seconds_after_lift": 0.0,
+          "object_lift_m": 0.08481,
+          "object_to_ee_m": 0.00125
+        },
+        {
+          "seconds_after_lift": 1.0,
+          "object_lift_m": 0.09162,
+          "object_to_ee_m": 0.00117
+        },
+        {
+          "seconds_after_lift": 2.0,
+          "object_lift_m": 0.09143,
+          "object_to_ee_m": 0.00114
+        },
+        {
+          "seconds_after_lift": 3.0,
+          "object_lift_m": 0.09122,
+          "object_to_ee_m": 0.00115
+        },
+        {
+          "seconds_after_lift": 4.0,
+          "object_lift_m": 0.09101,
+          "object_to_ee_m": 0.00119
+        },
+        {
+          "seconds_after_lift": 5.0,
+          "object_lift_m": 0.0908,
+          "object_to_ee_m": 0.00127
+        }
+      ],
+      "held_after_5s": true
+    },
+    {
+      "catalog": "robocasa_orange",
+      "trace": [
+        {
+          "seconds_after_lift": 0.0,
+          "object_lift_m": 0.08472,
+          "object_to_ee_m": 0.00125
+        },
+        {
+          "seconds_after_lift": 1.0,
+          "object_lift_m": 0.09155,
+          "object_to_ee_m": 0.00118
+        },
+        {
+          "seconds_after_lift": 2.0,
+          "object_lift_m": 0.09134,
+          "object_to_ee_m": 0.00117
+        },
+        {
+          "seconds_after_lift": 3.0,
+          "object_lift_m": 0.09111,
+          "object_to_ee_m": 0.0012
+        },
+        {
+          "seconds_after_lift": 4.0,
+          "object_lift_m": 0.09089,
+          "object_to_ee_m": 0.00127
+        },
+        {
+          "seconds_after_lift": 5.0,
+          "object_lift_m": 0.09066,
+          "object_to_ee_m": 0.00138
+        }
+      ],
+      "held_after_5s": true
+    },
+    {
+      "catalog": "robocasa_potato",
+      "trace": [
+        {
+          "seconds_after_lift": 0.0,
+          "object_lift_m": 0.08451,
+          "object_to_ee_m": 0.00102
+        },
+        {
+          "seconds_after_lift": 1.0,
+          "object_lift_m": 0.09141,
+          "object_to_ee_m": 0.00099
+        },
+        {
+          "seconds_after_lift": 2.0,
+          "object_lift_m": 0.09131,
+          "object_to_ee_m": 0.00098
+        },
+        {
+          "seconds_after_lift": 3.0,
+          "object_lift_m": 0.09119,
+          "object_to_ee_m": 0.00099
+        },
+        {
+          "seconds_after_lift": 4.0,
+          "object_lift_m": 0.09107,
+          "object_to_ee_m": 0.00101
+        },
+        {
+          "seconds_after_lift": 5.0,
+          "object_lift_m": 0.09094,
+          "object_to_ee_m": 0.00105
+        }
+      ],
+      "held_after_5s": true
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "trace": [
+        {
+          "seconds_after_lift": 0.0,
+          "object_lift_m": 0.07682,
+          "object_to_ee_m": 0.00119
+        },
+        {
+          "seconds_after_lift": 1.0,
+          "object_lift_m": 0.07461,
+          "object_to_ee_m": 0.0012
+        },
+        {
+          "seconds_after_lift": 2.0,
+          "object_lift_m": 0.07449,
+          "object_to_ee_m": 0.00122
+        },
+        {
+          "seconds_after_lift": 3.0,
+          "object_lift_m": 0.07438,
+          "object_to_ee_m": 0.00124
+        },
+        {
+          "seconds_after_lift": 4.0,
+          "object_lift_m": 0.07427,
+          "object_to_ee_m": 0.00127
+        },
+        {
+          "seconds_after_lift": 5.0,
+          "object_lift_m": 0.07417,
+          "object_to_ee_m": 0.00131
+        }
+      ],
+      "held_after_5s": true
+    }
+  ],
+  "centered_drops": [
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        0.0001,
+        0.00012,
+        0.02995
+      ],
+      "xy_error_m": 0.00015,
+      "linear_speed_m_s": 0.010179,
+      "container_shift_m": 0.0011,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.8e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        7e-05,
+        -5e-05,
+        0.02995
+      ],
+      "xy_error_m": 9e-05,
+      "linear_speed_m_s": 0.002099,
+      "container_shift_m": 0.00039,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -5e-05,
+        -1e-05,
+        0.02995
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.010054,
+      "container_shift_m": 0.00048,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.9e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        -5e-05,
+        -0.0,
+        0.02995
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.010109,
+      "container_shift_m": 0.00048,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.9e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        -6e-05,
+        -0.00012,
+        0.02995
+      ],
+      "xy_error_m": 0.00013,
+      "linear_speed_m_s": 0.005058,
+      "container_shift_m": 0.00048,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        4e-05,
+        -2e-05,
+        0.02995
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.005102,
+      "container_shift_m": 0.00037,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        -2e-05,
+        -4e-05,
+        0.01685
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.001767,
+      "container_shift_m": 0.00023,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7e-06
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        -3e-05,
+        0.0,
+        0.01685
+      ],
+      "xy_error_m": 3e-05,
+      "linear_speed_m_s": 0.001731,
+      "container_shift_m": 0.001,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -3e-05,
+        -1e-05,
+        0.01685
+      ],
+      "xy_error_m": 3e-05,
+      "linear_speed_m_s": 0.001763,
+      "container_shift_m": 0.00022,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 9e-06
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        -3e-05,
+        0.0,
+        0.01685
+      ],
+      "xy_error_m": 3e-05,
+      "linear_speed_m_s": 0.001758,
+      "container_shift_m": 0.00032,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.4e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        4e-05,
+        -3e-05,
+        0.01685
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.001759,
+      "container_shift_m": 0.00023,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7e-06
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        1e-05,
+        4e-05,
+        0.01685
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.001768,
+      "container_shift_m": 0.00024,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        2e-05,
+        7e-05,
+        0.02979
+      ],
+      "xy_error_m": 7e-05,
+      "linear_speed_m_s": 0.005761,
+      "container_shift_m": 0.00051,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.6e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        1e-05,
+        -3e-05,
+        0.02979
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.004179,
+      "container_shift_m": 0.00039,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -5e-05,
+        2e-05,
+        0.02978
+      ],
+      "xy_error_m": 6e-05,
+      "linear_speed_m_s": 0.004057,
+      "container_shift_m": 0.00038,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        -6e-05,
+        1e-05,
+        0.02978
+      ],
+      "xy_error_m": 7e-05,
+      "linear_speed_m_s": 0.004164,
+      "container_shift_m": 0.00039,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        -6e-05,
+        -0.00012,
+        0.02978
+      ],
+      "xy_error_m": 0.00013,
+      "linear_speed_m_s": 0.004213,
+      "container_shift_m": 0.00058,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        5e-05,
+        -0.0,
+        0.02978
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.008621,
+      "container_shift_m": 0.00049,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.6e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        -2e-05,
+        -4e-05,
+        0.01669
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.001835,
+      "container_shift_m": 0.00023,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 5e-06
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        1e-05,
+        -5e-05,
+        0.01669
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.001345,
+      "container_shift_m": 0.00604,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000555
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -3e-05,
+        -1e-05,
+        0.01669
+      ],
+      "xy_error_m": 3e-05,
+      "linear_speed_m_s": 0.001841,
+      "container_shift_m": 0.00022,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        2e-05,
+        -0.0,
+        0.01669
+      ],
+      "xy_error_m": 2e-05,
+      "linear_speed_m_s": 0.003479,
+      "container_shift_m": 0.00125,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 9e-06
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        4e-05,
+        -1e-05,
+        0.01669
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.001835,
+      "container_shift_m": 0.00024,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        1e-05,
+        4e-05,
+        0.01669
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.001836,
+      "container_shift_m": 0.00024,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        0.00015,
+        0.00016,
+        0.02978
+      ],
+      "xy_error_m": 0.00022,
+      "linear_speed_m_s": 0.001897,
+      "container_shift_m": 0.0006,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.5e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        -1e-05,
+        2e-05,
+        0.02978
+      ],
+      "xy_error_m": 2e-05,
+      "linear_speed_m_s": 0.002102,
+      "container_shift_m": 0.00069,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -5e-05,
+        4e-05,
+        0.02978
+      ],
+      "xy_error_m": 6e-05,
+      "linear_speed_m_s": 0.00218,
+      "container_shift_m": 0.00046,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        -1e-05,
+        -2e-05,
+        0.02978
+      ],
+      "xy_error_m": 3e-05,
+      "linear_speed_m_s": 0.002114,
+      "container_shift_m": 0.0005,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        -7e-05,
+        -8e-05,
+        0.02978
+      ],
+      "xy_error_m": 0.00011,
+      "linear_speed_m_s": 0.004201,
+      "container_shift_m": 0.00052,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        3e-05,
+        4e-05,
+        0.02978
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.002118,
+      "container_shift_m": 0.00047,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        -4e-05,
+        -4e-05,
+        0.01668
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.001801,
+      "container_shift_m": 0.00028,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        1e-05,
+        -2e-05,
+        0.01668
+      ],
+      "xy_error_m": 2e-05,
+      "linear_speed_m_s": 0.003654,
+      "container_shift_m": 0.00041,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.3e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -3e-05,
+        -1e-05,
+        0.01668
+      ],
+      "xy_error_m": 3e-05,
+      "linear_speed_m_s": 0.001804,
+      "container_shift_m": 0.00026,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        -2e-05,
+        2e-05,
+        0.01668
+      ],
+      "xy_error_m": 3e-05,
+      "linear_speed_m_s": 0.001801,
+      "container_shift_m": 0.00025,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 4e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        2e-05,
+        -5e-05,
+        0.01668
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.0018,
+      "container_shift_m": 0.00028,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-06
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        2e-05,
+        4e-05,
+        0.01668
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.001799,
+      "container_shift_m": 0.00027,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 9e-06
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        1e-05,
+        0.00019,
+        0.02901
+      ],
+      "xy_error_m": 0.00019,
+      "linear_speed_m_s": 0.004451,
+      "container_shift_m": 0.00073,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.6e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        -2e-05,
+        0.00058,
+        0.02905
+      ],
+      "xy_error_m": 0.00058,
+      "linear_speed_m_s": 0.003621,
+      "container_shift_m": 0.01299,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.2e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        0.0,
+        4e-05,
+        0.0295
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.033218,
+      "container_shift_m": 0.00048,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000145
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        0.00027,
+        -5e-05,
+        0.02903
+      ],
+      "xy_error_m": 0.00028,
+      "linear_speed_m_s": 0.001979,
+      "container_shift_m": 0.00337,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        -0.0,
+        -6e-05,
+        0.02901
+      ],
+      "xy_error_m": 6e-05,
+      "linear_speed_m_s": 0.004425,
+      "container_shift_m": 0.00087,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        0.00028,
+        4e-05,
+        0.02902
+      ],
+      "xy_error_m": 0.00028,
+      "linear_speed_m_s": 0.004392,
+      "container_shift_m": 0.00067,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.6e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        -1e-05,
+        4e-05,
+        0.01601
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.00321,
+      "container_shift_m": 0.00045,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        0.0,
+        -9e-05,
+        0.01601
+      ],
+      "xy_error_m": 0.0001,
+      "linear_speed_m_s": 0.003214,
+      "container_shift_m": 0.00041,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.1e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        2e-05,
+        0.00017,
+        0.01601
+      ],
+      "xy_error_m": 0.00017,
+      "linear_speed_m_s": 0.002399,
+      "container_shift_m": 0.00044,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.4e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        3e-05,
+        9e-05,
+        0.01601
+      ],
+      "xy_error_m": 9e-05,
+      "linear_speed_m_s": 0.002462,
+      "container_shift_m": 0.00042,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7e-06
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        -3e-05,
+        0.00016,
+        0.01601
+      ],
+      "xy_error_m": 0.00016,
+      "linear_speed_m_s": 0.003214,
+      "container_shift_m": 0.00042,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        3e-05,
+        -7e-05,
+        0.01601
+      ],
+      "xy_error_m": 7e-05,
+      "linear_speed_m_s": 0.002413,
+      "container_shift_m": 0.00043,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 5e-06
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        0.00011,
+        0.00011,
+        0.03005
+      ],
+      "xy_error_m": 0.00015,
+      "linear_speed_m_s": 0.007018,
+      "container_shift_m": 0.0004,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.4e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        -5e-05,
+        0.00012,
+        0.03007
+      ],
+      "xy_error_m": 0.00013,
+      "linear_speed_m_s": 0.009232,
+      "container_shift_m": 0.00035,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 0.96,
+      "settling_window_excursion_m": 0.00018
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -4e-05,
+        -0.00011,
+        0.03007
+      ],
+      "xy_error_m": 0.00012,
+      "linear_speed_m_s": 0.006002,
+      "container_shift_m": 0.00034,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        -0.00014,
+        -1e-05,
+        0.03004
+      ],
+      "xy_error_m": 0.00014,
+      "linear_speed_m_s": 0.005954,
+      "container_shift_m": 0.00038,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.3e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        -0.0001,
+        0.00028,
+        0.03008
+      ],
+      "xy_error_m": 0.0003,
+      "linear_speed_m_s": 0.014037,
+      "container_shift_m": 0.00396,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 0.96,
+      "settling_window_excursion_m": 0.000433
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        3e-05,
+        0.00023,
+        0.03007
+      ],
+      "xy_error_m": 0.00024,
+      "linear_speed_m_s": 0.005727,
+      "container_shift_m": 0.00034,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7.2e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "object_container_offset_m": [
+        1e-05,
+        -1e-05,
+        0.01694
+      ],
+      "xy_error_m": 2e-05,
+      "linear_speed_m_s": 0.004799,
+      "container_shift_m": 0.00023,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "object_container_offset_m": [
+        -3e-05,
+        -1e-05,
+        0.01694
+      ],
+      "xy_error_m": 4e-05,
+      "linear_speed_m_s": 0.002039,
+      "container_shift_m": 0.00037,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "object_container_offset_m": [
+        -0.00011,
+        3e-05,
+        0.01695
+      ],
+      "xy_error_m": 0.00011,
+      "linear_speed_m_s": 0.001787,
+      "container_shift_m": 0.00019,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.7e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "object_container_offset_m": [
+        5e-05,
+        0.0,
+        0.01694
+      ],
+      "xy_error_m": 5e-05,
+      "linear_speed_m_s": 0.002043,
+      "container_shift_m": 0.0002,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8e-06
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "object_container_offset_m": [
+        -1e-05,
+        -1e-05,
+        0.01694
+      ],
+      "xy_error_m": 1e-05,
+      "linear_speed_m_s": 0.004797,
+      "container_shift_m": 0.00022,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.1e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "object_container_offset_m": [
+        -1e-05,
+        1e-05,
+        0.01694
+      ],
+      "xy_error_m": 1e-05,
+      "linear_speed_m_s": 0.004809,
+      "container_shift_m": 0.00023,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    }
+  ],
+  "scripted_placements": [
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08452,
+      "max_carry_gap_m": 0.00137,
+      "gap_before_open_m": 0.00137,
+      "clearance_before_open_m": 0.06495,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00199,
+        -0.00016,
+        0.02995
+      ],
+      "xy_error_m": 0.002,
+      "linear_speed_m_s": 0.002177,
+      "container_shift_m": 0.00316,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.8e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.08455,
+      "max_carry_gap_m": 0.00132,
+      "gap_before_open_m": 0.00135,
+      "clearance_before_open_m": 0.06914,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00022,
+        0.00085,
+        0.02995
+      ],
+      "xy_error_m": 0.00088,
+      "linear_speed_m_s": 0.005265,
+      "container_shift_m": 0.0004,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.7e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08451,
+      "max_carry_gap_m": 0.00122,
+      "gap_before_open_m": 0.00141,
+      "clearance_before_open_m": 0.06862,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00044,
+        0.00022,
+        0.02995
+      ],
+      "xy_error_m": 0.0005,
+      "linear_speed_m_s": 0.001979,
+      "container_shift_m": 0.00039,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 9e-06
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07682,
+      "max_carry_gap_m": 0.00216,
+      "gap_before_open_m": 0.00225,
+      "clearance_before_open_m": 0.06785,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00071,
+        0.00101,
+        0.02995
+      ],
+      "xy_error_m": 0.00124,
+      "linear_speed_m_s": 0.005066,
+      "container_shift_m": 0.00044,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.9e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07794,
+      "max_carry_gap_m": 0.00116,
+      "gap_before_open_m": 0.00132,
+      "clearance_before_open_m": 0.06469,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00336,
+        0.00255,
+        0.02995
+      ],
+      "xy_error_m": 0.00422,
+      "linear_speed_m_s": 0.001444,
+      "container_shift_m": 0.00677,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.7e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08437,
+      "max_carry_gap_m": 0.00134,
+      "gap_before_open_m": 0.00154,
+      "clearance_before_open_m": 0.06848,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.0009,
+        0.00021,
+        0.02995
+      ],
+      "xy_error_m": 0.00092,
+      "linear_speed_m_s": 0.01019,
+      "container_shift_m": 0.0005,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 3e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08452,
+      "max_carry_gap_m": 0.00137,
+      "gap_before_open_m": 0.00139,
+      "clearance_before_open_m": 0.06779,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.001,
+        0.00066,
+        0.01685
+      ],
+      "xy_error_m": 0.0012,
+      "linear_speed_m_s": 0.001748,
+      "container_shift_m": 0.00098,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7.3e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.08455,
+      "max_carry_gap_m": 0.00132,
+      "gap_before_open_m": 0.00133,
+      "clearance_before_open_m": 0.06778,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00045,
+        0.0001,
+        0.01685
+      ],
+      "xy_error_m": 0.00046,
+      "linear_speed_m_s": 0.004274,
+      "container_shift_m": 0.0035,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.1e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08451,
+      "max_carry_gap_m": 0.00122,
+      "gap_before_open_m": 0.00127,
+      "clearance_before_open_m": 0.06711,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00039,
+        -0.00139,
+        0.01685
+      ],
+      "xy_error_m": 0.00144,
+      "linear_speed_m_s": 0.001756,
+      "container_shift_m": 0.00102,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7.8e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07682,
+      "max_carry_gap_m": 0.00216,
+      "gap_before_open_m": 0.00222,
+      "clearance_before_open_m": 0.06653,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00086,
+        0.00124,
+        0.01685
+      ],
+      "xy_error_m": 0.00151,
+      "linear_speed_m_s": 0.004233,
+      "container_shift_m": 0.0013,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000107
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07794,
+      "max_carry_gap_m": 0.00116,
+      "gap_before_open_m": 0.0012,
+      "clearance_before_open_m": 0.06765,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00103,
+        0.00097,
+        0.01685
+      ],
+      "xy_error_m": 0.00141,
+      "linear_speed_m_s": 0.004444,
+      "container_shift_m": 0.00104,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7.8e-05
+    },
+    {
+      "catalog": "robocasa_apple",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08437,
+      "max_carry_gap_m": 0.00134,
+      "gap_before_open_m": 0.00139,
+      "clearance_before_open_m": 0.06699,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.0017,
+        -0.00134,
+        0.01685
+      ],
+      "xy_error_m": 0.00216,
+      "linear_speed_m_s": 0.001969,
+      "container_shift_m": 0.00154,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000118
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08481,
+      "max_carry_gap_m": 0.00125,
+      "gap_before_open_m": 0.00123,
+      "clearance_before_open_m": 0.06513,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00199,
+        -0.00019,
+        0.02979
+      ],
+      "xy_error_m": 0.00199,
+      "linear_speed_m_s": 0.005019,
+      "container_shift_m": 0.00332,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.6e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.08486,
+      "max_carry_gap_m": 0.00119,
+      "gap_before_open_m": 0.00117,
+      "clearance_before_open_m": 0.06933,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00027,
+        0.00076,
+        0.02978
+      ],
+      "xy_error_m": 0.00081,
+      "linear_speed_m_s": 0.004017,
+      "container_shift_m": 0.00042,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.8e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08478,
+      "max_carry_gap_m": 0.00107,
+      "gap_before_open_m": 0.00128,
+      "clearance_before_open_m": 0.06876,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00026,
+        0.0002,
+        0.02979
+      ],
+      "xy_error_m": 0.00033,
+      "linear_speed_m_s": 0.002116,
+      "container_shift_m": 0.00039,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-06
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07712,
+      "max_carry_gap_m": 0.00206,
+      "gap_before_open_m": 0.00215,
+      "clearance_before_open_m": 0.06793,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00065,
+        0.00095,
+        0.02978
+      ],
+      "xy_error_m": 0.00115,
+      "linear_speed_m_s": 0.004029,
+      "container_shift_m": 0.00047,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.0782,
+      "max_carry_gap_m": 0.00116,
+      "gap_before_open_m": 0.00133,
+      "clearance_before_open_m": 0.06472,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00264,
+        0.0026,
+        0.02979
+      ],
+      "xy_error_m": 0.0037,
+      "linear_speed_m_s": 0.003852,
+      "container_shift_m": 0.00685,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08466,
+      "max_carry_gap_m": 0.00116,
+      "gap_before_open_m": 0.00137,
+      "clearance_before_open_m": 0.06865,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00162,
+        0.00019,
+        0.02979
+      ],
+      "xy_error_m": 0.00163,
+      "linear_speed_m_s": 0.002286,
+      "container_shift_m": 0.00049,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.4e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08481,
+      "max_carry_gap_m": 0.00125,
+      "gap_before_open_m": 0.00125,
+      "clearance_before_open_m": 0.06797,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00069,
+        0.00055,
+        0.01669
+      ],
+      "xy_error_m": 0.00088,
+      "linear_speed_m_s": 0.001869,
+      "container_shift_m": 0.00076,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 5.6e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.08486,
+      "max_carry_gap_m": 0.00119,
+      "gap_before_open_m": 0.00116,
+      "clearance_before_open_m": 0.06798,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00146,
+        0.0002,
+        0.01669
+      ],
+      "xy_error_m": 0.00147,
+      "linear_speed_m_s": 0.003954,
+      "container_shift_m": 0.00369,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08478,
+      "max_carry_gap_m": 0.00107,
+      "gap_before_open_m": 0.00112,
+      "clearance_before_open_m": 0.06727,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00059,
+        -0.00139,
+        0.01669
+      ],
+      "xy_error_m": 0.00151,
+      "linear_speed_m_s": 0.003716,
+      "container_shift_m": 0.00137,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 9.6e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07712,
+      "max_carry_gap_m": 0.00206,
+      "gap_before_open_m": 0.00211,
+      "clearance_before_open_m": 0.0666,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00066,
+        0.00112,
+        0.01669
+      ],
+      "xy_error_m": 0.0013,
+      "linear_speed_m_s": 0.001805,
+      "container_shift_m": 0.00125,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000102
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.0782,
+      "max_carry_gap_m": 0.00116,
+      "gap_before_open_m": 0.0012,
+      "clearance_before_open_m": 0.0677,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00036,
+        0.00102,
+        0.01669
+      ],
+      "xy_error_m": 0.00108,
+      "linear_speed_m_s": 0.003257,
+      "container_shift_m": 0.00036,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.3e-05
+    },
+    {
+      "catalog": "robocasa_tomato",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08466,
+      "max_carry_gap_m": 0.00116,
+      "gap_before_open_m": 0.00122,
+      "clearance_before_open_m": 0.06717,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.0029,
+        -0.00133,
+        0.01669
+      ],
+      "xy_error_m": 0.0032,
+      "linear_speed_m_s": 0.002165,
+      "container_shift_m": 0.00095,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08472,
+      "max_carry_gap_m": 0.00146,
+      "gap_before_open_m": 0.00146,
+      "clearance_before_open_m": 0.0649,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.0016,
+        -0.00011,
+        0.02978
+      ],
+      "xy_error_m": 0.0016,
+      "linear_speed_m_s": 0.003839,
+      "container_shift_m": 0.00316,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.08475,
+      "max_carry_gap_m": 0.00143,
+      "gap_before_open_m": 0.00146,
+      "clearance_before_open_m": 0.06908,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        4e-05,
+        0.00091,
+        0.02978
+      ],
+      "xy_error_m": 0.00091,
+      "linear_speed_m_s": 0.00223,
+      "container_shift_m": 0.00052,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.8e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08428,
+      "max_carry_gap_m": 0.00161,
+      "gap_before_open_m": 0.00174,
+      "clearance_before_open_m": 0.06827,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00022,
+        0.00022,
+        0.02978
+      ],
+      "xy_error_m": 0.00031,
+      "linear_speed_m_s": 0.004085,
+      "container_shift_m": 0.00046,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.1e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07776,
+      "max_carry_gap_m": 0.00159,
+      "gap_before_open_m": 0.00168,
+      "clearance_before_open_m": 0.06848,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00027,
+        0.00096,
+        0.02978
+      ],
+      "xy_error_m": 0.001,
+      "linear_speed_m_s": 0.004266,
+      "container_shift_m": 0.00054,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.2e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07797,
+      "max_carry_gap_m": 0.00136,
+      "gap_before_open_m": 0.0014,
+      "clearance_before_open_m": 0.06443,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00328,
+        0.0023,
+        0.02978
+      ],
+      "xy_error_m": 0.00401,
+      "linear_speed_m_s": 0.00226,
+      "container_shift_m": 0.00614,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 8.3e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08419,
+      "max_carry_gap_m": 0.00168,
+      "gap_before_open_m": 0.00181,
+      "clearance_before_open_m": 0.0682,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00153,
+        0.00024,
+        0.02978
+      ],
+      "xy_error_m": 0.00155,
+      "linear_speed_m_s": 0.004717,
+      "container_shift_m": 0.00054,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 2.4e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08472,
+      "max_carry_gap_m": 0.00146,
+      "gap_before_open_m": 0.00149,
+      "clearance_before_open_m": 0.06774,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00023,
+        0.00071,
+        0.01668
+      ],
+      "xy_error_m": 0.00075,
+      "linear_speed_m_s": 0.003799,
+      "container_shift_m": 0.00086,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.3e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.08475,
+      "max_carry_gap_m": 0.00143,
+      "gap_before_open_m": 0.00145,
+      "clearance_before_open_m": 0.06771,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00028,
+        0.00024,
+        0.01668
+      ],
+      "xy_error_m": 0.00037,
+      "linear_speed_m_s": 0.001763,
+      "container_shift_m": 0.00382,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.2e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08428,
+      "max_carry_gap_m": 0.00161,
+      "gap_before_open_m": 0.00167,
+      "clearance_before_open_m": 0.06667,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00114,
+        -0.00142,
+        0.01668
+      ],
+      "xy_error_m": 0.00182,
+      "linear_speed_m_s": 0.001955,
+      "container_shift_m": 0.00127,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 9.6e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07776,
+      "max_carry_gap_m": 0.00159,
+      "gap_before_open_m": 0.00164,
+      "clearance_before_open_m": 0.06715,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00019,
+        0.0011,
+        0.01668
+      ],
+      "xy_error_m": 0.00112,
+      "linear_speed_m_s": 0.007588,
+      "container_shift_m": 0.00084,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6.2e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07797,
+      "max_carry_gap_m": 0.00136,
+      "gap_before_open_m": 0.00141,
+      "clearance_before_open_m": 0.06738,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00128,
+        0.00098,
+        0.01668
+      ],
+      "xy_error_m": 0.00161,
+      "linear_speed_m_s": 0.003881,
+      "container_shift_m": 0.00128,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 9.8e-05
+    },
+    {
+      "catalog": "robocasa_orange",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08419,
+      "max_carry_gap_m": 0.00168,
+      "gap_before_open_m": 0.00175,
+      "clearance_before_open_m": 0.0666,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00274,
+        -0.00133,
+        0.01668
+      ],
+      "xy_error_m": 0.00304,
+      "linear_speed_m_s": 0.003888,
+      "container_shift_m": 0.00283,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000226
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08451,
+      "max_carry_gap_m": 0.0011,
+      "gap_before_open_m": 0.00111,
+      "clearance_before_open_m": 0.06518,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00173,
+        -2e-05,
+        0.02901
+      ],
+      "xy_error_m": 0.00173,
+      "linear_speed_m_s": 0.004424,
+      "container_shift_m": 0.00283,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6.5e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.0847,
+      "max_carry_gap_m": 0.00104,
+      "gap_before_open_m": 0.0009,
+      "clearance_before_open_m": 0.06961,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00023,
+        0.00068,
+        0.02957
+      ],
+      "xy_error_m": 0.00072,
+      "linear_speed_m_s": 0.013228,
+      "container_shift_m": 0.01009,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": false,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.002234
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08433,
+      "max_carry_gap_m": 0.00089,
+      "gap_before_open_m": 0.00094,
+      "clearance_before_open_m": 0.06906,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.0,
+        -6e-05,
+        0.02902
+      ],
+      "xy_error_m": 6e-05,
+      "linear_speed_m_s": 0.004638,
+      "container_shift_m": 0.00069,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.4e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07751,
+      "max_carry_gap_m": 0.00128,
+      "gap_before_open_m": 0.00132,
+      "clearance_before_open_m": 0.06882,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -9e-05,
+        0.00079,
+        0.02904
+      ],
+      "xy_error_m": 0.00079,
+      "linear_speed_m_s": 0.003016,
+      "container_shift_m": 0.00614,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000927
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07783,
+      "max_carry_gap_m": 0.00105,
+      "gap_before_open_m": 0.00105,
+      "clearance_before_open_m": 0.06483,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00357,
+        0.00273,
+        0.02957
+      ],
+      "xy_error_m": 0.00449,
+      "linear_speed_m_s": 0.014218,
+      "container_shift_m": 0.00875,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000334
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08393,
+      "max_carry_gap_m": 0.00122,
+      "gap_before_open_m": 0.00129,
+      "clearance_before_open_m": 0.06869,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00071,
+        0.00041,
+        0.02905
+      ],
+      "xy_error_m": 0.00082,
+      "linear_speed_m_s": 0.001841,
+      "container_shift_m": 0.00069,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.8e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.08451,
+      "max_carry_gap_m": 0.0011,
+      "gap_before_open_m": 0.0011,
+      "clearance_before_open_m": 0.06809,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00094,
+        0.00096,
+        0.01623
+      ],
+      "xy_error_m": 0.00134,
+      "linear_speed_m_s": 0.012699,
+      "container_shift_m": 0.00152,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": false,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000758
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.0847,
+      "max_carry_gap_m": 0.00104,
+      "gap_before_open_m": 0.00089,
+      "clearance_before_open_m": 0.06825,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00053,
+        0.00056,
+        0.01601
+      ],
+      "xy_error_m": 0.00078,
+      "linear_speed_m_s": 0.003211,
+      "container_shift_m": 0.00309,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": false,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 7.6e-05
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.08433,
+      "max_carry_gap_m": 0.00089,
+      "gap_before_open_m": 0.00092,
+      "clearance_before_open_m": 0.06743,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.0002,
+        -0.00141,
+        0.01601
+      ],
+      "xy_error_m": 0.00143,
+      "linear_speed_m_s": 0.005353,
+      "container_shift_m": 0.00071,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": false,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000659
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07751,
+      "max_carry_gap_m": 0.00128,
+      "gap_before_open_m": 0.00131,
+      "clearance_before_open_m": 0.06749,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00076,
+        0.00148,
+        0.01622
+      ],
+      "xy_error_m": 0.00167,
+      "linear_speed_m_s": 0.004956,
+      "container_shift_m": 0.00091,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": false,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.00043
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07783,
+      "max_carry_gap_m": 0.00105,
+      "gap_before_open_m": 0.00107,
+      "clearance_before_open_m": 0.06782,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00027,
+        0.00176,
+        0.0161
+      ],
+      "xy_error_m": 0.00178,
+      "linear_speed_m_s": 0.025973,
+      "container_shift_m": 0.00053,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": false,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000142
+    },
+    {
+      "catalog": "robocasa_potato",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.08393,
+      "max_carry_gap_m": 0.00122,
+      "gap_before_open_m": 0.00126,
+      "clearance_before_open_m": 0.06707,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.0012,
+        -0.0013,
+        0.01639
+      ],
+      "xy_error_m": 0.00178,
+      "linear_speed_m_s": 0.019117,
+      "container_shift_m": 0.00111,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": false,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000653
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.07682,
+      "max_carry_gap_m": 0.00127,
+      "gap_before_open_m": 0.00125,
+      "clearance_before_open_m": 0.06518,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00179,
+        0.00099,
+        0.03007
+      ],
+      "xy_error_m": 0.00205,
+      "linear_speed_m_s": 0.005082,
+      "container_shift_m": 0.00437,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000127
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.07696,
+      "max_carry_gap_m": 0.00122,
+      "gap_before_open_m": 0.00121,
+      "clearance_before_open_m": 0.0695,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00035,
+        0.0015,
+        0.03006
+      ],
+      "xy_error_m": 0.00154,
+      "linear_speed_m_s": 0.001628,
+      "container_shift_m": 0.00052,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 6e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.077,
+      "max_carry_gap_m": 0.00076,
+      "gap_before_open_m": 0.00079,
+      "clearance_before_open_m": 0.06931,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -3e-05,
+        0.00068,
+        0.03004
+      ],
+      "xy_error_m": 0.00068,
+      "linear_speed_m_s": 0.006113,
+      "container_shift_m": 0.00039,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.4e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07636,
+      "max_carry_gap_m": 0.00205,
+      "gap_before_open_m": 0.00209,
+      "clearance_before_open_m": 0.06806,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00017,
+        0.0014,
+        0.03007
+      ],
+      "xy_error_m": 0.00141,
+      "linear_speed_m_s": 0.003981,
+      "container_shift_m": 0.00044,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 5.8e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07762,
+      "max_carry_gap_m": 0.00104,
+      "gap_before_open_m": 0.00103,
+      "clearance_before_open_m": 0.065,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00327,
+        0.0024,
+        0.03006
+      ],
+      "xy_error_m": 0.00406,
+      "linear_speed_m_s": 0.016918,
+      "container_shift_m": 0.00734,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000123
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_plate",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.0768,
+      "max_carry_gap_m": 0.00087,
+      "gap_before_open_m": 0.00095,
+      "clearance_before_open_m": 0.06912,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00028,
+        0.00059,
+        0.03004
+      ],
+      "xy_error_m": 0.00066,
+      "linear_speed_m_s": 0.002223,
+      "container_shift_m": 0.00039,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 1.3e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 0,
+      "source_cell": 3,
+      "lift_m": 0.07682,
+      "max_carry_gap_m": 0.00127,
+      "gap_before_open_m": 0.00127,
+      "clearance_before_open_m": 0.06802,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00035,
+        0.00076,
+        0.01697
+      ],
+      "xy_error_m": 0.00084,
+      "linear_speed_m_s": 0.004494,
+      "container_shift_m": 0.0002,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000146
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 1,
+      "source_cell": 4,
+      "lift_m": 0.07696,
+      "max_carry_gap_m": 0.00122,
+      "gap_before_open_m": 0.00121,
+      "clearance_before_open_m": 0.06812,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00125,
+        0.00071,
+        0.01695
+      ],
+      "xy_error_m": 0.00144,
+      "linear_speed_m_s": 0.001958,
+      "container_shift_m": 0.00464,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 5.2e-05
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 2,
+      "source_cell": 5,
+      "lift_m": 0.077,
+      "max_carry_gap_m": 0.00076,
+      "gap_before_open_m": 0.00074,
+      "clearance_before_open_m": 0.06769,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00092,
+        -0.00147,
+        0.01699
+      ],
+      "xy_error_m": 0.00173,
+      "linear_speed_m_s": 0.005827,
+      "container_shift_m": 0.00077,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000189
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 3,
+      "source_cell": 0,
+      "lift_m": 0.07636,
+      "max_carry_gap_m": 0.00205,
+      "gap_before_open_m": 0.00208,
+      "clearance_before_open_m": 0.06671,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.00031,
+        0.00237,
+        0.01694
+      ],
+      "xy_error_m": 0.00239,
+      "linear_speed_m_s": 0.002264,
+      "container_shift_m": 0.00163,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000134
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 4,
+      "source_cell": 1,
+      "lift_m": 0.07762,
+      "max_carry_gap_m": 0.00104,
+      "gap_before_open_m": 0.00106,
+      "clearance_before_open_m": 0.06798,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        0.00049,
+        0.00173,
+        0.01695
+      ],
+      "xy_error_m": 0.0018,
+      "linear_speed_m_s": 0.006243,
+      "container_shift_m": 0.00131,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 0.000103
+    },
+    {
+      "catalog": "robocasa_bell_pepper",
+      "container": "robocasa_bowl",
+      "destination_cell": 5,
+      "source_cell": 2,
+      "lift_m": 0.0768,
+      "max_carry_gap_m": 0.00087,
+      "gap_before_open_m": 0.0009,
+      "clearance_before_open_m": 0.06751,
+      "retained_until_open": true,
+      "object_container_offset_m": [
+        -0.0013,
+        -0.00095,
+        0.01694
+      ],
+      "xy_error_m": 0.00162,
+      "linear_speed_m_s": 0.00157,
+      "container_shift_m": 0.00075,
+      "has_container_contact": true,
+      "whole_visual_xy_inside_conservative": true,
+      "settled_on_container": true,
+      "support_contact_fraction": 1.0,
+      "settling_window_excursion_m": 5.2e-05
+    }
+  ],
+  "summary": {
+    "grips_held": 5,
+    "grips_total": 5,
+    "stationary_holds_after_5s": 5,
+    "centered_drops_settled": 60,
+    "centered_drops_total": 60,
+    "centered_drops_whole_visual_inside": 60,
+    "scripted_settled": 59,
+    "scripted_retained_until_open": 60,
+    "scripted_total": 60
+  },
+  "fit_checks_passed": true,
+  "motion_checks_passed": false,
+  "passed": false
+}

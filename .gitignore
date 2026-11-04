@@ -13,3 +13,9 @@ benchmarks/externals/*
 
 # Per-stage configs written by tools/train/run_widowx200_pipeline.py
 configs/widowx200_pipeline/
+
+# Generated simulation scenes and LaTeX intermediates (keep source and reports).
+tools/audit/out/contact_tmp/
+tools/sim_compare/out/tmp/
+*.toc
+*.xdv

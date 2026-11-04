@@ -1,3 +1,31 @@
+# Matched CDPR and WidowX results - 4 November 2026 (current)
+
+The active paper now uses `latent_control_60m_comparison_20261104.json` for
+**1,416/2,048 = 69.14% strict CDPR success**. The 512 development scenes are
+each repeated four times, excluding the 128-scene training validation panel.
+The matched baseline is 1,245/2,048 = 60.79%, not the earlier 61.43% from
+different rollouts. The +8.35 pp paired interval [+6.05, +10.69] and Holm
+p=0.00005 are reported by the supplied comparison; raw per-episode evaluation
+files are still unavailable. The baseline hash agrees with the promoted 40M
+adapter. The selected 60M hash is
+`f69360d4a7afeac36b147c6f3a335a7199c9a385f871c568587c85d9d3d86711`.
+`latent_control_60m_review_summary_20261104.json` checks count/rate and
+destination consistency.
+
+`widowx200_final_report_20261103.json` records final-policy reach/pickup and
+placement scores. `widowx200_snapshot_audit_20261104.json` reproduces the
+435-source-file manifest audit, stage configs, SIL outcomes and composition
+diagnostics. The source ZIP is retained at
+`../../docs/artifacts/widowx200_snapshot_20261104/results_snapshot.zip`.
+The arm's 73/1,024 = 7.13% composed score is an aligned empty-hand simulation
+protocol, with no distant approach; it is not a CDPR strict score or hardware
+result. The manuscript now includes this limitation rather than describing
+the simulation evaluation as pending.
+
+The prior PDF and edited sources are archived under
+`../archive/manuscript_20261104_before_matched_evaluation/`.
+The dated entries below are historical where superseded.
+
 # Dense/phase implementation audit - 29 October 2026
 
 `DENSE_REWARD_CODE_AUDIT_20261029.md` records the pinned remote implementation, the combined dense-plus-phase reward, the phase-only comparison and the role of the low-success acquisition diagnostic. Current numerical reporting continues to follow the author-corrected 26 October CSV; repository defaults and its older archive summary are not substituted for those reported settings.

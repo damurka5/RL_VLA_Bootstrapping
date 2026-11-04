@@ -1,0 +1,2632 @@
+{
+  "exporter_commit": "3c6486dbd9fe69bc8897a5fc84f64286e6f16ba5",
+  "git_commit_at_pipeline_start": "dbcb5c241dab259bb520ad2d936b79e776ff96d0",
+  "live_snapshot_not_globally_atomic": true,
+  "pipeline": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201",
+  "rows": {
+    "banks": 4,
+    "record_rounds": 160,
+    "replay_survival": 40,
+    "retention": 54,
+    "stages": 7,
+    "training": 3544,
+    "validation": 161,
+    "validation_slices": 1770
+  },
+  "schema_version": 1,
+  "snapshot_finished_utc": "2026-11-03T15:31:51.626058+00:00",
+  "source_config_current_may_differ_from_launch": true,
+  "sources": [
+    {
+      "bytes": 49859,
+      "exported": "raw/pipeline/pipeline_state.json",
+      "sha256": "309faa7d9b965d9aa16bcdb108e8c2e29879c9dfe8aa0e2da676cfeedccf0c57",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/pipeline_state.json"
+    },
+    {
+      "bytes": 7877,
+      "exported": "raw/stages/s1_move_to_dense/config.json",
+      "sha256": "03f8408c50db137fe132b1982aea26c161960450a90949f65a6ad93eac1dcee3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/config.json"
+    },
+    {
+      "bytes": 13366,
+      "exported": "raw/stages/s1_move_to_dense/manifests/project_config_resolved.json",
+      "sha256": "088f462a7f0c5db7844c2f64818f26b24f275abdd2d34206d14e51216b2cd9fa",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/manifests/project_config_resolved.json"
+    },
+    {
+      "bytes": 478,
+      "exported": "raw/stages/s1_move_to_dense/manifests/smolvla_action_codec.json",
+      "sha256": "b2fb17cb2904bf4381f26512ec2efd35b2f204fa54ad04beaa5035e85a871a3a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/manifests/smolvla_action_codec.json"
+    },
+    {
+      "bytes": 212,
+      "exported": "raw/stages/s1_move_to_dense/early_stop.json",
+      "sha256": "6b965041a9bd2f00e70edc21573d8149454d32e682bfefa94428e46cb1023baa",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/early_stop.json"
+    },
+    {
+      "bytes": 131815,
+      "exported": "raw/stages/s1_move_to_dense/validation.jsonl",
+      "sha256": "7ae28f473678bd6150db8924e3fd222fd9164f3b002a919b0494519b740a09ca",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/validation.jsonl"
+    },
+    {
+      "bytes": 6985139,
+      "exported": "raw/stages/s1_move_to_dense/metrics.jsonl",
+      "sha256": "f12dc56384a8426257312fccac6629d4f3977c80b0221621b8e2c0f76c7e89d3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s1_move_to_dense/rl/metrics.jsonl"
+    },
+    {
+      "bytes": 7858,
+      "exported": "raw/stages/s2_pick_up_dense/config.json",
+      "sha256": "b317cda06001a9eac975779bdf325884c25d3e43569ef68267bb77940e444911",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/config.json"
+    },
+    {
+      "bytes": 14044,
+      "exported": "raw/stages/s2_pick_up_dense/manifests/project_config_resolved.json",
+      "sha256": "95c7d9544d9749d11c6b9d28627cd8c401af1a1265b0c77e1f093ce556c0d9e8",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/manifests/project_config_resolved.json"
+    },
+    {
+      "bytes": 478,
+      "exported": "raw/stages/s2_pick_up_dense/manifests/smolvla_action_codec.json",
+      "sha256": "b2fb17cb2904bf4381f26512ec2efd35b2f204fa54ad04beaa5035e85a871a3a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/manifests/smolvla_action_codec.json"
+    },
+    {
+      "bytes": 206,
+      "exported": "raw/stages/s2_pick_up_dense/early_stop.json",
+      "sha256": "0d6598bc9aa7ac756f2c1e2d26bb834733bc6bf4fd1006b13d4e7563c5b40f11",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/early_stop.json"
+    },
+    {
+      "bytes": 34728,
+      "exported": "raw/stages/s2_pick_up_dense/validation.jsonl",
+      "sha256": "ca7bafb04df7f21a319b69064437f27889e51ec991a5e31fb26f521896bfedc1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/validation.jsonl"
+    },
+    {
+      "bytes": 2513752,
+      "exported": "raw/stages/s2_pick_up_dense/metrics.jsonl",
+      "sha256": "6f9daffedd5203bcc6b8113b6045d8f74d74658ef04952a350fa7ccc2a94ed5f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s2_pick_up_dense/rl/metrics.jsonl"
+    },
+    {
+      "bytes": 7924,
+      "exported": "raw/stages/s3_put_into_dense/config.json",
+      "sha256": "50f8f4cbd4badebe78c8a93003ddbd11664039f859a8396caf20adf7dcdad567",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/config.json"
+    },
+    {
+      "bytes": 14956,
+      "exported": "raw/stages/s3_put_into_dense/manifests/project_config_resolved.json",
+      "sha256": "a70d50e3ff54187fdf231a2419d4ffa936672064d7eaff1198eccf43eb4694ff",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/manifests/project_config_resolved.json"
+    },
+    {
+      "bytes": 478,
+      "exported": "raw/stages/s3_put_into_dense/manifests/smolvla_action_codec.json",
+      "sha256": "b2fb17cb2904bf4381f26512ec2efd35b2f204fa54ad04beaa5035e85a871a3a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/manifests/smolvla_action_codec.json"
+    },
+    {
+      "bytes": 200,
+      "exported": "raw/stages/s3_put_into_dense/early_stop.json",
+      "sha256": "40d0840b0bcc3e42a53ce85a6c66b9c8d013aa09cf28a53c98a42730fdb501b9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/early_stop.json"
+    },
+    {
+      "bytes": 103076,
+      "exported": "raw/stages/s3_put_into_dense/validation.jsonl",
+      "sha256": "043d5b856da46fc901b8ca5b8e69be0404d8d25fac2cf436f1ea430c9dcca375",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/validation.jsonl"
+    },
+    {
+      "bytes": 8281962,
+      "exported": "raw/stages/s3_put_into_dense/metrics.jsonl",
+      "sha256": "01a01da643a9fbf54fa2cd260a9bfa6e98992e1f9e6b449eff42eac7b4196288",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s3_put_into_dense/rl/metrics.jsonl"
+    },
+    {
+      "bytes": 7879,
+      "exported": "raw/stages/s4_move_to_binary/config.json",
+      "sha256": "43a57a574fdf2cb88cfb07a374b78f915e473b3d3d32f8ef3e2af79ac5107099",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/config.json"
+    },
+    {
+      "bytes": 13489,
+      "exported": "raw/stages/s4_move_to_binary/manifests/project_config_resolved.json",
+      "sha256": "2ef1c8e0d9af351c08d3efdf48f356c5ccff475c95070f714fac8e914e96b7e0",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/manifests/project_config_resolved.json"
+    },
+    {
+      "bytes": 478,
+      "exported": "raw/stages/s4_move_to_binary/manifests/smolvla_action_codec.json",
+      "sha256": "b2fb17cb2904bf4381f26512ec2efd35b2f204fa54ad04beaa5035e85a871a3a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/manifests/smolvla_action_codec.json"
+    },
+    {
+      "bytes": 210,
+      "exported": "raw/stages/s4_move_to_binary/early_stop.json",
+      "sha256": "be44fc84282de3db69ec8ec77b0e74d54967d641a28d6f968d94888e8b907a20",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/early_stop.json"
+    },
+    {
+      "bytes": 62482,
+      "exported": "raw/stages/s4_move_to_binary/validation.jsonl",
+      "sha256": "d341d7bbf540c8844d69fd3e7d8177bbc22cb5bbc4544582fda2d092aadf758e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/validation.jsonl"
+    },
+    {
+      "bytes": 1841879,
+      "exported": "raw/stages/s4_move_to_binary/metrics.jsonl",
+      "sha256": "bbbc6120117f84bdc1181c86917244b884a04c31e5ecee02bda764e9c2236c61",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s4_move_to_binary/rl/metrics.jsonl"
+    },
+    {
+      "bytes": 7861,
+      "exported": "raw/stages/s5_pick_up_binary/config.json",
+      "sha256": "d39cc4609e5463d17108c85f0faf9d987f9aba3c63ae6452d68e631d6daf664a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/rl/config.json"
+    },
+    {
+      "bytes": 14128,
+      "exported": "raw/stages/s5_pick_up_binary/manifests/project_config_resolved.json",
+      "sha256": "47d01e7ae4ece7e8277cfffc6a09cf62e14a0a80ea807cc052d0ee5b9d6f343a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/manifests/project_config_resolved.json"
+    },
+    {
+      "bytes": 478,
+      "exported": "raw/stages/s5_pick_up_binary/manifests/smolvla_action_codec.json",
+      "sha256": "b2fb17cb2904bf4381f26512ec2efd35b2f204fa54ad04beaa5035e85a871a3a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/manifests/smolvla_action_codec.json"
+    },
+    {
+      "bytes": 192,
+      "exported": "raw/stages/s5_pick_up_binary/early_stop.json",
+      "sha256": "bc8c59bd5fa83588a73541b38dda734c7feb28cfd7338de6679b5965399843a1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/rl/early_stop.json"
+    },
+    {
+      "bytes": 21235,
+      "exported": "raw/stages/s5_pick_up_binary/validation.jsonl",
+      "sha256": "b5c35f6dfef3be8b6f96ca0e2350ab7db4943ce87029adab05f3bc5e3e280d1e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/rl/validation.jsonl"
+    },
+    {
+      "bytes": 376197,
+      "exported": "raw/stages/s5_pick_up_binary/metrics.jsonl",
+      "sha256": "fbcca47ccf2c8715fb1acfd7e661296e940b889e87596dd784d269b6bfcb7080",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s5_pick_up_binary/rl/metrics.jsonl"
+    },
+    {
+      "bytes": 7926,
+      "exported": "raw/stages/s6_put_into_binary/config.json",
+      "sha256": "5b398e2dc79d9634e0f8cf93e1424e7e11d171b7f536347510cbae993d9bb882",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/config.json"
+    },
+    {
+      "bytes": 15079,
+      "exported": "raw/stages/s6_put_into_binary/manifests/project_config_resolved.json",
+      "sha256": "4d78da0c529278e8a7abb63466ab672f5b48566b9f33f6a66247b68108f8048f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/manifests/project_config_resolved.json"
+    },
+    {
+      "bytes": 478,
+      "exported": "raw/stages/s6_put_into_binary/manifests/smolvla_action_codec.json",
+      "sha256": "b2fb17cb2904bf4381f26512ec2efd35b2f204fa54ad04beaa5035e85a871a3a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/manifests/smolvla_action_codec.json"
+    },
+    {
+      "bytes": 18731,
+      "exported": "raw/stages/s6_put_into_binary/validation.jsonl",
+      "sha256": "196593ebb649ae7d5360bb5f3e68c03c70e08bd76baf376ca4867ecb83873562",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/validation.jsonl"
+    },
+    {
+      "bytes": 971666,
+      "exported": "raw/stages/s6_put_into_binary/metrics.jsonl",
+      "sha256": "818c9e4079c0e695603460ccd5d6a4b79470e7b8ab1d505c9e298090da07df2b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s6_put_into_binary/rl/metrics.jsonl"
+    },
+    {
+      "bytes": 8015,
+      "exported": "raw/stages/s7_joint_staged/config.json",
+      "sha256": "346e6beb9d49e1e58ebd70a4c82b757c4c4b7b413ebd706819fc94aa5d579cbf",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/config.json"
+    },
+    {
+      "bytes": 15525,
+      "exported": "raw/stages/s7_joint_staged/manifests/project_config_resolved.json",
+      "sha256": "0d117ea9884214583bccee059a124c7f4f7e061fb6b716bb020539b7469de93a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/manifests/project_config_resolved.json"
+    },
+    {
+      "bytes": 478,
+      "exported": "raw/stages/s7_joint_staged/manifests/smolvla_action_codec.json",
+      "sha256": "b2fb17cb2904bf4381f26512ec2efd35b2f204fa54ad04beaa5035e85a871a3a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/manifests/smolvla_action_codec.json"
+    },
+    {
+      "bytes": 229,
+      "exported": "raw/stages/s7_joint_staged/early_stop.json",
+      "sha256": "e2bb632885ece789b7b74e9312b18c255e9278f46a7fef1a925b4bb6ec8151c1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/early_stop.json"
+    },
+    {
+      "bytes": 248751,
+      "exported": "raw/stages/s7_joint_staged/validation.jsonl",
+      "sha256": "d9388efbaec7c20c84e0f75f4ac5d468a582524aac595d14818e216b7061d18f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/validation.jsonl"
+    },
+    {
+      "bytes": 3268825,
+      "exported": "raw/stages/s7_joint_staged/metrics.jsonl",
+      "sha256": "c4aa2ae4072efa1705f5a9fb309442986dc0201323fa98d2bc8ba3b9141ea39d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201__s7_joint_staged/rl/metrics.jsonl"
+    },
+    {
+      "bytes": 33486,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/record/episodes_00.csv",
+      "sha256": "a882e4c0e588eae1c0c1b3d970ffbeebb3a0043cb0c27d8ee0c3ef8e0164f4cb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record/episodes_00.csv"
+    },
+    {
+      "bytes": 33479,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/record/episodes_01.csv",
+      "sha256": "ebd8a97b2f8eae2e65d49a3ad196b52e81ac1e84d630cbf828cb547de2d0997b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record/episodes_01.csv"
+    },
+    {
+      "bytes": 33498,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/record/episodes_02.csv",
+      "sha256": "264b100dff1c9613565a30cfeac1cd4c1ee95eab54d0aa2924c614da4e821578",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record/episodes_02.csv"
+    },
+    {
+      "bytes": 33527,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/record/episodes_03.csv",
+      "sha256": "4b859c1b62efef159c3a447cddaa899c176a007b088715c944d35edc51017eda",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record/episodes_03.csv"
+    },
+    {
+      "bytes": 685,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/record/summary.json",
+      "sha256": "05ec988e923b60a52f000fff5980cea24531a64541ada69a54775825e2795dbe",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record/summary.json"
+    },
+    {
+      "bytes": 3610,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/record/summary_cuda0.json",
+      "sha256": "a8abee6d92f4a43a8bf77cc853172d692a626a8e9acbbbadcaddf2d3956ddee3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record/summary_cuda0.json"
+    },
+    {
+      "bytes": 3612,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/record/summary_cuda1.json",
+      "sha256": "7e99563c30903ac6a717275157e1e388881f0c851029d6e2010347c28be3c9fb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/record/summary_cuda1.json"
+    },
+    {
+      "bytes": 33508,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/episodes_record_record_00.csv",
+      "sha256": "a178116f55be1212135454be7222efb8a59bc31b69001e2490ae7370c99ebd3d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/episodes_record_record_00.csv"
+    },
+    {
+      "bytes": 33496,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/episodes_record_record_01.csv",
+      "sha256": "33260036afda5506045505cdb996a2bf14a28edd8c0b4e33ccb9ce84a22c0526",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/episodes_record_record_01.csv"
+    },
+    {
+      "bytes": 33525,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/episodes_record_record_02.csv",
+      "sha256": "f91cba3b398c783cb1b02434c89c54f2dc831bc836fb3641db800540cdeb20b3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/episodes_record_record_02.csv"
+    },
+    {
+      "bytes": 33546,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/episodes_record_record_03.csv",
+      "sha256": "c1ae325c05be74532c28c06647192e9dc11759d68ff56a0ea6f9d7ad2e953385",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/episodes_record_record_03.csv"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/replay_record_record_00.complete.json",
+      "sha256": "349a758b59e227ccdd946ae2f29be465ec275b9f13ede904877c0e2627715d0d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/replay_record_record_00.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/replay_record_record_01.complete.json",
+      "sha256": "a16b97927bf23ff76bbc5e4146f2da8788f2469a4130417fac8b178209966c7a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/replay_record_record_01.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/replay_record_record_02.complete.json",
+      "sha256": "61f227e63bd8fde603cc3bf9cf541a55b6875aaadc02f3ec5999938f50177dbb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/replay_record_record_02.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/replay_record_record_03.complete.json",
+      "sha256": "ae9ea184eaba166c5a2b310771b71e2e7937687028699b2a1804b71da1e43971",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/replay_record_record_03.complete.json"
+    },
+    {
+      "bytes": 2305,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/summary_record_record_00.json",
+      "sha256": "0b61f1540f4f5ace2e84e1e8221da9073dc9e636a0016d1256b82f39d0b472d2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/summary_record_record_00.json"
+    },
+    {
+      "bytes": 2304,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/summary_record_record_01.json",
+      "sha256": "b6baa60877294a99104e085ed7ab96d8cca7491d5e857da7bc3370f319669854",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/summary_record_record_01.json"
+    },
+    {
+      "bytes": 2304,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/summary_record_record_02.json",
+      "sha256": "218e7216842c08de4b836670c908c4d897a80fd38cd52764f7fe8824a893dd8e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/summary_record_record_02.json"
+    },
+    {
+      "bytes": 2304,
+      "exported": "raw/pipeline/banks/move_to/s1_move_to_dense/replay/summary_record_record_03.json",
+      "sha256": "e7c04fcbea5b9fb6cfa0a8b26c6f8dd380f32391a80ab3b4712a4d9fac4cb170",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s1_move_to_dense/replay/summary_record_record_03.json"
+    },
+    {
+      "bytes": 33413,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record/episodes_00.csv",
+      "sha256": "3d14cc4b51fa4770b98628d5758b898d3976e1e2945eada5428ed5702158a02a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record/episodes_00.csv"
+    },
+    {
+      "bytes": 33422,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record/episodes_01.csv",
+      "sha256": "b42754bfc4c484509487afb9b7b92cf12b7df6f3009ed1fb7b695e345b2f908c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record/episodes_01.csv"
+    },
+    {
+      "bytes": 33410,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record/episodes_02.csv",
+      "sha256": "222ce370419e8f4b00921e03152dfe39e37a500a0c84f49758048e722a713c86",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record/episodes_02.csv"
+    },
+    {
+      "bytes": 33457,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record/episodes_03.csv",
+      "sha256": "bcdf3bee767bbe48e0e40e8a4e4d4a83fbea2edc9022a76a7c88c28eb7208042",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record/episodes_03.csv"
+    },
+    {
+      "bytes": 686,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record/summary.json",
+      "sha256": "583cc3f7c1b9ca93ac5d135bda36c4d39888051a613cffaf6404bce430505570",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record/summary.json"
+    },
+    {
+      "bytes": 3606,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record/summary_cuda0.json",
+      "sha256": "500fb49f300803991d26d9583a2d17152fec2efd5343e40618a2f8e121fa2cd7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record/summary_cuda0.json"
+    },
+    {
+      "bytes": 3617,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record/summary_cuda1.json",
+      "sha256": "6fcca9e949e19617970d65a5e304fbaa1b0229af8038b26da146b9436911bfff",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record/summary_cuda1.json"
+    },
+    {
+      "bytes": 33655,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record_r100/episodes_100.csv",
+      "sha256": "c52d2e82078cd22293352bf5d6f4abb336036a764bc2f04195773a65d2d2959e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record_r100/episodes_100.csv"
+    },
+    {
+      "bytes": 33692,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record_r100/episodes_101.csv",
+      "sha256": "b08a2543e6af212bb6d3525bd6e7197d8a372c0fcbe5a381bce22c3406bcad1f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record_r100/episodes_101.csv"
+    },
+    {
+      "bytes": 33678,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record_r100/episodes_102.csv",
+      "sha256": "23b39c48712487b3e7af1c9b36f246e1c845b57c6b6c71afe49947c052cce1f2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record_r100/episodes_102.csv"
+    },
+    {
+      "bytes": 33676,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record_r100/episodes_103.csv",
+      "sha256": "20f5cfd53983b7c2d2dea4d4e80fbc3e11b26df44e70ece0a750b9d165ea76ad",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record_r100/episodes_103.csv"
+    },
+    {
+      "bytes": 690,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record_r100/summary.json",
+      "sha256": "e019109775e97333a1e6e31354f5b829337b8b25b6ef7291631f84ee9e1c5ccb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record_r100/summary.json"
+    },
+    {
+      "bytes": 3609,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record_r100/summary_cuda0.json",
+      "sha256": "42f384a43a7f92910821b9da450f85552cfd7dfa9d60d55b2bf2ef05a3dc0111",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record_r100/summary_cuda0.json"
+    },
+    {
+      "bytes": 3603,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/record_r100/summary_cuda1.json",
+      "sha256": "5f5487d5113f6fff9cc25dbbba5058c7e9c8d6c4f72e8497ad7343b54705ea77",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/record_r100/summary_cuda1.json"
+    },
+    {
+      "bytes": 33453,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/episodes_record_record_00.csv",
+      "sha256": "95d95d075ea30774aede06ac473fd2396a4cdf962543dd311de83d9714c29167",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/episodes_record_record_00.csv"
+    },
+    {
+      "bytes": 33456,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/episodes_record_record_01.csv",
+      "sha256": "b8c39340ad76945601e9e241754c9a7f034613ab80dea34bdc60b36e29a78f4a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/episodes_record_record_01.csv"
+    },
+    {
+      "bytes": 33450,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/episodes_record_record_02.csv",
+      "sha256": "f3ff0a4285a4f9609e025bae0753c8d2d11e871ebca52faeb16dbaafb68701f4",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/episodes_record_record_02.csv"
+    },
+    {
+      "bytes": 33491,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/episodes_record_record_03.csv",
+      "sha256": "5d00ebc4c4942603ca6ea899d83c2f61c70699be5cffce859c6a2512b9c4eb3e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/episodes_record_record_03.csv"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/replay_record_record_00.complete.json",
+      "sha256": "3f047aac073cf2c1954489fb922090ea9ded7844526c625ad4aa09454f29550e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/replay_record_record_00.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/replay_record_record_01.complete.json",
+      "sha256": "eda68827e5ae6e8b9d1eb25a96f8eeb56a33460ed50b40ac456e43d531440c19",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/replay_record_record_01.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/replay_record_record_02.complete.json",
+      "sha256": "9dbf2d9b50bf911001bc81e9621eb1818c532103e8b26722530c15b068666fa4",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/replay_record_record_02.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/replay_record_record_03.complete.json",
+      "sha256": "f349aa4abc538a8f24b1c2c6b16e2357548080f1ed5b9a3fef027c45b71d5b27",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/replay_record_record_03.complete.json"
+    },
+    {
+      "bytes": 2307,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/summary_record_record_00.json",
+      "sha256": "01776fa48450a4a4ae4474caca5fef47bec2284e09f3d38543c5896db12fc4cb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/summary_record_record_00.json"
+    },
+    {
+      "bytes": 2306,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/summary_record_record_01.json",
+      "sha256": "9cf0aa4a02b052fbf15636a569572abd676139df170c8572bdc751d197f2e2ee",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/summary_record_record_01.json"
+    },
+    {
+      "bytes": 2307,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/summary_record_record_02.json",
+      "sha256": "f9715280046d78961b798ec8680f27b2dbc04111937ba9121fcde7772ce7c5c7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/summary_record_record_02.json"
+    },
+    {
+      "bytes": 2306,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay/summary_record_record_03.json",
+      "sha256": "659b42c4773aa13c18d60e8e9cd4b4febdead2c66a76c2754417cc82ac6ca1bf",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay/summary_record_record_03.json"
+    },
+    {
+      "bytes": 33665,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_100.csv",
+      "sha256": "75e46ab06ce35b887af9c51983d7beb524e701a1bacfa8b20a2ea63c26643fe8",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_100.csv"
+    },
+    {
+      "bytes": 33696,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_101.csv",
+      "sha256": "da4253db55fdc961baf681127c6ce4ca5c78b74985f864f13081e338a914f11e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_101.csv"
+    },
+    {
+      "bytes": 33688,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_102.csv",
+      "sha256": "bf8573fff551235bc44bd4a4acee68fcf4c2e63889be5b7118d8b6685cb8053e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_102.csv"
+    },
+    {
+      "bytes": 33685,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_103.csv",
+      "sha256": "fc4524ae7cb890b1906db0f72c439cd40e3d1e7f7c550a06fab2a53fbc16f853",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/episodes_record_r100_record_103.csv"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_100.complete.json",
+      "sha256": "66b68848ee3fd9be6d5dad4d8b0f2572eba231687f2558542823a6bc51024703",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_100.complete.json"
+    },
+    {
+      "bytes": 87,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_101.complete.json",
+      "sha256": "f1c994ce762fb848306ea1c35439080233f8fa4af196d0740cd9be8f5fa03e86",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_101.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_102.complete.json",
+      "sha256": "a70ea3f77ec1a2011d1103d7b19f85812bd0b5c7e931f1493c4a82f3f87ad866",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_102.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_103.complete.json",
+      "sha256": "3b30e70ab4c5bc5901468a59f0505d9999c85d0597bffd5880676fd9022192f0",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/replay_record_r100_record_103.complete.json"
+    },
+    {
+      "bytes": 2524,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_100.json",
+      "sha256": "21e22ec5732c073ea4785eba947dee385cd1c05bb6ab6ed9cc51d83b01d54215",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_100.json"
+    },
+    {
+      "bytes": 2518,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_101.json",
+      "sha256": "afaaa871f52f313f7810426df09b742699b43d1dfdc070b5ad629a17238f6efa",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_101.json"
+    },
+    {
+      "bytes": 2516,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_102.json",
+      "sha256": "7b17d2cd590cac0f44628e7d34a486ff9363fa56c8bcfae140543a73db273afb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_102.json"
+    },
+    {
+      "bytes": 2519,
+      "exported": "raw/pipeline/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_103.json",
+      "sha256": "a274425998c40f4bbcf519a8a1a3af23713a94dd8972befee34b27db90874284",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/move_to/s4_move_to_binary/replay_r100/summary_record_r100_record_103.json"
+    },
+    {
+      "bytes": 31531,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record/episodes_00.csv",
+      "sha256": "b28ff4a61fcd2636b516863402c6d37bb165e66e810e7f440b65ed6e7bafc8da",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record/episodes_00.csv"
+    },
+    {
+      "bytes": 31557,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record/episodes_01.csv",
+      "sha256": "30f5de8b9e35b6c900e8cfcc88f8d87ebb8c8db0bfb022574635c2082774f3e5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record/episodes_01.csv"
+    },
+    {
+      "bytes": 31479,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record/episodes_02.csv",
+      "sha256": "aac1019a60a71ae40a4b195f00716c4a73206c7312908059ee4974158285d218",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record/episodes_02.csv"
+    },
+    {
+      "bytes": 31419,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record/episodes_03.csv",
+      "sha256": "8302a616c63e3ee1d1f6689ac1a1d30b71773dddb0b5f550bef65d4baa04e86c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record/episodes_03.csv"
+    },
+    {
+      "bytes": 675,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record/summary.json",
+      "sha256": "077c36717c98dd986cf9be00df499b9798cae1a17e78b5b4edb8986d2dc92782",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record/summary.json"
+    },
+    {
+      "bytes": 2990,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record/summary_cuda0.json",
+      "sha256": "716e92957d7bcf4dc9d281058f7a2e7055f2a5596925eb2471ad622ad0abf512",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record/summary_cuda0.json"
+    },
+    {
+      "bytes": 2986,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record/summary_cuda1.json",
+      "sha256": "e737c2044bfa791b5a9719b6bf4e0ac686ebc5659cb65ea6da3b4df43f29ed1d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record/summary_cuda1.json"
+    },
+    {
+      "bytes": 31246,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record_r100/episodes_100.csv",
+      "sha256": "a4ad463f51c49de183b32965d78bd016663296dacfc5d0935a750463dd2d30e7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record_r100/episodes_100.csv"
+    },
+    {
+      "bytes": 31223,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record_r100/episodes_101.csv",
+      "sha256": "fc51c1baa25011aed6cd7d47d03708d6872a0910ccf6c725ee50156af4b57f66",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record_r100/episodes_101.csv"
+    },
+    {
+      "bytes": 31235,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record_r100/episodes_102.csv",
+      "sha256": "defbe5ff46f0e350cdf81d80f47f80ee113eb3a08030d4211ff76a16f0a47803",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record_r100/episodes_102.csv"
+    },
+    {
+      "bytes": 31230,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record_r100/episodes_103.csv",
+      "sha256": "8f53999b4c2126871fd97ca470eb4dd00cc5356a0fecc2c1bfcc82c9dab4d687",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record_r100/episodes_103.csv"
+    },
+    {
+      "bytes": 675,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record_r100/summary.json",
+      "sha256": "327ae8c67e0e11bf9a49d0e485432d906d62893776921c785fb45843584d8179",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record_r100/summary.json"
+    },
+    {
+      "bytes": 2952,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record_r100/summary_cuda0.json",
+      "sha256": "0d474f452ee249d098f3d8ddc17d6e3b53b21295fde9adf3ae6969550a4ed894",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record_r100/summary_cuda0.json"
+    },
+    {
+      "bytes": 2952,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/record_r100/summary_cuda1.json",
+      "sha256": "493a19dc3a5c074d4cf8eda5402f52c9b046fe30e985de8cf1c436f9257c695c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/record_r100/summary_cuda1.json"
+    },
+    {
+      "bytes": 31486,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_00.csv",
+      "sha256": "e3cb4b7d57de042f0f3a84dafe7ee093d00868e5861be46d55a2cd6fbe5edcb2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_00.csv"
+    },
+    {
+      "bytes": 31497,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_01.csv",
+      "sha256": "b8ad28b904379317c73fd4d4cd54bafbba1c9c0cd33be010fc1e0983ce3de827",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_01.csv"
+    },
+    {
+      "bytes": 31431,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_02.csv",
+      "sha256": "8faf6de53f66ec43529f01d0dfd18a379cbc63207eaf897bb68da23af40f4a8e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_02.csv"
+    },
+    {
+      "bytes": 31370,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_03.csv",
+      "sha256": "2b4464030a78dadcd433ec858c50c28919a6a95cb6d05a88d46541a0a4acc0c1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/episodes_record_record_03.csv"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_00.complete.json",
+      "sha256": "c7dae9a08160e1035c3b4df081879fa99039f9bd95eeb63d5c559d66360c1f56",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_00.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_01.complete.json",
+      "sha256": "776bca617f543ad82e889eda4124eb6e21b5f3c58ef9138dccb40f90d9d5202c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_01.complete.json"
+    },
+    {
+      "bytes": 89,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_02.complete.json",
+      "sha256": "9f9c377ccfec422f58c4fd7d4503a22ab705e673759c4390312199e8c6d2df99",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_02.complete.json"
+    },
+    {
+      "bytes": 88,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_03.complete.json",
+      "sha256": "6e4768f7593d77e3e4a6731fe4a86086f3e171a06838a0dc150a4b652cc767b5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/replay_record_record_03.complete.json"
+    },
+    {
+      "bytes": 2283,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_00.json",
+      "sha256": "a7f6583a361efaa6b1591106c26157129461564990258cd7caab56eaf156a40d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_00.json"
+    },
+    {
+      "bytes": 2287,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_01.json",
+      "sha256": "20939acdc3a276a314f5e3dae07eb99de0c1caa424b1a76e1f9fc04d28ab9ba0",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_01.json"
+    },
+    {
+      "bytes": 2287,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_02.json",
+      "sha256": "c6b6b689c091568a1e13a680f8badccf7382dd50297a823c657c146bb5297355",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_02.json"
+    },
+    {
+      "bytes": 2284,
+      "exported": "raw/pipeline/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_03.json",
+      "sha256": "748183c328d0becdb0c8f8b20be5aa3b3bc84a482c1ded57cd92ae02a0a12976",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s2_pick_up_dense/replay/summary_record_record_03.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/banks/pick_up/s5_pick_up_binary/record/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s5_pick_up_binary/record/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/banks/pick_up/s5_pick_up_binary/record/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s5_pick_up_binary/record/episodes_01.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/banks/pick_up/s5_pick_up_binary/record/episodes_02.csv",
+      "sha256": "601e53df715fb17fcfece7a9ede51c8cdf8ebd34dfdba91ac386094d0eeaeefe",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s5_pick_up_binary/record/episodes_02.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/banks/pick_up/s5_pick_up_binary/record/episodes_03.csv",
+      "sha256": "5a5b150dc501ac6a3f72ea08cae6837d3efc1e8f60a12f914d34f4029307516c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s5_pick_up_binary/record/episodes_03.csv"
+    },
+    {
+      "bytes": 669,
+      "exported": "raw/pipeline/banks/pick_up/s5_pick_up_binary/record/summary.json",
+      "sha256": "6844ca48d69b0605c478f0d9036be7c287fabb9009fc4328971b8fa99a813022",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s5_pick_up_binary/record/summary.json"
+    },
+    {
+      "bytes": 2939,
+      "exported": "raw/pipeline/banks/pick_up/s5_pick_up_binary/record/summary_cuda0.json",
+      "sha256": "664d38de5570fad3742cbc6979f071bd54ba9e2b8b447889ffb24a98c9542683",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s5_pick_up_binary/record/summary_cuda0.json"
+    },
+    {
+      "bytes": 2939,
+      "exported": "raw/pipeline/banks/pick_up/s5_pick_up_binary/record/summary_cuda1.json",
+      "sha256": "1a4f33accb0b748377cc0256524c9a2d8e8103f961c6b27dd0f60ac269e23378",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/pick_up/s5_pick_up_binary/record/summary_cuda1.json"
+    },
+    {
+      "bytes": 38525,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record/episodes_00.csv",
+      "sha256": "19500f2ad2e32abc6c0c33db655205858e6c6e23ad46d0fc7fb2f7fe15776c87",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record/episodes_00.csv"
+    },
+    {
+      "bytes": 38379,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record/episodes_01.csv",
+      "sha256": "a8bc8eb60a70c1f90850f16f1e6ff3ee354f35ddb0fb87e82a2ce310a2b49637",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record/episodes_01.csv"
+    },
+    {
+      "bytes": 38442,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record/episodes_02.csv",
+      "sha256": "22873f0cac0c8aefc1b28e83d33bc9fc614dd8b67f7bb570a549379ca4bc9d24",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record/episodes_02.csv"
+    },
+    {
+      "bytes": 38416,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record/episodes_03.csv",
+      "sha256": "a60fa93436ffe7819103f2d9896820101fb28fc878187698ebd58e535279eef0",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record/episodes_03.csv"
+    },
+    {
+      "bytes": 919,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record/summary.json",
+      "sha256": "47bca9424facf95389dc37c73f76d58c6347a2b34d4b590c82445dacb2f7ce0e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record/summary.json"
+    },
+    {
+      "bytes": 3483,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record/summary_cuda0.json",
+      "sha256": "a37086a13024e836349f1c85e19d0fa394110204ec4bba7f7cb71ebd1a955333",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record/summary_cuda0.json"
+    },
+    {
+      "bytes": 3483,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record/summary_cuda1.json",
+      "sha256": "8a1390ca52ca30c98bf06d440719b4415eb0b04721aa9ccd865672aeebf17582",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record/summary_cuda1.json"
+    },
+    {
+      "bytes": 38671,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record_r100/episodes_100.csv",
+      "sha256": "54a4410fdf87c2394d20f85745daa19c17289f9f07306e9ba0b20107ea257765",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record_r100/episodes_100.csv"
+    },
+    {
+      "bytes": 38741,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record_r100/episodes_101.csv",
+      "sha256": "63cf1fdba8cbb1e833907845907cf83ab7a1c2469da068dfbe86b27513d870d1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record_r100/episodes_101.csv"
+    },
+    {
+      "bytes": 38911,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record_r100/episodes_102.csv",
+      "sha256": "e31a0504e7f1c53f46011223656a3988499079f5eac2f20d98ec77daf5c67df1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record_r100/episodes_102.csv"
+    },
+    {
+      "bytes": 38688,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record_r100/episodes_103.csv",
+      "sha256": "cd5ace9d802fa8188026df08137bc5d2398ac2040718700b1c54af4e2d4b354d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record_r100/episodes_103.csv"
+    },
+    {
+      "bytes": 925,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record_r100/summary.json",
+      "sha256": "473b3fca5f783fba98421dee17d1bc51bff8bd79dc4e334070c44881c0cad836",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record_r100/summary.json"
+    },
+    {
+      "bytes": 3500,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record_r100/summary_cuda0.json",
+      "sha256": "bf3ddd2c1d89d9355737a8ddb2b76c12c6ecaed78b4a50081b8a620638861be3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record_r100/summary_cuda0.json"
+    },
+    {
+      "bytes": 3499,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/record_r100/summary_cuda1.json",
+      "sha256": "f70d7c2eb2e4698fdd37c7a7cb4615657f72a6575a32e8bf7e9c0acf08c1c8d4",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/record_r100/summary_cuda1.json"
+    },
+    {
+      "bytes": 38522,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/episodes_record_record_00.csv",
+      "sha256": "5c75bc139816c60a73e8884168fa02286ac30feccaa55c7f730cd92971dc1888",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/episodes_record_record_00.csv"
+    },
+    {
+      "bytes": 38365,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/episodes_record_record_01.csv",
+      "sha256": "4ba19e52a556a5dfaa9ead2cbd25418f1138aa242710001e313065de4a1ad5f7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/episodes_record_record_01.csv"
+    },
+    {
+      "bytes": 38449,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/episodes_record_record_02.csv",
+      "sha256": "53ba154d8915fae66ed88b3790bfc4df4e7c51a4f2d0d9f673917d64f83c0581",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/episodes_record_record_02.csv"
+    },
+    {
+      "bytes": 38418,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/episodes_record_record_03.csv",
+      "sha256": "8254698e4ac47c8c15a076942d2f633c504ff0debc926de6ac4e20f551376fab",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/episodes_record_record_03.csv"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/replay_record_record_00.complete.json",
+      "sha256": "bb79e245ab7a86e8f92f9169ac352abc9f9c604cdb7770a3a1458a01fcb0d29b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/replay_record_record_00.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/replay_record_record_01.complete.json",
+      "sha256": "fbd1b20e5ecbc79aa40efd3df200ce842fa3a9c4807853446d80f0a131ee7573",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/replay_record_record_01.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/replay_record_record_02.complete.json",
+      "sha256": "720b849d25838aea2e654475bbb3fc306bd73c0440915c81b7921f4e79d22592",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/replay_record_record_02.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/replay_record_record_03.complete.json",
+      "sha256": "a086174673d06f37e3e609dad21a7a8dabf0de141abfc8dccb181d6f135cda26",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/replay_record_record_03.complete.json"
+    },
+    {
+      "bytes": 2523,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/summary_record_record_00.json",
+      "sha256": "83b3b1bdbf9b54c3bb2b0c9f2192d363b243794e3b44faab3c2959315bfe3cb7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/summary_record_record_00.json"
+    },
+    {
+      "bytes": 2526,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/summary_record_record_01.json",
+      "sha256": "50734abffa9f56532507f2d2a5f851068687f8682360b1d783363c8dbeb7256c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/summary_record_record_01.json"
+    },
+    {
+      "bytes": 2518,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/summary_record_record_02.json",
+      "sha256": "f76b448bfc5566d57dd12efb1830b54dcac0c13eb1c60ea261e522b9860bff9b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/summary_record_record_02.json"
+    },
+    {
+      "bytes": 2519,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay/summary_record_record_03.json",
+      "sha256": "005fae1add9d0bfcf4bc22eb4e3f001b5ee229d7ea1739b945f765b7237fe11a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay/summary_record_record_03.json"
+    },
+    {
+      "bytes": 38670,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_100.csv",
+      "sha256": "5365e1729321518a7642f55b73d322e39130fff5e4b95673bd077babddd834b9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_100.csv"
+    },
+    {
+      "bytes": 38773,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_101.csv",
+      "sha256": "a2b43da7772dc8d05867c215387a604385b00a210888236e4c559b7115aac47d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_101.csv"
+    },
+    {
+      "bytes": 38900,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_102.csv",
+      "sha256": "b7198469a68c6d8f0aa5ea308d6ea347dd4d66a9653a8a857d70e48378283fb4",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_102.csv"
+    },
+    {
+      "bytes": 38698,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_103.csv",
+      "sha256": "cfd6a8cb55631e987e60c1cc97ecad1f8d421c86e4a6c3bafba7066ca95ce82a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/episodes_record_r100_record_103.csv"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_100.complete.json",
+      "sha256": "b68686147932f098dbc81aeded6a9363f96f6c7c852868172135187554477d30",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_100.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_101.complete.json",
+      "sha256": "d3e4f801286bbebd10c88d0816080b03753932a2b93427116d24d532c3232d3b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_101.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_102.complete.json",
+      "sha256": "c68877f2a168a13b8debc87b35087ae40b290c72335124dcb2d4cb36c462d6d9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_102.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_103.complete.json",
+      "sha256": "a3ad339577f4d65cfc0b2c1a0ea9f3d41cce4dfd6d20fa461c3f4d42a4dc51c1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/replay_record_r100_record_103.complete.json"
+    },
+    {
+      "bytes": 2742,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_100.json",
+      "sha256": "10b268471169ab4fa036d05c6ac71001b484348dcef01a80ae985bfe7cfe6e8c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_100.json"
+    },
+    {
+      "bytes": 2747,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_101.json",
+      "sha256": "a4fd2a687b23c1ca4ec97b937723dad9872c9f967528c940c69150a2a8ef6f48",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_101.json"
+    },
+    {
+      "bytes": 2746,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_102.json",
+      "sha256": "4676326357ed34236b0212dbef459799d10162a829e1c18a2b158efab8e38fd7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_102.json"
+    },
+    {
+      "bytes": 2744,
+      "exported": "raw/pipeline/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_103.json",
+      "sha256": "224118fc79040815197588e206eabc2366fee4df5d523754af6e89152aec1d0f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s3_put_into_dense/replay_r100/summary_record_r100_record_103.json"
+    },
+    {
+      "bytes": 38610,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/record_r100/episodes_100.csv",
+      "sha256": "9b60e6b427447f7141c35275d4a07a465bcafddc0f00f3148e1191bb304aa338",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/record_r100/episodes_100.csv"
+    },
+    {
+      "bytes": 38759,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/record_r100/episodes_101.csv",
+      "sha256": "eada98dc24ea605bc5bf27a7f5bf43bc5c12407752862f2a2d46a7d11fdd935b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/record_r100/episodes_101.csv"
+    },
+    {
+      "bytes": 38808,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/record_r100/episodes_102.csv",
+      "sha256": "640e6204a3f764b693c7f79c99506d1b1bf5b41b46ae421e9209afa556a3613a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/record_r100/episodes_102.csv"
+    },
+    {
+      "bytes": 38671,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/record_r100/episodes_103.csv",
+      "sha256": "27f766fd616e42883bc2e60ca2bb4f777c53463a0b5a510486bde60b206454c6",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/record_r100/episodes_103.csv"
+    },
+    {
+      "bytes": 928,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/record_r100/summary.json",
+      "sha256": "d289801527410a943965eaeed3ee55961c21399490818db05e33fa9773348d2f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/record_r100/summary.json"
+    },
+    {
+      "bytes": 3507,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/record_r100/summary_cuda0.json",
+      "sha256": "3c8db7a329b843e1f41c269b3e481d8bca937ed4b84de41e918915a27aacd532",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/record_r100/summary_cuda0.json"
+    },
+    {
+      "bytes": 3506,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/record_r100/summary_cuda1.json",
+      "sha256": "2d2d0c9b50817db0733165684dc53e85ce8a708d85228adacb32560e40c73a29",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/record_r100/summary_cuda1.json"
+    },
+    {
+      "bytes": 38620,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_100.csv",
+      "sha256": "37bad0e4faddefd3321b4777b195843bddb79ded33c93a15ca8e2f76cc7fee96",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_100.csv"
+    },
+    {
+      "bytes": 38775,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_101.csv",
+      "sha256": "63274eb5451196e08a955462a3694a8a3a5714e27c47a9e237edc16225e32200",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_101.csv"
+    },
+    {
+      "bytes": 38828,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_102.csv",
+      "sha256": "7dcba1d24f97521a99f51d210975854789b50d07bc1068f0791db2f773adfc9f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_102.csv"
+    },
+    {
+      "bytes": 38679,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_103.csv",
+      "sha256": "9f2c62c89501d4b776ec0aec8de3148807abc3ce398271e0e8164afa1d9dceb5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/episodes_record_r100_record_103.csv"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_100.complete.json",
+      "sha256": "ac6a5966fad20caa7eba9eafd6f11a4a06ff4e3667bfa05a21c256e7d1c92c42",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_100.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_101.complete.json",
+      "sha256": "909bad39d51a2fa315c05c74583e485901a2982ffadc327a6e0dae8b685d9ce6",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_101.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_102.complete.json",
+      "sha256": "5c382bdefe39fba626c2f0b79e8a11ddeefab56c18a4724a5453e033f5714d5c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_102.complete.json"
+    },
+    {
+      "bytes": 90,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_103.complete.json",
+      "sha256": "c015cc91482d54d2dbebc7890a46554ea3ced6ca64ea4a4936399f5dc0b42f05",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/replay_record_r100_record_103.complete.json"
+    },
+    {
+      "bytes": 2743,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_100.json",
+      "sha256": "38715503b654a5013c881bf5c9c783de062dd37c1991d0bd0cecdff21aaa2e71",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_100.json"
+    },
+    {
+      "bytes": 2740,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_101.json",
+      "sha256": "a483a660204a0ba4d5b6a8f24ac04909bf612e0760056b3c1b4afde0af7da3f5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_101.json"
+    },
+    {
+      "bytes": 2740,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_102.json",
+      "sha256": "37f8f65b96c322f154740575679ac8a59a88848dc47e7de1cc865f7f0a948001",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_102.json"
+    },
+    {
+      "bytes": 2749,
+      "exported": "raw/pipeline/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_103.json",
+      "sha256": "8404cd6cd5bf1a091272596567139d56cd46f7b6b0cad467411e5e3a54359c48",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/banks/put_into/s6_put_into_binary/replay_r100/summary_record_r100_record_103.json"
+    },
+    {
+      "bytes": 33687,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/move_to/episodes_00.csv",
+      "sha256": "b68acc8c75113677253537ad942dbf0ec570eb65609cbe2a9387857e63a816c1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33693,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/move_to/episodes_01.csv",
+      "sha256": "7f7b9eacef2516dfeb28aaf9ddaaf3309561f2aa315c00f7ff107cbe5f7683b0",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 679,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/move_to/summary.json",
+      "sha256": "a47b81fcdc14de3b27d5e724d926f1149046fb004af69fd9326c782ac29a3924",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/move_to/summary.json"
+    },
+    {
+      "bytes": 2274,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/move_to/summary_cuda0.json",
+      "sha256": "6d8cabc2e1fecf6b06929f47baf63b24ab6963bc1aee8151bc90317a72993a39",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2271,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/move_to/summary_cuda1.json",
+      "sha256": "5c376f1df78ee40ae6256e4710d202dd6206952acc76b2df9f57ac219baec2b5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/pick_up/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31186,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/pick_up/episodes_01.csv",
+      "sha256": "393461d4b7f3b586b10b68c7f5478f947b2685624f918ee2c12a1e95fffb1d68",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 660,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/pick_up/summary.json",
+      "sha256": "b548baf8d43f817290cd9bc51e5ebed94c4482730ef9d5fe7d35762a3af15c76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/pick_up/summary.json"
+    },
+    {
+      "bytes": 1948,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/pick_up/summary_cuda0.json",
+      "sha256": "ca429f723c72b40a0afd9ce9e37272e7894002bf19f1f9e1d49c8e9f3fa95344",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1948,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/pick_up/summary_cuda1.json",
+      "sha256": "26486f08f6a2a8357ac24af13e1b66371918f8f4680d808b0662230720024eba",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38772,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/put_into/episodes_00.csv",
+      "sha256": "5996e710c8391b838763b91416a151dc7e0a8d94da5280d3bad0218beda6119a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38593,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/put_into/episodes_01.csv",
+      "sha256": "a66f7398c4b451e9a2f292d8a61a67e6faa13b7b5107e2c593a42bbdb578a046",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 920,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/put_into/summary.json",
+      "sha256": "ebbb8d6530350f20411ef275ffa6d54bdde9b26946d5b1cea25672fd4d25c204",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/put_into/summary.json"
+    },
+    {
+      "bytes": 2303,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/put_into/summary_cuda0.json",
+      "sha256": "6667778d46f14b6a14b6c2ccdf4f6a3fe7c0295bcb97f246deaa49fca39ab968",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2302,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_after/put_into/summary_cuda1.json",
+      "sha256": "cfec967ca1d480a7faa845b3f555ddd0924bcaedb57796b39173982a96db0d2e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_after/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33698,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/move_to/episodes_00.csv",
+      "sha256": "7aa4ec1c06c8ab2850ea31943f00e705c46355f0be2c8523d460d9eff30e28e9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33702,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/move_to/episodes_01.csv",
+      "sha256": "1e21e307693945c0f77f5bf305a7605c97619e7a481e49dc977da8dc03fd2dd3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 678,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/move_to/summary.json",
+      "sha256": "b074f4cb1ebeda0e32cac7415d1ebe74640c338d9d8ec9e3b09f19517be40332",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/move_to/summary.json"
+    },
+    {
+      "bytes": 2272,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/move_to/summary_cuda0.json",
+      "sha256": "168f38fdbe4dadf44566f66e68ed850e7fa104ffa1c79f170bd47a24edc029db",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2265,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/move_to/summary_cuda1.json",
+      "sha256": "a3476edb7f8a8b3a504f5baeb51aee9b9dad322134859c363fb7aa226bfef01e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/pick_up/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/pick_up/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 660,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/pick_up/summary.json",
+      "sha256": "b548baf8d43f817290cd9bc51e5ebed94c4482730ef9d5fe7d35762a3af15c76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/pick_up/summary.json"
+    },
+    {
+      "bytes": 1953,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/pick_up/summary_cuda0.json",
+      "sha256": "793b8ab94d5ffc4f4e27c526b0a52b6e38a7a0c46067bf2c0a230aaa05f78d2e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1953,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/pick_up/summary_cuda1.json",
+      "sha256": "9565b1ced3af5d6c4497a7308ad2a58ee167c4d7ab086dc52a917e62863baa5b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38779,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/put_into/episodes_00.csv",
+      "sha256": "34cd793b7f5f44b0272e41cef3eb1ad7e7bf00f27c05cefa0d9f637c8b75637a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38548,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/put_into/episodes_01.csv",
+      "sha256": "86de0a9c590eda71086035726ea58816b049ba13008c348d2c910b3025f7525d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 921,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/put_into/summary.json",
+      "sha256": "2e0059467b0e91fb3c83960ab9b5d7de7963e3b04011eae7e59782ff89cfe5e7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/put_into/summary.json"
+    },
+    {
+      "bytes": 2311,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/put_into/summary_cuda0.json",
+      "sha256": "899cafa017329fb5c76a20d01d0d93f1711e5bd8d749a3c7f93f54a2150b22dd",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2308,
+      "exported": "raw/pipeline/eval/composition_5af896659773bb52_before/put_into/summary_cuda1.json",
+      "sha256": "8b2d4770c34347ec9dbb95980abf5ce66d8597aa768f235d9148244ca1f6c7c1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/composition_5af896659773bb52_before/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33510,
+      "exported": "raw/pipeline/eval/final/move_to/episodes_00.csv",
+      "sha256": "875750eea819914bae74c2f6ccb3bd9d29d4fb5e7be8499241973bab81c2d8ae",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33555,
+      "exported": "raw/pipeline/eval/final/move_to/episodes_01.csv",
+      "sha256": "059352b4a67b27c2eb262c8550cc471ab2066c5ffee7c4e9561396228275b218",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 685,
+      "exported": "raw/pipeline/eval/final/move_to/summary.json",
+      "sha256": "04eecba51b82dba59ae5d874bac2e6e07987dd65a7de4d6e307cd06c655ae4ac",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/move_to/summary.json"
+    },
+    {
+      "bytes": 2269,
+      "exported": "raw/pipeline/eval/final/move_to/summary_cuda0.json",
+      "sha256": "21e6c96eb87452af9ffa226af128561940948876fef6b8f9b6931f1b3b352673",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2269,
+      "exported": "raw/pipeline/eval/final/move_to/summary_cuda1.json",
+      "sha256": "cee12f05777a7b2ac4677c28d6a013196780fe50c2e6690561a2b4a6fd363301",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31644,
+      "exported": "raw/pipeline/eval/final/pick_up/episodes_00.csv",
+      "sha256": "a7e5e670da17194398fed87f76a7094378dc1994aca326d4b975a73b1f3d5a6e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31622,
+      "exported": "raw/pipeline/eval/final/pick_up/episodes_01.csv",
+      "sha256": "a334109e85da831a38e3c9a637e6a615caeec5186ea9ebb230244a2584723c5e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 671,
+      "exported": "raw/pipeline/eval/final/pick_up/summary.json",
+      "sha256": "52bc586d83a423ff6cc87fcaa1dab7a041651f8a0df7000c11d1ea20497f8a15",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/pick_up/summary.json"
+    },
+    {
+      "bytes": 1955,
+      "exported": "raw/pipeline/eval/final/pick_up/summary_cuda0.json",
+      "sha256": "31e3e880d9b04eeedf2d7bfe2fdd55050ea0057d7e30a1645de3a8d94933ce75",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1954,
+      "exported": "raw/pipeline/eval/final/pick_up/summary_cuda1.json",
+      "sha256": "eb7accd10ec7cb1e9ba0434a76267668718d1afcfb20bd2fbe5192de88a391a2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38658,
+      "exported": "raw/pipeline/eval/final/put_into/episodes_00.csv",
+      "sha256": "50b656cf27dd1ba6e28a2469ca1a8c9843b27c2a602f44e49d68bd5e8f15990c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38587,
+      "exported": "raw/pipeline/eval/final/put_into/episodes_01.csv",
+      "sha256": "4b0b4e9668f7e4a0dc4826caf8834e6f56003e38dcef536f4c24e24e554630d7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 923,
+      "exported": "raw/pipeline/eval/final/put_into/summary.json",
+      "sha256": "bfaf9d16254e0e8bab0673dd7a7ebb8949f003ed29da6e6180eb8fa4cb945067",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into/summary.json"
+    },
+    {
+      "bytes": 2277,
+      "exported": "raw/pipeline/eval/final/put_into/summary_cuda0.json",
+      "sha256": "00407ef839631afeff174336b722da923c120f40456f81e1a900bdb1d8b2fdb2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2275,
+      "exported": "raw/pipeline/eval/final/put_into/summary_cuda1.json",
+      "sha256": "66e119af7434091453ad03e23a970ae8870fdd507649f65fe2d1777808b49c66",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 39569,
+      "exported": "raw/pipeline/eval/final/put_into_composed/episodes_00.csv",
+      "sha256": "f260371fe8568172ff4bd235dd98ef9019199aae2073fd390f2692b5112e2102",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into_composed/episodes_00.csv"
+    },
+    {
+      "bytes": 39327,
+      "exported": "raw/pipeline/eval/final/put_into_composed/episodes_01.csv",
+      "sha256": "71d00f851655b2672128f539ebaea754dbb35c47249fe3ae549a0a48ae976da4",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into_composed/episodes_01.csv"
+    },
+    {
+      "bytes": 922,
+      "exported": "raw/pipeline/eval/final/put_into_composed/summary.json",
+      "sha256": "5ee6a33edf2a1e67545996dbe22b0f2e00733e338bd09307b1feae97f963f495",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into_composed/summary.json"
+    },
+    {
+      "bytes": 2282,
+      "exported": "raw/pipeline/eval/final/put_into_composed/summary_cuda0.json",
+      "sha256": "8a7d1cf3b83699c92208d07663827f921e057dc917fe71b7e56246161f2bf272",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into_composed/summary_cuda0.json"
+    },
+    {
+      "bytes": 2289,
+      "exported": "raw/pipeline/eval/final/put_into_composed/summary_cuda1.json",
+      "sha256": "056f10529c18c2458ac48b2bf6587fe02540c386ac952fc9058717ea30890296",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/final/put_into_composed/summary_cuda1.json"
+    },
+    {
+      "bytes": 33478,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/move_to/episodes_00.csv",
+      "sha256": "c284137e82f6c4ecf87cf91e02a8cc3b15168ef1b6ec451a67866d0882f9a99f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33523,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/move_to/episodes_01.csv",
+      "sha256": "9945154eef79b61d8d89e1172424f8f5893357fb3281b032608ad08ea37c9eca",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 680,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/move_to/summary.json",
+      "sha256": "23bfb51eb352c5e171fb505a6ca3c6b33d22492e5406e83f74b9e85fbb3dfebd",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/move_to/summary.json"
+    },
+    {
+      "bytes": 2284,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/move_to/summary_cuda0.json",
+      "sha256": "7ca486dbe89e731c50eb9b0982e9fb43b5e4f5ef87d1d197a6fc2c577b535e44",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2282,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/move_to/summary_cuda1.json",
+      "sha256": "63d393cd393769a61bb407f9b1428c11db2e1610378084d6486135dc508c2cfd",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31498,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/pick_up/episodes_00.csv",
+      "sha256": "e79fae81f4e54ade16c5a2b1beab1204cdc47368c445a7808b08f6e66061fec1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31521,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/pick_up/episodes_01.csv",
+      "sha256": "5be8c47ca8094ce9b57d8413ccebca17c1cebc000c1bebbb7c2c9e2830524a41",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 675,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/pick_up/summary.json",
+      "sha256": "4271949deebadcd82d2e6974b0816b9da9b62cb2f9d0a9e27435a88f72878402",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/pick_up/summary.json"
+    },
+    {
+      "bytes": 1975,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/pick_up/summary_cuda0.json",
+      "sha256": "7047bb1847dd10b903455e7dc937da9acc1f152a0a2727dcb29d9bcc1cca7fdb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1970,
+      "exported": "raw/pipeline/eval/s2_pick_up_dense_policy/pick_up/summary_cuda1.json",
+      "sha256": "ae6c807385c266364e78ef892142560483cac26993896225f13ffb1c94932fe9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s2_pick_up_dense_policy/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 33686,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/move_to/episodes_00.csv",
+      "sha256": "87d3bc51bac31f6c3f6fca45e61a3b6f8bbb0012dadf8f9f379d8a82ef599775",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33665,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/move_to/episodes_01.csv",
+      "sha256": "e3f0bd6b464fdba47ae32e98f1c0daa46d114fe84e823891cff47e14a1ac3c62",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 679,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/move_to/summary.json",
+      "sha256": "418083786d7f625859a64dd27e10820e3fc970d97c7f930ec8f41359a40ad8d3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/move_to/summary.json"
+    },
+    {
+      "bytes": 2262,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/move_to/summary_cuda0.json",
+      "sha256": "d0ed6d3081eb6d58897aed80f4d891c4f08305c8419e1b3605ed7600dd61162d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2271,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/move_to/summary_cuda1.json",
+      "sha256": "ebfbef854a1ecd211e8c02f995336163491f22773898dd73a71e342a74eba9d1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/pick_up/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/pick_up/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 660,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/pick_up/summary.json",
+      "sha256": "b548baf8d43f817290cd9bc51e5ebed94c4482730ef9d5fe7d35762a3af15c76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/pick_up/summary.json"
+    },
+    {
+      "bytes": 1941,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/pick_up/summary_cuda0.json",
+      "sha256": "a12cef80c373db25f9dd70bb3054d112fa052f06ba0323d130ac43ff2fe78516",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1941,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/pick_up/summary_cuda1.json",
+      "sha256": "2b8c8a2471474a10fa5618efbcee2f116ddd684dc3e7c0ae14d3565048667774",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38519,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/put_into/episodes_00.csv",
+      "sha256": "79b34b66adf02588b9d4d5819447a4ab05a90ca98514982971699b63a3a352d5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38385,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/put_into/episodes_01.csv",
+      "sha256": "c98bd759c27577d88764f6d50bed3b594ec8165883593a0efb716130768bff95",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 917,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/put_into/summary.json",
+      "sha256": "6222b66a5cb967fc6e775092c0f1d6aae813ef700f06b2e226c35e344c039170",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/put_into/summary.json"
+    },
+    {
+      "bytes": 2294,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/put_into/summary_cuda0.json",
+      "sha256": "e856708fc7adae1a76b39d1e262058cd857a275e70ffe00b5188306e5f6b6105",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2295,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_policy/put_into/summary_cuda1.json",
+      "sha256": "50af85f001066f6c3f3bbca29c124f503a52ab3690f3ed1163d2ccd1146dae4c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_policy/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33629,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/move_to/episodes_00.csv",
+      "sha256": "bb0d328b1cafc3c66fcc2e84fe5d92080577a21f21abec60ede7c93eeb9b9be2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33638,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/move_to/episodes_01.csv",
+      "sha256": "24ee91bb6de9bb8df41818d37b9d2b2cba22674a95a14d29b4e57c5a68245451",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 680,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/move_to/summary.json",
+      "sha256": "c296e2a95c7cccefbc3bfe8a0a19f7d0fb4a9a89a316b195ef9846cd7d3b756c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/move_to/summary.json"
+    },
+    {
+      "bytes": 2277,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/move_to/summary_cuda0.json",
+      "sha256": "2c332962bd319dac66b5e815044f6d1153048d4139a0773f08c88d5b7385cdad",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2272,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/move_to/summary_cuda1.json",
+      "sha256": "5ce8b503b2ef20fa1802439a17b9c947d6e926096cd781de9029995f52e96831",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31285,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/pick_up/episodes_00.csv",
+      "sha256": "be9fc8d5d21bd6e06275bdb2965894b794c1111a2d2de40a81eeb27f2af809dc",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31308,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/pick_up/episodes_01.csv",
+      "sha256": "b2ff870942e0a07c69fcd3dbec80f781a18d6cf037b45356a44fbaf248dded20",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 664,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/pick_up/summary.json",
+      "sha256": "c82dd5b8d7eca90683a7d76c66e7a078e88661a2f3c6a09a0f2dd8df7f54f770",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/pick_up/summary.json"
+    },
+    {
+      "bytes": 1950,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/pick_up/summary_cuda0.json",
+      "sha256": "03a153bda43b9eba91d003edde72bfa39951d5970bf4c1fc357934a828e7a2fa",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1940,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/pick_up/summary_cuda1.json",
+      "sha256": "d61031a2f76eaa59d3a28a5026e00a47ca0eb699ca7000139e4deed49e1463bb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38720,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/put_into/episodes_00.csv",
+      "sha256": "e663cf08259f48e86f53ed429b3f7ca725a5c5d34a2d6d0f87e8514cde114871",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38560,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/put_into/episodes_01.csv",
+      "sha256": "3da33bcf15da48e39ef9be2c36f284b25b11ab13b74516622dd87ebf1e454b98",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 918,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/put_into/summary.json",
+      "sha256": "c79d524c07362258032fb1c4f36fed7f99d26c028d36529fd78aeb0877b0bf44",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/put_into/summary.json"
+    },
+    {
+      "bytes": 2289,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/put_into/summary_cuda0.json",
+      "sha256": "c764aa6418490cec2ff87e2cf30c91b36d057781c69d235e58bdbcb3fc110a6e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2288,
+      "exported": "raw/pipeline/eval/s3_put_into_dense_sil1_candidate/put_into/summary_cuda1.json",
+      "sha256": "5ba5e76308df4a36a06ebaaa6262fdeab35403e6214973344637249df0f152a9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s3_put_into_dense_sil1_candidate/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33424,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/move_to/episodes_00.csv",
+      "sha256": "0fa0a1fb25bf8ecfb7050d0523306d7aa0d5084518f05b580eb2f33037895b4a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33431,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/move_to/episodes_01.csv",
+      "sha256": "891eb402de4e0ffd97117592d39eb36a7ebb2be91e8187583b898eca4cb1e9d6",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 685,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/move_to/summary.json",
+      "sha256": "211e2d568597e0bab6b7736fd34b6b1cb4ba4d202addc452dea87299e478cb2d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/move_to/summary.json"
+    },
+    {
+      "bytes": 2290,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/move_to/summary_cuda0.json",
+      "sha256": "5f479b318a623f963700daadbaefdeedfb0d807717727cfe562b9a89e38b3fab",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2288,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/move_to/summary_cuda1.json",
+      "sha256": "4909bd272fe900649250dea1d8a75a1e0e6e2b1053c03e38cfeaa86b7b3304de",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/pick_up/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/pick_up/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 660,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/pick_up/summary.json",
+      "sha256": "b548baf8d43f817290cd9bc51e5ebed94c4482730ef9d5fe7d35762a3af15c76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/pick_up/summary.json"
+    },
+    {
+      "bytes": 1941,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/pick_up/summary_cuda0.json",
+      "sha256": "46bb2584d3f7347db1dfaacf9e5cbc33af543f89dbdbddc10bdd735c9a5ddf4b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1941,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/pick_up/summary_cuda1.json",
+      "sha256": "57992f324ef80b3f5c2aeb3d7d4d686a21f6a7ee07954daaa745c2f5373f6856",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38653,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/put_into/episodes_00.csv",
+      "sha256": "aa95ed4c4b439e4a7d2168ebec03df37a50b0901bca77057a64384638da433de",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38517,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/put_into/episodes_01.csv",
+      "sha256": "489043e135d57b7cf6232e71eb9ac30408775a5a0d2b49cd81a934c1c631adfb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 906,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/put_into/summary.json",
+      "sha256": "b27caee8504adea64e4d1df6bb92943c05bd92f5085b1abb0298d716447d4cf6",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/put_into/summary.json"
+    },
+    {
+      "bytes": 2280,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/put_into/summary_cuda0.json",
+      "sha256": "3e14340e39b89f566f06a2eb74ac45b3ef1d2d6eef6799731d8eebb7f276a404",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2277,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_policy/put_into/summary_cuda1.json",
+      "sha256": "65c8cac3fc48a57ffdbd3d2582f187e88576db0477385e9ee2f0e92a090c0e08",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_policy/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33527,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/move_to/episodes_00.csv",
+      "sha256": "a3166e70fab8da4ab1bf60fdaf7f651b50b7a25b9ab5812864b307b563531930",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33506,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/move_to/episodes_01.csv",
+      "sha256": "c194f0203c1d95137bf4cc987061001882e97c2a8c515c4e62e4a2d7eee7cc76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 685,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/move_to/summary.json",
+      "sha256": "d8b4d24650d3135afdd42eb4f66475d8d1407e4b7aaf9a646b39a76b715d82b8",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/move_to/summary.json"
+    },
+    {
+      "bytes": 2289,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/move_to/summary_cuda0.json",
+      "sha256": "0f32254abaa384931ef2f77ebe05fdbb76aca5d1f976e8860b3937feffb826fd",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2286,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/move_to/summary_cuda1.json",
+      "sha256": "77fe704921552039a04abde2add0eebbb574a11bcb8a09d541d71107921b244d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31170,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/pick_up/episodes_00.csv",
+      "sha256": "9eb20e4f6baa1f38a949e7dd64e26699608ca1801b329a7096bfc059e7c85acb",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31203,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/pick_up/episodes_01.csv",
+      "sha256": "a3ade8f0f86ca015fa0dd6340708da204b6bacdc924642da5c2a38da0c087f09",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 664,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/pick_up/summary.json",
+      "sha256": "aab31dfbbd7fcf534ae50eaab52859904d0ebf35a7cbf5d6597a4c4f8cca9156",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/pick_up/summary.json"
+    },
+    {
+      "bytes": 1940,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/pick_up/summary_cuda0.json",
+      "sha256": "4426916b8150f53de31c7c6f6c0a1de280a0429e0f560442c2ffb79ee7a0bdf1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1950,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/pick_up/summary_cuda1.json",
+      "sha256": "5ed024efc63252ab83a934f23640e26c84bd9a98644df69c47bdf115672e5f6f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38628,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/put_into/episodes_00.csv",
+      "sha256": "16cbbadb41e2214578b32fecedab6b7e5ea8cfd774b97c6fd447ed0d651c2c1e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38490,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/put_into/episodes_01.csv",
+      "sha256": "82552df1e8fc04325c4f60ee788ff188b34d12a49ef75ada5b6a3cac9f308ea8",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 906,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/put_into/summary.json",
+      "sha256": "2151739ab61e3f61209de5ea0377569fb284dd16c963efa682b4d383f57ea266",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/put_into/summary.json"
+    },
+    {
+      "bytes": 2279,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/put_into/summary_cuda0.json",
+      "sha256": "030e970bd90ed02670b8c8134a3fccc3f6f5019bfe92aaa362bfc05414c7b6a9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2280,
+      "exported": "raw/pipeline/eval/s4_move_to_binary_sil1_candidate/put_into/summary_cuda1.json",
+      "sha256": "787deed70fc9a1c221902fe38015a56ff1d77013bc536e281b165a5193330e80",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s4_move_to_binary_sil1_candidate/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33703,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/move_to/episodes_00.csv",
+      "sha256": "584eb6dd46178ae143a9ef0efab9b4fb56bf8dc541e78a1e09c113edd993f0a0",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33703,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/move_to/episodes_01.csv",
+      "sha256": "584eb6dd46178ae143a9ef0efab9b4fb56bf8dc541e78a1e09c113edd993f0a0",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 674,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/move_to/summary.json",
+      "sha256": "cca5c560d5e820c7f145622e6f403fd84816780d67ba94e9b7ad72b12ceb4bb5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/move_to/summary.json"
+    },
+    {
+      "bytes": 2244,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/move_to/summary_cuda0.json",
+      "sha256": "ad0e2ac96200a624fc129236aad74f5e5ee9ef3075d77d1e2b5519bda2a7368d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2244,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/move_to/summary_cuda1.json",
+      "sha256": "1ce1737cece992373e7ee4b7f7c8f5b4bd3d3606fe989f6bc42a2fb36eba6ff8",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/pick_up/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/pick_up/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 669,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/pick_up/summary.json",
+      "sha256": "7018caad50e5f051a99aa0e8bdb9b8fe8ebfb0dbee8a1da87ead5a178f9d2d49",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/pick_up/summary.json"
+    },
+    {
+      "bytes": 1950,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/pick_up/summary_cuda0.json",
+      "sha256": "9f734edc3e8b926ec4412515860ad23134d0e8adef6ffb19a4935010c38ce244",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1950,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/pick_up/summary_cuda1.json",
+      "sha256": "2689cf745b6346b9c55db8d0cbdd89fd08f0eba075dfa466e65c2a01a44ef57b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38977,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/put_into/episodes_00.csv",
+      "sha256": "9fddbb8afad81105cfdda4b7a02c76492809eb73dbfbf97f1d3d1cafddabfa28",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38733,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/put_into/episodes_01.csv",
+      "sha256": "0fd581647be522abfe7865288b1dbbfdc533846251b881c67794cd37a8291bef",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 905,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/put_into/summary.json",
+      "sha256": "2dcad039ffefc32da48bb7f81a0262492c3935c54c09f5593e5b920fbce876c5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/put_into/summary.json"
+    },
+    {
+      "bytes": 2278,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/put_into/summary_cuda0.json",
+      "sha256": "f25ae4fa57a429d755ae65a65def1d25563257f6368f29006a8b85e43adbcb2a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2278,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_policy/put_into/summary_cuda1.json",
+      "sha256": "e0963197e8b83256f9a42bec39d3172a70bcc51447f61a2ec3d2c462eb932455",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_policy/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33552,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/move_to/episodes_00.csv",
+      "sha256": "55b707d7608cd37cede3146e845b89ffd76bff483567de23676a2d155b4c8a92",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33543,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/move_to/episodes_01.csv",
+      "sha256": "d96273442f620bddbbfc34d5cbdabda5f4b04c6b173b29e6b4a4e9e33bc5735a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 680,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/move_to/summary.json",
+      "sha256": "e3434e3f56a2cbb6c0668e6153901a656c092fdfe8f38355ef3ec88075b45a1e",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/move_to/summary.json"
+    },
+    {
+      "bytes": 2281,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/move_to/summary_cuda0.json",
+      "sha256": "d86901af495f117d1a47b5d4de9a2472c312a5ea8bafc62a1ee4476f8684c337",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2283,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/move_to/summary_cuda1.json",
+      "sha256": "d0580eafb115501d35b7d87c47d3f6ee3bac1f1b99fb6a343f6f18257592ee97",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31138,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/pick_up/episodes_00.csv",
+      "sha256": "74c9477d8154cd5faffb38539c5f6e1f473822959d7bb1d7a57ce08623c7a720",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/pick_up/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 669,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/pick_up/summary.json",
+      "sha256": "7018caad50e5f051a99aa0e8bdb9b8fe8ebfb0dbee8a1da87ead5a178f9d2d49",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/pick_up/summary.json"
+    },
+    {
+      "bytes": 1949,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/pick_up/summary_cuda0.json",
+      "sha256": "f98759990802b07e8d243a3bdc636220a9fe2049b476b6badec0abeffcb7cc7c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1949,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/pick_up/summary_cuda1.json",
+      "sha256": "581ffb508e2c64c0423bea832162c55e1281681cfd8b456b72cfc90e9cb02249",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38697,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/put_into/episodes_00.csv",
+      "sha256": "4bc5150dd49d29959e800c240df47b3ed9936dfd1771157cf74cef2a545c8454",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38492,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/put_into/episodes_01.csv",
+      "sha256": "d5c8259c32f8804996ff95300bef1d01a05406f84efd5a98686fa027f12593a6",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 906,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/put_into/summary.json",
+      "sha256": "9d45b142de6edc4cc181219a89cd882bf95c68270550bfc4a03d3f09cb67df76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/put_into/summary.json"
+    },
+    {
+      "bytes": 2278,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/put_into/summary_cuda0.json",
+      "sha256": "3ff6dcb350d7be0510320c23229a76259725025274e0f43400163995b5c8d492",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2279,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil1_candidate/put_into/summary_cuda1.json",
+      "sha256": "33bf396bbf87042d6778664ed1d79a4312e3175a2a4698163027adbe360334a2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil1_candidate/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33529,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/move_to/episodes_00.csv",
+      "sha256": "c41c3207173cd275f7ee9e45384e7e2c3182016ff2205274f2395a68a208e679",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33505,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/move_to/episodes_01.csv",
+      "sha256": "8f3420fd49eb9cb16760df9364e3209e9c45b3bffc6eae17ab468ad40719c4c3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 680,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/move_to/summary.json",
+      "sha256": "4771b2c3b234bac6a7dc8943251ec39062dcf0ad58ea532cbeffbc86dc1bd81f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/move_to/summary.json"
+    },
+    {
+      "bytes": 2284,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/move_to/summary_cuda0.json",
+      "sha256": "68225f2b3e1425e7c81468d21759951a7141c2d19702095874e879a995ad8b85",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2282,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/move_to/summary_cuda1.json",
+      "sha256": "b43bf12ac8a495db54e934ed2bfc79ad2405f41d7691819fb528ed539d6f47b9",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31202,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/pick_up/episodes_00.csv",
+      "sha256": "a5509b2624026ef86b45de0f1a191e409add0216f2acd17124a78bb2ac0797a3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31209,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/pick_up/episodes_01.csv",
+      "sha256": "8ef02ddeef0613b66dc9c126d4a4dd99781c1253f3fdeee1378d1ee64840608c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 673,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/pick_up/summary.json",
+      "sha256": "9133c99029ee7fcf89398b7206140793ef15ade4b712174b57c620af17fc60e3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/pick_up/summary.json"
+    },
+    {
+      "bytes": 1958,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/pick_up/summary_cuda0.json",
+      "sha256": "8e638ecf5d32ec8b0bf0ced7a415da945dc72f3cfba28628e49c2ef3fcd62768",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1949,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/pick_up/summary_cuda1.json",
+      "sha256": "c7c0789d36ace0098662bf7fb1a9c4118fa3a7f215fb44581c7ab6f90e84f5fc",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38644,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/put_into/episodes_00.csv",
+      "sha256": "f803d6d761efd804f6b21ba14faa141d668e154957cab63aed6f04785027f7d5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38484,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/put_into/episodes_01.csv",
+      "sha256": "eb9baef911618bfab60998996d727090217f92ce086465569d03fecffd787589",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 906,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/put_into/summary.json",
+      "sha256": "2a01e4f55b01c48f0021280b09453e131277a4050885070ab4901a49a9a752e6",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/put_into/summary.json"
+    },
+    {
+      "bytes": 2277,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/put_into/summary_cuda0.json",
+      "sha256": "71220ca64138646d677477a3d387c6f668aa8ce54af1cd3ebef83456cca76717",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2279,
+      "exported": "raw/pipeline/eval/s5_pick_up_binary_sil2_candidate/put_into/summary_cuda1.json",
+      "sha256": "ccadff49997c790885afe14439a7b6f14c8fa8392d546a5f748457658f2a8eb8",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s5_pick_up_binary_sil2_candidate/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33697,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/move_to/episodes_00.csv",
+      "sha256": "60e99ade2738f76d3f2b1a892f5281a8d12659b001903d3f4abc7f9f377c5e2c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33700,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/move_to/episodes_01.csv",
+      "sha256": "1da523b54973ac2380f1ee34809cca25a48bf88f9de2e969b5d56fad38e1f405",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 678,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/move_to/summary.json",
+      "sha256": "89bb467bf4f96d3a12b08a1fc78dcbb8c1306df053a17d115c9330b3f387070f",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/move_to/summary.json"
+    },
+    {
+      "bytes": 2259,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/move_to/summary_cuda0.json",
+      "sha256": "0637f340d242671308c543ece30d6a43d16f802e341867dd5a30aefa1197653a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2260,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/move_to/summary_cuda1.json",
+      "sha256": "54b4fa26b5706fbfe5162083a9d529c689dc1f3d11b9333c745ae4ebc4634bc7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/pick_up/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/pick_up/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 660,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/pick_up/summary.json",
+      "sha256": "b548baf8d43f817290cd9bc51e5ebed94c4482730ef9d5fe7d35762a3af15c76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/pick_up/summary.json"
+    },
+    {
+      "bytes": 1943,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/pick_up/summary_cuda0.json",
+      "sha256": "c03bc357e38e2283abf67e5bad6977a502d3ad9425d0a1ef122c0bbc0c7ddadc",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1943,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/pick_up/summary_cuda1.json",
+      "sha256": "cf2a8a12fd76e6af01c41225740441c534239669843c1e54dcd8cabc711b1281",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38748,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/put_into/episodes_00.csv",
+      "sha256": "aacce5f7bf02c7463e661a39f3dd46c225e0fdefba42adf2dce17908cfda0765",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38552,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/put_into/episodes_01.csv",
+      "sha256": "0ff33c40b911198c31cc234427e3f0f734c5dda55878f1709543759559795d4b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 921,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/put_into/summary.json",
+      "sha256": "ce1707b1f9bdeb39e80a786bcfa291c09a560595ccb739fda3aae26c1fc184fe",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/put_into/summary.json"
+    },
+    {
+      "bytes": 2301,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/put_into/summary_cuda0.json",
+      "sha256": "deac6e78d559bbb20e5c0a49141152e7fdced5acbd1930772d034e6c1b1916b7",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2298,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_policy/put_into/summary_cuda1.json",
+      "sha256": "07f522168924ee976b53895eead13897b7b3f7a4facbfc525197861d365212dc",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_policy/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 33697,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/move_to/episodes_00.csv",
+      "sha256": "604f07e8d986278cfb22b8eb8915c0bf458533b05751240c29511d24ef8cb746",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/move_to/episodes_00.csv"
+    },
+    {
+      "bytes": 33697,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/move_to/episodes_01.csv",
+      "sha256": "f239eddcbb81a5e1f68dc770f8c75538dca5d7a88df14dcc2a1c1fd4e7cb0ba8",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/move_to/episodes_01.csv"
+    },
+    {
+      "bytes": 679,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/move_to/summary.json",
+      "sha256": "5fec4a7d305e6acf56cc282795367a535ebe79e8d3c592aed41d016bcaf6edfa",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/move_to/summary.json"
+    },
+    {
+      "bytes": 2259,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/move_to/summary_cuda0.json",
+      "sha256": "7a035aa085c427acfededa504f805a10b866030afbe53fa15bae0603f4ad3297",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/move_to/summary_cuda0.json"
+    },
+    {
+      "bytes": 2256,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/move_to/summary_cuda1.json",
+      "sha256": "34edafd47f5ba3d7d14bef014da79ec0dd06437627ba31bef6ec05f2472eeed2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/move_to/summary_cuda1.json"
+    },
+    {
+      "bytes": 31135,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/pick_up/episodes_00.csv",
+      "sha256": "ae66abb21accea0522a7986407ee47b952404497ed1471e92c1475befbf73cde",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/pick_up/episodes_00.csv"
+    },
+    {
+      "bytes": 31175,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/pick_up/episodes_01.csv",
+      "sha256": "611fc77103a4e66fb97f6cb8174350f9ea08a4e0a20fd9ff7f8932dcffe7d380",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/pick_up/episodes_01.csv"
+    },
+    {
+      "bytes": 660,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/pick_up/summary.json",
+      "sha256": "b548baf8d43f817290cd9bc51e5ebed94c4482730ef9d5fe7d35762a3af15c76",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/pick_up/summary.json"
+    },
+    {
+      "bytes": 1942,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/pick_up/summary_cuda0.json",
+      "sha256": "cd360dcaf2b44ef1c97109c163c951c19b03d79b3c6b60655f8f5a69520fd54b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/pick_up/summary_cuda0.json"
+    },
+    {
+      "bytes": 1942,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/pick_up/summary_cuda1.json",
+      "sha256": "1a9bc2cf08a80a3187124b25681f911488e78ea7e4faec22b88ddccef5c97463",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/pick_up/summary_cuda1.json"
+    },
+    {
+      "bytes": 38829,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/put_into/episodes_00.csv",
+      "sha256": "4b236d456475eec8bc0600c3de978fcbf9fdbe67e178d9b794f11acf5dfd0496",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/put_into/episodes_00.csv"
+    },
+    {
+      "bytes": 38621,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/put_into/episodes_01.csv",
+      "sha256": "d70cc9be10f15e3507d02dc3e55402546cf51c999c48f78c505f70fa06127c01",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/put_into/episodes_01.csv"
+    },
+    {
+      "bytes": 921,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/put_into/summary.json",
+      "sha256": "798698e395b302e1ef6f170c7fd8de79481b0fa11bb3c9060f64a48f55a11cea",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/put_into/summary.json"
+    },
+    {
+      "bytes": 2296,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/put_into/summary_cuda0.json",
+      "sha256": "b504ab12e0c4037a83957de064ce88c6480a00b12d57ddf3ee8f4df2f981d568",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/put_into/summary_cuda0.json"
+    },
+    {
+      "bytes": 2297,
+      "exported": "raw/pipeline/eval/s6_put_into_binary_sil1_candidate/put_into/summary_cuda1.json",
+      "sha256": "802bb7e7193826f6c5971cca0b4b317f372daada36aa736f9b689d1f5167a39b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/eval/s6_put_into_binary_sil1_candidate/put_into/summary_cuda1.json"
+    },
+    {
+      "bytes": 7897,
+      "exported": "raw/pipeline/sil/s3_put_into_dense_sil1/dataset/dataset.json",
+      "sha256": "9fe225bc861f8e372ea7a90c903dc62e6effb2d33e62d76d6f765d1f91ce5f4c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s3_put_into_dense_sil1/dataset/dataset.json"
+    },
+    {
+      "bytes": 8427,
+      "exported": "raw/pipeline/sil/s3_put_into_dense_sil1/refreshed/dataset.json",
+      "sha256": "616207422a698286b610904ef5d5886300cb01504fe0e93148afdff92dde5478",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s3_put_into_dense_sil1/refreshed/dataset.json"
+    },
+    {
+      "bytes": 3749,
+      "exported": "raw/pipeline/sil/s3_put_into_dense_sil1/refreshed/refresh.json",
+      "sha256": "93ed930658e1368c6fef4e8021a682553c240e88e86c21362c79405bd45a124c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s3_put_into_dense_sil1/refreshed/refresh.json"
+    },
+    {
+      "bytes": 21830,
+      "exported": "raw/pipeline/sil/s3_put_into_dense_sil1/sft/sft_report.json",
+      "sha256": "93f4f1acce66afcc4a88b1b01531fdf5c8fe01a1243dd364b801b1a08a8aef46",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s3_put_into_dense_sil1/sft/sft_report.json"
+    },
+    {
+      "bytes": 7906,
+      "exported": "raw/pipeline/sil/s4_move_to_binary_sil1/dataset/dataset.json",
+      "sha256": "966b7e15860d0a8e01b50b27a42127c9fe1e596ffca5f70fa96b312035af8b94",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s4_move_to_binary_sil1/dataset/dataset.json"
+    },
+    {
+      "bytes": 8436,
+      "exported": "raw/pipeline/sil/s4_move_to_binary_sil1/refreshed/dataset.json",
+      "sha256": "b71d62d8836a56429d3af76e353ece797349e9a03b72b9174fb5e8dd3298e74b",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s4_move_to_binary_sil1/refreshed/dataset.json"
+    },
+    {
+      "bytes": 3782,
+      "exported": "raw/pipeline/sil/s4_move_to_binary_sil1/refreshed/refresh.json",
+      "sha256": "e15a01901078f10222c612422480179291571e53a6fd3c5b1fa88e426496d2ce",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s4_move_to_binary_sil1/refreshed/refresh.json"
+    },
+    {
+      "bytes": 21833,
+      "exported": "raw/pipeline/sil/s4_move_to_binary_sil1/sft/sft_report.json",
+      "sha256": "f210919c99552e42b5512e62253e2c1a09a0d5ae1a626f2febc9e866805603ba",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s4_move_to_binary_sil1/sft/sft_report.json"
+    },
+    {
+      "bytes": 7906,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil1/dataset/dataset.json",
+      "sha256": "966b7e15860d0a8e01b50b27a42127c9fe1e596ffca5f70fa96b312035af8b94",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil1/dataset/dataset.json"
+    },
+    {
+      "bytes": 8436,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil1/refreshed/dataset.json",
+      "sha256": "ab158f7a4763cb16eee569ab2f0f7d06eea12a096b319835cabda34cd3691d2d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil1/refreshed/dataset.json"
+    },
+    {
+      "bytes": 3782,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil1/refreshed/refresh.json",
+      "sha256": "8f972abef3c6b72e0abe84c5038fb87d961b1f5496b499be3c312925e4c47cab",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil1/refreshed/refresh.json"
+    },
+    {
+      "bytes": 21836,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil1/sft/sft_report.json",
+      "sha256": "e745c16c88d11fe69c5541803fd0c5754b908361083a1a66da496f967294a065",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil1/sft/sft_report.json"
+    },
+    {
+      "bytes": 7906,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil2/dataset/dataset.json",
+      "sha256": "966b7e15860d0a8e01b50b27a42127c9fe1e596ffca5f70fa96b312035af8b94",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/dataset/dataset.json"
+    },
+    {
+      "bytes": 8427,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil2/refreshed/dataset.json",
+      "sha256": "e0211e16ad8c94bb412167b92e1289f8176606b76fab23ecb2bfb5cdb967d154",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/refreshed/dataset.json"
+    },
+    {
+      "bytes": 3773,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil2/refreshed/refresh.json",
+      "sha256": "b422a9a6d7b49d98d2c110fd9d0dbee9a49860b546a38197bbc514747d584710",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/refreshed/refresh.json"
+    },
+    {
+      "bytes": 21820,
+      "exported": "raw/pipeline/sil/s5_pick_up_binary_sil2/sft/sft_report.json",
+      "sha256": "802f96a15798d64117894c50f0de012f8fe77c71ade91a7807a3f79449b06def",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s5_pick_up_binary_sil2/sft/sft_report.json"
+    },
+    {
+      "bytes": 8089,
+      "exported": "raw/pipeline/sil/s6_put_into_binary_sil1/dataset/dataset.json",
+      "sha256": "e56e846f33a5789e3f85c9e169a6ebea3569c04d9116a422f5fb9d48e36e829c",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s6_put_into_binary_sil1/dataset/dataset.json"
+    },
+    {
+      "bytes": 8622,
+      "exported": "raw/pipeline/sil/s6_put_into_binary_sil1/refreshed/dataset.json",
+      "sha256": "46e90e162ad2c0bf391c9689e84e7cc4f07f99c83f5f1450c3cbbcc8d06bcfe5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s6_put_into_binary_sil1/refreshed/dataset.json"
+    },
+    {
+      "bytes": 3840,
+      "exported": "raw/pipeline/sil/s6_put_into_binary_sil1/refreshed/refresh.json",
+      "sha256": "c9f03cec3eac1ed17ce519d7d2f546a15ce439465557e0e8ea29766fbacb9c44",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s6_put_into_binary_sil1/refreshed/refresh.json"
+    },
+    {
+      "bytes": 22028,
+      "exported": "raw/pipeline/sil/s6_put_into_binary_sil1/sft/sft_report.json",
+      "sha256": "bef5690ef41f7e50b792eb510831d644268b18d53489555aeca48a7e6f0ad998",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/sil/s6_put_into_binary_sil1/sft/sft_report.json"
+    },
+    {
+      "bytes": 38534,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/after/put_into_composed/episodes_00.csv",
+      "sha256": "ae5e8b7aebc27b8f5bcc77b0b6eed652cbd74591200b4903e57f8cf7e5e27642",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/after/put_into_composed/episodes_00.csv"
+    },
+    {
+      "bytes": 38374,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/after/put_into_composed/episodes_01.csv",
+      "sha256": "7dad0172e0ab74133522233a5b0bdb4eae121fa2601174f325820a175bd9dd72",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/after/put_into_composed/episodes_01.csv"
+    },
+    {
+      "bytes": 913,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/after/put_into_composed/summary.json",
+      "sha256": "c6e92595c24fba357aab39a2a11093799ae0b9b75bb439fda1b584fed5f62d2a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/after/put_into_composed/summary.json"
+    },
+    {
+      "bytes": 2298,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/after/put_into_composed/summary_cuda0.json",
+      "sha256": "90873353fe228e33de0ec843d7ce81fba030d2571b7eab5a3ddeec351a677ee3",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/after/put_into_composed/summary_cuda0.json"
+    },
+    {
+      "bytes": 2299,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/after/put_into_composed/summary_cuda1.json",
+      "sha256": "17bc25f77cff802d66a87562978ab10968d5e2d94c1cbe1c6884d8661c69d05a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/after/put_into_composed/summary_cuda1.json"
+    },
+    {
+      "bytes": 38575,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/before/put_into_composed/episodes_00.csv",
+      "sha256": "9f7cf94ec8d2ae9e3922ac7337272db8552b47954092cc34606268e45c5f0412",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/before/put_into_composed/episodes_00.csv"
+    },
+    {
+      "bytes": 38382,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/before/put_into_composed/episodes_01.csv",
+      "sha256": "cc9bc0a859cbb832a3696b68f29085fb22c7436627efb65765ffe755bf97ba4d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/before/put_into_composed/episodes_01.csv"
+    },
+    {
+      "bytes": 914,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/before/put_into_composed/summary.json",
+      "sha256": "a697fdc2e894db6b97f2f3674dea72c34dc4901f086fe26d3d6a6a4e1c77bcd2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/before/put_into_composed/summary.json"
+    },
+    {
+      "bytes": 2304,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/before/put_into_composed/summary_cuda0.json",
+      "sha256": "c508bdbf5ba80dbb0a7827639345f3b1f8d5581a15092bdc22aec69eb2713785",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/before/put_into_composed/summary_cuda0.json"
+    },
+    {
+      "bytes": 2305,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/eval/before/put_into_composed/summary_cuda1.json",
+      "sha256": "fb1b99fe30f43bbc8f97e11b5efa479afda18312e65a6ca8f32c5bf9459a73d1",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/eval/before/put_into_composed/summary_cuda1.json"
+    },
+    {
+      "bytes": 4496,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/modified/dataset.json",
+      "sha256": "aebe7660549055e8ccf09af3f940d1b7645a683c3a7536c3293cbd9d26766a83",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/modified/dataset.json"
+    },
+    {
+      "bytes": 7921,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/original/dataset.json",
+      "sha256": "e1f0d37ba3c34a91b0a44456b70c117af6aa0703f1958895b063011b62c3ecf2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/original/dataset.json"
+    },
+    {
+      "bytes": 5016,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/refreshed/dataset.json",
+      "sha256": "6554bf3193fc89b9f2b0350f3120484d0fd48a867a7701d07a0f77c4ff309004",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/refreshed/dataset.json"
+    },
+    {
+      "bytes": 3883,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/refreshed/refresh.json",
+      "sha256": "a6fa61a250a8f74cd572599ff1042fe34ac2789e9e7423aa5ccc07002f20ffa6",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/refreshed/refresh.json"
+    },
+    {
+      "bytes": 25743,
+      "exported": "raw/pipeline/composition_sft/5af896659773bb52/sft/sft_report.json",
+      "sha256": "87365b0dced212b0727ad23529f2eb973daa9e34feec637c3520220eee8d88a5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/composition_sft/5af896659773bb52/sft/sft_report.json"
+    },
+    {
+      "bytes": 1988,
+      "exported": "raw/pipeline/final_report.json",
+      "sha256": "512277e0466fafa1e6a05bcb3777b70422370f892878aa3e8f43848d2bc8f7ee",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/final_report.json"
+    },
+    {
+      "bytes": 2311,
+      "exported": "raw/pipeline/final_report.md",
+      "sha256": "25ce5d48c3d7dba4db2a8ba9a63f03053a7ab506b708707a5ed270e2ba9cb22d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_20261024_131201/final_report.md"
+    },
+    {
+      "bytes": 10771,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__composition_after_composed.yaml",
+      "sha256": "1bbdab2fb97646aa3b6a85dbc5b6e886b890f9a968851cca49e7102eb17b7fc2",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__composition_after_composed.yaml"
+    },
+    {
+      "bytes": 10772,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__composition_before_composed.yaml",
+      "sha256": "211a1ccaa2a0a0cc5d1e3fe4d1b0d97e5067cdebd2f86f976d9374d6f3bb9891",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__composition_before_composed.yaml"
+    },
+    {
+      "bytes": 9398,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__eval_move_to.yaml",
+      "sha256": "d4c1b8157e622c5e0e348e39296b9d0c9c536498b29efc0c8a671036e32feb8a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__eval_move_to.yaml"
+    },
+    {
+      "bytes": 9924,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__eval_pick_up.yaml",
+      "sha256": "7e610ffb24d473cfe89e1a35d7228c33df9a5d36577096e01672fcbc3a41134d",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__eval_pick_up.yaml"
+    },
+    {
+      "bytes": 10576,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__eval_put_into.yaml",
+      "sha256": "42ae812ad14ab286f026efb7e33188107c88eca06ade473fde7cc70b8c8f13e5",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__eval_put_into.yaml"
+    },
+    {
+      "bytes": 10767,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__eval_put_into_composed.yaml",
+      "sha256": "08680d6bc5b1886b0b1244ebb1a952336026cea51189fae4e011f720b7ae5399",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__eval_put_into_composed.yaml"
+    },
+    {
+      "bytes": 9294,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__s1_move_to_dense.yaml",
+      "sha256": "f6a9defbc467aed6f1ca1f2cfc086851603611bb6a9ba1703841fb9f8264016a",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s1_move_to_dense.yaml"
+    },
+    {
+      "bytes": 10158,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__s2_pick_up_dense.yaml",
+      "sha256": "4bf81430a2f0b1d32a104f9819941c0db48083d44cc581b1a7be624c5326d962",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s2_pick_up_dense.yaml"
+    },
+    {
+      "bytes": 10750,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__s3_put_into_dense.yaml",
+      "sha256": "d03048db09df9e1c4a4fa0be828a6747cefa7958a369b4b381d857bc48e3fdfe",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s3_put_into_dense.yaml"
+    },
+    {
+      "bytes": 9663,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__s4_move_to_binary.yaml",
+      "sha256": "0aad8ef8b5ba7138630af969e705ff11e9c3fbde47c6ab20560b87db759a9096",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s4_move_to_binary.yaml"
+    },
+    {
+      "bytes": 10232,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__s5_pick_up_binary.yaml",
+      "sha256": "b0a706ed5f47453dd69175de847185e623049d29008ad597a19b40967ec06dca",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s5_pick_up_binary.yaml"
+    },
+    {
+      "bytes": 10858,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__s6_put_into_binary.yaml",
+      "sha256": "d4cfd45f3d5efbfc81f14158f49e4c6aacb0d5d368201155a06cd21546e2b169",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s6_put_into_binary.yaml"
+    },
+    {
+      "bytes": 11146,
+      "exported": "raw/generated_configs/widowx200_pipeline_20261024_131201__s7_joint_staged.yaml",
+      "sha256": "60333be119a98f20f18dde403bce85c0eaf8d66e8dfc17a5fde77293f792d416",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/widowx200_pipeline/widowx200_pipeline_20261024_131201__s7_joint_staged.yaml"
+    },
+    {
+      "bytes": 26147,
+      "exported": "raw/source_config_current/widowx200_smolvla_pipeline.yaml",
+      "sha256": "a803ca443cbb5a0cdbae4f8ef9d6fd47709a4948d4cdb55673afa417352e16be",
+      "source": "/root/repo/RL_VLA_Bootstrapping/configs/examples/widowx200_smolvla_pipeline.yaml"
+    }
+  ],
+  "warnings": []
+}

@@ -1,9 +1,2 @@
-\subsection{Additional Embodiment: WX200}\label{sec:wx200}
-An ongoing experiment applies the pipeline to the five-DoF WX200 serial manipulator. This setting changes the robot mechanism while retaining the skill-learning and composition schedule. Figure~\ref{fig:wx200} reserves the setup and rollout illustrations. Quantitative success rates will be added after the evaluation is complete.
-
-\begin{figure*}[!t]
-\centering
-\IfFileExists{figures/wx200/panel.pdf}{\includegraphics[width=\textwidth]{figures/wx200/panel.pdf}}{\includegraphics[width=\textwidth]{figures/wx200_slots.pdf}}
-\caption{WX200 evaluation layout. (a) Apparatus, workspace, cameras, and control axes. (b) Reach, grasp, lift, transport, and release under one instruction. The current panels reserve space for setup images and timestamped rollout frames from the ongoing experiment.}
-\label{fig:wx200}
-\end{figure*}
+\subsection{Additional Embodiment: WidowX-200 Simulation}\label{sec:wx200}
+A completed run on a simulated five-DoF WidowX-200 arm yields 33.30\% reaching and 24.02\% pickup success, with 1,024 attempts per skill. Placement from an already-held object succeeds in 72/520 bowl and 293/504 plate attempts (35.64\% pooled). Empty-hand composition succeeds in 32/520 bowl and 41/504 plate attempts (7.13\% pooled). These composed resets align the gripper above the object and omit a distant approach, so the rates are not directly comparable with CDPR full-task success. Earlier skill losses persist through consolidation; composition SFT lowers imitation error without improving rollout success. This initial port exposes unresolved retention and grasp-to-placement transitions.

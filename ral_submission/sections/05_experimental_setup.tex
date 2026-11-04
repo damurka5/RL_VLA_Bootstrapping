@@ -13,7 +13,9 @@ No human demonstrations are collected on the CDPR. Skill consolidation uses succ
 \subsection{SmolVLA: Complete-Task Adaptation}\label{sec:cdpr_results}
 Strict success requires grasp, held lift, intentional release, and correct placement, without carry slip or wrong-placement events.
 
-The development validation comprises 1,024 full-task episodes: 512 plate and 512 bowl attempts. Each attempt starts with an empty gripper and uses one full-task instruction, without teacher assistance. All attempts, including numerical failures, remain in the denominator.
+Development evaluation uses 512 distinct scenes, each repeated four times, for 2,048 full-task attempts: 1,028 plate and 1,020 bowl attempts. The fixed 128-scene validation panel used during training is excluded. Each attempt starts with an empty gripper and uses one full-task instruction, without teacher assistance. Residual actions are deterministic while the VLA prior retains unit-scale sampling noise. All attempts, including numerical failures, remain in the denominator. These development scenes support model selection; the final-test split remains unused.
 \input{sections/06a_simulation_results}
+
+\input{sections/06c_real_world_results}
 
 \input{sections/07_discussion}

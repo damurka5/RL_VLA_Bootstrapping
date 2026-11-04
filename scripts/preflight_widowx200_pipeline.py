@@ -9,12 +9,13 @@ hours into a run as a policy that "cannot learn":
    bottom, middle and top of its approach ladder. Every start the arm is asked
    for must be reachable (``reachable`` from the IK, not a tautology on the
    clamped target), every caught start must still be holding its object after
-   a few still steps, nothing may be non-finite, and active objects must not
+   five simulated seconds, nothing may be non-finite, and active objects must not
    interpenetrate.
 2. **the task is physically solvable** -- a scripted top-down grasp and 5 cm
-   lift on every world of a pick_up reset, through the same normalized
+   lift followed by a five-second hold on every world of a pick_up reset, through the same normalized
    five-channel action the policy emits. This is the WidowX analogue of the
-   CDPR oracle ladder: if the script cannot lift at a cell, neither can RL.
+   CDPR oracle ladder: a failure blocks launch and needs diagnosis; it does
+   not establish that every possible policy would fail.
 3. **cameras** -- one render, checked for finite non-blank images, saved as a
    PNG grid (overview | wrist) for a human to look at.
 
@@ -75,6 +76,33 @@ def ladder_points(metadata: dict[str, Any], instructions: list[str]) -> list[dic
     return points
 
 
+def max_object_penetration(backend: Any) -> float:
+    """Actual object/object overlap; nearby centres also occur in valid stacks.
+
+    This preflight inspects the MJWarp contact buffers already bound by the
+    backend. Contacts between fingers and their grasped object are excluded.
+    """
+    torch = backend.torch
+    slot_for_geom = torch.full(
+        (backend.host_model.ngeom,), -1, dtype=torch.int64, device=backend.device
+    )
+    for slot, geoms in enumerate(backend._slot_geom_ids):
+        slot_for_geom[geoms] = slot
+    geoms = backend._contact_geom.to(torch.int64)
+    valid_geom = (geoms >= 0).all(dim=1) & (geoms < backend.host_model.ngeom).all(dim=1)
+    slots = slot_for_geom[geoms.clamp(0, backend.host_model.ngeom - 1)]
+    valid = (
+        valid_geom
+        & (backend._contact_indices < backend._nacon.reshape(-1)[0])
+        & (backend._contact_worldid >= 0)
+        & (backend._contact_worldid < backend.worlds_per_rank)
+        & (slots >= 0).all(dim=1)
+        & (slots[:, 0] != slots[:, 1])
+    )
+    depth = torch.where(valid, (-backend._contact_dist).clamp_min(0), 0.0)
+    return float(depth.max()) if depth.numel() else 0.0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--config", default=str(ROOT / "configs" / "examples" / "widowx200_smolvla_pipeline.yaml"))
@@ -85,7 +113,15 @@ def main() -> int:
     parser.add_argument("--min-reachable", type=float, default=0.98)
     parser.add_argument("--min-caught-held", type=float, default=0.90)
     parser.add_argument("--min-scripted-lift", type=float, default=0.80)
+    parser.add_argument("--hold-seconds", type=float, default=5.0,
+                        help="Simulated duration of caught-start and post-lift hold checks.")
+    parser.add_argument("--max-object-penetration", type=float, default=0.003,
+                        help="Maximum actual object/object contact penetration in metres.")
     args = parser.parse_args()
+    if not math.isfinite(args.hold_seconds) or args.hold_seconds <= 0.0:
+        parser.error("--hold-seconds must be finite and positive")
+    if not math.isfinite(args.max_object_penetration) or args.max_object_penetration < 0.0:
+        parser.error("--max-object-penetration must be finite and nonnegative")
 
     import numpy as np
     import torch
@@ -128,7 +164,17 @@ def main() -> int:
             workspace_z=(0.168, 0.27),
         )
     )
-    report: dict[str, Any] = {"device": str(device), "worlds": worlds, "skills": {}, "failures": []}
+    seconds_per_action = float(backend.metadata()["simulated_seconds_per_action"])
+    hold_actions = max(4, math.ceil(args.hold_seconds / seconds_per_action))
+    report: dict[str, Any] = {
+        "device": str(device), "worlds": worlds, "skills": {}, "failures": [],
+        "hold_actions": hold_actions, "hold_seconds": hold_actions * seconds_per_action,
+        "physics_options": {
+            "cone": int(backend.host_model.opt.cone),
+            "impratio": float(backend.host_model.opt.impratio),
+            "solver": int(backend.host_model.opt.solver),
+        },
+    }
     active_all = torch.ones((worlds,), dtype=torch.bool, device=device)
     zeros = torch.zeros((worlds, 5), dtype=torch.float32, device=device)
 
@@ -163,8 +209,10 @@ def main() -> int:
                 finite = bool(torch.isfinite(low.ee_position).all() and torch.isfinite(low.object_positions).all())
                 caught = reset.task_state.ever_grasped.to(torch.bool)
                 target = low.object_positions[torch.arange(worlds, device=device), reset.task_state.target_slots]
-                for _ in range(4):
+                reset_penetration = max_object_penetration(backend)
+                for _ in range(hold_actions):
                     low = backend.step(zeros, active_all)
+                finite = finite and bool(torch.isfinite(low.ee_position).all() and torch.isfinite(low.object_positions).all())
                 after = low.object_positions[torch.arange(worlds, device=device), reset.task_state.target_slots]
                 held = (after - low.ee_position).norm(dim=-1) < 0.03
                 held_rate = float(held[caught].float().mean()) if bool(caught.any()) else float("nan")
@@ -175,6 +223,7 @@ def main() -> int:
                 gaps = (positions[:, :, None, :] - positions[:, None, :, :]).norm(dim=-1)
                 pair = active[:, :, None] & active[:, None, :] & ~torch.eye(4, dtype=torch.bool, device=device)[None]
                 min_gap = float(gaps[pair].min()) if bool(pair.any()) else float("nan")
+                penetration = max(reset_penetration, max_object_penetration(backend))
                 horizons = reset.horizons.float()
                 entry = {
                     "caps": caps,
@@ -184,6 +233,7 @@ def main() -> int:
                     "caught_worlds": int(caught.sum()),
                     "caught_held_fraction": None if math.isnan(held_rate) else round(held_rate, 4),
                     "min_object_gap_m": round(min_gap, 4),
+                    "max_object_penetration_m": round(penetration, 6),
                     "target_z_mean": round(float(target[:, 2].mean()), 4),
                     "horizon_decisions": [int(horizons.min()), int(horizons.max())],
                 }
@@ -192,8 +242,9 @@ def main() -> int:
                 check(finite, f"{skill} {caps}: non-finite state after reset")
                 check(reachable >= args.min_reachable, f"{skill} {caps}: only {reachable:.3f} of reset poses reachable")
                 if not math.isnan(held_rate):
-                    check(held_rate >= args.min_caught_held, f"{skill} {caps}: caught starts holding {held_rate:.3f}")
-                check(not (min_gap < 0.03), f"{skill} {caps}: objects {min_gap:.3f} m apart")
+                    check(held_rate >= args.min_caught_held, f"{skill} {caps}: caught starts holding {held_rate:.3f} after {report['hold_seconds']:.2f}s")
+                check(penetration <= args.max_object_penetration,
+                      f"{skill} {caps}: object/object penetration {penetration:.4f} m")
         report["skills"][skill] = entries
 
     # Scripted grasp-and-lift at every lattice cell and every graspable.
@@ -219,7 +270,7 @@ def main() -> int:
         low = backend.low_dim_observations()
         start = low.object_positions[rows, slots].clone()
         step = float(base_args["action_step_xyz"])
-        for phase, count in (("align", 8), ("descend", 8), ("close", 18), ("lift", 12), ("hold", 6)):
+        for phase, count in (("align", 8), ("descend", 8), ("close", 18), ("lift", 12), ("hold", hold_actions)):
             for _ in range(count):
                 low = backend.low_dim_observations()
                 obj = low.object_positions[rows, slots]
@@ -235,9 +286,10 @@ def main() -> int:
                 backend.step(action, active_all)
         low = backend.low_dim_observations()
         lift = low.object_positions[rows, slots][:, 2] - start[:, 2]
-        rate = float((lift >= 0.04).float().mean())
+        gap = (low.object_positions[rows, slots] - low.ee_position).norm(dim=-1)
+        rate = float(((lift >= 0.04) & (gap < 0.03)).float().mean())
         lifted_rates.append(rate)
-        print(f"[preflight] scripted grasp+lift round {round_index}: {rate:.3f} lifted >= 4 cm", flush=True)
+        print(f"[preflight] scripted grasp+lift round {round_index}: {rate:.3f} held >= 4 cm for {report['hold_seconds']:.2f}s", flush=True)
     report["scripted_lift_rate"] = round(float(np.mean(lifted_rates)), 4)
     check(report["scripted_lift_rate"] >= args.min_scripted_lift, f"scripted grasp+lift only {report['scripted_lift_rate']:.3f}")
 
@@ -262,7 +314,7 @@ def main() -> int:
     report["backend_metadata"] = {
         key: value
         for key, value in backend.metadata().items()
-        if key in ("controller_implementation", "physics_substeps_per_action", "simulated_seconds_per_action", "versions", "embodiment")
+        if key in ("controller_implementation", "physics_substeps_per_action", "simulated_seconds_per_action", "versions", "embodiment", "xml_sha256", "object_assets_sha256")
     }
     report["capacity"] = backend.capacity_status()
     check(report["capacity"]["contact_overflow"] == 0 and report["capacity"]["constraint_overflow"] == 0, "MJWarp contact/constraint capacity overflow")

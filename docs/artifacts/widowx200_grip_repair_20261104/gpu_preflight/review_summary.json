@@ -1,0 +1,43 @@
+{
+  "review_date": "2026-11-04",
+  "device": "cuda:0",
+  "worlds_per_batch": 512,
+  "passed": true,
+  "reset_batches": 24,
+  "reset_world_checks": 12288,
+  "all_logged_resets_reachable": true,
+  "all_logged_states_finite": true,
+  "hold_seconds": 5.0,
+  "hold_actions": 100,
+  "placement_caught_world_checks": 3072,
+  "joint_caught_world_checks": 816,
+  "placement_caught_held_fraction_min": 1.0,
+  "joint_caught_held_fraction_min": 1.0,
+  "scripted_lift_hold_rate": 1.0,
+  "min_logged_object_centre_gap_m": 0.0452,
+  "reported_capacity_snapshot": {
+    "contacts": 1615,
+    "max_constraints_per_world": 28,
+    "contact_capacity": 131072,
+    "constraint_capacity_per_world": 1024,
+    "contact_overflow": 0,
+    "constraint_overflow": 0
+  },
+  "versions_match_repository_lock": true,
+  "image_size": [
+    640,
+    960
+  ],
+  "image_row_sha256": [
+    "43838569b14cdea1e1ceb6ef8ead013d4f9b3d8431483de6276e2d76ea1ef28c",
+    "7e583497b27bee153bc8e04226344570b1db38bcb978ee8b6762400de690d0c6",
+    "459ae9a93e9e955a9ddc0fbac16d5083d7496ad229bf41d371df49262e7fd7bb",
+    "0193dc9a8a43eaf39a7ea5a3132dc9c76fc8f804db0baccd488d0ec9ce13e085"
+  ],
+  "scope": "Observed user-returned CUDA preflight; repeated GRPO worlds/caps are not independent trials or learned-policy success measurements.",
+  "provenance_limits": [
+    "Returned JSON lacks model/config/catalog/asset hashes and explicit solver settings.",
+    "Camera grid shows the first four worlds of one GRPO scene, not four distinct object/scene examples.",
+    "The server preflight retains its centre-distance check; the local signed-contact penetration diagnostic was not installed by the model-only installer."
+  ]
+}

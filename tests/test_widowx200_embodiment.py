@@ -513,14 +513,15 @@ class SceneAndControlTests(unittest.TestCase):
         )
 
     def test_graspable_size_envelope(self) -> None:
-        """Which objects this gripper can hold at all -- a catalog constraint.
+        """The scaled object fits a centred grasp without exceeding finger travel.
 
-        Measured band is 30-56 mm. The current RoboCasa catalog's apple (69 mm),
-        bell pepper (74 mm), tomato, orange, and potato (58 mm) are all outside
-        it: they need rescaling before any grasp task can use them.
+        A wide sphere can be pinched by its top cap without fitting between
+        the pads. Lift alone is not a test of centred fit. Require the same
+        object/EE proximity as the preflight, and enforce the actual mechanical
+        travel rather than the clipped normalized opening observation.
         """
 
-        def lifts(radius: float) -> float:
+        def grasp(radius: float) -> tuple[float, float]:
             model, data, controller, spec = self._build(object_radius=radius)
             body = mj.mj_name2id(model, mj.mjtObj.mjOBJ_BODY, "probe_object")
             controller.reset_to_pose([-0.14, 0.06, 0.26], 0.0, 1.0)
@@ -546,10 +547,21 @@ class SceneAndControlTests(unittest.TestCase):
             servo(resting, 30, -1.0)
             before = float(data.xpos[body][2])
             servo(resting + np.array([0.0, 0.0, 0.10]), 40, -1.0)
-            return float(data.xpos[body][2]) - before
+            for name in ("left_finger", "right_finger"):
+                joint = mj.mj_name2id(model, mj.mjtObj.mjOBJ_JOINT, name)
+                position = float(data.qpos[model.jnt_qposadr[joint]])
+                self.assertLessEqual(position, K.FINGER_LIMITS[1] + 0.0005,
+                                     f"{name} exceeded its mechanical open stop")
+                self.assertGreaterEqual(position, K.FINGER_LIMITS[0] - 0.0005)
+            return (float(data.xpos[body][2]) - before,
+                    float(np.linalg.norm(data.xpos[body] - controller.get_end_effector_position())))
 
-        self.assertGreater(lifts(0.020), 0.06, "40 mm object should be graspable")
-        self.assertLess(lifts(0.0345), 0.02, "the 69 mm CDPR apple must NOT fit")
+        lift, gap = grasp(0.020)
+        self.assertGreater(lift, 0.06, "40 mm object should be graspable")
+        self.assertLess(gap, 0.01, "40 mm object should remain centred")
+        lift, gap = grasp(0.0345)
+        self.assertFalse(lift >= 0.04 and gap < 0.03,
+                         "69 mm sphere must not count as a centred grasp")
 
 
 if __name__ == "__main__":  # pragma: no cover

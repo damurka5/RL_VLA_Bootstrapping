@@ -24,6 +24,12 @@
   -->
   <compiler autolimits="true" angle="radian"/>
 
+  <!-- Increase tangential contact impedance rather than the friction coefficient.
+       Default pyramidal contacts creep under gravity and drop a grasp after
+       2-3 s despite sufficient normal force. These settings retain all five
+       scaled graspables through a 20 s CPU hold; MJWarp supports both options. -->
+  <option cone="elliptic" impratio="10"/>
+
   <default>
     <site type="sphere" rgba="1 0 0 1" size="0.005"/>
     <default class="wx200_visual">
@@ -254,7 +260,8 @@
                                   diaginertia="0.0000047 0.0000016 0.0000037"/>
                         <joint name="left_finger" type="slide" axis="0 1 0"
                                limited="true" range="0.015 0.037" damping="3.0"
-                               armature="0.005"/>
+                               armature="0.005" solreflimit="0.004 1"
+                               solimplimit="0.99 0.999 0.001"/>
                         <geom name="left_finger_visual" class="wx200_visual" mesh="wx200_gripper_finger"
                               pos="0 0.005 0" euler="3.1415927 3.1415927 0"/>
                         <!--
@@ -276,7 +283,8 @@
                                   diaginertia="0.0000047 0.0000016 0.0000037"/>
                         <joint name="right_finger" type="slide" axis="0 -1 0"
                                limited="true" range="0.015 0.037" damping="3.0"
-                               armature="0.005"/>
+                               armature="0.005" solreflimit="0.004 1"
+                               solimplimit="0.99 0.999 0.001"/>
                         <geom name="right_finger_visual" class="wx200_visual" mesh="wx200_gripper_finger"
                               pos="0 -0.005 0" euler="0 3.1415927 0"/>
                         <geom name="right_finger_pad" class="finger_pad_collision"

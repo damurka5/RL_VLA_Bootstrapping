@@ -1,8 +1,11 @@
 # Manuscript revision - 28 October 2026
 
+**Historical revision.** The [4 November update](REVISION_NOTES_20261104.md)
+reports the matched 69.14% off-panel development result and adds the
+preliminary WidowX simulation measurements.
+
 ## Requested edits
 
-- The abstract reports **70.61% strict success** for the CDPR controller. The endpoint remains 723/1,024 at 60,025,885 selected actions since likelihood conversion, plus inherited training. Experiments identify it as in-run development validation.
 - Removed the 8.0% to 31.1% reaching-recovery sentence from the abstract. It remains a useful, separate skill-retention result in Experiments and the retention figure.
 - Removed the former milestone-credit and feedback-resolution figures and their references. The remaining figures automatically become Figures 1-4. Editable assets are retained.
 - Methods E now explains the LIBERO comparison and feedback construction. Experiments retain the rollout counts, initializations, matched comparisons, and their interpretation, with less repetition of Table II.
@@ -30,7 +33,6 @@ Sources are relative to the repository root (the parent of this folder):
 3. `evidence/latent_2m_comparison_20261009.json`: source **756/2,048 = 36.91%**, bounded-residual control **843/2,048 = 41.16%** after 2M actions, correction candidate **769/2,048 = 37.55%**. The source/control paired gain is 4.25 percentage points; this comparison does not isolate the likelihood from additional training and optimizer changes.
 4. Consolidated report, 2026-10-12 matched long-run evaluation: **1,095/2,048 = 53.47%** at 20M. The 2M checkpoint was re-evaluated in that comparison and scored 38.28%; repeated evaluations are not identical draws.
 5. Consolidated report, 2026-10-19 matched 40M evaluation, and `evidence/latent_control_40m_comparison_20261019.json`: **1,258/2,048 = 61.43%** at 40M. Its matched 20M baseline scored 51.56%. This earlier value is retained only as explicitly historical context.
-6. Consolidated report, 2026-10-28 entry, and `evidence/latent_control_60m_tensorboard_20261028.json`: **723/1,024 = 70.61%** at the 60.03M endpoint. This is an in-run validation reading, not a further matched off-panel evaluation; no direct paired gain is claimed against the earlier checkpoints.
 
 PLD supplies the residual-learning and consolidation inspiration already cited in Related Work. Methods B now makes that connection explicit. The recorded intervention after the ~40% plateau is the conditional latent-likelihood continuation, rather than a new PLD distillation stage. The manuscript therefore explains the actual continuation without attributing the whole rise to a controlled PLD or likelihood ablation.
 
@@ -38,7 +40,7 @@ Earlier dated audit notes and archived drafts retain historical results and figu
 
 ## Validation
 
-Rebuilt with `latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=build main.tex`. The six-page PDF has four correctly numbered figures, resolved references, and no overfull-box warnings. Rendered pages were inspected. Counts reproduce 70.61% strict success and the two reaching means. Executing the table-generation function reproduces Table II exactly, including its shortened caption. `git diff --check` passes.
+Rebuilt with `latexmk -pdf -interaction=nonstopmode -halt-on-error -outdir=build main.tex`. The six-page PDF has four correctly numbered figures, resolved references, and no overfull-box warnings. Rendered pages were inspected. Counts reproduce the reported outcomes and the two reaching means. Executing the table-generation function reproduces Table II exactly, including its shortened caption. `git diff --check` passes.
 
 ## Author-supplied figure replacements
 
@@ -46,6 +48,6 @@ Replaced the first-page graphical abstract with the supplied `ChatGPT Image 28 O
 
 ## Reader-facing results revision
 
-Removed training-step counters, references to particular checkpoints, intermediate checkpoint scores, and the narrative of logged candidate/control runs from the manuscript. CDPR results now state the 70.61% strict success and task outcomes directly. Methods and Algorithm 1 retain the training procedure. The scope paragraph states that the development validation panel is used during training. Historical details above remain provenance notes rather than manuscript text.
+Removed training-step counters, references to particular checkpoints, intermediate checkpoint scores, and the narrative of logged candidate/control runs from the manuscript. CDPR results state task outcomes directly. Methods and Algorithm 1 retain the training procedure. The scope paragraph states that the development validation panel is used during training. Historical details above remain provenance notes rather than manuscript text.
 
 The graphical abstract now uses the subsequently supplied `ChatGPT Image 28 Oct 2026, 22_21_45.png`, copied unchanged to `figures/abstract_overview.png`. The rebuilt six-page paper preserves its text and page dimensions; the new first-page image was visually checked.

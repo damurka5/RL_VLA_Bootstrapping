@@ -1,0 +1,52 @@
+{
+  "base_commit": "3c6486dbd9fe69bc8897a5fc84f64286e6f16ba5",
+  "cpu_regressions": {
+    "errors": 0,
+    "failures": 0,
+    "passed": 208,
+    "run": 211,
+    "skipped": 3,
+    "skipped_scope": "Camera rendering: no CoreGraphics context in the local test process."
+  },
+  "environment": {
+    "local_gl_backend": "glfw",
+    "mujoco": "3.3.7",
+    "numpy": "2.2.6",
+    "python": "conda cdpr Python 3.10",
+    "torch": "2.13.0"
+  },
+  "gpu_memory_tests_run": false,
+  "gpu_training_started": false,
+  "launcher_dry_run": {
+    "driver_calls": [
+      "smoke dry run",
+      "production dry run"
+    ],
+    "fresh_state": true,
+    "memory_check_first": 0,
+    "memory_check_invocations": 0,
+    "passed": true,
+    "smoke_first": 1
+  },
+  "review_date": "2026-11-04",
+  "source_sha256": {
+    "configs/examples/widowx200_smolvla_pipeline.yaml": "a803ca443cbb5a0cdbae4f8ef9d6fd47709a4948d4cdb55673afa417352e16be",
+    "rl_vla_bootstrapping/simulation/cdpr_object_catalog.py": "c8a83f4bcc66dd1d1c63975b90e3588a171eee7f5a85d178fb8c27b53134380f",
+    "robots/widowx200/widowx200_mujoco/wx200.xml": "0c5a15b20d7e7ec5ea7bf97e25a45ef879d725b2ceef3081e2e0d46e95fc2af4",
+    "scripts/preflight_widowx200_pipeline.py": "e9bbd63dce43af55033ebf439d17be168f789d33afe6dd7758b959c0b80c31d7",
+    "scripts/train_widowx200_pipeline_remote.sh": "70f045dea6901b74aa86730180839ce4d523b7bee77bc12af9f1b69b35f11984",
+    "tools/train/run_widowx200_pipeline.py": "656f47692d72f7c291813012ec23d7bf2c46fc169f94ed0515092d8207c44b7b"
+  },
+  "theory_sanity_checks": {
+    "corollary_anchor": true,
+    "lemma1_pdl": true,
+    "lemma2_shift": true,
+    "theorem1_grpo_coefficient": true,
+    "theorem2_expected_tv": true,
+    "theorem2_kl": true,
+    "theorem2_sup_tv": true,
+    "theorem3_retention": true,
+    "theorem4_mirror_descent": true,
+    "theorem6_composition": true
+  }
+}

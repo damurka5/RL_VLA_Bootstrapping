@@ -1,5 +1,11 @@
 # Revision checklist after critical review
 
+**4 November follow-up:** [the latest revision](REVISION_NOTES_20261104.md)
+now reports the 69.14% off-panel development evaluation and preliminary
+WidowX simulation results. The checklist below retains the original review
+requests; raw per-episode CDPR records and independent final-test evidence
+remain outstanding.
+
 29 October 2026. This checklist incorporates the author's clarification that the **new residual controller is initialized from scratch while SmolVLA's pretrained action expert is retained**. It is a revision plan, not evidence that any additional experiment has been completed.
 
 The intended central contribution is adaptation to a target robot without collecting human demonstrations for that embodiment, beginning with RL and subsequently consolidating successful experience. Whether the selected result satisfies that exact data contract must be established from its training ancestry.
@@ -91,7 +97,7 @@ The intended central contribution is adaptation to a target robot without collec
     - [ ] Freeze checkpoint selection and evaluate on untouched scenes, with explicit object/destination distributions and all failures in the denominator.
     - [ ] Report counts, uncertainty, and the number of distinct scenes versus stochastic repetitions. Use paired or scene-aware analysis where applicable.
     - [ ] Repeat central training comparisons across independent seeds where feasible; evaluation repetitions are not independent training runs.
-    - [ ] Preserve “development validation” for the current 70.61% endpoint until a separate evaluation is available. Archive the selected model, resolved configuration, and per-episode outcomes.
+    - [ ] Report the current matched development evaluation with its exact denominator. Archive the selected model, resolved configuration, and per-episode outcomes; keep reserved final-test evaluation distinct.
     - [ ] Include same-scene instruction changes if claiming that the resulting controller uses language to select objects and destinations.
 
 11. **Priority 2 — Make the method and resource requirements reproducible.**
