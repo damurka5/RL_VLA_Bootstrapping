@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Теория RL-бутстрэппинга VLA</title>
-<meta name="description" content="Презентация черновика теоретической главы диссертации: почему исполнительную часть VLA-политики можно обучить только консервативным обучением с подкреплением.">
+<meta name="description" content="Пошаговое объяснение теории RL-бутстрэппинга VLA: одна новая часть формулы на слайд, от вероятности успеха до композиции навыков и условий сходимости.">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
@@ -100,64 +100,8 @@
   ul, ol { margin: 0 0 10px; padding-left: 24px; }
   li { margin: 0 0 7px; }
   li::marker { color: var(--muted); }
-  .muted { color: var(--muted); }
-  .small { font-size: 16px; line-height: 1.45; }
-  .tiny { font-size: 14px; line-height: 1.4; }
-  .grow { flex: 1; min-height: 0; }
-  .spacer { flex: 1; }
-
-  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 34px; align-items: start; }
-  .cols.wide-left { grid-template-columns: 1.25fr 1fr; }
-  .cols.wide-right { grid-template-columns: 1fr 1.2fr; }
-  .grid-2x2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
-  .grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
-  .grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; }
-
-  .card {
-    background: var(--surface-2); border: 1px solid var(--line);
-    border-radius: 12px; padding: 16px 18px;
-  }
-  .card h3 { font-size: 18px; }
-  .card p, .card li { font-size: 16.5px; line-height: 1.42; }
-  .card .tag { display: inline-block; font-size: 13px; font-weight: 600; color: var(--accent); background: var(--accent-soft); border-radius: 6px; padding: 1px 8px; margin-bottom: 8px; }
-
-  .thm {
-    background: var(--surface); border: 1px solid var(--line);
-    border-left: 4px solid var(--accent);
-    border-radius: 10px; padding: 14px 20px; margin: 0 0 14px;
-  }
-  .thm .label { font-weight: 650; margin-right: 6px; }
-  .thm .label .name { font-weight: 500; color: var(--muted); }
-  .thm p:last-child { margin-bottom: 0; }
-  .note {
-    border-left: 3px solid var(--line); padding: 2px 0 2px 14px;
-    color: var(--muted); font-size: 16px; line-height: 1.45;
-  }
-  .lead { font-size: 22px; line-height: 1.45; }
-  .quote {
-    font-size: 25px; line-height: 1.4; font-weight: 500;
-    border-left: 4px solid var(--accent); padding: 4px 0 4px 22px; margin: 0 0 24px;
-  }
-  .pill { display: inline-block; font-size: 14px; border: 1px solid var(--line); border-radius: 999px; padding: 3px 12px; margin: 0 6px 6px 0; color: var(--muted); background: var(--surface-2); }
-  .ok { color: var(--good); font-weight: 600; }
-  .bad { color: var(--bad); font-weight: 600; }
-
-  table { border-collapse: collapse; width: 100%; font-size: 15.5px; line-height: 1.38; }
-  th { text-align: left; font-weight: 600; color: var(--muted); border-bottom: 1.5px solid var(--text); padding: 6px 10px 6px 0; }
-  td { border-bottom: 1px solid var(--line); padding: 7px 10px 7px 0; vertical-align: top; }
-  tr:last-child td { border-bottom: none; }
-
   .katex { font-size: 1.04em; }
   .katex-display { margin: .45em 0; }
-  .thm .katex-display { margin: .35em 0; }
-
-  /* chain diagram */
-  .chain { display: flex; align-items: stretch; gap: 0; margin: 6px 0 14px; }
-  .chain .node { flex: 1; background: var(--surface-2); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; font-size: 15px; line-height: 1.35; }
-  .chain .node b { display: block; font-size: 16px; margin-bottom: 4px; }
-  .chain .node.goal { border-color: var(--accent); background: var(--accent-soft); }
-  .chain .arrow { display: flex; flex-direction: column; justify-content: center; align-items: center; width: 74px; font-size: 13px; color: var(--muted); text-align: center; line-height: 1.25; }
-  .chain .arrow::before { content: "→"; font-size: 24px; color: var(--accent); line-height: 1; margin-bottom: 2px; }
 
   /* charts */
   .chart { width: 100%; height: auto; display: block; }
@@ -171,7 +115,6 @@
   .chart .cross { stroke: var(--muted); stroke-width: 1; stroke-dasharray: 3 3; }
   .chart .tip-bg { fill: var(--surface); stroke: var(--line); }
   .chart .tip { fill: var(--text); font-size: 12.5px; }
-  .chart-caption { font-size: 14px; color: var(--muted); margin-top: 4px; }
 
   /* title slide */
   .title-slide { justify-content: center; }
@@ -198,14 +141,8 @@
     h1 { font-size: 30px; }
     h2 { font-size: 24px; margin-bottom: 14px; }
     .lead { font-size: 18px; }
-    .quote { font-size: 19px; }
     .title-slide .sub { font-size: 19px; }
-    .cols, .cols.wide-left, .cols.wide-right, .grid-2x2, .grid-3, .grid-4 { grid-template-columns: 1fr; gap: 14px; }
-    .chain { flex-direction: column; }
-    .chain .arrow { width: auto; flex-direction: row; gap: 8px; padding: 4px 0; }
-    .chain .arrow::before { content: "↓"; margin: 0; }
     .katex-display { overflow-x: auto; overflow-y: hidden; padding-bottom: 2px; }
-    table { font-size: 14px; display: block; overflow-x: auto; }
     .progress, .controls .nav, .controls .count, .controls .fs { display: none; }
   }
   @media print {
@@ -213,514 +150,697 @@
     .controls { display: none; }
     .slide { break-inside: avoid; page-break-after: always; box-shadow: none; }
   }
+
+  /* One equation, one new idea. The previous equation stays visible above it. */
+  .slide { padding: 48px 72px 66px; }
+  h2 { font-size: 36px; max-width: 1100px; margin-bottom: 20px; }
+  .previous { display: flex; align-items: center; gap: 20px; min-height: 48px; color: var(--muted); font-size: 19px; margin: 0; }
+  .previous-label { flex: none; font-size: 14px; text-transform: uppercase; letter-spacing: .05em; }
+  .previous .katex { font-size: 1em; }
+  .equation { font-size: 31px; margin: 14px 0 24px; padding: 16px 0; }
+  .equation .katex-display { margin: 0; text-align: left; }
+  .equation .katex-display > .katex { text-align: left; }
+  .new-term, .new-label { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 5px; }
+  .explanation { font-size: 24px; line-height: 1.45; max-width: 1060px; margin-bottom: 16px; }
+  .terms { font-size: 19px; color: var(--muted); max-width: 1060px; }
+  .example { border-left: 3px solid var(--accent); padding-left: 16px; font-size: 20px; margin-top: 16px; }
+  .note { margin-top: auto; padding-top: 16px; font-size: 16px; color: var(--muted); max-width: 1060px; }
+  .slide > .foot { font-size: 13px; gap: 20px; }
+  .slide > .foot span:last-child { flex: none; }
+  .title-slide .sub { margin-bottom: 24px; }
+  .title-slide .lead { font-size: 27px; }
+  .title-meta { font-size: 18px; color: var(--muted); margin: 28px 0 8px; }
+  .title-slide .note { margin-top: 12px; }
+  .links { display: flex; gap: 24px; font-size: 16px; margin-top: 20px; }
+  .route, .checks { margin-top: 12px; padding-left: 28px; font-size: 23px; }
+  .route li, .checks li { margin-bottom: 22px; padding-left: 8px; }
+  .summary-route { font-size: 22px; }
+  .summary-route li { margin-bottom: 16px; }
+  .summary-route span { display: block; color: var(--muted); font-size: 20px; }
+  .source-list { font-size: 22px; line-height: 1.6; margin-top: 24px; }
+  .source-list li { margin-bottom: 16px; }
+  .mix-chart { width: 480px; height: 305px; align-self: center; }
+  .chart-slide .equation { font-size: 27px; margin: 8px 0; padding: 8px 0; }
+  .chart-slide .explanation { font-size: 21px; margin-bottom: 0; }
+  .chart-slide .previous { min-height: 32px; }
+  .controls select { max-width: 270px; height: 34px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); color: var(--text); font: inherit; font-size: 13px; padding: 0 8px; }
+  .controls button:disabled { opacity: .35; cursor: default; }
+  :focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+  .math-warning { position: fixed; top: 12px; left: 12px; right: 12px; padding: 10px; background: var(--surface); color: var(--bad); border: 1px solid var(--bad); z-index: 10; }
+  @media (max-width: 860px), print {
+    .slide { padding: 28px 22px 60px; overflow: visible; }
+    h2 { font-size: 26px; }
+    .previous { display: block; min-height: 0; font-size: 16px; overflow-x: auto; }
+    .previous-label { display: block; margin-bottom: 8px; font-size: 12px; }
+    .equation { font-size: 23px; margin: 16px 0; padding: 8px 0; }
+    .explanation { font-size: 20px; }
+    .terms, .example { font-size: 17px; }
+    .note { margin-top: 20px; font-size: 15px; }
+    .slide > .foot { left: 22px; right: 22px; font-size: 11px; }
+    .route, .checks, .source-list { font-size: 19px; }
+    .summary-route span { font-size: 17px; }
+    .mix-chart { width: 100%; height: auto; }
+    .chart-slide .equation { font-size: 22px; }
+    .controls { left: 16px; justify-content: flex-end; }
+    .controls select { max-width: calc(100vw - 90px); }
+    .stage { padding-bottom: 64px; }
+    .title-slide .lead { font-size: 22px; }
+  }
+  @media print {
+    @page { size: A4 landscape; margin: 10mm; }
+    :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #fff; --surface: #fff; --text: #111; --muted: #444; --line: #ddd; --accent: #245db6; }
+    .stage { padding: 0; }
+    .slide { min-height: 175mm; margin: 0; border: 0; border-radius: 0; break-after: page; }
+    .slide:last-child { break-after: auto; page-break-after: auto; }
+    .slide > .foot { bottom: 12px; }
+    .progress, .math-warning { display: none; }
+  }
+  @media (prefers-reduced-motion: reduce) { .progress { transition: none; } }
+
 </style>
 </head>
 <body>
+<noscript><p>Для формул и навигации включите JavaScript. <a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf">Открыть главу PDF</a>.</p><style>.stage{position:static;transform:none;width:auto;height:auto}.slide{position:relative;display:flex;margin:16px}</style></noscript>
 <div class="progress" id="progress"></div>
 
-<main class="stage" id="stage">
 
-<!-- 1 -->
-<section class="slide title-slide">
-  <p class="kicker">Черновик теоретической главы диссертации</p>
-  <h1>Почему исполнительную часть VLA‑политики можно обучить только обучением с подкреплением</h1>
-  <p class="sub">Математическое обоснование поэтапного бутстрэппинга</p>
-  <p class="lead" style="margin-bottom:22px">Д. Нуртдинов · ноябрь 2026</p>
-  <div>
-    <span class="pill">SmolVLA</span><span class="pill">тросовый робот CDPR</span><span class="pill">WidowX-200</span><span class="pill">PPO / GRPO с усечением</span><span class="pill">бинарная награда успеха</span>
-  </div>
-  <p class="tiny muted" style="margin-top:26px">Навигация: ← → или пробел · F — полный экран · T — тема · <a href="../">сайт проекта</a> · <a href="https://github.com/damurka5/RL_VLA_Bootstrapping">репозиторий</a></p>
+<main class="stage" id="stage" aria-label="Пошаговая презентация теории">
+
+<!-- 1. Начало -->
+<section id="slide-1" class="slide title-slide" data-chapter="Начало" data-source="" aria-labelledby="title-1">
+<p class="kicker">Начало</p>
+<h1 id="title-1">Зачем пайплайну<br>простые навыки</h1>
+<p class="sub">Теория RL-бутстрэппинга VLA, шаг за шагом</p>
+<p class="lead">Сначала получаем отдельные успехи.<br>Затем учимся выполнять всю задачу.</p>
+<p class="title-meta">Д. Нуртдинов · ноябрь 2026</p>
+<p class="note">На следующих слайдах <span class="new-label">синий подчёркнутый член</span> показывает, что изменилось в формуле.</p>
+<p class="links"><a href="../">Сайт проекта</a><a href="https://github.com/damurka5/RL_VLA_Bootstrapping">Репозиторий</a></p>
 </section>
 
-<!-- 2 -->
-<section class="slide">
-  <p class="kicker">Постановка</p>
-  <h2>Вопрос</h2>
-  <p class="quote">Почему исполнительную часть VLA-политики (action expert / action head) можно обучить только консервативным RL — PPO и GRPO с усечением — и почему это приводит к успеху на инструкциях манипуляции?</p>
-  <div class="grid-4">
-    <div class="card"><h3>Разреженность</h3><p>Награда бинарна. Пока успехов нет, градиент политики тождественно равен нулю.</p></div>
-    <div class="card"><h3>Длинный горизонт</h3><p>Подход, захват, подъём, перенос, отпускание: случайный успех экспоненциально мал по длине цепочки.</p></div>
-    <div class="card"><h3>Одна политика</h3><p>Много инструкций и общие параметры: улучшение одного навыка может разрушать другой.</p></div>
-    <div class="card"><h3>Новая кинематика</h3><p>На CDPR приор SmolVLA — почти постоянное смещение: переносится представление, а не поведение.</p></div>
-  </div>
-  <div class="spacer"></div>
-  <p class="small muted">Эмпирическая основа. CDPR: 69,14 % строгого успеха полной задачи (1416 из 2048 попыток), старт с пустым захватом, без учителя и без демонстраций человека. WidowX-200: та же схема «навыки → композиция» на другой кинематике.</p>
+<!-- 2. Начало -->
+<section id="slide-2" class="slide " data-chapter="Начало" data-source="" aria-labelledby="title-2">
+<p class="kicker">Начало</p>
+<h2 id="title-2">Логика пайплайна</h2>
+<ol class="route">
+<li><b>Успех.</b> Что именно мы хотим сделать вероятнее?</li>
+<li><b>Сигнал.</b> Почему без первых успехов GRPO не учится?</li>
+<li><b>Навыки и композиция.</b> Как получить эти первые успехи?</li>
+<li><b>Обновления.</b> Как улучшать поведение и сохранять навыки?</li>
+<li><b>Сходимость.</b> При каких условиях шаги дают результат?</li>
+</ol><p class="note">Стрелки листают по одному шагу. Меню внизу позволяет перейти к нужной части.</p>
 </section>
 
-<!-- 3 -->
-<section class="slide">
-  <p class="kicker">Постановка</p>
-  <h2>Что именно означает «только RL»</h2>
-  <div class="cols">
-    <div class="card">
-      <h3>Доступно обучающемуся</h3>
-      <ul>
-        <li>замороженное отображение признаков $\varphi$: бэкбон VLM, проекция, приор действий;</li>
-        <li>симулятор со сбросом в стартовые распределения навыков;</li>
-        <li>предикаты успеха навыков.</li>
-      </ul>
-    </div>
-    <div class="card">
-      <h3>Недоступно</h3>
-      <ul>
-        <li>целевые действия из внешнего источника: человек, скриптовый оракул, контроллер-помощник.</li>
-      </ul>
-      <p class="small muted" style="margin-top:10px">Допустимо: самоимитация на собственных успехах и переразметка инструкций — действия выбраны самой политикой, а отобраны предикатом успеха.</p>
-    </div>
-  </div>
-  <div class="thm" style="margin-top:22px">
-    <p><span class="label">Навык</span> — тройка «инструкция, стартовое распределение, событие успеха»:</p>
-    \[ \mathcal T=(\ell,\mu,E,H),\qquad J_{\mathcal T}(\pi)=\PP^{\pi}_{\mu}\bigl(z_H\in E\bigr). \]
-  </div>
-  <p class="lead">«Описать простейший навык» = задать $\ell$, $\mu$ и $E$. Через эти объекты и замороженное представление выражаются все величины в оценках сходимости.</p>
+<!-- 3. 1. Что считаем успехом -->
+<section id="slide-3" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 2" aria-labelledby="title-3">
+<p class="kicker">1. Что считаем успехом</p>
+<h2 id="title-3">Политика выбирает действие</h2>
+<div class="equation">\[ u\sim\pi_\theta(\cdot\mid x) \]</div>
+<p class="explanation">Политика задаёт вероятности действий. Обучение меняет эти вероятности через параметры головы.</p>
+<p class="terms">$x$ — признаки наблюдения и инструкции. $u$ — действие до усечения. $\theta$ — обучаемые параметры.</p>
+<p class="note">В этой модели признаки VLA заморожены. Симулятор задаёт старты и проверяет успех. Целевые действия для новой задачи порождает сама политика.</p>
 </section>
 
-<!-- 4 -->
-<section class="slide">
-  <p class="kicker">Структура ответа</p>
-  <h2>Ответ — четыре условия</h2>
-  <div class="grid-2x2">
-    <div class="card"><span class="tag">У1 · теорема 4.1</span><h3>Что оптимизирует GRPO?</h3><p>Монотонное преобразование $2\arcsin\sqrt p$ вероятности успеха. Оптимумы Парето-оптимальны по контекстам.</p></div>
-    <div class="card"><span class="tag">У2 · теоремы 5.1, 5.4</span><h3>Почему консервативный шаг не вредит?</h3><p>Граница улучшения в доверительной области и граница сохранения навыка через среднюю вариацию политики.</p></div>
-    <div class="card"><span class="tag">У3 · теоремы 6.2, 6.4</span><h3>Почему шаги приходят к успеху?</h3><p>Неточный зеркальный спуск: разрыв $\le\sqrt{HD/2K}$ плюс невязка и покрытие. Потолок задаёт представление.</p></div>
-    <div class="card"><span class="tag">У4 · лемма 7.1, теоремы 7.4, 7.5</span><h3>Откуда сигнал и зачем навыки?</h3><p>Без успехов шага нет; для составной задачи успех экспоненциально мал. Навыки, лестница стартов и композиция поднимают его выше нуля.</p></div>
-  </div>
-  <div class="spacer"></div>
-  <p class="small muted">Сводная теорема 8.1 объединяет условия; предложение 8.2 показывает, что сигнал необходим.</p>
+<!-- 4. 1. Что считаем успехом -->
+<section id="slide-4" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 2" aria-labelledby="title-4">
+<p class="kicker">1. Что считаем успехом</p>
+<h2 id="title-4">Одна попытка даёт ноль или один</h2>
+<div class="equation">\[ Y=\begin{cases}1,&amp;\text{задача выполнена},\\0,&amp;\text{иначе}.\end{cases} \]</div>
+<p class="explanation">Вводим результат одной попытки. Для «положить в миску» единица означает выполнение всего условия успеха.</p>
+<p class="terms">$Y$ — бинарная награда за эпизод.</p>
 </section>
 
-<!-- 5 -->
-<section class="slide">
-  <p class="kicker">Модель</p>
-  <h2>Процесс, класс политик и алгоритм</h2>
-  <div class="cols">
-    <div>
-      <p class="small"><b>Расширенное состояние</b> хранит всю историю, поэтому процесс марковский при любой политике:</p>
-      \[ z_h=(c,\ s_{0:h},\ o_{0:h},\ p_{0:h},\ u_{0:h-1}). \]
-      <p class="small"><b>Класс политик</b> над замороженными признаками $x_h=\varphi_h(z_h)$: сравнительная политика тоже из $\Pi_\varphi$, без привилегий.</p>
-      <p class="small"><b>Параметризация</b> (остаточная голова над приором $p$):</p>
-      \[ \mu_\theta(x)=\tanh\bigl(p+s_r\tanh f_\theta(x)\bigr), \]
-      \[ u_h\sim\mathcal N(\mu_\theta(x_h)+b_h,\ \sigma^2_\theta),\qquad a_h=\operatorname{clip}(u_h,-1,1). \]
-      <p class="tiny muted">Действие в теории — латентное $u_h$; усечение отнесено к окружению. $H$ — число решений (кусков действий), в CDPR 40–128.</p>
-    </div>
-    <div>
-      <p class="small"><b>Групповое преимущество</b> по $G$ эпизодам из одного старта:</p>
-      \[ A_i=\frac{Y_i-\bar Y}{\max(\hat\sigma,\epsilon)},\qquad Y_i\in\{0,1\}. \]
-      <p class="small"><b>Усечённый суррогат</b>:</p>
-      \[ \mathcal L^{\rm clip}=\frac1N\sum_{i,h}\min\bigl(r_{ih}A_i,\ \bar r_{ih}A_i\bigr),\quad \bar r=\operatorname{clip}(r,1-\varepsilon_-,1+\varepsilon_+). \]
-      <div class="card" style="margin-top:8px">
-        <p class="small" style="margin:0">Конфигурация WidowX: $G=8$, $\varepsilon_-=0{,}2$, $\varepsilon_+=0{,}28$, 4 эпохи, энтропия $2\cdot10^{-4}$, фильтр групп по std $0{,}05$ (DAPO).</p>
-      </div>
-    </div>
-  </div>
+<!-- 5. 1. Что считаем успехом -->
+<section id="slide-5" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 4" aria-labelledby="title-5">
+<p class="kicker">1. Что считаем успехом</p>
+<h2 id="title-5">Средняя награда равна вероятности успеха</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$Y\in\{0,1\}$</span></div>
+<div class="equation">\[ p=\PP(Y=1)=\newterm{\E[Y]} \]</div>
+<p class="explanation">Добавили усреднение по многим попыткам. Среднее нулей и единиц равно доле единиц.</p>
+<p class="terms">$p$ — вероятность успеха в одном фиксированном контексте. $\E$ означает среднее.</p>
+<p class="example">Если из 100 попыток успешны 30, оценка p равна 0,30.</p>
 </section>
 
-<!-- 6 -->
-<section class="slide">
-  <p class="kicker">У1 · Что оптимизирует GRPO</p>
-  <h2>GRPO поднимается по $2\arcsin\sqrt{p}$</h2>
-  <div class="cols wide-left">
-    <div>
-      <div class="thm">
-        <p><span class="label">Теорема 4.1</span>При бинарной награде направление обновления в точке поведения в среднем равно</p>
-        \[ \E g=\frac{\nabla_\theta p_c}{\sqrt{p_c(1-p_c)}}=\nabla_\theta\bigl[2\arcsin\sqrt{p_c(\theta)}\bigr]. \]
-        <p class="small">При групповой нормировке — $c_{G,\epsilon}(p)\,\nabla p$, и $c_{G,\epsilon}\to1/\sqrt{p(1-p)}$ при $G\to\infty$.</p>
-      </div>
-      <ul class="small">
-        <li>Вырожденные группы дают $A_i\equiv0$ <i>точно</i>.</li>
-        <li>Трудные контексты усиливаются как $p^{-1/2}$.</li>
-        <li>Оптимумы $\E_cF_G(p_c)$ Парето-оптимальны по вектору $(p_c)_c$.</li>
-        <li>Константы: $|A_i|\le\sqrt7\approx2{,}65\lt 6$ — усечение преимуществ не срабатывает; минимальное ненулевое std $\approx0{,}33\gt0{,}05$ — фильтр удаляет ровно вырожденные группы.</li>
-      </ul>
-    </div>
-    <div>
-      <svg class="chart" id="chartWeight" viewBox="0 0 520 330" role="img" aria-label="Вес контекста 1/√(p(1−p)) в зависимости от вероятности успеха p"></svg>
-      <p class="chart-caption">Вес контекста относительно обычного градиента политики, $1/\sqrt{p(1-p)}$. Наведите курсор, чтобы увидеть значения.</p>
-    </div>
-  </div>
+<!-- 6. 1. Что считаем успехом -->
+<section id="slide-6" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 4" aria-labelledby="title-6">
+<p class="kicker">1. Что считаем успехом</p>
+<h2 id="title-6">Задача включает разные сцены</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$p=\E[Y]$</span></div>
+<div class="equation">\[ J(\pi)=\newterm{\E_c}\,[p_c(\pi)] \]</div>
+<p class="explanation">Добавили усреднение по контекстам: объектам, положениям и инструкциям. Получили итоговую метрику.</p>
+<p class="terms">$c$ — контекст. $p_c$ — успех в нём. $J$ — средний успех на заданном распределении задач.</p>
+<p class="note">Распределение контекстов фиксируем. Иначе изменение состава задач можно принять за улучшение политики.</p>
 </section>
 
-<!-- 7 -->
-<section class="slide">
-  <p class="kicker">У2 · Устойчивость</p>
-  <h2>Улучшение в доверительной области</h2>
-  <div class="thm">
-    <p><span class="label">Теорема 5.1</span><span class="name">для вероятности успеха на горизонте $H$</span></p>
-    \[ J(\pi')\ \ge\ J(\pi)+L_\pi(\pi')-H(H-1)\,\alpha_\infty^2\ \ge\ J(\pi)+L_\pi(\pi')-\tfrac12H(H-1)\,\delta, \]
-    <p class="small">где $L_\pi(\pi')=\sum_h\E_{d^\pi_h}\bar A_h$, $\alpha_\infty=\sup\TV(\pi'_h,\pi_h)$, $\delta=\sup\KL(\pi_h\|\pi'_h)$. Следствие 5.2: шаг миноризации–максимизации не уменьшает $J$.</p>
-  </div>
-  <div class="grid-3">
-    <div class="card"><h3>Усечение ≠ доверительная область</h3><p>Оно убирает стимул выходить за полосу только на выборочных действиях. Условие теоремы — свойство реализованного шага: контролировать по <code>approx_kl</code>, доле усечений, отбраковке шагов.</p></div>
-    <div class="card"><h3>Шаг $\propto H^{-2}$</h3><p>Улучшение гарантировано при $\delta\lt2L/(H(H-1))$. Отсюда довод в пользу кусков действий (они уменьшают число решений $H$) и малых шагов на длинных задачах.</p></div>
-    <div class="card"><h3>Константы худшего случая</h3><p>При $H=40$ и $\delta=0{,}009$ штраф $\approx7\gt1$: оценка численно бессодержательна. Её роль структурная — как шаг должен зависеть от горизонта.</p></div>
-  </div>
+<!-- 7. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-7" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2, формула GRPO" aria-labelledby="title-7">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-7">Сравниваем несколько попыток</h2>
+<div class="equation">\[ Y_1,\ldots,Y_G\in\{0,1\} \]</div>
+<p class="explanation">Из одного контекста запускаем G независимых попыток. Различия между исходами показывают, какие действия стоит повторять.</p>
+<p class="terms">$G$ — размер группы. $i$ — номер попытки.</p>
+<p class="example">Группа из четырёх попыток: 0, 0, 0, 1.</p>
 </section>
 
-<!-- 8 -->
-<section class="slide">
-  <p class="kicker">У2 · Устойчивость</p>
-  <h2>Сохранение навыков</h2>
-  <div class="thm">
-    <p><span class="label">Теорема 5.4</span>Для любой задачи $\mathcal T$ и любых $\pi,\pi'$</p>
-    \[ \bigl|J_{\mathcal T}(\pi')-J_{\mathcal T}(\pi)\bigr|\le\sum_{h=0}^{H-1}\E_{z\sim d^{\pi,\mathcal T}_h}\TV\bigl(\pi'_h(\cdot|z),\pi_h(\cdot|z)\bigr)\le\sum_h\sqrt{\tfrac12\,\E\,\KL(\pi_h\|\pi'_h)}. \]
-    <p class="small">Ожидание — по состояниям <i>этой</i> задачи при старой политике. На случайных конечных МППР оценка почти точна: максимум $|\Delta J|/\Delta=0{,}987$.</p>
-  </div>
-  <div class="grid-3">
-    <div class="card"><span class="tag">следствие 5.5</span><h3>Смесь задач</h3><p>$|\Delta J_{\mathcal T}|\le\bar\Delta/w_{\mathcal T}$. При $w_{\mathcal T}=0$ гарантии нет: изменение задаёт обобщение общей сети.</p></div>
-    <div class="card"><span class="tag">следствие 5.6</span><h3>Накопление дрейфа</h3><p>Оценка растёт линейно по числу шагов $K$. CDPR: KL $0{,}009$ на обновление, за 113 обновлений потеряно удержание подъёма.</p></div>
-    <div class="card"><span class="tag">следствия 5.7, 5.8</span><h3>Якорь к эталону</h3><p>$|J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le\sqrt{H D_{\rm ref}/2}$ — равномерно по $K$. Для гауссиан это член $(\mu-\mu_{\rm ref})^2/2\sigma^2$.</p></div>
-  </div>
+<!-- 8. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-8" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2" aria-labelledby="title-8">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-8">Вычитаем средний результат группы</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$Y_i$</span></div>
+<div class="equation">\[ Y_i\newterm{-\bar Y} \]</div>
+<p class="explanation">Добавили среднее группы. Успех получает положительный знак, неудача отрицательный.</p>
+<p class="terms">$\bar Y=(Y_1+\cdots+Y_G)/G$ — доля успехов в группе.</p>
+<p class="example">Для группы 0, 0, 0, 1 среднее равно 0,25. Отклонения: −0,25, −0,25, −0,25, +0,75.</p>
 </section>
 
-<!-- 9 -->
-<section class="slide">
-  <p class="kicker">У3 · Сходимость</p>
-  <h2>Консервативные шаги как зеркальный спуск</h2>
-  <div class="cols wide-left">
-    <div>
-      <p class="small"><b>KL-проксимальный шаг</b> (вариационный принцип Гиббса); усечённый суррогат — его приближение первого порядка:</p>
-      \[ \pi_{k+1}(\cdot|z)=\arg\max_q\Bigl\{\E_q\hat Q_k-\tfrac1\eta\KL(q\|\pi_k)\Bigr\}\ \propto\ \pi_k\,e^{\eta\hat Q_k}. \]
-      <div class="thm">
-        <p><span class="label">Теорема 6.2</span>Для любой сравнительной политики $\tilde\pi$ при точных $Q$ и $\eta=\sqrt{8D/HK}$</p>
-        \[ \min_{k\lt K}\bigl[J(\tilde\pi)-J(\pi_k)\bigr]\le\sqrt{\frac{H\,D(\tilde\pi\|\pi_0)}{2K}},\qquad D=\sum_h\E_{d^{\tilde\pi}_h}\KL\bigl(\tilde\pi_h\|\pi_{0,h}\bigr). \]
-      </div>
-    </div>
-    <div>
-      <div class="card">
-        <h3>Идея доказательства</h3>
-        <ol class="small" style="margin-bottom:0">
-          <li>Шаг Гиббса и лемма Хёфдинга дают неравенство трёх точек в каждом $z$.</li>
-          <li>Лемма о разности производительностей берётся по распределению $d^{\tilde\pi}$ сравнительной политики.</li>
-          <li>$d^{\tilde\pi}$ не зависит от $k$, поэтому KL-члены телескопируются.</li>
-        </ol>
-      </div>
-      <p class="lead" style="margin-top:20px">Размер шага $\eta$ задаёт только скорость. Вся трудность задачи сосредоточена в одном числе $D$.</p>
-    </div>
-  </div>
+<!-- 9. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-9" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2" aria-labelledby="title-9">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-9">Приводим отклонения к одному масштабу</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$Y_i-\bar Y$</span></div>
+<div class="equation">\[ A_i=\frac{Y_i-\bar Y}{\newterm{\hat\sigma}} \]</div>
+<p class="explanation">Добавили деление на разброс результатов. Так величина сигнала учитывает, насколько редок исход внутри группы.</p>
+<p class="terms">$A_i$ — преимущество попытки. Для бинарной группы $\hat\sigma=\sqrt{\bar Y(1-\bar Y)}$.</p>
+<p class="note">Пока предполагаем, что в группе есть и успехи, и неудачи. На следующем шаге уберём это ограничение.</p>
 </section>
 
-<!-- 10 -->
-<section class="slide">
-  <p class="kicker">У3 · Сходимость</p>
-  <h2>Что определяет $D$ и что ещё входит в ошибку</h2>
-  <div class="cols">
-    <div>
-      <p class="small"><b>Следствие 6.3.</b> Для гауссовских $\pi_0=\mathcal N(\mu_0,\sigma_0^2)$ и $\tilde\pi=\mathcal N(\tilde\mu,\tilde\sigma^2)$</p>
-      \[ D=\sum_h\E_{d^{\tilde\pi}_h}\frac{\|\tilde\mu-\mu_0\|^2}{2\sigma_0^2}+Hm\Bigl[\log\frac{\sigma_0}{\tilde\sigma}+\frac{\tilde\sigma^2}{2\sigma_0^2}-\frac12\Bigr]. \]
-      <ul class="small">
-        <li>При $\sigma_0=e^{-1{,}2}\approx0{,}30$ рассогласование $0{,}1$ стоит $0{,}055$ нат на шаг, а $0{,}5$ — $1{,}38$ нат: в 25 раз больше обновлений.</li>
-        <li>Точность $\tilde\sigma\ll\sigma_0$ обходится лишь логарифмически.</li>
-        <li>Если приор — постоянное смещение вдали от нужных действий, $D$ велико, а остаток работает в насыщении $\tanh$.</li>
-      </ul>
-    </div>
-    <div>
-      <p class="small"><b>Теорема 6.4</b> (неточный шаг): средний разрыв не больше суммы трёх членов.</p>
-      <div class="card" style="margin-bottom:10px"><span class="tag">оптимизация</span><p style="margin:0">$D/(\eta K)+H\eta/8$ — консервативный шаг сходится.</p></div>
-      <div class="card" style="margin-bottom:10px"><span class="tag">невязка шага $e_k$</span><p style="margin:0">Оценка $Q$ по $G$ исходам (на вырожденной группе — полная ошибка), представление на признаках $\varphi$, приближение усечением.</p></div>
-      <div class="card"><span class="tag">покрытие $\sqrt{C_h}$</span><p style="margin:0">$C_h=1+\chi^2(d^{\tilde\pi}_h\|\nu_h)$: покрывают ли состояния обучения состояния успеха. Старты «в захвате», лестница, рестарты.</p></div>
-    </div>
-  </div>
+<!-- 10. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-10" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2, лемма 7.1" aria-labelledby="title-10">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-10">Защита от деления на ноль</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$A_i=(Y_i-\bar Y)/\hat\sigma$</span></div>
+<div class="equation">\[ A_i=\frac{Y_i-\bar Y}{\newterm{\max(\hat\sigma,\epsilon)}} \]</div>
+<p class="explanation">Добавили маленькое положительное число ε. Знаменатель теперь не обращается в ноль.</p>
+<p class="terms">$\epsilon&gt;0$ — численная защита. Если разброс больше ε, формула остаётся прежней.</p>
+<p class="example">Если все результаты равны нулю, числитель тоже ноль. Все преимущества равны нулю.</p>
 </section>
 
-<!-- 11 -->
-<section class="slide">
-  <p class="kicker">У3 · Сходимость</p>
-  <h2>Потолок задаёт представление, а не RL</h2>
-  <div class="cols">
-    <div>
-      <div class="thm">
-        <p><span class="label">Предложение 6.6</span>Если на решающем шаге успех требует $\|g(\xi)-u\|\le r$ и $\sup_a\PP(\|g-a\|\le r\mid x)\le\beta$, то</p>
-        \[ J(\pi)\le\beta\quad\text{для любой }\pi\in\Pi_\varphi. \]
-      </div>
-      <p class="small">RL сходится к $J^*_\varphi=\sup_{\Pi_\varphi}J$, а не к $\sup J$. Разрыв устраняется улучшением признаков (адаптация зрения, камера на запястье), а не бюджетом RL.</p>
-      <p class="small muted">CDPR: локализация 3–5 см при допуске захвата около 2 см ограничивает захват. Размещение с допуском 5,7 и 9,1 см устойчиво.</p>
-    </div>
-    <div>
-      <div class="card" style="margin-bottom:12px">
-        <h3>Случайная проекция признаков</h3>
-        <p>Токены проецируются фиксированной гауссовской матрицей в $\mathbb R^{512}$. По лемме Джонсона–Линденштраусса расстояния сохраняются с искажением $\epsilon$, поэтому потолок задают сами токены VLM.</p>
-      </div>
-      <div class="card">
-        <h3>Почему обучается только голова</h3>
-        <ol style="margin:0">
-          <li>Класс $\Pi_\varphi$ фиксирован — сравнительная политика не движется.</li>
-          <li>Входы $(x,p)$ стационарны — банки SIL и якоря остаются корректными.</li>
-          <li>Геометрия доверительной области — в пространстве действий; голова — самый дешёвый способ в ней двигаться.</li>
-        </ol>
-      </div>
-    </div>
-  </div>
+<!-- 11. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-11" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1" aria-labelledby="title-11">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-11">Одинаковые исходы не дают сравнения</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$A_i=(Y_i-\bar Y)/\max(\hat\sigma,\epsilon)$</span></div>
+<div class="equation">\[ Y_1=\cdots=Y_G\quad\Longrightarrow\quad\newterm{A_1=\cdots=A_G=0} \]</div>
+<p class="explanation">Если все попытки неудачны, GRPO не знает, какую предпочесть. То же верно для группы из одних успехов.</p>
+<p class="terms">Нулевая группа даёт нулевой вклад награды в градиент политики.</p>
+<p class="note">Это утверждение о сигнале награды. Энтропия, другие потери или накопленный момент оптимизатора могут продолжать менять параметры.</p>
 </section>
 
-<!-- 12 -->
-<section class="slide">
-  <p class="kicker">У4 · Сигнал</p>
-  <h2>Без успеха нет шага</h2>
-  <div class="cols wide-left">
-    <div>
-      <div class="thm">
-        <p><span class="label">Лемма 7.1</span>Если все группы вырождены, то $A_i\equiv0$ и вклад градиента политики равен нулю. Ожидаемое число эпизодов до первого ненулевого шага не меньше $1/\E_cp_c$, так как</p>
-        \[ P_{\rm mix}(p,G)=1-p^G-(1-p)^G\le Gp. \]
-      </div>
-      <div class="thm">
-        <p><span class="label">Предложение 7.2</span>Если каждая из $m$ вех проходится с вероятностью не больше $q$, то $J_c(\pi_0)\le q^m$.</p>
-      </div>
-      <p class="small">Иллюстрация: попадание в шар 2 см при разбросе 20 см в $\mathbb R^3$ — $10^{-3}$; цепочка из четырёх таких событий — $10^{-12}$. Декомпозиция на навыки — способ обойти этот барьер.</p>
-    </div>
-    <div>
-      <svg class="chart" id="chartMix" viewBox="0 0 520 330" role="img" aria-label="Доля смешанных групп P_mix(p, 8) в зависимости от вероятности успеха p"></svg>
-      <p class="chart-caption">Доля информативных групп при $G=8$: $P_{\rm mix}(p,8)$.</p>
-    </div>
-  </div>
+<!-- 12. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-12" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1" aria-labelledby="title-12">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-12">Вероятность встретить хотя бы один успех</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\PP(\text{неудача})=1-p$</span></div>
+<div class="equation">\[ P_{\ge1}=1\newterm{-(1-p)^G} \]</div>
+<p class="explanation">Из единицы вычли вероятность того, что все G попыток неудачны.</p>
+<p class="terms">$1-p$ — вероятность одной неудачи. Степень G появляется из независимости попыток при фиксированном контексте.</p>
 </section>
 
-<!-- 13 -->
-<section class="slide">
-  <p class="kicker">У4 · Сигнал</p>
-  <h2>Плотная награда — сигнал; бинарная — правильная цель</h2>
-  <div class="thm">
-    <p><span class="label">Предложение 7.3</span></p>
-    <ol style="margin-bottom:4px">
-      <li>Если плотная отдача не имеет атомов, $P_{\rm mix}=1$: каждая группа информативна.</li>
-      <li>Мост Маркова: если плотная стадия добилась $\E\bigl[\tfrac1H\sum_hg(d(s_h))\bigr]\le\bar g$, то $J\ge1-\bar g/g(r)$.</li>
-      <li>Максимум плотной цели может иметь нулевую вероятность успеха.</li>
-    </ol>
-  </div>
-  <div class="cols">
-    <div class="card">
-      <h3>Контрпример к п. 3</h3>
-      <p>Успех — $d(s_H)\le r$, награда $-d(s_H)$.</p>
-      <p>A всегда заканчивает на $r+\epsilon$: плотная цель $-(r+\epsilon)$, успех $0$.<br>B с вероятностью ½ попадает точно, иначе на $3r$: плотная цель $-1{,}5r$, успех ½.</p>
-      <p style="margin:0">Плотная цель предпочитает A.</p>
-    </div>
-    <div>
-      <p class="lead">Отсюда порядок «плотная → бинарная».</p>
-      <p class="small">Плотная награда даёт сигнал при нулевой стартовой вероятности успеха. Доведя расстояние ниже радиуса успеха, она обеспечивает $p_0\gt0$, после чего бинарная стадия оптимизирует саму $J$.</p>
-      <p class="small muted">Требование «окно плотной награды шире радиуса успеха» — это требование, чтобы $g$ различала состояния вне успеха.</p>
-    </div>
-  </div>
+<!-- 13. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-13" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1" aria-labelledby="title-13">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-13">Для сравнения нужна ещё и неудача</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$P_{\ge1}=1-(1-p)^G$</span></div>
+<div class="equation">\[ P_{\rm mix}=1-(1-p)^G\newterm{-p^G} \]</div>
+<p class="explanation">Теперь вычли группы, в которых все попытки успешны. Остались смешанные группы с ненулевыми преимуществами.</p>
+<p class="terms">$p^G$ — вероятность G успехов подряд. $P_{\rm mix}$ — вероятность информативной группы.</p>
 </section>
 
-<!-- 14 -->
-<section class="slide">
-  <p class="kicker">У4 · Лестница стартов</p>
-  <h2>Условие храповика $P-\Delta\ge D$</h2>
-  <div class="cols wide-right">
-    <div>
-      <div class="thm">
-        <p><span class="label">Теорема 7.4</span>Переход на ступень $j+1$ при успехе $P$, возврат при успехе ниже $D$. Если в момент перехода $J_{\mu_{j+1}}\ge J_{\mu_j}-\Delta$ и</p>
-        \[ P-\Delta\ge D, \]
-        <p class="small">то немедленного возврата нет, а доля смешанных групп не меньше $\min\{P_{\rm mix}(P-\Delta),P_{\rm mix}(P)\}$. Достаточно $\Delta\ge\TV(\mu_j,\mu_{j+1})$ или $\Delta\ge L_VW_1(\mu_j,\mu_{j+1})$.</p>
-      </div>
-      <p class="small">С учётом оценивания по $n$ эпизодам: $P-\Delta-2\zeta_n\ge D$, где $\zeta_n=\sqrt{\log(2/\delta)/2n}$.</p>
-    </div>
-    <div>
-      <svg class="chart" id="chartLadder" viewBox="0 0 560 290" role="img" aria-label="Пороги лестницы CDPR: где оказывается успех после перехода относительно порога возврата"></svg>
-      <p class="chart-caption">CDPR, $\Delta_{p90}=0{,}129$ за 12 переходов. При $0{,}45/0{,}30$: ноль возвратов, захват выведен из нуля, $P_{\rm mix}(0{,}321;8)\approx0{,}955$.</p>
-    </div>
-  </div>
+<!-- 14. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-14" class="slide chart-slide" data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1" aria-labelledby="title-14">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-14">Небольшой рост успеха даёт больше полезных групп</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$P_{\rm mix}=1-(1-p)^G-p^G$</span></div>
+<div class="equation">\[ P_{\rm mix}=1-(1-p)^8-p^8 \]</div>
+<p class="explanation">Подставили размер группы G = 8. При успехе 3% полезны около 22% групп. При успехе 16% полезны уже около 75%.</p>
+<svg class="chart mix-chart" id="chartMix" viewBox="0 0 520 330" role="img" aria-label="Вероятность смешанной группы из восьми попыток в зависимости от вероятности успеха"></svg>
 </section>
 
-<!-- 15 -->
-<section class="slide">
-  <p class="kicker">У4 · Композиция</p>
-  <h2>Навыки под одной инструкцией</h2>
-  <div class="thm">
-    <p><span class="label">Теорема 7.5</span><span class="name">реактивная политика, этапы с моментами остановки $\tau_j$</span></p>
-    \[ J_{\mathcal T_c}(\pi)=\prod_{j=1}^m\E_{\rho_{j-1}}V^{\ell_c}_j\ \ge\ \prod_{j=1}^m\Bigl(p_j-\Gamma_j-\TV(\rho_{j-1},\mu_j)\Bigr)^{+}. \]
-  </div>
-  <div class="chain">
-    <div class="node"><b>Старт $\mu_c$</b>пустой захват, одна итоговая инструкция $\ell_c$</div>
-    <div class="arrow">этап 1</div>
-    <div class="node"><b>Захват: $p_1$, $\Gamma_1$</b>навык обучен под «pick up», исполняется под $\ell_c$</div>
-    <div class="arrow">передача<br>$\TV(\rho_1,\mu_2)$</div>
-    <div class="node"><b>Размещение: $p_2$, $\Gamma_2$</b>обучено со стартов «в захвате» под $\ell_c$, поэтому $\Gamma_2=0$</div>
-    <div class="arrow">этап 2</div>
-    <div class="node goal"><b>Строгий успех</b>подход, захват, подъём, отпускание в цели</div>
-  </div>
-  <div class="grid-3">
-    <div class="card"><h3>$p_j$ — качество навыка</h3><p>Обеспечивают стадии RL навыков.</p></div>
-    <div class="card"><h3>$\Gamma_j$ — перенос инструкции</h3><p>Считается по записанным состояниям: KL между средними головы при $\ell_c$ и $\ell_j$. Переразметка успехов под $\ell_c$ минимизирует $\Gamma_j$.</p></div>
-    <div class="card"><h3>$\TV(\rho,\mu)$ — передача</h3><p>Покрывают ли старты «в захвате» реальные состояния после захвата. Оценка двухвыборочным классификатором.</p></div>
-  </div>
-  <p class="small muted" style="margin-top:12px">Пример: $(0{,}5-0{,}1)(0{,}7-0{,}3)=0{,}16$, $P_{\rm mix}\approx0{,}75$ — против $q^m$ без декомпозиции.</p>
+<!-- 15. 2. Откуда берётся сигнал GRPO -->
+<section id="slide-15" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Предложение 7.2" aria-labelledby="title-15">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<h2 id="title-15">Длинная цепочка делает первый успех редким</h2>
+<div class="equation">\[ p_{\rm full}\le\newterm{q^m} \]</div>
+<p class="explanation">Если каждый следующий этап проходит с условной вероятностью не больше q, шансы перемножаются.</p>
+<p class="terms">$m$ — число обязательных этапов. Независимость этапов не нужна: q ограничивает успех при прохождении предыдущих.</p>
+<p class="example">Учебный пример: четыре этапа с условным успехом 10% дают не больше 0,01% полного успеха.</p>
+<p class="note">Поэтому начинаем с отдельных навыков, для которых успех достижим чаще.</p>
 </section>
 
-<!-- 16 -->
-<section class="slide">
-  <p class="kicker">У4 · Самоимитация</p>
-  <h2>Самоимитация на собственных успехах — тоже шаг RL</h2>
-  <div class="thm">
-    <p><span class="label">Предложение 7.6</span>Пусть $q^+_\beta$ — закон траекторий политики $\beta$ при условии успеха. Тогда</p>
-    \[ \log\frac{J_{\mathcal T}(\pi_\theta)}{J_{\mathcal T}(\pi_\beta)}\ \ge\ G_{\mathcal T}(\theta)=\E_{q^+_\beta}\sum_h\log\frac{\pi_\theta(u_h|x_h)}{\pi_\beta(u_h|x_h)}. \]
-    <p class="small">Неравенство EM-типа (Dayan–Hinton, RWR): если подгонка не уменьшила популяционное правдоподобие собственных успехов, успех не падает.</p>
-  </div>
-  <div class="thm">
-    <p><span class="label">Следствие 7.7</span><span class="name">сбалансированная смесь банков, $\sum_{\mathcal T}w_{\mathcal T}G_{\mathcal T}\ge0$</span></p>
-    \[ J_{\theta,\mathcal T}\ \ge\ J_{\beta,\mathcal T}\prod_{\mathcal T'\ne\mathcal T}J_{\beta,\mathcal T'}^{\,w_{\mathcal T'}/w_{\mathcal T}}. \]
-  </div>
-  <div class="cols">
-    <p class="small">Сбалансированная самоимитация поднимает $\prod_{\mathcal T}J_{\mathcal T}^{w_{\mathcal T}}$ — логарифмический барьер против забывания. Задача с $w_{\mathcal T}=0$ нижней границы не имеет: на CDPR захват стёрт до нуля, когда отсутствовал в смеси.</p>
-    <p class="small muted">Для гауссовской головы правдоподобие — взвешенная MSE на латентном $u$. Подгонка к усечённым или сглаженным действиям этой гарантии формально не наследует.</p>
-  </div>
+<!-- 16. 3. Как получить первые успехи -->
+<section id="slide-16" class="slide " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3" aria-labelledby="title-16">
+<p class="kicker">3. Как получить первые успехи</p>
+<h2 id="title-16">Плотная награда различает неудачи</h2>
+<div class="equation">\[ R_{\rm dense}=\newterm{-d} \]</div>
+<p class="explanation">Вместо одинакового нуля даём больший балл за меньшее расстояние. Появляется сравнение даже до полного успеха.</p>
+<p class="terms">$d\ge0$ — расстояние до цели в конце эпизода. Это упрощённый пример плотной награды.</p>
+<p class="example">Расстояния 10 см и 3 см дают разные награды, даже если для успеха нужно попасть ближе 2 см.</p>
+<p class="note">Разные награды дают сигнал для обновления, но сами по себе ещё не гарантируют улучшение.</p>
 </section>
 
-<!-- 17 -->
-<section class="slide">
-  <p class="kicker">Сводная теорема</p>
-  <h2>Теорема 8.1 о бутстрэппинге исполнительной части</h2>
-  <div class="cols">
-    <div class="card">
-      <h3>Условия</h3>
-      <ul class="small" style="margin:0">
-        <li><b>A1. Представимость:</b> есть $\tilde\pi\in\Pi_\varphi$ с $\bar D=D(\tilde\pi\|\pi^{\rm III}_0)\lt\infty$.</li>
-        <li><b>A2. Сигнал:</b> $p_0=\prod_j\bigl(p_j-\Gamma_j-\TV(\rho_{j-1},\mu_j)\bigr)^+\gt0$.</li>
-        <li><b>A3. Неточность шага:</b> $\sum_h\sqrt{C_h}\,\|e^+_{k,h}\|\le\varepsilon_{\rm upd}$.</li>
-      </ul>
-    </div>
-    <div class="card">
-      <h3>Выводы</h3>
-      <ul class="small" style="margin:0">
-        <li>(а) группа содержит успех с вероятностью $\ge p_0$;</li>
-        <li>(б) $\displaystyle\max_{k\lt K}J_{\mathcal T_c}(\pi_k)\ge J_{\mathcal T_c}(\tilde\pi)-\sqrt{\tfrac{H\bar D}{2K}}-\varepsilon_{\rm upd}$;</li>
-        <li>(в) навык в смеси меняется на $\le\bar\Delta_k/w_{\mathcal T}$ за шаг; с якорём — на $\le\sqrt{HD_{\rm ref}/2}$ всегда;</li>
-        <li>(г) $J_{\mathcal T_c}(\tilde\pi)\le J^*_\varphi$ — потолок представления.</li>
-      </ul>
-    </div>
-  </div>
-  <div class="thm" style="margin-top:18px">
-    <p><span class="label">Предложение 8.2</span><span class="name">необходимость сигнала</span></p>
-    <p class="small">Если $p_c(\pi^{\rm III}_0)=0$ почти для всех контекстов и регуляризации нет, то $\pi_k=\pi^{\rm III}_0$ при всех $k$, и условие A3 нарушается. Сигнал A2 необходим, а простые навыки — конструктивный способ его обеспечить.</p>
-  </div>
+<!-- 17. 3. Как получить первые успехи -->
+<section id="slide-17" class="slide " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3" aria-labelledby="title-17">
+<p class="kicker">3. Как получить первые успехи</p>
+<h2 id="title-17">Порог связывает расстояние с успехом</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$R_{\rm dense}=-d$</span></div>
+<div class="equation">\[ p=\PP(d\le r)=\newterm{1-\PP(d&gt;r)} \]</div>
+<p class="explanation">Ввели радиус допуска r. Теперь успех означает попасть внутрь этого радиуса.</p>
+<p class="terms">$r&gt;0$ — допуск. В этом примере только конечное расстояние определяет успех.</p>
+<p class="note">Для реального захвата или размещения нужно отдельно учесть остальные условия: удержание, отпускание и устойчивость.</p>
 </section>
 
-<!-- 18 -->
-<section class="slide">
-  <p class="kicker">Ответ</p>
-  <h2>Почему достаточно консервативного RL</h2>
-  <div class="grid-2x2">
-    <div class="card"><span class="tag">У1</span><p>При бинарной награде GRPO оптимизирует монотонное преобразование вероятности успеха — саму метрику задачи.</p></div>
-    <div class="card"><span class="tag">У2</span><p>Шаг в доверительной области почти монотонен и меняет успех каждого навыка, на состояниях которого он ограничен, не больше суммы средних вариаций.</p></div>
-    <div class="card"><span class="tag">У3</span><p>Последовательность шагов — неточный зеркальный спуск к любому успешному поведению на замороженных признаках. Цена — $D$, покрытие и невязка.</p></div>
-    <div class="card"><span class="tag">У4</span><p>Сигнал есть, только если $p_0\gt0$. Тройки навыков, плотная награда, лестница стартов и композиция делают $p_0$ отделённой от нуля за полиномиальную цену.</p></div>
-  </div>
+<!-- 18. 3. Как получить первые успехи -->
+<section id="slide-18" class="slide " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3" aria-labelledby="title-18">
+<p class="kicker">3. Как получить первые успехи</p>
+<h2 id="title-18">Малое среднее расстояние даёт нижнюю границу</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$p=1-\PP(d&gt;r)$</span></div>
+<div class="equation">\[ p\ge1-\newterm{\frac{\E[d]}{r}} \]</div>
+<p class="explanation">Неравенство Маркова даёт верхнюю границу вероятности промаха. Подставили её в предыдущую формулу.</p>
+<p class="terms">Если $\E[d]&lt;r$, правая часть положительна. Тогда есть успехи для запуска бинарного RL.</p>
+<p class="example">Если среднее расстояние не больше 1 см при допуске 2 см, успех в этой модели не ниже 50%.</p>
+<p class="note">Плотная цель может предпочитать частые почти-успехи редким полным успехам. Поэтому завершаем обучение по бинарной награде.</p>
 </section>
 
-<!-- 19 -->
-<section class="slide">
-  <p class="kicker">Ответ</p>
-  <h2>Что дали бы демонстрации и чем пайплайн их заменяет</h2>
-  <p class="lead">В сводной оценке демонстрации входят лишь через две величины.</p>
-  <table style="font-size:18px">
-    <thead><tr><th style="width:22%">Величина</th><th style="width:39%">Демонстрации</th><th>Пайплайн без датасета</th></tr></thead>
-    <tbody>
-      <tr><td>$\bar D$ — KL до успешной политики</td><td>клонирование поведения приближает $\pi_0$ к $\tilde\pi$</td><td>RL навыков и самоимитация на собственных успехах (предложение 7.6)</td></tr>
-      <tr><td>$C_h$ — покрытие</td><td>рестарты из состояний демонстраций</td><td>стартовые распределения навыков в симуляторе: «в захвате», выровненный захват, лестница</td></tr>
-    </tbody>
-  </table>
-  <div class="spacer"></div>
-  <p class="quote" style="margin-bottom:10px">Обе величины управляемы без демонстраций — в этом точный математический смысл утверждения «датасет для новой структуры не обязателен».</p>
-  <p class="small muted">При развёртывании привилегированные старты не используются: итоговая оценка проводится из целевого распределения $\mu_c$.</p>
+<!-- 19. 3. Как получить первые успехи -->
+<section id="slide-19" class="slide " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4" aria-labelledby="title-19">
+<p class="kicker">3. Как получить первые успехи</p>
+<h2 id="title-19">Сначала решаем задачу из лёгких стартов</h2>
+<div class="equation">\[ J_{\rm easy}\ge\newterm{P} \]</div>
+<p class="explanation">Задаём порог P. Усложняем старты только после того, как навык достиг этого уровня успеха.</p>
+<p class="terms">$J_{\rm easy}$ — успех на текущей ступени. $P$ — порог перехода.</p>
+<p class="example">Например, начинаем захват рядом с объектом. Затем постепенно увеличиваем расстояние.</p>
 </section>
 
-<!-- 20 -->
-<section class="slide">
-  <p class="kicker">Эксперимент</p>
-  <h2>Связь с наблюдениями</h2>
-  <table>
-    <thead><tr><th style="width:27%">Величина теории</th><th style="width:30%">Механизм и диагностика</th><th>Наблюдение</th></tr></thead>
-    <tbody>
-      <tr><td>$\bar\alpha\le\sqrt{\overline{\KL}/2}$ (лемма 3.3)</td><td>усечение $0{,}2/0{,}28$; <code>approx_kl_mean</code></td><td>CDPR, LR $10^{-5}$: $\overline{\KL}=0{,}009$, $\bar\alpha\le0{,}067$</td></tr>
-      <tr><td>Накопление дрейфа (сл. 5.6)</td><td>$\sum_k\sqrt{\overline{\KL}_k/2}$ по запуску</td><td>CDPR: за 113 обновлений потеряно удержание подъёма; «обмен» plate/bowl</td></tr>
-      <tr><td>Якорь (сл. 5.7, 5.8)</td><td><code>reference_anchor</code> на банке успехов</td><td>ущерб plate/lift вдвое меньше, эрозия lift|grasp остаётся</td></tr>
-      <tr><td>$w_{\mathcal T}=0$ (сл. 5.5, 7.7)</td><td>стадии RL по отдельным инструкциям</td><td>WidowX: подход и захват потеряны на стадии размещения; CDPR: захват стёрт, когда отсутствовал в смеси</td></tr>
-      <tr><td>$D(\tilde\pi\|\pi_0)$ (сл. 6.3)</td><td>остаток над приором; насыщение $\tanh$</td><td>CDPR: приор — постоянное смещение, остаток насыщен</td></tr>
-      <tr><td>Потолок $J^*_\varphi$ (пр. 6.6)</td><td>ошибка локализации против допуска</td><td>CDPR: 3–5 см против 2 см на захвате; размещение устойчиво</td></tr>
-      <tr><td>Храповик (т. 7.4)</td><td>пороги лестницы, $\Delta_{p90}$</td><td>$0{,}30/0{,}20$: три из четырёх семейств застряли; $0{,}45/0{,}30$: ноль возвратов</td></tr>
-      <tr><td>$\Gamma_j$, $\TV(\rho,\mu)$ (т. 7.5)</td><td>переразметка под итоговую инструкцию; старты «в захвате»</td><td>CDPR: отказы на передаче захват → отпускание; WidowX: composition SFT неэффективен</td></tr>
-    </tbody>
-  </table>
+<!-- 20. 3. Как получить первые успехи -->
+<section id="slide-20" class="slide " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4" aria-labelledby="title-20">
+<p class="kicker">3. Как получить первые успехи</p>
+<h2 id="title-20">При усложнении часть успеха теряется</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$J_{\rm easy}\ge P$</span></div>
+<div class="equation">\[ J_{\rm harder}\ge P\newterm{-\Delta} \]</div>
+<p class="explanation">Добавили возможное падение Δ при смене стартов. Даже та же политика хуже справляется с более трудной задачей.</p>
+<p class="terms">$\Delta$ — верхняя граница падения при переходе. Предполагаем $J_{\rm harder}\ge J_{\rm easy}-\Delta$.</p>
 </section>
 
-<!-- 21 -->
-<section class="slide">
-  <p class="kicker">Эксперимент</p>
-  <h2>Проверяемые предсказания для WidowX-200</h2>
-  <ol class="lead" style="padding-left:30px">
-    <li><b>Сигнал.</b> Совместное RL стартует, только когда $J_c(\pi^{\rm III}_0)$ заметно больше нуля; доля смешанных групп согласуется с $\E_cP_{\rm mix}(p_c,8)$.</li>
-    <li><b>Перенос инструкции.</b> Посчитать $\hat\Gamma_1$ до и после composition SFT. Если оно не уменьшилось, переход не поднимет $J_c$.</li>
-    <li><b>Передача.</b> Оценить $\TV(\rho_1,\mu_2)$ между состояниями после захвата и стартами «в захвате».</li>
-    <li><b>Сохранение.</b> Держать каждую инструкцию в смеси с $w_{\mathcal T}\ge w_{\min}$ или под якорём; сообщать бюджет $\sum_k\sqrt{\overline{\KL}_k/2}$.</li>
-    <li><b>Храповик.</b> Проверять $P-\Delta_{p90}-2\zeta_n\ge D$ для каждой лестницы до запуска.</li>
-  </ol>
-  <div class="spacer"></div>
-  <p class="small muted">Пункты 2 и 3 считаются по уже записанным состояниям, без новых эпизодов.</p>
+<!-- 21. 3. Как получить первые успехи -->
+<section id="slide-21" class="slide " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4, § 9" aria-labelledby="title-21">
+<p class="kicker">3. Как получить первые успехи</p>
+<h2 id="title-21">Запас должен быть выше порога возврата</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$J_{\rm harder}\ge P-\Delta$</span></div>
+<div class="equation">\[ P-\Delta\newterm{\ge D_{\rm back}} \]</div>
+<p class="explanation">Сравнили оставшийся успех с порогом возврата. При этом условии новая ступень не вызывает немедленный откат.</p>
+<p class="terms">$D_{\rm back}$ — порог возврата на лёгкую ступень. В главе он обозначен D.</p>
+<p class="example">При P = 0,45 и Δ = 0,129 остаётся 0,321. Это выше порога возврата 0,30.</p>
+<p class="note">Число 0,129 взято из 90-го перцентиля наблюдений CDPR. Это иллюстрация настройки, а не строгая верхняя граница Δ.</p>
 </section>
 
-<!-- 22 -->
-<section class="slide">
-  <p class="kicker">Честность утверждений</p>
-  <h2>Границы применимости</h2>
-  <div class="cols">
-    <ul class="small">
-      <li><b>Усечение не является доверительной областью.</b> Теоремы относятся к реализованным шагам; их условия измеряются, а не выводятся из $\varepsilon_\pm$.</li>
-      <li><b>Константы худшего случая.</b> При $H\sim40$–$128$ оценки улучшения численно бессодержательны; граница сохранения почти точна.</li>
-      <li><b>Сходимость для нейросети — разложение, а не гарантия.</b> Невязка $e_k$ теорией не ограничивается.</li>
-      <li><b>Обучение против развёртывания.</b> $J$ — для стохастической обучающей политики; оценка использует детерминированное среднее остатка, поэтому $J_{\rm explore}$ и $J_{\rm deploy}$ измеряются отдельно.</li>
-      <li><b>Реактивность.</b> Композиция и рестарты используют реактивную политику; память кусков действий включается в состояние.</li>
-      <li><b>Происхождение данных.</b> Теорема требует, чтобы все целевые действия порождала сама политика; для каждого эксперимента это подтверждается аудитом происхождения.</li>
-    </ul>
-    <div class="card">
-      <h3>Атрибуция</h3>
-      <p class="small"><b>Известное:</b> лемма о разности производительностей (Kakade–Langford), граница TRPO/CPO, зеркальный спуск в пространстве политик (Shani, Lan, Xiao, Agarwal), эффективная цель GRPO (Mroueh), неравенство EM-типа (Dayan–Hinton, RWR), «кодовый замок» (Kakade).</p>
-      <p class="small" style="margin:0"><b>Собственное:</b> формулировки для вероятности успеха с явными константами; следствия о смеси, накоплении и якоре; теоремы о храповике, композиции и сводная; нижняя граница при сбалансированной самоимитации; связь с измеримыми величинами.</p>
-    </div>
-  </div>
+<!-- 22. 4. Как соединить навыки -->
+<section id="slide-22" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5" aria-labelledby="title-22">
+<p class="kicker">4. Как соединить навыки</p>
+<h2 id="title-22">Успех всей задачи требует успеха обоих этапов</h2>
+<div class="equation">\[ p_{\rm full}=r_1\newterm{r_2} \]</div>
+<p class="explanation">Умножили шанс первого этапа на шанс второго после успешного первого.</p>
+<p class="terms">$r_1$ — захват в полной задаче. $r_2$ — размещение при условии успешного захвата.</p>
+<p class="note">Это правило условных вероятностей. Оно не предполагает независимость этапов.</p>
 </section>
 
-<!-- 23 -->
-<section class="slide">
-  <p class="kicker">Проект</p>
-  <h2>Положения, выносимые на защиту</h2>
-  <ol class="small" style="font-size:17.5px; padding-left:28px">
-    <li>Для эпизодических задач манипуляции с бинарным предикатом успеха групповой GRPO в точке поведения — несмещённый подъём по строго возрастающему преобразованию вероятности успеха контекста; его стационарные точки Парето-оптимальны.</li>
-    <li>Для вероятности успеха на горизонте $H$ получены граница улучшения в доверительной области с константой $H(H-1)/2$ и граница сохранения навыка; из них — условия сохранения в смеси инструкций, линейное накопление дрейфа и равномерная граница для якоря.</li>
-    <li>Консервативная итерация политики с групповыми оценками — неточный зеркальный спуск с разрывом $O(\sqrt{HD/K})$ до любой сравнимой политики над замороженными признаками плюс члены покрытия и невязки.</li>
-    <li>При разреженной награде начальная вероятность успеха необходима для сигнала и экспоненциально мала для составной задачи; спецификация навыков, плотная награда, храповик $P-\Delta\ge D$ и композиция дают её нижнюю границу через $p_j$, $\Gamma_j$ и рассогласование передачи.</li>
-    <li>Демонстрации участвуют в оценке только через $\bar D$ и $C_h$; обе величины управляемы без демонстраций — обоснование адаптации VLA к новым кинематическим структурам без ручного сбора данных.</li>
-  </ol>
+<!-- 23. 4. Как соединить навыки -->
+<section id="slide-23" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5" aria-labelledby="title-23">
+<p class="kicker">4. Как соединить навыки</p>
+<h2 id="title-23">Отдельный навык даёт исходную точку сравнения</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$p_{\rm full}=r_1r_2$</span></div>
+<div class="equation">\[ r_j=p_j\quad\text{при совпадении условий} \]</div>
+<p class="explanation">Если инструкция, старты и оставшееся время совпадают, этап в полной задаче имеет то же качество, что отдельный навык.</p>
+<p class="terms">$p_j$ — успех отдельно обученного навыка j. $r_j$ — его условный успех внутри полной задачи.</p>
+<p class="note">На следующих слайдах учтём два различия между этими условиями.</p>
 </section>
 
-<!-- 24 -->
-<section class="slide">
-  <p class="kicker">Приложение</p>
-  <h2>Численная проверка утверждений</h2>
-  <p class="small">Случайные конечные МППР с терминальной наградой успеха; $J$, $Q$, $A$, $d_h$ вычисляются точно динамическим программированием. Проверка ловит ошибки в алгебре и константах, но не сертифицирует нейросетевую политику.</p>
-  <table style="font-size:17px">
-    <thead><tr><th>Утверждение</th><th>Случаев</th><th>Результат</th></tr></thead>
-    <tbody>
-      <tr><td>Лемма 3.1 (тождество)</td><td>4000</td><td class="ok">✓ ошибка ≤ 6·10⁻¹⁶</td></tr>
-      <tr><td>Лемма 3.2, теорема 5.1 (три формы)</td><td>4000</td><td class="ok">✓ наибольшее отношение нарушения к штрафу 0,56</td></tr>
-      <tr><td>Теорема 5.4, следствие 5.7</td><td>4000</td><td class="ok">✓ отношение $|\Delta J|/\Delta$ до 0,987 — почти точна</td></tr>
-      <tr><td>Теорема 6.2 (точный шаг Гиббса)</td><td>600</td><td class="ok">✓ отношение разрыва к оценке до 0,71</td></tr>
-      <tr><td>Теорема 4.1(б), $p\in[0{,}03;0{,}8]$, $G\in\{2,8,32\}$</td><td>$4\cdot10^5$ групп</td><td class="ok">✓ $|z|\le2{,}26$, Монте-Карло против формулы</td></tr>
-      <tr><td>Теорема 7.5 (шаг передачи)</td><td>20000</td><td class="ok">✓</td></tr>
-    </tbody>
-  </table>
-  <div class="spacer"></div>
-  <p class="small muted">Скрипт: <code>ral_submission/theory/rl_only_justification_ru/verify_theorems.py</code></p>
+<!-- 24. 4. Как соединить навыки -->
+<section id="slide-24" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5" aria-labelledby="title-24">
+<p class="kicker">4. Как соединить навыки</p>
+<h2 id="title-24">Итоговая инструкция может изменить поведение</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$r_j=p_j\quad\text{при совпадении условий}$</span></div>
+<div class="equation">\[ r_j\ge p_j\newterm{-\Gamma_j} \]</div>
+<p class="explanation">Вычли запас на смену инструкции. После «возьми» политика может действовать иначе, чем после «положи в миску».</p>
+<p class="terms">$\Gamma_j\ge0$ — верхняя граница потери из-за инструкции. Пока старты этапа совпадают.</p>
+<p class="note">Обучение на собственных успехах с итоговой инструкцией должно уменьшать этот разрыв. Это нужно проверять.</p>
 </section>
 
+<!-- 25. 4. Как соединить навыки -->
+<section id="slide-25" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5" aria-labelledby="title-25">
+<p class="kicker">4. Как соединить навыки</p>
+<h2 id="title-25">Предыдущий этап оставляет другие стартовые состояния</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$r_j\ge p_j-\Gamma_j$</span></div>
+<div class="equation">\[ r_j\ge p_j-\Gamma_j\newterm{-T_j} \]</div>
+<p class="explanation">Вычли запас на передачу: реальный захват может оставить объект не там и не так, как тренировочные старты размещения.</p>
+<p class="terms">$T_j=\TV(\rho_{j-1},\mu_j)$ — различие распределений. $\rho$ — реальные состояния передачи, $\mu$ — старты навыка.</p>
+<p class="note">TV лежит от 0 до 1. Она ограничивает, насколько может измениться вероятность события при смене распределения.</p>
+</section>
+
+<!-- 26. 4. Как соединить навыки -->
+<section id="slide-26" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5" aria-labelledby="title-26">
+<p class="kicker">4. Как соединить навыки</p>
+<h2 id="title-26">Нижняя граница вероятности не нужна ниже нуля</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$r_j\ge p_j-\Gamma_j-T_j$</span></div>
+<div class="equation">\[ r_j\ge\newterm{\bigl(}p_j-\Gamma_j-T_j\newterm{\bigr)^+} \]</div>
+<p class="explanation">Заменили отрицательную оценку нулём. Это делает границу корректной для перемножения.</p>
+<p class="terms">$a^+=\max(a,0)$. Нулевая граница означает, что эта оценка ничего не обещает.</p>
+</section>
+
+<!-- 27. 4. Как соединить навыки -->
+<section id="slide-27" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5" aria-labelledby="title-27">
+<p class="kicker">4. Как соединить навыки</p>
+<h2 id="title-27">Подставляем границы этапов в полную задачу</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$r_j\ge(p_j-\Gamma_j-T_j)^+$</span></div>
+<div class="equation">\[ p_{\rm full}\ge\newterm{\prod_{j=1}^{m}}(p_j-\Gamma_j-T_j)^+ \]</div>
+<p class="explanation">Для каждого этапа взяли полученную нижнюю границу и перемножили. Символ ∏ означает произведение.</p>
+<p class="terms">Каждый навык должен быть достаточно надёжен после учёта инструкции и передачи.</p>
+<p class="note">Предполагаются реактивная политика, согласованные этапы и достаточный горизонт. Произведение всё ещё может убывать с числом этапов.</p>
+</section>
+
+<!-- 28. 4. Как соединить навыки -->
+<section id="slide-28" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5" aria-labelledby="title-28">
+<p class="kicker">4. Как соединить навыки</p>
+<h2 id="title-28">Два навыка могут дать стартовый сигнал</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$p_{\rm full}\ge\prod_j(p_j-\Gamma_j-T_j)^+$</span></div>
+<div class="equation">\[ p_{\rm full}\ge(0{,}5-0{,}1-0)(0{,}7-0-0{,}3)=\newterm{0{,}16} \]</div>
+<p class="explanation">Подставили пример: захват с потерей на инструкции и размещение с потерей на передаче.</p>
+<p class="terms">Для иллюстрации: при фактическом успехе p = 0,16 смешанными будут около 75% групп размера 8.</p>
+<p class="note">Это учебный расчёт из главы, а не измеренная успешность пайплайна. Долю смешанных групп считаем по фактическому p, а не по его нижней границе.</p>
+</section>
+
+<!-- 29. 5. В какую сторону обновляет GRPO -->
+<section id="slide-29" class="slide " data-chapter="5. В какую сторону обновляет GRPO" data-source="Теорема 4.1, доказательство" aria-labelledby="title-29">
+<p class="kicker">5. В какую сторону обновляет GRPO</p>
+<h2 id="title-29">Успешные действия нужно делать вероятнее</h2>
+<div class="equation">\[ \nabla_\theta p=\E[Y\newterm{Z}] \]</div>
+<p class="explanation">Добавили чувствительность вероятности траектории к параметрам. Получили стандартную формулу градиента политики.</p>
+<p class="terms">$Z=\nabla_\theta\log P_\theta(\tau)$ — направление увеличения вероятности траектории $\tau$. $\nabla$ обозначает градиент.</p>
+<p class="note">Здесь фиксируем один контекст. Предполагаем дифференцируемую политику и обычные условия перестановки градиента и ожидания.</p>
+</section>
+
+<!-- 30. 5. В какую сторону обновляет GRPO -->
+<section id="slide-30" class="slide " data-chapter="5. В какую сторону обновляет GRPO" data-source="Теорема 4.1(а)" aria-labelledby="title-30">
+<p class="kicker">5. В какую сторону обновляет GRPO</p>
+<h2 id="title-30">Вычитание среднего сохраняет среднее направление</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\nabla_\theta p=\E[YZ]$</span></div>
+<div class="equation">\[ \nabla_\theta p=\E[(Y\newterm{-p})Z] \]</div>
+<p class="explanation">Вычли p из награды. Среднее Z равно нулю, поэтому добавленный член не меняет ожидаемый градиент.</p>
+<p class="terms">Пока используем истинное среднее p. Групповую оценку вернём через два шага.</p>
+</section>
+
+<!-- 31. 5. В какую сторону обновляет GRPO -->
+<section id="slide-31" class="slide " data-chapter="5. В какую сторону обновляет GRPO" data-source="Теорема 4.1(а)" aria-labelledby="title-31">
+<p class="kicker">5. В какую сторону обновляет GRPO</p>
+<h2 id="title-31">Нормировка меняет масштаб направления</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\nabla_\theta p=\E[(Y-p)Z]$</span></div>
+<div class="equation">\[ \E[g]=\frac{\nabla_\theta p}{\newterm{\sqrt{p(1-p)}}} \]</div>
+<p class="explanation">Разделили преимущество на стандартное отклонение бинарного исхода. Оно равно корню из p(1 − p).</p>
+<p class="terms">$g$ — направление обновления с нормированным преимуществом. При $0&lt;p&lt;1$ знаменатель положителен.</p>
+<p class="note">Формула относится к истинной нормировке в начале обновления, когда новая политика ещё совпадает со старой.</p>
+</section>
+
+<!-- 32. 5. В какую сторону обновляет GRPO -->
+<section id="slide-32" class="slide " data-chapter="5. В какую сторону обновляет GRPO" data-source="Теорема 4.1(а, в)" aria-labelledby="title-32">
+<p class="kicker">5. В какую сторону обновляет GRPO</p>
+<h2 id="title-32">Этому направлению соответствует возрастающая функция</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\E[g]=\nabla_\theta p/\sqrt{p(1-p)}$</span></div>
+<div class="equation">\[ \E[g]=\nabla_\theta\newterm{\bigl[2\arcsin\sqrt{p}\bigr]} \]</div>
+<p class="explanation">Нашли функцию, производная которой равна 1 / √(p(1 − p)). Так появляется арксинус.</p>
+<p class="terms">$F(p)=2\arcsin\sqrt p$ строго возрастает. Для одного контекста больше F означает больше p.</p>
+<p class="note">При общих параметрах контексты могут конкурировать. Рост средней цели не гарантирует улучшения каждого навыка.</p>
+</section>
+
+<!-- 33. 5. В какую сторону обновляет GRPO -->
+<section id="slide-33" class="slide " data-chapter="5. В какую сторону обновляет GRPO" data-source="Теорема 4.1(б), с явным учётом ε" aria-labelledby="title-33">
+<p class="kicker">5. В какую сторону обновляет GRPO</p>
+<h2 id="title-33">Конечная группа меняет коэффициент</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\E[g]=\nabla_\theta p/\sqrt{p(1-p)}$</span></div>
+<div class="equation">\[ \E[g]=\newterm{c_{G,\epsilon}(p)}\,\nabla_\theta p,\qquad c_{G,\epsilon}(p)&gt;0 \]</div>
+<p class="explanation">Вернули среднее и разброс, измеренные по G попыткам. Положительный коэффициент сохраняет направление для одного контекста.</p>
+<p class="terms">Коэффициент зависит от размера группы и защиты ε. Формула с арксинусом описывает идеальную нормировку.</p>
+<p class="note">При большом G получаем 1 / max(√(p(1 − p)), ε). Арксинус соответствует области, где защита ε неактивна.</p>
+</section>
+
+<!-- 34. 6. Почему обновление ограничивают -->
+<section id="slide-34" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, PPO/GRPO" aria-labelledby="title-34">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-34">Сравниваем вероятность одного действия до и после шага</h2>
+<div class="equation">\[ r=\frac{\newterm{\pi_\theta(u\mid x)}}{\pi_{\rm old}(u\mid x)} \]</div>
+<p class="explanation">Вводим отношение вероятностей. Оно показывает, насколько новая политика чаще выбирает записанное действие.</p>
+<p class="terms">$r=1$ — вероятность не изменилась. $r&gt;1$ — действие стало вероятнее.</p>
+<p class="note">Здесь r означает отношение плотностей. Радиус допуска из раздела о расстоянии больше не используется.</p>
+</section>
+
+<!-- 35. 6. Почему обновление ограничивают -->
+<section id="slide-35" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, суррогатная цель" aria-labelledby="title-35">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-35">Преимущество задаёт желательное направление</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$r=\pi_\theta(u\mid x)/\pi_{\rm old}(u\mid x)$</span></div>
+<div class="equation">\[ \mathcal L=\E[\newterm{rA}] \]</div>
+<p class="explanation">Умножили отношение на преимущество и усреднили по записанным решениям. Эту цель максимизируем.</p>
+<p class="terms">При $A&gt;0$ выгодно увеличивать r. При $A&lt;0$ выгодно уменьшать r.</p>
+</section>
+
+<!-- 36. 6. Почему обновление ограничивают -->
+<section id="slide-36" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 5, замечание 5.3; PPO" aria-labelledby="title-36">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-36">Усечение ограничивает выгоду от большого изменения</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\mathcal L=\E[rA]$</span></div>
+<div class="equation">\[ \mathcal L_{\rm clip}=\E\!\left[\newterm{\min}\bigl(rA,\newterm{\bar r}A\bigr)\right] \]</div>
+<p class="explanation">Добавили усечённое отношение и выбрали меньшую из двух целей. Слишком большой сдвиг в выгодную сторону перестаёт давать выигрыш.</p>
+<p class="terms">$\bar r=\operatorname{clip}(r,1-\varepsilon_-,1+\varepsilon_+)$. Параметры $\varepsilon_-,\varepsilon_+$ задают полосу.</p>
+<p class="note">Усечение цели само по себе не гарантирует малое изменение всей политики. Величину фактического шага нужно контролировать.</p>
+</section>
+
+<!-- 37. 6. Почему обновление ограничивают -->
+<section id="slide-37" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1" aria-labelledby="title-37">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-37">Сначала оцениваем ожидаемую пользу шага</h2>
+<div class="equation">\[ J_{\rm predicted}=J(\pi)\newterm{+L_\pi(\pi\prime)} \]</div>
+<p class="explanation">К старому успеху добавили ожидаемый выигрыш новых действий в состояниях, которые посещала старая политика.</p>
+<p class="terms">$\pi\prime$ — новая политика. $L_\pi(\pi\prime)$ — локальная оценка улучшения.</p>
+<p class="note">Это прогноз. После обновления изменятся и посещаемые состояния. Следующий член учитывает эту ошибку.</p>
+</section>
+
+<!-- 38. 6. Почему обновление ограничивают -->
+<section id="slide-38" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1" aria-labelledby="title-38">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-38">Смена посещаемых состояний добавляет штраф</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$J_{\rm predicted}=J(\pi)+L_\pi(\pi\prime)$</span></div>
+<div class="equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)\newterm{-H(H-1)\alpha^2} \]</div>
+<p class="explanation">Вычли верхнюю границу ошибки прогноза. Чем длиннее эпизод и больше изменение действий, тем больше возможная ошибка.</p>
+<p class="terms">$H$ — число решений. $\alpha=\sup_{h,z}\TV(\pi_h\prime,\pi_h)$ — наибольшее изменение распределения действий.</p>
+<p class="note">Улучшение гарантировано только если локальный выигрыш перекрывает штраф.</p>
+</section>
+
+<!-- 39. 6. Почему обновление ограничивают -->
+<section id="slide-39" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1" aria-labelledby="title-39">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-39">KL позволяет выразить тот же штраф иначе</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-H(H-1)\alpha^2$</span></div>
+<div class="equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-\newterm{\tfrac12H(H-1)\delta} \]</div>
+<p class="explanation">Неравенство Пинскера даёт α² ≤ δ/2. Подставили его в штраф.</p>
+<p class="terms">$\delta=\sup_{h,z}\KL(\pi_h\|\pi_h\prime)$. KL измеряет различие распределений и равна нулю при их совпадении.</p>
+<p class="note">Теорема требует максимальную KL. Средняя approx_kl из лога служит диагностикой и не заменяет это условие.</p>
+</section>
+
+<!-- 40. 6. Почему обновление ограничивают -->
+<section id="slide-40" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.4" aria-labelledby="title-40">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-40">Старый навык зависит от изменений на его состояниях</h2>
+<div class="equation">\[ |J_{\mathcal T}(\pi\prime)-J_{\mathcal T}(\pi)|\le\newterm{\sum_{h=0}^{H-1}\bar\alpha_h} \]</div>
+<p class="explanation">Для сохранения навыка складываем изменения действий вдоль его траекторий.</p>
+<p class="terms">$\mathcal T$ — старый навык. $\bar\alpha_h$ — средняя TV на его состояниях при старой политике.</p>
+<p class="note">Малый шаг на состояниях размещения ничего не обещает про захват, если его состояния не контролируются.</p>
+</section>
+
+<!-- 41. 6. Почему обновление ограничивают -->
+<section id="slide-41" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Следствие 5.7" aria-labelledby="title-41">
+<p class="kicker">6. Почему обновление ограничивают</p>
+<h2 id="title-41">Привязка к эталону ограничивает суммарный уход</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$|\Delta J_{\mathcal T}|\le\sum_h\bar\alpha_h$</span></div>
+<div class="equation">\[ |J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le\newterm{\sqrt{H D_{\rm ref}/2}} \]</div>
+<p class="explanation">Сравниваем текущую политику с фиксированным эталоном. Так ограничиваем весь уход, накопленный за обучение.</p>
+<p class="terms">$D_{\rm ref}$ — сумма средних $\KL(\pi_{\rm ref}\|\pi)$ по шагам на состояниях эталона для этого навыка.</p>
+<p class="note">Якорь должен контролировать нужные состояния. Небольшая ошибка на конечном банке успехов ещё не доказывает такую границу.</p>
+</section>
+
+<!-- 42. 7. Что говорит оценка сходимости -->
+<section id="slide-42" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1" aria-labelledby="title-42">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-42">Идеальный шаг выбирает более полезные действия</h2>
+<div class="equation">\[ \E_{u\sim q}[Q(u)] \]</div>
+<p class="explanation">Сначала рассмотрим точную модель шага. Q показывает шанс завершить задачу после выбранного действия.</p>
+<p class="terms">$q$ — новое распределение действий в фиксированном состоянии. $Q(u)\in[0,1]$ — успех при дальнейшем следовании текущей политике.</p>
+<p class="note">Дальше анализируем идеальный шаг в пространстве политик. Связь с нейросетевым PPO потребует отдельного члена ошибки.</p>
+</section>
+
+<!-- 43. 7. Что говорит оценка сходимости -->
+<section id="slide-43" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1" aria-labelledby="title-43">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-43">За большое изменение платим KL-штраф</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\E_q[Q]$</span></div>
+<div class="equation">\[ \pi_{k+1}=\arg\max_q\left\{\E_q[Q]\newterm{-\frac1\eta\KL(q\|\pi_k)}\right\} \]</div>
+<p class="explanation">Добавили цену отклонения от текущей политики. Новые действия должны оправдать изменение ожидаемой пользой.</p>
+<p class="terms">$k$ — номер обновления. $\eta&gt;0$ — размер шага. Меньшая η означает более сильный штраф.</p>
+<p class="note">Это KL-проксимальный шаг. Название «зеркальный спуск» относится к такому способу учитывать геометрию распределений.</p>
+</section>
+
+<!-- 44. 7. Что говорит оценка сходимости -->
+<section id="slide-44" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2" aria-labelledby="title-44">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-44">Скорость зависит от расстояния до успешного поведения</h2>
+<div class="equation">\[ D=\newterm{\sum_h\E_{d_h^{\tilde\pi}}}\KL(\tilde\pi_h\|\pi_{0,h}) \]</div>
+<p class="explanation">Собрали KL между начальной политикой и выбранным успешным поведением вдоль его траекторий.</p>
+<p class="terms">$\tilde\pi$ — политика для сравнения. $\pi_0$ — старт обучения. $d_h^{\tilde\pi}$ — состояния при следовании $\tilde\pi$.</p>
+<p class="note">Нужна конечная D. Подготовка навыков должна приблизить начало полной задачи к успешному поведению.</p>
+</section>
+
+<!-- 45. 7. Что говорит оценка сходимости -->
+<section id="slide-45" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2, доказательство" aria-labelledby="title-45">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-45">Начальная удалённость даёт первый член оценки</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$D=\sum_h\E_{d_h^{\tilde\pi}}\KL(\tilde\pi_h\|\pi_{0,h})$</span></div>
+<div class="equation">\[ B_{\rm start}=\newterm{\frac{D}{\eta K}} \]</div>
+<p class="explanation">При сложении K шагов промежуточные KL сокращаются. Остаётся начальная удалённость D, делённая на ηK.</p>
+<p class="terms">$K$ — число обновлений. $B_{\rm start}$ — только первый член будущей границы.</p>
+<p class="note">Больше обновлений уменьшает этот член. Очень маленький шаг η замедляет его уменьшение.</p>
+</section>
+
+<!-- 46. 7. Что говорит оценка сходимости -->
+<section id="slide-46" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2" aria-labelledby="title-46">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-46">Конечный размер шага даёт второй член</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$B_{\rm start}=D/(\eta K)$</span></div>
+<div class="equation">\[ \bar E_K\le\frac{D}{\eta K}\newterm{+\frac{H\eta}{8}} \]</div>
+<p class="explanation">Добавили ошибку конечного шага. Ограниченность Q от 0 до 1 даёт η/8 на одно решение, всего решений H.</p>
+<p class="terms">$\bar E_K=\frac1K\sum_{k&lt;K}[J(\tilde\pi)-J(\pi_k)]$ — среднее отставание от политики сравнения.</p>
+<p class="note">Это полная граница для точных KL-проксимальных шагов. Первый член уменьшается при росте η, второй увеличивается.</p>
+</section>
+
+<!-- 47. 7. Что говорит оценка сходимости -->
+<section id="slide-47" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2" aria-labelledby="title-47">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-47">Баланс двух членов даёт корень из числа шагов</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le D/(\eta K)+H\eta/8$</span></div>
+<div class="equation">\[ \bar E_K\le\newterm{\sqrt{\frac{HD}{2K}}} \]</div>
+<p class="explanation">Выбрали η так, чтобы два предыдущих члена совпали. Их сумма принимает компактный вид.</p>
+<p class="terms">При $D&gt;0$ берём $\eta=\sqrt{8D/(HK)}$. Тогда увеличение K в 4 раза уменьшает эту границу в 2 раза.</p>
+<p class="note">Граница относится к среднему отставанию. Лучший из просмотренных шагов не хуже среднего. Про последний шаг этого не утверждаем.</p>
+</section>
+
+<!-- 48. 7. Что говорит оценка сходимости -->
+<section id="slide-48" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4" aria-labelledby="title-48">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-48">Реальный алгоритм добавляет ошибку обновления</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le\sqrt{HD/(2K)}$</span></div>
+<div class="equation">\[ \bar E_K\le\sqrt{\frac{HD}{2K}}\newterm{+\varepsilon_{\rm upd}} \]</div>
+<p class="explanation">Добавили отклонение реального обучения от точных шагов: конечные данные, ограничения сети и способ оптимизации.</p>
+<p class="terms">$\varepsilon_{\rm upd}$ — верхняя граница среднего вклада этих отклонений с учётом посещаемых состояний.</p>
+<p class="note">Для нейросетевого PPO эта ошибка не обязана быть малой. Поэтому формула задаёт условия успеха, а не безусловную гарантию.</p>
+</section>
+
+<!-- 49. 7. Что говорит оценка сходимости -->
+<section id="slide-49" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4" aria-labelledby="title-49">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-49">Плохое покрытие усиливает ошибку шага</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le\sqrt{HD/(2K)}+\varepsilon_{\rm upd}$</span></div>
+<div class="equation">\[ \varepsilon_{\rm upd}=\frac1K\sum_{k,h}\newterm{\sqrt{C_h}}\,e^+_{k,h} \]</div>
+<p class="explanation">Раскрыли ошибку обновления. Если обучение редко видит состояния успешного поведения, локальные ошибки весят сильнее.</p>
+<p class="terms">$e^+_{k,h}$ здесь обозначает L²-норму положительной невязки шага. $C_h\ge1$ — коэффициент покрытия.</p>
+<p class="note">В главе норма записана явно. Если нужные состояния вообще не представлены в обучении, C может быть бесконечным. Старты навыков и рестарты помогают обеспечить покрытие.</p>
+</section>
+
+<!-- 50. 7. Что говорит оценка сходимости -->
+<section id="slide-50" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Предложение 6.6" aria-labelledby="title-50">
+<p class="kicker">7. Что говорит оценка сходимости</p>
+<h2 id="title-50">Признаки ограничивают достижимый успех</h2>
+<div class="equation">\[ J(\tilde\pi)\le\newterm{J_\varphi^*} \]</div>
+<p class="explanation">Политика сравнения тоже должна использовать доступные признаки. Поэтому у её успеха есть потолок.</p>
+<p class="terms">$J_\varphi^*=\sup_{\pi\in\Pi_\varphi}J(\pi)$ — лучший успех в классе политик с признаками φ.</p>
+<p class="note">Если одинаковые признаки скрывают ситуации, требующие разных действий, увеличение бюджета RL не устраняет эту неоднозначность.</p>
+</section>
+
+<!-- 51. 8. Зачем повторять собственные успехи -->
+<section id="slide-51" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6" aria-labelledby="title-51">
+<p class="kicker">8. Зачем повторять собственные успехи</p>
+<h2 id="title-51">Сравниваем вероятность записанного успешного действия</h2>
+<div class="equation">\[ \frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
+<p class="explanation">Собираем успешные траектории старой политики β. Проверяем, стала ли новая политика чаще воспроизводить их действия.</p>
+<p class="terms">$\beta$ — параметры политики, собравшей банк. $\theta$ — параметры после самоимитации.</p>
+<p class="note">Используем действия, выбранные самой политикой, с известным правдоподобием.</p>
+</section>
+
+<!-- 52. 8. Зачем повторять собственные успехи -->
+<section id="slide-52" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6" aria-labelledby="title-52">
+<p class="kicker">8. Зачем повторять собственные успехи</p>
+<h2 id="title-52">Для траектории складываем логарифмы отношений</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\pi_\theta(u_h\mid x_h)/\pi_\beta(u_h\mid x_h)$</span></div>
+<div class="equation">\[ G_{\rm SIL}=\newterm{\E_{\tau\mid Y=1}\sum_h\log}\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
+<p class="explanation">Вероятности действий вдоль траектории перемножаются. Логарифм превращает произведение в сумму. Затем усредняем по старым успехам.</p>
+<p class="terms">$G_{\rm SIL}$ — среднее изменение логарифма правдоподобия собственных успехов.</p>
+</section>
+
+<!-- 53. 8. Зачем повторять собственные успехи -->
+<section id="slide-53" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6" aria-labelledby="title-53">
+<p class="kicker">8. Зачем повторять собственные успехи</p>
+<h2 id="title-53">Рост правдоподобия успехов даёт границу улучшения</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$G_{\rm SIL}=\E_{\tau\mid Y=1}\sum_h\log(\pi_\theta/\pi_\beta)$</span></div>
+<div class="equation">\[ \newterm{\log\frac{J(\pi_\theta)}{J(\pi_\beta)}}\ge G_{\rm SIL} \]</div>
+<p class="explanation">Неравенство Йенсена связывает правдоподобие старых успехов с новой вероятностью успеха.</p>
+<p class="terms">Если $G_{\rm SIL}\ge0$ и $J(\pi_\beta)&gt;0$, то успех не уменьшается в этой популяционной модели.</p>
+<p class="note">Улучшение на конечном банке не гарантирует улучшения на всех успехах. Подгонка к усечённым или сглаженным действиям также требует отдельного обоснования.</p>
+</section>
+
+<!-- 54. Итог и условия -->
+<section id="slide-54" class="slide " data-chapter="Итог и условия" data-source="Теорема 8.1" aria-labelledby="title-54">
+<p class="kicker">Итог и условия</p>
+<h2 id="title-54">Каждый этап пайплайна решает конкретную проблему</h2>
+<ol class="route summary-route">
+<li><b>Плотная награда и лёгкие старты</b><span>дают первые различающиеся исходы.</span></li>
+<li><b>RL отдельных навыков</b><span>повышает качество каждого этапа.</span></li>
+<li><b>Композиция на собственных успехах</b><span>согласует итоговую инструкцию и передачу между этапами.</span></li>
+<li><b>Бинарный RL полной задачи</b><span>повышает вероятность строгого успеха.</span></li>
+<li><b>Смесь навыков и якорь к эталону</b><span>помогают контролировать забывание.</span></li>
+</ol>
+<p class="note">Теория объясняет назначение этапов. Их фактический эффект проверяем на целевых стартах и по строгому критерию успеха.</p>
+</section>
+
+<!-- 55. Итог и условия -->
+<section id="slide-55" class="slide " data-chapter="Итог и условия" data-source="§ 9–10" aria-labelledby="title-55">
+<p class="kicker">Итог и условия</p>
+<h2 id="title-55">Что нужно проверить в эксперименте</h2>
+<ul class="checks">
+<li>Есть ли смешанные группы на текущей задаче?</li>
+<li>Сохраняются ли навыки под итоговой инструкцией?</li>
+<li>Похожи ли реальные состояния передачи на тренировочные?</li>
+<li>Сохраняется ли старый навык после обновления?</li>
+<li>Позволяют ли признаки различать нужные действия?</li>
+</ul>
+<p class="note">Отдельно измеряем успех стохастической политики обучения и детерминированного исполнения. Утверждение «без внешних демонстраций» требует аудита происхождения действий.</p>
+</section>
+
+<!-- 56. Итог и условия -->
+<section id="slide-56" class="slide " data-chapter="Итог и условия" data-source="" aria-labelledby="title-56">
+<p class="kicker">Итог и условия</p>
+<h2 id="title-56">Полные формулировки и доказательства</h2>
+<p class="lead">Здесь разобрана логика теоретического черновика. Полные условия и доказательства находятся в главе.</p>
+<ul class="source-list">
+<li><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf">Теоретическая глава, PDF</a></li>
+<li><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.tex">Исходник главы и библиография</a></li>
+<li><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/verify_theorems.py">Численная проверка на конечных марковских процессах</a></li>
+<li><a href="https://arxiv.org/abs/1707.06347">Schulman et al. Proximal Policy Optimization Algorithms</a></li>
+</ul>
+<p class="note">Обозначения немного упрощены. Номера теорем внизу слайдов отсылают к черновику. Численная проверка конечных моделей не доказывает сходимость нейросетевого пайплайна.</p>
+</section>
 </main>
-
-<div class="controls">
+<div class="controls" aria-label="Управление презентацией">
+  <select id="chapters" aria-label="Раздел презентации"></select>
   <button class="nav" id="prev" type="button" aria-label="Предыдущий слайд">‹</button>
-  <span class="count" id="count">1 / 1</span>
+  <span class="count" id="count" aria-live="polite">1 / 1</span>
   <button class="nav" id="next" type="button" aria-label="Следующий слайд">›</button>
   <button class="fs" id="fs" type="button" aria-label="Полный экран">⛶</button>
   <button id="themeToggle" type="button" aria-label="Переключить тему">◐</button>
 </div>
-
 <script>
 (function () {
   var root = document.documentElement;
@@ -729,13 +849,28 @@
   var progress = document.getElementById("progress");
   var count = document.getElementById("count");
   var cur = 0;
-  var TITLE = "Теория RL-бутстрэппинга VLA";
+  var chapterSelect = document.getElementById("chapters");
+  var mobile = window.matchMedia("(max-width: 860px)");
+  var chapterStarts = [];
+  slides.forEach(function (slide, i) {
+    if (i === 0 || slide.dataset.chapter !== slides[i - 1].dataset.chapter) {
+      var option = document.createElement("option");
+      option.value = i;
+      option.textContent = slide.dataset.chapter;
+      chapterSelect.appendChild(option);
+      chapterStarts.push(i);
+    }
+  });
 
   slides.forEach(function (el, i) {
     if (i === 0) return;
     var foot = document.createElement("div");
     foot.className = "foot";
-    foot.innerHTML = "<span>" + TITLE + "</span><span>" + (i + 1) + " / " + slides.length + "</span>";
+    var source = document.createElement("span");
+    source.textContent = el.dataset.source || el.dataset.chapter;
+    var number = document.createElement("span");
+    number.textContent = (i + 1) + " / " + slides.length;
+    foot.append(source, number);
     el.appendChild(foot);
   });
 
@@ -743,17 +878,22 @@
     var s = Math.min((window.innerWidth - 24) / 1280, (window.innerHeight - 76) / 720);
     root.style.setProperty("--s", Math.max(s, 0.2));
   }
-  function show(i) {
+  function show(i, scroll) {
     cur = Math.max(0, Math.min(slides.length - 1, i));
     slides.forEach(function (el, k) { el.classList.toggle("active", k === cur); });
     progress.style.width = ((cur + 1) / slides.length * 100) + "%";
     count.textContent = (cur + 1) + " / " + slides.length;
+    document.getElementById("prev").disabled = cur === 0;
+    document.getElementById("next").disabled = cur === slides.length - 1;
+    chapterSelect.value = chapterStarts.filter(function (n) { return n <= cur; }).pop();
     try { history.replaceState(null, "", "#" + (cur + 1)); } catch (e) {}
+    if (scroll && mobile.matches) slides[cur].scrollIntoView({ block: "start" });
   }
   function fromHash() {
-    var n = parseInt((location.hash || "").replace("#", ""), 10);
+    var n = parseInt(location.hash.slice(1), 10);
     return isNaN(n) ? 0 : n - 1;
   }
+  chapterSelect.addEventListener("change", function () { show(Number(chapterSelect.value), true); });
   function toggleTheme() {
     var dark = root.getAttribute("data-theme") === "dark" ||
       (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
@@ -762,8 +902,10 @@
     try { localStorage.setItem("theme", next); } catch (e) {}
   }
   function toggleFullscreen() {
-    if (!document.fullscreenElement) { (document.documentElement.requestFullscreen || function () {}).call(document.documentElement); }
-    else if (document.exitFullscreen) { document.exitFullscreen(); }
+    var request;
+    if (!document.fullscreenElement && document.documentElement.requestFullscreen) request = document.documentElement.requestFullscreen();
+    else if (document.exitFullscreen) request = document.exitFullscreen();
+    if (request && request.catch) request.catch(function () {});
   }
 
   try {
@@ -776,7 +918,10 @@
   document.getElementById("fs").addEventListener("click", toggleFullscreen);
   document.getElementById("themeToggle").addEventListener("click", toggleTheme);
   document.addEventListener("keydown", function (e) {
-    if (e.metaKey || e.ctrlKey || e.altKey) return;
+    if (e.metaKey || e.ctrlKey || e.altKey || e.target.closest("select, input, textarea, a, [contenteditable]")) return;
+    if (e.target.closest("button") && (e.key === " " || e.key === "Enter")) return;
+    // On phones all slides are a document. Preserve native scrolling keys.
+    if (mobile.matches && !/^[fFtTаАеЕ]$/.test(e.key)) return;
     var k = e.key;
     if (k === "ArrowRight" || k === "PageDown" || k === " " || k === "Enter") { e.preventDefault(); show(cur + 1); }
     else if (k === "ArrowLeft" || k === "PageUp" || k === "Backspace") { e.preventDefault(); show(cur - 1); }
@@ -794,9 +939,10 @@
     touchX = null;
   });
   window.addEventListener("resize", fit);
-  window.addEventListener("hashchange", function () { show(fromHash()); });
+  window.addEventListener("hashchange", function () { show(fromHash(), true); });
   fit();
   show(fromHash());
+  window.addEventListener("load", function () { if (location.hash && mobile.matches) show(fromHash(), true); });
 
   // ---------------- charts ----------------
   var NS = "http://www.w3.org/2000/svg";
@@ -864,13 +1010,6 @@
     hit.addEventListener("mouseleave", function () { g.setAttribute("visibility", "hidden"); });
   }
 
-  lineChart(document.getElementById("chartWeight"), {
-    f: function (p) { return 1 / Math.sqrt(p * (1 - p)); },
-    x0: 0.02, x1: 0.98, y0: 0, y1: 8, yd: 0,
-    yticks: [0, 2, 4, 6, 8], xticks: [0.02, 0.25, 0.5, 0.75, 0.98],
-    xlabel: "вероятность успеха контекста p", name: "вес",
-    marks: [[0.03, "p = 0,03: вес 5,86", 10, 4], [0.5, "p = 0,5: вес 2 (минимум)", 0, -14, "middle"]]
-  });
   lineChart(document.getElementById("chartMix"), {
     f: function (p) { return 1 - Math.pow(p, 8) - Math.pow(1 - p, 8); },
     x0: 0, x1: 1, y0: 0, y1: 1, yd: 2,
@@ -878,35 +1017,6 @@
     xlabel: "вероятность успеха p", name: "P_mix",
     marks: [[0.03, "0,03 → 0,216", 10, 4], [0.16, "0,16 → 0,75", 10, 14], [0.3, "0,30 → 0,942", 8, 20]]
   });
-
-  // ladder: where success lands after a promotion, against the demote gate
-  (function () {
-    var svg = document.getElementById("chartLadder");
-    var W = 560, L = 30, R = 30;
-    var x = function (v) { return L + v / 0.6 * (W - L - R); };
-    [0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6].forEach(function (t) {
-      el("line", { x1: x(t), x2: x(t), y1: 26, y2: 252, "class": "grid" }, svg);
-      el("text", { x: x(t), y: 274, "text-anchor": "middle", "class": "tick" }, svg, fmt(t, 1));
-    });
-    var rows = [
-      { y: 78, P: 0.30, D: 0.20, title: "старые пороги P = 0,30, D = 0,20" },
-      { y: 192, P: 0.45, D: 0.30, title: "новые пороги P = 0,45, D = 0,30" }
-    ];
-    rows.forEach(function (r) {
-      var land = r.P - 0.129, ok = land >= r.D;
-      el("text", { x: L, y: r.y - 40, "class": "mlabel", "font-weight": "600" }, svg, r.title);
-      el("line", { x1: x(0), x2: x(0.6), y1: r.y, y2: r.y, "class": "axis" }, svg);
-      el("rect", { x: x(r.D), y: r.y - 9, width: x(r.P) - x(r.D), height: 18, rx: 4, fill: "var(--accent-soft)", stroke: "var(--accent)", "stroke-width": 1 }, svg);
-      el("text", { x: x(r.D), y: r.y + 26, "text-anchor": "middle", "class": "tick" }, svg, "D");
-      el("text", { x: x(r.P), y: r.y + 26, "text-anchor": "middle", "class": "tick" }, svg, "P");
-      el("line", { x1: x(land), x2: x(r.P), y1: r.y - 18, y2: r.y - 18, stroke: "var(--muted)", "stroke-width": 1.5 }, svg);
-      el("text", { x: (x(land) + x(r.P)) / 2, y: r.y - 23, "text-anchor": "middle", "class": "tick" }, svg, "Δ = 0,129");
-      el("circle", { cx: x(land), cy: r.y, r: 6, fill: ok ? "var(--good)" : "var(--bad)", stroke: "var(--surface)", "stroke-width": 2 }, svg);
-      el("text", { x: L, y: r.y + 48, fill: ok ? "var(--good)" : "var(--bad)", "font-size": "13", "font-weight": "600" }, svg,
-        ok ? "✓ после перехода P − Δ = 0,321 ≥ D: возврата нет"
-           : "✕ после перехода P − Δ = 0,171 < D: семейство застревает");
-    });
-  })();
 
   // ---------------- math ----------------
   function renderMath() {
@@ -916,8 +1026,10 @@
         { left: "\\[", right: "\\]", display: true },
         { left: "$", right: "$", display: false }
       ],
-      macros: { "\\E": "\\mathbb{E}", "\\PP": "\\mathbb{P}", "\\TV": "\\operatorname{TV}", "\\KL": "\\operatorname{KL}" },
+      macros: { "\\E": "\\mathbb{E}", "\\PP": "\\mathbb{P}", "\\TV": "\\operatorname{TV}", "\\KL": "\\operatorname{KL}", "\\newterm": "\\htmlClass{new-term}{#1}" },
       ignoredTags: ["script", "noscript", "style", "textarea", "pre", "code", "svg"],
+      trust: function (context) { return context.command === "\\htmlClass"; },
+      strict: "ignore",
       throwOnError: false
     });
     return true;
@@ -926,7 +1038,15 @@
   // before DOMContentLoaded.
   if (!renderMath()) {
     document.addEventListener("DOMContentLoaded", function () {
-      if (!renderMath()) window.addEventListener("load", renderMath);
+      if (!renderMath()) window.addEventListener("load", function () {
+        if (!renderMath()) {
+          var warning = document.createElement("p");
+          warning.className = "math-warning";
+          warning.setAttribute("role", "alert");
+          warning.textContent = "Не удалось загрузить формулы. Проверьте соединение и перезагрузите страницу.";
+          document.body.appendChild(warning);
+        }
+      });
     });
   }
 })();
