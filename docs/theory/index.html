@@ -151,7 +151,7 @@
     .slide { break-inside: avoid; page-break-after: always; box-shadow: none; }
   }
 
-  /* One equation, one new idea. The previous equation stays visible above it. */
+  /* Keep the complete target equation visible while explaining its terms. */
   .slide { padding: 48px 72px 66px; }
   h2 { font-size: 36px; max-width: 1100px; margin-bottom: 20px; }
   .previous { display: flex; align-items: center; gap: 20px; min-height: 48px; color: var(--muted); font-size: 19px; margin: 0; }
@@ -160,7 +160,7 @@
   .equation { font-size: 31px; margin: 14px 0 24px; padding: 16px 0; }
   .equation .katex-display { margin: 0; text-align: left; }
   .equation .katex-display > .katex { text-align: left; }
-  .new-term, .new-label { color: var(--accent); text-decoration: underline; text-decoration-thickness: 1.5px; text-underline-offset: 5px; }
+  .new-term, .new-label { color: var(--accent); text-decoration: none; }
   .explanation { font-size: 24px; line-height: 1.45; max-width: 1060px; margin-bottom: 16px; }
   .terms { font-size: 19px; color: var(--muted); max-width: 1060px; }
   .example { border-left: 3px solid var(--accent); padding-left: 16px; font-size: 20px; margin-top: 16px; }
@@ -276,6 +276,41 @@
   }
   @media print { .presets, #glossary { display: none; } .lab-layout { grid-template-columns: 38% 1fr; } }
 
+
+  /* A stable complete equation, followed by the term currently being explained. */
+  .formula-walkthrough { padding-top: 34px; }
+  .formula-anchor { margin: 6px 0 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line); }
+  .formula-label { color: var(--muted); font-size: 13px; margin: 0 0 10px; }
+  .anchor-equation { font-size: 28px; }
+  .anchor-equation .katex-display { margin: 0; text-align: left; }
+  .anchor-equation .katex-display > .katex { text-align: left; }
+  .formula-walkthrough h2 { font-size: 29px; margin-bottom: 12px; }
+  .derivation { font-size: 22px; margin: 0 0 14px; }
+  .derivation-label { display: block; color: var(--muted); font-size: 12px; margin-bottom: 6px; }
+  .derivation .katex-display { margin: 0; text-align: left; }
+  .derivation .katex-display > .katex { text-align: left; }
+  .formula-walkthrough .explanation { font-size: 22px; margin-bottom: 12px; }
+  .formula-walkthrough .terms { font-size: 18px; }
+  .formula-walkthrough .example { font-size: 18px; margin-top: 8px; }
+  .formula-walkthrough .note { font-size: 15px; padding-top: 10px; }
+  .formula-summary h2 { font-size: 33px; margin-bottom: 12px; }
+  .formula-row { border-bottom: 1px solid var(--line); padding: 12px 0 16px; }
+  .formula-row:last-of-type { border-bottom: 0; }
+  .formula-row .summary-equation { font-size: 24px; margin-bottom: 8px; }
+  .summary-equation .katex-display { text-align: left; margin: 0; }
+  .summary-equation .katex-display > .katex { text-align: left; }
+  .formula-row p { font-size: 19px; color: var(--muted); margin: 0; }
+  .summary-navigation { display: flex; gap: 24px; font-size: 14px; margin-top: auto; padding-top: 8px; }
+  @media (max-width: 860px), print {
+    .formula-walkthrough { padding-top: 28px; }
+    .formula-walkthrough h2 { font-size: 24px; }
+    .anchor-equation { font-size: 23px; }
+    .derivation { font-size: 20px; }
+    .formula-walkthrough .explanation { font-size: 20px; }
+    .formula-summary h2 { font-size: 26px; }
+    .formula-row .summary-equation { font-size: 21px; }
+    .formula-row p { font-size: 17px; }
+  }
 </style>
 </head>
 <body>
@@ -293,8 +328,8 @@
 <p class="sub">Теория RL-бутстрэппинга VLA, шаг за шагом</p>
 <p class="lead">Сначала получаем отдельные успехи.<br>Затем учимся выполнять всю задачу.</p>
 <p class="title-meta">Д. Нуртдинов · ноябрь 2026</p>
-<p class="note">На следующих слайдах <span class="new-label">синий подчёркнутый член</span> показывает, что изменилось в формуле.</p>
-<p class="links"><a href="../">Сайт проекта</a><a href="https://github.com/damurka5/RL_VLA_Bootstrapping">Репозиторий</a></p>
+<p class="note">Основная формула остаётся перед глазами. <span class="new-label">Синим выделен член</span>, который разбираем сейчас.</p>
+<p class="links"><a href="../">Сайт проекта</a><a href="https://github.com/damurka5/RL_VLA_Bootstrapping">Репозиторий</a><a href="#formula-summary">Все формулы</a></p>
 </section>
 
 <!-- 2 -->
@@ -311,42 +346,42 @@
 </section>
 
 <!-- 3 -->
-<section id="slide-3" aria-labelledby="title-3" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 2">
-<p class="kicker">1. Что считаем успехом</p>
+<section id="slide-3" data-formula-family="metric" aria-labelledby="title-3" class="slide formula-walkthrough " data-chapter="1. Что считаем успехом" data-source="§ 2">
+<p class="kicker">1. Что считаем успехом</p><div class="formula-anchor"><p class="formula-label">Средний успех на заданных контекстах</p><div class="anchor-equation">\[ J(\pi_\theta)=\E_c\!\left[\newterm{p_c(\pi_\theta)}\right]=\E_c\!\left[\E_{\tau\mid c}[Y(\tau)]\right] \]</div></div>
 <h2 id="title-3">Политика выбирает действие</h2>
-<div class="equation">\[ u\sim\pi_\theta(\cdot\mid x) \]</div>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ u\sim\pi_\theta(\cdot\mid x) \]</div>
 <p class="explanation">Политика задаёт вероятности действий. Обучение меняет эти вероятности через параметры головы.</p>
 <p class="terms">$x$ — признаки наблюдения и инструкции. $u$ — действие до усечения. $\theta$ — обучаемые параметры.</p>
 <p class="note">В этой модели признаки VLA заморожены. Симулятор задаёт старты и проверяет успех. Это постановка RL-only. Ниже числа CDPR иллюстрируют реальные измерения, но его предки включают и автоматически подготовленные данные.</p>
 </section>
 
 <!-- 4 -->
-<section id="slide-4" aria-labelledby="title-4" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 2">
-<p class="kicker">1. Что считаем успехом</p>
+<section id="slide-4" data-formula-family="metric" aria-labelledby="title-4" class="slide formula-walkthrough " data-chapter="1. Что считаем успехом" data-source="§ 2">
+<p class="kicker">1. Что считаем успехом</p><div class="formula-anchor"><p class="formula-label">Средний успех на заданных контекстах</p><div class="anchor-equation">\[ J(\pi_\theta)=\E_c\!\left[p_c(\pi_\theta)\right]=\E_c\!\left[\E_{\tau\mid c}[\newterm{Y(\tau)}]\right] \]</div></div>
 <h2 id="title-4">Одна попытка даёт ноль или один</h2>
-<div class="equation">\[ Y=\begin{cases}1,&amp;\text{задача выполнена},\\0,&amp;\text{иначе}.\end{cases} \]</div>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ Y=\begin{cases}1,&amp;\text{задача выполнена},\\0,&amp;\text{иначе}.\end{cases} \]</div>
 <p class="explanation">Вводим результат одной попытки. Для «положить в миску» единица означает выполнение всего условия успеха.</p>
 <p class="terms">$Y$ — бинарная награда за эпизод.</p>
 </section>
 
 <!-- 5 -->
-<section id="slide-5" aria-labelledby="title-5" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 4">
-<p class="kicker">1. Что считаем успехом</p>
+<section id="slide-5" data-formula-family="metric" aria-labelledby="title-5" class="slide formula-walkthrough " data-chapter="1. Что считаем успехом" data-source="§ 4">
+<p class="kicker">1. Что считаем успехом</p><div class="formula-anchor"><p class="formula-label">Средний успех на заданных контекстах</p><div class="anchor-equation">\[ J(\pi_\theta)=\E_c\!\left[p_c(\pi_\theta)\right]=\E_c\!\left[\newterm{\E_{\tau\mid c}}[Y(\tau)]\right] \]</div></div>
 <h2 id="title-5">Средняя награда равна вероятности успеха</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$Y\in\{0,1\}$</span></div>
-<div class="equation">\[ p=\PP(Y=1)=\newterm{\E[Y]} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p=\PP(Y=1)=\E[Y] \]</div>
 <p class="explanation">Добавили усреднение по многим попыткам. Среднее нулей и единиц равно доле единиц.</p>
 <p class="terms">$p$ — вероятность успеха в одном фиксированном контексте, то есть $p=p_c(	heta)$. $\E$ означает среднее.</p>
 <p class="example">Если из 100 попыток успешны 30, оценка p равна 0,30.</p>
 </section>
 
 <!-- 6 -->
-<section id="slide-6" aria-labelledby="title-6" class="slide " data-chapter="1. Что считаем успехом" data-source="§ 4">
-<p class="kicker">1. Что считаем успехом</p>
+<section id="slide-6" data-formula-family="metric" aria-labelledby="title-6" class="slide formula-walkthrough " data-chapter="1. Что считаем успехом" data-source="§ 4">
+<p class="kicker">1. Что считаем успехом</p><div class="formula-anchor"><p class="formula-label">Средний успех на заданных контекстах</p><div class="anchor-equation">\[ \newterm{J(\pi_\theta)}=\newterm{\E_c}\!\left[p_c(\pi_\theta)\right]=\E_c\!\left[\E_{\tau\mid c}[Y(\tau)]\right] \]</div></div>
 <h2 id="title-6">Задача включает разные сцены</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$p=\E[Y]$</span></div>
-<div class="equation">\[ J(\pi)=\newterm{\E_c}\,[p_c(\pi)] \]</div>
-<p class="explanation">Добавили усреднение по контекстам: объектам, положениям и инструкциям. Получили итоговую метрику.</p>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ J(\pi)=\E_c\,[p_c(\pi)] \]</div>
+<p class="explanation">Внешнее ожидание усредняет успех по контекстам: объектам, положениям и инструкциям. Так получаем итоговую метрику J.</p>
 <p class="terms">$c$ — контекст. $p_c$ — успех в нём. $J$ — средний успех на заданном распределении задач.</p>
 <p class="note">Распределение контекстов фиксируем. Иначе изменение состава задач можно принять за улучшение политики.</p>
 </section>
@@ -364,75 +399,75 @@
 <tr><td>$H=128$, $G=8$</td><td>Решений в полной попытке CDPR и попыток в одной группе GRPO.</td></tr></table><p class="note">Букву r больше не используем. Распределение посещаемых состояний обозначаем ω, чтобы не путать его с расстоянием d.</p></section>
 
 <!-- 9 -->
-<section id="slide-9" aria-labelledby="title-9" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2, формула GRPO">
-<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<section id="slide-9" data-formula-family="advantage" aria-labelledby="title-9" class="slide formula-walkthrough " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2, формула GRPO">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p><div class="formula-anchor"><p class="formula-label">Преимущество одной попытки в группе</p><div class="anchor-equation">\[ A_i=\frac{\newterm{Y_i}-\bar Y}{\max(\hat\sigma,\epsilon)} \]</div></div>
 <h2 id="title-9">Сравниваем несколько попыток</h2>
-<div class="equation">\[ Y_1,\ldots,Y_G\in\{0,1\} \]</div>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ Y_1,\ldots,Y_G\in\{0,1\} \]</div>
 <p class="explanation">Из одного контекста запускаем G независимых попыток. Различия между исходами показывают, какие действия стоит повторять.</p>
 <p class="terms">$G=8$ — размер группы в CDPR и WidowX. Для простоты ниже пример из четырёх. $i$ — номер попытки.</p>
 <p class="example">Группа из четырёх попыток: 0, 0, 0, 1.</p>
 </section>
 
 <!-- 10 -->
-<section id="slide-10" aria-labelledby="title-10" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2">
-<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<section id="slide-10" data-formula-family="advantage" aria-labelledby="title-10" class="slide formula-walkthrough " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p><div class="formula-anchor"><p class="formula-label">Преимущество одной попытки в группе</p><div class="anchor-equation">\[ A_i=\frac{Y_i\newterm{-\bar Y}}{\max(\hat\sigma,\epsilon)} \]</div></div>
 <h2 id="title-10">Вычитаем средний результат группы</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$Y_i$</span></div>
-<div class="equation">\[ Y_i\newterm{-\bar Y} \]</div>
-<p class="explanation">Добавили среднее группы. Успех получает положительный знак, неудача отрицательный.</p>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ Y_i-\bar Y \]</div>
+<p class="explanation">В числителе вычитаем среднее группы. Успех получает положительный знак, неудача отрицательный.</p>
 <p class="terms">$\bar Y=(Y_1+\cdots+Y_G)/G$ — доля успехов в группе.</p>
 <p class="example">Для группы 0, 0, 0, 1 среднее равно 0,25. Отклонения: −0,25, −0,25, −0,25, +0,75.</p>
 </section>
 
 <!-- 11 -->
-<section id="slide-11" aria-labelledby="title-11" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2">
-<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<section id="slide-11" data-formula-family="advantage" aria-labelledby="title-11" class="slide formula-walkthrough " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p><div class="formula-anchor"><p class="formula-label">Преимущество одной попытки в группе</p><div class="anchor-equation">\[ A_i=\frac{Y_i-\bar Y}{\max(\newterm{\hat\sigma},\epsilon)} \]</div></div>
 <h2 id="title-11">Приводим отклонения к одному масштабу</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$Y_i-\bar Y$</span></div>
-<div class="equation">\[ A_i=\frac{Y_i-\bar Y}{\newterm{\hat\sigma}} \]</div>
-<p class="explanation">Добавили деление на разброс результатов. Так величина сигнала учитывает, насколько редок исход внутри группы.</p>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ A_i=\frac{Y_i-\bar Y}{\hat\sigma} \]</div>
+<p class="explanation">Знаменатель учитывает разброс результатов. Так величина сигнала учитывает, насколько редок исход внутри группы.</p>
 <p class="terms">$A_i$ — преимущество попытки. Для бинарной группы $\hat\sigma=\sqrt{\bar Y(1-\bar Y)}$.</p>
-<p class="note">Пока предполагаем, что в группе есть и успехи, и неудачи. На следующем шаге уберём это ограничение.</p>
+<p class="note">При σ̂ > ε знаменатель равен σ̂. Член ε уже виден в полной формуле; его роль разберём следующим.</p>
 </section>
 
 <!-- 12 -->
-<section id="slide-12" aria-labelledby="title-12" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2, лемма 7.1">
-<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<section id="slide-12" data-formula-family="advantage" aria-labelledby="title-12" class="slide formula-walkthrough " data-chapter="2. Откуда берётся сигнал GRPO" data-source="§ 2, лемма 7.1">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p><div class="formula-anchor"><p class="formula-label">Преимущество одной попытки в группе</p><div class="anchor-equation">\[ A_i=\frac{Y_i-\bar Y}{\max(\hat\sigma,\newterm{\epsilon})} \]</div></div>
 <h2 id="title-12">Защита от деления на ноль</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$A_i=(Y_i-\bar Y)/\hat\sigma$</span></div>
-<div class="equation">\[ A_i=\frac{Y_i-\bar Y}{\newterm{\max(\hat\sigma,\epsilon)}} \]</div>
-<p class="explanation">Добавили маленькое положительное число ε. Знаменатель теперь не обращается в ноль.</p>
+
+
+<p class="explanation">Функция max выбирает хотя бы маленькое положительное ε. Поэтому знаменатель не обращается в ноль.</p>
 <p class="terms">$\epsilon&gt;0$ — численная защита. Если разброс больше ε, формула остаётся прежней.</p>
 <p class="example">Если все результаты равны нулю, числитель тоже ноль. Все преимущества равны нулю.</p>
 </section>
 
 <!-- 13 -->
-<section id="slide-13" aria-labelledby="title-13" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1">
-<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<section id="slide-13" data-formula-family="advantage" aria-labelledby="title-13" class="slide formula-walkthrough " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p><div class="formula-anchor"><p class="formula-label">Преимущество одной попытки в группе</p><div class="anchor-equation">\[ A_i=\frac{\newterm{Y_i}\newterm{-\bar Y}}{\max(\hat\sigma,\epsilon)} \]</div></div>
 <h2 id="title-13">Одинаковые исходы не дают сравнения</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$A_i=(Y_i-\bar Y)/\max(\hat\sigma,\epsilon)$</span></div>
-<div class="equation">\[ Y_1=\cdots=Y_G\quad\Longrightarrow\quad\newterm{A_1=\cdots=A_G=0} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ Y_1=\cdots=Y_G\quad\Longrightarrow\quadA_1=\cdots=A_G=0 \]</div>
 <p class="explanation">Если все попытки неудачны, GRPO не знает, какую предпочесть. То же верно для группы из одних успехов.</p>
 <p class="terms">Нулевая группа даёт нулевой вклад награды в градиент политики.</p>
 <p class="note">Это утверждение о сигнале награды. Энтропия, другие потери или накопленный момент оптимизатора могут продолжать менять параметры.</p>
 </section>
 
 <!-- 14 -->
-<section id="slide-14" aria-labelledby="title-14" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1">
-<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<section id="slide-14" data-formula-family="mixed" aria-labelledby="title-14" class="slide formula-walkthrough " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p><div class="formula-anchor"><p class="formula-label">Шанс получить успехи и неудачи в одной группе</p><div class="anchor-equation">\[ P_{\rm mix}=1-\newterm{(1-p)^G}-p^G \]</div></div>
 <h2 id="title-14">Вероятность встретить хотя бы один успех</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\PP(\text{неудача})=1-p$</span></div>
-<div class="equation">\[ P_{\ge1}=1\newterm{-(1-p)^G} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ P_{\ge1}=1-(1-p)^G \]</div>
 <p class="explanation">Из единицы вычли вероятность того, что все G попыток неудачны.</p>
 <p class="terms">$1-p$ — вероятность одной неудачи. Степень G появляется из независимости попыток при фиксированном контексте.</p>
 </section>
 
 <!-- 15 -->
-<section id="slide-15" aria-labelledby="title-15" class="slide " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1">
-<p class="kicker">2. Откуда берётся сигнал GRPO</p>
+<section id="slide-15" data-formula-family="mixed" aria-labelledby="title-15" class="slide formula-walkthrough " data-chapter="2. Откуда берётся сигнал GRPO" data-source="Лемма 7.1">
+<p class="kicker">2. Откуда берётся сигнал GRPO</p><div class="formula-anchor"><p class="formula-label">Шанс получить успехи и неудачи в одной группе</p><div class="anchor-equation">\[ P_{\rm mix}=1-(1-p)^G-\newterm{p^G} \]</div></div>
 <h2 id="title-15">Для сравнения нужна ещё и неудача</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$P_{\ge1}=1-(1-p)^G$</span></div>
-<div class="equation">\[ P_{\rm mix}=1-(1-p)^G\newterm{-p^G} \]</div>
+
+
 <p class="explanation">Теперь вычли группы, в которых все попытки успешны. Остались смешанные группы с ненулевыми преимуществами.</p>
 <p class="terms">$p^G$ — вероятность G успехов подряд. $P_{\rm mix}$ — вероятность информативной группы.</p>
 </section>
@@ -459,10 +494,10 @@
 </section>
 
 <!-- 18 -->
-<section id="slide-18" aria-labelledby="title-18" class="slide " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3">
-<p class="kicker">3. Как получить первые успехи</p>
+<section id="slide-18" data-formula-family="distance" aria-labelledby="title-18" class="slide formula-walkthrough " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3">
+<p class="kicker">3. Как получить первые успехи</p><div class="formula-anchor"><p class="formula-label">Геометрический критерий при d ≥ 0 и R_tol > 0</p><div class="anchor-equation">\[ p=\PP(d\le R_{\rm tol})\ge\max\!\left(0,1-\frac{\newterm{\E[d]}}{R_{\rm tol}}\right) \]</div></div>
 <h2 id="title-18">Плотная награда различает неудачи</h2>
-<div class="equation">\[ R_{\rm dense}=\newterm{-d} \]</div>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ R_{\rm dense}=-d \]</div>
 <p class="explanation">Вместо одинакового нуля даём больший балл за меньшее расстояние. Появляется сравнение даже до полного успеха.</p>
 <p class="terms">$d\ge0$ — расстояние объекта до цели в конце эпизода в этой учебной модели. Это упрощённый пример плотной награды.</p>
 <p class="example">Расстояния 10 см и 3 см дают разные награды, даже если для успеха нужно попасть ближе 2 см.</p>
@@ -470,22 +505,22 @@
 </section>
 
 <!-- 19 -->
-<section id="slide-19" aria-labelledby="title-19" class="slide " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3">
-<p class="kicker">3. Как получить первые успехи</p>
+<section id="slide-19" data-formula-family="distance" aria-labelledby="title-19" class="slide formula-walkthrough " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3">
+<p class="kicker">3. Как получить первые успехи</p><div class="formula-anchor"><p class="formula-label">Геометрический критерий при d ≥ 0 и R_tol > 0</p><div class="anchor-equation">\[ p=\PP(\newterm{d\le R_{\rm tol}})\ge\max\!\left(0,1-\frac{\E[d]}{\newterm{R_{\rm tol}}}\right) \]</div></div>
 <h2 id="title-19">Порог связывает расстояние с успехом</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$R_{\rm dense}=-d$</span></div>
-<div class="equation">\[ p=\PP(d\le R_{\rm tol})=\newterm{1-\PP(d&gt;R_{\rm tol})} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p=\PP(d\le R_{\rm tol})=1-\PP(d&gt;R_{\rm tol}) \]</div>
 <p class="explanation">Ввели радиус допуска $R_{\rm tol}$. Теперь успех означает попасть внутрь этого радиуса.</p>
 <p class="terms">$R_{\rm tol}&gt;0$ — допуск. Для CDPR допуск по XY: миска 0,057 м, тарелка 0,091 м. Здесь рассматриваем только геометрическое условие.</p>
 <p class="note">Для реального захвата или размещения нужно отдельно учесть остальные условия: удержание, отпускание и устойчивость.</p>
 </section>
 
 <!-- 20 -->
-<section id="slide-20" aria-labelledby="title-20" class="slide " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3">
-<p class="kicker">3. Как получить первые успехи</p>
+<section id="slide-20" data-formula-family="distance" aria-labelledby="title-20" class="slide formula-walkthrough " data-chapter="3. Как получить первые успехи" data-source="Предложение 7.3">
+<p class="kicker">3. Как получить первые успехи</p><div class="formula-anchor"><p class="formula-label">Геометрический критерий при d ≥ 0 и R_tol > 0</p><div class="anchor-equation">\[ p=\PP(d\le R_{\rm tol})\ge\max\!\left(0,1-\frac{\newterm{\E[d]}}{R_{\rm tol}}\right) \]</div></div>
 <h2 id="title-20">Малое среднее расстояние даёт нижнюю границу</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$p=1-\PP(d&gt;R_{\rm tol})$</span></div>
-<div class="equation">\[ p\ge1-\newterm{\frac{\E[d]}{R_{\rm tol}}} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p\ge1-\frac{\E[d]}{R_{\rm tol}} \]</div>
 <p class="explanation">Неравенство Маркова даёт верхнюю границу вероятности промаха. Подставили её в предыдущую формулу.</p>
 <p class="terms">Если $\E[d]&lt;R_{\rm tol}$, правая часть положительна. Тогда есть успехи для запуска бинарного RL.</p>
 <p class="example">Учебный пример с допуском CDPR: среднее d = 0,0285 м и R_tol = 0,057 м дают не ниже 50% для геометрического условия. Среднее d здесь задано, а не измерено.</p>
@@ -496,31 +531,31 @@
 <section id="slide-21" aria-labelledby="title-21" class="slide lab-slide" data-chapter="3. Как получить первые успехи" data-source="Геометрия из конфигурации CDPR" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/configs/examples/cdpr_smolvla_three_stage_put_into.yaml" data-key="distance-example"><p class="kicker">3. Как получить первые успехи</p><h2 id="title-21">Как читать расстояние на числовом примере</h2><div class="lab-layout"><div class="lab-inputs"><p class="lab-caption">Геометрическое условие, не весь strict success</p><label for="target-geometry">Цель</label><select id="target-geometry"><option value="0.057">Миска: допуск 5,7 см</option><option value="0.091">Тарелка: допуск 9,1 см</option></select><label class="slider-label" for="distance">Расстояние d, см<output id="distance-value"></output></label><input id="distance" type="range" min="0" max="20" step="0.1" value="6"><p id="geometry-result" class="lab-result"></p></div><div class="lab-visual"><svg id="geometry-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Геометрическое условие успеха по расстоянию и порогу"></svg><p class="chart-caption">Точка показывает выбранное расстояние. Ступенька меняется у допуска.</p></div></div><p class="note">Допуски взяты из YAML. Положение ползунка — учебное значение. Реальный strict success дополнительно требует захват, удержанный подъём и корректное отпускание без срыва.</p></section>
 
 <!-- 22 -->
-<section id="slide-22" aria-labelledby="title-22" class="slide " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4">
-<p class="kicker">3. Как получить первые успехи</p>
+<section id="slide-22" data-formula-family="curriculum" aria-labelledby="title-22" class="slide formula-walkthrough " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4">
+<p class="kicker">3. Как получить первые успехи</p><div class="formula-anchor"><p class="formula-label">Условие усложнения стартов</p><div class="anchor-equation">\[ J_{\rm harder}\ge \newterm{P}-\Delta\ge D_{\rm back} \]</div></div>
 <h2 id="title-22">Сначала решаем задачу из лёгких стартов</h2>
-<div class="equation">\[ J_{\rm easy}\ge\newterm{P} \]</div>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ J_{\rm easy}\geP \]</div>
 <p class="explanation">Задаём порог P. Усложняем старты только после того, как навык достиг этого уровня успеха.</p>
 <p class="terms">$J_{\rm easy}$ — успех на текущей ступени. $P$ — порог перехода.</p>
 <p class="example">Например, начинаем захват рядом с объектом. Затем постепенно увеличиваем расстояние.</p>
 </section>
 
 <!-- 23 -->
-<section id="slide-23" aria-labelledby="title-23" class="slide " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4">
-<p class="kicker">3. Как получить первые успехи</p>
+<section id="slide-23" data-formula-family="curriculum" aria-labelledby="title-23" class="slide formula-walkthrough " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4">
+<p class="kicker">3. Как получить первые успехи</p><div class="formula-anchor"><p class="formula-label">Условие усложнения стартов</p><div class="anchor-equation">\[ \newterm{J_{\rm harder}}\ge P-\newterm{\Delta}\ge D_{\rm back} \]</div></div>
 <h2 id="title-23">При усложнении часть успеха теряется</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$J_{\rm easy}\ge P$</span></div>
-<div class="equation">\[ J_{\rm harder}\ge P\newterm{-\Delta} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ J_{\rm harder}\ge P-\Delta \]</div>
 <p class="explanation">Добавили возможное падение Δ при смене стартов. Даже та же политика хуже справляется с более трудной задачей.</p>
 <p class="terms">$\Delta$ — верхняя граница падения при переходе. Предполагаем $J_{\rm harder}\ge J_{\rm easy}-\Delta$.</p>
 </section>
 
 <!-- 24 -->
-<section id="slide-24" aria-labelledby="title-24" class="slide " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4, § 9">
-<p class="kicker">3. Как получить первые успехи</p>
+<section id="slide-24" data-formula-family="curriculum" aria-labelledby="title-24" class="slide formula-walkthrough " data-chapter="3. Как получить первые успехи" data-source="Теорема 7.4, § 9">
+<p class="kicker">3. Как получить первые успехи</p><div class="formula-anchor"><p class="formula-label">Условие усложнения стартов</p><div class="anchor-equation">\[ J_{\rm harder}\ge P-\Delta\ge \newterm{D_{\rm back}} \]</div></div>
 <h2 id="title-24">Запас должен быть выше порога возврата</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$J_{\rm harder}\ge P-\Delta$</span></div>
-<div class="equation">\[ P-\Delta\newterm{\ge D_{\rm back}} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ P-\Delta\ge D_{\rm back} \]</div>
 <p class="explanation">Сравнили оставшийся успех с порогом возврата. При этом условии новая ступень не вызывает немедленный откат.</p>
 <p class="terms">$D_{\rm back}$ — порог возврата на лёгкую ступень. В главе он обозначен D.</p>
 <p class="example">При P = 0,45 и Δ = 0,129 остаётся 0,321. Это выше порога возврата 0,30.</p>
@@ -528,75 +563,75 @@
 </section>
 
 <!-- 25 -->
-<section id="slide-25" aria-labelledby="title-25" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
-<p class="kicker">4. Как соединить навыки</p>
+<section id="slide-25" data-formula-family="composition" aria-labelledby="title-25" class="slide formula-walkthrough " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
+<p class="kicker">4. Как соединить навыки</p><div class="formula-anchor"><p class="formula-label">Полная задача: согласованные этапы и достаточный горизонт</p><div class="anchor-equation">\[ p_{\rm full}=\prod_{j=1}^{m}\newterm{q_j}\ge \prod_{j=1}^{m}\bigl(s_j-\Gamma_j-T_j\bigr)^{+} \]</div></div>
 <h2 id="title-25">Успех всей задачи требует успеха обоих этапов</h2>
-<div class="equation">\[ p_{\rm full}=q_1\newterm{q_2} \]</div>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p_{\rm full}=q_1q_2 \]</div>
 <p class="explanation">Умножили шанс первого этапа на шанс второго после успешного первого.</p>
 <p class="terms">$q_1$ — захват в полной задаче. $q_2$ — размещение при условии успешного захвата.</p>
 <p class="note">Это правило условных вероятностей. Оно не предполагает независимость этапов.</p>
 </section>
 
 <!-- 26 -->
-<section id="slide-26" aria-labelledby="title-26" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
-<p class="kicker">4. Как соединить навыки</p>
+<section id="slide-26" data-formula-family="composition" aria-labelledby="title-26" class="slide formula-walkthrough " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
+<p class="kicker">4. Как соединить навыки</p><div class="formula-anchor"><p class="formula-label">Полная задача: согласованные этапы и достаточный горизонт</p><div class="anchor-equation">\[ p_{\rm full}=\prod_{j=1}^{m}q_j\ge \prod_{j=1}^{m}\bigl(\newterm{s_j}-\Gamma_j-T_j\bigr)^{+} \]</div></div>
 <h2 id="title-26">Отдельный навык даёт исходную точку сравнения</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$p_{\rm full}=q_1q_2$</span></div>
-<div class="equation">\[ q_j=s_j\quad\text{при совпадении условий} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ q_j=s_j\quad\text{при совпадении условий} \]</div>
 <p class="explanation">Если инструкция, старты и оставшееся время совпадают, этап в полной задаче имеет то же качество, что отдельный навык.</p>
 <p class="terms">$s_j$ — успех отдельно обученного навыка j. $q_j$ — его условный успех внутри полной задачи.</p>
 <p class="note">На следующих слайдах учтём два различия между этими условиями.</p>
 </section>
 
 <!-- 27 -->
-<section id="slide-27" aria-labelledby="title-27" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
-<p class="kicker">4. Как соединить навыки</p>
+<section id="slide-27" data-formula-family="composition" aria-labelledby="title-27" class="slide formula-walkthrough " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
+<p class="kicker">4. Как соединить навыки</p><div class="formula-anchor"><p class="formula-label">Полная задача: согласованные этапы и достаточный горизонт</p><div class="anchor-equation">\[ p_{\rm full}=\prod_{j=1}^{m}q_j\ge \prod_{j=1}^{m}\bigl(s_j-\newterm{\Gamma_j}-T_j\bigr)^{+} \]</div></div>
 <h2 id="title-27">Итоговая инструкция может изменить поведение</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$q_j=s_j\quad\text{при совпадении условий}$</span></div>
-<div class="equation">\[ q_j\ge s_j\newterm{-\Gamma_j} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ q_j\ge s_j-\Gamma_j \]</div>
 <p class="explanation">Вычли запас на смену инструкции. После «возьми» политика может действовать иначе, чем после «положи в миску».</p>
 <p class="terms">$\Gamma_j\ge0$ — верхняя граница потери из-за инструкции. Пока старты этапа совпадают.</p>
 <p class="note">Обучение на собственных успехах с итоговой инструкцией должно уменьшать этот разрыв. Это нужно проверять.</p>
 </section>
 
 <!-- 28 -->
-<section id="slide-28" aria-labelledby="title-28" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
-<p class="kicker">4. Как соединить навыки</p>
+<section id="slide-28" data-formula-family="composition" aria-labelledby="title-28" class="slide formula-walkthrough " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
+<p class="kicker">4. Как соединить навыки</p><div class="formula-anchor"><p class="formula-label">Полная задача: согласованные этапы и достаточный горизонт</p><div class="anchor-equation">\[ p_{\rm full}=\prod_{j=1}^{m}q_j\ge \prod_{j=1}^{m}\bigl(s_j-\Gamma_j-\newterm{T_j}\bigr)^{+} \]</div></div>
 <h2 id="title-28">Предыдущий этап оставляет другие стартовые состояния</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$q_j\ge s_j-\Gamma_j$</span></div>
-<div class="equation">\[ q_j\ge s_j-\Gamma_j\newterm{-T_j} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ q_j\ge s_j-\Gamma_j-T_j \]</div>
 <p class="explanation">Вычли запас на передачу: реальный захват может оставить объект не там и не так, как тренировочные старты размещения.</p>
 <p class="terms">$T_j=\TV(\rho_{j-1},\mu_j)$ — различие распределений. $\rho$ — реальные состояния передачи, $\mu$ — старты навыка.</p>
 <p class="note">TV лежит от 0 до 1. Она ограничивает, насколько может измениться вероятность события при смене распределения.</p>
 </section>
 
 <!-- 29 -->
-<section id="slide-29" aria-labelledby="title-29" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
-<p class="kicker">4. Как соединить навыки</p>
+<section id="slide-29" data-formula-family="composition" aria-labelledby="title-29" class="slide formula-walkthrough " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
+<p class="kicker">4. Как соединить навыки</p><div class="formula-anchor"><p class="formula-label">Полная задача: согласованные этапы и достаточный горизонт</p><div class="anchor-equation">\[ p_{\rm full}=\prod_{j=1}^{m}q_j\ge \prod_{j=1}^{m}\bigl(s_j-\Gamma_j-T_j\bigr)^{\newterm{+}} \]</div></div>
 <h2 id="title-29">Нижняя граница вероятности не нужна ниже нуля</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$q_j\ge s_j-\Gamma_j-T_j$</span></div>
-<div class="equation">\[ q_j\ge\newterm{\bigl(}s_j-\Gamma_j-T_j\newterm{\bigr)^+} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ q_j\ge\bigl(s_j-\Gamma_j-T_j\bigr)^+ \]</div>
 <p class="explanation">Заменили отрицательную оценку нулём. Это делает границу корректной для перемножения.</p>
 <p class="terms">$a^+=\max(a,0)$. Нулевая граница означает, что эта оценка ничего не обещает.</p>
 </section>
 
 <!-- 30 -->
-<section id="slide-30" aria-labelledby="title-30" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
-<p class="kicker">4. Как соединить навыки</p>
+<section id="slide-30" data-formula-family="composition" aria-labelledby="title-30" class="slide formula-walkthrough " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
+<p class="kicker">4. Как соединить навыки</p><div class="formula-anchor"><p class="formula-label">Полная задача: согласованные этапы и достаточный горизонт</p><div class="anchor-equation">\[ p_{\rm full}=\prod_{j=1}^{m}q_j\ge \newterm{\prod_{j=1}^{m}}\bigl(s_j-\Gamma_j-T_j\bigr)^{+} \]</div></div>
 <h2 id="title-30">Подставляем границы этапов в полную задачу</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$q_j\ge(s_j-\Gamma_j-T_j)^+$</span></div>
-<div class="equation">\[ p_{\rm full}\ge\newterm{\prod_{j=1}^{m}}(s_j-\Gamma_j-T_j)^+ \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p_{\rm full}\ge\prod_{j=1}^{m}(s_j-\Gamma_j-T_j)^+ \]</div>
 <p class="explanation">Для каждого этапа взяли полученную нижнюю границу и перемножили. Символ ∏ означает произведение.</p>
 <p class="terms">Каждый навык должен быть достаточно надёжен после учёта инструкции и передачи.</p>
 <p class="note">Предполагаются реактивная политика, согласованные этапы и достаточный горизонт. Произведение всё ещё может убывать с числом этапов.</p>
 </section>
 
 <!-- 31 -->
-<section id="slide-31" aria-labelledby="title-31" class="slide " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
-<p class="kicker">4. Как соединить навыки</p>
+<section id="slide-31" data-formula-family="composition" aria-labelledby="title-31" class="slide formula-walkthrough " data-chapter="4. Как соединить навыки" data-source="Теорема 7.5">
+<p class="kicker">4. Как соединить навыки</p><div class="formula-anchor"><p class="formula-label">Полная задача: согласованные этапы и достаточный горизонт</p><div class="anchor-equation">\[ p_{\rm full}=\prod_{j=1}^{m}q_j\ge \prod_{j=1}^{m}\bigl(\newterm{s_j}-\newterm{\Gamma_j}-\newterm{T_j}\bigr)^{+} \]</div></div>
 <h2 id="title-31">Два навыка могут дать стартовый сигнал</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$p_{\rm full}\ge\prod_j(s_j-\Gamma_j-T_j)^+$</span></div>
-<div class="equation">\[ p_{\rm full}\ge(0{,}5-0{,}1-0)(0{,}7-0-0{,}3)=\newterm{0{,}16} \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p_{\rm full}\ge(0{,}5-0{,}1-0)(0{,}7-0-0{,}3)=0{,}16 \]</div>
 <p class="explanation">Подставили пример: захват с потерей на инструкции и размещение с потерей на передаче.</p>
 <p class="terms">Для иллюстрации: при фактическом успехе p = 0,16 смешанными будут около 75% групп размера 8.</p>
 <p class="note">Это учебный расчёт из главы, а не измеренная успешность пайплайна. Долю смешанных групп считаем по фактическому p, а не по его нижней границе.</p>
@@ -616,92 +651,92 @@
 </section>
 
 <!-- 33 -->
-<section id="slide-33" aria-labelledby="title-33" class="slide " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="gradient-start"><p class="kicker">5а. Откуда берётся градиент</p><p class="context-reminder">Шаг 1: выразить направление роста p через записанные попытки.</p><h2 id="title-33">Сначала фиксируем, чью вероятность меняем</h2><div class="equation">\[ p=p_c(\theta_0)=\PP_{\pi_{\theta_0}}(Y=1\mid c) \]</div><p class="explanation">Выбрали один контекст c и текущие параметры θ₀. Снова запускаем эту же задачу, меняя только случайные действия политики.</p><p class="terms">p — истинная вероятность успеха до обновления. Это не доля успехов в случайной группе и не средний J по всем сценам.</p><p class="example">Учебное p = 0,25 означает: при многократном повторении именно этого контекста успешна четверть попыток.</p><p class="note">В задаче навыка Y проверяет навык. В задаче put_into Y проверяет всю инструкцию. Определение Y фиксируем до вывода.</p></section>
+<section id="slide-33" data-formula-family="gradient" aria-labelledby="title-33" class="slide formula-walkthrough " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="gradient-start"><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-\newterm{p}}{\sqrt{p(1-p)}}\,Z\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-33">Сначала фиксируем, чью вероятность меняем</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p=p_c(\theta_0)=\PP_{\pi_{\theta_0}}(Y=1\mid c) \]</div><p class="explanation">Выбрали один контекст c и текущие параметры θ₀. Снова запускаем эту же задачу, меняя только случайные действия политики.</p><p class="terms">p — истинная вероятность успеха до обновления. Это не доля успехов в случайной группе и не средний J по всем сценам.</p><p class="example">Учебное p = 0,25 означает: при многократном повторении именно этого контекста успешна четверть попыток.</p><p class="note">В задаче навыка Y проверяет навык. В задаче put_into Y проверяет всю инструкцию. Определение Y фиксируем до вывода.</p></section>
 
 <!-- 34 -->
-<section id="slide-34" aria-labelledby="title-34" class="slide " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-34">Успех можно записать как сумму по траекториям</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$p=\E[Y]$</span></div><div class="equation">\[ p(\theta)=\int Y(\tau)\,f_\theta(\tau\mid c)\,d\tau \]</div><p class="explanation">Каждую возможную траекторию взвешиваем по её вероятности. Успешные имеют Y = 1, остальные Y = 0.</p><p class="terms">$\tau$ — вся попытка. $f_\theta$ — её плотность. Интеграл суммирует варианты непрерывных движений.</p><p class="example">Для конечного набора вариантов это обычная сумма: успех варианта × вероятность варианта.</p><p class="note">Символ dτ — знак интегрирования, а не расстояние d.</p></section>
+<section id="slide-34" data-formula-family="gradient" aria-labelledby="title-34" class="slide formula-walkthrough " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\newterm{\E}\!\left[\frac{\newterm{Y}-p}{\sqrt{p(1-p)}}\,Z\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-34">Успех можно записать как сумму по траекториям</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p(\theta)=\int Y(\tau)\,f_\theta(\tau\mid c)\,d\tau \]</div><p class="explanation">Каждую возможную траекторию взвешиваем по её вероятности. Успешные имеют Y = 1, остальные Y = 0.</p><p class="terms">$\tau$ — вся попытка. $f_\theta$ — её плотность. Интеграл суммирует варианты непрерывных движений.</p><p class="example">Для конечного набора вариантов это обычная сумма: успех варианта × вероятность варианта.</p><p class="note">Символ dτ — знак интегрирования, а не расстояние d.</p></section>
 
 <!-- 35 -->
-<section id="slide-35" aria-labelledby="title-35" class="slide " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-35">Градиент показывает, как менять параметры</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$p(\theta)=\int Y(\tau)f_\theta(\tau\mid c)\,d\tau$</span></div><div class="equation">\[ \nabla_\theta p=\int Y(\tau)\,\newterm{\nabla_\theta f_\theta(\tau\mid c)}\,d\tau \]</div><p class="explanation">Взяли производную по параметрам сети. Меняются вероятности траекторий, поэтому производная действует на f.</p><p class="terms">$\nabla_\theta p$ — вектор: одна производная для каждого параметра. Направление этого вектора локально увеличивает p.</p><p class="note">Предикат Y и динамика симулятора не зависят от параметров сети. Нужны условия, позволяющие перенести производную под интеграл.</p></section>
+<section id="slide-35" data-formula-family="gradient" aria-labelledby="title-35" class="slide formula-walkthrough " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,Z\right]=\frac{\newterm{\nabla_\theta p}}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-35">Градиент показывает, как менять параметры</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \nabla_\theta p=\int Y(\tau)\,\nabla_\theta f_\theta(\tau\mid c)\,d\tau \]</div><p class="explanation">Взяли производную по параметрам сети. Меняются вероятности траекторий, поэтому производная действует на f.</p><p class="terms">$\nabla_\theta p$ — вектор: одна производная для каждого параметра. Направление этого вектора локально увеличивает p.</p><p class="note">Предикат Y и динамика симулятора не зависят от параметров сети. Нужны условия, позволяющие перенести производную под интеграл.</p></section>
 
 <!-- 36 -->
-<section id="slide-36" aria-labelledby="title-36" class="slide wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-36">Логарифм помогает переписать производную</h2><div class="equation">\[ \nabla_\theta\log f_\theta=\frac{\nabla_\theta f_\theta}{f_\theta}\quad\Longrightarrow\quad\nabla_\theta f_\theta=f_\theta\newterm{\nabla_\theta\log f_\theta} \]</div><p class="explanation">Использовали обычное правило: производная log f равна производной f, делённой на f. Затем умножили обе части на f.</p><p class="terms">Логарифм здесь нужен для преобразования формулы. Он ещё не меняет цель обучения.</p><p class="note">Равенство используем на носителе распределения, где плотность положительна.</p></section>
+<section id="slide-36" data-formula-family="gradient" aria-labelledby="title-36" class="slide formula-walkthrough wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,\newterm{Z}\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-36">Логарифм помогает переписать производную</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \nabla_\theta\log f_\theta=\frac{\nabla_\theta f_\theta}{f_\theta}\quad\Longrightarrow\quad\nabla_\theta f_\theta=f_\theta\nabla_\theta\log f_\theta \]</div><p class="explanation">Использовали обычное правило: производная log f равна производной f, делённой на f. Затем умножили обе части на f.</p><p class="terms">Логарифм здесь нужен для преобразования формулы. Он ещё не меняет цель обучения.</p><p class="note">Равенство используем на носителе распределения, где плотность положительна.</p></section>
 
 <!-- 37 -->
-<section id="slide-37" aria-labelledby="title-37" class="slide wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-37">Подставляем производную обратно под интеграл</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$\nabla_\theta f_\theta=f_\theta\nabla_\theta\log f_\theta$</span></div><div class="equation">\[ \nabla_\theta p=\int Y(\tau)f_\theta(\tau\mid c)\newterm{\nabla_\theta\log f_\theta(\tau\mid c)}\,d\tau \]</div><p class="explanation">Теперь под интегралом снова есть плотность f. Значит, выражение можно оценивать обычным средним по попыткам политики.</p><p class="terms">Мы заменили производную вероятности всех траекторий на среднее величин, вычисляемых для записанных траекторий.</p></section>
+<section id="slide-37" data-formula-family="gradient" aria-labelledby="title-37" class="slide formula-walkthrough wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,\newterm{Z}\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-37">Подставляем производную обратно под интеграл</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \nabla_\theta p=\int Y(\tau)f_\theta(\tau\mid c)\nabla_\theta\log f_\theta(\tau\mid c)\,d\tau \]</div><p class="explanation">Теперь под интегралом снова есть плотность f. Значит, выражение можно оценивать обычным средним по попыткам политики.</p><p class="terms">Мы заменили производную вероятности всех траекторий на среднее величин, вычисляемых для записанных траекторий.</p></section>
 
 <!-- 38 -->
-<section id="slide-38" aria-labelledby="title-38" class="slide " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key="gradient-formula"><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-38">Получили формулу, которая раньше появлялась сразу</h2><div class="equation">\[ \nabla_\theta p=\E_{\tau\sim\pi_{\theta_0}}[Y(\tau)\newterm{Z(\tau)}] \]</div><p class="explanation">Свернули интеграл в знак ожидания E. Длинную производную логарифма назвали Z.</p><p class="terms">$Y$ выбирает успешные попытки. $Z=\nabla_\theta\log f_\theta(\tau\mid c)$ показывает, как сделать конкретную попытку вероятнее. E усредняет их вклад.</p><p class="note">Все производные здесь берём в θ₀. E[YZ] — направление изменения параметров, а не сама вероятность успеха.</p></section>
+<section id="slide-38" data-formula-family="gradient" aria-labelledby="title-38" class="slide formula-walkthrough " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key="gradient-formula"><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\newterm{\E}\!\left[\frac{\newterm{Y}-p}{\sqrt{p(1-p)}}\,\newterm{Z}\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-38">Почему среднее YZ даёт градиент успеха</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \nabla_\theta p=\E_{\tau\sim\pi_{\theta_0}}[Y(\tau)Z(\tau)] \]</div><p class="explanation">Свернули интеграл в знак ожидания E. Длинную производную логарифма назвали Z.</p><p class="terms">$Y$ выбирает успешные попытки. $Z=\nabla_\theta\log f_\theta(\tau\mid c)$ показывает, как сделать конкретную попытку вероятнее. E усредняет их вклад.</p><p class="note">Все производные здесь берём в θ₀. E[YZ] — направление изменения параметров, а не сама вероятность успеха.</p></section>
 
 <!-- 39 -->
-<section id="slide-39" aria-labelledby="title-39" class="slide " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-39">Z складывается из вкладов действий</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$Z=\nabla_\theta\log f_\theta(\tau\mid c)$</span></div><div class="equation">\[ Z(\tau)=\newterm{\sum_{h=0}^{H-1}}\nabla_\theta\log\pi_\theta(u_h\mid x_h) \]</div><p class="explanation">Вероятности действий вдоль попытки перемножаются. Логарифм превращает произведение в сумму. Части динамики без θ исчезают при дифференцировании.</p><p class="terms">$u_h$ — записанное действие. $x_h$ — доступные признаки. Для полной задачи CDPR $H\le128$, до 4 действий исполняются за решение.</p><p class="note">В реальной реализации учитывается плотность латентного действия и реализованное смещение исследования.</p></section>
+<section id="slide-39" data-formula-family="gradient" aria-labelledby="title-39" class="slide formula-walkthrough " data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,\newterm{Z}\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-39">Z складывается из вкладов действий</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ Z(\tau)=\sum_{h=0}^{H-1}\nabla_\theta\log\pi_\theta(u_h\mid x_h) \]</div><p class="explanation">Вероятности действий вдоль попытки перемножаются. Логарифм превращает произведение в сумму. Части динамики без θ исчезают при дифференцировании.</p><p class="terms">$u_h$ — записанное действие. $x_h$ — доступные признаки. Для полной задачи CDPR $H\le128$, до 4 действий исполняются за решение.</p><p class="note">В реальной реализации учитывается плотность латентного действия и реализованное смещение исследования.</p></section>
 
 <!-- 40 -->
-<section id="slide-40" aria-labelledby="title-40" class="slide wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-40">Числовой пример: одно правильное движение</h2><div class="equation">\[ p(\theta)=\theta,\qquad Z_{\rm success}=\frac1\theta,\quad Z_{\rm fail}=-\frac1{1-\theta} \]</div><p class="explanation">Для проверки возьмём простую политику: правильное движение выбирается с вероятностью θ, неправильное с вероятностью 1 − θ.</p><p class="terms">В этом учебном примере параметр θ сам является вероятностью. При θ = 0,25 получаем Z успеха = 4, Z неудачи = −4/3.</p><p class="note">Это игрушечная политика для проверки алгебры. Параметры реальной головы CDPR не являются вероятностями.</p></section>
+<section id="slide-40" data-formula-family="gradient" aria-labelledby="title-40" class="slide formula-walkthrough wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,\newterm{Z}\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-40">Числовой пример: одно правильное движение</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ p(\theta)=\theta,\qquad Z_{\rm success}=\frac1\theta,\quad Z_{\rm fail}=-\frac1{1-\theta} \]</div><p class="explanation">Для проверки возьмём простую политику: правильное движение выбирается с вероятностью θ, неправильное с вероятностью 1 − θ.</p><p class="terms">В этом учебном примере параметр θ сам является вероятностью. При θ = 0,25 получаем Z успеха = 4, Z неудачи = −4/3.</p><p class="note">Это игрушечная политика для проверки алгебры. Параметры реальной головы CDPR не являются вероятностями.</p></section>
 
 <!-- 41 -->
-<section id="slide-41" aria-labelledby="title-41" class="slide wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><h2 id="title-41">Среднее YZ даёт ровно нужную производную</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$p=\theta=0{,}25$</span></div><div class="equation">\[ \E[YZ]=0{,}25\cdot1\cdot4+0{,}75\cdot0\cdot(-4/3)=\newterm{1} \]</div><p class="explanation">Взвесили оба исхода по вероятности. Неудачный исход исчез из-за Y = 0. Получили производную p(θ) = θ, равную единице.</p><p class="terms">Единица означает чувствительность: малое увеличение θ на 0,01 увеличивает p на 0,01. Это не утверждение p = 1.</p></section>
+<section id="slide-41" data-formula-family="gradient" aria-labelledby="title-41" class="slide formula-walkthrough wide-equation" data-chapter="5а. Откуда берётся градиент" data-source="Теорема 4.1: вывод градиента" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5а. Откуда берётся градиент</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,Z\right]=\frac{\newterm{\nabla_\theta p}}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-41">Среднее YZ даёт ровно нужную производную</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[YZ]=0{,}25\cdot1\cdot4+0{,}75\cdot0\cdot(-4/3)=1 \]</div><p class="explanation">Взвесили оба исхода по вероятности. Неудачный исход исчез из-за Y = 0. Получили производную p(θ) = θ, равную единице.</p><p class="terms">Единица означает чувствительность: малое увеличение θ на 0,01 увеличивает p на 0,01. Это не утверждение p = 1.</p></section>
 
 <!-- 42 -->
-<section id="slide-42" aria-labelledby="title-42" class="slide " data-chapter="5б. Какую p вычитаем" data-source="Теорема 4.1: центрирование" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="baseline-p"><p class="kicker">5б. Какую p вычитаем</p><p class="context-reminder">Шаг 2: проверить, что вычитание среднего сохраняет нужное направление.</p><h2 id="title-42">Вычитаем вероятность успеха текущей политики</h2><div class="equation">\[ Y-\newterm{p_c(\theta_0)} \]</div><p class="explanation">Это та же p из начала вывода: шанс успеха в выбранном контексте при старой политике. На время вычисления преимущества считаем её фиксированным числом.</p><p class="terms">При p = 0,25 успех получает 1 − 0,25 = +0,75, неудача 0 − 0,25 = −0,25.</p><p class="note">При обновлении не дифференцируем через вычисленное преимущество. В коде истинная p неизвестна: вместо неё используется групповое среднее Ȳ.</p></section>
+<section id="slide-42" data-formula-family="gradient" aria-labelledby="title-42" class="slide formula-walkthrough " data-chapter="5б. Какую p вычитаем" data-source="Теорема 4.1: центрирование" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="baseline-p"><p class="kicker">5б. Какую p вычитаем</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-\newterm{p}}{\sqrt{p(1-p)}}\,Z\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-42">Вычитаем вероятность успеха текущей политики</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ Y-p_c(\theta_0) \]</div><p class="explanation">Это та же p из начала вывода: шанс успеха в выбранном контексте при старой политике. На время вычисления преимущества считаем её фиксированным числом.</p><p class="terms">При p = 0,25 успех получает 1 − 0,25 = +0,75, неудача 0 − 0,25 = −0,25.</p><p class="note">При обновлении не дифференцируем через вычисленное преимущество. В коде истинная p неизвестна: вместо неё используется групповое среднее Ȳ.</p></section>
 
 <!-- 43 -->
-<section id="slide-43" aria-labelledby="title-43" class="slide wide-equation" data-chapter="5б. Какую p вычитаем" data-source="Теорема 4.1: центрирование" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5б. Какую p вычитаем</p><h2 id="title-43">Средний Z равен нулю</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$Z=\nabla_\theta\log f_\theta$</span></div><div class="equation">\[ \E[Z]=\int\nabla_\theta f_\theta(\tau\mid c)d\tau=\nabla_\theta1=\newterm{0} \]</div><p class="explanation">Суммарная вероятность всех траекторий всегда равна единице. Изменение параметров перераспределяет эту массу, не меняя её сумму.</p><p class="terms">Поэтому среднее направление увеличения вероятности всех возможных траекторий взаимно компенсируется.</p></section>
+<section id="slide-43" data-formula-family="gradient" aria-labelledby="title-43" class="slide formula-walkthrough wide-equation" data-chapter="5б. Какую p вычитаем" data-source="Теорема 4.1: центрирование" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5б. Какую p вычитаем</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,\newterm{Z}\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-43">Средний Z равен нулю</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[Z]=\int\nabla_\theta f_\theta(\tau\mid c)d\tau=\nabla_\theta1=0 \]</div><p class="explanation">Суммарная вероятность всех траекторий всегда равна единице. Изменение параметров перераспределяет эту массу, не меняя её сумму.</p><p class="terms">Поэтому среднее направление увеличения вероятности всех возможных траекторий взаимно компенсируется.</p></section>
 
 <!-- 44 -->
-<section id="slide-44" aria-labelledby="title-44" class="slide " data-chapter="5б. Какую p вычитаем" data-source="Теорема 4.1: центрирование" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5б. Какую p вычитаем</p><h2 id="title-44">Добавленный член исчезает при усреднении</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$\E[Z]=0$</span></div><div class="equation">\[ \E[(Y-p)Z]=\E[YZ]\newterm{-p\E[Z]}=\nabla_\theta p \]</div><p class="explanation">Раскрыли скобки и вынесли фиксированную p за знак ожидания. Последний член нулевой благодаря предыдущему слайду.</p><p class="terms">В числовом примере: 0,25 × (0,75 × 4) + 0,75 × (−0,25 × −4/3) = 0,75 + 0,25 = 1.</p><p class="note">Это доказательство использует истинную p. Для Ȳ из той же конечной группы отдельный расчёт будет ниже.</p></section>
+<section id="slide-44" data-formula-family="gradient" aria-labelledby="title-44" class="slide formula-walkthrough " data-chapter="5б. Какую p вычитаем" data-source="Теорема 4.1: центрирование" data-source-url="https://spinningup.openai.com/en/latest/spinningup/rl_intro3.html" data-key=""><p class="kicker">5б. Какую p вычитаем</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-\newterm{p}}{\sqrt{p(1-p)}}\,Z\right]=\frac{\newterm{\nabla_\theta p}}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-44">Добавленный член исчезает при усреднении</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[(Y-p)Z]=\E[YZ]-p\E[Z]=\nabla_\theta p \]</div><p class="explanation">Раскрыли скобки и вынесли фиксированную p за знак ожидания. Последний член нулевой благодаря предыдущему слайду.</p><p class="terms">В числовом примере: 0,25 × (0,75 × 4) + 0,75 × (−0,25 × −4/3) = 0,75 + 0,25 = 1.</p><p class="note">Это доказательство использует истинную p. Для Ȳ из той же конечной группы отдельный расчёт будет ниже.</p></section>
 
 <!-- 45 -->
-<section id="slide-45" aria-labelledby="title-45" class="slide " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="normalization"><p class="kicker">5в. Зачем нормировка и арксинус</p><p class="context-reminder">Шаг 3: выяснить, как деление на разброс меняет направление и масштаб обновления.</p><h2 id="title-45">Разброс бинарной награды выражается через p</h2><div class="equation">\[ \sigma_Y^2=\E[Y^2]-(\E[Y])^2=p-p^2=\newterm{p(1-p)} \]</div><p class="explanation">У нулей и единиц квадрат не меняет значение: Y² = Y. Поэтому дисперсия награды равна p(1 − p).</p><p class="terms">При p = 0,25 дисперсия равна 0,1875, стандартное отклонение σ = √0,1875 ≈ 0,433.</p><p class="note">На этих слайдах 0 < p < 1. Если все исходы одинаковы, нормировка без защиты не определена.</p></section>
+<section id="slide-45" data-formula-family="gradient" aria-labelledby="title-45" class="slide formula-walkthrough " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="normalization"><p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\newterm{\sqrt{p(1-p)}}}\,Z\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-45">Разброс бинарной награды выражается через p</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \sigma_Y^2=\E[Y^2]-(\E[Y])^2=p-p^2=p(1-p) \]</div><p class="explanation">У нулей и единиц квадрат не меняет значение: Y² = Y. Поэтому дисперсия награды равна p(1 − p).</p><p class="terms">При p = 0,25 дисперсия равна 0,1875, стандартное отклонение σ = √0,1875 ≈ 0,433.</p><p class="note">На этих слайдах 0 < p < 1. Если все исходы одинаковы, нормировка без защиты не определена.</p></section>
 
 <!-- 46 -->
-<section id="slide-46" aria-labelledby="title-46" class="slide " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><h2 id="title-46">Преимущество измеряем в единицах разброса</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$Y-p$</span></div><div class="equation">\[ A=\frac{Y-p}{\newterm{\sqrt{p(1-p)}}} \]</div><p class="explanation">Разделили отклонение от среднего на стандартное отклонение. Знак сохранился, масштаб изменился.</p><p class="terms">При p = 0,25: A успеха ≈ 0,75/0,433 = +1,732. A неудачи ≈ −0,25/0,433 = −0,577.</p><p class="note">Это истинная нормировка для вывода. Практический GRPO использует Ȳ и σ̂ по группе.</p></section>
+<section id="slide-46" data-formula-family="gradient" aria-labelledby="title-46" class="slide formula-walkthrough " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\newterm{\sqrt{p(1-p)}}}\,Z\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-46">Преимущество измеряем в единицах разброса</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ A=\frac{Y-p}{\sqrt{p(1-p)}} \]</div><p class="explanation">Разделили отклонение от среднего на стандартное отклонение. Знак сохранился, масштаб изменился.</p><p class="terms">При p = 0,25: A успеха ≈ 0,75/0,433 = +1,732. A неудачи ≈ −0,25/0,433 = −0,577.</p><p class="note">Это истинная нормировка для вывода. Практический GRPO использует Ȳ и σ̂ по группе.</p></section>
 
 <!-- 47 -->
-<section id="slide-47" aria-labelledby="title-47" class="slide " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><h2 id="title-47">Нормированный градиент получает положительный множитель</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$A=(Y-p)/\sqrt{p(1-p)}$</span></div><div class="equation">\[ \E[g]=\E[AZ]=\newterm{\frac1{\sqrt{p(1-p)}}}\nabla_\theta p \]</div><p class="explanation">Знаменатель одинаков для всех попыток фиксированного контекста. Вынесли его из ожидания и применили формулу E[(Y − p)Z] = ∇p.</p><p class="terms">При p = 0,25 множитель равен 2,309. Он меняет длину ожидаемого вектора, сохраняя его направление.</p><p class="note">g — случайный градиент, вычисленный по попытке. E[g] — его среднее по возможным попыткам.</p></section>
+<section id="slide-47" data-formula-family="gradient" aria-labelledby="title-47" class="slide formula-walkthrough " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\newterm{\sqrt{p(1-p)}}}\,Z\right]=\frac{\newterm{\nabla_\theta p}}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-47">Нормированный градиент получает положительный множитель</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[g]=\E[AZ]=\frac1{\sqrt{p(1-p)}}\nabla_\theta p \]</div><p class="explanation">Знаменатель одинаков для всех попыток фиксированного контекста. Вынесли его из ожидания и применили формулу E[(Y − p)Z] = ∇p.</p><p class="terms">При p = 0,25 множитель равен 2,309. Он меняет длину ожидаемого вектора, сохраняя его направление.</p><p class="note">g — случайный градиент, вычисленный по попытке. E[g] — его среднее по возможным попыткам.</p></section>
 
 <!-- 48 -->
-<section id="slide-48" aria-labelledby="title-48" class="slide wide-equation" data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><h2 id="title-48">Что именно означает «направление роста»</h2><div class="equation">\[ \left.\frac{d}{d\eta}p(\theta_0+\eta\E[g])\right|_{\eta=0}=\newterm{\frac{\|\nabla_\theta p\|^2}{\sqrt{p(1-p)}}}\ge0 \]</div><p class="explanation">Проверили, как меняется p при маленьком шаге вдоль среднего градиента. Скалярное произведение ∇p с самим собой даёт квадрат нормы.</p><p class="terms">При ненулевом ∇p достаточно малый идеальный шаг увеличивает p. В стационарной точке производная равна нулю.</p><p class="note">Большой шаг, шумная группа, Adam, несколько эпох и другие потери требуют отдельного анализа. Эта локальная формула не обещает рост после каждого реального обновления.</p></section>
+<section id="slide-48" data-formula-family="gradient" aria-labelledby="title-48" class="slide formula-walkthrough wide-equation" data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\sqrt{p(1-p)}}\,Z\right]=\frac{\newterm{\nabla_\theta p}}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-48">Что именно означает «направление роста»</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \left.\frac{d}{d\eta}p(\theta_0+\eta\E[g])\right|_{\eta=0}=\frac{\|\nabla_\theta p\|^2}{\sqrt{p(1-p)}}\ge0 \]</div><p class="explanation">Проверили, как меняется p при маленьком шаге вдоль среднего градиента. Скалярное произведение ∇p с самим собой даёт квадрат нормы.</p><p class="terms">При ненулевом ∇p достаточно малый идеальный шаг увеличивает p. В стационарной точке производная равна нулю.</p><p class="note">Большой шаг, шумная группа, Adam, несколько эпох и другие потери требуют отдельного анализа. Эта локальная формула не обещает рост после каждого реального обновления.</p></section>
 
 <!-- 49 -->
-<section id="slide-49" aria-labelledby="title-49" class="slide " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><h2 id="title-49">Ищем функцию с такой производной</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$\E[g]=\nabla_\theta p/\sqrt{p(1-p)}$</span></div><div class="equation">\[ F\prime(p)=\newterm{\frac1{\sqrt{p(1-p)}}} \]</div><p class="explanation">Хотим описать, какую цель задаёт нормировка. Если найдём F с такой производной, её градиент по параметрам совпадёт со средним обновлением.</p><p class="terms">F — вспомогательная шкала качества. Она нужна для анализа весов разных p; алгоритм уже может вычислить обновление без неё.</p></section>
+<section id="slide-49" data-formula-family="gradient" aria-labelledby="title-49" class="slide formula-walkthrough " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\newterm{\sqrt{p(1-p)}}}\,Z\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-49">Ищем функцию с такой производной</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ F\prime(p)=\frac1{\sqrt{p(1-p)}} \]</div><p class="explanation">Хотим описать, какую цель задаёт нормировка. Если найдём F с такой производной, её градиент по параметрам совпадёт со средним обновлением.</p><p class="terms">F — вспомогательная шкала качества. Она нужна для анализа весов разных p; алгоритм уже может вычислить обновление без неё.</p></section>
 
 <!-- 50 -->
-<section id="slide-50" aria-labelledby="title-50" class="slide wide-equation" data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><h2 id="title-50">Арксинус появляется из обычного интеграла</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$F\prime(p)=1/\sqrt{p(1-p)}$</span></div><div class="equation">\[ F(p)=\int\frac{dp}{\sqrt{p(1-p)}}=2\int du=\newterm{2\arcsin\sqrt p} \]</div><p class="explanation">Подстановка p = sin²u даёт dp = 2 sin u cos u du. Корень в знаменателе равен sin u cos u, и эти множители сокращаются.</p><p class="terms">Берём u от 0 до π/2. Константу интегрирования выбрали так, чтобы F(0) = 0.</p></section>
+<section id="slide-50" data-formula-family="gradient" aria-labelledby="title-50" class="slide formula-walkthrough wide-equation" data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\newterm{\sqrt{p(1-p)}}}\,Z\right]=\frac{\nabla_\theta p}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-50">Арксинус появляется из обычного интеграла</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ F(p)=\int\frac{dp}{\sqrt{p(1-p)}}=2\int du=2\arcsin\sqrt p \]</div><p class="explanation">Подстановка p = sin²u даёт dp = 2 sin u cos u du. Корень в знаменателе равен sin u cos u, и эти множители сокращаются.</p><p class="terms">Берём u от 0 до π/2. Константу интегрирования выбрали так, чтобы F(0) = 0.</p></section>
 
 <!-- 51 -->
-<section id="slide-51" aria-labelledby="title-51" class="slide " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><h2 id="title-51">Правило цепочки возвращает исходное направление</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$F(p)=2\arcsin\sqrt p$</span></div><div class="equation">\[ \nabla_\theta F(p(\theta))=F\prime(p)\nabla_\theta p=\newterm{\E[g]} \]</div><p class="explanation">Для одного контекста F строго возрастает вместе с p. Оптимизация F и рост p согласованы по локальному направлению.</p><p class="terms">При p = 0,25 получаем F = π/3 ≈ 1,047. При p = 0,50: F = π/2 ≈ 1,571. Значения F не читаются как проценты.</p></section>
+<section id="slide-51" data-formula-family="gradient" aria-labelledby="title-51" class="slide formula-walkthrough " data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\newterm{\sqrt{p(1-p)}}}\,Z\right]=\frac{\newterm{\nabla_\theta p}}{\sqrt{p(1-p)}} \]</div></div><h2 id="title-51">Правило цепочки возвращает исходное направление</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \nabla_\theta F(p(\theta))=F\prime(p)\nabla_\theta p=\E[g] \]</div><p class="explanation">Для одного контекста F строго возрастает вместе с p. Оптимизация F и рост p согласованы по локальному направлению.</p><p class="terms">При p = 0,25 получаем F = π/3 ≈ 1,047. При p = 0,50: F = π/2 ≈ 1,571. Значения F не читаются как проценты.</p></section>
 
 <!-- 52 -->
 <section id="slide-52" aria-labelledby="title-52" class="slide lab-slide" data-chapter="5в. Зачем нормировка и арксинус" data-source="Теорема 4.1(а), бинарная награда" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="objective-graph"><p class="kicker">5в. Зачем нормировка и арксинус</p><h2 id="title-52">График показывает шкалу F и её наклон</h2><div class="lab-layout"><div class="lab-inputs"><label class="slider-label" for="objective-p">Вероятность p в одном контексте<output id="objective-p-value"></output></label><input id="objective-p" type="range" min="0.001" max="0.999" step="0.001" value="0.25"><p class="lab-formula">F(p) = 2 arcsin √p</p><p id="objective-readout" class="lab-result"></p><p class="lab-caption">Синий график — F. Короткая касательная показывает локальный наклон F′. Наклон положителен при любом 0 &lt; p &lt; 1.</p></div><div class="lab-visual"><svg id="objective-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Возрастающая функция F вероятности успеха с касательной"></svg><p class="chart-caption">Ось x: вероятность. Ось y: значение F, от 0 до π.</p></div></div><p class="note">Большой F′ не гарантирует большой прирост успеха: итоговый градиент ещё умножается на ∇p. Около p = 0 также трудно получить смешанную группу.</p></section>
 
 <!-- 53 -->
-<section id="slide-53" aria-labelledby="title-53" class="slide" data-chapter="5в. Зачем нормировка и арксинус" data-source="Смысл теоремы 4.1" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="gradient-takeaway">
-<p class="kicker">5в. Зачем нормировка и арксинус</p>
+<section id="slide-53" data-formula-family="gradient" aria-labelledby="title-53" class="slide" data-chapter="5в. Зачем нормировка и арксинус" data-source="Смысл теоремы 4.1" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="gradient-takeaway">
+<p class="kicker">5в. Зачем нормировка и арксинус</p><div class="formula-anchor"><p class="formula-label">Среднее направление: один контекст, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\E\!\left[\frac{Y-p}{\newterm{\sqrt{p(1-p)}}}\,Z\right]=\frac{\newterm{\nabla_\theta p}}{\sqrt{p(1-p)}} \]</div></div>
 <h2 id="title-53">Получили обоснование направления обновления</h2>
-<div class="equation">\[ \E[g]=\underbrace{\frac{1}{\sqrt{p(1-p)}}}_{\text{положительный вес}}\nabla_\theta p \]</div>
+
 <p class="explanation">Начали с исходов попыток Y и вероятностей действий. Получили среднее направление изменения параметров, которое локально повышает p одного контекста при ненулевом ∇p.</p>
 <p class="terms">Вычитание p сохранило средний градиент. Деление на разброс изменило его длину. Функция F(p) = 2 arcsin √p описывает этот вес: её градиент совпадает с E[g]. Вычислять арксинус для обновления не требуется.</p>
 <p class="note">Практический GRPO использует среднее и разброс по группе, поэтому дальше проверим, сохраняется ли направление для G = 8. Рост после каждого реального шага сети этим выводом ещё не установлен.</p>
 </section>
 
 <!-- 54 -->
-<section id="slide-54" aria-labelledby="title-54" class="slide " data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="finite-groups"><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-54">В группе истинную p заменяет случайная доля успехов</h2><div class="equation">\[ \bar Y=\frac{n}{G},\qquad n\in\{0,1,\ldots,G\} \]</div><p class="explanation">n — число успехов в группе. При одной и той же истинной p следующая группа может дать другое n.</p><p class="terms">В пайплайне G = 8. При n = 2 получаем Ȳ = 0,25. Это оценка p по восьми попыткам, а не новое определение p.</p><p class="note">Именно зависимость Ȳ от исходов этой же группы меняет коэффициент ожидаемого градиента.</p></section>
+<section id="slide-54" data-formula-family="finite" aria-labelledby="title-54" class="slide formula-walkthrough " data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="finite-groups"><p class="kicker">5г. Что меняет группа из восьми попыток</p><div class="formula-anchor"><p class="formula-label">Ожидаемый градиент конечной группы, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=c_{G,\epsilon}(p)\,\nabla p,\qquad c_{G,\epsilon}(p)=\sum_{n=0}^{G}W_n\,\newterm{c_n(p)} \]</div></div><h2 id="title-54">В группе истинную p заменяет случайная доля успехов</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \bar Y=\frac{n}{G},\qquad n\in\{0,1,\ldots,G\} \]</div><p class="explanation">n — число успехов в группе. При одной и той же истинной p следующая группа может дать другое n.</p><p class="terms">В пайплайне G = 8. При n = 2 получаем Ȳ = 0,25. Это оценка p по восьми попыткам, а не новое определение p.</p><p class="note">Именно зависимость Ȳ от исходов этой же группы меняет коэффициент ожидаемого градиента.</p></section>
 
 <!-- 55 -->
-<section id="slide-55" aria-labelledby="title-55" class="slide wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-55">Внутри успехов и неудач средний Z различается</h2><div class="equation">\[ \E[Z\mid Y=1]=\frac{\nabla p}{p},\qquad \E[Z\mid Y=0]=-\frac{\nabla p}{1-p} \]</div><p class="explanation">Из E[YZ] = ∇p следует: вероятность успеха p, умноженная на средний Z среди успехов, равна ∇p. Для неудач используем E[Z] = 0.</p><p class="terms">Это позволяет усреднить градиент, когда уже известно число успехов n в группе.</p></section>
+<section id="slide-55" data-formula-family="finite" aria-labelledby="title-55" class="slide formula-walkthrough wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><div class="formula-anchor"><p class="formula-label">Ожидаемый градиент конечной группы, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=c_{G,\epsilon}(p)\,\newterm{\nabla p},\qquad c_{G,\epsilon}(p)=\sum_{n=0}^{G}W_n\,c_n(p) \]</div></div><h2 id="title-55">Внутри успехов и неудач средний Z различается</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[Z\mid Y=1]=\frac{\nabla p}{p},\qquad \E[Z\mid Y=0]=-\frac{\nabla p}{1-p} \]</div><p class="explanation">Из E[YZ] = ∇p следует: вероятность успеха p, умноженная на средний Z среди успехов, равна ∇p. Для неудач используем E[Z] = 0.</p><p class="terms">Это позволяет усреднить градиент, когда уже известно число успехов n в группе.</p></section>
 
 <!-- 56 -->
-<section id="slide-56" aria-labelledby="title-56" class="slide wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="group-contributions"><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-56">Складываем вклад успехов и вклад неудач</h2><div class="equation">\[ \E[g\mid n]=\left[\frac{\bar Y(1-\bar Y)}{\sigma_n p}\newterm{+\frac{(1-\bar Y)\bar Y}{\sigma_n(1-p)}}\right]\nabla p \]</div><p class="explanation">Первый член: доля успехов × их преимущество × средний Z успеха. Второй: то же для неудач. Там два минуса дают плюс.</p><p class="terms">$\sigma_n=\max(\sqrt{\bar Y(1-\bar Y)},\epsilon)$ — нормировка группы. Успех имеет A = (1 − Ȳ)/σₙ; неудача A = −Ȳ/σₙ.</p><p class="note">Например, при n = 2 и G = 8 доля успехов Ȳ = 0,25. Но истинная p может отличаться от 0,25: она остаётся в условных средних Z.</p></section>
+<section id="slide-56" data-formula-family="finite" aria-labelledby="title-56" class="slide formula-walkthrough wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="group-contributions"><p class="kicker">5г. Что меняет группа из восьми попыток</p><div class="formula-anchor"><p class="formula-label">Ожидаемый градиент конечной группы, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=c_{G,\epsilon}(p)\,\nabla p,\qquad c_{G,\epsilon}(p)=\sum_{n=0}^{G}W_n\,\newterm{c_n(p)} \]</div></div><h2 id="title-56">Складываем вклад успехов и вклад неудач</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[g\mid n]=\left[\frac{\bar Y(1-\bar Y)}{\sigma_n p}+\frac{(1-\bar Y)\bar Y}{\sigma_n(1-p)}\right]\nabla p \]</div><p class="explanation">Первый член: доля успехов × их преимущество × средний Z успеха. Второй: то же для неудач. Там два минуса дают плюс.</p><p class="terms">$\sigma_n=\max(\sqrt{\bar Y(1-\bar Y)},\epsilon)$ — нормировка группы. Успех имеет A = (1 − Ȳ)/σₙ; неудача A = −Ȳ/σₙ.</p><p class="note">Например, при n = 2 и G = 8 доля успехов Ȳ = 0,25. Но истинная p может отличаться от 0,25: она остаётся в условных средних Z.</p></section>
 
 <!-- 57 -->
-<section id="slide-57" aria-labelledby="title-57" class="slide wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-57">Известное число успехов задаёт свой множитель</h2><div class="equation">\[ \E[g\mid n]=\newterm{\frac{\bar Y(1-\bar Y)}{p(1-p)\max(\sqrt{\bar Y(1-\bar Y)},\epsilon)}}\nabla p \]</div><p class="explanation">Вынесли общий множитель Ȳ(1 − Ȳ)/σₙ. Оставшаяся сумма 1/p + 1/(1 − p) равна 1/[p(1 − p)]. Затем раскрыли σₙ.</p><p class="terms">При n = 0 или n = G числитель нулевой. При смешанной группе множитель положителен.</p><p class="note">Здесь g = (1/G)Σ AᵢZᵢ. Предполагаем независимые попытки при одном фиксированном контексте.</p></section>
+<section id="slide-57" data-formula-family="finite" aria-labelledby="title-57" class="slide formula-walkthrough wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><div class="formula-anchor"><p class="formula-label">Ожидаемый градиент конечной группы, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=c_{G,\epsilon}(p)\,\nabla p,\qquad c_{G,\epsilon}(p)=\sum_{n=0}^{G}W_n\,\newterm{c_n(p)} \]</div></div><h2 id="title-57">Известное число успехов задаёт свой множитель</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[g\mid n]=\frac{\bar Y(1-\bar Y)}{p(1-p)\max(\sqrt{\bar Y(1-\bar Y)},\epsilon)}\nabla p \]</div><p class="explanation">Вынесли общий множитель Ȳ(1 − Ȳ)/σₙ. Оставшаяся сумма 1/p + 1/(1 − p) равна 1/[p(1 − p)]. Затем раскрыли σₙ.</p><p class="terms">При n = 0 или n = G числитель нулевой. При смешанной группе множитель положителен.</p><p class="note">Здесь g = (1/G)Σ AᵢZᵢ. Предполагаем независимые попытки при одном фиксированном контексте.</p></section>
 
 <!-- 58 -->
-<section id="slide-58" aria-labelledby="title-58" class="slide " data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-58">Нужно учесть, как часто встречается каждое n</h2><div class="equation">\[ W_n=\binom Gn\newterm{p^n(1-p)^{G-n}} \]</div><p class="explanation">Это вероятность получить ровно n успехов. Степени описывают одну последовательность исходов, а биномиальный коэффициент считает её перестановки.</p><p class="terms">Например, два успеха могут занять разные два места среди восьми. Число таких вариантов равно 28.</p><p class="note">Веса W₀,…,W_G суммируются в 1. Они задают распределение n, а не важность действий PPO.</p></section>
+<section id="slide-58" data-formula-family="finite" aria-labelledby="title-58" class="slide formula-walkthrough " data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><div class="formula-anchor"><p class="formula-label">Ожидаемый градиент конечной группы, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=c_{G,\epsilon}(p)\,\nabla p,\qquad c_{G,\epsilon}(p)=\sum_{n=0}^{G}\newterm{W_n}\,c_n(p) \]</div></div><h2 id="title-58">Нужно учесть, как часто встречается каждое n</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ W_n=\binom Gnp^n(1-p)^{G-n} \]</div><p class="explanation">Это вероятность получить ровно n успехов. Степени описывают одну последовательность исходов, а биномиальный коэффициент считает её перестановки.</p><p class="terms">Например, два успеха могут занять разные два места среди восьми. Число таких вариантов равно 28.</p><p class="note">Веса W₀,…,W_G суммируются в 1. Они задают распределение n, а не важность действий PPO.</p></section>
 
 <!-- 59 -->
-<section id="slide-59" aria-labelledby="title-59" class="slide wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-59">Усреднение по всем группам даёт коэффициент c</h2><div class="equation">\[ \E[g]=c_{G,\epsilon}(p)\nabla p,\qquad c_{G,\epsilon}(p)=\newterm{\sum_{n=0}^G W_n c_n(p)} \]</div><p class="explanation">cₙ — множитель для фиксированного n. Взвесили его вероятностью соответствующей группы и сложили по n.</p><p class="terms">Для G ≥ 2 и 0 < p < 1 коэффициент положителен. Поэтому ожидаемое направление одного контекста остаётся направлением ∇p.</p><p class="note">В коде ε = 10⁻⁶. Фильтры и маски могут менять веса групп. Здесь показана базовая оценка до этих дополнительных операций.</p></section>
+<section id="slide-59" data-formula-family="finite" aria-labelledby="title-59" class="slide formula-walkthrough wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key=""><p class="kicker">5г. Что меняет группа из восьми попыток</p><div class="formula-anchor"><p class="formula-label">Ожидаемый градиент конечной группы, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\newterm{c_{G,\epsilon}(p)}\,\nabla p,\qquad c_{G,\epsilon}(p)=\sum_{n=0}^{G}W_n\,c_n(p) \]</div></div><h2 id="title-59">Усреднение по всем группам даёт коэффициент c</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E[g]=c_{G,\epsilon}(p)\nabla p,\qquad c_{G,\epsilon}(p)=\sum_{n=0}^G W_n c_n(p) \]</div><p class="explanation">cₙ — множитель для фиксированного n. Взвесили его вероятностью соответствующей группы и сложили по n.</p><p class="terms">Для G ≥ 2 и 0 < p < 1 коэффициент положителен. Поэтому ожидаемое направление одного контекста остаётся направлением ∇p.</p><p class="note">В коде ε = 10⁻⁶. Фильтры и маски могут менять веса групп. Здесь показана базовая оценка до этих дополнительных операций.</p></section>
 
 <!-- 60 -->
 <section id="slide-60" aria-labelledby="title-60" class="slide lab-slide" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="groups-graph"><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-60">Распределение групп при G = 8</h2><div class="lab-layout"><div class="lab-inputs"><label class="slider-label" for="group-p">Истинная p фиксированного контекста<output id="group-p-value"></output></label><input id="group-p" type="range" min="0" max="1" step="0.001" value="0.25"><p id="group-readout" class="lab-result"></p><p class="lab-caption">Синие столбцы: смешанные группы n = 1…7. Серые: все неудачи или все успехи. Одна группа может отличаться от ожидаемого распределения.</p></div><div class="lab-visual"><svg id="group-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Вероятности числа успехов в группе из восьми попыток"></svg><p class="chart-caption">Ось x: n успехов. Ось y: вероятность такой группы.</p></div></div><p class="note">Показываем модель одного контекста. По общему J из отчёта нельзя восстановить распределение групп разных сцен.</p></section>
@@ -710,7 +745,7 @@
 <section id="slide-61" aria-labelledby="title-61" class="slide lab-slide" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="weights-graph"><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-61">Конечная группа сглаживает большой вес редких исходов</h2><div class="lab-layout"><div class="lab-inputs"><label class="slider-label" for="weight-p">Вероятность p фиксированного контекста<output id="weight-p-value"></output></label><input id="weight-p" type="range" min="0.001" max="0.999" step="0.001" value="0.03"><p id="weight-readout" class="lab-result"></p><p class="lab-caption">Синий: точный c₈(p) для бинарной группы. Пунктир: 1/√(p(1 − p)) при истинной нормировке. По вертикали логарифмическая шкала.</p></div><div class="lab-visual"><svg id="weight-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Сравнение множителей конечной и истинной нормировки"></svg><p class="chart-caption">При p → 0 коэффициент c₈ стремится к √7 ≈ 2,646. Сигнал группы всё равно исчезает при p = 0.</p></div></div><p class="note">При G → ∞ предел равен 1/max(√(p(1 − p)), ε). Арксинус применим там, где защита ε неактивна.</p></section>
 
 <!-- 62 -->
-<section id="slide-62" aria-labelledby="title-62" class="slide wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="finite-objective"><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-62">У конечной группы своя возрастающая функция</h2><div class="previous"><span class="previous-label">Уже знаем</span><span>$\E[g]=c_{G,\epsilon}(p)\nabla p$</span></div><div class="equation">\[ F_G(p)=\newterm{\int_0^p c_{G,\epsilon}(v)\,dv},\qquad \nabla_\theta F_G(p)=\E[g] \]</div><p class="explanation">Повторили тот же ход: ищем функцию, производная которой равна множителю перед ∇p. Интеграл строит такую функцию.</p><p class="terms">v — переменная интегрирования. G = 8 и ε = 10⁻⁶ фиксированы. Поскольку c положителен, F_G растёт вместе с p одного контекста.</p><p class="note">При конечном G это не точно 2 arcsin √p. Арксинус соответствует истинной нормировке без активной защиты ε. Сейчас вводим F_G, чтобы дальше усреднить цель по разным контекстам.</p></section>
+<section id="slide-62" data-formula-family="finite" aria-labelledby="title-62" class="slide formula-walkthrough wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="finite-objective"><p class="kicker">5г. Что меняет группа из восьми попыток</p><div class="formula-anchor"><p class="formula-label">Ожидаемый градиент конечной группы, 0 < p < 1</p><div class="anchor-equation">\[ \E[g]=\newterm{c_{G,\epsilon}(p)}\,\nabla p,\qquad c_{G,\epsilon}(p)=\sum_{n=0}^{G}W_n\,c_n(p) \]</div></div><h2 id="title-62">У конечной группы своя возрастающая функция</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ F_G(p)=\int_0^p c_{G,\epsilon}(v)\,dv,\qquad \nabla_\theta F_G(p)=\E[g] \]</div><p class="explanation">Повторили тот же ход: ищем функцию, производная которой равна множителю перед ∇p. Интеграл строит такую функцию.</p><p class="terms">v — переменная интегрирования. G = 8 и ε = 10⁻⁶ фиксированы. Поскольку c положителен, F_G растёт вместе с p одного контекста.</p><p class="note">При конечном G это не точно 2 arcsin √p. Арксинус соответствует истинной нормировке без активной защиты ε. Сейчас вводим F_G, чтобы дальше усреднить цель по разным контекстам.</p></section>
 
 <!-- 63 -->
 <section id="slide-63" aria-labelledby="title-63" class="slide wide-equation" data-chapter="5г. Что меняет группа из восьми попыток" data-source="Теорема 4.1(б), конечная группа" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="objective-versus-success"><p class="kicker">5г. Что меняет группа из восьми попыток</p><h2 id="title-63">Средняя цель GRPO и средний успех различаются</h2><div class="equation">\[ \Phi(\theta)=\E_c[F_G(p_c(\theta))],\qquad J(\pi_\theta)=\E_c[p_c(\theta)] \]</div><p class="explanation">Для каждого контекста F_G возрастает вместе с p_c. Но при общей сети рост одного контекста может сопровождаться падением другого.</p><p class="terms">Φ — преобразованная цель GRPO. J — обычный средний успех, введённый в начале. Они усредняют разные числа.</p><p class="note">Поэтому локальная формула одного контекста не доказывает монотонный рост среднего J или полной цепочки навыков.</p></section>
@@ -728,66 +763,66 @@
 <p class="note">Усечение PPO ограничивает стимул к большому сдвигу. Теоретические границы требуют контроля фактического изменения распределений на нужных состояниях.</p></section>
 
 <!-- 66 -->
-<section id="slide-66" aria-labelledby="title-66" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, PPO/GRPO">
-<p class="kicker">6. Почему обновление ограничивают</p>
+<section id="slide-66" data-formula-family="ppo" aria-labelledby="title-66" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, PPO/GRPO">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Цель PPO: максимизируем; policy loss = −цель</p><div class="anchor-equation">\[ \mathcal L_{\rm clip}=\E\!\left[\min\left(wA,\operatorname{clip}(\newterm{w},1-\varepsilon_-,1+\varepsilon_+)A\right)\right] \]</div></div>
 <h2 id="title-66">Сравниваем вероятность одного действия до и после шага</h2>
-<div class="equation">\[ w=\frac{\newterm{\pi_\theta(u\mid x)}}{\pi_{\rm old}(u\mid x)} \]</div>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ w=\frac{\pi_\theta(u\mid x)}{\pi_{\rm old}(u\mid x)} \]</div>
 <p class="explanation">Вводим отношение вероятностей. Оно показывает, насколько новая политика чаще выбирает записанное действие.</p>
 <p class="terms">$w=1$ — вероятность не изменилась. $w&gt;1$ — действие стало вероятнее.</p>
 <p class="note">Вес w безразмерный и может быть больше 1. Расстояние всегда обозначаем d, а допуск — R с индексом tol.</p>
 </section>
 
 <!-- 67 -->
-<section id="slide-67" aria-labelledby="title-67" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, суррогатная цель">
-<p class="kicker">6. Почему обновление ограничивают</p>
+<section id="slide-67" data-formula-family="ppo" aria-labelledby="title-67" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, суррогатная цель">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Цель PPO: максимизируем; policy loss = −цель</p><div class="anchor-equation">\[ \mathcal L_{\rm clip}=\E\!\left[\min\left(\newterm{wA},\operatorname{clip}(w,1-\varepsilon_-,1+\varepsilon_+)A\right)\right] \]</div></div>
 <h2 id="title-67">Преимущество задаёт желательное направление</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$w=\pi_\theta(u\mid x)/\pi_{\rm old}(u\mid x)$</span></div>
-<div class="equation">\[ \mathcal L=\E[\newterm{wA}] \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \mathcal L=\E[wA] \]</div>
 <p class="explanation">Умножили отношение на преимущество и усреднили по записанным решениям. Эту цель максимизируем.</p>
-<p class="terms">При $A&gt;0$ выгодно увеличивать w. При $A&lt;0$ выгодно уменьшать w.</p>
+<p class="terms">При $A&gt;0$ выгодно увеличивать w, при $A&lt;0$ — уменьшать. В оптимизаторе минимизируем отрицательную цель: policy loss = −ℒ.</p>
 </section>
 
 <!-- 68 -->
-<section id="slide-68" aria-labelledby="title-68" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 5, замечание 5.3; PPO">
-<p class="kicker">6. Почему обновление ограничивают</p>
+<section id="slide-68" data-formula-family="ppo" aria-labelledby="title-68" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="§ 5, замечание 5.3; PPO">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Цель PPO: максимизируем; policy loss = −цель</p><div class="anchor-equation">\[ \mathcal L_{\rm clip}=\E\!\left[\min\left(wA,\operatorname{clip}(w,\newterm{1-\varepsilon_-},\newterm{1+\varepsilon_+})A\right)\right] \]</div></div>
 <h2 id="title-68">Усечение ограничивает выгоду от большого изменения</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\mathcal L=\E[wA]$</span></div>
-<div class="equation">\[ \mathcal L_{\rm clip}=\E\!\left[\newterm{\min}\bigl(wA,\newterm{\bar w}A\bigr)\right] \]</div>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \mathcal L_{\rm clip}=\E\!\left[\min\bigl(wA,\bar wA\bigr)\right] \]</div>
 <p class="explanation">Добавили усечённое отношение и выбрали меньшую из двух целей. Слишком большой сдвиг в выгодную сторону перестаёт давать выигрыш.</p>
 <p class="terms">$\bar w=\operatorname{clip}(w,1-\varepsilon_-,1+\varepsilon_+)$. В конфигурации CDPR $\varepsilon_-=0{,}20$, $\varepsilon_+=0{,}28$: полоса от 0,80 до 1,28.</p>
 <p class="note">Усечение цели само по себе не гарантирует малое изменение всей политики. Величину фактического шага нужно контролировать.</p>
 </section>
 
 <!-- 69 -->
-<section id="slide-69" aria-labelledby="title-69" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Сопоставимая оценка CDPR 40M/60M" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="j-reminder"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-69">J здесь означает то же самое, что в начале</h2><div class="equation">\[ J(\pi)=\E_c[p_c(\pi)],\qquad J(\pi\prime)=\E_c[p_c(\pi\prime)] \]</div><p class="explanation">Сравниваем старую и новую политики на одной задаче, с теми же стартами и тем же критерием. Меняется только поведение.</p><p class="terms">Для сопоставимой оценки CDPR: оценка J старой политики = 1245/2048 = 60,79%, новой = 1416/2048 = 69,14%.</p><p class="note">Числа относятся к режиму оценки: детерминированный остаток и шум приора 1. Это не измерение p_c стохастической обучающей политики.</p></section>
+<section id="slide-69" data-formula-family="update" aria-labelledby="title-69" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="Сопоставимая оценка CDPR 40M/60M" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="j-reminder"><p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Нижняя граница успеха после одного обновления</p><div class="anchor-equation">\[ \newterm{J(\pi\prime)}\ge \newterm{J(\pi)}+L_\pi(\pi\prime)-\tfrac12H(H-1)\delta \]</div></div><h2 id="title-69">J здесь означает то же самое, что в начале</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ J(\pi)=\E_c[p_c(\pi)],\qquad J(\pi\prime)=\E_c[p_c(\pi\prime)] \]</div><p class="explanation">Сравниваем старую и новую политики на одной задаче, с теми же стартами и тем же критерием. Меняется только поведение.</p><p class="terms">Для сопоставимой оценки CDPR: оценка J старой политики = 1245/2048 = 60,79%, новой = 1416/2048 = 69,14%.</p><p class="note">Числа относятся к режиму оценки: детерминированный остаток и шум приора 1. Это не измерение p_c стохастической обучающей политики.</p></section>
 
 <!-- 70 -->
-<section id="slide-70" aria-labelledby="title-70" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
-<p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-70">Сначала оцениваем ожидаемую пользу шага</h2>
-<div class="equation">\[ J_{\rm predicted}=J(\pi)\newterm{+L_\pi(\pi\prime)} \]</div>
+<section id="slide-70" data-formula-family="update" aria-labelledby="title-70" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Нижняя граница успеха после одного обновления</p><div class="anchor-equation">\[ J(\pi\prime)\ge J(\pi)+\newterm{L_\pi(\pi\prime)}-\tfrac12H(H-1)\delta \]</div></div>
+<h2 id="title-70">Сначала оцениваем ожидаемую пользу шага</h2>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ J_{\rm predicted}=J(\pi)+L_\pi(\pi\prime) \]</div>
 <p class="explanation">К старому успеху добавили ожидаемый выигрыш новых действий в состояниях, которые посещала старая политика.</p>
 <p class="terms">$\pi\prime$ — новая политика. $L_\pi(\pi\prime)$ — локальная оценка улучшения.</p>
 <p class="note">Это прогноз. После обновления изменятся и посещаемые состояния. Следующий член учитывает эту ошибку.</p>
 </section>
 
 <!-- 71 -->
-<section id="slide-71" aria-labelledby="title-71" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
-<p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-71">Смена посещаемых состояний добавляет штраф</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$J_{\rm predicted}=J(\pi)+L_\pi(\pi\prime)$</span></div>
-<div class="equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)\newterm{-H(H-1)\alpha^2} \]</div>
+<section id="slide-71" data-formula-family="update" aria-labelledby="title-71" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Нижняя граница успеха после одного обновления</p><div class="anchor-equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-\tfrac12\newterm{H(H-1)}\newterm{\delta} \]</div></div>
+<h2 id="title-71">Смена посещаемых состояний добавляет штраф</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-H(H-1)\alpha^2 \]</div>
 <p class="explanation">Вычли верхнюю границу ошибки прогноза. Чем длиннее эпизод и больше изменение действий, тем больше возможная ошибка.</p>
 <p class="terms">$H=128$ — максимум решений полной задачи CDPR, по 4 исполняемых действия на решение. $\alpha=\sup_{h,z}\TV(\pi_h\prime,\pi_h)$ — наибольшее изменение распределения действий.</p>
 <p class="note">Улучшение гарантировано только если локальный выигрыш перекрывает штраф.</p>
 </section>
 
 <!-- 72 -->
-<section id="slide-72" aria-labelledby="title-72" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
-<p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-72">KL позволяет выразить тот же штраф иначе</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-H(H-1)\alpha^2$</span></div>
-<div class="equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-\newterm{\tfrac12H(H-1)\delta} \]</div>
+<section id="slide-72" data-formula-family="update" aria-labelledby="title-72" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Нижняя граница успеха после одного обновления</p><div class="anchor-equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-\tfrac12H(H-1)\newterm{\delta} \]</div></div>
+<h2 id="title-72">KL позволяет выразить тот же штраф иначе</h2>
+
+
 <p class="explanation">Неравенство Пинскера даёт α² ≤ δ/2. Подставили его в штраф.</p>
 <p class="terms">$\delta=\sup_{h,z}\KL(\pi_h\|\pi_h\prime)$. KL измеряет различие распределений и равна нулю при их совпадении.</p>
 <p class="note">Теорема требует максимальную KL. Средняя approx_kl из лога служит диагностикой и не заменяет это условие.</p>
@@ -802,37 +837,37 @@
 </section>
 
 <!-- 74 -->
-<section id="slide-74" aria-labelledby="title-74" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.4">
-<p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-74">Старый навык зависит от изменений на его состояниях</h2>
-<div class="equation">\[ |J_{\mathcal T}(\pi\prime)-J_{\mathcal T}(\pi)|\le\newterm{\sum_{h=0}^{H-1}\bar\alpha_h} \]</div>
+<section id="slide-74" data-formula-family="retention" aria-labelledby="title-74" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.4">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Сохранение навыка T относительно замороженного эталона</p><div class="anchor-equation">\[ \newterm{|J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|}\le \newterm{\sum_{h=0}^{H-1}}\sqrt{x_h/2}\le\sqrt{H\,D_{\rm ref}/2} \]</div></div>
+<h2 id="title-74">Старый навык зависит от изменений на его состояниях</h2>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ |J_{\mathcal T}(\pi\prime)-J_{\mathcal T}(\pi)|\le\sum_{h=0}^{H-1}\bar\alpha_h \]</div>
 <p class="explanation">Теперь J_T — успех старой инструкции pick_up. Изменение её успеха ограничиваем суммой изменений действий на её собственных траекториях.</p>
 <p class="terms">$\mathcal T$ — фиксированные инструкция, старты и критерий успеха старого навыка. $\bar\alpha_h$ — средняя TV действий на его состояниях до обновления; H — горизонт этой задачи.</p>
 <p class="note">Условный пример: если успех pick_up был 90%, а сумма TV не выше 0,03, то после обновления успех не ниже 87%. Малый сдвиг только на состояниях put_into такого вывода не даёт.</p>
 </section>
 
 <!-- 75 -->
-<section id="slide-75" aria-labelledby="title-75" class="slide wide-equation" data-chapter="6. Почему обновление ограничивают" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="anchor-kl"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-75">Первый переход: KL ограничивает изменение действий</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$|\Delta J_{\mathcal T}|\le\sum_h\bar\alpha_h$</span></div>
-<div class="equation">\[ x_h=\E_{z\sim\omega_h^{\pi_{\rm ref},\mathcal T}}\KL(\pi_{{\rm ref},h}\|\pi_h),\qquad \bar\alpha_h\le\newterm{\sqrt{x_h/2}} \]</div>
+<section id="slide-75" data-formula-family="retention" aria-labelledby="title-75" class="slide formula-walkthrough wide-equation" data-chapter="6. Почему обновление ограничивают" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="anchor-kl"><p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Сохранение навыка T относительно замороженного эталона</p><div class="anchor-equation">\[ |J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le \sum_{h=0}^{H-1}\sqrt{\newterm{x_h}/2}\le\sqrt{H\,D_{\rm ref}/2} \]</div></div><h2 id="title-75">Первый переход: KL ограничивает изменение действий</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ x_h=\E_{z\sim\omega_h^{\pi_{\rm ref},\mathcal T}}\KL(\pi_{{\rm ref},h}\|\pi_h),\qquad \bar\alpha_h\le\sqrt{x_h/2} \]</div>
 <p class="explanation">Взяли эталон в роли старой политики. Пинскер переводит KL в TV — величину изменения распределения действий. При усреднении используем вогнутость корня.</p>
 <p class="terms">xₕ — средняя KL на шаге h именно на состояниях эталона для сохраняемого навыка. Поэтому $|\Delta J_{\mathcal T}|\le\sum_h\sqrt{x_h/2}$.</p>
 <p class="note">Это средняя KL на каждом шаге для оценки сохранения. В границе улучшения предыдущих слайдов δ означала максимальную KL; это разные условия.</p></section>
 
 <!-- 76 -->
-<section id="slide-76" aria-labelledby="title-76" class="slide wide-equation" data-chapter="6. Почему обновление ограничивают" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="anchor-root"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-76">Второй переход: объединяем H корней</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$|\Delta J_{\mathcal T}|\le\sum_h\sqrt{x_h/2}$</span></div>
-<div class="equation">\[ \left(\sum_{h=0}^{H-1}1\cdot\sqrt{x_h/2}\right)^2\le\newterm{H}\sum_h x_h/2=\frac{H D_{\rm ref}}2 \]</div>
+<section id="slide-76" data-formula-family="retention" aria-labelledby="title-76" class="slide formula-walkthrough wide-equation" data-chapter="6. Почему обновление ограничивают" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="anchor-root"><p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Сохранение навыка T относительно замороженного эталона</p><div class="anchor-equation">\[ |J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le \sum_{h=0}^{H-1}\sqrt{x_h/2}\le\sqrt{\newterm{H}\,\newterm{D_{\rm ref}}/2} \]</div></div><h2 id="title-76">Второй переход: объединяем H корней</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \left(\sum_{h=0}^{H-1}1\cdot\sqrt{x_h/2}\right)^2\leH\sum_h x_h/2=\frac{H D_{\rm ref}}2 \]</div>
 <p class="explanation">Применили неравенство Коши: квадрат суммы произведений не больше произведения сумм квадратов. У нас H единиц, поэтому сумма их квадратов равна H.</p>
 <p class="terms">Обозначили $D_{\rm ref}=\sum_hx_h$. Затем берём корень обеих неотрицательных частей: $\sum_h\sqrt{x_h/2}\le\sqrt{HD_{\rm ref}/2}$.</p>
 <p class="note">Так появился корень: 1/2 пришла из Пинскера, H — из суммирования по времени. D_ref — сумма KL по шагам, а не среднее по всей попытке.</p></section>
 
 <!-- 77 -->
-<section id="slide-77" aria-labelledby="title-77" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Следствие 5.7">
-<p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-77">Привязка к эталону ограничивает суммарный уход</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$|\Delta J_{\mathcal T}|\le\sum_h\bar\alpha_h$</span></div>
-<div class="equation">\[ |J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le\newterm{\sqrt{H D_{\rm ref}/2}} \]</div>
+<section id="slide-77" data-formula-family="retention" aria-labelledby="title-77" class="slide formula-walkthrough " data-chapter="6. Почему обновление ограничивают" data-source="Следствие 5.7">
+<p class="kicker">6. Почему обновление ограничивают</p><div class="formula-anchor"><p class="formula-label">Сохранение навыка T относительно замороженного эталона</p><div class="anchor-equation">\[ \newterm{|J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|}\le \sum_{h=0}^{H-1}\sqrt{x_h/2}\le\sqrt{H\,\newterm{D_{\rm ref}}/2} \]</div></div>
+<h2 id="title-77">Привязка к эталону ограничивает суммарный уход</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ |J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le\sqrt{H D_{\rm ref}/2} \]</div>
 <p class="explanation">Подставили сумму корней в границу изменения успеха. Получили предел возможной потери старого навыка относительно замороженного эталона на любой итерации обучения.</p>
 <p class="terms">$D_{\rm ref}$ — сумма средних $\KL(\pi_{\rm ref}\|\pi)$ по шагам на состояниях эталона для этого навыка.</p>
 <p class="note">Пример: при H = 128 и суммарной D_ref = 0,0001 граница равна 0,08, то есть 8 п.п. Это условный расчёт. Конечный банк успехов не покрывает все состояния эталона.</p>
@@ -845,94 +880,94 @@
 <p class="note">Итог относится к среднему отставанию и лучшей просмотренной политике. Для реального PPO он условен. D здесь — начальная KL до политики сравнения; D_ref в блоке 6 — текущий уход от замороженного эталона.</p></section>
 
 <!-- 79 -->
-<section id="slide-79" aria-labelledby="title-79" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-79">Идеальный шаг выбирает более полезные действия</h2>
-<div class="equation">\[ \E_{u\sim q}[Q(u)] \]</div>
+<section id="slide-79" data-formula-family="proximal" aria-labelledby="title-79" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Идеальное обновление распределения действий</p><div class="anchor-equation">\[ \pi_{k+1}=\arg\max_q\left\{\newterm{\E_q[Q]}-\frac1{\eta}\KL(q\|\pi_k)\right\} \]</div></div>
+<h2 id="title-79">Идеальный шаг выбирает более полезные действия</h2>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \E_{u\sim q}[Q(u)] \]</div>
 <p class="explanation">Сначала рассмотрим точную модель шага. Q показывает шанс завершить задачу после выбранного действия.</p>
 <p class="terms">$q$ — новое распределение действий в фиксированном состоянии. $Q(u)\in[0,1]$ — успех при дальнейшем следовании текущей политике.</p>
 <p class="note">Дальше анализируем идеальный шаг в пространстве политик. Связь с нейросетевым PPO потребует отдельного члена ошибки.</p>
 </section>
 
 <!-- 80 -->
-<section id="slide-80" aria-labelledby="title-80" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-80">За большое изменение платим KL-штраф</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\E_q[Q]$</span></div>
-<div class="equation">\[ \pi_{k+1}=\arg\max_q\left\{\E_q[Q]\newterm{-\frac1\eta\KL(q\|\pi_k)}\right\} \]</div>
+<section id="slide-80" data-formula-family="proximal" aria-labelledby="title-80" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Идеальное обновление распределения действий</p><div class="anchor-equation">\[ \pi_{k+1}=\arg\max_q\left\{\E_q[Q]-\frac1{\newterm{\eta}}\newterm{\KL(q\|\pi_k)}\right\} \]</div></div>
+<h2 id="title-80">За большое изменение платим KL-штраф</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \pi_{k+1}=\arg\max_q\left\{\E_q[Q]-\frac1\eta\KL(q\|\pi_k)\right\} \]</div>
 <p class="explanation">Добавили цену отклонения от текущей политики. Новые действия должны оправдать изменение ожидаемой пользой.</p>
-<p class="terms">$k$ — номер обновления. $\eta&gt;0$ — размер шага. Меньшая η означает более сильный штраф.</p>
+<p class="terms">$k$ — номер обновления. $\eta&gt;0$ регулирует KL-штраф: при η = 0,01 коэффициент равен 100, при η = 0,1 — 10. Это параметр идеальной схемы, не learning_rate Adam.</p>
 <p class="note">Это KL-проксимальный шаг. Название «зеркальный спуск» относится к такому способу учитывать геометрию распределений.</p>
 </section>
 
 <!-- 81 -->
-<section id="slide-81" aria-labelledby="title-81" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-81">Скорость зависит от расстояния до успешного поведения</h2>
-<div class="equation">\[ D=\newterm{\sum_h\E_{\omega_h^{\tilde\pi}}}\KL(\tilde\pi_h\|\pi_{0,h}) \]</div>
+<section id="slide-81" data-formula-family="convergence" aria-labelledby="title-81" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Итоговая граница среднего отставания при условиях теоремы</p><div class="anchor-equation">\[ \bar E_K\le\sqrt{\frac{H\newterm{D}}{2K}}+\varepsilon_{\rm upd} \]</div></div>
+<h2 id="title-81">Скорость зависит от расстояния до успешного поведения</h2>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ D=\sum_h\E_{\omega_h^{\tilde\pi}}\KL(\tilde\pi_h\|\pi_{0,h}) \]</div>
 <p class="explanation">Собрали KL между начальной политикой и выбранным успешным поведением вдоль его траекторий.</p>
 <p class="terms">$\tilde\pi$ — политика для сравнения. $\pi_0$ — старт обучения. $\omega_h^{\tilde\pi}$ — состояния при следовании $\tilde\pi$.</p>
 <p class="note">Нужна конечная D. Подготовка навыков должна приблизить начало полной задачи к успешному поведению.</p>
 </section>
 
 <!-- 82 -->
-<section id="slide-82" aria-labelledby="title-82" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2, доказательство">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-82">Начальная удалённость даёт первый член оценки</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$D=\sum_h\E_{\omega_h^{\tilde\pi}}\KL(\tilde\pi_h\|\pi_{0,h})$</span></div>
-<div class="equation">\[ B_{\rm start}=\newterm{\frac{D}{\eta K}} \]</div>
+<section id="slide-82" data-formula-family="convergence" aria-labelledby="title-82" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2, доказательство">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Итоговая граница среднего отставания при условиях теоремы</p><div class="anchor-equation">\[ \bar E_K\le\sqrt{\frac{H\newterm{D}}{2\newterm{K}}}+\varepsilon_{\rm upd} \]</div></div>
+<h2 id="title-82">Начальная удалённость даёт первый член оценки</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ B_{\rm start}=\frac{D}{\eta K} \]</div>
 <p class="explanation">При сложении K шагов промежуточные KL сокращаются. Остаётся начальная удалённость D, делённая на ηK.</p>
 <p class="terms">$K$ — число обновлений. $B_{\rm start}$ — только первый член будущей границы.</p>
 <p class="note">Больше обновлений уменьшает этот член. Очень маленький шаг η замедляет его уменьшение.</p>
 </section>
 
 <!-- 83 -->
-<section id="slide-83" aria-labelledby="title-83" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-83">Конечный размер шага даёт второй член</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$B_{\rm start}=D/(\eta K)$</span></div>
-<div class="equation">\[ \bar E_K\le\frac{D}{\eta K}\newterm{+\frac{H\eta}{8}} \]</div>
+<section id="slide-83" data-formula-family="convergence" aria-labelledby="title-83" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Итоговая граница среднего отставания при условиях теоремы</p><div class="anchor-equation">\[ \bar E_K\le\sqrt{\frac{\newterm{H}D}{2K}}+\varepsilon_{\rm upd} \]</div></div>
+<h2 id="title-83">Конечный размер шага даёт второй член</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \bar E_K\le\frac{D}{\eta K}+\frac{H\eta}{8} \]</div>
 <p class="explanation">Добавили ошибку конечного шага. Ограниченность Q от 0 до 1 даёт η/8 на одно решение, всего решений H.</p>
 <p class="terms">$\bar E_K=\frac1K\sum_{k&lt;K}[J(\tilde\pi)-J(\pi_k)]$ — среднее отставание от политики сравнения.</p>
 <p class="note">Это полная граница для точных KL-проксимальных шагов. Первый член уменьшается при росте η, второй увеличивается.</p>
 </section>
 
 <!-- 84 -->
-<section id="slide-84" aria-labelledby="title-84" class="slide wide-equation" data-chapter="7. Что говорит оценка сходимости" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="rate-balance"><p class="kicker">7. Что говорит оценка сходимости</p><h2 id="title-84">Размер шага балансирует две ошибки</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le D/(\eta K)+H\eta/8$</span></div>
-<div class="equation">\[ \frac{D}{\eta K}=\frac{H\eta}{8}\quad\Longrightarrow\quad\eta^2=\frac{8D}{HK}\quad\Longrightarrow\quad\eta=\newterm{\sqrt{\frac{8D}{HK}}} \]</div>
+<section id="slide-84" data-formula-family="convergence" aria-labelledby="title-84" class="slide formula-walkthrough wide-equation" data-chapter="7. Что говорит оценка сходимости" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="rate-balance"><p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Итоговая граница среднего отставания при условиях теоремы</p><div class="anchor-equation">\[ \bar E_K\le\sqrt{\frac{\newterm{H}\newterm{D}}{2\newterm{K}}}+\varepsilon_{\rm upd} \]</div></div><h2 id="title-84">Размер шага балансирует две ошибки</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \frac{D}{\eta K}=\frac{H\eta}{8}\quad\Longrightarrow\quad\eta^2=\frac{8D}{HK}\quad\Longrightarrow\quad\eta=\sqrt{\frac{8D}{HK}} \]</div>
 <p class="explanation">Маленькая η делает первый член большим, большая η увеличивает второй. Для суммы a/η + bη минимум достигается при равенстве членов.</p>
 <p class="terms">При выбранной η каждый член равен $\sqrt{HD/(8K)}$. Их сумма равна $2\sqrt{HD/(8K)}=\sqrt{HD/(2K)}$.</p>
 <p class="note">Это другой корень: он возникает при выборе размера шага. Корень √(H D_ref/2) в блоке 6 возникал из Пинскера и Коши при оценке сохранения.</p></section>
 
 <!-- 85 -->
-<section id="slide-85" aria-labelledby="title-85" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-85">Баланс двух членов даёт корень из числа шагов</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le D/(\eta K)+H\eta/8$</span></div>
-<div class="equation">\[ \bar E_K\le\newterm{\sqrt{\frac{HD}{2K}}} \]</div>
+<section id="slide-85" data-formula-family="convergence" aria-labelledby="title-85" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Итоговая граница среднего отставания при условиях теоремы</p><div class="anchor-equation">\[ \newterm{\bar E_K}\le\sqrt{\frac{HD}{2\newterm{K}}}+\varepsilon_{\rm upd} \]</div></div>
+<h2 id="title-85">Баланс двух членов даёт корень из числа шагов</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \bar E_K\le\sqrt{\frac{HD}{2K}} \]</div>
 <p class="explanation">Выбрали η так, чтобы два предыдущих члена совпали. Их сумма принимает компактный вид.</p>
 <p class="terms">Пример: H = 128, D = 0,1, K = 1000 дают η = 0,0025. Два члена равны 0,04 + 0,04 = 0,08. Это граница отставания в 8 п.п., а не предсказание прироста.</p>
 <p class="note">Граница относится к среднему отставанию. Лучший из просмотренных шагов не хуже среднего. Про последний шаг этого не утверждаем.</p>
 </section>
 
 <!-- 86 -->
-<section id="slide-86" aria-labelledby="title-86" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-86">Реальный алгоритм добавляет ошибку обновления</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le\sqrt{HD/(2K)}$</span></div>
-<div class="equation">\[ \bar E_K\le\sqrt{\frac{HD}{2K}}\newterm{+\varepsilon_{\rm upd}} \]</div>
+<section id="slide-86" data-formula-family="convergence" aria-labelledby="title-86" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Итоговая граница среднего отставания при условиях теоремы</p><div class="anchor-equation">\[ \bar E_K\le\sqrt{\frac{HD}{2K}}+\newterm{\varepsilon_{\rm upd}} \]</div></div>
+<h2 id="title-86">Реальный алгоритм добавляет ошибку обновления</h2>
+
+
 <p class="explanation">Добавили отклонение реального обучения от точных шагов: конечные данные, ограничения сети и способ оптимизации.</p>
 <p class="terms">$\varepsilon_{\rm upd}$ — верхняя граница среднего вклада этих отклонений с учётом посещаемых состояний.</p>
 <p class="note">Для нейросетевого PPO эта ошибка не обязана быть малой. Поэтому формула задаёт условия успеха, а не безусловную гарантию.</p>
 </section>
 
 <!-- 87 -->
-<section id="slide-87" aria-labelledby="title-87" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
-<p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-87">Плохое покрытие усиливает ошибку шага</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le\sqrt{HD/(2K)}+\varepsilon_{\rm upd}$</span></div>
-<div class="equation">\[ \varepsilon_{\rm upd}=\frac1K\sum_{k,h}\newterm{\sqrt{C_h}}\,e^+_{k,h} \]</div>
+<section id="slide-87" data-formula-family="convergence" aria-labelledby="title-87" class="slide formula-walkthrough " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
+<p class="kicker">7. Что говорит оценка сходимости</p><div class="formula-anchor"><p class="formula-label">Итоговая граница среднего отставания при условиях теоремы</p><div class="anchor-equation">\[ \bar E_K\le\sqrt{\frac{HD}{2K}}+\newterm{\varepsilon_{\rm upd}} \]</div></div>
+<h2 id="title-87">Плохое покрытие усиливает ошибку шага</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \varepsilon_{\rm upd}=\frac1K\sum_{k,h}\sqrt{C_h}\,e^+_{k,h} \]</div>
 <p class="explanation">Раскрыли ошибку обновления. Если обучение редко видит состояния успешного поведения, локальные ошибки весят сильнее.</p>
 <p class="terms">$e^+_{k,h}$ здесь обозначает L²-норму положительной невязки шага. $C_h\ge1$ — коэффициент покрытия.</p>
 <p class="note">В главе норма записана явно. Если нужные состояния вообще не представлены в обучении, C может быть бесконечным. Старты навыков и рестарты помогают обеспечить покрытие.</p>
@@ -955,31 +990,31 @@
 <p class="note">Связь даёт неравенство Йенсена. Улучшение на конечном банке само по себе ещё не устанавливает нужное среднее по всем успехам.</p></section>
 
 <!-- 90 -->
-<section id="slide-90" aria-labelledby="title-90" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
-<p class="kicker">8. Зачем повторять собственные успехи</p>
-<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-90">Сравниваем вероятность записанного успешного действия</h2>
-<div class="equation">\[ \frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
+<section id="slide-90" data-formula-family="sil" aria-labelledby="title-90" class="slide formula-walkthrough " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
+<p class="kicker">8. Зачем повторять собственные успехи</p><div class="formula-anchor"><p class="formula-label">Связь правдоподобия всех старых успехов с новым успехом</p><div class="anchor-equation">\[ \log\frac{J(\pi_\theta)}{J(\pi_\beta)}\ge \E_{\tau\mid Y=1}\sum_h\log\newterm{\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)}}=G_{\rm SIL} \]</div></div>
+<h2 id="title-90">Сравниваем вероятность записанного успешного действия</h2>
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
 <p class="explanation">Собираем успешные траектории старой политики β. Проверяем, стала ли новая политика чаще воспроизводить их действия.</p>
 <p class="terms">$\beta$ — параметры политики, собравшей банк. $\theta$ — параметры после самоимитации.</p>
 <p class="note">Используем действия, выбранные самой политикой, с известным правдоподобием.</p>
 </section>
 
 <!-- 91 -->
-<section id="slide-91" aria-labelledby="title-91" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
-<p class="kicker">8. Зачем повторять собственные успехи</p>
-<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-91">Для траектории складываем логарифмы отношений</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$\pi_\theta(u_h\mid x_h)/\pi_\beta(u_h\mid x_h)$</span></div>
-<div class="equation">\[ G_{\rm SIL}=\newterm{\E_{\tau\mid Y=1}\sum_h\log}\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
+<section id="slide-91" data-formula-family="sil" aria-labelledby="title-91" class="slide formula-walkthrough " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
+<p class="kicker">8. Зачем повторять собственные успехи</p><div class="formula-anchor"><p class="formula-label">Связь правдоподобия всех старых успехов с новым успехом</p><div class="anchor-equation">\[ \log\frac{J(\pi_\theta)}{J(\pi_\beta)}\ge \newterm{\E_{\tau\mid Y=1}}\newterm{\sum_h}\log\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)}=G_{\rm SIL} \]</div></div>
+<h2 id="title-91">Для траектории складываем логарифмы отношений</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ G_{\rm SIL}=\E_{\tau\mid Y=1}\sum_h\log\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
 <p class="explanation">Вероятности действий вдоль траектории перемножаются. Логарифм превращает произведение в сумму. Затем усредняем по старым успехам.</p>
 <p class="terms">$G_{\rm SIL}$ — среднее изменение логарифма правдоподобия собственных успехов.</p>
 </section>
 
 <!-- 92 -->
-<section id="slide-92" aria-labelledby="title-92" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
-<p class="kicker">8. Зачем повторять собственные успехи</p>
-<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-92">Рост правдоподобия успехов даёт границу улучшения</h2>
-<div class="previous"><span class="previous-label">Уже знаем</span><span>$G_{\rm SIL}=\E_{\tau\mid Y=1}\sum_h\log(\pi_\theta/\pi_\beta)$</span></div>
-<div class="equation">\[ \newterm{\log\frac{J(\pi_\theta)}{J(\pi_\beta)}}\ge G_{\rm SIL} \]</div>
+<section id="slide-92" data-formula-family="sil" aria-labelledby="title-92" class="slide formula-walkthrough " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
+<p class="kicker">8. Зачем повторять собственные успехи</p><div class="formula-anchor"><p class="formula-label">Связь правдоподобия всех старых успехов с новым успехом</p><div class="anchor-equation">\[ \newterm{\log\frac{J(\pi_\theta)}{J(\pi_\beta)}}\ge \E_{\tau\mid Y=1}\sum_h\log\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)}=G_{\rm SIL} \]</div></div>
+<h2 id="title-92">Рост правдоподобия успехов даёт границу улучшения</h2>
+
+<div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \log\frac{J(\pi_\theta)}{J(\pi_\beta)}\ge G_{\rm SIL} \]</div>
 <p class="explanation">Неравенство Йенсена связывает правдоподобие старых успехов с новой вероятностью успеха.</p>
 <p class="terms">Если $G_{\rm SIL}\ge0$ и $J(\pi_\beta)&gt;0$, то успех не уменьшается в этой популяционной модели.</p>
 <p class="note">Улучшение на конечном банке не гарантирует улучшения на всех успехах. Подгонка к усечённым или сглаженным действиям также требует отдельного обоснования.</p>
@@ -993,10 +1028,10 @@
 <tr><td>Строгий успех среди подъёмов</td><td>1245/1764 = 70,58%</td><td>1416/1832 = 77,29%</td></tr></table><p class="note">512 сцен × 4 повтора для каждого checkpoint. Это два измеренных состояния обучения, не траектория гарантированного роста. В предках CDPR были автоматически подготовленные данные, поэтому 69,14% не доказывает RL-only.</p></section>
 
 <!-- 94 -->
-<section id="slide-94" aria-labelledby="title-94" class="slide wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Проверенные счётчики и FullTaskOutcome.strict" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/artifacts/latent_control_60m_comparison_20261104/review_summary.json" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-94">Полный успех можно разложить на два условных этапа</h2><div class="equation">\[ \widehat J_{\rm eval}=\underbrace{\frac{1832}{2048}}_{q_{\rm lift}}\cdot\underbrace{\frac{1416}{1832}}_{q_{\rm finish}}=\newterm{\frac{1416}{2048}} \]</div><p class="explanation">Первый множитель: дошли до удержанного подъёма. Второй: завершили всю инструкцию среди тех попыток, где подъём был.</p><p class="terms">Это q этапов уже внутри put_into. Они включают фактические последствия инструкции и передачи. Это не s отдельных навыков на специальных стартах.</p><p class="note">В коде strict success требует lifted. Поэтому такое разложение верно. Оно не доказывает независимость этапов или сохранение отдельной инструкции pick_up.</p></section>
+<section id="slide-94" data-formula-family="empirical" aria-labelledby="title-94" class="slide formula-walkthrough wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Проверенные счётчики и FullTaskOutcome.strict" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/artifacts/latent_control_60m_comparison_20261104/review_summary.json" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><div class="formula-anchor"><p class="formula-label">Условные этапы внутри полной инструкции</p><div class="anchor-equation">\[ J=\newterm{q_{\rm lift}}\,\newterm{q_{\rm finish}} \]</div></div><h2 id="title-94">Полный успех можно разложить на два условных этапа</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ \widehat J_{\rm eval}=\underbrace{\frac{1832}{2048}}_{q_{\rm lift}}\cdot\underbrace{\frac{1416}{1832}}_{q_{\rm finish}}=\frac{1416}{2048} \]</div><p class="explanation">Первый множитель: дошли до удержанного подъёма. Второй: завершили всю инструкцию среди тех попыток, где подъём был.</p><p class="terms">Это q этапов уже внутри put_into. Они включают фактические последствия инструкции и передачи. Это не s отдельных навыков на специальных стартах.</p><p class="note">В коде strict success требует lifted. Поэтому такое разложение верно. Оно не доказывает независимость этапов или сохранение отдельной инструкции pick_up.</p></section>
 
 <!-- 95 -->
-<section id="slide-95" aria-labelledby="title-95" class="slide wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Сопоставимая оценка 40M/60M, 4 ноября 2026" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-95">Просадка одного этапа может компенсироваться другим</h2><div class="equation">\[ q_{\rm lift}^{\rm new}q_{\rm finish}^{\rm new}\ge J_{\rm old}\quad\Longleftrightarrow\quad q_{\rm finish}^{\rm new}\ge\newterm{\frac{J_{\rm old}}{q_{\rm lift}^{\rm new}}} \]</div><p class="explanation">Общий результат сохраняется, если рост второго множителя перекрыл падение первого. Условие получили делением на положительный q подъёма.</p><p class="terms">При падении q подъёма до 0,81 нужно q завершения ≥ 0,607910/0,81 ≈ 0,7505. Значение 60M, 0,7729, выше этого порога.</p><p class="note">Получили бы 0,81 × 0,7729 = 62,61%, выше 40M. Это сценарий с удержанием второго множителя, а не наблюдавшаяся просадка. При q подъёма = 0 полный успех равен нулю.</p></section>
+<section id="slide-95" data-formula-family="empirical" aria-labelledby="title-95" class="slide formula-walkthrough wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Сопоставимая оценка 40M/60M, 4 ноября 2026" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><div class="formula-anchor"><p class="formula-label">Условные этапы внутри полной инструкции</p><div class="anchor-equation">\[ \newterm{J}=\newterm{q_{\rm lift}}\,\newterm{q_{\rm finish}} \]</div></div><h2 id="title-95">Просадка одного этапа может компенсироваться другим</h2><div class="derivation"><span class="derivation-label">Разбор выделенного члена</span>\[ q_{\rm lift}^{\rm new}q_{\rm finish}^{\rm new}\ge J_{\rm old}\quad\Longleftrightarrow\quad q_{\rm finish}^{\rm new}\ge\frac{J_{\rm old}}{q_{\rm lift}^{\rm new}} \]</div><p class="explanation">Общий результат сохраняется, если рост второго множителя перекрыл падение первого. Условие получили делением на положительный q подъёма.</p><p class="terms">При падении q подъёма до 0,81 нужно q завершения ≥ 0,607910/0,81 ≈ 0,7505. Значение 60M, 0,7729, выше этого порога.</p><p class="note">Получили бы 0,81 × 0,7729 = 62,61%, выше 40M. Это сценарий с удержанием второго множителя, а не наблюдавшаяся просадка. При q подъёма = 0 полный успех равен нулю.</p></section>
 
 <!-- 96 -->
 <section id="slide-96" aria-labelledby="title-96" class="slide " data-chapter="9. Все величины на примере CDPR" data-source="add_full_task_bonus и preflight запуска" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/rl_vla_bootstrapping/policy/mjwarp_rank_local_collector.py" data-key="credit-protection"><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-96">Код защищает сигнал за уже достигнутый этап</h2><div class="equation">\[ A_{\rm used}=A_{\rm stage}+\newterm{\max(A_{\rm full},0)} \]</div><p class="explanation">Для достигнутого подхода или подъёма отрицательный бонус полной задачи обнуляется. Поздняя ошибка не отнимает уже заработанный локальный сигнал.</p><p class="terms">В запуске CDPR: коэффициент полного бонуса 1, отрицательный масштаб для достигнутого этапа 0, массы трёх стадий одинаковы.</p><p class="note">Формула относится к допустимой записи достигнутого раннего этапа. Размещение получает полный сигнал один раз. Весь loss с масками и бонусами не равен идеальному градиенту ∇F(p); гарантии сохранения навыка нет.</p></section>
@@ -1060,9 +1095,54 @@
 </section>
 
 <!-- 105 -->
-<section id="slide-105" aria-labelledby="title-105" class="slide sources-slide" data-chapter="Итог и условия" data-source="">
+<section id="slide-105" aria-labelledby="title-105" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="formula-summary"><p class="kicker">Сводка формул · 1 / 15</p><h2 id="title-105">Успех и преимущество GRPO</h2><div class="formula-row"><div class="summary-equation">\[ p_c=\PP(Y=1\mid c)=\E[Y\mid c],\quad J(\pi)=\E_c[p_c(\pi)] \]</div><p>p — успех одного контекста, J — средний успех по заданным контекстам.</p></div><div class="formula-row"><div class="summary-equation">\[ \bar Y=\frac1G\sum_iY_i,\quad\hat\sigma=\sqrt{\bar Y(1-\bar Y)} \]</div><p>Доля успехов и разброс бинарных исходов в группе.</p></div><div class="formula-row"><div class="summary-equation">\[ A_i=\frac{Y_i-\bar Y}{\max(\hat\sigma,\epsilon)} \]</div><p>Сигнал относительно группы; одинаковые исходы дают Aᵢ = 0.</p></div><p class="note">В CDPR G = 8. Числа 0/1 относятся к заранее выбранному критерию успеха.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#gradient-motivation">К объяснению градиента</a><a href="#summary-signal">Следующие формулы →</a></nav></section>
+
+<!-- 106 -->
+<section id="slide-106" aria-labelledby="title-106" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-signal"><p class="kicker">Сводка формул · 2 / 15</p><h2 id="title-106">Когда появляется сигнал награды</h2><div class="formula-row"><div class="summary-equation">\[ P_{\ge1}=1-(1-p)^G \]</div><p>Вероятность хотя бы одного успеха в G независимых попытках одного контекста.</p></div><div class="formula-row"><div class="summary-equation">\[ P_{\rm mix}=1-(1-p)^G-p^G \]</div><p>Вероятность иметь в группе и успех, и неудачу для сравнения.</p></div><div class="formula-row"><div class="summary-equation">\[ p_{\rm full}\le q^m \]</div><p>Если каждый из m условных этапов успешен с вероятностью не выше q, длинная цепочка делает полный успех редким.</p></div><p class="note">P_mix характеризует наличие сравнения. Он не задаёт скорость обучения или гарантированный прирост J.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#formula-summary">← Предыдущие формулы</a><a href="#summary-starts">Следующие формулы →</a></nav></section>
+
+<!-- 107 -->
+<section id="slide-107" aria-labelledby="title-107" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-starts"><p class="kicker">Сводка формул · 3 / 15</p><h2 id="title-107">Расстояние и усложнение стартов</h2><div class="formula-row"><div class="summary-equation">\[ R_{\rm dense}=-d \]</div><p>Учебная плотная награда различает попытки по оставшемуся расстоянию.</p></div><div class="formula-row"><div class="summary-equation">\[ p=\PP(d\le R_{\rm tol})\ge\max(0,1-\E[d]/R_{\rm tol}) \]</div><p>При d ≥ 0 и R_tol > 0 малое среднее расстояние ограничивает вероятность нарушения порога.</p></div><div class="formula-row"><div class="summary-equation">\[ J_{\rm easy}\ge P,\quad J_{\rm harder}\ge P-\Delta\ge D_{\rm back} \]</div><p>Для перехода к трудным стартам запас P после потери Δ должен оставаться выше порога возврата.</p></div><p class="note">Геометрический критерий — упрощённая задача. Полный strict success проверяет дополнительные условия.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-signal">← Предыдущие формулы</a><a href="#summary-composition">Следующие формулы →</a></nav></section>
+
+<!-- 108 -->
+<section id="slide-108" aria-labelledby="title-108" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-composition"><p class="kicker">Сводка формул · 4 / 15</p><h2 id="title-108">Композиция навыков</h2><div class="formula-row"><div class="summary-equation">\[ p_{\rm full}=\prod_{j=1}^m q_j \]</div><p>Полный успех — произведение условных успехов этапов; независимость этапов не требуется.</p></div><div class="formula-row"><div class="summary-equation">\[ q_j\ge(s_j-\Gamma_j-T_j)^+,\quad T_j=\TV(\rho_{j-1},\mu_j) \]</div><p>Из качества отдельного навыка вычитаем потери от инструкции и распределения передачи; a⁺ = max(a, 0).</p></div><div class="formula-row"><div class="summary-equation">\[ p_{\rm full}\ge\prod_{j=1}^m(s_j-\Gamma_j-T_j)^+ \]</div><p>Перемножение нижних границ даёт оценку полной инструкции.</p></div><p class="note">Нужны согласованные этапы, подходящие распределения стартов и достаточный горизонт.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-starts">← Предыдущие формулы</a><a href="#summary-score">Следующие формулы →</a></nav></section>
+
+<!-- 109 -->
+<section id="slide-109" aria-labelledby="title-109" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-score"><p class="kicker">Сводка формул · 5 / 15</p><h2 id="title-109">Как получить градиент из попыток</h2><div class="formula-row"><div class="summary-equation">\[ p(\theta)=\int Y(\tau)f_\theta(\tau\mid c)d\tau \]</div><p>Вероятность успеха — сумма вкладов успешных траекторий.</p></div><div class="formula-row"><div class="summary-equation">\[ Z=\nabla_\theta\log f_\theta=\sum_h\nabla_\theta\log\pi_\theta(u_h\mid x_h) \]</div><p>Z показывает, как изменить параметры, чтобы записанная траектория стала вероятнее.</p></div><div class="formula-row"><div class="summary-equation">\[ \nabla p=\E[YZ]=\E[(Y-p)Z],\quad\E[Z]=0 \]</div><p>Вычитание фиксированного среднего p сохраняет ожидаемый градиент.</p></div><p class="note">Производные берутся в текущих параметрах одного контекста; нужны условия дифференцирования под интегралом.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-composition">← Предыдущие формулы</a><a href="#summary-normalization">Следующие формулы →</a></nav></section>
+
+<!-- 110 -->
+<section id="slide-110" aria-labelledby="title-110" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-normalization"><p class="kicker">Сводка формул · 6 / 15</p><h2 id="title-110">Что делает истинная нормировка</h2><div class="formula-row"><div class="summary-equation">\[ \sigma_Y^2=p(1-p),\quad A=(Y-p)/\sqrt{p(1-p)} \]</div><p>У бинарной награды разброс выражается через её вероятность успеха.</p></div><div class="formula-row"><div class="summary-equation">\[ \E[g]=\E[AZ]=\frac{\nabla p}{\sqrt{p(1-p)}} \]</div><p>Положительный множитель сохраняет ожидаемое направление роста p.</p></div><div class="formula-row"><div class="summary-equation">\[ F(p)=2\arcsin\sqrt p,\quad F\prime(p)=\frac1{\sqrt{p(1-p)}},\quad\nabla_\theta F=\E[g] \]</div><p>Арксинус описывает цель, чей градиент совпадает с нормированным обновлением.</p></div><p class="note">При 0 < p < 1 направленная производная p вдоль E[g] равна ‖∇p‖²/√(p(1−p)) ≥ 0. Реальный конечный шаг требует отдельной проверки.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-score">← Предыдущие формулы</a><a href="#summary-finite">Следующие формулы →</a></nav></section>
+
+<!-- 111 -->
+<section id="slide-111" aria-labelledby="title-111" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-finite"><p class="kicker">Сводка формул · 7 / 15</p><h2 id="title-111">Как конечная группа меняет коэффициент</h2><div class="formula-row"><div class="summary-equation">\[ \E[Z\mid Y=1]=\nabla p/p,\quad\E[Z\mid Y=0]=-\nabla p/(1-p) \]</div><p>Усредняем Z отдельно по успехам и неудачам.</p></div><div class="formula-row"><div class="summary-equation">\[ \bar Y=n/G,\quad W_n=\binom Gn p^n(1-p)^{G-n} \]</div><p>Wₙ — вероятность получить ровно n успехов в группе.</p></div><div class="formula-row"><div class="summary-equation">\[ c_n(p)=\frac{\bar Y(1-\bar Y)}{p(1-p)\max(\sqrt{\bar Y(1-\bar Y)},\epsilon)} \]</div><p>При фиксированном n ожидаемый градиент равен cₙ(p)∇p.</p></div><p class="note">Предполагаются независимые попытки одного контекста и 0 < p < 1. Однородные группы дают c₀ = c_G = 0.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-normalization">← Предыдущие формулы</a><a href="#summary-objectives">Следующие формулы →</a></nav></section>
+
+<!-- 112 -->
+<section id="slide-112" aria-labelledby="title-112" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-objectives"><p class="kicker">Сводка формул · 8 / 15</p><h2 id="title-112">Конечная группа и средний успех</h2><div class="formula-row"><div class="summary-equation">\[ c_{G,\epsilon}(p)=\sum_{n=0}^{G}W_nc_n(p),\quad\E[g]=c_{G,\epsilon}(p)\nabla p \]</div><p>Усреднение по группам сохраняет направление одного контекста при G ≥ 2 и 0 < p < 1.</p></div><div class="formula-row"><div class="summary-equation">\[ F_G(p)=\int_0^p c_{G,\epsilon}(v)dv,\quad\nabla_\theta F_G=\E[g] \]</div><p>У конечной группы своя возрастающая преобразованная цель.</p></div><div class="formula-row"><div class="summary-equation">\[ \Phi(\theta)=\E_c[F_G(p_c(\theta))],\quad J(\pi_\theta)=\E_c[p_c(\theta)] \]</div><p>Рост средней преобразованной цели Φ сам по себе не устанавливает рост среднего успеха J.</p></div><p class="note">Маски, отбор групп и дополнительные потери могут менять оценку. Формулы описывают базовый групповой сигнал.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-finite">← Предыдущие формулы</a><a href="#summary-ppo">Следующие формулы →</a></nav></section>
+
+<!-- 113 -->
+<section id="slide-113" aria-labelledby="title-113" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-ppo"><p class="kicker">Сводка формул · 9 / 15</p><h2 id="title-113">Цель обновления PPO</h2><div class="formula-row"><div class="summary-equation">\[ w=\pi_\theta(u\mid x)/\pi_{\rm old}(u\mid x) \]</div><p>Вес показывает, насколько изменилось правдоподобие записанного действия.</p></div><div class="formula-row"><div class="summary-equation">\[ \mathcal L=\E[wA],\quad\bar w=\operatorname{clip}(w,1-\varepsilon_-,1+\varepsilon_+) \]</div><p>A задаёт желательное направление; w̄ ограничивает выгодное изменение веса в цели.</p></div><div class="formula-row"><div class="summary-equation">\[ \mathcal L_{\rm clip}=\E[\min(wA,\bar wA)] \]</div><p>Цель максимизируют; соответствующий policy loss равен −ℒ_clip.</p></div><p class="note">В CDPR полоса усечения 0,80…1,28. Усечение цели не обеспечивает ограничение KL во всех состояниях.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-objectives">← Предыдущие формулы</a><a href="#summary-update">Следующие формулы →</a></nav></section>
+
+<!-- 114 -->
+<section id="slide-114" aria-labelledby="title-114" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-update"><p class="kicker">Сводка формул · 10 / 15</p><h2 id="title-114">Условие улучшения за один шаг</h2><div class="formula-row"><div class="summary-equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-H(H-1)\alpha^2 \]</div><p>Локальная польза новых действий должна перекрыть ошибку из-за смены состояний.</p></div><div class="formula-row"><div class="summary-equation">\[ \alpha=\sup_{h,z}\TV(\pi_h\prime,\pi_h),\quad\delta=\sup_{h,z}\KL(\pi_h\|\pi_h\prime) \]</div><p>В этой оценке нужны максимальные изменения распределения действий.</p></div><div class="formula-row"><div class="summary-equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-\tfrac12H(H-1)\delta \]</div><p>Пинскер даёт форму через KL; при H > 1 рост следует из L > H(H−1)δ/2.</p></div><p class="note">L — локальный прогноз прироста успеха, ℒ — цель оптимизации. Средняя approx_kl не заменяет максимальную δ.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-ppo">← Предыдущие формулы</a><a href="#summary-retention">Следующие формулы →</a></nav></section>
+
+<!-- 115 -->
+<section id="slide-115" aria-labelledby="title-115" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-retention"><p class="kicker">Сводка формул · 11 / 15</p><h2 id="title-115">Сохранение старого навыка</h2><div class="formula-row"><div class="summary-equation">\[ |J_{\mathcal T}(\pi\prime)-J_{\mathcal T}(\pi)|\le\sum_h\bar\alpha_h \]</div><p>Сумма средних изменений действий на старой задаче ограничивает изменение её успеха.</p></div><div class="formula-row"><div class="summary-equation">\[ D_{\rm ref}=\sum_h x_h,\quad x_h=\E_{\omega_h^{\pi_{\rm ref},\mathcal T}}\KL(\pi_{{\rm ref},h}\|\pi_h) \]</div><p>Суммарную KL считаем на состояниях эталона для сохраняемого навыка.</p></div><div class="formula-row"><div class="summary-equation">\[ |J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le\sum_h\sqrt{x_h/2}\le\sqrt{HD_{\rm ref}/2} \]</div><p>Пинскер и Коши ограничивают накопленный уход от замороженного эталона.</p></div><p class="note">Контроль только состояний новой задачи не обеспечивает эти условия для старого навыка.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-update">← Предыдущие формулы</a><a href="#summary-proximal">Следующие формулы →</a></nav></section>
+
+<!-- 116 -->
+<section id="slide-116" aria-labelledby="title-116" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-proximal"><p class="kicker">Сводка формул · 12 / 15</p><h2 id="title-116">Идеальный шаг и начальная удалённость</h2><div class="formula-row"><div class="summary-equation">\[ \pi_{k+1}=\arg\max_q\{\E_q[Q]-\KL(q\|\pi_k)/\eta\} \]</div><p>Полезность действий балансируется ценой изменения политики. η регулирует этот баланс.</p></div><div class="formula-row"><div class="summary-equation">\[ D=\sum_h\E_{\omega_h^{\tilde\pi}}\KL(\tilde\pi_h\|\pi_{0,h}) \]</div><p>D измеряет начальную KL до политики сравнения на её состояниях.</p></div><div class="formula-row"><div class="summary-equation">\[ \bar E_K=\frac1K\sum_{k<K}[J(\tilde\pi)-J(\pi_k)] \]</div><p>Измеряем среднее отставание за K обновлений.</p></div><p class="note">Q — шанс завершить задачу после действия. η этой идеальной схемы не равна learning_rate Adam; D отличается от D_ref.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-retention">← Предыдущие формулы</a><a href="#summary-convergence">Следующие формулы →</a></nav></section>
+
+<!-- 117 -->
+<section id="slide-117" aria-labelledby="title-117" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-convergence"><p class="kicker">Сводка формул · 13 / 15</p><h2 id="title-117">Скорость приближения и ошибка реального шага</h2><div class="formula-row"><div class="summary-equation">\[ \bar E_K\le\frac{D}{\eta K}+\frac{H\eta}{8},\quad\eta=\sqrt{\frac{8D}{HK}} \]</div><p>Для точных шагов баланс двух членов при D > 0 задаёт размер шага.</p></div><div class="formula-row"><div class="summary-equation">\[ \bar E_K\le\sqrt{\frac{HD}{2K}}+\varepsilon_{\rm upd} \]</div><p>Первый член границы убывает как 1/√K; ошибка обновления задаёт дополнительный остаток.</p></div><div class="formula-row"><div class="summary-equation">\[ \varepsilon_{\rm upd}=\frac1K\sum_{k,h}\sqrt{C_h}\,e^+_{k,h},\quad J(\tilde\pi)\le J_\varphi^* \]</div><p>Плохое покрытие усиливает невязку; доступные признаки ограничивают достижимый успех.</p></div><p class="note">Нужны условия теоремы. Это оценка среднего отставания, не гарантия роста каждого обновления или качества последней политики.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-proximal">← Предыдущие формулы</a><a href="#summary-replay">Следующие формулы →</a></nav></section>
+
+<!-- 118 -->
+<section id="slide-118" aria-labelledby="title-118" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-replay"><p class="kicker">Сводка формул · 14 / 15</p><h2 id="title-118">Самоимитация и кредит достигнутого этапа</h2><div class="formula-row"><div class="summary-equation">\[ G_{\rm SIL}=\E_{\tau\mid Y=1}\sum_h\log\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div><p>Среднее изменение правдоподобия собственных успешных траекторий.</p></div><div class="formula-row"><div class="summary-equation">\[ \log\frac{J(\pi_\theta)}{J(\pi_\beta)}\ge G_{\rm SIL} \]</div><p>При J(πβ) > 0 и G_SIL ≥ 0 успех не падает в популяционной модели.</p></div><div class="formula-row"><div class="summary-equation">\[ A_{\rm used}=A_{\rm stage}+\max(A_{\rm full},0) \]</div><p>В CDPR отрицательный полный бонус не отнимает локальный кредит допустимой записи достигнутого раннего этапа.</p></div><p class="note">Улучшение на конечном банке и защита кредита сами по себе не доказывают сохранение навыка общей сетью.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-convergence">← Предыдущие формулы</a><a href="#summary-numbers">Следующие формулы →</a></nav></section>
+
+<!-- 119 -->
+<section id="slide-119" aria-labelledby="title-119" class="slide formula-summary" data-chapter="Сводка формул" data-source="Основные результаты и условия — теоретическая глава" data-key="summary-numbers"><p class="kicker">Сводка формул · 15 / 15</p><h2 id="title-119">Компенсация просадки на числах CDPR</h2><div class="formula-row"><div class="summary-equation">\[ \widehat J_{\rm eval}=q_{\rm lift}q_{\rm finish}=\frac{1832}{2048}\frac{1416}{1832}=\frac{1416}{2048} \]</div><p>69,14% — измеренная частота строгого успеха оценки 60M; strict требует подъёма.</p></div><div class="formula-row"><div class="summary-equation">\[ q_{\rm lift}^{\rm new}q_{\rm finish}^{\rm new}\ge J_{\rm old}\iff q_{\rm finish}^{\rm new}\ge\frac{J_{\rm old}}{q_{\rm lift}^{\rm new}} \]</div><p>При положительном q подъёма это точное условие компенсации его просадки.</p></div><div class="formula-row"><div class="summary-equation">\[ 0{,}81\cdot\frac{1416}{1832}\approx0{,}6261>\frac{1245}{2048}\approx0{,}6079 \]</div><p>Сценарий: снижение подъёма до 81% компенсируется выбранным успехом завершения.</p></div><p class="note">Измеренные частоты оценки и ручные сценарии различаются. Нулевой успех обязательного этапа обнуляет полный успех.</p><nav class="summary-navigation" aria-label="Навигация по формулам"><a href="#summary-replay">← Предыдущие формулы</a></nav></section>
+
+<!-- 120 -->
+<section id="slide-120" aria-labelledby="title-120" class="slide sources-slide" data-chapter="Итог и условия" data-source="">
 <p class="kicker">Итог и условия</p>
-<h2 id="title-105">Полные формулировки и доказательства</h2>
+<h2 id="title-120">Полные формулировки и доказательства</h2>
 <p class="lead">Здесь разобрана логика теоретического черновика. Полные условия и доказательства находятся в главе.</p>
 <ul class="source-list">
 <li><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf">Теоретическая глава, PDF</a></li>
@@ -1080,7 +1160,7 @@
 <tr><td>$s_j$, $q_j$</td><td>Успех отдельного навыка и условный успех этапа внутри полной задачи.</td></tr>
 <tr><td>$d$, $R_{\rm tol}$</td><td>Физическое расстояние и допуск в метрах. Радиусы CDPR по XY: миска 0,057 м, тарелка 0,091 м. В dτ буква d — знак интегрирования.</td></tr>
 <tr><td>$w=\pi_\theta/\pi_{\rm old}$</td><td>Отношение плотностей действий. Без единиц, может превышать 1. Это не вероятность и не расстояние.</td></tr>
-<tr><td>$H$, $G$, $K$</td><td>Число решений в попытке (до 128 у CDPR), размер группы (8), число обновлений политики.</td></tr>
+<tr><td>$H$, $G$, $K$</td><td>Лимит циклов перепланирования (128 у CDPR), попыток в группе GRPO (8), обновлений политики. За вызов предсказывается 8 действий, исполняются первые 4.</td></tr>
 <tr><td>$Y$, $A$, $Z$, $g$</td><td>Бинарный исход, преимущество, градиент логарифма вероятности траектории, оценка градиента обновления.</td></tr>
 <tr><td>$\theta$, $\pi_\theta$, $\tau$</td><td>Параметры головы, политика с этими параметрами, одна полная траектория.</td></tr>
 <tr><td>$F$, $\Phi$</td><td>Возрастающее преобразование p и средняя преобразованная цель. Они не измеряются в процентах успеха.</td></tr>
