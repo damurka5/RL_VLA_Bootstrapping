@@ -233,6 +233,7 @@
   .lab-caption { margin: 0 0 14px; }
   .chart-caption { margin: 8px 0 0; }
   .lab-result { font-size: 21px; line-height: 1.5; margin: 16px 0; }
+  #bound-calculation { margin-bottom: 8px; }
   .lab-formula { font-size: 20px; margin: 18px 0 8px; }
   .slider-label { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; margin-top: 16px; font-size: 16px; }
   .slider-label output { color: var(--accent); font-weight: 600; white-space: nowrap; }
@@ -721,29 +722,35 @@
 <tr><td>Средняя F при истинной нормировке</td><td>0,8856</td><td>0,9123 ↑</td></tr></table><p class="note">Это учебный контрпример для F(p) = 2 arcsin √p. F сильнее вознаграждает прирост редкого успеха. Факт роста Φ сам по себе не доказывает рост J. Для полной инструкции проверяем композицию и фактическую метрику.</p></section>
 
 <!-- 65 -->
-<section id="slide-65" aria-labelledby="title-65" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, PPO/GRPO">
+<section id="slide-65" aria-labelledby="title-65" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="update-motivation"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-65">Польза шага и сохранение старых навыков</h2>
+<p class="explanation">Нашли полезное направление обновления. Но большой шаг меняет действия и посещаемые состояния; при обучении размещению может ухудшиться захват.</p>
+<ol class="route summary-route"><li><b>Начинаем с локального прогноза</b><span>По старым попыткам оцениваем пользу новых действий.</span></li><li><b>Учитываем размер изменения</b><span>Вычитаем запас на ошибку прогноза и отдельно контролируем старый навык.</span></li><li><b>Получим два условия</b><span>Когда шаг улучшает J и когда политика остаётся близка к эталону.</span></li></ol>
+<p class="note">Усечение PPO ограничивает стимул к большому сдвигу. Теоретические границы требуют контроля фактического изменения распределений на нужных состояниях.</p></section>
+
+<!-- 66 -->
+<section id="slide-66" aria-labelledby="title-66" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, PPO/GRPO">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<h2 id="title-65">Сравниваем вероятность одного действия до и после шага</h2>
+<h2 id="title-66">Сравниваем вероятность одного действия до и после шага</h2>
 <div class="equation">\[ w=\frac{\newterm{\pi_\theta(u\mid x)}}{\pi_{\rm old}(u\mid x)} \]</div>
 <p class="explanation">Вводим отношение вероятностей. Оно показывает, насколько новая политика чаще выбирает записанное действие.</p>
 <p class="terms">$w=1$ — вероятность не изменилась. $w&gt;1$ — действие стало вероятнее.</p>
 <p class="note">Вес w безразмерный и может быть больше 1. Расстояние всегда обозначаем d, а допуск — R с индексом tol.</p>
 </section>
 
-<!-- 66 -->
-<section id="slide-66" aria-labelledby="title-66" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, суррогатная цель">
+<!-- 67 -->
+<section id="slide-67" aria-labelledby="title-67" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 2, суррогатная цель">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<h2 id="title-66">Преимущество задаёт желательное направление</h2>
+<h2 id="title-67">Преимущество задаёт желательное направление</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$w=\pi_\theta(u\mid x)/\pi_{\rm old}(u\mid x)$</span></div>
 <div class="equation">\[ \mathcal L=\E[\newterm{wA}] \]</div>
 <p class="explanation">Умножили отношение на преимущество и усреднили по записанным решениям. Эту цель максимизируем.</p>
 <p class="terms">При $A&gt;0$ выгодно увеличивать w. При $A&lt;0$ выгодно уменьшать w.</p>
 </section>
 
-<!-- 67 -->
-<section id="slide-67" aria-labelledby="title-67" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 5, замечание 5.3; PPO">
+<!-- 68 -->
+<section id="slide-68" aria-labelledby="title-68" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="§ 5, замечание 5.3; PPO">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<h2 id="title-67">Усечение ограничивает выгоду от большого изменения</h2>
+<h2 id="title-68">Усечение ограничивает выгоду от большого изменения</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$\mathcal L=\E[wA]$</span></div>
 <div class="equation">\[ \mathcal L_{\rm clip}=\E\!\left[\newterm{\min}\bigl(wA,\newterm{\bar w}A\bigr)\right] \]</div>
 <p class="explanation">Добавили усечённое отношение и выбрали меньшую из двух целей. Слишком большой сдвиг в выгодную сторону перестаёт давать выигрыш.</p>
@@ -751,23 +758,23 @@
 <p class="note">Усечение цели само по себе не гарантирует малое изменение всей политики. Величину фактического шага нужно контролировать.</p>
 </section>
 
-<!-- 68 -->
-<section id="slide-68" aria-labelledby="title-68" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Сопоставимая оценка CDPR 40M/60M" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="j-reminder"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-68">J здесь означает то же самое, что в начале</h2><div class="equation">\[ J(\pi)=\E_c[p_c(\pi)],\qquad J(\pi\prime)=\E_c[p_c(\pi\prime)] \]</div><p class="explanation">Сравниваем старую и новую политики на одной задаче, с теми же стартами и тем же критерием. Меняется только поведение.</p><p class="terms">Для сопоставимой оценки CDPR: оценка J старой политики = 1245/2048 = 60,79%, новой = 1416/2048 = 69,14%.</p><p class="note">Числа относятся к режиму оценки: детерминированный остаток и шум приора 1. Это не измерение p_c стохастической обучающей политики.</p></section>
-
 <!-- 69 -->
-<section id="slide-69" aria-labelledby="title-69" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
+<section id="slide-69" aria-labelledby="title-69" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Сопоставимая оценка CDPR 40M/60M" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="j-reminder"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-69">J здесь означает то же самое, что в начале</h2><div class="equation">\[ J(\pi)=\E_c[p_c(\pi)],\qquad J(\pi\prime)=\E_c[p_c(\pi\prime)] \]</div><p class="explanation">Сравниваем старую и новую политики на одной задаче, с теми же стартами и тем же критерием. Меняется только поведение.</p><p class="terms">Для сопоставимой оценки CDPR: оценка J старой политики = 1245/2048 = 60,79%, новой = 1416/2048 = 69,14%.</p><p class="note">Числа относятся к режиму оценки: детерминированный остаток и шум приора 1. Это не измерение p_c стохастической обучающей политики.</p></section>
+
+<!-- 70 -->
+<section id="slide-70" aria-labelledby="title-70" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-69">Сначала оцениваем ожидаемую пользу шага</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-70">Сначала оцениваем ожидаемую пользу шага</h2>
 <div class="equation">\[ J_{\rm predicted}=J(\pi)\newterm{+L_\pi(\pi\prime)} \]</div>
 <p class="explanation">К старому успеху добавили ожидаемый выигрыш новых действий в состояниях, которые посещала старая политика.</p>
 <p class="terms">$\pi\prime$ — новая политика. $L_\pi(\pi\prime)$ — локальная оценка улучшения.</p>
 <p class="note">Это прогноз. После обновления изменятся и посещаемые состояния. Следующий член учитывает эту ошибку.</p>
 </section>
 
-<!-- 70 -->
-<section id="slide-70" aria-labelledby="title-70" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
+<!-- 71 -->
+<section id="slide-71" aria-labelledby="title-71" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-70">Смена посещаемых состояний добавляет штраф</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-71">Смена посещаемых состояний добавляет штраф</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$J_{\rm predicted}=J(\pi)+L_\pi(\pi\prime)$</span></div>
 <div class="equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)\newterm{-H(H-1)\alpha^2} \]</div>
 <p class="explanation">Вычли верхнюю границу ошибки прогноза. Чем длиннее эпизод и больше изменение действий, тем больше возможная ошибка.</p>
@@ -775,10 +782,10 @@
 <p class="note">Улучшение гарантировано только если локальный выигрыш перекрывает штраф.</p>
 </section>
 
-<!-- 71 -->
-<section id="slide-71" aria-labelledby="title-71" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
+<!-- 72 -->
+<section id="slide-72" aria-labelledby="title-72" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.1">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-71">KL позволяет выразить тот же штраф иначе</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-72">KL позволяет выразить тот же штраф иначе</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-H(H-1)\alpha^2$</span></div>
 <div class="equation">\[ J(\pi\prime)\ge J(\pi)+L_\pi(\pi\prime)-\newterm{\tfrac12H(H-1)\delta} \]</div>
 <p class="explanation">Неравенство Пинскера даёт α² ≤ δ/2. Подставили его в штраф.</p>
@@ -786,41 +793,63 @@
 <p class="note">Теорема требует максимальную KL. Средняя approx_kl из лога служит диагностикой и не заменяет это условие.</p>
 </section>
 
-<!-- 72 -->
-<section id="slide-72" aria-labelledby="title-72" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.4">
+<!-- 73 -->
+<section id="slide-73" aria-labelledby="title-73" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Теорема 5.4">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-72">Старый навык зависит от изменений на его состояниях</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-73">Старый навык зависит от изменений на его состояниях</h2>
 <div class="equation">\[ |J_{\mathcal T}(\pi\prime)-J_{\mathcal T}(\pi)|\le\newterm{\sum_{h=0}^{H-1}\bar\alpha_h} \]</div>
 <p class="explanation">Для сохранения навыка складываем изменения действий вдоль его траекторий.</p>
 <p class="terms">$\mathcal T$ — старый навык. $\bar\alpha_h$ — средняя TV на его состояниях при старой политике.</p>
 <p class="note">Малый шаг на состояниях размещения ничего не обещает про захват, если его состояния не контролируются.</p>
 </section>
 
-<!-- 73 -->
-<section id="slide-73" aria-labelledby="title-73" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Следствие 5.7">
+<!-- 74 -->
+<section id="slide-74" aria-labelledby="title-74" class="slide wide-equation" data-chapter="6. Почему обновление ограничивают" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="anchor-kl"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-74">Первый переход: KL ограничивает изменение действий</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$|\Delta J_{\mathcal T}|\le\sum_h\bar\alpha_h$</span></div>
+<div class="equation">\[ x_h=\E_{z\sim\omega_h^{\pi_{\rm ref},\mathcal T}}\KL(\pi_{{\rm ref},h}\|\pi_h),\qquad \bar\alpha_h\le\newterm{\sqrt{x_h/2}} \]</div>
+<p class="explanation">Взяли эталон в роли старой политики. Пинскер переводит KL в TV — величину изменения распределения действий. При усреднении используем вогнутость корня.</p>
+<p class="terms">xₕ — средняя KL на шаге h именно на состояниях эталона для сохраняемого навыка. Поэтому $|\Delta J_{\mathcal T}|\le\sum_h\sqrt{x_h/2}$.</p>
+<p class="note">Это средняя KL на каждом шаге для оценки сохранения. В границе улучшения предыдущих слайдов δ означала максимальную KL; это разные условия.</p></section>
+
+<!-- 75 -->
+<section id="slide-75" aria-labelledby="title-75" class="slide wide-equation" data-chapter="6. Почему обновление ограничивают" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="anchor-root"><p class="kicker">6. Почему обновление ограничивают</p><h2 id="title-75">Второй переход: объединяем H корней</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$|\Delta J_{\mathcal T}|\le\sum_h\sqrt{x_h/2}$</span></div>
+<div class="equation">\[ \left(\sum_{h=0}^{H-1}1\cdot\sqrt{x_h/2}\right)^2\le\newterm{H}\sum_h x_h/2=\frac{H D_{\rm ref}}2 \]</div>
+<p class="explanation">Применили неравенство Коши: квадрат суммы произведений не больше произведения сумм квадратов. У нас H единиц, поэтому сумма их квадратов равна H.</p>
+<p class="terms">Обозначили $D_{\rm ref}=\sum_hx_h$. Затем берём корень обеих неотрицательных частей: $\sum_h\sqrt{x_h/2}\le\sqrt{HD_{\rm ref}/2}$.</p>
+<p class="note">Так появился корень: 1/2 пришла из Пинскера, H — из суммирования по времени. D_ref — сумма KL по шагам, а не среднее по всей попытке.</p></section>
+
+<!-- 76 -->
+<section id="slide-76" aria-labelledby="title-76" class="slide " data-chapter="6. Почему обновление ограничивают" data-source="Следствие 5.7">
 <p class="kicker">6. Почему обновление ограничивают</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-73">Привязка к эталону ограничивает суммарный уход</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-76">Привязка к эталону ограничивает суммарный уход</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$|\Delta J_{\mathcal T}|\le\sum_h\bar\alpha_h$</span></div>
 <div class="equation">\[ |J_{\mathcal T}(\pi)-J_{\mathcal T}(\pi_{\rm ref})|\le\newterm{\sqrt{H D_{\rm ref}/2}} \]</div>
-<p class="explanation">Сравниваем текущую политику с фиксированным эталоном. Так ограничиваем весь уход, накопленный за обучение.</p>
+<p class="explanation">Подставили сумму корней в границу изменения успеха. Получили предел возможного ухода от фиксированного эталона на любой итерации обучения.</p>
 <p class="terms">$D_{\rm ref}$ — сумма средних $\KL(\pi_{\rm ref}\|\pi)$ по шагам на состояниях эталона для этого навыка.</p>
-<p class="note">Якорь должен контролировать нужные состояния. Небольшая ошибка на конечном банке успехов ещё не доказывает такую границу.</p>
+<p class="note">Пример: при H = 128 и суммарной D_ref = 0,0001 граница равна 0,08, то есть 8 п.п. Это условный расчёт. Конечный банк успехов не покрывает все состояния эталона.</p>
 </section>
 
-<!-- 74 -->
-<section id="slide-74" aria-labelledby="title-74" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
+<!-- 77 -->
+<section id="slide-77" aria-labelledby="title-77" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="convergence-motivation"><p class="kicker">7. Что говорит оценка сходимости</p><h2 id="title-77">Что дают многие последовательные обновления</h2>
+<p class="explanation">Блок 6 рассматривал один шаг и сохранение навыка. Теперь спрашиваем, как меняется отставание от выбранной успешной политики после K обновлений.</p>
+<ol class="route summary-route"><li><b>Сначала точные шаги</b><span>Оцениваем среднее отставание через стартовую KL, горизонт H и размер шага η.</span></li><li><b>Затем выбираем η</b><span>Баланс двух ошибок даст убывание границы как 1/√K.</span></li><li><b>Возвращаем реальное обучение</b><span>Добавляем ошибку обновления и выясняем, что мешает приближению.</span></li></ol>
+<p class="note">Итог относится к среднему отставанию и лучшей просмотренной политике. Для реального PPO он условен. D здесь — начальная KL до политики сравнения; D_ref в блоке 6 — текущий уход от замороженного эталона.</p></section>
+
+<!-- 78 -->
+<section id="slide-78" aria-labelledby="title-78" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-74">Идеальный шаг выбирает более полезные действия</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-78">Идеальный шаг выбирает более полезные действия</h2>
 <div class="equation">\[ \E_{u\sim q}[Q(u)] \]</div>
 <p class="explanation">Сначала рассмотрим точную модель шага. Q показывает шанс завершить задачу после выбранного действия.</p>
 <p class="terms">$q$ — новое распределение действий в фиксированном состоянии. $Q(u)\in[0,1]$ — успех при дальнейшем следовании текущей политике.</p>
 <p class="note">Дальше анализируем идеальный шаг в пространстве политик. Связь с нейросетевым PPO потребует отдельного члена ошибки.</p>
 </section>
 
-<!-- 75 -->
-<section id="slide-75" aria-labelledby="title-75" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
+<!-- 79 -->
+<section id="slide-79" aria-labelledby="title-79" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Определение 6.1">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-75">За большое изменение платим KL-штраф</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-79">За большое изменение платим KL-штраф</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$\E_q[Q]$</span></div>
 <div class="equation">\[ \pi_{k+1}=\arg\max_q\left\{\E_q[Q]\newterm{-\frac1\eta\KL(q\|\pi_k)}\right\} \]</div>
 <p class="explanation">Добавили цену отклонения от текущей политики. Новые действия должны оправдать изменение ожидаемой пользой.</p>
@@ -828,20 +857,20 @@
 <p class="note">Это KL-проксимальный шаг. Название «зеркальный спуск» относится к такому способу учитывать геометрию распределений.</p>
 </section>
 
-<!-- 76 -->
-<section id="slide-76" aria-labelledby="title-76" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
+<!-- 80 -->
+<section id="slide-80" aria-labelledby="title-80" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-76">Скорость зависит от расстояния до успешного поведения</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-80">Скорость зависит от расстояния до успешного поведения</h2>
 <div class="equation">\[ D=\newterm{\sum_h\E_{\omega_h^{\tilde\pi}}}\KL(\tilde\pi_h\|\pi_{0,h}) \]</div>
 <p class="explanation">Собрали KL между начальной политикой и выбранным успешным поведением вдоль его траекторий.</p>
 <p class="terms">$\tilde\pi$ — политика для сравнения. $\pi_0$ — старт обучения. $\omega_h^{\tilde\pi}$ — состояния при следовании $\tilde\pi$.</p>
 <p class="note">Нужна конечная D. Подготовка навыков должна приблизить начало полной задачи к успешному поведению.</p>
 </section>
 
-<!-- 77 -->
-<section id="slide-77" aria-labelledby="title-77" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2, доказательство">
+<!-- 81 -->
+<section id="slide-81" aria-labelledby="title-81" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2, доказательство">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-77">Начальная удалённость даёт первый член оценки</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-81">Начальная удалённость даёт первый член оценки</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$D=\sum_h\E_{\omega_h^{\tilde\pi}}\KL(\tilde\pi_h\|\pi_{0,h})$</span></div>
 <div class="equation">\[ B_{\rm start}=\newterm{\frac{D}{\eta K}} \]</div>
 <p class="explanation">При сложении K шагов промежуточные KL сокращаются. Остаётся начальная удалённость D, делённая на ηK.</p>
@@ -849,10 +878,10 @@
 <p class="note">Больше обновлений уменьшает этот член. Очень маленький шаг η замедляет его уменьшение.</p>
 </section>
 
-<!-- 78 -->
-<section id="slide-78" aria-labelledby="title-78" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
+<!-- 82 -->
+<section id="slide-82" aria-labelledby="title-82" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-78">Конечный размер шага даёт второй член</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-82">Конечный размер шага даёт второй член</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$B_{\rm start}=D/(\eta K)$</span></div>
 <div class="equation">\[ \bar E_K\le\frac{D}{\eta K}\newterm{+\frac{H\eta}{8}} \]</div>
 <p class="explanation">Добавили ошибку конечного шага. Ограниченность Q от 0 до 1 даёт η/8 на одно решение, всего решений H.</p>
@@ -860,21 +889,29 @@
 <p class="note">Это полная граница для точных KL-проксимальных шагов. Первый член уменьшается при росте η, второй увеличивается.</p>
 </section>
 
-<!-- 79 -->
-<section id="slide-79" aria-labelledby="title-79" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
+<!-- 83 -->
+<section id="slide-83" aria-labelledby="title-83" class="slide wide-equation" data-chapter="7. Что говорит оценка сходимости" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="rate-balance"><p class="kicker">7. Что говорит оценка сходимости</p><h2 id="title-83">Размер шага балансирует две ошибки</h2>
+<div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le D/(\eta K)+H\eta/8$</span></div>
+<div class="equation">\[ \frac{D}{\eta K}=\frac{H\eta}{8}\quad\Longrightarrow\quad\eta^2=\frac{8D}{HK}\quad\Longrightarrow\quad\eta=\newterm{\sqrt{\frac{8D}{HK}}} \]</div>
+<p class="explanation">Маленькая η делает первый член большим, большая η увеличивает второй. Для суммы a/η + bη минимум достигается при равенстве членов.</p>
+<p class="terms">При выбранной η каждый член равен $\sqrt{HD/(8K)}$. Их сумма равна $2\sqrt{HD/(8K)}=\sqrt{HD/(2K)}$.</p>
+<p class="note">Это другой корень: он возникает при выборе размера шага. Корень √(H D_ref/2) в блоке 6 возникал из Пинскера и Коши при оценке сохранения.</p></section>
+
+<!-- 84 -->
+<section id="slide-84" aria-labelledby="title-84" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.2">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-79">Баланс двух членов даёт корень из числа шагов</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-84">Баланс двух членов даёт корень из числа шагов</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le D/(\eta K)+H\eta/8$</span></div>
 <div class="equation">\[ \bar E_K\le\newterm{\sqrt{\frac{HD}{2K}}} \]</div>
 <p class="explanation">Выбрали η так, чтобы два предыдущих члена совпали. Их сумма принимает компактный вид.</p>
-<p class="terms">При $D&gt;0$ берём $\eta=\sqrt{8D/(HK)}$. Тогда увеличение K в 4 раза уменьшает эту границу в 2 раза.</p>
+<p class="terms">Пример: H = 128, D = 0,1, K = 1000 дают η = 0,0025. Два члена равны 0,04 + 0,04 = 0,08. Это граница отставания в 8 п.п., а не предсказание прироста.</p>
 <p class="note">Граница относится к среднему отставанию. Лучший из просмотренных шагов не хуже среднего. Про последний шаг этого не утверждаем.</p>
 </section>
 
-<!-- 80 -->
-<section id="slide-80" aria-labelledby="title-80" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
+<!-- 85 -->
+<section id="slide-85" aria-labelledby="title-85" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-80">Реальный алгоритм добавляет ошибку обновления</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-85">Реальный алгоритм добавляет ошибку обновления</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le\sqrt{HD/(2K)}$</span></div>
 <div class="equation">\[ \bar E_K\le\sqrt{\frac{HD}{2K}}\newterm{+\varepsilon_{\rm upd}} \]</div>
 <p class="explanation">Добавили отклонение реального обучения от точных шагов: конечные данные, ограничения сети и способ оптимизации.</p>
@@ -882,10 +919,10 @@
 <p class="note">Для нейросетевого PPO эта ошибка не обязана быть малой. Поэтому формула задаёт условия успеха, а не безусловную гарантию.</p>
 </section>
 
-<!-- 81 -->
-<section id="slide-81" aria-labelledby="title-81" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
+<!-- 86 -->
+<section id="slide-86" aria-labelledby="title-86" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Теорема 6.4">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-81">Плохое покрытие усиливает ошибку шага</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-86">Плохое покрытие усиливает ошибку шага</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$\bar E_K\le\sqrt{HD/(2K)}+\varepsilon_{\rm upd}$</span></div>
 <div class="equation">\[ \varepsilon_{\rm upd}=\frac1K\sum_{k,h}\newterm{\sqrt{C_h}}\,e^+_{k,h} \]</div>
 <p class="explanation">Раскрыли ошибку обновления. Если обучение редко видит состояния успешного поведения, локальные ошибки весят сильнее.</p>
@@ -893,40 +930,46 @@
 <p class="note">В главе норма записана явно. Если нужные состояния вообще не представлены в обучении, C может быть бесконечным. Старты навыков и рестарты помогают обеспечить покрытие.</p>
 </section>
 
-<!-- 82 -->
-<section id="slide-82" aria-labelledby="title-82" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Предложение 6.6">
+<!-- 87 -->
+<section id="slide-87" aria-labelledby="title-87" class="slide " data-chapter="7. Что говорит оценка сходимости" data-source="Предложение 6.6">
 <p class="kicker">7. Что говорит оценка сходимости</p>
-<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-82">Признаки ограничивают достижимый успех</h2>
+<p class="context-reminder">Напоминание: J — средний успех на фиксированном распределении задачи. H — число решений политики.</p><h2 id="title-87">Признаки ограничивают достижимый успех</h2>
 <div class="equation">\[ J(\tilde\pi)\le\newterm{J_\varphi^*} \]</div>
 <p class="explanation">Политика сравнения тоже должна использовать доступные признаки. Поэтому у её успеха есть потолок.</p>
 <p class="terms">$J_\varphi^*=\sup_{\pi\in\Pi_\varphi}J(\pi)$ — лучший успех в классе политик с признаками φ.</p>
 <p class="note">Если одинаковые признаки скрывают ситуации, требующие разных действий, увеличение бюджета RL не устраняет эту неоднозначность.</p>
 </section>
 
-<!-- 83 -->
-<section id="slide-83" aria-labelledby="title-83" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
+<!-- 88 -->
+<section id="slide-88" aria-labelledby="title-88" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="replay-motivation"><p class="kicker">8. Зачем повторять собственные успехи</p><h2 id="title-88">Как использовать уже найденные успешные попытки</h2>
+<p class="explanation">RL тратит попытки на поиск успеха. Когда успешная траектория уже найдена, можно повторно учиться выбирать её действия и закреплять найденное поведение.</p>
+<ol class="route summary-route"><li><b>Что сохраняем</b><span>Собственные успешные траектории старой политики β.</span></li><li><b>Что изменяем</b><span>Увеличиваем правдоподобие этих действий под новой политикой θ.</span></li><li><b>Что обоснуем</b><span>Свяжем средний рост правдоподобия всех старых успехов с новой вероятностью успеха J.</span></li></ol>
+<p class="note">Связь даёт неравенство Йенсена. Улучшение на конечном банке само по себе ещё не устанавливает нужное среднее по всем успехам.</p></section>
+
+<!-- 89 -->
+<section id="slide-89" aria-labelledby="title-89" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
 <p class="kicker">8. Зачем повторять собственные успехи</p>
-<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-83">Сравниваем вероятность записанного успешного действия</h2>
+<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-89">Сравниваем вероятность записанного успешного действия</h2>
 <div class="equation">\[ \frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
 <p class="explanation">Собираем успешные траектории старой политики β. Проверяем, стала ли новая политика чаще воспроизводить их действия.</p>
 <p class="terms">$\beta$ — параметры политики, собравшей банк. $\theta$ — параметры после самоимитации.</p>
 <p class="note">Используем действия, выбранные самой политикой, с известным правдоподобием.</p>
 </section>
 
-<!-- 84 -->
-<section id="slide-84" aria-labelledby="title-84" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
+<!-- 90 -->
+<section id="slide-90" aria-labelledby="title-90" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
 <p class="kicker">8. Зачем повторять собственные успехи</p>
-<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-84">Для траектории складываем логарифмы отношений</h2>
+<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-90">Для траектории складываем логарифмы отношений</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$\pi_\theta(u_h\mid x_h)/\pi_\beta(u_h\mid x_h)$</span></div>
 <div class="equation">\[ G_{\rm SIL}=\newterm{\E_{\tau\mid Y=1}\sum_h\log}\frac{\pi_\theta(u_h\mid x_h)}{\pi_\beta(u_h\mid x_h)} \]</div>
 <p class="explanation">Вероятности действий вдоль траектории перемножаются. Логарифм превращает произведение в сумму. Затем усредняем по старым успехам.</p>
 <p class="terms">$G_{\rm SIL}$ — среднее изменение логарифма правдоподобия собственных успехов.</p>
 </section>
 
-<!-- 85 -->
-<section id="slide-85" aria-labelledby="title-85" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
+<!-- 91 -->
+<section id="slide-91" aria-labelledby="title-91" class="slide " data-chapter="8. Зачем повторять собственные успехи" data-source="Предложение 7.6">
 <p class="kicker">8. Зачем повторять собственные успехи</p>
-<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-85">Рост правдоподобия успехов даёт границу улучшения</h2>
+<p class="context-reminder">Напоминание: J — средний успех одной и той же задачи. Меняется политика, а не критерий успеха.</p><h2 id="title-91">Рост правдоподобия успехов даёт границу улучшения</h2>
 <div class="previous"><span class="previous-label">Уже знаем</span><span>$G_{\rm SIL}=\E_{\tau\mid Y=1}\sum_h\log(\pi_\theta/\pi_\beta)$</span></div>
 <div class="equation">\[ \newterm{\log\frac{J(\pi_\theta)}{J(\pi_\beta)}}\ge G_{\rm SIL} \]</div>
 <p class="explanation">Неравенство Йенсена связывает правдоподобие старых успехов с новой вероятностью успеха.</p>
@@ -934,42 +977,56 @@
 <p class="note">Улучшение на конечном банке не гарантирует улучшения на всех успехах. Подгонка к усечённым или сглаженным действиям также требует отдельного обоснования.</p>
 </section>
 
-<!-- 86 -->
-<section id="slide-86" aria-labelledby="title-86" class="slide " data-chapter="9. Все величины на примере CDPR" data-source="Сопоставимая оценка 40M/60M, 4 ноября 2026" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="pipeline-numbers"><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-86">Какие числа действительно измерены</h2><table class="symbol-table evidence-table"><tr><th>Полная инструкция put_into</th><th>40M</th><th>60M</th></tr>
+<!-- 92 -->
+<section id="slide-92" aria-labelledby="title-92" class="slide " data-chapter="9. Все величины на примере CDPR" data-source="Сопоставимая оценка 40M/60M, 4 ноября 2026" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="pipeline-numbers"><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-92">Какие числа действительно измерены</h2><table class="symbol-table evidence-table"><tr><th>Полная инструкция put_into</th><th>40M</th><th>60M</th></tr>
 <tr><td>Попыток</td><td>2048</td><td>2048</td></tr>
 <tr><td>Удержанный подъём</td><td>1764 (86,13%)</td><td>1832 (89,45%)</td></tr>
 <tr><td>Строгий успех</td><td>1245 (60,79%)</td><td>1416 (69,14%)</td></tr>
 <tr><td>Строгий успех среди подъёмов</td><td>1245/1764 = 70,58%</td><td>1416/1832 = 77,29%</td></tr></table><p class="note">512 сцен × 4 повтора для каждого checkpoint. Это два измеренных состояния обучения, не траектория гарантированного роста. В предках CDPR были автоматически подготовленные данные, поэтому 69,14% не доказывает RL-only.</p></section>
 
-<!-- 87 -->
-<section id="slide-87" aria-labelledby="title-87" class="slide wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Проверенные счётчики и FullTaskOutcome.strict" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/artifacts/latent_control_60m_comparison_20261104/review_summary.json" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-87">Полный успех можно разложить на два условных этапа</h2><div class="equation">\[ \widehat J_{\rm eval}=\underbrace{\frac{1832}{2048}}_{q_{\rm lift}}\cdot\underbrace{\frac{1416}{1832}}_{q_{\rm finish}}=\newterm{\frac{1416}{2048}} \]</div><p class="explanation">Первый множитель: дошли до удержанного подъёма. Второй: завершили всю инструкцию среди тех попыток, где подъём был.</p><p class="terms">Это q этапов уже внутри put_into. Они включают фактические последствия инструкции и передачи. Это не s отдельных навыков на специальных стартах.</p><p class="note">В коде strict success требует lifted. Поэтому такое разложение верно. Оно не доказывает независимость этапов или сохранение отдельной инструкции pick_up.</p></section>
+<!-- 93 -->
+<section id="slide-93" aria-labelledby="title-93" class="slide wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Проверенные счётчики и FullTaskOutcome.strict" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/artifacts/latent_control_60m_comparison_20261104/review_summary.json" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-93">Полный успех можно разложить на два условных этапа</h2><div class="equation">\[ \widehat J_{\rm eval}=\underbrace{\frac{1832}{2048}}_{q_{\rm lift}}\cdot\underbrace{\frac{1416}{1832}}_{q_{\rm finish}}=\newterm{\frac{1416}{2048}} \]</div><p class="explanation">Первый множитель: дошли до удержанного подъёма. Второй: завершили всю инструкцию среди тех попыток, где подъём был.</p><p class="terms">Это q этапов уже внутри put_into. Они включают фактические последствия инструкции и передачи. Это не s отдельных навыков на специальных стартах.</p><p class="note">В коде strict success требует lifted. Поэтому такое разложение верно. Оно не доказывает независимость этапов или сохранение отдельной инструкции pick_up.</p></section>
 
-<!-- 88 -->
-<section id="slide-88" aria-labelledby="title-88" class="slide wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Сопоставимая оценка 40M/60M, 4 ноября 2026" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-88">Просадка одного этапа может компенсироваться другим</h2><div class="equation">\[ q_{\rm lift}^{\rm new}q_{\rm finish}^{\rm new}\ge J_{\rm old}\quad\Longleftrightarrow\quad q_{\rm finish}^{\rm new}\ge\newterm{\frac{J_{\rm old}}{q_{\rm lift}^{\rm new}}} \]</div><p class="explanation">Общий результат сохраняется, если рост второго множителя перекрыл падение первого. Условие получили делением на положительный q подъёма.</p><p class="terms">При падении q подъёма до 0,81 нужно q завершения ≥ 0,607910/0,81 ≈ 0,7505. Значение 60M, 0,7729, выше этого порога.</p><p class="note">Получили бы 0,81 × 0,7729 = 62,61%, выше 40M. Это сценарий с удержанием второго множителя, а не наблюдавшаяся просадка. При q подъёма = 0 полный успех равен нулю.</p></section>
+<!-- 94 -->
+<section id="slide-94" aria-labelledby="title-94" class="slide wide-equation" data-chapter="9. Все величины на примере CDPR" data-source="Сопоставимая оценка 40M/60M, 4 ноября 2026" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-94">Просадка одного этапа может компенсироваться другим</h2><div class="equation">\[ q_{\rm lift}^{\rm new}q_{\rm finish}^{\rm new}\ge J_{\rm old}\quad\Longleftrightarrow\quad q_{\rm finish}^{\rm new}\ge\newterm{\frac{J_{\rm old}}{q_{\rm lift}^{\rm new}}} \]</div><p class="explanation">Общий результат сохраняется, если рост второго множителя перекрыл падение первого. Условие получили делением на положительный q подъёма.</p><p class="terms">При падении q подъёма до 0,81 нужно q завершения ≥ 0,607910/0,81 ≈ 0,7505. Значение 60M, 0,7729, выше этого порога.</p><p class="note">Получили бы 0,81 × 0,7729 = 62,61%, выше 40M. Это сценарий с удержанием второго множителя, а не наблюдавшаяся просадка. При q подъёма = 0 полный успех равен нулю.</p></section>
 
-<!-- 89 -->
-<section id="slide-89" aria-labelledby="title-89" class="slide " data-chapter="9. Все величины на примере CDPR" data-source="add_full_task_bonus и preflight запуска" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/rl_vla_bootstrapping/policy/mjwarp_rank_local_collector.py" data-key="credit-protection"><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-89">Код защищает сигнал за уже достигнутый этап</h2><div class="equation">\[ A_{\rm used}=A_{\rm stage}+\newterm{\max(A_{\rm full},0)} \]</div><p class="explanation">Для достигнутого подхода или подъёма отрицательный бонус полной задачи обнуляется. Поздняя ошибка не отнимает уже заработанный локальный сигнал.</p><p class="terms">В запуске CDPR: коэффициент полного бонуса 1, отрицательный масштаб для достигнутого этапа 0, массы трёх стадий одинаковы.</p><p class="note">Формула относится к допустимой записи достигнутого раннего этапа. Размещение получает полный сигнал один раз. Весь loss с масками и бонусами не равен идеальному градиенту ∇F(p); гарантии сохранения навыка нет.</p></section>
+<!-- 95 -->
+<section id="slide-95" aria-labelledby="title-95" class="slide " data-chapter="9. Все величины на примере CDPR" data-source="add_full_task_bonus и preflight запуска" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/rl_vla_bootstrapping/policy/mjwarp_rank_local_collector.py" data-key="credit-protection"><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-95">Код защищает сигнал за уже достигнутый этап</h2><div class="equation">\[ A_{\rm used}=A_{\rm stage}+\newterm{\max(A_{\rm full},0)} \]</div><p class="explanation">Для достигнутого подхода или подъёма отрицательный бонус полной задачи обнуляется. Поздняя ошибка не отнимает уже заработанный локальный сигнал.</p><p class="terms">В запуске CDPR: коэффициент полного бонуса 1, отрицательный масштаб для достигнутого этапа 0, массы трёх стадий одинаковы.</p><p class="note">Формула относится к допустимой записи достигнутого раннего этапа. Размещение получает полный сигнал один раз. Весь loss с масками и бонусами не равен идеальному градиенту ∇F(p); гарантии сохранения навыка нет.</p></section>
 
-<!-- 90 -->
-<section id="slide-90" aria-labelledby="title-90" class="slide " data-chapter="9. Все величины на примере CDPR" data-source="Конфигурация, отчёт оценки и ограничения главы" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-90">Где проверять условия, которых нет в отчёте</h2><table class="symbol-table"><tr><th>Есть в источниках</th><th>Не измерено этими числами</th></tr>
+<!-- 96 -->
+<section id="slide-96" aria-labelledby="title-96" class="slide " data-chapter="9. Все величины на примере CDPR" data-source="Конфигурация, отчёт оценки и ограничения главы" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key=""><p class="kicker">9. Все величины на примере CDPR</p><h2 id="title-96">Где проверять условия, которых нет в отчёте</h2><table class="symbol-table"><tr><th>Есть в источниках</th><th>Не измерено этими числами</th></tr>
 <tr><td>H = 128, G = 8, 4 действия за решение</td><td>Градиент ∇p каждого контекста</td></tr>
 <tr><td>J_eval и условные частоты этапов</td><td>Все p_c обучающей политики</td></tr>
 <tr><td>Допуски миски 5,7 см, тарелки 9,1 см</td><td>Среднее d для каждого этапа</td></tr>
 <tr><td>Усечение 0,20 / 0,28</td><td>Максимальная KL, D, C, ε_upd, Γ и TV передачи</td></tr></table><p class="note">Следующие графики разделяют измеренные точки и управляемые сценарии. Неизмеренные параметры нельзя подставлять в теорему как установленные факты.</p></section>
 
-<!-- 91 -->
-<section id="slide-91" aria-labelledby="title-91" class="slide lab-slide" data-chapter="10. Интерактивная проверка всей цепочки" data-source="Числа CDPR + явно заданный сценарий" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="composition-lab"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-91">Когда просадка сохраняет общий результат</h2><div class="lab-layout"><div class="lab-inputs"><p id="composition-mode" class="lab-caption">Измеренные частоты 60M</p><div class="presets"><button type="button" data-preset="before">40M</button><button type="button" data-preset="after">60M</button><button type="button" data-preset="compensated">Просадка компенсирована</button><button type="button" data-preset="failure">Просадка не компенсирована</button><button type="button" data-preset="zero">Этап перестал работать</button></div><label class="slider-label" for="lift-q">q подъёма внутри полной задачи<output id="lift-q-value"></output></label><input id="lift-q" type="range" min="0" max="1" step="0.001" value="0.89453125"><label class="slider-label" for="finish-q">q завершения при условии подъёма<output id="finish-q-value"></output></label><input id="finish-q" type="range" min="0" max="1" step="0.001" value="0.7729257642"><p id="composition-readout" class="lab-result" aria-live="polite"></p></div><div class="lab-visual"><svg id="composition-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Полный успех как произведение условных успехов и граница компенсации"></svg><p class="chart-caption">Синяя линия: J = q подъёма × выбранный q завершения. Пунктир: результат 40M. Кружки: измеренные 40M и 60M. Ромб: выбранный сценарий.</p></div></div><p class="note">Изменение ползунка моделирует другие условные частоты. Реальное обучение может менять оба множителя и распределение передачи одновременно. Значение q = 0 на обязательном этапе обнуляет полный успех.</p></section>
+<!-- 97 -->
+<section id="slide-97" aria-labelledby="title-97" class="slide lab-slide" data-chapter="10. Интерактивная проверка всей цепочки" data-source="Числа CDPR + явно заданный сценарий" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="composition-lab"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-97">Когда просадка сохраняет общий результат</h2><div class="lab-layout"><div class="lab-inputs"><p id="composition-mode" class="lab-caption">Измеренные частоты 60M</p><div class="presets"><button type="button" data-preset="before">40M</button><button type="button" data-preset="after">60M</button><button type="button" data-preset="compensated">Просадка компенсирована</button><button type="button" data-preset="failure">Просадка не компенсирована</button><button type="button" data-preset="zero">Этап перестал работать</button></div><label class="slider-label" for="lift-q">q подъёма внутри полной задачи<output id="lift-q-value"></output></label><input id="lift-q" type="range" min="0" max="1" step="0.001" value="0.89453125"><label class="slider-label" for="finish-q">q завершения при условии подъёма<output id="finish-q-value"></output></label><input id="finish-q" type="range" min="0" max="1" step="0.001" value="0.7729257642"><p id="composition-readout" class="lab-result" aria-live="polite"></p></div><div class="lab-visual"><svg id="composition-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Полный успех как произведение условных успехов и граница компенсации"></svg><p class="chart-caption">Синяя линия: J = q подъёма × выбранный q завершения. Пунктир: результат 40M. Кружки: измеренные 40M и 60M. Ромб: выбранный сценарий.</p></div></div><p class="note">Изменение ползунка моделирует другие условные частоты. Реальное обучение может менять оба множителя и распределение передачи одновременно. Значение q = 0 на обязательном этапе обнуляет полный успех.</p></section>
 
-<!-- 92 -->
-<section id="slide-92" aria-labelledby="title-92" class="slide lab-slide" data-chapter="10. Интерактивная проверка всей цепочки" data-source="Числа CDPR + явно заданный сценарий" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="pipeline-signal"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-92">Как композиция связана с сигналом GRPO</h2><div class="lab-layout"><div class="lab-inputs"><p class="lab-caption">Учебная модель одного однородного контекста</p><label class="slider-label" for="signal-lift">q подъёма<output id="signal-lift-value"></output></label><input id="signal-lift" type="range" min="0" max="1" step="0.001" value="0.89453125"><label class="slider-label" for="signal-finish">q завершения<output id="signal-finish-value"></output></label><input id="signal-finish" type="range" min="0" max="1" step="0.001" value="0.7729257642"><p class="lab-formula">p = q подъёма × q завершения</p><p id="signal-readout" class="lab-result" aria-live="polite"></p></div><div class="lab-visual"><svg id="signal-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Вероятность смешанной группы и положение p из композиции"></svg><p class="chart-caption">G = 8. График показывает наличие сравнения, а не скорость обучения. При p → 1 смешанные группы редки, потому что почти всё уже получается.</p></div></div><p class="note">Ползунки связаны с предыдущим слайдом. Здесь дополнительно предполагаем одинаковую p контекстов. Для реальных сцен E_c[P_mix(p_c)] не равно P_mix(J). Частоты оценки CDPR не подставляем как измеренную обучающую p.</p></section>
+<!-- 98 -->
+<section id="slide-98" aria-labelledby="title-98" class="slide " data-chapter="10. Интерактивная проверка всей цепочки" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="signal-reading"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-98">Есть ли в восьми попытках материал для сравнения</h2>
+<p class="explanation">GRPO с бинарной наградой сравнивает успехи с неудачами внутри группы. Если все восемь исходов одинаковы, преимущество от этой награды равно нулю.</p>
+<table class="symbol-table"><tr><th>Успех одной попытки p</th><th>Шанс смешанной группы из 8</th></tr><tr><td>1%</td><td>7,73% — почти всегда восемь неудач</td></tr><tr><td>50%</td><td>99,22% — почти всегда есть оба исхода</td></tr><tr><td>99%</td><td>7,73% — почти всегда восемь успехов</td></tr></table>
+<p class="terms">На следующем графике x — p одного контекста; y — доля групп с обоими исходами. Ползунки задают p через композицию; точка показывает выбранный сценарий.</p>
+<p class="note">Падение графика справа означает, что неудачи уже редки. Оно не означает ухудшение политики. Максимум около p = 50% не задаёт оптимальную скорость обучения.</p></section>
 
-<!-- 93 -->
-<section id="slide-93" aria-labelledby="title-93" class="slide lab-slide" data-chapter="10. Интерактивная проверка всей цепочки" data-source="Числа CDPR + явно заданный сценарий" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="step-lab"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-93">Чего численная граница обновления ещё не обещает</h2><div class="lab-layout"><div class="lab-inputs"><p class="lab-caption">Тот же сценарий J, но L и максимальная KL заданы вручную</p><label class="slider-label" for="local-gain">Локальный выигрыш L, процентных пунктов<output id="local-gain-value"></output></label><input id="local-gain" type="range" min="0" max="10" step="0.1" value="2"><label class="slider-label" for="max-kl">log₁₀ максимальной KL δ<output id="max-kl-value"></output></label><input id="max-kl" type="range" min="-7" max="-2" step="0.05" value="-5"><label for="bound-horizon">Горизонт H</label><select id="bound-horizon"><option value="128">128 решений, полная задача CDPR</option><option value="40">40 решений, короткая задача</option></select><p id="bound-readout" class="lab-result"></p></div><div class="lab-visual"><svg id="bound-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Локальный прогноз и нижняя граница успеха при изменении максимальной KL"></svg><p class="chart-caption">J_new ≥ J + L − H(H − 1)δ/2. Ось x: log₁₀ δ. Учитываем также тривиальную границу J_new ≥ 0.</p></div></div><p class="note">δ здесь — sup KL по состояниям, не средняя approx_kl. При H = 128 и δ = 0,009 штраф равен 73,152: оценка бессодержательна. D, покрытие и ε_upd тоже не измерены; график не является сертификатом сходимости.</p></section>
+<!-- 99 -->
+<section id="slide-99" aria-labelledby="title-99" class="slide lab-slide" data-chapter="10. Интерактивная проверка всей цепочки" data-source="Числа CDPR + явно заданный сценарий" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="pipeline-signal"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-99">Как часто GRPO получает разные исходы в группе</h2><div class="lab-layout"><div class="lab-inputs"><p class="lab-caption">Учебная модель одного однородного контекста</p><label class="slider-label" for="signal-lift">q подъёма<output id="signal-lift-value"></output></label><input id="signal-lift" type="range" min="0" max="1" step="0.001" value="0.89453125"><label class="slider-label" for="signal-finish">q завершения<output id="signal-finish-value"></output></label><input id="signal-finish" type="range" min="0" max="1" step="0.001" value="0.7729257642"><p class="lab-formula">p = q подъёма × q завершения</p><p id="signal-readout" class="lab-result" aria-live="polite"></p></div><div class="lab-visual"><svg id="signal-plot" class="teaching-chart" viewBox="0 0 620 330" role="img" aria-label="Вероятность смешанной группы и положение p из композиции"></svg><p class="chart-caption">Кривая: P_mix(p, 8) = 1 − p⁸ − (1 − p)⁸. Точка: p выбранного сценария. Двигайте ползунки: точка перемещается по одной и той же кривой. По оси x — успех, не время обучения.</p></div></div><p class="note">Ползунки связаны с предыдущим слайдом. Здесь дополнительно предполагаем одинаковую p контекстов. Для реальных сцен E_c[P_mix(p_c)] не равно P_mix(J). Частоты оценки CDPR не подставляем как измеренную обучающую p.</p></section>
 
-<!-- 94 -->
-<section id="slide-94" aria-labelledby="title-94" class="slide " data-chapter="Итог и условия" data-source="Теорема 8.1">
+<!-- 100 -->
+<section id="slide-100" aria-labelledby="title-100" class="slide wide-equation" data-chapter="10. Интерактивная проверка всей цепочки" data-source="Теоретическая глава: условия и доказательства" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf" data-key="bound-reading"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-100">Перекрывает ли польза шага ошибку прогноза</h2>
+<div class="equation">\[ J_{\rm new}\ge J+L-\underbrace{\tfrac12H(H-1)\delta}_{\text{запас на ошибку прогноза}} \]</div>
+<p class="explanation">При J = 69,14%, L = 2 п.п. и H = 128 локальный прогноз равен 71,14%. Но из него ещё вычитается штраф за изменение политики.</p>
+<table class="symbol-table"><tr><th>Максимальная KL δ</th><th>Штраф</th><th>Нижняя граница</th></tr><tr><td>10⁻⁷</td><td>0,0813 п.п.</td><td>71,06% — выше текущего J</td></tr><tr><td>10⁻⁵</td><td>8,128 п.п.</td><td>63,01% — роста не установлено</td></tr></table>
+<p class="note">Следующий график показывает этот минимум при разных δ. Снижение границы не предсказывает снижение фактического успеха: растёт неопределённость оценки. L и максимальная KL здесь заданы как сценарий.</p></section>
+
+<!-- 101 -->
+<section id="slide-101" aria-labelledby="title-101" class="slide lab-slide" data-chapter="10. Интерактивная проверка всей цепочки" data-source="Числа CDPR + явно заданный сценарий" data-source-url="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/docs/reports/campaign/CDPR_60M_CONTROL_REVIEW_20261104.md" data-key="step-lab"><p class="kicker">10. Интерактивная проверка всей цепочки</p><h2 id="title-101">Когда нижняя граница подтверждает улучшение</h2><div class="lab-layout"><div class="lab-inputs"><p class="lab-caption">Тот же сценарий J, но L и максимальная KL заданы вручную</p><label class="slider-label" for="local-gain">Локальный выигрыш L, процентных пунктов<output id="local-gain-value"></output></label><input id="local-gain" type="range" min="0" max="10" step="0.1" value="2"><label class="slider-label" for="max-kl">Максимальная KL δ<output id="max-kl-value"></output></label><input id="max-kl" type="range" min="-7" max="-2" step="0.05" value="-5"><label for="bound-horizon">Горизонт H</label><select id="bound-horizon"><option value="128">128 решений, полная задача CDPR</option><option value="40">40 решений, короткая задача</option></select><p id="bound-readout" class="lab-result"></p></div><div class="lab-visual"><p id="bound-calculation" class="lab-caption" aria-live="polite"></p><svg id="bound-plot" class="teaching-chart" viewBox="0 0 620 300" role="img" aria-label="Локальный прогноз и нижняя граница успеха при изменении максимальной KL"></svg><p class="chart-caption">Синяя: нижняя граница; пунктир: текущий J; точка: выбранная δ. Левее вертикального порога граница выше J. Деления KL отличаются в 10 раз.</p></div></div><p class="note">δ — максимальная KL, не средняя approx_kl. Граница ниже J не устанавливает рост; ноль ничего не обещает. Фактический успех график не предсказывает.</p></section>
+
+<!-- 102 -->
+<section id="slide-102" aria-labelledby="title-102" class="slide " data-chapter="Итог и условия" data-source="Теорема 8.1">
 <p class="kicker">Итог и условия</p>
-<h2 id="title-94">Каждый этап пайплайна решает конкретную проблему</h2>
+<h2 id="title-102">Каждый этап пайплайна решает конкретную проблему</h2>
 <ol class="route summary-route">
 <li><b>Плотная награда и лёгкие старты</b><span>дают первые различающиеся исходы.</span></li>
 <li><b>RL отдельных навыков</b><span>повышает качество каждого этапа.</span></li>
@@ -980,10 +1037,10 @@
 <p class="note">Теория объясняет назначение этапов. Их фактический эффект проверяем на целевых стартах и по строгому критерию успеха.</p>
 </section>
 
-<!-- 95 -->
-<section id="slide-95" aria-labelledby="title-95" class="slide " data-chapter="Итог и условия" data-source="§ 9–10">
+<!-- 103 -->
+<section id="slide-103" aria-labelledby="title-103" class="slide " data-chapter="Итог и условия" data-source="§ 9–10">
 <p class="kicker">Итог и условия</p>
-<h2 id="title-95">Что нужно проверить в эксперименте</h2>
+<h2 id="title-103">Что нужно проверить в эксперименте</h2>
 <ul class="checks">
 <li>Есть ли смешанные группы на текущей задаче?</li>
 <li>Сохраняются ли навыки под итоговой инструкцией?</li>
@@ -994,10 +1051,10 @@
 <p class="note">Отдельно измеряем успех стохастической политики обучения и детерминированного исполнения. Утверждение «без внешних демонстраций» требует аудита происхождения действий.</p>
 </section>
 
-<!-- 96 -->
-<section id="slide-96" aria-labelledby="title-96" class="slide sources-slide" data-chapter="Итог и условия" data-source="">
+<!-- 104 -->
+<section id="slide-104" aria-labelledby="title-104" class="slide sources-slide" data-chapter="Итог и условия" data-source="">
 <p class="kicker">Итог и условия</p>
-<h2 id="title-96">Полные формулировки и доказательства</h2>
+<h2 id="title-104">Полные формулировки и доказательства</h2>
 <p class="lead">Здесь разобрана логика теоретического черновика. Полные условия и доказательства находятся в главе.</p>
 <ul class="source-list">
 <li><a href="https://github.com/damurka5/RL_VLA_Bootstrapping/blob/main/ral_submission/theory/rl_only_justification_ru/main.pdf">Теоретическая глава, PDF</a></li>
@@ -1020,6 +1077,7 @@
 <tr><td>$\theta$, $\pi_\theta$, $\tau$</td><td>Параметры головы, политика с этими параметрами, одна полная траектория.</td></tr>
 <tr><td>$F$, $\Phi$</td><td>Возрастающее преобразование p и средняя преобразованная цель. Они не измеряются в процентах успеха.</td></tr>
 <tr><td>$\Gamma_j$, $T_j$</td><td>Запас на смену инструкции и рассогласование передачи. В этой оценке CDPR не измерены.</td></tr>
+<tr><td>$D_{\rm ref}$</td><td>Сумма средних KL от замороженного эталона к текущей политике по H шагам на состояниях сохраняемого навыка. Задаёт границу сохранения.</td></tr>
 <tr><td>$D$, $C_h$, $\varepsilon_{\rm upd}$</td><td>Удалённость начальной политики, покрытие и ошибка обновления. D_back отдельно обозначает порог возврата curriculum.</td></tr>
 <tr><td>$\omega_h^\pi$, $\delta$</td><td>Распределение состояний на шаге h и максимум KL для границы обновления. Средняя KL не заменяет максимум.</td></tr></table></dialog>
 <div class="controls" aria-label="Управление презентацией">
@@ -1251,6 +1309,6 @@
   }
 })();
 </script>
-<script type="module" src="interactive.mjs"></script>
+<script type="module" src="interactive.mjs?v=20261106-explanations2"></script>
 </body>
 </html>

@@ -38,3 +38,9 @@ KaTeX загружается с CDN; графики работают локал�
 Ссылки на разделы поддерживают числовой слайд и смысловой ключ, например
 `#gradient-start`, `#baseline-p`, `#objective-graph`, `#groups-graph`,
 `#composition-lab`, `#pipeline-signal`, `#step-lab`.
+
+Смысловые вводные: `#update-motivation`, `#convergence-motivation`, `#replay-motivation`.
+Вывод границы сохранения: `#anchor-kl`, `#anchor-root`; баланс размера шага: `#rate-balance`.
+Как читать итоговые графики: `#signal-reading`, `#bound-reading`.
+В графике границы ось KL логарифмическая; вертикаль отмечает δ = 2L/[H(H−1)],
+где граница совпадает с текущим J. Слева от порога при L > 0 граница выше J.

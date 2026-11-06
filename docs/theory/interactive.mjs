@@ -15,10 +15,10 @@ function element(parent, tag, attrs = {}, content) {
   return node;
 }
 function plot(id, { xmin = 0, xmax = 1, ymin = 0, ymax = 1, xticks = [0, .25, .5, .75, 1],
-  yticks = [0, .25, .5, .75, 1], xformat = v => number(v, 2), yformat = v => number(v, 2), xlabel = 'Вероятность', ylabel = '' } = {}) {
+  yticks = [0, .25, .5, .75, 1], xformat = v => number(v, 2), yformat = v => number(v, 2), xlabel = 'Вероятность', ylabel = '', height = 330 } = {}) {
   const svg = $(id);
   svg.replaceChildren();
-  const L = 60, R = 20, T = 40, B = 52, W = 620, H = 330;
+  const L = 60, R = 20, T = 40, B = 52, W = 620, H = height;
   const x = v => L + (v - xmin) / (xmax - xmin) * (W - L - R);
   const y = v => H - B - (v - ymin) / (ymax - ymin) * (H - T - B);
   for (const v of yticks) {
@@ -131,10 +131,10 @@ function drawComposition() {
 }
 function drawSignal() {
   const value = composition(state.lift, state.finish);
-  const mix = mixProbability(value), coefficient = finiteCoefficient(value);
-  text('signal-readout', `p модели = ${percent(value)}. P_mix(p, 8) = ${percent(mix)}. c₈(p) = ${number(coefficient)}.${value===0||value===1 ? ' Все группы одинаковы: сигнал награды нулевой. c₈ на границе — только непрерывный предел.' : ' Ненулевой сигнал ещё не гарантирует рост после реального шага.'}`);
-  const p = plot('signal-plot', { xlabel: 'p = q подъёма × q завершения, один контекст', ylabel: 'P смешанной группы', yformat: v => number(100*v,0)+'%' });
-  p.line(v => mixProbability(v)); p.dot(value, mix);
+  const mix = mixProbability(value);
+  text('signal-readout', `p одной попытки = ${percent(value)}. Из 100 групп в среднем ${number(100*mix,1)} содержат и успех, и неудачу.${value===0||value===1 ? ' Все группы одинаковы: сигнал этой награды нулевой.' : ' Это возможность сравнения, не величина улучшения.'}`);
+  const p = plot('signal-plot', { xlabel: 'p: успех одной попытки', ylabel: 'P_mix: смешанных групп из 8', xformat: v => number(100*v,0)+'%', yformat: v => number(100*v,0)+'%' });
+  p.line(v => mixProbability(v)); p.dot(value, mix, 'сценарий', value>.8 ? -82:8, mix>.85?20:-10);
 }
 function drawBound() {
   const success = composition(state.lift, state.finish);
@@ -142,11 +142,18 @@ function drawBound() {
   const logarithm = rangeValue('max-kl', v => 'δ = ' + (10**v).toExponential(2).replace('.',','));
   const delta = 10 ** logarithm, H = Number($('bound-horizon').value);
   const result = trustBound(success, gain, H, delta);
-  text('bound-readout', `H = ${H}. Штраф = ${number(result.penalty,4)}. Условная нижняя граница J_new ≥ ${percent(result.lower)}. ${result.raw <= 0 ? 'Осталась только тривиальная граница ноль.' : result.lower > success ? 'При заданных условиях граница выше текущего J.' : 'Эта граница не доказывает улучшение.'}`);
-  const p = plot('bound-plot', { xmin:-7,xmax:-2,xticks:[-7,-6,-5,-4,-3,-2],xlabel:'log₁₀ δ, максимальная KL (заданный сценарий)',
-    ylabel:'Условная нижняя граница J_new', ymax:1.1, xformat:v=>String(v), yformat:v=>number(100*v,0)+'%' });
+  text('bound-readout', `Нижняя граница: ${percent(result.lower)}. Текущий J: ${percent(success)}. ${result.raw <= 0 ? 'Осталась лишь граница ноль.' : result.lower > success ? 'При этих условиях рост установлен.' : 'Эта оценка не устанавливает рост.'}`);
+  text('bound-calculation', `Расчёт: ${percent(success)} + ${number(100*gain,1)} п.п. − ${number(100*result.penalty,3)} п.п. = ${percent(result.raw)} до ограничения снизу нулём.`);
+  const p = plot('bound-plot', { height:300, xmin:-7,xmax:-2,xticks:[-7,-6,-5,-4,-3,-2],xlabel:'δ: максимальная KL, логарифмическая шкала',
+    ylabel:'Условная нижняя граница J_new', ymax:1.1, xformat:v=>'10'+({'-7':'⁻⁷','-6':'⁻⁶','-5':'⁻⁵','-4':'⁻⁴','-3':'⁻³','-2':'⁻²'}[v]), yformat:v=>number(100*v,0)+'%' });
   p.line(v=>trustBound(success,gain,H,10**v).lower);
   p.line(()=>success,'secondary');
+  const critical = 2*gain/(H*(H-1));
+  if (critical >= 1e-7 && critical <= 1e-2) {
+    const x = p.x(Math.log10(critical));
+    element(p.svg,'line',{x1:x,x2:x,y1:p.y(0),y2:p.y(1.05),class:'secondary'});
+    element(p.svg,'text',{x:x+6,y:p.y(1.02)},'порог роста');
+  }
   p.dot(logarithm, result.lower);
 }
 for (const [id,key] of [['lift-q','lift'],['finish-q','finish'],['signal-lift','lift'],['signal-finish','finish']]) {
