@@ -1,4 +1,4 @@
-\subsection{Intermediate Feedback on LIBERO-Spatial}\label{sec:libero_results}
-This experiment compares feedback for complete manipulation instructions, using OpenVLA-OFT and SimpleVLA-RL to hold the backbone and training framework fixed across reward conditions~\cite{openvlaoft,simplevlarl}. It tests an ingredient of the adaptation pipeline; the complete training schedule is evaluated on the CDPR.
+\subsection{How does intermediate feedback affect learning?}\label{sec:libero_results}
+For the LIBERO reward comparison, we fine-tuned OpenVLA-OFT with SimpleVLA-RL on ten LIBERO-Spatial tasks. Each suite run began at 61.0\% success and used 300 rollouts per evaluation. We kept the native benchmark success criterion. Terminal feedback rewards complete-task success, phase feedback additionally rewards milestone completion, and dense feedback additionally rewards improvement within the current phase.
 
-We fine-tune with LoRA on the ten LIBERO-Spatial tasks~\cite{libero}, using the feedback variants in Section~\ref{sec:composition}. All runs share a 61.0\% initialization and use 300 validation rollouts per endpoint. The terminal-only baseline is trained with SimpleVLA-RL under the same 160-update budget and terminal verifier coefficient 5 as the dense-and-phase condition. The phase-only condition uses phase-completion bonuses with terminal verifier coefficient 1 and a 110-update budget.
+\input{tables/libero_results}

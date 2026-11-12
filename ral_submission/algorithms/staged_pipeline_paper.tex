@@ -1,44 +1,14 @@
-% Method-level schedule. Automatic stopping is implemented for WX200;
-% the historical CDPR sequence used validation-guided manual transitions.
 \begin{algorithm}[!t]
 \caption{Staged VLA adaptation}
 \label{alg:paper_pipeline}
 \small
 \begin{algorithmic}[1]
-\Require Pretrained VLA, simple-skill instructions, fixed evaluations
-\State Load the pretrained VLA; initialize a residual and success banks
-\For{reward mode: dense acquisition, then binary refinement}
-    \For{skill: approach, pickup, placement}
-        \Repeat
-            \State Collect same-scene rollout groups for the skill
-            \State Update with $\mathcal L_{\rm RL}$; retain successful trajectories
-            \State Evaluate skill success
-        \Until{target, plateau, or stage budget ends training}
-        \State Evaluate retention of all learned skills
-        \If{earlier skills have degraded}
-            \State Balance earlier and current successful experience
-            \State Fit $\mathcal L_{\rm SI}$; validate recovery and retention
-        \EndIf
-    \EndFor
-\EndFor
-\State Initialize full-task learning from the consolidated base policy
-\Repeat
-    \State Collect full-task rollouts from empty-gripper starts
-    \State Assign milestone credit; protect achieved prefix skills
-    \State Update with $\mathcal L_{\rm RL}$; evaluate complete-task success
-\Until{target, plateau, or full-task budget ends training}
-\If{composition plateaus and budget remains}
-    \State Freeze VLA/LoRA; retain the bounded residual
-    \State Reset optimizer; keep milestone rewards unchanged
-    \Repeat
-        \State Collect full-task groups; execute clipped commands
-        \State Store pre-clipping samples and episode offsets
-        \State Score samples conditional on their stored offsets
-        \State Assign milestone credit; protect achieved prefix skills
-        \State Update residual and exploration with $\mathcal L_{\rm RL}$
-        \State Evaluate complete-task success
-    \Until{target, renewed plateau, or budget exhaustion}
-\EndIf
-\State \Return One policy for the complete instruction
+\State Load the pretrained VLA, initialize the residual controller, and create successful-trajectory banks.
+\State Train approach, pickup, and placement separately with dense rewards, using each skill's instruction and reset conditions.
+\State After each skill, evaluate the earlier skills. If they have degraded, fit the shared policy to a balanced bank of earlier and recent successes and evaluate it again.
+\State Refine the skills with binary completion rewards, repeating the retention checks and recovery when needed.
+\State Relabel successful skill trajectories with the complete instruction. Collect compatible segments for composition and fit their actions under that instruction.
+\State Train the complete task from empty-gripper starts with milestone feedback, and evaluate complete-task success.
+\State If composition plateaus and the budget permits, freeze the VLA and its adapters, retain the learned residual, reset the optimizer, and continue full-task RL with the same milestone rewards. In the CDPR continuation, likelihoods are evaluated on stored pre-clipping samples conditional on their recorded episode offsets.
 \end{algorithmic}
 \end{algorithm}

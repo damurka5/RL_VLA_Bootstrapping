@@ -1,2 +1,6 @@
-The adapted controller completes 1,416 of 2,048 development attempts (69.14\% strict success; Table~\ref{tab:cdpr}). Physical grasp occurs in 92.14\% of attempts and held lift in 89.45\%. Completion rates are 774/1,028 (75.29\%) for plates and 642/1,020 (62.94\%) for bowls. Carry slips (19.43\%) and wrong placements (14.89\%) remain the main failure modes. A matched comparison with the preceding controller yields an 8.35 percentage-point strict-success gain (scene-clustered paired 95\% interval: 6.05--10.69 points; Holm-adjusted $p=0.00005$), with improved grasp and lift. Numerical failures are 24/2,048 (1.17\%); their change is not distinguishable from zero in this comparison.
+\subsection{Execution under one instruction}\label{sec:cdpr_results}
+For the complete CDPR task, we evaluated 512 development scenes outside the training validation panel, with four attempts per scene. Each attempt allowed up to 128 decisions. Strict success required the robot to grasp the object, lift it while held, and deliberately release it at the correct destination without a carry slip or wrong placement. Numerical failures counted as failed attempts. Evaluation used only the learned controller, while training included scripted and assisted trajectories.
+
 \input{tables/cdpr_results}
+
+Under the full instruction, the CDPR policy lifted the object in 1,832 of 2,048 attempts and completed 1,416. Thus 416 attempts failed after the robot had already achieved pickup. Placement was more often successful on the plate than in the bowl.
