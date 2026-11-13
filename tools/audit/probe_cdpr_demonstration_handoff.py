@@ -178,7 +178,8 @@ def _score(collector, reset, low, caught, active, diagnostics, *, state=None):
         thresholds=collector._task_thresholds(),
         move_to_distance_reward=collector.move_to_distance_reward,
         catch_release_dense_reward=collector.catch_release_dense_reward,
-        bilateral_contact=diagnostics['bilateral_contact'])
+        bilateral_contact=diagnostics['bilateral_contact'],
+        loaded_finger_contact=diagnostics.get('loaded_finger_contact'))
 
 
 def run_job(world, recording, job, task, *, group_size, position_tolerance,

@@ -276,6 +276,11 @@
                         <geom name="left_finger_pad" class="finger_pad_collision"
                               type="box" size="0.017 0.002 0.010"
                               pos="0.027 -0.009 0"/>
+                        <!-- Contact geoms are hidden from policy cameras.
+                             Render the actual pad surface as a visual only box. -->
+                        <geom name="left_finger_pad_visual" class="wx200_visual"
+                              type="box" size="0.017 0.002 0.010"
+                              pos="0.027 -0.009 0"/>
                       </body>
 
                       <body name="right_finger_link" pos="0 0 0">
@@ -288,6 +293,9 @@
                         <geom name="right_finger_visual" class="wx200_visual" mesh="wx200_gripper_finger"
                               pos="0 -0.005 0" euler="0 3.1415927 0"/>
                         <geom name="right_finger_pad" class="finger_pad_collision"
+                              type="box" size="0.017 0.002 0.010"
+                              pos="0.027 0.009 0"/>
+                        <geom name="right_finger_pad_visual" class="wx200_visual"
                               type="box" size="0.017 0.002 0.010"
                               pos="0.027 0.009 0"/>
                       </body>

@@ -28,6 +28,7 @@ from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
     gather_world_slots,
 )
 from rl_vla_bootstrapping.simulation.cdpr_object_catalog import (
+    ACTIVE_EMBODIMENT,
     ACTIVE_CDPR_CATALOGS,
     BOWL_CATALOG,
     CAUGHT_START_GRIP_SQUEEZE,
@@ -1364,6 +1365,9 @@ class BatchedReverseFrontierResetter:
         self.support_surface_z = float(support_surface_z)
         self.balanced_target_catalogs = bool(balanced_target_catalogs)
         metadata = dict(task_metadata or {})
+        self.contact_based_grasp = (
+            getattr(backend, "embodiment", ACTIVE_EMBODIMENT) == "widowx200"
+        )
 
         def flag(key: str, default: bool = False) -> bool:
             value = metadata.get(key, default)
@@ -1386,6 +1390,14 @@ class BatchedReverseFrontierResetter:
             except (TypeError, ValueError):
                 low, high = default
             return (min(low, high), max(low, high))
+
+        # A 1 cm hover puts the pads through elongated objects at some yaws.
+        # Keep open aligned/uncaught starts above the object instead of seeding
+        # a wedged lift before the policy has executed a closing action.
+        self.open_grasp_hover_height = max(
+            number("open_grasp_hover_height", 0.04 if self.contact_based_grasp else 0.01),
+            0.0,
+        )
 
         self.random_workspace_gripper_start = flag(
             "random_workspace_gripper_start", False
@@ -2846,7 +2858,7 @@ class BatchedReverseFrontierResetter:
                 object_positions_group[:, 0],
             )
             uncaught_ee = target_position.clone()
-            uncaught_ee[:, 2] += grasp_offset + 0.01
+            uncaught_ee[:, 2] += grasp_offset + self.open_grasp_hover_height
             ee_group = torch.where(
                 uncaught_container[:, None], uncaught_ee, ee_group
             )
@@ -2879,11 +2891,9 @@ class BatchedReverseFrontierResetter:
                 uncaught_object,
                 object_positions_group[:, 0],
             )
-            # One centimetre above the grasp height, pads bracketing the object
-            # without touching it -- the same pose the aligned pick_up stage
-            # uses, so the two curricula hand off in the same state.
+            # The same clear open hover as aligned pickup starts.
             uncaught_ee = uncaught_object.clone()
-            uncaught_ee[:, 2] += grasp_offset + 0.01
+            uncaught_ee[:, 2] += grasp_offset + self.open_grasp_hover_height
             ee_group = torch.where(
                 uncaught_container[:, None], uncaught_ee, ee_group
             )
@@ -2893,16 +2903,14 @@ class BatchedReverseFrontierResetter:
         caught_ee[:, 2] += grasp_offset
         ee_group = torch.where(caught_group[:, None], caught_ee, ee_group)
         grasp_pose = caught_object_position.clone()
-        # 1 cm above the grasp height: pads bracketing the object, not yet closed.
-        grasp_pose[:, 2] += grasp_offset + 0.01
+        grasp_pose[:, 2] += grasp_offset + self.open_grasp_hover_height
         ee_group = torch.where(
             (grasp_learning & (shell_group == 5))[:, None],
             grasp_pose,
             ee_group,
         )
         # Aligned starts reuse the same pose the shell curriculum already uses
-        # for this phase -- object XY, one centimetre above the grasp height, so
-        # the pads bracket the object without touching it. Deliberately NOT
+        # for this phase -- object XY, above the grasp height. Deliberately NOT
         # folded into caught_group: that path closes the gripper to the fitted
         # opening and seeds grasped/ever_grasped/physical_grasp, which would
         # hand over the very action this stage exists to train.
@@ -3014,6 +3022,26 @@ class BatchedReverseFrontierResetter:
             object_quaternions,
         )
 
+        # WidowX checks the ACTUAL device contacts after the final teleport.
+        # This also repairs near-object random pickup starts, not just the
+        # explicitly aligned starts. Caught starts intentionally have contact.
+        penetration = getattr(self.backend, "grasp_start_penetration", None)
+        if self.contact_based_grasp and penetration is not None:
+            empty_grasp = (pick_up_task | uncaught_container) & ~caught_group
+            world_slots = target_slot_group.repeat_interleave(group_size)
+            for attempt in range(7):
+                depth = penetration(world_slots).reshape(groups, group_size).amax(dim=1)
+                blocked = empty_grasp & (depth > 0.001)
+                if not bool(blocked.any().item()):
+                    break
+                if attempt == 6:
+                    raise RuntimeError("Cannot create a collision-free open WidowX grasp start within controller bounds.")
+                ee_group[:, 2] += blocked.to(ee_group.dtype) * 0.01
+                self.backend.set_end_effector_poses(
+                    ee_group.repeat_interleave(group_size, dim=0),
+                    yaw_group.repeat_interleave(group_size, dim=0),
+                )
+
         texture_group = torch.randint(
             0, 7, (groups,), generator=generator, device=self.device
         )
@@ -3046,6 +3074,7 @@ class BatchedReverseFrontierResetter:
             torch.full_like(fitted, 0.55), (fitted + 0.04).clamp(max=1.0)
         )
         task_state = BatchedTaskState(
+            contact_based_grasp=self.contact_based_grasp,
             instruction_ids=task_ids,
             target_slots=target_slots,
             reference_slots=reference_slots,
@@ -3404,6 +3433,7 @@ class FullTaskSceneResetter:
         )
 
         task_state = BatchedTaskState(
+            contact_based_grasp=(getattr(self.backend, "embodiment", ACTIVE_EMBODIMENT) == "widowx200"),
             instruction_ids=task_ids,
             target_slots=target_slots,
             reference_slots=reference_slots,
@@ -3983,11 +4013,10 @@ class RankLocalMJWarpGRPOCollector:
             <= float(_GRASP_MAX_RELATIVE_ORIENTATION_SLIP_RAD)
         )
         contacts = self.backend.finger_object_contact_metrics(target_slots)
-        force_ok = (
-            contacts.left_normal_force >= float(_GRASP_MIN_PAD_FORCE_N)
-        ) & (
-            contacts.right_normal_force >= float(_GRASP_MIN_PAD_FORCE_N)
-        )
+        left_loaded = contacts.left_normal_force >= float(_GRASP_MIN_PAD_FORCE_N)
+        right_loaded = contacts.right_normal_force >= float(_GRASP_MIN_PAD_FORCE_N)
+        force_ok = left_loaded & right_loaded
+        loaded_finger_contact = (left_loaded | right_loaded) & active_mask
         persistent_candidate = (
             reset.grasp_eligible
             & active_mask
@@ -4016,8 +4045,9 @@ class RankLocalMJWarpGRPOCollector:
                 reset.bilateral_contact_steps
                 >= int(_GRASP_PERSISTENCE_STEPS)
             )
-            & ~release_open
         )
+        if not getattr(reset.task_state, "contact_based_grasp", False):
+            physical_grasp &= ~release_open
         reset.physical_grasp.copy_(physical_grasp)
         reset.previous_relative_position.copy_(relative_position)
         reset.previous_relative_quaternion.copy_(relative_quaternion)
@@ -4033,6 +4063,9 @@ class RankLocalMJWarpGRPOCollector:
         # full-sigma Gaussian one, and is LOWEST during the fastest lift, so the
         # expected reading is a reject rate at or near zero.
         contact_loaded = contacts.bilateral_contact & force_ok
+        physical_release = reset.task_state.ever_grasped & ~physical_grasp & release_open
+        if getattr(reset.task_state, "contact_based_grasp", False):
+            physical_release &= ~loaded_finger_contact
         diagnostics = {
             "bilateral_contact": contacts.bilateral_contact,
             "left_pad_force_n": contacts.left_normal_force,
@@ -4041,6 +4074,7 @@ class RankLocalMJWarpGRPOCollector:
             "relative_orientation_slip_rad": relative_orientation_slip,
             "stable_relative_pose": stable_relative_pose,
             "contact_loaded": contact_loaded,
+            "loaded_finger_contact": loaded_finger_contact,
             "contact_loaded_pose_rejected": contact_loaded & ~stable_relative_pose,
             "slip_while_loaded_m": self.torch.where(
                 contact_loaded,
@@ -4049,9 +4083,7 @@ class RankLocalMJWarpGRPOCollector:
             ),
             "physically_lifted": lifted,
             "physical_grasp": physical_grasp,
-            "physical_release": reset.task_state.ever_grasped
-            & ~physical_grasp
-            & release_open,
+            "physical_release": physical_release,
         }
         return low_dim, physical_grasp, diagnostics
 
@@ -4188,6 +4220,7 @@ class RankLocalMJWarpGRPOCollector:
                 "physical_grasp",
                 "physical_release",
                 "contact_loaded",
+                "loaded_finger_contact",
                 "contact_loaded_pose_rejected",
                 "slip_while_loaded_m",
             )
@@ -4644,6 +4677,7 @@ class RankLocalMJWarpGRPOCollector:
                         self.catch_release_dense_reward
                     ),
                     bilateral_contact=grasp_diagnostics["bilateral_contact"],
+                    loaded_finger_contact=grasp_diagnostics["loaded_finger_contact"],
                 )
                 if self.three_stage_sparse_credit:
                     three_stage = advance_three_stage_milestones(
@@ -5317,6 +5351,11 @@ class RankLocalMJWarpGRPOCollector:
                 grasp_diagnostic_totals["physical_release"].item()
                 / grasp_denominator
             ),
+            "loaded_finger_contact_rate": float(
+                grasp_diagnostic_totals["loaded_finger_contact"].item()
+                / grasp_denominator
+            ),
+            "grasp_contract_version": 2.0 if getattr(reset.task_state, "contact_based_grasp", False) else 1.0,
             # Contact-conditioned pose test. relative_position_slip_mean_m above
             # is NOT gated on contact and mostly measures approach speed; these
             # are the ones that say whether the 8 mm stability bound rejects a
@@ -5656,6 +5695,7 @@ class RankLocalMJWarpGRPOCollector:
                         bilateral_contact=grasp_diagnostics[
                             "bilateral_contact"
                         ],
+                        loaded_finger_contact=grasp_diagnostics["loaded_finger_contact"],
                     )
                     if self.three_stage_sparse_credit:
                         three_stage = advance_three_stage_milestones(
@@ -5742,6 +5782,7 @@ class RankLocalMJWarpGRPOCollector:
                     sampled_actions.item()
                 ),
                 "validation/episodes_per_rank": float(worlds),
+                "validation/grasp_contract_version": 2.0 if getattr(reset.task_state, "contact_based_grasp", False) else 1.0,
                 "validation/controller_ceiling_z_m": float(ceiling_z),
                 **(
                     {

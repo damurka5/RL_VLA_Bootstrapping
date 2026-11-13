@@ -224,10 +224,17 @@ class _Recording:
     reset_object_xyz: Any = None  # true pre-action pose, not object_xyz[0]
     reset_ee_xyz: Any = None
     source_key: str = ""
+    # Version the scoring contract; absent fields keep historical recordings
+    # on opening-v1 rather than silently rescoring them under new semantics.
+    contact_based_grasp: bool = False
+    loaded_finger_contact: Any = None  # [S, W], either pad carries solved load
+    reset_object_quaternions: Any = None
+    reset_ee_quaternion: Any = None
 
     _OPTIONAL_ARRAYS = (
         "states", "priors", "target_catalog_ids", "diverged_world_mask",
         "reset_object_xyz", "reset_ee_xyz",
+        "loaded_finger_contact", "reset_object_quaternions", "reset_ee_quaternion",
     )
     _REQUIRED_ARRAYS = (
         "actions", "active", "success", "terminated", "caught_target",
@@ -246,7 +253,23 @@ class _Recording:
     _OPTIONAL_SCALARS = (
         ("start_distance_cap", np.float64, float("nan")),
         ("source_key", np.str_, ""),
+        ("contact_based_grasp", np.bool_, False),
     )
+
+    @property
+    def held_mask(self) -> np.ndarray:
+        if self.contact_based_grasp:
+            return self.caught_target.astype(bool)
+        return self.caught_target & (self.gripper_opening <= 0.94)
+
+    def release_mask(self, minimum_opening: float = 0.55) -> np.ndarray:
+        bar = np.maximum(self.release_threshold, float(minimum_opening))
+        released = self.gripper_opening >= bar[None, :]
+        if self.contact_based_grasp:
+            if self.loaded_finger_contact is None:
+                raise ValueError("Contact-v2 recordings require loaded_finger_contact to reconstruct release.")
+            released &= self.active & ~self.caught_target.astype(bool) & ~self.loaded_finger_contact.astype(bool)
+        return released
 
     @property
     def has_observations(self) -> bool:
@@ -653,6 +676,15 @@ class _RoundRecorder:
             initial_low = backend.low_dim_observations()
             self.reset_object_xyz = _host_float(initial_low.object_positions).copy()
             self.reset_ee_xyz = _host_float(initial_low.ee_position).copy()
+            self.contact_based_grasp = bool(getattr(reset.task_state, "contact_based_grasp", False))
+            self.reset_object_quaternions = (
+                _host_float(initial_low.object_quaternions).copy()
+                if hasattr(initial_low, "object_quaternions") else None
+            )
+            self.reset_ee_quaternion = (
+                _host_float(initial_low.ee_quaternion).copy()
+                if hasattr(initial_low, "ee_quaternion") else None
+            )
             # `reset.physical_grasp` is LIVE state the grasp detector writes
             # into on every env step, so reading it when the recording is
             # assembled -- after the round -- gives the FINAL grasp, gated on
@@ -730,6 +762,11 @@ class _RoundRecorder:
                     "ee_xyz": _host_float(kwargs["ee_position"]),
                     "gripper_opening": _host_float(kwargs["gripper_opening"]),
                     "object_xyz": _host_float(kwargs["object_positions"]),
+                    "loaded_finger_contact": _host_bool(
+                        kwargs.get("loaded_finger_contact")
+                        if kwargs.get("loaded_finger_contact") is not None
+                        else torch.zeros_like(kwargs["active_mask"])
+                    ),
                 }
             )
             self._last_caught = kwargs["caught_target"]
@@ -877,6 +914,10 @@ class _RoundRecorder:
                     catalog_ids, worlds // max(catalog_ids.shape[0], 1)
                 )
         return _Recording(
+            contact_based_grasp=self.contact_based_grasp,
+            loaded_finger_contact=stack(self._rows_eval, "loaded_finger_contact"),
+            reset_object_quaternions=self.reset_object_quaternions,
+            reset_ee_quaternion=self.reset_ee_quaternion,
             target_catalog_ids=catalog_ids,
             states=(
                 stack(self._rows_decision, "states")
@@ -1164,7 +1205,7 @@ def _episode_rows(recording: _Recording) -> list[dict[str, Any]]:
     # Peak lift above the RESET height, while the object was held. The same two
     # quantities the pick_up predicate multiplies together, kept apart on
     # purpose: reported as measurements, not as a reimplemented predicate.
-    grasped = recording.caught_target & (recording.gripper_opening <= 0.94)
+    grasped = recording.held_mask
     lift = (
         recording.object_xyz[
             :, np.arange(recording.worlds), recording.target_slots, 2
@@ -1369,7 +1410,7 @@ def _pick_up_prefix_report(recording: _Recording) -> dict[str, Any]:
             ACTIVE_INSTRUCTION_TYPES.index("put_into_bowl"),
         ],
     )
-    grasped = recording.caught_target & (recording.gripper_opening <= 0.94)
+    grasped = recording.held_mask
     lift = (
         recording.object_xyz[
             :, np.arange(recording.worlds), recording.target_slots, 2
@@ -3424,6 +3465,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             path = output / f"record_{file_index:02d}.npz"
             recording.to_npz(path)
             recordings.append(recording)
+            summary["grasp_contract"] = "contact_v2" if recording.contact_based_grasp else "opening_v1"
             rows = _episode_rows(recording)
             _write_csv(output / f"episodes_{file_index:02d}.csv", rows)
             slices = _slice_summary(rows)
@@ -3464,6 +3506,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     else:
         source_path = args.actions.expanduser().resolve()
         source = _Recording.from_npz(source_path)
+        contact_v2 = bool(getattr(world.resetter, "contact_based_grasp", False))
+        if source.contact_based_grasp != contact_v2:
+            raise ValueError("Recording and runtime use different grasp contracts. Re-record the bank under the corrected reset/scoring contract.")
         # The reset is a pure function of its seed, and round_index is part of
         # that seed. Replaying a recording against a different round index
         # feeds one episode set's actions into another's starts -- the actions

@@ -1329,6 +1329,7 @@ def clone_task_state(
     """
 
     return BatchedTaskState(
+        contact_based_grasp=state.contact_based_grasp,
         instruction_ids=torch.full_like(
             state.instruction_ids, int(instruction_id)
         ),
@@ -2164,6 +2165,7 @@ def run_staged_chains(
                     move_reward=move_reward,
                     catch_reward=catch_reward,
                     bilateral=bilateral,
+                    loaded_finger_contact=grasp_diagnostics["loaded_finger_contact"],
                     max_steps=never_timeout,
                 )
                 pick_result = _evaluate(
@@ -2175,6 +2177,7 @@ def run_staged_chains(
                     move_reward=move_reward,
                     catch_reward=catch_reward,
                     bilateral=bilateral,
+                    loaded_finger_contact=grasp_diagnostics["loaded_finger_contact"],
                     max_steps=never_timeout,
                 )
                 place_result = _evaluate(
@@ -2186,6 +2189,7 @@ def run_staged_chains(
                     move_reward=move_reward,
                     catch_reward=catch_reward,
                     bilateral=bilateral,
+                    loaded_finger_contact=grasp_diagnostics["loaded_finger_contact"],
                     max_steps=never_timeout,
                 )
 
@@ -2501,6 +2505,7 @@ def _evaluate(
     catch_reward: Any,
     bilateral: Any,
     max_steps: int,
+    loaded_finger_contact: Any | None = None,
 ) -> Any:
     from rl_vla_bootstrapping.simulation.cdpr_batched_tasks import (
         evaluate_active_sparse_tasks,
@@ -2518,6 +2523,7 @@ def _evaluate(
         move_to_distance_reward=move_reward,
         catch_release_dense_reward=catch_reward,
         bilateral_contact=bilateral,
+        loaded_finger_contact=loaded_finger_contact,
     )
 
 

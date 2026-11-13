@@ -327,6 +327,7 @@ def run_unassisted(
                         collector.catch_release_dense_reward
                     ),
                     bilateral_contact=grasp_diagnostics["bilateral_contact"],
+                    loaded_finger_contact=grasp_diagnostics["loaded_finger_contact"],
                 )
                 place_result = evaluate_active_sparse_tasks(
                     state=place_state,
@@ -342,6 +343,7 @@ def run_unassisted(
                         collector.catch_release_dense_reward
                     ),
                     bilateral_contact=grasp_diagnostics["bilateral_contact"],
+                    loaded_finger_contact=grasp_diagnostics["loaded_finger_contact"],
                 )
                 released = place_result.diagnostics["released"]
                 lift = pick_result.diagnostics["target_lift"]

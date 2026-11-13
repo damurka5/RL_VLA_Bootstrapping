@@ -19,7 +19,12 @@ success predicate, and `physical_grasp` is a five-term conjunction::
                    & (right_normal_force >= 0.05 N)
                    & stable_relative_pose      # <= 8 mm AND <= 0.15 rad
                                                # PER ENV STEP
-    persisted >= 2 consecutive steps, and & ~release_open
+    persisted >= 2 consecutive steps
+
+Legacy opening-v1 recordings also require `~release_open`. WidowX contact-v2
+removes that aperture veto: a wide object can load both pads at full opening.
+Release then requires open, no physical grasp, and neither pad loaded. The
+recording's contract selects the matching reconstruction below.
 
 So `lost_grip_env_step` -- already computed per episode by
 `placement_failure_decomposition` -- fires on four physically distinct events:
@@ -88,8 +93,9 @@ exists there: an analysis that does not reproduce the verdict it is analysing
 describes a different task.
 
 Conditioning on `no_release` is what makes the taxonomy safe. Within those
-episodes the gripper never crossed the release bar for the whole episode, so a
-`caught_target` False step cannot be a normal release seen from the side.
+episodes no step satisfied the recording's release test. For contact-v2 this
+does not imply the aperture stayed below the bar: a loaded wide grip can be
+above it for the entire carry.
 
 Usage::
 
@@ -242,10 +248,7 @@ def _loss_rows(
     active = recording.active.astype(bool)
     caught = recording.caught_target.astype(bool)
     ever_grasped_t = np.logical_or.accumulate(caught & active, axis=0)
-    release_bar = np.maximum(
-        recording.release_threshold.astype(np.float64),
-        float(thresholds.release_opening),
-    )
+    released = recording.release_mask(thresholds.release_opening)
     opening = recording.gripper_opening.astype(np.float64)
     desk = (
         recording.support_surface_z.astype(np.float64)
@@ -401,7 +404,7 @@ def _loss_rows(
         for step in range(first_loss + 1, window_end):
             if not live[step]:
                 break
-            if opening[step, world] >= release_bar[world]:
+            if released[step, world]:
                 break
             if caught[step, world]:
                 relatch_gap = int(step - first_loss)

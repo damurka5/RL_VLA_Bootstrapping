@@ -195,6 +195,11 @@ def main(argv: list[str] | None = None) -> int:
         microbatch=args.smolvla_microbatch, load_policy=True, run_dir=output,
         start_distance_cap=args.start_distance_cap, controller_workspace_from_config=True,
     )
+    manifest.update(
+        grasp_contract="contact_v2" if getattr(world.resetter, "contact_based_grasp", False) else "opening_v1",
+        open_grasp_hover_height_m=getattr(world.resetter, "open_grasp_hover_height", None),
+    )
+    (output / "manifest.json").write_text(json.dumps(manifest, indent=2) + "\n")
     kept: collections.Counter = collections.Counter()
     all_rows, videos = [], []
     for round_index in range(args.round_index, args.round_index + args.rounds):

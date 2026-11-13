@@ -67,6 +67,7 @@ def pickup_success_mask(recording, lift_baseline=None):
         return torch.as_tensor(np.tile(a, (steps,) + (1,) * (a.ndim - 1)), dtype=dtype)
 
     state = BatchedTaskState(
+        contact_based_grasp=recording.contact_based_grasp,
         instruction_ids=torch.full((size,), INSTRUCTION_TO_ID['pick_up'], dtype=torch.int64),
         target_slots=repeated(recording.target_slots, torch.int64),
         reference_slots=repeated(recording.reference_slots, torch.int64),
@@ -87,6 +88,10 @@ def pickup_success_mask(recording, lift_baseline=None):
             object_positions=torch.as_tensor(recording.object_xyz.reshape(size, -1, 3), dtype=torch.float32),
             gripper_opening=torch.as_tensor(recording.gripper_opening.reshape(size), dtype=torch.float32),
             caught_target=torch.as_tensor(recording.caught_target.reshape(size), dtype=torch.bool),
+            loaded_finger_contact=(
+                None if recording.loaded_finger_contact is None else
+                torch.as_tensor(recording.loaded_finger_contact.reshape(size), dtype=torch.bool)
+            ),
             active_mask=torch.as_tensor(recording.active.reshape(size), dtype=torch.bool),
             max_steps=steps + 1,
             catch_release_dense_reward=BatchedCatchReleaseDenseReward(

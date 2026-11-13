@@ -256,11 +256,7 @@ def _episode_terms(
     # Latched exactly as `state.ever_grasped.logical_or_` latches it: once true,
     # true for every later step of the episode.
     ever_grasped_t = np.logical_or.accumulate(caught & active, axis=0)
-    release_bar = np.maximum(
-        recording.release_threshold.astype(np.float64),
-        float(thresholds.release_opening),
-    )
-    released = recording.gripper_opening.astype(np.float64) >= release_bar[None, :]
+    released = recording.release_mask(thresholds.release_opening)
 
     settled = target[:, :, 2] <= (
         recording.support_surface_z[None, :]
@@ -333,9 +329,7 @@ def _episode_terms(
         # grip without ever opening past the release bar, and the object settled
         # outside the receptacle. Those are a horizon problem and a grip
         # retention problem, and they want opposite work.
-        held_now = caught[:, world] & (
-            recording.gripper_opening[:, world] <= 0.94
-        )
+        held_now = recording.held_mask[:, world]
         ended_holding = bool(held_now[last])
         lost_steps = np.flatnonzero(
             (~caught[:, world]) & live & ever_grasped_t[:, world]

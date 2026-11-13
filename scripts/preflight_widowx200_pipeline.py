@@ -208,6 +208,9 @@ def main() -> int:
                 low = backend.low_dim_observations()
                 finite = bool(torch.isfinite(low.ee_position).all() and torch.isfinite(low.object_positions).all())
                 caught = reset.task_state.ever_grasped.to(torch.bool)
+                empty = reset.grasp_eligible & ~caught
+                robot_depth = backend.grasp_start_penetration(reset.task_state.target_slots)
+                open_start_penetration = float(robot_depth[empty].max()) if bool(empty.any()) else 0.0
                 target = low.object_positions[torch.arange(worlds, device=device), reset.task_state.target_slots]
                 reset_penetration = max_object_penetration(backend)
                 for _ in range(hold_actions):
@@ -234,12 +237,16 @@ def main() -> int:
                     "caught_held_fraction": None if math.isnan(held_rate) else round(held_rate, 4),
                     "min_object_gap_m": round(min_gap, 4),
                     "max_object_penetration_m": round(penetration, 6),
+                    "max_open_grasp_start_penetration_m": round(open_start_penetration, 6),
+                    "grasp_contract": "contact_v2" if reset.task_state.contact_based_grasp else "opening_v1",
                     "target_z_mean": round(float(target[:, 2].mean()), 4),
                     "horizon_decisions": [int(horizons.min()), int(horizons.max())],
                 }
                 entries.append(entry)
                 print(f"[preflight] {skill} {json.dumps(entry)}", flush=True)
                 check(finite, f"{skill} {caps}: non-finite state after reset")
+                check(open_start_penetration <= 0.001,
+                      f"{skill} {caps}: open grasp start penetrates robot by {open_start_penetration:.4f} m")
                 check(reachable >= args.min_reachable, f"{skill} {caps}: only {reachable:.3f} of reset poses reachable")
                 if not math.isnan(held_rate):
                     check(held_rate >= args.min_caught_held, f"{skill} {caps}: caught starts holding {held_rate:.3f} after {report['hold_seconds']:.2f}s")

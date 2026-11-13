@@ -71,6 +71,8 @@ def _gripper_surface_names() -> tuple[str, ...]:
         "wx200_gripper_bar_visual",
         "left_finger_visual",
         "right_finger_visual",
+        "left_finger_pad_visual",
+        "right_finger_pad_visual",
     )
 
 
@@ -105,6 +107,39 @@ class WidowX200MJWarpBackend(MJLabMJWarpCDPRBackend):
             workspace_z=(z_low, z_high),
             min_reach_radius=float(layout.min_reach_radius),
         )
+
+    def grasp_start_penetration(self, target_slots: Any) -> Any:
+        """Per-world target/robot overlap in the current device contact buffer.
+
+        Called after reset teleports and before actions. Unlike the general
+        object/object preflight, this includes pads and arm collision geoms.
+        Caught starts are deliberately filtered by the caller.
+        """
+        torch = self.torch
+        slots = torch.as_tensor(target_slots, dtype=torch.int64, device=self._device).reshape(-1)
+        if slots.numel() != self.worlds_per_rank:
+            raise ValueError("One target slot is required per reset world.")
+        robot = getattr(self, "_grasp_reset_robot_geoms", None)
+        if robot is None:
+            robot = torch.tensor(
+                [i for i, mask in enumerate(self.host_model.geom_contype) if int(mask) & 10],
+                dtype=torch.int64, device=self._device,
+            )
+            self._grasp_reset_robot_geoms = robot
+        world = self._contact_worldid.to(torch.int64)
+        safe = world.clamp(0, self.worlds_per_rank - 1)
+        valid = ((self._contact_indices < self._nacon.reshape(-1)[0])
+                 & (world >= 0) & (world < self.worlds_per_rank))
+        first, second = self._contact_geom[:, 0], self._contact_geom[:, 1]
+        targets = self._slot_geom_ids.index_select(0, slots.index_select(0, safe))
+        matched = (((first[:, None] == targets).any(dim=1)
+                    & (second[:, None] == robot).any(dim=1))
+                   | ((second[:, None] == targets).any(dim=1)
+                      & (first[:, None] == robot).any(dim=1)))
+        depth = torch.where(valid & matched, (-self._contact_dist).clamp_min(0), 0.0)
+        result = torch.zeros(self.worlds_per_rank, dtype=depth.dtype, device=self._device)
+        result.scatter_reduce_(0, safe, depth, reduce="amax", include_self=True)
+        return torch.nan_to_num(result, nan=float("inf"))
 
     # -- embodiment hooks ---------------------------------------------------
 
@@ -476,6 +511,7 @@ class WidowX200MJWarpBackend(MJLabMJWarpCDPRBackend):
         payload.update(
             {
                 "embodiment": self.embodiment,
+                "grasp_contract": "contact_v2",
                 "controller_implementation": "batched_torch_widowx200_top_down_ik_v1",
                 "widowx200_controller": self._controller.metadata(),
                 "widowx200_yaw_limits": list(WIDOWX200_YAW_LIMITS),

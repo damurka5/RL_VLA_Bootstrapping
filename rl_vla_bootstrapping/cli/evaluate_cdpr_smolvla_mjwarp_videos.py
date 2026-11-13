@@ -873,6 +873,7 @@ def _run_episode(
                         object_positions=low_dim.object_positions,
                         gripper_opening=low_dim.gripper_opening,
                         caught_target=torch.zeros_like(active),
+                        loaded_finger_contact=torch.zeros_like(active),
                         active_mask=step_active,
                         max_steps=10_000,
                         thresholds=BatchedTaskThresholds(

@@ -1,5 +1,9 @@
 # Inspecting the completed WidowX run on the server
 
+For the subsequent grasp/reset correction and commands to reevaluate or
+warm-start stage 7, see [the contact-v2 repair](WIDOWX200_CONTACT_GRASP_FIX.md).
+Keep the original diagnostics: their opening-v1 scores describe the old run.
+
 The reported composed rates are 35/520 bowl (6.7%) and 26/504 plate (5.2%),
 61/1024 overall (6.0%). `put_into` starts holding the object;
 `put_into_composed` starts empty-handed, already aligned over the object. It
@@ -170,6 +174,9 @@ This is a kinematic/visibility audit, not proof of collision-free dynamic
 graspability. It uses the current scene assets/controller implementation; the
 saved YAML alone cannot recover older geometry. Rounds 0/1 are the final test
 resets, while rounds 100–103 check the usual harvest resets at each skill cap.
+CPU and CUDA random streams differ. These CPU samples characterize the sampler;
+they do not reproduce the exact GPU scenes, even with identical seeds. Use the
+CUDA preflight and the video recording's true reset poses for that check.
 
 ## 4. Watch live policy successes AND failures (GPU)
 

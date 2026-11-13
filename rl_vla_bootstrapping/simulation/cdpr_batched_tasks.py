@@ -517,6 +517,11 @@ class BatchedTaskState:
     # reward is on, seeded from ever_grasped so a caught start begins with the
     # milestones its reset handed it.
     milestones: Any | None = None
+    # WidowX contact-v2: caught_target is an authoritative, persistent,
+    # force-confirmed bilateral grasp. Measured aperture is not a grasp veto:
+    # wide objects can hold the jaws open above a nominal release threshold.
+    # False preserves the scoring contract of older CDPR callers/recordings.
+    contact_based_grasp: bool = False
 
     def validate(self, batch_size: int, device: Any) -> None:
         import torch
@@ -820,6 +825,7 @@ def evaluate_active_sparse_tasks(
     move_to_distance_reward: BatchedMoveToDistanceReward | None = None,
     catch_release_dense_reward: BatchedCatchReleaseDenseReward | None = None,
     bilateral_contact: Any | None = None,
+    loaded_finger_contact: Any | None = None,
 ) -> BatchedTaskResult:
     """Tensorized task predicates plus optional dense manipulation rewards."""
 
@@ -843,14 +849,23 @@ def evaluate_active_sparse_tasks(
         reference[:, :2] - ee_position[:, :2], dim=-1
     )
 
-    state.ever_grasped.logical_or_(caught_target.to(dtype=torch.bool))
-    state.grasped.copy_(
-        caught_target.to(dtype=torch.bool) & (gripper_opening <= 0.94)
-    )
+    caught = caught_target.to(dtype=torch.bool)
+    if state.contact_based_grasp:
+        if loaded_finger_contact is None:
+            raise ValueError("Contact-based grasp scoring requires loaded_finger_contact.")
+        caught = caught & active
+        state.grasped.copy_(caught)
+    else:
+        state.grasped.copy_(caught & (gripper_opening <= 0.94))
+    state.ever_grasped.logical_or_(caught)
     released = gripper_opening >= torch.maximum(
         state.release_threshold,
         torch.full_like(state.release_threshold, float(cfg.release_opening)),
     )
+    if state.contact_based_grasp:
+        # A wide, loaded grip is not a release. Wait until BOTH pads unload;
+        # mere proximity/contact with zero solved force need not block a drop.
+        released &= active & ~caught & ~loaded_finger_contact.to(dtype=torch.bool)
 
     success = torch.zeros(
         (batch_size,), dtype=torch.bool, device=ee_position.device
@@ -1088,7 +1103,8 @@ def evaluate_active_sparse_tasks(
         # worth 63 of composed plate's 228 failures.
         #
         # `container_ok` requires `released`. `state.grasped` is
-        # `caught_target & (opening <= 0.94)`, and `caught_target` is the live
+        # the live contact grasp (legacy callers also gate opening <= 0.94),
+        # and `caught_target` is the live
         # `physical_grasp` -- which needs both pads loaded above 0.05 N. So when
         # a carried object touches down INSIDE the receptacle while the gripper
         # is still opening, the surface takes the load, the pads unload,
