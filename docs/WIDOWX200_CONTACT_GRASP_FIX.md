@@ -74,6 +74,30 @@ run on the local Mac; CPU regressions do not establish the new success rate.
 
 ## Warm-start a fresh stage 7 after the checks pass
 
+The one-command launcher prepares the saved stage-7 config with the phased
+milestone reward, runs CUDA preflight on that exact config, and starts joint RL:
+
+```bash
+conda run --no-capture-output -n cdpr-mjlab python tools/train/continue_widowx200_stage7.py \
+  --pipeline-dir runs/widowx200_pipeline_fresh_20261104_162138_CBEU9r --execute
+```
+
+Run it inside tmux from the repository root after pulling the fix. The default
+initializer is stage 7's selected/handoff policy. `--checkpoint /path/to/policy.pt`
+can choose a different saved policy, and `--steps 10000000` sets a new 10M-action
+budget. Otherwise the saved stage-7 budget is retained (30M actions for this
+run). Placement gets 0.2 per reached milestone: approach, grasp, held lift,
+carry over the container, successful placement. Move-to and pickup retain their
+own shorter milestone chains. This is the existing staged reward throughout
+the run, rather than a schedule that switches reward formulas at step counts.
+
+The launcher prints the new run directory. It saves `continuation.json`,
+`preflight.log`, and `training.log` there, and selects checkpoints using
+`min_by_instruction_composed`. It runs only stage-7 RL; earlier stages,
+composition SFT, and SIL are not rerun. Source configs and pipeline state are
+preserved. A failed preflight stops before training. Omitting `--execute` only
+prepares the run and prints commands.
+
 Reuse learned weights, with a fresh optimizer, curriculum and validation-best
 history. The completed pipeline skips finished stages, and a full checkpoint
 resume preserves the old histories and may fail the changed XML fingerprint.

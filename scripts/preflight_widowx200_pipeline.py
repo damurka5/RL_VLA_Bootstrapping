@@ -52,6 +52,9 @@ from tools.train.run_widowx200_pipeline import (  # noqa: E402
 
 
 def merged_skill(raw: dict[str, Any], skill: str) -> dict[str, Any]:
+    if PIPELINE_KEY not in raw:
+        # A saved standalone stage config already contains the skill overrides.
+        return deep_merge({}, raw)
     spec = raw[PIPELINE_KEY]
     base = {key: value for key, value in raw.items() if key != PIPELINE_KEY}
     return deep_merge(base, spec["skills"][skill].get("overrides") or {})
@@ -109,6 +112,9 @@ def main() -> int:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--worlds", type=int, default=512)
     parser.add_argument("--rounds", type=int, default=2)
+    parser.add_argument("--skills", nargs="+", choices=("move_to", "pick_up", "put_into", "joint"),
+                        default=("move_to", "pick_up", "put_into", "joint"),
+                        help="Reset skills to check; use joint for a saved stage-7 YAML.")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--min-reachable", type=float, default=0.98)
     parser.add_argument("--min-caught-held", type=float, default=0.90)
@@ -183,7 +189,7 @@ def main() -> int:
             report["failures"].append(message)
             print(f"[preflight] FAIL {message}", flush=True)
 
-    for skill in ("move_to", "pick_up", "put_into", "joint"):
+    for skill in args.skills:
         config = merged_skill(raw, skill)
         metadata = dict(config["task"]["metadata"])
         instructions = list(config["task"]["instruction_types"])
