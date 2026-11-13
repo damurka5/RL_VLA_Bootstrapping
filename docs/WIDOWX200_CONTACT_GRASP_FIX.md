@@ -98,6 +98,35 @@ composition SFT, and SIL are not rerun. Source configs and pipeline state are
 preserved. A failed preflight stops before training. Omitting `--execute` only
 prepares the run and prints commands.
 
+### Retry an expired-token failure during model loading
+
+The initial stage-7 launcher omitted the main shell launcher's public-model
+authentication setup. An expired cached OAuth token was consequently sent to
+the public SmolVLM2 processor endpoint, producing HTTP 401 before RL updates.
+The corrected launcher removes inherited tokens, disables implicit credentials,
+and redirects the child process's token-file lookup to the null device. It
+does not delete credentials or change `HF_HOME`/`HF_HUB_CACHE`.
+
+After pulling the correction, retry this already prepared run:
+
+```bash
+RLVLA_HF_PUBLIC_MODELS_ONLY=1 conda run --no-capture-output -n cdpr-mjlab python tools/train/continue_widowx200_stage7.py \
+  --retry-run runs/widowx200_s7_contact_v2_20261113_135223 --execute
+```
+
+This preserves its config, selected initializer, budget, phased rewards and
+output directory; only HF environment settings are repaired. A passed
+preflight is reused for this startup retry. If preflight did not pass it runs
+again. Startup retry refuses runs with saved training checkpoints so progress
+cannot be silently restarted. Use a new continuation when changing the task
+or simulator, rather than treating this authentication retry as a new preflight.
+
+`RLVLA_HF_OFFLINE=1` now enables both Hub and Transformers cache-only loading
+for this launcher, if all model and processor files are already cached. Public
+mode is the default; `RLVLA_HF_PUBLIC_MODELS_ONLY=0` retains authentication for
+an intentionally private model. These modes follow the repository's existing
+shell helper and Hugging Face's [environment-variable documentation](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables).
+
 Reuse learned weights, with a fresh optimizer, curriculum and validation-best
 history. The completed pipeline skips finished stages, and a full checkpoint
 resume preserves the old histories and may fail the changed XML fingerprint.

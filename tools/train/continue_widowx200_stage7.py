@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import copy
 import datetime as dt
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -37,6 +38,34 @@ STALE_OVERRIDES = (
     "RLVLA_MJWARP_WORLDS_PER_RANK", "RLVLA_SMOLVLA_INFERENCE_MICROBATCH_SIZE",
     "RLVLA_MEMORY_REPORT",
 )
+
+
+def configure_huggingface_env(env: dict[str, str]) -> None:
+    """Set public/cache-only access before the child imports HF libraries.
+
+    Mirror scripts/huggingface_public_models.sh. The token-file override also
+    prevents older Hub clients from trying to refresh an unused cached OAuth
+    token. Model-cache paths and the user's real token files are untouched.
+    """
+    public_only = env.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1")
+    offline = env.get("RLVLA_HF_OFFLINE", "0")
+    if public_only not in {"0", "1"} or offline not in {"0", "1"}:
+        raise ValueError("RLVLA_HF_PUBLIC_MODELS_ONLY and RLVLA_HF_OFFLINE must be 0 or 1.")
+    if public_only == "1":
+        env.pop("HF_TOKEN", None)
+        env.pop("HUGGING_FACE_HUB_TOKEN", None)
+        env["HF_HUB_DISABLE_IMPLICIT_TOKEN"] = "1"
+        env["HF_TOKEN_PATH"] = os.devnull
+    if offline == "1":
+        env.update(HF_HUB_OFFLINE="1", TRANSFORMERS_OFFLINE="1", RLVLA_HF_PREFLIGHT="0")
+
+
+def configure_saved_huggingface_env(env: dict[str, str]) -> None:
+    # The explicit launch mode also applies to env overrides in the saved YAML.
+    for key in ("RLVLA_HF_PUBLIC_MODELS_ONLY", "RLVLA_HF_OFFLINE"):
+        if key in os.environ:
+            env[key] = os.environ[key]
+    configure_huggingface_env(env)
 
 
 def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None,
@@ -94,6 +123,7 @@ def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None
     for saved_env in (remote_env, config["project"].get("env", {})):
         for key in STALE_OVERRIDES:
             saved_env.pop(key, None)
+        configure_saved_huggingface_env(saved_env)
     remote_env.update(RLVLA_EMBODIMENT="widowx200",
                       RLVLA_SMOLVLA_WARMSTART_CHECKPOINT=str(checkpoint),
                       RLVLA_SMOLVLA_RESET_LOG_STD="1")
@@ -118,6 +148,7 @@ def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None
         "max_train_steps": int(rl_args["max_train_steps"]),
         "ranks": int(config["training"]["rl"].get("launcher_args", {}).get("nproc_per_node", 1)),
         "early_stop_metric": rl_args["early_stop_metric"], "commands": commands,
+        "config_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
     }
     (run_dir / "continuation.json").write_text(json.dumps(payload, indent=2) + "\n")
     return payload
@@ -133,7 +164,43 @@ def continuation_env(payload: dict[str, Any]) -> dict[str, str]:
                RLVLA_SMOLVLA_NPROC_PER_NODE=str(payload["ranks"]))
     env.setdefault("MUJOCO_GL", "egl")
     env.setdefault("CUDA_VISIBLE_DEVICES", "0,1")
+    configure_huggingface_env(env)
     return env
+
+
+def retry_startup(run_dir: Path) -> dict[str, Any]:
+    """Retry a prepared run that failed before saving its first checkpoint."""
+    run_dir = run_dir.expanduser().resolve()
+    payload = json.loads((run_dir / "continuation.json").read_text())
+    if (Path(payload["run_dir"]).resolve() != run_dir
+            or payload.get("grasp_contract") != "contact_v2"
+            or payload.get("reward") != "staged_milestone"):
+        raise ValueError("--retry-run requires a prepared contact-v2 stage-7 run.")
+    if any((run_dir / "rl").rglob("*.pt")):
+        raise ValueError("This run already has checkpoints; resume its latest.pt instead of retrying startup.")
+    config = Path(payload["config"])
+    raw = yaml.safe_load(config.read_text())
+    if not raw["task"]["metadata"].get("staged_milestone_reward"):
+        raise ValueError("The prepared config no longer enables phased milestone rewards.")
+    if not Path(payload["warmstart"]).is_file():
+        raise ValueError(f"Missing initializer: {payload['warmstart']}")
+    checksum = payload.get("config_sha256")
+    if checksum and hashlib.sha256(config.read_bytes()).hexdigest() != checksum:
+        raise ValueError("Prepared config changed; prepare a fresh continuation to rerun its preflight.")
+    # Saved project/remote env overrides the shell in cli.train. Apply the HF
+    # repair there as well, without touching task, optimizer or simulator args.
+    repaired = copy.deepcopy(raw)
+    for saved_env in (repaired.setdefault("remote", {}).setdefault("env_vars", {}),
+                      repaired.setdefault("project", {}).get("env", {})):
+        configure_saved_huggingface_env(saved_env)
+    if repaired != raw:
+        config.write_text(yaml.safe_dump(repaired, sort_keys=False))
+    payload["config_sha256"] = hashlib.sha256(config.read_bytes()).hexdigest()
+    payload["startup_retry"] = True
+    payload["commands"][0][0] = sys.executable
+    payload["commands"][1][0] = sys.executable
+    (run_dir / "continuation.json").write_text(json.dumps(payload, indent=2) + "\n")
+    return payload
 
 
 def run_logged(command: list[str], env: dict[str, str], path: Path) -> None:
@@ -151,22 +218,33 @@ def run_logged(command: list[str], env: dict[str, str], path: Path) -> None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--pipeline-dir", required=True, type=Path)
+    source = parser.add_mutually_exclusive_group(required=True)
+    source.add_argument("--pipeline-dir", type=Path)
+    source.add_argument("--retry-run", type=Path, help="Retry model-loading startup in an existing prepared run")
     parser.add_argument("--checkpoint", type=Path, help="Override the selected stage-7 policy")
     parser.add_argument("--run-name", default="widowx200_s7_contact_v2_" + dt.datetime.now().strftime("%Y%m%d_%H%M%S"))
     parser.add_argument("--steps", type=int, help="New-run action budget; default preserves the saved stage-7 budget")
     parser.add_argument("--execute", action="store_true", help="Run CUDA preflight and then joint RL")
     args = parser.parse_args(argv)
     try:
-        payload = prepare(args.pipeline_dir, args.run_name, checkpoint=args.checkpoint, steps=args.steps)
+        if args.retry_run:
+            if args.checkpoint is not None or args.steps is not None:
+                raise ValueError("--retry-run preserves its initializer and budget; omit --checkpoint and --steps.")
+            payload = retry_startup(args.retry_run)
+        else:
+            payload = prepare(args.pipeline_dir, args.run_name, checkpoint=args.checkpoint, steps=args.steps)
+        env = continuation_env(payload)
     except (OSError, ValueError, KeyError) as error:
         parser.error(str(error))
-    env = continuation_env(payload)
     print(f"[stage7] weights-only initializer: {payload['warmstart']}", flush=True)
     print("[stage7] phased reward: approach -> grasp -> lift -> carry -> placement", flush=True)
     print(f"[stage7] contact_v2; fresh optimizer/curriculum; budget {payload['max_train_steps']} actions", flush=True)
     print(f"[stage7] run directory: {payload['run_dir']}", flush=True)
     print("[stage7] source pipeline and earlier stages preserved", flush=True)
+    if env.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1") == "1":
+        print("[stage7] Hugging Face: anonymous public models; cached credentials ignored", flush=True)
+    if env.get("HF_HUB_OFFLINE") == "1":
+        print("[stage7] Hugging Face: local model cache only", flush=True)
     for command in payload["commands"]:
         print("[stage7] " + shlex.join(command), flush=True)
     if not args.execute:
@@ -177,7 +255,13 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     try:
         run_dir = Path(payload["run_dir"])
-        run_logged(payload["commands"][0], env, run_dir / "preflight.log")
+        preflight = run_dir / "preflight" / "preflight.json"
+        passed = bool(payload.get("startup_retry") and preflight.is_file()
+                      and json.loads(preflight.read_text()).get("passed") is True)
+        if passed:
+            print("[stage7] reusing passed preflight for this model-loading startup retry", flush=True)
+        else:
+            run_logged(payload["commands"][0], env, run_dir / "preflight.log")
         run_logged(payload["commands"][1], env, run_dir / "training.log")
     except subprocess.CalledProcessError as error:
         print(f"[stage7] Child failed with code {error.returncode}; see logs in {payload['run_dir']}", file=sys.stderr)
