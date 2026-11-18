@@ -30,6 +30,8 @@ from .cdpr_object_catalog import (
 from .mjwarp_compat import package_versions, require_pinned_versions
 
 
+FINGER_CONTACT_MAX_DISTANCE_M = 0.002
+
 _FRAME_ANCHORS = (
     (-0.535, -0.755, 1.309),
     (0.755, -0.525, 1.309),
@@ -1561,7 +1563,7 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
             (contact_index < self._nacon.reshape(-1)[0].to(dtype=torch.int64))
             & (world >= 0)
             & (world < self.worlds_per_rank)
-            & (self._contact_dist <= 0.002)
+            & (self._contact_dist <= FINGER_CONTACT_MAX_DISTANCE_M)
         )
         safe_world = world.clamp(0, self.worlds_per_rank - 1)
         first = self._contact_geom[:, 0].to(dtype=torch.int64)

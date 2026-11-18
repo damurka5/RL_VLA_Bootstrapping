@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import contextlib
 import hashlib
 import json
 import math
@@ -143,6 +144,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--video-seed", type=int, default=0)
     parser.add_argument("--horizon-decisions", type=int, default=0, help="0 preserves the task; positive values are a budget ablation")
     parser.add_argument("--oracle", action="store_true", help="Diagnostic scripted controller in place of the policy")
+    parser.add_argument("--grasp-audit", action="store_true", help="Record every grasp gate, annotate videos, and write an audit report")
     args = parser.parse_args(argv)
     if args.pipeline_dir:
         try:
@@ -204,7 +206,10 @@ def main(argv: list[str] | None = None) -> int:
     all_rows, videos = [], []
     for round_index in range(args.round_index, args.round_index + args.rounds):
         tracked = tracked_worlds(args.worlds, args.group_size, args.track_scenes, args.video_seed + round_index)
-        with _FrameTap(world.backend, tracked, both_cameras=True) as tap:
+        if args.grasp_audit:
+            from tools.audit.grasp_detector_trace import GraspTraceCapture
+        trace_context = GraspTraceCapture(world) if args.grasp_audit else contextlib.nullcontext()
+        with trace_context as trace, _FrameTap(world.backend, tracked, both_cameras=True) as tap:
             with _RoundRecorder(world, torch_seed=args.seed_torch, horizon_override=args.horizon_decisions,
                                 action_source=_OracleActionSource() if args.oracle else None) as recorder:
                 recording = recorder.run(round_index=round_index)
@@ -212,12 +217,24 @@ def main(argv: list[str] | None = None) -> int:
             with world.torch.inference_mode():
                 world.backend.render_policy_cameras()
         recording.start_distance_cap = args.start_distance_cap
-        recording.to_npz(output / f"record_{round_index:02d}.npz")
+        recording_path = output / f"record_{round_index:02d}.npz"
+        recording.to_npz(recording_path)
+        if args.grasp_audit:
+            trace.save(output / f"grasp_trace_{round_index:02d}.npz", recording, recording_path)
         rows = outcome_rows(recording)
         for row in rows:
             row["scene"] = int(row["world"]) // args.group_size
         all_rows.extend(rows)
         _write_csv(output / f"episodes_{round_index:02d}.csv", rows)
+        if args.grasp_audit:
+            from tools.audit.grasp_detector_trace import COLUMNS, diagnose
+            findings, _, _, _ = diagnose(vars(recording), trace.values, COLUMNS, trace.metadata, trace.initial_persistence)
+            tracked.sort(key=lambda index: (
+                findings[index]["detector_mismatch_steps"] + findings[index]["scoring_mismatch_steps"],
+                findings[index]["motion_proxy_unrecognized_steps"], findings[index]["nonfinite_force_steps"],
+                findings[index]["loaded_contacts_outside_distance_window_steps"],
+                findings[index]["wide_loaded_counted_steps"],
+            ), reverse=True)
         for index in tracked:
             row = rows[index]
             outcome = "success" if row["success"] else "failed"
@@ -227,6 +244,9 @@ def main(argv: list[str] | None = None) -> int:
             frames = episode_frames(tap.frames[index], recording, index)
             if not frames:
                 continue
+            if args.grasp_audit:
+                from tools.audit.grasp_detector_trace import annotate_frames
+                frames = annotate_frames(frames, recording, trace, index)
             name = f"r{round_index:03d}_w{index:03d}_{row['instruction']}_{row['object']}_{outcome}"
             path = output / "videos" / f"{name}.mp4"
             writer = _Mp4(path, fps=args.fps, height=frames[0].shape[0], width=frames[0].shape[1])
@@ -254,6 +274,9 @@ def main(argv: list[str] | None = None) -> int:
         tap.frames.clear()
         frames = []
     print(f"[outcomes] {len(videos)} videos; report: {output / 'summary.json'}", flush=True)
+    if args.grasp_audit:
+        from tools.audit.grasp_detector_trace import analyze_files
+        analyze_files(str(output / "record_*.npz"), output / "grasp_audit")
     return 0
 
 

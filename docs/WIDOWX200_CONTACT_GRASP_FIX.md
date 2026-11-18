@@ -1,5 +1,8 @@
 # WidowX grasp scoring and open-start repair
 
+For a direct test of whether live physical grasps are counted, use the
+[grasp-gate recording and annotated videos](WIDOWX200_GRASP_DETECTOR_CHECK.md).
+
 The old WidowX grasp detector rejected a stable bilateral grasp whenever the
 measured opening exceeded the per-object release threshold. The task predicate
 then independently rejected `opening > 0.94`. Both can reject a wide object
