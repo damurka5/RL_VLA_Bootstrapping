@@ -375,8 +375,12 @@ def main(argv=None):
     parser.add_argument("--output", required=True, type=Path)
     parser.add_argument("--rounds", type=int, default=2)
     parser.add_argument("--round-index", type=int, default=1000)
+    parser.add_argument("--horizon-decisions", type=int, default=0,
+                        help="0 keeps the original budget; positive values test a longer rollout")
     parser.add_argument("--device", default="cuda:0")
     args = parser.parse_args(argv)
+    if args.horizon_decisions < 0:
+        parser.error("horizon-decisions must be nonnegative")
     if args.recordings:
         analyze_files(args.recordings, args.output)
         return 0
@@ -393,6 +397,7 @@ def main(argv=None):
                "--pipeline-dir", lineage["source_pipeline"], "--evaluation", "put_into_composed",
                "--checkpoint", str(checkpoint), "--device", args.device, "--grasp-audit",
                "--round-index", str(args.round_index), "--rounds", str(args.rounds),
+               "--horizon-decisions", str(args.horizon_decisions),
                "--track-scenes", "32", "--output", str(args.output.resolve())]
     return subprocess.run(command, cwd=ROOT, env=env).returncode
 
