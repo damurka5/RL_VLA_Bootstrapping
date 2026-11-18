@@ -96,6 +96,41 @@ def summarize(rows):
     return result
 
 
+def summarize_extended_timing(baseline_rows, extended_rows):
+    """Score two cutoffs on the SAME extended trajectory, without rerun pairing.
+
+    Baseline rows supply only each world's old budget. Their outcomes and
+    trajectory matches play no part in this count of recorded late completions.
+    """
+    budgets = {(r["round"], r["world"]): r["budget_env_steps"] for r in baseline_rows}
+    if len(budgets) != len(baseline_rows) or len(baseline_rows) != len(extended_rows):
+        raise ValueError("Timing comparison requires one baseline budget per extended episode")
+    extended_keys = {(r["round"], r["world"]) for r in extended_rows}
+    if extended_keys != budgets.keys() or len(extended_keys) != len(extended_rows):
+        raise ValueError("Timing comparison episode keys differ")
+    result = []
+    for name in sorted({r["instruction"] for r in extended_rows}):
+        subset = [r for r in extended_rows if r["instruction"] == name]
+        late = [r for r in subset if r["success"] and
+                r["first_success_env_step"] >= budgets[r["round"], r["world"]]]
+        total = sum(r["success"] for r in subset)
+        early = total - len(late)
+        result.append({
+            "instruction": name, "episodes": len(subset),
+            "original_budget_env_steps": sorted({budgets[r["round"], r["world"]] for r in subset}),
+            "extended_budget_env_steps": sorted({r["budget_env_steps"] for r in subset}),
+            "successes_by_original_cutoff": early,
+            "successes_after_original_cutoff": len(late),
+            "successes_by_extended_cutoff": total,
+            "original_cutoff_success_rate": early / len(subset),
+            "extended_cutoff_success_rate": total / len(subset),
+            "gain_from_late_completions_pp": 100 * len(late) / len(subset),
+            "late_success_distinct_reset_groups": len({(r["round"], r["scene"]) for r in late}),
+            "late_successes_by_object": dict(sorted(Counter(r["object"] for r in late).items())),
+        })
+    return result
+
+
 def compare_rounds(baseline, extended, baseline_rows, extended_rows):
     """Match reset state and audit the common prefix before attributing a rescue.
 
@@ -188,12 +223,18 @@ def analyze(baseline_dir, output, extended_dir=None, tail_steps=20):
                         "Prefix matches allow 0.0001 action error and 0.001 m position error; GPU reruns may differ."]}
     if pairs:
         report.update(extended=str(extended_dir.resolve()), extended_summary=summarize(extended_rows),
+                      extended_trajectory_budget_summary=summarize_extended_timing(rows, extended_rows),
                       paired_summary=[{"instruction": name, "episodes": len(subset),
                                        "prefix_matches": sum(r["prefix_matches"] for r in subset),
+                                       "cross_run_attribution_available": any(r["prefix_matches"] for r in subset),
                                        "rescued_after_original_budget": sum(r["rescued_after_original_budget"] for r in subset),
                                        "baseline_success_lost_on_rerun": sum(r["baseline_success"] and not r["extended_success"] for r in subset)}
                                       for name in sorted({r["instruction"] for r in pairs})
                                       for subset in [[r for r in pairs if r["instruction"] == name]]])
+        report["notes"].extend([
+            "extended_trajectory_budget_summary scores the old and new cutoffs on the same extended recordings; it does not require cross-run prefix matches.",
+            "Zero verified rescues with zero prefix matches means cross-run attribution is unavailable, not that extra time had no benefit.",
+        ])
     # Validate everything before creating the result directory.
     output.mkdir(parents=True, exist_ok=False)
     write_csv(output / "episodes.csv", rows)

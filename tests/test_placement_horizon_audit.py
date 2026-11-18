@@ -4,7 +4,7 @@ import unittest
 
 import numpy as np
 
-from tools.audit.placement_horizon_audit import compare_rounds, episode_rows, summarize
+from tools.audit.placement_horizon_audit import compare_rounds, episode_rows, summarize, summarize_extended_timing
 
 
 RADII = {"put_into_plate": .073}
@@ -107,6 +107,46 @@ class HorizonTests(unittest.TestCase):
         after["horizons"][:] = before["horizons"]
         with self.assertRaisesRegex(ValueError, "exceed"):
             compare(before, after)
+
+    def test_late_completion_is_measured_even_when_rerun_prefix_differs(self):
+        before, after = paired()
+        after["actions"][0, 0, 0] = .5
+        self.assertFalse(compare(before, after)["prefix_matches"])
+        result = summarize_extended_timing(episode_rows(before, RADII), episode_rows(after, RADII))[0]
+        self.assertEqual(result["successes_by_original_cutoff"], 0)
+        self.assertEqual(result["successes_after_original_cutoff"], 1)
+        self.assertEqual(result["successes_by_extended_cutoff"], 1)
+        self.assertEqual(result["late_successes_by_object"], {"orange": 1})
+
+    def test_cutoff_boundary_uses_zero_based_environment_step(self):
+        before = fixture()
+        for step, early, late in [(3, 1, 0), (4, 0, 1)]:
+            with self.subTest(first_success=step):
+                after = fixture(8, success_step=step)
+                result = summarize_extended_timing(episode_rows(before, RADII), episode_rows(after, RADII))[0]
+                self.assertEqual(result["successes_by_original_cutoff"], early)
+                self.assertEqual(result["successes_after_original_cutoff"], late)
+
+    def test_timing_keeps_failures_in_rate_denominator(self):
+        before, after = paired()
+        before_rows = episode_rows(before, RADII)
+        after_rows = episode_rows(after, RADII)
+        before_rows.append({**before_rows[0], "world": 1})
+        after_rows.append({**after_rows[0], "world": 1, "success": False,
+                           "first_success_env_step": -1, "category": "live_divergence"})
+        result = summarize_extended_timing(before_rows, after_rows)[0]
+        self.assertEqual(result["episodes"], 2)
+        self.assertEqual(result["extended_cutoff_success_rate"], .5)
+        self.assertEqual(result["gain_from_late_completions_pp"], 50)
+
+    def test_timing_refuses_duplicate_or_unmatched_episode_keys(self):
+        before, after = paired()
+        a, b = episode_rows(before, RADII), episode_rows(after, RADII)
+        with self.assertRaisesRegex(ValueError, "one baseline budget"):
+            summarize_extended_timing(a * 2, b * 2)
+        b[0]["round"] += 1
+        with self.assertRaisesRegex(ValueError, "keys differ"):
+            summarize_extended_timing(a, b)
 
 
 if __name__ == "__main__":
