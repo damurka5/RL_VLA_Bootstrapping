@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Warm-start only WidowX stage 7 with phased milestone rewards and contact-v2.
+"""Continue only WidowX stage 7 with phased milestone rewards and contact-v2.
 
 Without --execute, prepare a new config/run and print the server commands.
-With --execute, run the CUDA preflight first, then start weights-only joint RL.
+With --execute, run the CUDA preflight first, then start joint RL.
+--pipeline-dir starts from policy weights; --resume-run restores training state.
 The source pipeline, checkpoints and completed-stage markers are never edited.
 """
 from __future__ import annotations
@@ -68,16 +69,35 @@ def configure_saved_huggingface_env(env: dict[str, str]) -> None:
     configure_huggingface_env(env)
 
 
-def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None,
-            steps: int | None = None) -> dict[str, Any]:
+def prepare(pipeline_dir: Path | None, run_name: str, *, checkpoint: Path | None = None,
+            steps: int | None = None, composed_horizon_decisions: int | None = None,
+            no_early_stop: bool = False, resume_run: Path | None = None) -> dict[str, Any]:
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]*", run_name):
         raise ValueError("Run name must be a plain directory name.")
     if steps is not None and steps <= 0:
         raise ValueError("--steps must be positive.")
+    if composed_horizon_decisions is not None and composed_horizon_decisions <= 0:
+        raise ValueError("--composed-horizon-decisions must be positive.")
+    lineage = None
+    if resume_run is not None:
+        resume_run = resume_run.expanduser().resolve()
+        lineage = json.loads((resume_run / "continuation.json").read_text())
+        if (Path(lineage["run_dir"]).resolve() != resume_run
+                or lineage.get("source_stage") != STAGE
+                or lineage.get("grasp_contract") != "contact_v2"
+                or lineage.get("reward") != "staged_milestone"):
+            raise ValueError("--resume-run requires a contact-v2 phased-reward stage-7 run.")
+        if pipeline_dir is not None:
+            raise ValueError("Choose --pipeline-dir or --resume-run, not both.")
+        pipeline_dir = Path(lineage["source_pipeline"])
+        if checkpoint is None:
+            checkpoint = resume_run / "rl" / "latest.pt"
+    if pipeline_dir is None:
+        raise ValueError("Supply --pipeline-dir or --resume-run.")
     pipeline_dir = pipeline_dir.expanduser().resolve()
     state = json.loads((pipeline_dir / "pipeline_state.json").read_text())
     stage = state["stages"][STAGE]
-    source = Path(stage["config"]).expanduser()
+    source = Path(lineage["config"] if lineage else stage["config"]).expanduser()
     if not source.is_absolute():
         source = ROOT / source
     source = source.resolve()
@@ -86,6 +106,8 @@ def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None
         raise ValueError("The saved stage-7 config must contain all four joint instructions.")
     if not str(config["embodiment"]["name"]).startswith("widowx200"):
         raise ValueError("The saved config is not a WidowX-200 config.")
+    if lineage and not config["task"].get("metadata", {}).get("staged_milestone_reward"):
+        raise ValueError("The resumed run's saved config no longer uses phased milestone rewards.")
     if checkpoint is None:
         checkpoint = stage.get("policy") or stage.get("selected_checkpoint") or stage.get("best_checkpoint")
         if not checkpoint:
@@ -95,7 +117,7 @@ def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None
         checkpoint = ROOT / checkpoint
     checkpoint = checkpoint.resolve()
     if not checkpoint.is_file():
-        raise ValueError(f"Missing weights-only initializer: {checkpoint}")
+        raise ValueError(f"Missing initializer checkpoint: {checkpoint}")
 
     # Keep the new YAML beside the original so all relative assets still resolve.
     destination = source.with_name(f"{run_name}.yaml")
@@ -107,11 +129,19 @@ def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None
     metadata = config["task"].setdefault("metadata", {})
     metadata.update(staged_milestone_reward=True, sparse_binary_reward=False,
                     open_grasp_hover_height=0.04)
+    if composed_horizon_decisions is not None:
+        # The same metadata builds the training and composed-validation
+        # resetters; their uncaught placements must get the same budget.
+        metadata["placement_grasp_horizon_min_decisions"] = composed_horizon_decisions
     rl_args = config["training"]["rl"]["args"]
     rl_args.pop("resume_checkpoint", None)
     rl_args.pop("legacy_init_checkpoint", None)
     rl_args.update(three_stage_sparse_credit=False, split_credit_at_grasp=False,
                    early_stop_metric="min_by_instruction_composed")
+    if lineage:
+        rl_args["resume_checkpoint"] = str(checkpoint)
+    if no_early_stop:
+        rl_args.update(early_stop_target=0.0, early_stop_plateau_validations=0)
     if int(rl_args.get("composed_validation_episodes_per_instruction", 0)) <= 0:
         rl_args["composed_validation_episodes_per_instruction"] = 256
     if steps is not None:
@@ -124,9 +154,12 @@ def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None
         for key in STALE_OVERRIDES:
             saved_env.pop(key, None)
         configure_saved_huggingface_env(saved_env)
-    remote_env.update(RLVLA_EMBODIMENT="widowx200",
-                      RLVLA_SMOLVLA_WARMSTART_CHECKPOINT=str(checkpoint),
-                      RLVLA_SMOLVLA_RESET_LOG_STD="1")
+    remote_env["RLVLA_EMBODIMENT"] = "widowx200"
+    if lineage:
+        remote_env["RLVLA_SMOLVLA_RESUME_CHECKPOINT"] = str(checkpoint)
+    else:
+        remote_env.update(RLVLA_SMOLVLA_WARMSTART_CHECKPOINT=str(checkpoint),
+                          RLVLA_SMOLVLA_RESET_LOG_STD="1")
 
     run_dir.mkdir(parents=True, exist_ok=False)
     with destination.open("x") as handle:
@@ -142,14 +175,22 @@ def prepare(pipeline_dir: Path, run_name: str, *, checkpoint: Path | None = None
     payload = {
         "source_pipeline": str(pipeline_dir), "source_stage": STAGE,
         "source_config": str(source), "config": str(destination), "run_dir": str(run_dir),
-        "warmstart": str(checkpoint), "initialization": "weights_only",
-        "fresh_optimizer": True, "fresh_curriculum": True, "global_step_start": 0,
+        "initialization": "full_state_resume" if lineage else "weights_only",
+        "fresh_optimizer": not bool(lineage), "fresh_curriculum": not bool(lineage),
+        "global_step_start": None if lineage else 0,
         "reward": "staged_milestone", "grasp_contract": "contact_v2",
         "max_train_steps": int(rl_args["max_train_steps"]),
         "ranks": int(config["training"]["rl"].get("launcher_args", {}).get("nproc_per_node", 1)),
         "early_stop_metric": rl_args["early_stop_metric"], "commands": commands,
+        "composed_horizon_min_decisions": int(metadata.get("placement_grasp_horizon_min_decisions", 32)),
+        "early_stop_target": float(rl_args.get("early_stop_target", 0.0)),
+        "early_stop_plateau_validations": int(rl_args.get("early_stop_plateau_validations", 0)),
         "config_sha256": hashlib.sha256(destination.read_bytes()).hexdigest(),
     }
+    if lineage:
+        payload.update(source_run=str(resume_run), resume_checkpoint=str(checkpoint))
+    else:
+        payload["warmstart"] = str(checkpoint)
     (run_dir / "continuation.json").write_text(json.dumps(payload, indent=2) + "\n")
     return payload
 
@@ -159,9 +200,12 @@ def continuation_env(payload: dict[str, Any]) -> dict[str, str]:
     for key in STALE_OVERRIDES:
         env.pop(key, None)
     env.update(RLVLA_EMBODIMENT="widowx200", PYTHONUNBUFFERED="1",
-               RLVLA_SMOLVLA_WARMSTART_CHECKPOINT=payload["warmstart"],
-               RLVLA_SMOLVLA_RESET_LOG_STD="1",
                RLVLA_SMOLVLA_NPROC_PER_NODE=str(payload["ranks"]))
+    if payload["initialization"] == "full_state_resume":
+        env["RLVLA_SMOLVLA_RESUME_CHECKPOINT"] = payload["resume_checkpoint"]
+    else:
+        env.update(RLVLA_SMOLVLA_WARMSTART_CHECKPOINT=payload["warmstart"],
+                   RLVLA_SMOLVLA_RESET_LOG_STD="1")
     env.setdefault("MUJOCO_GL", "egl")
     env.setdefault("CUDA_VISIBLE_DEVICES", "0,1")
     configure_huggingface_env(env)
@@ -182,8 +226,9 @@ def retry_startup(run_dir: Path) -> dict[str, Any]:
     raw = yaml.safe_load(config.read_text())
     if not raw["task"]["metadata"].get("staged_milestone_reward"):
         raise ValueError("The prepared config no longer enables phased milestone rewards.")
-    if not Path(payload["warmstart"]).is_file():
-        raise ValueError(f"Missing initializer: {payload['warmstart']}")
+    initializer = payload.get("resume_checkpoint") or payload["warmstart"]
+    if not Path(initializer).is_file():
+        raise ValueError(f"Missing initializer: {initializer}")
     checksum = payload.get("config_sha256")
     if checksum and hashlib.sha256(config.read_bytes()).hexdigest() != checksum:
         raise ValueError("Prepared config changed; prepare a fresh continuation to rerun its preflight.")
@@ -220,25 +265,37 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--pipeline-dir", type=Path)
+    source.add_argument("--resume-run", type=Path, help="Resume latest.pt and training state from a prior contact-v2 phased stage-7 run")
     source.add_argument("--retry-run", type=Path, help="Retry model-loading startup in an existing prepared run")
-    parser.add_argument("--checkpoint", type=Path, help="Override the selected stage-7 policy")
+    parser.add_argument("--checkpoint", type=Path, help="Override the selected policy, or the full checkpoint when resuming")
     parser.add_argument("--run-name", default="widowx200_s7_contact_v2_" + dt.datetime.now().strftime("%Y%m%d_%H%M%S"))
-    parser.add_argument("--steps", type=int, help="New-run action budget; default preserves the saved stage-7 budget")
+    parser.add_argument("--steps", type=int, help="Total selected-action step cap, including restored steps on resume; default preserves the saved cap")
+    parser.add_argument("--composed-horizon-decisions", type=int, help="Uncaught placement horizon floor in training and composed validation")
+    parser.add_argument("--no-early-stop", action="store_true", help="Disable validation target and plateau stopping; keep validation and checkpoints")
     parser.add_argument("--execute", action="store_true", help="Run CUDA preflight and then joint RL")
     args = parser.parse_args(argv)
     try:
         if args.retry_run:
-            if args.checkpoint is not None or args.steps is not None:
-                raise ValueError("--retry-run preserves its initializer and budget; omit --checkpoint and --steps.")
+            if (args.checkpoint is not None or args.steps is not None
+                    or args.composed_horizon_decisions is not None or args.no_early_stop):
+                raise ValueError("--retry-run preserves its initializer, budget and rules; omit overrides.")
             payload = retry_startup(args.retry_run)
         else:
-            payload = prepare(args.pipeline_dir, args.run_name, checkpoint=args.checkpoint, steps=args.steps)
+            payload = prepare(args.pipeline_dir, args.run_name, checkpoint=args.checkpoint, steps=args.steps,
+                              composed_horizon_decisions=args.composed_horizon_decisions,
+                              no_early_stop=args.no_early_stop, resume_run=args.resume_run)
         env = continuation_env(payload)
     except (OSError, ValueError, KeyError) as error:
         parser.error(str(error))
-    print(f"[stage7] weights-only initializer: {payload['warmstart']}", flush=True)
+    resuming = payload["initialization"] == "full_state_resume"
+    initializer = payload.get("resume_checkpoint") or payload["warmstart"]
+    print(f"[stage7] {'full-state resume' if resuming else 'weights-only initializer'}: {initializer}", flush=True)
     print("[stage7] phased reward: approach -> grasp -> lift -> carry -> placement", flush=True)
-    print(f"[stage7] contact_v2; fresh optimizer/curriculum; budget {payload['max_train_steps']} actions", flush=True)
+    state = "restored optimizer/curriculum/step count" if resuming else "fresh optimizer/curriculum; step 0"
+    print(f"[stage7] contact_v2; {state}; total cap {payload['max_train_steps']} selected-action steps", flush=True)
+    if "composed_horizon_min_decisions" in payload:
+        print(f"[stage7] uncaught placement horizon: >= {payload['composed_horizon_min_decisions']} decisions (training + composed validation)", flush=True)
+        print(f"[stage7] validation stopping: target={payload['early_stop_target']:g}, plateau window={payload['early_stop_plateau_validations']} (0 disables each)", flush=True)
     print(f"[stage7] run directory: {payload['run_dir']}", flush=True)
     print("[stage7] source pipeline and earlier stages preserved", flush=True)
     if env.get("RLVLA_HF_PUBLIC_MODELS_ONLY", "1") == "1":
@@ -249,9 +306,13 @@ def main(argv: list[str] | None = None) -> int:
         print("[stage7] " + shlex.join(command), flush=True)
     if not args.execute:
         print("[stage7] Prepared only. To execute these commands, set:", flush=True)
-        for key in ("RLVLA_EMBODIMENT", "RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", "RLVLA_SMOLVLA_RESET_LOG_STD"):
+        mode_keys = (("RLVLA_SMOLVLA_RESUME_CHECKPOINT",) if resuming else
+                     ("RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", "RLVLA_SMOLVLA_RESET_LOG_STD"))
+        for key in ("RLVLA_EMBODIMENT", *mode_keys):
             print(f"export {key}={shlex.quote(env[key])}")
-        print("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT RLVLA_SMOLVLA_LEGACY_INIT_CHECKPOINT")
+        opposite = ("RLVLA_SMOLVLA_WARMSTART_CHECKPOINT RLVLA_SMOLVLA_RESET_LOG_STD" if resuming else
+                    "RLVLA_SMOLVLA_RESUME_CHECKPOINT")
+        print(f"unset {opposite} RLVLA_SMOLVLA_LEGACY_INIT_CHECKPOINT")
         return 0
     try:
         run_dir = Path(payload["run_dir"])

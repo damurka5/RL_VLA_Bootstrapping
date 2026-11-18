@@ -9,6 +9,7 @@ from pathlib import Path
 import subprocess
 import sys
 import tempfile
+from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
 
@@ -44,6 +45,7 @@ class Stage7ContinuationTests(unittest.TestCase):
             "training": {"rl": {"args": {
                 "max_train_steps": 30000000, "resume_checkpoint": "old/latest.pt",
                 "early_stop_metric": "validation/success_rate", "early_stop_min_steps": 5000000,
+                "early_stop_target": .6, "early_stop_plateau_validations": 16,
                 "three_stage_sparse_credit": True, "split_credit_at_grasp": True,
             }}},
         }
@@ -105,6 +107,96 @@ class Stage7ContinuationTests(unittest.TestCase):
         payload = self.prepare(checkpoint=latest, steps=10000000)
         self.assertEqual(payload["warmstart"], str(latest.resolve()))
         self.assertEqual(payload["max_train_steps"], 10000000)
+
+    def trained_run(self):
+        payload = self.prepare("prior_contact_v2")
+        run = Path(payload["run_dir"])
+        (run / "rl").mkdir()
+        (run / "rl/latest.pt").write_bytes(b"fixture full training state; runtime loader validates it")
+        return run, payload
+
+    def test_resume_keeps_training_state_and_changes_the_shared_placement_budget(self):
+        run, previous = self.trained_run()
+        source_before = Path(previous["config"]).read_bytes()
+        checkpoint_before = (run / "rl/latest.pt").read_bytes()
+        payload = continuation.prepare(None, "resume_h80", resume_run=run,
+                                       composed_horizon_decisions=80, no_early_stop=True, steps=30000000)
+        config = yaml.safe_load(Path(payload["config"]).read_text())
+        self.assertEqual(payload["initialization"], "full_state_resume")
+        self.assertFalse(payload["fresh_optimizer"])
+        self.assertFalse(payload["fresh_curriculum"])
+        self.assertIsNone(payload["global_step_start"])
+        self.assertEqual(payload["source_run"], str(run))
+        self.assertEqual(payload["source_config"], previous["config"])
+        self.assertEqual(config["task"]["metadata"]["placement_grasp_horizon_min_decisions"], 80)
+        self.assertEqual(config["training"]["rl"]["args"]["resume_checkpoint"], str(run / "rl/latest.pt"))
+        self.assertEqual(config["training"]["rl"]["args"]["max_train_steps"], 30000000)
+        self.assertEqual(config["simulator"], self.config["simulator"])
+        self.assertEqual(Path(previous["config"]).read_bytes(), source_before)
+        self.assertEqual((run / "rl/latest.pt").read_bytes(), checkpoint_before)
+        with patch.dict(os.environ, {"RLVLA_SMOLVLA_WARMSTART_CHECKPOINT": "stale.pt",
+                                     "RLVLA_SMOLVLA_RESET_LOG_STD": "1"}):
+            env = continuation.continuation_env(payload)
+        self.assertEqual(env["RLVLA_SMOLVLA_RESUME_CHECKPOINT"], str(run / "rl/latest.pt"))
+        self.assertNotIn("RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", env)
+        self.assertNotIn("RLVLA_SMOLVLA_RESET_LOG_STD", env)
+        saved = config["remote"]["env_vars"]
+        self.assertNotIn("RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", saved)
+        self.assertNotIn("RLVLA_SMOLVLA_RESET_LOG_STD", saved)
+
+    def test_disabled_stop_rule_ignores_a_restored_plateau_and_a_reached_target(self):
+        from rl_vla_bootstrapping.policy.smolvla_grpo_mjwarp_cdpr import EarlyStopRule
+
+        payload = self.prepare(composed_horizon_decisions=80, no_early_stop=True)
+        config = yaml.safe_load(Path(payload["config"]).read_text())
+        rule = EarlyStopRule(SimpleNamespace(**config["training"]["rl"]["args"]))
+        rule.load_state_dict({"metric": "min_by_instruction_composed", "history": [(5000000, .1)], "streak": 2})
+        self.assertFalse(rule.enabled)
+        for step in range(6000000, 31000000, 250000):
+            self.assertIsNone(rule.update({"validation_composed/by_instruction/put_into_bowl/success_rate": .9,
+                                          "validation_composed/by_instruction/put_into_plate/success_rate": .9}, step))
+
+    def test_resume_cli_executes_preflight_then_resume_with_the_requested_rules(self):
+        run, _ = self.trained_run()
+        output = io.StringIO()
+        with patch.object(continuation, "run_logged") as child, contextlib.redirect_stdout(output):
+            code = continuation.main(["--resume-run", str(run), "--run-name", "cli_resume",
+                                      "--composed-horizon-decisions", "80", "--no-early-stop", "--execute"])
+        self.assertEqual(code, 0)
+        self.assertEqual(child.call_count, 2)
+        self.assertIn("--skills", child.call_args_list[0].args[0])
+        env = child.call_args_list[1].args[1]
+        self.assertEqual(env["RLVLA_SMOLVLA_RESUME_CHECKPOINT"], str(run / "rl/latest.pt"))
+        self.assertIn("restored optimizer/curriculum/step count", output.getvalue())
+        self.assertIn("plateau window=0", output.getvalue())
+
+    def test_prepared_resume_prints_the_resume_export_without_unsetting_it(self):
+        run, _ = self.trained_run()
+        output = io.StringIO()
+        with contextlib.redirect_stdout(output):
+            continuation.main(["--resume-run", str(run), "--run-name", "print_resume"])
+        self.assertIn("export RLVLA_SMOLVLA_RESUME_CHECKPOINT=", output.getvalue())
+        self.assertNotIn("unset RLVLA_SMOLVLA_RESUME_CHECKPOINT", output.getvalue())
+
+    def test_resume_retry_preserves_the_new_horizon_and_disabled_stopping(self):
+        run, _ = self.trained_run()
+        payload = continuation.prepare(None, "retry_resume", resume_run=run,
+                                       composed_horizon_decisions=80, no_early_stop=True)
+        retried = continuation.retry_startup(Path(payload["run_dir"]))
+        self.assertEqual(retried["resume_checkpoint"], payload["resume_checkpoint"])
+        self.assertEqual(retried["composed_horizon_min_decisions"], 80)
+        self.assertEqual(retried["early_stop_plateau_validations"], 0)
+
+    def test_resume_refuses_an_incompatible_lineage_and_an_invalid_horizon(self):
+        with self.assertRaisesRegex(ValueError, "must be positive"):
+            self.prepare(composed_horizon_decisions=0)
+        run, _ = self.trained_run()
+        path = run / "continuation.json"
+        payload = json.loads(path.read_text())
+        payload["reward"] = "sparse_binary"
+        path.write_text(json.dumps(payload))
+        with self.assertRaisesRegex(ValueError, "phased-reward"):
+            continuation.prepare(None, "bad_resume", resume_run=run)
 
     def test_environment_discards_the_old_resume_state(self):
         payload = self.prepare()
