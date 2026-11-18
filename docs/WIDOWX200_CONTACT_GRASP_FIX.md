@@ -127,6 +127,46 @@ mode is the default; `RLVLA_HF_PUBLIC_MODELS_ONLY=0` retains authentication for
 an intentionally private model. These modes follow the repository's existing
 shell helper and Hugging Face's [environment-variable documentation](https://huggingface.co/docs/huggingface_hub/package_reference/environment_variables).
 
+### Plateau stop at 5,006,757 actions
+
+The supplied `early_stop.json` confirms a normal plateau stop at step 5,006,757.
+The monitored metric is `min_by_instruction_composed`: the worst instruction,
+using the uncaught/composed validation leg for plate and bowl. Its earlier best
+was 0.0535714 (5.36%); the best within the latest 16 validations was 0.0446429
+(4.46%). The rule required a gain greater than 0.02 (two percentage points) and
+was allowed to stop after 5M actions. The 30M budget was an upper bound.
+
+The progress bar's `1053/2048` counts training candidates across mixed
+instructions and assisted starts. It is not a composed placement rate. Inspect
+the per-instruction curves and the actual best checkpoint before choosing an
+extension:
+
+```bash
+conda run --no-capture-output -n cdpr-mjlab python tools/audit/inspect_widowx200_stage7.py \
+  --run-dir runs/widowx200_s7_contact_v2_20261113_135223 \
+  --output runs/widowx200_s7_contact_v2_20261113_135223/stage7_diagnosis.json
+```
+
+The report uses the trainer's own metric reader, matches the configured
+validation caps, identifies the bottleneck instruction and best saved policy,
+and reports non-finite force/loss metrics. It loads no checkpoints and starts
+no GPU work. No stop file means the reason is unconfirmed, rather than an
+assumed plateau.
+
+The force warning is emitted when TensorBoard skips non-finite scalars; that
+warning does not itself terminate training. A separate backend masking bug can
+produce those scalars: `NaN * 0` and `Inf * 0` from an unused or unrelated
+contact contaminate the target's pad load. Contact-force reduction now selects
+matched pad contacts with `torch.where` before summing. Real matched non-finite
+pad forces remain visible; this does not establish that every warning came
+from unused contacts or that every physical rollout was finite.
+
+An extension of this trained contact-v2 run should resume its full checkpoint,
+including optimizer and curriculum. `--retry-run` is only for failures before
+the first saved checkpoint. A full resume also restores stopping history, so
+the same plateau rule remains active unless it is deliberately changed. The
+diagnosis report supplies the per-instruction evidence for that decision.
+
 Reuse learned weights, with a fresh optimizer, curriculum and validation-best
 history. The completed pipeline skips finished stages, and a full checkpoint
 resume preserves the old histories and may fail the changed XML fingerprint.

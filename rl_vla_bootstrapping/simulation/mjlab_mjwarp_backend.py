@@ -1594,11 +1594,16 @@ class MJLabMJWarpCDPRBackend(CDPRSimulatorBackend):
         normal_force = self._contact_forces[:, 0].abs()
         left_force = self._left_pad_force.zero_()
         right_force = self._right_pad_force.zero_()
+        # Unused slots and non-pad contacts can contain NaN/Inf solver output.
+        # Multiplication by a zero mask still produces NaN and poisons the
+        # target's pad load (and therefore its grasp), even without contact.
+        # Select before reducing. A non-finite MATCHED pad force deliberately
+        # remains non-finite so a real solver problem is still reported.
         left_force.scatter_add_(
-            0, safe_world, normal_force * left_matched.to(dtype=torch.float32)
+            0, safe_world, torch.where(left_matched, normal_force, 0.0)
         )
         right_force.scatter_add_(
-            0, safe_world, normal_force * right_matched.to(dtype=torch.float32)
+            0, safe_world, torch.where(right_matched, normal_force, 0.0)
         )
         left_counts = self._left_pad_contact_count.zero_()
         right_counts = self._right_pad_contact_count.zero_()
