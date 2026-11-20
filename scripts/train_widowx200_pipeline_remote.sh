@@ -31,6 +31,8 @@
 # saved checkpoint, then finish its harvest/retention and continue the pipeline,
 # RESTART_JOINT_FROM_SFT=1 to preserve an interrupted old joint attempt and
 # restart only joint RL after the new final-prompt composition SFT,
+# SKIP_COMPOSITION_SFT=1 to start joint RL directly from the preceding skill
+# policy and remember that choice on resume (production only),
 # RLVLA_HF_OFFLINE=1 to use the local Hugging Face cache only.
 set -euo pipefail
 
@@ -134,6 +136,7 @@ fi
 production_args=(--pipeline-dir "$PIPELINE_DIR")
 [[ -n "${STOP_BEFORE_STAGE:-}" ]] && production_args+=(--stop-before-stage "$STOP_BEFORE_STAGE")
 [[ "${RESTART_JOINT_FROM_SFT:-0}" == "1" ]] && production_args+=(--restart-joint-from-sft)
+[[ "${SKIP_COMPOSITION_SFT:-0}" == "1" ]] && production_args+=(--skip-composition-sft)
 [[ -n "${FINISH_STAGE_AT_CHECKPOINT:-}" ]] && production_args+=(--finish-stage-at-checkpoint "$FINISH_STAGE_AT_CHECKPOINT")
 "${driver[@]}" "${production_args[@]}"
 if [[ -n "${STOP_BEFORE_STAGE:-}" ]]; then

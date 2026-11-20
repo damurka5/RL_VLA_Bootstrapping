@@ -1,4 +1,4 @@
-"""An interrupted old joint run cannot bypass final-prompt composition SFT."""
+"""Joint RL uses its recorded SFT handoff or an explicit persistent opt-out."""
 
 import copy
 import json
@@ -90,6 +90,112 @@ class CompositionHandoffTests(unittest.TestCase):
         self.assertEqual(train.call_args.args[2], result)
         self.assertEqual(self.record["init"], str(result))
 
+    def launch_joint_until_interrupted(self, pipeline):
+        with patch.object(pipeline, "write_config", return_value=self.root / "joint.yaml"), \
+             patch.object(pipeline, "prepare_composition", side_effect=AssertionError("must skip SFT")), \
+             patch.object(module, "run_command", side_effect=module.ChildFailed("training interrupted")) as run, \
+             self.assertRaisesRegex(module.ChildFailed, "training interrupted"):
+            pipeline.run()
+        self.assertEqual(run.call_count, 1)
+        return run.call_args.kwargs["env"]
+
+    def test_explicit_skip_warm_starts_joint_and_persists_across_resume_without_flag(self):
+        self.p.args.skip_composition_sft = True
+        rejected = {"id": "failed_sft", "status": "rejected", "sft_report": "old_report.json"}
+        self.p.state["composition_sft"] = copy.deepcopy(rejected)
+        baseline = self.p.dir / "eval/stage6_composed/summary.json"
+        baseline.parent.mkdir(parents=True)
+        baseline.write_text('{"by_instruction": {}}')
+        skills = copy.deepcopy({name: row for name, row in self.p.state["stages"].items()
+                                if name != self.stage["name"]})
+        env = self.launch_joint_until_interrupted(self.p)
+        self.assertEqual(env["RLVLA_SMOLVLA_WARMSTART_CHECKPOINT"], str(self.initializer))
+        self.assertNotIn("RLVLA_SMOLVLA_RESUME_CHECKPOINT", env)
+        self.assertEqual(self.p.state["composition_sft"], rejected)
+        saved = json.loads(self.p.state_path.read_text())
+        joint = saved["stages"][self.stage["name"]]
+        decision = joint["composition_sft_skipped"]
+        self.assertEqual(decision["initializer"], str(self.initializer))
+        self.assertEqual(decision["previous_composition_sft_id"], "failed_sft")
+        self.assertEqual(Path(decision["composed_baseline_summary"]), baseline)
+        self.assertEqual(joint["init"], str(self.initializer))
+        self.assertNotIn("composition_sft_id", joint)
+        self.assertEqual({name: saved["stages"][name] for name in skills}, skills)
+
+        # Reload from disk without the opt-out flag; resume the same experiment.
+        resumed = module.Pipeline(module.parse_args([
+            "--config", str(self.p.config_path), "--pipeline-dir", str(self.p.dir)]))
+        latest = self.root / "runs" / f"{self.p.name}__{self.stage['name']}" / "rl/latest.pt"
+        latest.parent.mkdir(parents=True)
+        latest.write_bytes(b"joint optimizer and policy")
+        env = self.launch_joint_until_interrupted(resumed)
+        self.assertEqual(env["RLVLA_SMOLVLA_RESUME_CHECKPOINT"], str(latest))
+        self.assertNotIn("RLVLA_SMOLVLA_WARMSTART_CHECKPOINT", env)
+        self.assertEqual(latest.read_bytes(), b"joint optimizer and policy")
+        self.assertEqual(resumed.state["stages"][self.stage["name"]]["composition_sft_skipped"], decision)
+        self.assertEqual(sum(e["kind"] == "composition_sft_skipped" for e in resumed.state["events"]), 1)
+
+    def test_skip_uses_stage6_handoff_even_if_current_policy_names_a_completed_sft(self):
+        self.p.args.skip_composition_sft = True
+        self.p.state["current_policy"] = str(self.root / "unused_sft.pt")
+        self.p.state["composition_sft"] = {"status": "done", "id": "unused_sft"}
+        env = self.launch_joint_until_interrupted(self.p)
+        self.assertEqual(env["RLVLA_SMOLVLA_WARMSTART_CHECKPOINT"], str(self.initializer))
+
+    def test_skip_refuses_an_existing_joint_attempt_without_a_skip_record(self):
+        latest = self.root / "runs" / f"{self.p.name}__{self.stage['name']}" / "rl/latest.pt"
+        latest.parent.mkdir(parents=True)
+        latest.write_bytes(b"existing experiment")
+        with self.assertRaisesRegex(module.ChildFailed, "Joint RL already started"):
+            self.p.prepare_joint_without_composition_sft(self.stage, self.record, self.initializer)
+        self.assertEqual(latest.read_bytes(), b"existing experiment")
+        self.assertNotIn("composition_sft_skipped", self.record)
+
+    def test_skip_refuses_replacing_a_recorded_sft_handoff(self):
+        self.record["composition_sft_id"] = "existing_sft"
+        with self.assertRaisesRegex(module.ChildFailed, "already uses composition SFT"):
+            self.p.prepare_joint_without_composition_sft(self.stage, self.record, self.initializer)
+
+    def test_skip_refuses_a_changed_initializer_on_resume(self):
+        self.p.prepare_joint_without_composition_sft(self.stage, self.record, self.initializer)
+        changed = self.root / "other_stage6.pt"
+        changed.write_bytes(b"different initializer")
+        with self.assertRaisesRegex(module.ChildFailed, "initializer differs"):
+            self.p.prepare_joint_without_composition_sft(self.stage, self.record, changed)
+
+    def test_skip_requires_completed_stage6_and_an_existing_policy(self):
+        self.p.args.skip_composition_sft = True
+        self.p.state["stages"]["s6_put_into_binary"]["status"] = "harvested"
+        with patch.object(self.p, "write_config", return_value=self.root / "joint.yaml"), \
+             self.assertRaisesRegex(module.ChildFailed, "preceding skill stage"):
+            self.p.run_stage(6, self.stage, self.record)
+        self.initializer.unlink()
+        with self.assertRaisesRegex(module.ChildFailed, "checkpoint is missing"):
+            self.p.prepare_joint_without_composition_sft(self.stage, self.record, self.initializer)
+
+    def test_skip_and_restart_from_sft_are_incompatible(self):
+        import contextlib
+        import io
+
+        with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+            module.parse_args(["--pipeline-dir", str(self.p.dir),
+                               "--skip-composition-sft", "--restart-joint-from-sft"])
+        self.p.prepare_joint_without_composition_sft(self.stage, self.record, self.initializer)
+        self.p.args.restart_joint_from_sft = True
+        with self.assertRaisesRegex(module.ChildFailed, "after choosing to skip"):
+            self.p.prepare_joint_without_composition_sft(self.stage, self.record, self.initializer)
+
+    def test_composition_passes_its_optimizer_settings_to_sft(self):
+        settings = {"lr": 2e-5, "batch_size": 128, "weight_decay": .01,
+                    "lora_lr": 3e-7, "lora_actor_lr": 4e-6, "lora_kl_coef": .2}
+        self.p.composition.update(settings, train_vision_lora=True)
+        self.preparation()
+        command = self.commands[-1]
+        for key, value in settings.items():
+            flag = "--" + key.replace("_", "-")
+            self.assertEqual(command[command.index(flag) + 1], str(value))
+        self.assertIn("--train-vision-lora", command)
+
     def test_old_joint_latest_is_preserved_and_cannot_bypass_sft(self):
         run = self.root / "runs" / f"{self.p.name}__{self.stage['name']}"
         (run / "rl").mkdir(parents=True)
@@ -129,16 +235,66 @@ class CompositionHandoffTests(unittest.TestCase):
         self.assertEqual((archive / "checkpoint.pt").read_bytes(), b"preserved")
 
     def test_no_sft_checkpoint_means_no_joint_handoff(self):
+        # Reproduce the historical attempt, which used implicit tool defaults.
+        for key in ("lr", "lora_lr", "lora_actor_lr"):
+            self.p.composition.pop(key, None)
         original = self.run_child
         def no_adapter(command, **kwargs):
             original(command, **kwargs)
             if command[1].endswith("sil_sft.py"):
-                (Path(command[command.index("--output") + 1]) / "sil_sft_adapter.pt").unlink()
+                output = Path(command[command.index("--output") + 1])
+                (output / "sil_sft_adapter.pt").unlink()
+                (output / "sft_report.json").write_text(json.dumps({
+                    "selected": "initializer", "adapter_written": False}))
         with patch.object(module, "run_command", side_effect=no_adapter), \
              self.assertRaisesRegex(module.ChildFailed, "no improved adapter"):
             self.p.prepare_composition(self.stage, self.record, self.initializer)
-        self.assertNotEqual(self.p.state["composition_sft"]["status"], "done")
+        rejected = dict(self.p.state["composition_sft"])
+        self.assertEqual(rejected["status"], "rejected")
+        self.assertEqual(json.loads(self.p.state_path.read_text())["composition_sft"]["status"], "rejected")
         self.assertEqual(self.p.state["current_policy"], str(self.initializer))
+        # A completed rejection is not an interrupted training job. Do not
+        # launch it again or mislead the user into expecting different results.
+        with self.assertRaisesRegex(module.ChildFailed, "rerunning unchanged settings will stop here again"):
+            self.preparation()
+        self.assertEqual(len(self.commands), 4)
+        self.assertEqual(self.p.state["current_policy"], str(self.initializer))
+
+        # Changed optimizer settings must get a new attempt and leave the
+        # rejection and all finished skill stages available for inspection.
+        self.p.composition.update(lr=1e-5, lora_lr=1e-7, lora_actor_lr=1e-6)
+        stages_before = copy.deepcopy({name: entry for name, entry in self.p.state["stages"].items()
+                                      if name != self.stage["name"]})
+        result = self.preparation()
+        self.assertNotEqual(self.p.state["composition_sft"]["id"], rejected["id"])
+        self.assertNotEqual(result.parent.parent, Path(rejected["directory"]))
+        self.assertEqual(json.loads(Path(rejected["sft_report"]).read_text())["selected"], "initializer")
+        self.assertFalse((Path(rejected["directory"]) / "sft/sil_sft_adapter.pt").exists())
+        self.assertEqual({name: self.p.state["stages"][name] for name in stages_before}, stages_before)
+        self.assertEqual(self.p.state["composition_sft"]["status"], "done")
+
+    def test_rejected_sft_does_not_print_generic_unchanged_resume_advice(self):
+        self.p.state["composition_sft"] = {"status": "rejected"}
+        with patch.object(module, "Pipeline", return_value=self.p), \
+             patch.object(module.signal, "signal"), patch.dict(module.os.environ), \
+             patch.object(self.p, "run", side_effect=module.ChildFailed("no improved adapter")), \
+             patch.object(module, "log") as log:
+            self.assertEqual(module.main(["--pipeline-dir", str(self.p.dir)]), 1)
+        messages = [call.args[0] for call in log.call_args_list]
+        self.assertTrue(any("Change composition SFT settings" in message for message in messages))
+        self.assertFalse(any("Re-run the same command" in message for message in messages))
+
+    def test_joint_failure_after_skipping_sft_prints_resume_advice(self):
+        self.p.state["composition_sft"] = {"status": "rejected"}
+        self.p.prepare_joint_without_composition_sft(self.stage, self.record, self.initializer)
+        with patch.object(module, "Pipeline", return_value=self.p), \
+             patch.object(module.signal, "signal"), patch.dict(module.os.environ), \
+             patch.object(self.p, "run", side_effect=module.ChildFailed("training interrupted")), \
+             patch.object(module, "log") as log:
+            self.assertEqual(module.main(["--pipeline-dir", str(self.p.dir)]), 1)
+        messages = [call.args[0] for call in log.call_args_list]
+        self.assertTrue(any("Re-run the same command" in message for message in messages))
+        self.assertFalse(any("Change composition SFT settings" in message for message in messages))
 
     def test_stop_before_joint_finishes_skills_without_starting_sft_or_training(self):
         self.p.args.stop_before_stage = self.stage["name"]

@@ -23,6 +23,8 @@ Before joint RL, an enabled composition_sft transition pools successful skill
 samples under final plate/bowl prompts, keeps original-label retention, refreshes
 network inputs, and fits the residual/action-expert LoRA. Joint RL starts fresh
 from that adapter. Independent skill samples are not claimed as continuous chains.
+An explicit --skip-composition-sft starts joint RL from the preceding skill
+policy instead; that decision is recorded and retained on subsequent resumes.
 
 All state lives in ``<pipeline-dir>/pipeline_state.json``. Re-running the same
 command on the same ``--pipeline-dir`` resumes: finished stages are skipped and
@@ -615,11 +617,18 @@ class Pipeline:
                     "stage has produced one. Run the earlier stages first."
                 )
             init = Path(current)
-        if skill_name == "joint" and self.composition.get("enabled", False):
+        skip_composition = skill_name == "joint" and (
+            getattr(self.args, "skip_composition_sft", False) or record.get("composition_sft_skipped")
+        )
+        if skill_name == "joint" and (skip_composition or self.composition.get("enabled", False)):
             previous = self.state["stages"].get(str(self.spec["stages"][index - 1]["name"]), {}) if index else {}
             if not self.dry_run and previous.get("status") != "done":
-                raise ChildFailed("Composition SFT requires the preceding skill stage, including harvest and retention, to finish")
-            init = self.prepare_composition(stage, record, Path(previous.get("policy") or init or "<previous policy>"))
+                raise ChildFailed("The joint handoff requires the preceding skill stage, including harvest and retention, to finish")
+            initializer = Path(previous.get("policy") or init or "<previous policy>")
+            if skip_composition:
+                init = self.prepare_joint_without_composition_sft(stage, record, initializer)
+            else:
+                init = self.prepare_composition(stage, record, initializer)
             record["init"] = str(init)
         record.setdefault("init", None if init is None else str(init))
 
@@ -779,6 +788,44 @@ class Pipeline:
         self.save_state()
         log(f"{'Would preserve' if self.dry_run else 'Preserved'} pre-SFT joint attempt at {archive}; stages 1–6 remain complete")
 
+    def prepare_joint_without_composition_sft(
+        self, stage: Mapping[str, Any], record: dict[str, Any], initializer: Path,
+    ) -> Path:
+        """Persist an explicit direct handoff without replacing a joint attempt."""
+
+        if getattr(self.args, "restart_joint_from_sft", False):
+            raise ChildFailed("Cannot restart joint RL from SFT after choosing to skip composition SFT in this run")
+        if record.get("composition_sft_id"):
+            raise ChildFailed("This joint stage already uses composition SFT; preserve it as a separate experiment")
+        if not self.dry_run and not initializer.is_file():
+            raise ChildFailed(f"The preceding skill checkpoint is missing: {initializer}")
+        decision = record.get("composition_sft_skipped")
+        if decision is not None:
+            if decision.get("initializer") != str(initializer) or record.get("init") != str(initializer):
+                raise ChildFailed("The saved no-SFT joint initializer differs from the preceding skill policy")
+            log(f"{stage['name']}: composition SFT remains skipped; initializer {initializer}")
+            return initializer
+        run = ROOT / "runs" / f"{self.name}__{stage['name']}"
+        if run.exists() or record.get("status") not in (None, "pending"):
+            raise ChildFailed("Joint RL already started without a recorded SFT-skip decision; preserve it as a separate experiment")
+        if any(item.get("stage") == stage["name"] and item.get("status") == "pending"
+               for item in self.state.get("joint_restarts", [])):
+            raise ChildFailed("Finish the pending joint restart before changing its initialization")
+        attempt = self.state.get("composition_sft", {})
+        decision = {"reason": "user_requested", "initializer": str(initializer),
+                    "time": _dt.datetime.now().isoformat(), "git_commit": git_commit(),
+                    "previous_composition_sft_id": attempt.get("id"),
+                    "previous_composition_sft_status": attempt.get("status")}
+        baseline = self.dir / "eval" / "stage6_composed" / "summary.json"
+        if baseline.is_file():
+            decision["composed_baseline_summary"] = str(baseline)
+        record["composition_sft_skipped"] = decision
+        record["init"] = str(initializer)
+        self.state["current_policy"] = str(initializer)
+        self.event("composition_sft_skipped", stage=stage["name"], **decision)
+        log(f"{stage['name']}: composition SFT skipped by request; initializing fresh joint RL from {initializer}")
+        return initializer
+
     def prepare_composition(self, stage: Mapping[str, Any], record: dict[str, Any], initializer: Path) -> Path:
         settings = dict(self.composition)
         if self.smoke:
@@ -850,16 +897,34 @@ class Pipeline:
         adapter = base / "sft" / "sil_sft_adapter.pt"
         report = base / "sft" / "sft_report.json"
         if self.dry_run or not report.is_file():
-            execute("sft", [self.python, str(ROOT / "tools/audit/sil_sft.py"),
+            command = [self.python, str(ROOT / "tools/audit/sil_sft.py"),
                     "--dataset", str(refreshed), "--frames", *frames, "--checkpoint", str(initializer),
                     "--epochs", str(int(settings.get("epochs", 20))),
                     "--lora-epochs", str(int(settings.get("lora_epochs", 4))),
                     "--lora-rows", str(int(settings.get("lora_rows", 8192))),
                     "--lora-microbatch", str(int(settings.get("lora_microbatch", 4))),
                     "--split-by", "provided", "--sampler", "balanced",
-                    "--seed", str(int(settings.get("seed", 0))), "--device", device, "--output", str(adapter.parent)])
+                    "--seed", str(int(settings.get("seed", 0))), "--device", device, "--output", str(adapter.parent)]
+            # Keep absent settings at sil_sft's defaults for older configs.
+            # These settings already participate in the composition identity,
+            # so tuning them cannot reuse a rejected run's report/adapter.
+            for key in ("lr", "batch_size", "weight_decay", "lora_lr", "lora_actor_lr", "lora_kl_coef"):
+                if key in settings:
+                    command.extend(["--" + key.replace("_", "-"), str(settings[key])])
+            if settings.get("train_vision_lora", False):
+                command.append("--train-vision-lora")
+            execute("sft", command)
         if not self.dry_run and not adapter.is_file():
-            raise ChildFailed(f"Composition SFT wrote no improved adapter; joint RL has not started. Inspect {report}")
+            prep.update(status="rejected", phase="sft", sft_report=str(report),
+                        reason="no_improved_adapter")
+            self.save_state()
+            raise ChildFailed(
+                f"Composition SFT wrote no improved adapter; joint RL has not started. Inspect {report}. "
+                "This completed SFT attempt is cached: rerunning unchanged settings will stop here again. "
+                "Change widowx200_pipeline.composition_sft settings (for example lr, lora_lr and "
+                "lora_actor_lr) to create a separate attempt, or explicitly use --skip-composition-sft "
+                "to initialize joint RL from the preceding skill policy. Completed skills and old artifacts are preserved."
+            )
         if not self.dry_run:
             prep["dataset_report"] = json.loads((modified.parent / "dataset.json").read_text())
             prep["sft_report"] = str(report)
@@ -1304,6 +1369,7 @@ class Pipeline:
                     "metric", "best_value", "best_step", "best_checkpoint",
                     "checkpoint_selection", "selected_checkpoint", "selected_step",
                     "selected_value", "early_stop", "policy",
+                    "init", "composition_sft_id", "composition_sft_skipped",
                 )},
                 "sil_cycles_attempted": len(entry.get("sil_cycles") or []),
                 "sil_cycles_accepted": sum(bool(c.get("accepted")) for c in entry.get("sil_cycles") or []),
@@ -1326,6 +1392,9 @@ class Pipeline:
                 lines.append(f"| {label} | {instruction} | {entry['successes']}/{entry['episodes']} | {entry['rate']:.3f} |")
         lines += ["", "## Stages", ""]
         for entry in report["stages"]:
+            if entry.get("composition_sft_skipped"):
+                lines.append(f"- **{entry['name']} initialization**: composition SFT skipped by request; "
+                             f"preceding skill policy `{entry['composition_sft_skipped']['initializer']}`.")
             lines.append(
                 f"- **{entry['name']}**: best RL {entry.get('metric')}={entry.get('best_value')} at step "
                 f"{entry.get('best_step')}; early stop {(entry.get('early_stop') or {}).get('reason')}; "
@@ -1490,8 +1559,11 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dry-run", action="store_true", help="Write the stage configs and print the commands only.")
     parser.add_argument("--only-stage", action="append", default=[], help="Run only these stages (repeatable).")
     parser.add_argument("--stop-before-stage", help="Finish preceding stages, then exit cleanly before this stage.")
-    parser.add_argument("--restart-joint-from-sft", action="store_true",
-                        help="Preserve an interrupted pre-SFT joint run and restart only joint RL after composition SFT.")
+    composition_mode = parser.add_mutually_exclusive_group()
+    composition_mode.add_argument("--restart-joint-from-sft", action="store_true",
+                                  help="Preserve an interrupted pre-SFT joint run and restart only joint RL after composition SFT.")
+    composition_mode.add_argument("--skip-composition-sft", action="store_true",
+                                  help="Start fresh joint RL directly from the preceding completed skill policy; persist this choice on resume.")
     parser.add_argument("--finish-stage-at-checkpoint", metavar="STAGE=CHECKPOINT",
                         help="End an interrupted skill stage's RL at this saved checkpoint (or latest); still run its harvest and retention.")
     return parser.parse_args(argv)
@@ -1514,7 +1586,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             pipeline.event("failed", error=str(error))
         log(f"FAILED: {error}")
         if pipeline is not None:
-            log(f"Re-run the same command to resume from {pipeline.state_path}.")
+            skipped = getattr(args, "skip_composition_sft", False) or any(
+                record.get("composition_sft_skipped") for record in pipeline.state["stages"].values())
+            if pipeline.state.get("composition_sft", {}).get("status") == "rejected" and not skipped:
+                log(f"Change composition SFT settings before resuming from {pipeline.state_path}.")
+            else:
+                log(f"Re-run the same command to resume from {pipeline.state_path}.")
         return 1
     return 0
 

@@ -74,6 +74,17 @@ class FinalReportTests(unittest.TestCase):
         self.assertIn("selected RL (user_checkpoint) `manual_rl.pt` at step 1764679", markdown)
         self.assertIn("SIL accepted/attempted 1/2", markdown)
 
+    def test_final_report_identifies_joint_rl_without_composition_sft(self):
+        decision = {"reason": "user_requested", "initializer": "stage6_policy.pt"}
+        self.p.state["stages"]["s7_joint_staged"].update(
+            init="stage6_policy.pt", composition_sft_skipped=decision)
+        report, markdown = self.finish()
+        joint = next(row for row in report["stages"] if row["name"] == "s7_joint_staged")
+        self.assertEqual(joint["composition_sft_skipped"], decision)
+        self.assertEqual(joint["init"], "stage6_policy.pt")
+        self.assertIsNone(joint["composition_sft_id"])
+        self.assertIn("composition SFT skipped by request", markdown)
+
     def test_missing_evaluation_cannot_pass_retention(self):
         self.p.state["references"] = {"pick_up": self.report["references"]["pick_up"]}
         self.report["pick_up"] = {}

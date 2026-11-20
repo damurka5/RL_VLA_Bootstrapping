@@ -5180,3 +5180,30 @@ which is five times slower and more reliable).
   invocation. The supplied GPU hold preflight is kept as separate evidence.
   [Changes, validation and command](docs/reports/campaign/WIDOWX200_FRESH_RUN_20261104.md).
   No new policy training was launched during this publication task.
+
+### 2026-11-11 — Fresh WidowX stage-6 baseline; composition SFT rejected, direct joint RL requested
+
+- Run: `widowx200_pipeline_fresh_20261104_162138_CBEU9r`. The user supplied
+  stage-6 handoff evaluations and the 2026-11-10 composition-SFT log; these
+  measurements were not rerun locally.
+- Stage-6 policy, after retention: reaching **533/1024 = 52.05%**, pickup
+  **109/1024 = 10.64%**, caught bowl **324/520 = 62.31%**, caught plate
+  **403/504 = 79.96%**. These belong to the fresh run, separately from the
+  earlier completed pipeline above.
+- Empty-hand aligned composed evaluation of that same policy: bowl
+  **11/520 = 2.12%**, plate **6/504 = 1.19%**, pooled
+  **17/1024 = 1.66%**. Evidence is on the server under
+  `eval/stage6_composed/summary.json`, with CUDA shard summaries and recorded
+  rounds. This protocol does not include a distant initial approach.
+- Composition attempt `89daca60b586621b` used **801 source skill episodes /
+  12,649 decision rows** (11,354 train, 1,295 validation), with an 8,192-row
+  frame budget for LoRA. No residual or LoRA epoch beat its untouched
+  held-out baseline; the initializer was selected and no adapter was written.
+  Joint RL had not started in the supplied failure log.
+- The user requests stage 7 directly from the stage-6 handed-off policy,
+  without another composition-SFT pass. Added the explicit launcher control
+  `SKIP_COMPOSITION_SFT=1` / driver `--skip-composition-sft`. The choice and
+  initializer persist in the joint-stage state; the rejected SFT attempt and
+  composed baseline stay available. This skips the composition transition,
+  not earlier retention work. Existing joint attempts cannot be silently
+  reinitialized. No stage-7 training result is supplied yet.

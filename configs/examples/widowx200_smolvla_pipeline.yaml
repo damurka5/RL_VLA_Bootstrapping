@@ -618,7 +618,13 @@ widowx200_pipeline:
     rows_per_cell: 2000
     retention_fraction: 0.20
     epochs: 20
+    # Lower-rate retry after the scene-held-out run selected the initializer.
+    # Training loss fell while validation worsened; these are trial rates,
+    # not evidence that the next attempt will generalize. Keep the same split.
+    lr: 1.0e-5
     lora_epochs: 4
+    lora_lr: 1.0e-7
+    lora_actor_lr: 1.0e-6
     lora_rows: 8192
     lora_microbatch: 4
     seed: 0

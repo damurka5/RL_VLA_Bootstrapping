@@ -106,8 +106,9 @@ earlier scene settings; inspect source provenance when comparing results.
 - The existing SFT tool fits the residual and action-expert LoRA, selects epochs
   against its held-out loss, and writes provenance. Vision LoRA is left off.
   Defaults are 20 residual epochs, 4 LoRA epochs, an 8192-row frame budget and a
-  4-row LoRA microbatch. If no improved SFT adapter is written, joint RL is held
-  rather than silently pretending that SFT was applied.
+  4-row LoRA microbatch. The example config now explicitly uses `lr: 1.0e-5`,
+  `lora_lr: 1.0e-7` and `lora_actor_lr: 1.0e-6`. If no improved SFT adapter is
+  written, joint RL is held rather than silently pretending that SFT was applied.
 - Original-skill and empty-start composed placement success are evaluated before
   and after SFT. These results are recorded, not claimed from SFT loss alone.
   Joint RL uses the selected SFT adapter with fresh optimizer/curriculum/step
@@ -134,5 +135,66 @@ The identity includes settings, initializer and retained bank provenance.
 scores and the selected policy. The joint stage records `composition_sft_id`.
 Completed preparation is reused when resuming corrected joint RL; keeping
 `RESTART_JOINT_FROM_SFT=1` does not archive that corrected run again.
+
+### When SFT selects the initializer
+
+`selected: initializer` and `adapter_written: false` mean neither training pass
+beat its own untouched held-out baseline. Joint RL stays pending, and the
+composition state records `status: rejected` and the report path. The completed
+report is cached: rerunning the same settings does not repeat training.
+
+For the 2026-11-10 attempt `89daca60b586621b`, residual training MSE fell from
+0.04649 to 0.03122 while validation MSE increased from 0.04781 to 0.04924.
+LoRA training loss also fell, while every validation result was worse than its
+0.04887 baseline. This suggests overfitting or a distribution mismatch; it is
+not evidence of rising training loss or a download failure.
+
+The example config's explicit rates are a lower-rate retry: residual `1e-4`
+to `1e-5`, expert LoRA `1e-6` to `1e-7`, and the residual during LoRA `1e-5`
+to `1e-6` (the original LoRA rate assumes the checkpoint's `vla_lr: 1e-5`).
+These trial rates do not guarantee an improvement. The split, sampling,
+epoch budgets and acceptance rule stay the same.
+
+After pulling the updated code/config, rerun the existing launcher command with
+the same `PIPELINE_DIR`. Changed settings get a separate composition identity;
+the previous artifacts and completed skill stages remain intact. The composition
+dataset is prepared again under that identity. No state editing, deleting
+reports or `RESTART_JOINT_FROM_SFT=1` is needed when joint RL has not started.
+
+The driver forwards `lr`, `batch_size`, `weight_decay`, `lora_lr`,
+`lora_actor_lr`, `lora_kl_coef` and `train_vision_lora` from `composition_sft`.
+Omitted controls retain the SFT tool's defaults. Reports include the effective
+optimizer rates and baseline/selected/last-residual validation by stage,
+destination, object and SFT view, including rejected attempts. If the lower-rate
+attempt is rejected too, use those breakdowns and source-bank coverage to
+investigate generalization before choosing another training configuration.
+
+### Continue directly to joint RL without composition SFT
+
+Use `SKIP_COMPOSITION_SFT=1` in the remote launcher (driver option:
+`--skip-composition-sft`) to initialize stage 7 directly from the completed
+stage-6 **handed-off policy**, including any accepted retention repair:
+
+```bash
+PIPELINE_DIR=/root/repo/RL_VLA_Bootstrapping/runs/widowx200_pipeline_fresh_20261104_162138_CBEU9r \
+MODE=full SMOKE_FIRST=0 MEMORY_CHECK_FIRST=0 SKIP_COMPOSITION_SFT=1 \
+bash scripts/train_widowx200_pipeline_remote.sh
+```
+
+This skips only the composition transition. Completed skills, earlier retention
+SFT and the rejected composition artifacts stay intact. Stage 7 starts with
+fresh RL optimizer/curriculum/step state, and the ordinary stage-7 recipe is
+unchanged. The skip flag is passed only to production, not the smoke pass.
+
+Before starting training, the driver records `composition_sft_skipped` and the
+exact initializer in the joint stage, with the prior composition attempt's ID
+and status. If `eval/stage6_composed/summary.json` exists, its path is also
+recorded as baseline evidence. The decision persists on resume, even when the
+environment flag is omitted; an interrupted stage 7 resumes its own `latest.pt`
+without retrying SFT. Final reports expose this initialization choice.
+
+The driver refuses to change an existing joint attempt's initializer in place
+or combine this mode with `RESTART_JOINT_FROM_SFT=1`. Keep the same pipeline
+directory when resuming the direct stage-6 handoff.
 
 Use `export_widowx200_pipeline_results.py` to export this evidence for analysis.

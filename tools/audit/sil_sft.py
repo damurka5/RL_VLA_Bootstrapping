@@ -1358,9 +1358,9 @@ def build_runtime_and_trainer(
     )
     if info["vla_lora/vision_modules"] <= 0:
         print(
-            "[sft] NOTE: the vision tower is NOT adapted in this checkpoint's "
-            "args (train_vla_vision_lora is off). Phase 4 turns it on at the "
-            "first SFT; set it in the config the harvest checkpoint came from.",
+            "[sft] NOTE: no vision LoRA modules are attached. "
+            "--train-vision-lora opts into vision adaptation; check the "
+            "attached module counts when enabling it.",
             flush=True,
         )
     trainer.load_weights_only(Path(checkpoint))
@@ -1672,10 +1672,11 @@ def train_lora_stage(
     if best_state is None:
         print(
             "[sft][lora] NO epoch beat the starting point "
-            f"({baseline['mse']}). The adapter is not applied and the "
-            "residual-only checkpoint stands. Lower --lora-lr or --lora-epochs "
-            "before reading this as 'LoRA does not help' -- a rising TRAIN "
-            "loss means the step size is wrong, not that the data is.",
+            f"({baseline['mse']}). LoRA is not applied; the starting residual "
+            "is kept. Falling training loss with worsening validation suggests "
+            "overfitting or a train/validation distribution mismatch. Smaller "
+            "--lora-lr and --lora-actor-lr are tuning experiments, not a guarantee "
+            "of held-out improvement.",
             flush=True,
         )
     else:
@@ -1700,6 +1701,9 @@ def train_lora_stage(
         "state": best_state,
         "rows_per_epoch": int(train_rows.size),
         "rows_train": int(train_rows.size),
+        "lr": float(lr),
+        "actor_lr": float(actor_lr),
+        "kl_coef": float(kl_coef),
         "baseline": baseline,
         "history": history,
         "sampler_report": stage_sampler_report,
@@ -2671,14 +2675,28 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
 
 
-    # Per-stage and per-destination validation, taken on the BEST residual
-    # rather than on whatever the last epoch left behind. A pooled MSE that
-    # improves while the release gets worse looks exactly like a pooled MSE
-    # that improves, and the three stages of a chain have very different action
-    # statistics.
+    # Per-stage and per-destination validation, taken on the selected residual
+    # (including the untouched initializer when every epoch was rejected).
+    # Retain the baseline and last trained residual too, so a rejection can
+    # be investigated by cell rather than leaving per_stage empty.
+    # The three stages of a chain have very different action statistics; pooled
+    # improvement can hide a worsening release.
     per_stage: dict[str, Any] = {}
+    restored = _build_actor(payload, device)
+    val_index = np.flatnonzero(val_rows)
+    columns = ("stage_name", "destination", "target_catalog", "source_group", "sampling_destination", "sft_view")
+    for column in columns:
+        per_stage[f"baseline_val_by_{column}"] = per_group_metrics(
+            restored, torch, dataset=dataset, rows=val_index, state=va_state,
+            prior=va_prior, action=va_action, mask=va_mask,
+            batch_size=int(args.batch_size), column=column,
+        )
+        per_stage[f"last_residual_val_by_{column}"] = per_group_metrics(
+            actor, torch, dataset=dataset, rows=val_index, state=va_state,
+            prior=va_prior, action=va_action, mask=va_mask,
+            batch_size=int(args.batch_size), column=column,
+        )
     if best_policy_state is not None:
-        restored = _build_actor(payload, device)
         restored.load_state_dict(
             {
                 key[len("actor.") :]: value
@@ -2687,20 +2705,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             },
             strict=True,
         )
-        val_index = np.flatnonzero(val_rows)
-        for column in ("stage_name", "destination", "target_catalog", "source_group"):
-            per_stage[f"val_by_{column}"] = per_group_metrics(
-                restored,
-                torch,
-                dataset=dataset,
-                rows=val_index,
-                state=va_state,
-                prior=va_prior,
-                action=va_action,
-                mask=va_mask,
-                batch_size=int(args.batch_size),
-                column=column,
-            )
+    for column in columns:
+        per_stage[f"val_by_{column}"] = per_group_metrics(
+            restored, torch, dataset=dataset, rows=val_index, state=va_state,
+            prior=va_prior, action=va_action, mask=va_mask,
+            batch_size=int(args.batch_size), column=column,
+        )
     reach_by_group = {
         f"reachability_by_{column}": per_group_reachability(
             dataset,
@@ -2763,6 +2773,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         "selected": selected,
         "adapter_written": adapter_written,
         "selection_metric": str(args.selection_metric),
+        "training_settings": {
+            "lr": float(args.lr),
+            "weight_decay": float(args.weight_decay),
+            "batch_size": int(args.batch_size),
+            "epochs": int(args.epochs),
+            "lora_epochs": int(args.lora_epochs),
+            "train_vision_lora_requested": bool(args.train_vision_lora),
+        },
         "initializer_selection_score": round(float(initializer_score), 6),
         "best_selection_score": round(float(best), 6),
         "lora": lora_report,

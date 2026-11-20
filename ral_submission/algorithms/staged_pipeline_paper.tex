@@ -1,14 +1,61 @@
+% Method-level pseudocode for the paper: one single-column float.
+% Vocabulary follows the manuscript text; the justification lines reuse
+% Eq. (eq:mixed) and Eq. (eq:chain). Implementation details (optimizer state,
+% log-std bounds, LoRA anchor, offset-conditioned likelihood, numeric gates)
+% stay in algorithms/staged_bootstrapping.tex, algorithms/cdpr_group_update.tex
+% and configs/examples/widowx200_smolvla_pipeline.yaml.
+%
+% \parState: a numbered statement whose continuation lines keep the
+% statement's indentation instead of returning to the left margin.
+\makeatletter
+\providecommand{\parState}[1]{\State\parbox[t]{\dimexpr\linewidth-\ALG@thistlm\relax}{\raggedright\strut#1\strut}}
+\makeatother
+% \AlgNote: an unnumbered, left-aligned line below the procedure.
+\providecommand{\AlgNote}[1]{\Statex\parbox[t]{\linewidth}{\raggedright\strut#1\strut}}
+
 \begin{algorithm}[!t]
 \caption{Staged VLA adaptation}
 \label{alg:paper_pipeline}
 \small
+\algrenewcommand\algorithmicindent{1.0em}
 \begin{algorithmic}[1]
-\State Load the pretrained VLA, initialize the residual controller, and create successful-trajectory banks.
-\State Train approach, pickup, and placement separately with dense rewards, using each skill's instruction and reset conditions.
-\State After each skill, evaluate the earlier skills. If they have degraded, fit the shared policy to a balanced bank of earlier and recent successes and evaluate it again.
-\State Refine the skills with binary completion rewards, repeating the retention checks and recovery when needed.
-\State Relabel successful skill trajectories with the complete instruction. Collect compatible segments for composition and fit their actions under that instruction.
-\State Train the complete task from empty-gripper starts with milestone feedback, and evaluate complete-task success.
-\State If composition plateaus and the budget permits, freeze the VLA and its adapters, retain the learned residual, reset the optimizer, and continue full-task RL with the same milestone rewards. In the CDPR continuation, likelihoods are evaluated on stored pre-clipping samples conditional on their recorded episode offsets.
+\Require Pretrained VLA with action prior $p_t$; skills $k=1,\ldots,n$ (approach, pickup, placement) with instructions $\ell_k$ and success conditions $E_k$; full-task instruction $\ell$
+\parState{Initialize the residual controller $f_\theta$ and SIL banks $\mathcal B_k\gets\varnothing$. The policy samples $a_t\sim\mathcal N\big(\mu_\theta,\sigma^2\big)$, $\mu_\theta=\tanh\big(p_t+\tanh f_\theta(x_t,p_t)\big)$}
+\For{reward type $\in$ (dense, binary)}
+  \For{$k=1,\ldots,n$}
+    \State \Call{TrainRL}{$\ell_k$, $R_k$, starting states of skill $k$}
+    \parState{Smooth the successes by a moving average, replay them, and add those that still satisfy $E_k$ to $\mathcal B_k$}
+    \State Evaluate success $\hat p_j$ of every skill learned so far
+    \If{$\hat p_j<p^{\star}_j-\delta$ for some $j$}\Comment{forgetting}
+      \State $\theta'\gets\arg\min_\theta\mathcal L_{\mathrm{SI}}(\theta)$ on all banks $\mathcal B_j$
+      \State Keep $\theta'$ if it restores $\hat p_j$ without lowering others
+    \EndIf
+  \EndFor
+\EndFor
+\parState{Relabel the bank segments with $\ell$ and fit $\mathcal L_{\mathrm{SI}}$ under $\ell$, training every factor $p_i$ of Eq.~\eqref{eq:chain} under one instruction}
+\State \Call{TrainRL}{$\ell$, $R^{\mathrm{ms}}$, empty-gripper starts}
+\If{success under $\ell$ stops improving}
+  \parState{Freeze the VLA and its adapters; continue \Call{TrainRL}{} for $f_\theta$ alone}
+\EndIf
+\State \Return the policy for $\ell$
+\Statex
+\Procedure{TrainRL}{instruction, reward $R$, starts}
+  \State Starting distance $d\gets d_{\min}$
+  \Repeat
+    \Repeat\Comment{dynamic sampling}
+      \State Run $G$ attempts $\tau_{1:G}$ from one start within $d$
+      \State Keep the group only if $\operatorname{std}_jR(\tau_j)>0$
+      \State $A_i\gets\big(R(\tau_i)-\operatorname{mean}_jR(\tau_j)\big)/\operatorname{std}_jR(\tau_j)$
+    \Until{the batch holds $N$ groups}
+    \parState{Update $\theta$ and the adapters by maximizing $\hat{\mathbb E}\big[\min\big(r_tA_i,\operatorname{clip}(r_t,1-\epsilon_{\mathrm l},1+\epsilon_{\mathrm h})A_i\big)\big]$, where $r_t=\pi_\theta(a_t)/\pi_{\theta_{\mathrm{old}}}(a_t)$~\cite{deepseekmath,dapo}}
+    \State If success exceeds $s$, increase $d$
+  \Until{success target, no improvement, or budget}
+  \State \Return the best evaluated policy
+\EndProcedure
+\Statex\hrulefill
+\AlgNote{Rewards: dense progress $R_k$, then binary $R_k=\mathbf 1[E_k]$; milestones $R^{\mathrm{ms}}=\frac1M\sum_{m=1}^{M}\mathbf 1[E_m]$.}
+\AlgNote{$\mathcal L_{\mathrm{SI}}=\operatorname{mean}_j\,\hat{\mathbb E}_{(o,\tilde a)\in\mathcal B_j}\|\mu_\theta(o,\ell_j)-\tilde a\|^2$ over learned skills $j$, so every skill has equal weight; $p^\star_j$ is the best success of skill $j$ so far.}
+\AlgNote{Why this order: a binary group is kept with probability $P_{\mathrm{mixed}}(p)$, Eq.~\eqref{eq:mixed}, which vanishes as $p\to0$. Dense rewards and a short distance $d$ first raise $p$ enough for binary rewards.}
+\AlgNote{Why milestones: with ordered milestones and independent attempts, Eqs.~\eqref{eq:mixed}--\eqref{eq:chain} give $P\big(\operatorname{std}R^{\mathrm{ms}}>0\big)\ge\max_m P_{\mathrm{mixed}}\big(\prod_{i\le m}p_i\big)$. The term $m=M$ is $P_{\mathrm{mixed}}(p_{\mathrm{total}})$, so milestone groups are informative at least as often as binary full-task groups, and more often when an earlier milestone has success nearer $1/2$.}
 \end{algorithmic}
 \end{algorithm}

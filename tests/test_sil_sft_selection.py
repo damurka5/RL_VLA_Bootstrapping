@@ -108,6 +108,13 @@ class InitializerSelectionTests(unittest.TestCase):
             self.assertIsNone(report["best_val_mse"])
             self.assertEqual(report["initializer_selection_score"], 1.0)
             self.assertGreaterEqual(min(row["selection_score"] for row in report["history"]), 1.0)
+            groups = report["per_stage"]
+            baseline = groups["baseline_val_by_stage_name"]
+            self.assertEqual(set(baseline), set(sil_sft.STAGE_NAMES))
+            self.assertEqual(groups["val_by_stage_name"], baseline)
+            self.assertNotEqual(groups["last_residual_val_by_stage_name"], baseline)
+            self.assertEqual(report["training_settings"]["lr"], 3e-2)
+            self.assertEqual(report["training_settings"]["batch_size"], 64)
 
     def test_learnable_bank_selects_an_epoch_and_writes_it(self):
         with tempfile.TemporaryDirectory() as tmp:
