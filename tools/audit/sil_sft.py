@@ -1262,6 +1262,7 @@ def build_runtime_and_trainer(
     checkpoint: Path,
     device: str,
     train_vision_lora: bool = False,
+    evaluation_only: bool = False,
 ) -> tuple[Any, Any, Any]:
     """The RL run's own SmolVLA runtime, LoRA and residual, rebuilt verbatim.
 
@@ -1363,7 +1364,24 @@ def build_runtime_and_trainer(
             "attached module counts when enabling it.",
             flush=True,
         )
-    trainer.load_weights_only(Path(checkpoint))
+    if evaluation_only:
+        # The native rollout loader also restores weights directly for latent
+        # checkpoints, which the training warm-start API explicitly disallows.
+        saved = payload.get("vla_lora") or {}
+        attached = {
+            name: parameter for name, parameter in runtime.policy.named_parameters()
+            if name.endswith((".lora_a", ".lora_b"))
+        }
+        if saved.keys() != attached.keys():
+            missing = sorted(saved.keys() - attached.keys())
+            extra = sorted(attached.keys() - saved.keys())
+            raise ValueError(f"Saved/attached LoRA mismatch: missing={missing[:4]}, extra={extra[:4]}")
+        runtime.policy.load_state_dict(saved, strict=False)
+        trainer._unwrap(trainer.actor).load_state_dict(payload["policy"])
+        runtime.policy.eval()
+        trainer.actor.eval()
+    else:
+        trainer.load_weights_only(Path(checkpoint))
     return runtime, trainer, args
 
 

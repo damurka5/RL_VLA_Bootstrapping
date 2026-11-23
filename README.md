@@ -370,5 +370,6 @@ PYTHONPATH=. python3 -m unittest discover -s tests -p 'test_*.py'
 | [`CDPR_CONSOLIDATED_PROGRESS_REPORT.md`](CDPR_CONSOLIDATED_PROGRESS_REPORT.md) | Headline results, method, exclusions, and the dated experiment ledger |
 | [`docs/reports/`](docs/reports/README.md) | Phase reports, superseded plans, side tracks and history, catalogued |
 | [`docs/research/CDPR_RESEARCH_THEORY.md`](docs/research/CDPR_RESEARCH_THEORY.md) | Mathematical draft of the dissertation framing |
+| [`docs/research/CDPR_CHECKPOINT_RETENTION.md`](docs/research/CDPR_CHECKPOINT_RETENTION.md) | Cycle 1 weight comparison and protocol for studying forgetting and recovery |
 | [`docs/cdpr_mjlab_architecture.md`](docs/cdpr_mjlab_architecture.md) | Batched MJWarp simulator architecture |
 | [`docs/reports/history/OPENVLA_OCTO_ERA_SUMMARY.md`](docs/reports/history/OPENVLA_OCTO_ERA_SUMMARY.md) | The project before SmolVLA: OpenVLA-OFT PPO → GRPO, LC-HOL, Octo |
