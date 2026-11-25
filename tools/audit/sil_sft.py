@@ -1747,6 +1747,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--device", default="cuda:0")
     parser.add_argument("--epochs", type=int, default=20)
     parser.add_argument(
+        "--save-final-residual", action="store_true",
+        help="Also save the fixed-budget residual endpoint as sil_final_residual.pt.",
+    )
+    parser.add_argument(
         "--progress",
         choices=("auto", "always", "never"),
         default="auto",
@@ -1955,6 +1959,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         ),
     )
     args = parser.parse_args(argv)
+    if args.save_final_residual and int(args.epochs) < 1:
+        parser.error("--save-final-residual requires at least one residual epoch")
 
     import torch
 
@@ -2477,6 +2483,21 @@ def main(argv: Sequence[str] | None = None) -> int:
                 ),
                 output / "sil_sft_adapter.pt",
             )
+
+    if args.save_final_residual:
+        policy_state = {f"actor.{key}": value.detach().cpu()
+                        for key, value in actor.state_dict().items()}
+        if "log_std" in payload["policy"]:
+            policy_state["log_std"] = payload["policy"]["log_std"]
+        torch.save(
+            build_resume_payload(
+                payload, policy_state=policy_state, lora_state=None,
+                note={"dataset": str(args.dataset), "source_checkpoint": str(args.checkpoint),
+                      "trained": "residual_only", "epoch": int(args.epochs) - 1,
+                      "optimizer_updates": optimizer_updates, "selection": "fixed_training_budget"},
+            ),
+            output / "sil_final_residual.pt",
+        )
 
     lora_report: dict[str, Any] | None = None
     if args.frames:

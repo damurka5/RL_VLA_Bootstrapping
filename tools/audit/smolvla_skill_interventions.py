@@ -282,7 +282,8 @@ def verify_reset(first, second) -> None:
 
 
 def series_report(manifest: dict, arm_rows: dict, baseline: np.ndarray,
-                  labels: np.ndarray, group_size: int, seed: int) -> dict:
+                  labels: np.ndarray, group_size: int, seed: int,
+                  holdout_quadrants=(), holdout_pairs=()) -> dict:
     scores = {"recipient": baseline, **{arm: rows for arm, (rows, _) in arm_rows.items()}}
     instructions = {name: labels[:, 1] == name for name in np.unique(labels[:, 1])}
     by_id, timeline = {}, []
@@ -296,17 +297,30 @@ def series_report(manifest: dict, arm_rows: dict, baseline: np.ndarray,
             "source_global_step": spec["source_global_step"],
             "success": {name: float(scores[arm][mask].mean()) for name, mask in instructions.items()},
         })
+    strata = {}
+    if holdout_quadrants or holdout_pairs:
+        bearing = np.isin(labels[:, 2], holdout_quadrants)
+        pair = np.isin(labels[:, 3], holdout_pairs)
+        strata = {"ordinary": ~(bearing | pair), "sector_only": bearing & ~pair,
+                  "pair_only": pair & ~bearing, "sector_and_pair": bearing & pair}
     transitions = []
     for spec in manifest["arms"].values():
         before, after = spec["previous_id"], spec["id"]
         if before not in by_id or after not in by_id:
             continue
         paired = np.stack((by_id[before], by_id[after]), axis=-1)
-        transitions.append({
+        transition = {
             "before": before, "after": after, "evidence": spec["evidence"],
             "instruction": {name: paired_stats(paired[mask], group_size, seed)
                             for name, mask in instructions.items()},
-        })
+        }
+        if strata:
+            transition["scene_group"] = {
+                name: {group: paired_stats(paired[mask & part], group_size, seed)
+                       for group, part in strata.items() if np.any(mask & part)}
+                for name, mask in instructions.items()
+            }
+        transitions.append(transition)
     return {"series": manifest["series"], "reference": manifest["reference"],
             "timeline": timeline, "adjacent_transitions": transitions}
 
@@ -388,7 +402,7 @@ def evaluate(args) -> None:
             }
         report[arm] = arm_report
         arm_rows[arm] = all_rows[:, :, 1], labels
-    depth_contrasts = {}
+    depth_contrasts, depth_by_instruction = {}, {}
     for early in sorted(name for name in arm_rows if name.startswith("early_")):
         late = early.replace("early_", "late_")
         if late not in arm_rows:
@@ -402,16 +416,22 @@ def evaluate(args) -> None:
             skill: paired_stats(scores[labels[:, 0] == skill], args.group_size, args.seed)
             for skill in np.unique(labels[:, 0])
         }
+        depth_by_instruction[f"{late}_vs_{early}"] = {
+            name: paired_stats(scores[labels[:, 1] == name], args.group_size, args.seed)
+            for name in np.unique(labels[:, 1])
+        }
     timeline = {}
     if "series" in manifest and baseline is not None:
         timeline = {"series_summary": series_report(manifest, arm_rows, baseline, labels,
-                                                    args.group_size, args.seed)}
+                                                    args.group_size, args.seed,
+                                                    args.holdout_quadrant, args.holdout_pair)}
     write_json(args.output / "paired.json", {
         "config": str(args.config), "config_sha256": digest(args.config),
         "manifest": str(args.manifest), "manifest_sha256": digest(args.manifest),
         "rollout": {key: value for key, value in vars(args).items()
                     if isinstance(value, (str, float, int, bool, list, type(None)))},
-        "arms": report, "late_minus_early": depth_contrasts, **timeline,
+        "arms": report, "late_minus_early": depth_contrasts,
+        "late_minus_early_by_instruction": depth_by_instruction, **timeline,
     })
 
 
@@ -443,6 +463,8 @@ def main() -> None:
     for name in ("manifest", "config", "output"):
         roll.add_argument(f"--{name}", type=Path, required=True)
     roll.add_argument("--cap", type=float, required=True)
+    roll.add_argument("--holdout-quadrant", action="append", choices=("NE", "NW", "SE", "SW"), default=[])
+    roll.add_argument("--holdout-pair", action="append", default=[], metavar="CATALOG:RECEPTACLE")
     roll.add_argument("--controller-workspace-from-checkpoint", action="store_true",
                       help="Use saved reference controller bounds for configs without explicit bounds")
     roll.add_argument("--arm", action="append")

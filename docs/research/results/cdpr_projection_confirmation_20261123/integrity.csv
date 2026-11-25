@@ -1,0 +1,17 @@
+task,arm,diverged_worlds,first_chunk_max_error
+move_to,recipient,0,1.780688762664795e-06
+move_to,recipient_repeat,0,
+move_to,donor_full,0,1.7881393432617188e-06
+move_to,donor_residual,0,
+move_to,all_expert,0,
+move_to,layer_13_gate_proj,0,
+move_to,layer_14_gate_proj,0,
+move_to,layer_14_q_proj,0,
+placement,recipient,1,1.7844140529632568e-06
+placement,recipient_repeat,2,
+placement,donor_full,3,1.5497207641601562e-06
+placement,donor_residual,2,
+placement,all_expert,2,
+placement,layer_13_gate_proj,2,
+placement,layer_14_gate_proj,1,
+placement,layer_14_q_proj,2,
