@@ -1,4 +1,4 @@
-\subsection{How does intermediate feedback affect learning?}\label{sec:libero_results}
-For the LIBERO reward comparison, we fine-tuned OpenVLA-OFT with SimpleVLA-RL on ten LIBERO-Spatial tasks. Each suite run began at 61.0\% success and used 300 rollouts per evaluation. We kept the native benchmark success criterion. Terminal feedback rewards complete-task success, phase feedback additionally rewards milestone completion, and dense feedback additionally rewards improvement within the current phase.
+\subsection{Reward comparison on LIBERO}\label{sec:libero_results}
+In a separate experiment, we fine-tuned OpenVLA-OFT with SimpleVLA-RL on ten LIBERO-Spatial tasks~\cite{openvlaoft,simplevlarl,libero}. Every suite run began at 61.0\% success. Each evaluation used 300 rollouts and the benchmark success criterion. Table~\ref{tab:libero} compares terminal, phase, and dense feedback.
 
 \input{tables/libero_results}

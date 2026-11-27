@@ -1,6 +1,10 @@
 \subsection{Execution under one instruction}\label{sec:cdpr_results}
-For the complete CDPR task, we evaluated 512 development scenes outside the training validation panel, with four attempts per scene. Each attempt allowed up to 128 decisions. Strict success required the robot to grasp the object, lift it while held, and deliberately release it at the correct destination without a carry slip or wrong placement. Numerical failures counted as failed attempts. Evaluation used only the learned controller, while training included scripted and assisted trajectories.
+We first tested the supervised fit under the full instruction. It matched its starting policy at five successes in 128 attempts. We then trained with milestone rewards from empty-gripper starts.
+
+We tested the final policy on 512 development scenes outside the training validation panel. We ran four attempts per scene. Each attempt allowed up to 128 decisions. Strict success required a grasp, a held lift, and a deliberate release at the target. We counted slips, wrong placements, and numerical failures as failures. The learned controller acted without assistance during evaluation.
 
 \input{tables/cdpr_results}
 
-Under the full instruction, the CDPR policy lifted the object in 1,832 of 2,048 attempts and completed 1,416. Thus 416 attempts failed after the robot had already achieved pickup. Placement was more often successful on the plate than in the bowl.
+The policy lifted the object in 1,832 of 2,048 attempts. It succeeded in 1,416 attempts (69.14\%). An earlier checkpoint succeeded in 1,245 attempts (60.79\%) on the same scenes. The paired gain was 8.35 percentage points (95\% CI $[6.05,10.69]$).
+
+We also trained a CDPR policy with only the terminal reward. It learned to place objects. The two runs used different starting states, supervision, and success criteria. Measuring the effect of milestone rewards on the CDPR requires a matched comparison.

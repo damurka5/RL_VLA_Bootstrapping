@@ -13,8 +13,8 @@ The two subtracted terms are the probabilities that all attempts fail or all att
 \label{fig:mixed}
 \end{figure}
 
-But the frequency of informative GRPO groups differs from average task success. The expected binary reward is $p$, whereas $P_{\mathrm{mixed}}$ is highest at $p=0.5$ and falls as success approaches one. With binary rewards, group normalization also changes how much each scene contributes to the expected on-policy GRPO update. When scenes share a policy, the resulting objective can favor a small gain in one scene over a larger loss in another~\cite[Sec.~6]{davis2025}.
+The mixed-group probability peaks at $p=0.5$. The mean binary reward is $p$. It keeps rising as success approaches one.
 
-For example, consider two equally likely scenes and groups of eight attempts. Suppose a policy change raises success in the first scene from 1\% to 2\% and lowers it in the second from 50\% to 48.8\%. The expected fraction of mixed groups rises from 53.47\% to 57.06\%, and the finite-group GRPO objective rises from 0.5381 to 0.5399. Mean task success falls from 25.5\% to 25.4\%.
+With binary rewards, group normalization changes the objective of on-policy GRPO. In the large-group limit, the update follows the gradient of the mean of $2\arcsin(\sqrt p)$ across scenes~\cite[Corollary~1 and Eq.~(26)]{thrampoulidis2026advantage}. This limit assumes unfiltered groups and an unclipped update.
 
-The numbers illustrate the unfiltered on-policy binary-reward model in~\cite[Sec.~6]{davis2025} in the zero-stabilizer limit.
+Consider two equally likely scenes that share a policy. Suppose a policy change raises success from 1\% to 2\% in one scene. It lowers success from 50\% to 48.8\% in the other. The mean success rate falls from 25.5\% to 25.4\%. The transformed objective rises from 0.8856 to 0.9153.

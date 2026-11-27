@@ -1,14 +1,32 @@
-\subsection{Skill acquisition and recovery}\label{sec:skill_retention}
-We noticed that learning the \emph{pick up} skill immediately after \emph{move to} failed. Only after learning \emph{put into}, which moves an already held object, did the VLA start to learn \emph{pick up}.
+\subsection{Skill acquisition}\label{sec:skill_retention}
+In our CDPR run, pickup training stalled after reaching. It began to succeed after the robot learned placement from a held-object start. Placement training reduced reaching success. We used self-imitation on saved trajectories to recover it. After later rounds of training and recovery, the shared policy reached 47.8\% on reaching and 11.9\% on pickup. With the object already held, it placed 73.8\% of attempts on the plate and 53.5\% in the bowl.
 
-When training the next skill, we noticed that previously learned skills degraded drastically. We started to collect successful episodes for each skill in a SIL bank and conducted skill recovery after learning a new skill. On the CDPR, reaching success fell from 64.1\% to 5.3\% after training placement. In a separate recovery evaluation, fitting earlier reaching and recent placement successes raised reaching from 8.0\% to 31.1\%. Plate placement rose from 50.0\% to 52.3\%, and bowl placement from 23.1\% to 27.7\%. These recovery measurements use different evaluation rounds from the forgetting comparison.
+\subsection{Checkpoint audit}\label{sec:checkpoint_audit}
+% Source: docs/research/SMOLVLA_CDPR_AUDIT_REPORT_20261125.md.
+% A: step_11009573. B: step_1504301. C: sft_retention_e60.
+We compare three versions of SmolVLA. Checkpoint A comes from before reaching success declined. B comes from after that decline. C is the result of self-imitation from B. Each comparison uses 512 groups of starts for reaching and 512 for placement. Each group has two attempts. We test the variants on the same starts within each comparison. All placement tests in the audit start with a held object. We bootstrap paired groups to estimate 95\% confidence intervals.
 
-\begin{figure*}[!t]
-\centering\includegraphics[width=\textwidth]{figures/skill_retention.pdf}
-\caption{Skill success (\%) during acquisition and recovery. CDPR references are separately trained skill policies. The horizontal line separates forgetting and recovery evaluations, which used different rounds. Dashes indicate unavailable measurements. On WidowX, reaching and pickup use 1,024 attempts each, plate placement uses 504, and bowl placement uses 520. Placement starts with the object held on both robots. The rejected WidowX SIL trial was evaluated but was not accepted as the next policy.}
-\label{fig:retention}
-\end{figure*}
+\paragraph{Forgetting}
+Reaching success fell from 59.2\% at A to 8.2\% at B. We restored the first or last 1, 2, 4, or 8 LoRA blocks of the action expert from A into B. The residual stayed fixed. Early blocks helped more at every tested size. With eight blocks, success was 17.0\% with early blocks and 10.6\% with late blocks. The gap was 6.35 percentage points (95\% CI $[3.42,9.28]$). Ramasesh et al. found a larger benefit from restoring late blocks in image classifiers~\cite[Fig.~1]{ramasesh2021}. Our early swaps changed the effective weights by 7.6--18.4\% more in norm. The test compares the saved updates at equal block counts.
 
-When pickup examples were added to the CDPR bank, pickup recovered from zero to 9.6\%. The later shared policy reached 47.8\% on reaching, 11.9\% on pickup, 73.8\% on plate placement, and 53.5\% on bowl placement. These are isolated skill evaluations. The placement rates use held-object starts and do not measure completion from an empty gripper.
+\paragraph{Recovery}
+On a separate set of starts, reaching success rose from 9.0\% at B to 34.1\% at C. Replacing just the residual of B with the one from C gave 36.3\%. Replacing just the expert's LoRA weights gave 9.8\%. Swapping individual projections in layers 13 and 14 also left reaching near 9--10\%. Bowl placement fell from 32.2\% to 28.2\% after SIL. Plate placement fell from 54.2\% to 52.4\%. The confidence interval for the plate change included zero.
 
-On WidowX, dense placement training reduced pickup from 140/1,024 successful attempts to zero. Later, two rounds of balanced self-imitation restored reaching to 372/1,024, but pickup succeeded only once. During binary pickup training, most successes came from assisted starts with an already lifted object. In 55 of 57 updates, there was no successful pickup from an ordinary approach. The controller could therefore receive successful pickup labels without regularly practicing the transition from approach to grasp.
+\paragraph{Layer activity}
+We compare activations at the first decision using linear centered kernel alignment (CKA)~\cite{kornblith2019}. Scores closer to one indicate more similar activation patterns. The visual features and the expert's proposed actions scored about one. The largest change was at the residual output for reaching (Table~\ref{tab:residual_cka}). The pattern held when we fed both versions the same inputs. Ramasesh et al. saw larger changes toward the output during forgetting in their classifiers~\cite[Fig.~1]{ramasesh2021}. We observe a similar pattern during recovery in the residual.
+
+\begin{table}[!htb]
+\caption{Similarity of residual activations before and after self-imitation. Each column gives the linear CKA score for a skill.}
+\label{tab:residual_cka}\centering\small
+\begin{tabular}{@{}lrrr@{}}\toprule
+Residual component & Reaching & Bowl & Plate\\\midrule
+First hidden layer & 0.968 & 0.982 & 0.984\\
+Second hidden layer & 0.838 & 0.910 & 0.911\\
+Output & 0.544 & 0.803 & 0.824\\\bottomrule
+\end{tabular}
+\end{table}
+
+Ramasesh et al. also used a linear probe to test what information remained in the layers~\cite[App.~H]{ramasesh2021}. We trained a probe to read the direction to the target from the residual output. We fit it on one skill and tested it on the other. Mean cosine similarity was 0.42 from reaching to placement and 0.48 in reverse. Both scores were negative when we tested on a spatial sector held out during fitting.
+
+\paragraph{Scene diversity}
+We trained two residuals from B and kept the expert frozen. Both used actions from the same teacher. One bank covered one spatial sector. The other covered three. Both used 2,560 decisions per epoch and 400 updates. The wider bank improved bowl placement by 3.21 percentage points and plate placement by 7.98 points compared with the narrower bank. Both variants still placed less often than B. Shi et al. also found that broader scene coverage helped transfer at a fixed data budget~\cite[Sec.~III-B]{shi2026diversity}. Their comparison used pretraining. Our rollout comparison used one training seed for additional self-imitation.

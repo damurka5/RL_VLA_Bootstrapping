@@ -1,10 +1,8 @@
 \section{Experiments}\label{sec:experiments}
-We tested the pipeline on a simulated CDPR and a simulated five-degree-of-freedom WidowX-200 arm. The CDPR uses MuJoCo Warp/MJ-Lab with four objects: apple, orange, potato, and tomato. The destinations are a plate and a bowl. Skill evaluations use each skill's prompt and prescribed starting states. Complete-task evaluations use one instruction and an empty gripper. A separate LIBERO-Spatial experiment examines the reward used for fine-tuning OpenVLA-OFT.
+We train and evaluate the CDPR in MuJoCo Warp/MJ-Lab. The robot moves an apple, orange, potato, or tomato to a plate or a bowl. Each skill test uses its own instruction and starting states. Full-task tests use one instruction and start with an empty gripper.
 \input{sections/06b_ablations_and_failures}
 
 \input{sections/06a_simulation_results}
-
-\input{sections/06c_real_world_results}
 
 \input{sections/05b_libero_setup}
 
